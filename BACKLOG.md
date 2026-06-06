@@ -155,6 +155,6 @@ From [PLAN.md](PLAN.md) — not backlog unless scope changes:
 
 ## Suggested order of work
 
-1. Finish alignment robustness (this pass)
-2. Real-world file validation (multi-track video, MP3, long files)
+1. ~~Finish alignment robustness~~ (done 2026-06-06)
+2. **Real-world corpus & validation** — Phase 0–1 done (committed WAV + manifest + `corpus_committed_cases`); Phase 2+ in [docs/TEMP-corpus-implementation-plan.md](docs/TEMP-corpus-implementation-plan.md)
 3. Performance (session reuse) and polish (logging, fixtures) as needed

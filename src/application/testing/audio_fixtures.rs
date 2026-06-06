@@ -50,3 +50,13 @@ pub fn write_offset_chirp_wav_pair(
 
     (path_a, path_b)
 }
+
+/// Steady 440 Hz tone for negative-control corpus cases.
+pub fn write_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
+    let total_samples = u64::from(sample_rate) * u64::from(seconds);
+    let samples = (0..total_samples).map(|index| {
+        let t = index as f32 / sample_rate as f32;
+        ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
+    });
+    write_mono_wav(path, sample_rate, samples);
+}

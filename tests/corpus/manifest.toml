@@ -1,0 +1,34 @@
+version = 1
+
+[defaults]
+clip_length_secs = 60
+num_clips = 1
+tolerance_secs = 1.0
+min_confidence = 0.5
+target_sample_rate = 11025
+
+[[case]]
+id = "wav_baseline_0s"
+tier = "committed"
+video_a = "wav/baseline_0s_a.wav"
+video_b = "wav/baseline_0s_b.wav"
+expected_offset_secs = 0.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "wav_leader_3s"
+tier = "committed"
+video_a = "wav/leader_3s_a.wav"
+video_b = "wav/leader_3s_b.wav"
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "no_overlap_tone_vs_chirp"
+tier = "committed"
+video_a = "wav/chirp_a.wav"
+video_b = "wav/tone_b.wav"
+expect_aligned = false
+expect_recommended = false
