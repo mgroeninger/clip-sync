@@ -20,6 +20,7 @@ pub fn run() -> ExitCode {
     match run_inner() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            tracing::debug!(error = %error, "clip-sync failed");
             eprintln!("{error}");
             exit_code::exit_code_for(&error)
         }

@@ -1,0 +1,241 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::application::error::{AlignmentError, FingerprintError, MediaError};
+use crate::application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
+use crate::domain::{
+    AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
+};
+
+pub struct FakeProgressReporter;
+
+impl ProgressReporter for FakeProgressReporter {
+    fn phase(&self, _message: &str) {}
+
+    fn progress(&self, _label: &str, _current: u64, _total: u64) {}
+}
+
+pub struct FakeMediaReader {
+    sessions: HashMap<PathBuf, FakeMediaSession>,
+    open_calls: Arc<AtomicUsize>,
+    open_error: Option<MediaError>,
+}
+
+impl FakeMediaReader {
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            open_calls: Arc::new(AtomicUsize::new(0)),
+            open_error: None,
+        }
+    }
+
+    pub fn with_session(mut self, path: impl AsRef<Path>, session: FakeMediaSession) -> Self {
+        self.sessions.insert(path.as_ref().to_path_buf(), session);
+        self
+    }
+
+    pub fn with_open_error(mut self, error: MediaError) -> Self {
+        self.open_error = Some(error);
+        self
+    }
+
+    pub fn open_calls(&self) -> usize {
+        self.open_calls.load(Ordering::SeqCst)
+    }
+}
+
+impl MediaReader for FakeMediaReader {
+    type Session = FakeMediaSession;
+
+    fn open(&self, source: &MediaSource) -> Result<Self::Session, MediaError> {
+        self.open_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = &self.open_error {
+            return Err(error.clone());
+        }
+
+        self.sessions
+            .get(source.path())
+            .cloned()
+            .ok_or_else(|| MediaError::FileNotFound(source.path().to_path_buf()))
+    }
+}
+
+#[derive(Clone)]
+pub struct FakeMediaSession {
+    tracks: Vec<AudioTrack>,
+    duration: Duration,
+    extract_error: Option<MediaError>,
+}
+
+impl FakeMediaSession {
+    pub fn with_duration(duration: Duration) -> Self {
+        Self {
+            tracks: vec![test_track(duration)],
+            duration,
+            extract_error: None,
+        }
+    }
+
+    pub fn with_tracks(tracks: Vec<AudioTrack>, duration: Duration) -> Self {
+        Self {
+            tracks,
+            duration,
+            extract_error: None,
+        }
+    }
+
+    pub fn with_extract_error(mut self, error: MediaError) -> Self {
+        self.extract_error = Some(error);
+        self
+    }
+}
+
+impl MediaSession for FakeMediaSession {
+    fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+        Ok(self.tracks.clone())
+    }
+
+    fn duration(&self) -> Result<Duration, MediaError> {
+        Ok(self.duration)
+    }
+
+    fn extract_mono(
+        &self,
+        _track: &AudioTrack,
+        window: &ClipWindow,
+        progress: &dyn ProgressReporter,
+        label: &str,
+    ) -> Result<MonoPcmClip, MediaError> {
+        if let Some(error) = &self.extract_error {
+            return Err(error.clone());
+        }
+
+        progress.progress(label, 1, 1);
+        let sample_rate = 44_100;
+        let sample_count = window_sample_count(window, sample_rate);
+        Ok(MonoPcmClip {
+            sample_rate,
+            samples: vec![1_i16; sample_count],
+        })
+    }
+}
+
+pub struct FakeFingerprinter {
+    error: Option<FingerprintError>,
+    seen_sample_rates: RefCell<Vec<u32>>,
+}
+
+impl FakeFingerprinter {
+    pub fn new() -> Self {
+        Self {
+            error: None,
+            seen_sample_rates: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn with_error(error: FingerprintError) -> Self {
+        Self {
+            error: Some(error),
+            seen_sample_rates: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn seen_sample_rates(&self) -> Vec<u32> {
+        self.seen_sample_rates.borrow().clone()
+    }
+}
+
+impl Fingerprinter for FakeFingerprinter {
+    fn fingerprint(&self, clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+
+        self.seen_sample_rates.borrow_mut().push(clip.sample_rate);
+        Ok(Fingerprint {
+            data: vec![clip.samples.len() as u32],
+        })
+    }
+}
+
+pub struct FakeAligner {
+    estimates: RefCell<Vec<ClipMatchEstimate>>,
+    fallback: ClipMatchEstimate,
+    error: Option<AlignmentError>,
+}
+
+impl FakeAligner {
+    pub fn with_estimate(estimate: ClipMatchEstimate) -> Self {
+        Self {
+            estimates: RefCell::new(Vec::new()),
+            fallback: estimate,
+            error: None,
+        }
+    }
+
+    pub fn with_estimates(estimates: Vec<ClipMatchEstimate>) -> Self {
+        let fallback = estimates
+            .last()
+            .copied()
+            .unwrap_or(ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.0,
+            });
+        Self {
+            estimates: RefCell::new(estimates),
+            fallback,
+            error: None,
+        }
+    }
+
+    pub fn with_error(error: AlignmentError) -> Self {
+        Self {
+            estimates: RefCell::new(Vec::new()),
+            fallback: ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.0,
+            },
+            error: Some(error),
+        }
+    }
+}
+
+impl Aligner for FakeAligner {
+    fn find_offset(
+        &self,
+        _left: &Fingerprint,
+        _right: &Fingerprint,
+    ) -> Result<ClipMatchEstimate, AlignmentError> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+
+        let mut queue = self.estimates.borrow_mut();
+        if queue.len() > 1 {
+            return Ok(queue.remove(0));
+        }
+
+        Ok(queue.first().copied().unwrap_or(self.fallback))
+    }
+}
+
+fn test_track(duration: Duration) -> AudioTrack {
+    AudioTrack {
+        index: 0,
+        codec: "test".into(),
+        channels: 1,
+        sample_rate: 44_100,
+        bitrate: None,
+        duration: Some(duration),
+    }
+}
+
+fn window_sample_count(window: &ClipWindow, sample_rate: u32) -> usize {
+    let seconds = window.end.saturating_sub(window.start).as_secs_f64();
+    ((seconds * f64::from(sample_rate)).floor().max(1.0)) as usize
+}

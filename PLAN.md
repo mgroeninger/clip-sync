@@ -57,8 +57,9 @@ Dependency rule: domain ← application ← infrastructure. No inward dependenci
 | `ClipWindow` | Start/end time range within a track |
 | `MonoPcmClip` | Sample rate, channel count (1), PCM samples for one window |
 | `Fingerprint` | Opaque fingerprint blob for a clip |
-| `MatchSegment` | Start/end in clip A and clip B, match score |
-| `AlignmentResult` | Offset (seconds or samples), confidence, matched segments, metadata |
+| `ClipMatchEstimate` | Raw offset + confidence from comparing one clip pair |
+| `ClipMatch` | Per-clip report: window, aligned or not, offset if matched |
+| `AlignmentResult` | Full report: start/end alignment flags, per-clip results, recommended offset |
 
 ### Domain policies (pure functions)
 
@@ -158,9 +159,9 @@ Domain errors carry no I/O or library context; they describe business rule viola
 8. Log: extraction progress (see Progress port).
 9. Fingerprint each clip via `Fingerprinter::fingerprint`.
 10. Log: fingerprint complete.
-11. For each clip index `i`, run `Aligner::find_offset` on clip *i* from A vs clip *i* from B; merge offsets (prefer start-clip match when estimates disagree — see `AlignmentConfig`).
-12. Log: match result summary.
-13. Return `AlignmentResult`.
+11. For each clip index `i`, run `Aligner::find_offset` on clip *i* from A vs clip *i* from B; build `AlignmentResult` with per-clip alignment and recommended offset.
+12. Log alignment summary (start/end aligned, per-clip status, recommended offset).
+13. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
 ### Ports (traits)
 
@@ -188,7 +189,7 @@ enum AppError {
 }
 ```
 
-Application errors aggregate domain and port failures; infrastructure maps library errors into `MediaError`, etc., before the use case sees them.
+Application errors aggregate domain and port failures; infrastructure maps library errors at the adapter boundary. Port variants, exit codes, user messages, Symphonia mapping, and logging are documented in [docs/error-mapping.md](docs/error-mapping.md).
 
 ## Infrastructure layer
 
@@ -196,8 +197,8 @@ Application errors aggregate domain and port failures; infrastructure maps libra
 
 - Subcommand or default: align two positional paths `VIDEO_A` `VIDEO_B`.
 - Global flags wired into `AppConfig` (see Configuration).
-- On success: print human-readable offset to stdout (JSON with `--format json`).
-- On failure: print mapped user message to stderr, exit code from `ExitCode` mapping.
+- On success: print alignment report to stdout (human or JSON per `--format`).
+- On failure: print error to stderr; exit code per [docs/error-mapping.md](docs/error-mapping.md).
 - Verbose / quiet flags control `ProgressReporter` and log level.
 
 ### Symphonia adapter (`MediaReader`)
@@ -205,13 +206,13 @@ Application errors aggregate domain and port failures; infrastructure maps libra
 - Demux container, enumerate audio tracks, decode selected track.
 - Down-mix to mono during decode (or post-decode mix).
 - Honor `ClipWindow` time bounds; stream decode for long segments.
-- Map Symphonia/decode failures → `MediaError` (see Error mapping).
+- Map Symphonia/decode failures → `MediaError` (see [docs/error-mapping.md](docs/error-mapping.md)).
 
 ### Chromaprint adapter (`Fingerprinter` + `Aligner`)
 
 - `rusty-chromaprint` for fingerprint generation.
 - Alignment: compare fingerprints by matching clip index; merge multiple offset estimates per use-case rules.
-- Map library failures → `FingerprintError` / `AlignmentError`.
+- Map library failures → `FingerprintError` / `AlignmentError` (see [docs/error-mapping.md](docs/error-mapping.md)).
 
 ### Logging and progress adapter
 
@@ -281,8 +282,48 @@ Invalid config → `ConfigError` at startup before media work begins (e.g. `clip
 | Clip plan | `Clip plan: 2 clips (15m each) — [0:00–15:00] start, [30:00–45:00] end` or `Clip plan: 1 clip — [0:00–12:00] start (media shorter than clip length)` |
 | Extract | `Extracting clip 1/2 (video A): 42%` — throttled updates |
 | Fingerprint | `Fingerprinting 4 clips...` (2 × effective_num_clips) |
-| Align | `Searching for match...` |
-| Done | `Offset: +12.340 s (confidence: 0.94)` |
+| Align | `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)` |
+| Done | `Start clip aligned: yes` / `Recommended offset: +12.340s (clip offsets agree)` |
+
+## Output
+
+The application reports **whether each clip pair aligns** and **any offset identified**, not just a single number.
+
+### `AlignmentResult` (stdout / JSON)
+
+```rust
+struct ClipMatch {
+    label: ClipLabel,              // start | interior | end
+    window_start_secs: f64,
+    window_end_secs: f64,
+    aligned: bool,                 // confidence >= min_match_score
+    offset_secs: Option<f64>,      // present only when aligned
+    confidence: f32,
+}
+
+struct AlignmentResult {
+    clips: Vec<ClipMatch>,
+    start_aligned: bool,
+    end_aligned: Option<bool>,     // None when only one clip was extracted
+    recommended_offset_secs: Option<f64>,
+    offsets_consistent: bool,      // aligned clips agree within 0.5s
+}
+```
+
+**Human output example:**
+
+```text
+Alignment report
+  Start clip aligned: yes
+  End clip aligned: yes
+  Start clip [0:00–15:00]: aligned, offset +12.340s (confidence 0.94)
+  End clip [30:00–45:00]: aligned, offset +12.355s (confidence 0.91)
+  Recommended offset: +12.340s (clip offsets agree)
+```
+
+When clips do not match, `aligned` is false, `offset_secs` is omitted, and `recommended_offset_secs` is `none`. Analysis still succeeds; only engine failures produce errors.
+
+**Offset semantics:** positive offset means video B's audio starts later than video A's at the matched point (add offset seconds to A to align with B).
 
 ### `ProgressReporter` port
 
@@ -299,70 +340,31 @@ Infrastructure implements with stderr TTY detection (no progress bar when not a 
 
 - Spans: `align_videos`, `open_media`, `extract_clip`, `fingerprint`, `align`.
 - Fields: `path`, `track_index`, `window_start`, `window_end`, `offset`, `score`.
-- Errors recorded with `tracing::error!` after mapping; user still sees sanitized message from CLI.
+- Errors logged via `tracing` after mapping; see [docs/error-mapping.md](docs/error-mapping.md) for levels and fields.
 
 ## Error mapping
 
-Errors flow: **library → port error → AppError → user message + exit code**.
+**Authoritative reference:** [docs/error-mapping.md](docs/error-mapping.md)
 
-### Port-level errors (infrastructure boundary)
+That document covers:
 
-```rust
-enum MediaError {
-    FileNotFound(PathBuf),
-    UnsupportedFormat(String),
-    OpenFailed(String),
-    DecodeFailed { track: u32, detail: String },
-    SeekFailed(String),
-}
+- Error flow: library → port error → `AppError` → stderr, exit code, and tracing
+- Exit codes (0 success, 2 config, 3 domain, 4 media, 5 fingerprint, 6 alignment)
+- User-facing `Display` messages (from `thiserror` in `src/application/error.rs`)
+- Symphonia → `MediaError` mapping (`src/infrastructure/symphonia/error_mapping.rs`)
+- Diagnostic logging (structured fields, log levels, enabling debug output)
 
-enum FingerprintError {
-    InvalidPcm(String),
-    EngineFailed(String),
-}
+**Plan-level notes (keep in sync with the doc):**
 
-enum AlignmentError {
-    NoMatch,
-    AmbiguousMatch { candidates: usize },
-    EngineFailed(String),
-}
+- Domain and application code must not depend on Symphonia or Chromaprint types.
+- Low-confidence alignment (clips do not line up) returns exit **0** with a report; it is not `AlignmentError::NoMatch`.
+- `AlignmentError::NoMatch` / `AmbiguousMatch` are for fingerprint **engine** failures, not “no overlap detected.”
 
-enum ConfigError {
-    FileRead(PathBuf),
-    Parse(String),
-    InvalidValue { field: String, reason: String },
-}
-```
+Enum definitions remain in code:
 
-Infrastructure adapters implement `From<symphonia::...>` (etc.) into these enums at the adapter boundary; domain never sees library types.
-
-### User-facing messages and exit codes
-
-| AppError variant | User message (stderr) | Exit code |
-|------------------|----------------------|-----------|
-| `Config(...)` | `Configuration error: ...` | 2 |
-| `Domain(NoAudioTracks)` | `No audio tracks found in <path>` | 3 |
-| `Media(FileNotFound)` | `File not found: <path>` | 4 |
-| `Media(UnsupportedFormat)` | `Unsupported format: ...` | 4 |
-| `Media(...)` | `Failed to read audio: ...` | 4 |
-| `Fingerprint(...)` | `Fingerprint failed: ...` | 5 |
-| `Alignment(NoMatch)` | `Could not find a matching segment` | 6 |
-| `Alignment(AmbiguousMatch)` | `Multiple equally likely matches; try shorter clips or higher quality source` | 6 |
-| `Alignment(...)` | `Alignment failed: ...` | 6 |
-
-CLI adapter owns `Display for AppError` (user-safe) and `impl From<AppError> for ExitCode`. Internal causes remain in logs when `--verbose` or `RUST_LOG=debug`.
-
-### Error mapping flow
-
-```mermaid
-flowchart LR
-  LIB[Symphonia / Chromaprint] --> PE[Port errors]
-  PE --> AE[AppError]
-  DOM[DomainError] --> AE
-  AE --> UM[User message]
-  AE --> EC[Exit code]
-  AE --> TR[tracing error span]
-```
+- `AppError`, port errors — `src/application/error.rs`
+- `DomainError` — `src/domain/error.rs`
+- Exit code mapping — `src/infrastructure/cli/exit_code.rs`
 
 ## CLI surface (sketch)
 
@@ -419,12 +421,18 @@ clip-sync/
 │       │   └── progress.rs     # ProgressReporter impl
 │       ├── symphonia/
 │       │   ├── mod.rs
+│       │   ├── error_mapping.rs  # Symphonia → MediaError (see docs/error-mapping.md)
 │       │   └── media_reader.rs
 │       └── chromaprint/
 │           ├── mod.rs
 │           ├── fingerprinter.rs
 │           └── aligner.rs
 ```
+
+## Documentation
+
+- [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, Symphonia mapping, diagnostic logging
+- [BACKLOG.md](BACKLOG.md) — deferred work and follow-up items
 
 ## Dependencies (planned)
 

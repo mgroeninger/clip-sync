@@ -102,6 +102,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 44_100,
                 bitrate: Some(128_000),
+                duration: Some(mins(60)),
             },
             AudioTrack {
                 index: 1,
@@ -109,6 +110,7 @@ mod tests {
                 channels: 2,
                 sample_rate: 48_000,
                 bitrate: Some(128_000),
+                duration: Some(mins(60)),
             },
         ];
 

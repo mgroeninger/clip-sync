@@ -102,6 +102,14 @@ impl ClipConfig {
                 reason: format!("must be at least {MIN_NUM_CLIPS}"),
             });
         }
+        if let Some(rate) = self.target_sample_rate {
+            if rate == 0 {
+                return Err(ConfigError::InvalidValue {
+                    field: "target_sample_rate".into(),
+                    reason: "must be greater than 0".into(),
+                });
+            }
+        }
         Ok(())
     }
 

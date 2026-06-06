@@ -11,11 +11,12 @@ clap = { version = "4", features = ["derive"] }
 rusty-chromaprint = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-symphonia = { version = "0.5", features = ["default"] }
+symphonia = { version = "0.5", features = ["default", "isomp4", "aac"] }
 thiserror = "1"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+hound = "3"
 tempfile = "3"

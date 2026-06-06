@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use crate::domain::{
-    AlignmentResult, AudioTrack, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
+    AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
 };
 
 pub trait ProgressReporter {
@@ -37,5 +37,5 @@ pub trait Aligner {
         &self,
         left: &Fingerprint,
         right: &Fingerprint,
-    ) -> Result<AlignmentResult, AlignmentError>;
+    ) -> Result<ClipMatchEstimate, AlignmentError>;
 }
