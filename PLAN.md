@@ -1,0 +1,3 @@
+This project is a tool to evaluate two videos based on sound and align them. It is a rust project which uses Symphonia to open video files, identify the tracks in the video, select the highest quality track and extract the first 15 minutes and last 15 minutes of the sound (or up to 30 minutes if it is shorter), down-mix the track to mono, then use those two clips to fingerprint and try to identify the offset with rusty-chromaprint to find matching segments.
+It is a command line tool.  It should use clap to manage command line parameters.
+It is built in an hexagonal architecture, using domain, application and infrastructure layers using adapters and ports.
