@@ -323,7 +323,32 @@ Alignment report
 
 When clips do not match, `aligned` is false, `offset_secs` is omitted, and `recommended_offset_secs` is `none`. Analysis still succeeds; only engine failures produce errors.
 
-**Offset semantics:** positive offset means video B's audio starts later than video A's at the matched point (add offset seconds to A to align with B).
+### Offset reporting semantics
+
+Video **A** (`VIDEO_A`, the first CLI argument) is always the **reference timeline** (t = 0). Every reported offset uses the same definition:
+
+**`offset_secs` = seconds to add to video A's timeline to align with video B.**
+
+Equivalently: at the matched moment, the same audio event occurs at time **t** on A and time **t + offset** on B.
+
+| Sign | Meaning | Sync actions |
+|------|---------|--------------|
+| **+offset** | B's matching audio appears **later** on B's clock (B started recording later, or is lagging) | Delay A by `offset`, **or** move B earlier by `offset` on the timeline |
+| **−offset** | B's matching audio appears **earlier** on B's clock (B started recording earlier, or is leading) | Advance A by `|offset|`, **or** move B later by `|offset|` |
+| **0** | Clips are already aligned at the matched point | No shift needed |
+
+**Examples**
+
+- `+12.340s` — the content at A's 0:00 matches B at 0:12.340. To sync in an editor: slip B left by 12.340s, or delay A by 12.340s.
+- `−3.000s` — the content at A's 0:03 matches B at 0:00. B is 3 seconds ahead; slip B right by 3s, or trim/advance A by 3s.
+
+**Where offsets appear**
+
+- Per-clip lines (`ClipMatch.offset_secs`) use this definition when `aligned` is true.
+- `recommended_offset_secs` is the best single value when multiple clips agree (within 0.5s) or when `prefer_start_clip` selects the start/end clip estimate.
+- Progress log lines during alignment use the same signed value (`offset +12.340s`).
+
+The Chromaprint adapter maps library segment positions into this domain convention at the infrastructure boundary (`offset2 − offset1`, scaled by fingerprint item duration).
 
 ### `ProgressReporter` port
 

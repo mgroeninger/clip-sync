@@ -156,6 +156,10 @@ fn probe_error(path: &Path, error: SymphoniaError) -> MediaError {
             "{}: unexpected decoder reset during probe",
             path.display()
         )),
+        other => MediaError::OpenFailed(format!(
+            "{}: probe failed: {other}",
+            path.display()
+        )),
     }
 }
 
@@ -198,6 +202,7 @@ fn decode_loop_error(path: &Path, track: u32, error: SymphoniaError) -> MediaErr
         SymphoniaError::ResetRequired => {
             decode_failed(track, "unexpected decoder reset while decoding".to_string())
         }
+        other => decode_failed(track, format!("decode failed on track {track}: {other}")),
     }
 }
 
@@ -225,6 +230,7 @@ fn seek_kind_message(kind: SeekErrorKind) -> &'static str {
         SeekErrorKind::ForwardOnly => "stream can only be seeked forward",
         SeekErrorKind::OutOfRange => "requested seek timestamp is out-of-range for stream",
         SeekErrorKind::InvalidTrack => "invalid track id",
+        _ => "seek error",
     }
 }
 

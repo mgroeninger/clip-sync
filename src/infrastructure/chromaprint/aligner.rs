@@ -43,7 +43,8 @@ fn find_offset(
     };
 
     let item_secs = f64::from(config.item_duration_in_seconds());
-    let offset_secs = (segment.offset1 as f64 - segment.offset2 as f64) * item_secs;
+    // Domain convention: seconds to add to video A to align with video B (see PLAN.md).
+    let offset_secs = (segment.offset2 as f64 - segment.offset1 as f64) * item_secs;
     let confidence = score_to_confidence(segment.score);
 
     debug!(
@@ -156,13 +157,13 @@ mod tests {
     }
 
     #[test]
-    fn phase_shifted_chirp_reports_positive_offset() {
+    fn phase_shifted_chirp_reports_negative_offset_when_b_is_ahead() {
         let sample_rate = 44_100;
-        let delay_secs = 2;
+        let lead_secs = 2;
         let left = fingerprint(&chirp_clip_from(sample_rate, 0, 20));
         let right = fingerprint(&chirp_clip_from(
             sample_rate,
-            delay_secs as u64 * sample_rate as u64,
+            lead_secs as u64 * sample_rate as u64,
             20,
         ));
 
@@ -173,7 +174,7 @@ mod tests {
             estimate.confidence
         );
         assert!(
-            (estimate.offset_secs - f64::from(delay_secs)).abs() < 1.0,
+            (estimate.offset_secs + f64::from(lead_secs)).abs() < 1.0,
             "offset={}",
             estimate.offset_secs
         );

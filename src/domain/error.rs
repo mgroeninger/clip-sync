@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum DomainError {
     #[error("no audio tracks found")]
     NoAudioTracks,
+    #[error("no decodable audio tracks")]
+    NoDecodableAudioTracks,
     #[error("invalid media duration")]
     InvalidDuration,
     #[error("empty clip")]

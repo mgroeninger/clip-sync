@@ -10,4 +10,6 @@ pub struct AudioTrack {
     pub bitrate: Option<u32>,
     /// Decodable duration for this track, when the container reports frame count and time base.
     pub duration: Option<Duration>,
+    /// Whether Symphonia can construct a decoder for this track at probe time.
+    pub decodable: bool,
 }

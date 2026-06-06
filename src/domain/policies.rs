@@ -6,15 +6,20 @@ use crate::domain::clip_window::{ClipLabel, ClipWindow};
 use crate::domain::error::DomainError;
 
 pub fn select_best_track(tracks: &[AudioTrack]) -> Result<&AudioTrack, DomainError> {
+    if tracks.is_empty() {
+        return Err(DomainError::NoAudioTracks);
+    }
+
     tracks
         .iter()
+        .filter(|track| track.decodable)
         .max_by(|a, b| {
             a.sample_rate
                 .cmp(&b.sample_rate)
-                .then(a.channels.cmp(&b.channels))
+                .then(b.channels.cmp(&a.channels))
                 .then(a.bitrate.cmp(&b.bitrate))
         })
-        .ok_or(DomainError::NoAudioTracks)
+        .ok_or(DomainError::NoDecodableAudioTracks)
 }
 
 pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindow>, DomainError> {
@@ -109,6 +114,7 @@ mod tests {
                 sample_rate: 44_100,
                 bitrate: Some(128_000),
                 duration: Some(mins(60)),
+                decodable: true,
             },
             AudioTrack {
                 index: 1,
@@ -117,6 +123,77 @@ mod tests {
                 sample_rate: 48_000,
                 bitrate: Some(128_000),
                 duration: Some(mins(60)),
+                decodable: true,
+            },
+        ];
+
+        assert_eq!(select_best_track(&tracks).unwrap().index, 1);
+    }
+
+    #[test]
+    fn select_best_track_prefers_decodable_over_sample_rate() {
+        let tracks = vec![
+            AudioTrack {
+                index: 0,
+                codec: "ac3".into(),
+                channels: 6,
+                sample_rate: 44_100,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
+            },
+            AudioTrack {
+                index: 1,
+                codec: "aac".into(),
+                channels: 2,
+                sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: false,
+            },
+        ];
+
+        assert_eq!(select_best_track(&tracks).unwrap().index, 0);
+    }
+
+    #[test]
+    fn select_best_track_errors_when_none_are_decodable() {
+        let tracks = vec![AudioTrack {
+            index: 2,
+            codec: "aac".into(),
+            channels: 6,
+            sample_rate: 48_000,
+            bitrate: None,
+            duration: Some(mins(60)),
+            decodable: false,
+        }];
+
+        assert_eq!(
+            select_best_track(&tracks),
+            Err(DomainError::NoDecodableAudioTracks)
+        );
+    }
+
+    #[test]
+    fn select_best_track_prefers_fewer_channels_when_rates_match() {
+        let tracks = vec![
+            AudioTrack {
+                index: 0,
+                codec: "aac".into(),
+                channels: 6,
+                sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
+            },
+            AudioTrack {
+                index: 1,
+                codec: "aac".into(),
+                channels: 2,
+                sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
             },
         ];
 

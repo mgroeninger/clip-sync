@@ -30,6 +30,8 @@ pub trait Fingerprinter {
 }
 
 pub trait Aligner {
+    /// Compare clip fingerprints from video A (`left`) and video B (`right`).
+    /// Returns seconds to add to A's timeline to align with B (see PLAN.md).
     fn find_offset(
         &self,
         left: &Fingerprint,

@@ -224,6 +224,7 @@ fn test_track(duration: Duration) -> AudioTrack {
         sample_rate: 44_100,
         bitrate: None,
         duration: Some(duration),
+        decodable: true,
     }
 }
 

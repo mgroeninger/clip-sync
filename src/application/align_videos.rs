@@ -136,11 +136,12 @@ where
         let tracks = session.list_tracks()?;
         let track = select_best_track(&tracks)?;
         self.progress.phase(&format!(
-            "Selected track {} ({} Hz, {} channel{})",
+            "Selected track {} ({} Hz, {} channel{}, {}decodable)",
             track.index,
             track.sample_rate,
             track.channels,
-            if track.channels == 1 { "" } else { "s" }
+            if track.channels == 1 { "" } else { "s" },
+            if track.decodable { "" } else { "not " }
         ));
 
         let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
@@ -431,6 +432,7 @@ mod tests {
                     sample_rate: 44_100,
                     bitrate: None,
                     duration: None,
+                    decodable: true,
                 }]),
             )
             .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
@@ -526,5 +528,62 @@ mod tests {
         assert_eq!(response.result.recommended_offset_secs, Some(10.0));
         assert_eq!(response.result.clips[0].label, ClipLabel::Start);
         assert_eq!(response.result.clips[1].label, ClipLabel::End);
+    }
+
+    #[test]
+    fn execute_detects_known_offset_through_real_wav_pipeline() {
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 120;
+        const OFFSET_SECS: u32 = 3;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_offset_chirp_wav_pair(
+            temp.path(),
+            SAMPLE_RATE,
+            TOTAL_SECS,
+            OFFSET_SECS,
+        );
+
+        let config = AppConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+            },
+            ..Default::default()
+        };
+
+        let media_reader = SymphoniaMediaReader;
+        let fingerprinter = ChromaprintFingerprinter;
+        let aligner = ChromaprintAligner;
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute should succeed");
+
+        let offset = response
+            .result
+            .recommended_offset_secs
+            .expect("expected aligned offset");
+        assert!(response.result.start_aligned);
+        assert!(
+            (offset - f64::from(OFFSET_SECS)).abs() < 1.0,
+            "offset={offset}, expected about +{OFFSET_SECS}"
+        );
+        assert!(
+            response.result.clips[0].confidence >= 0.5,
+            "confidence={}",
+            response.result.clips[0].confidence
+        );
     }
 }
