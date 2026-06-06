@@ -2,12 +2,30 @@ use tracing::debug;
 
 use rusty_chromaprint::{match_fingerprints, MatchError, Segment};
 
+use crate::application::config::ChromaprintPreset;
 use crate::application::error::AlignmentError;
 use crate::application::ports::Aligner;
 use crate::domain::{ClipMatchEstimate, Fingerprint};
-use crate::infrastructure::chromaprint::config::{default_configuration, MATCH_SCORE_THRESHOLD};
+use crate::infrastructure::chromaprint::config::{
+    configuration_for_preset, MATCH_SCORE_THRESHOLD, MIN_RELIABLE_ITEMS,
+};
 
-pub struct ChromaprintAligner;
+#[derive(Debug, Clone, Copy)]
+pub struct ChromaprintAligner {
+    preset: ChromaprintPreset,
+}
+
+impl ChromaprintAligner {
+    pub fn new(preset: ChromaprintPreset) -> Self {
+        Self { preset }
+    }
+}
+
+impl Default for ChromaprintAligner {
+    fn default() -> Self {
+        Self::new(ChromaprintPreset::default())
+    }
+}
 
 impl Aligner for ChromaprintAligner {
     fn find_offset(
@@ -15,13 +33,14 @@ impl Aligner for ChromaprintAligner {
         left: &Fingerprint,
         right: &Fingerprint,
     ) -> Result<ClipMatchEstimate, AlignmentError> {
-        find_offset(left, right)
+        find_offset(left, right, self.preset)
     }
 }
 
 fn find_offset(
     left: &Fingerprint,
     right: &Fingerprint,
+    preset: ChromaprintPreset,
 ) -> Result<ClipMatchEstimate, AlignmentError> {
     if left.data.is_empty() || right.data.is_empty() {
         return Ok(ClipMatchEstimate {
@@ -30,11 +49,12 @@ fn find_offset(
         });
     }
 
-    let config = default_configuration();
+    let config = configuration_for_preset(preset);
     let segments = match_fingerprints(&left.data, &right.data, &config)
         .map_err(map_match_error)?;
 
-    let Some(segment) = select_best_segment(&segments) else {
+    let selection = select_best_segment(&segments);
+    let Some((segment, ambiguous)) = selection else {
         debug!("no matching fingerprint segments found");
         return Ok(ClipMatchEstimate {
             offset_secs: 0.0,
@@ -43,15 +63,15 @@ fn find_offset(
     };
 
     let item_secs = f64::from(config.item_duration_in_seconds());
-    // Domain convention: seconds to add to video A to align with video B (see PLAN.md).
     let offset_secs = (segment.offset2 as f64 - segment.offset1 as f64) * item_secs;
-    let confidence = score_to_confidence(segment.score);
+    let confidence = segment_confidence(segment.score, segment.items_count, ambiguous);
 
     debug!(
         offset_secs,
         confidence,
         segment_score = segment.score,
         segment_items = segment.items_count,
+        ambiguous,
         "fingerprint match segment selected"
     );
 
@@ -61,21 +81,78 @@ fn find_offset(
     })
 }
 
-fn select_best_segment(segments: &[Segment]) -> Option<&Segment> {
-    segments.iter().min_by(|left, right| {
-        left.score
-            .partial_cmp(&right.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| right.items_count.cmp(&left.items_count))
-    })
+fn segment_offset_items(segment: &Segment) -> isize {
+    segment.offset2 as isize - segment.offset1 as isize
 }
 
-fn score_to_confidence(score: f64) -> f32 {
+fn select_best_segment(segments: &[Segment]) -> Option<(&Segment, bool)> {
+    if segments.is_empty() {
+        return None;
+    }
+
+    let mut clusters: Vec<(isize, f64, usize, &Segment)> = Vec::new();
+
+    for segment in segments {
+        let offset_items = segment_offset_items(segment);
+        if let Some(cluster) = clusters
+            .iter_mut()
+            .find(|(offset, _, _, _)| (*offset - offset_items).abs() <= 1)
+        {
+            cluster.1 += segment.items_count as f64 / (segment.score + 1.0);
+            cluster.2 += segment.items_count;
+            if segment.score < cluster.3.score
+                || (segment.score == cluster.3.score
+                    && segment.items_count > cluster.3.items_count)
+            {
+                cluster.3 = segment;
+            }
+        } else {
+            clusters.push((
+                offset_items,
+                segment.items_count as f64 / (segment.score + 1.0),
+                segment.items_count,
+                segment,
+            ));
+        }
+    }
+
+    clusters.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.2.cmp(&left.2))
+            .then_with(|| {
+                left.3
+                    .score
+                    .partial_cmp(&right.3.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let best = clusters.first()?;
+    let ambiguous = clusters.len() > 1
+        && clusters[1].1 >= best.1 * 0.75
+        && (clusters[1].0 - best.0).abs() > 2;
+
+    Some((best.3, ambiguous))
+}
+
+fn segment_confidence(score: f64, items_count: usize, ambiguous: bool) -> f32 {
     if score >= MATCH_SCORE_THRESHOLD {
         return 0.0;
     }
 
-    (((MATCH_SCORE_THRESHOLD - score) / MATCH_SCORE_THRESHOLD).clamp(0.0, 1.0)) as f32
+    let score_conf =
+        ((MATCH_SCORE_THRESHOLD - score) / MATCH_SCORE_THRESHOLD).clamp(0.0, 1.0) as f32;
+    let length_conf = (items_count as f32 / MIN_RELIABLE_ITEMS as f32).clamp(0.0, 1.0);
+    let mut confidence = (score_conf * length_conf).sqrt();
+
+    if ambiguous {
+        confidence *= 0.5;
+    }
+
+    confidence
 }
 
 fn map_match_error(error: MatchError) -> AlignmentError {
@@ -96,7 +173,7 @@ mod tests {
     use crate::infrastructure::chromaprint::ChromaprintFingerprinter;
 
     fn fingerprint(clip: &MonoPcmClip) -> Fingerprint {
-        ChromaprintFingerprinter.fingerprint(clip).unwrap()
+        ChromaprintFingerprinter::default().fingerprint(clip).unwrap()
     }
 
     fn tone_samples(sample_rate: u32, start_index: u64, count: usize) -> Vec<i16> {
@@ -130,7 +207,7 @@ mod tests {
         let left = fingerprint(&clip);
         let right = fingerprint(&clip);
 
-        let estimate = ChromaprintAligner.find_offset(&left, &right).unwrap();
+        let estimate = ChromaprintAligner::default().find_offset(&left, &right).unwrap();
         assert!(estimate.confidence >= 0.5, "confidence={}", estimate.confidence);
         assert!(
             estimate.offset_secs.abs() < 0.25,
@@ -167,7 +244,7 @@ mod tests {
             20,
         ));
 
-        let estimate = ChromaprintAligner.find_offset(&left, &right).unwrap();
+        let estimate = ChromaprintAligner::default().find_offset(&left, &right).unwrap();
         assert!(
             estimate.confidence >= 0.3,
             "confidence={}",
@@ -185,10 +262,17 @@ mod tests {
         let left = Fingerprint { data: vec![1, 2, 3] };
         let right = Fingerprint { data: vec![] };
 
-        let estimate = ChromaprintAligner
+        let estimate = ChromaprintAligner::default()
             .find_offset(&left, &right)
             .unwrap();
         assert_eq!(estimate.confidence, 0.0);
         assert_eq!(estimate.offset_secs, 0.0);
+    }
+
+    #[test]
+    fn short_segment_has_lower_confidence_than_long_segment_at_same_score() {
+        let short = segment_confidence(2.0, 5, false);
+        let long = segment_confidence(2.0, 200, false);
+        assert!(long > short);
     }
 }

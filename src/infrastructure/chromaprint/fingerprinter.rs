@@ -1,27 +1,46 @@
 use tracing::debug;
 
+use crate::application::config::ChromaprintPreset;
 use crate::application::error::FingerprintError;
 use crate::application::ports::Fingerprinter;
 use crate::domain::{Fingerprint, MonoPcmClip};
-use crate::infrastructure::chromaprint::config::default_configuration;
+use crate::infrastructure::chromaprint::config::configuration_for_preset;
 
 use rusty_chromaprint::{Fingerprinter as ChromaprintEngine, ResetError};
 
 const MONO_CHANNELS: u32 = 1;
 const MIN_SAMPLE_RATE: u32 = 1_001;
 
-pub struct ChromaprintFingerprinter;
+#[derive(Debug, Clone, Copy)]
+pub struct ChromaprintFingerprinter {
+    preset: ChromaprintPreset,
+}
 
-impl Fingerprinter for ChromaprintFingerprinter {
-    fn fingerprint(&self, clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError> {
-        fingerprint_clip(clip)
+impl ChromaprintFingerprinter {
+    pub fn new(preset: ChromaprintPreset) -> Self {
+        Self { preset }
     }
 }
 
-fn fingerprint_clip(clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError> {
+impl Default for ChromaprintFingerprinter {
+    fn default() -> Self {
+        Self::new(ChromaprintPreset::default())
+    }
+}
+
+impl Fingerprinter for ChromaprintFingerprinter {
+    fn fingerprint(&self, clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError> {
+        fingerprint_clip(clip, self.preset)
+    }
+}
+
+fn fingerprint_clip(
+    clip: &MonoPcmClip,
+    preset: ChromaprintPreset,
+) -> Result<Fingerprint, FingerprintError> {
     validate_clip(clip)?;
 
-    let config = default_configuration();
+    let config = configuration_for_preset(preset);
     let mut fingerprinter = ChromaprintEngine::new(&config);
     fingerprinter
         .start(clip.sample_rate, MONO_CHANNELS)
@@ -99,7 +118,7 @@ mod tests {
     #[test]
     fn rejects_empty_clip() {
         let clip = MonoPcmClip::new(44_100, vec![]);
-        match fingerprint_clip(&clip) {
+        match fingerprint_clip(&clip, ChromaprintPreset::default()) {
             Err(FingerprintError::InvalidPcm(_)) => {}
             other => panic!("expected InvalidPcm, got {other:?}"),
         }
@@ -108,7 +127,7 @@ mod tests {
     #[test]
     fn rejects_low_sample_rate() {
         let clip = MonoPcmClip::new(1_000, vec![0; 2_000]);
-        match fingerprint_clip(&clip) {
+        match fingerprint_clip(&clip, ChromaprintPreset::default()) {
             Err(FingerprintError::InvalidPcm(_)) => {}
             other => panic!("expected InvalidPcm, got {other:?}"),
         }
@@ -117,7 +136,7 @@ mod tests {
     #[test]
     fn fingerprints_tone_clip() {
         let clip = tone_clip(44_100, 10);
-        let fingerprint = fingerprint_clip(&clip).unwrap();
+        let fingerprint = fingerprint_clip(&clip, ChromaprintPreset::default()).unwrap();
         assert!(!fingerprint.data.is_empty());
     }
 }

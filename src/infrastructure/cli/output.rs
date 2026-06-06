@@ -37,6 +37,22 @@ fn print_human(result: &AlignmentResult) {
         ),
         None => println!("  Recommended offset: none"),
     }
+
+    if let Some(overlap) = result.start_overlap {
+        println!("  Overlap (from start clip):");
+        println!(
+            "    On video A:  {}",
+            format_window(overlap.video_a_start_secs, overlap.video_a_end_secs)
+        );
+        println!(
+            "    On video B:  {}",
+            format_window(overlap.video_b_start_secs, overlap.video_b_end_secs)
+        );
+        println!(
+            "    Length:      {}",
+            format_timestamp(overlap.shared_length_secs)
+        );
+    }
 }
 
 fn format_clip_line(clip: &ClipMatch) -> String {

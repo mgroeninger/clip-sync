@@ -8,8 +8,19 @@ use crate::domain::ClipPlan;
 
 pub const DEFAULT_CLIP_LENGTH: Duration = Duration::from_secs(15 * 60);
 pub const MIN_CLIP_LENGTH: Duration = Duration::from_secs(60);
-pub const DEFAULT_NUM_CLIPS: u32 = 2;
+pub const DEFAULT_NUM_CLIPS: u32 = 1;
 pub const MIN_NUM_CLIPS: u32 = 1;
+pub const DEFAULT_TARGET_SAMPLE_RATE: u32 = 11_025;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChromaprintPreset {
+    #[default]
+    Test2,
+    Test3,
+    Test4,
+    Test5,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -36,7 +47,16 @@ pub struct ClipConfig {
     pub clip_length: Duration,
     #[serde(default = "default_num_clips")]
     pub num_clips: u32,
+    #[serde(default = "default_target_sample_rate")]
     pub target_sample_rate: Option<u32>,
+    #[serde(default = "default_true")]
+    pub normalize_loudness: bool,
+    #[serde(default = "default_true")]
+    pub trim_silence: bool,
+    #[serde(default = "default_window_slide_secs")]
+    pub window_slide_secs: u32,
+    #[serde(default)]
+    pub chromaprint_preset: ChromaprintPreset,
 }
 
 fn default_clip_length() -> Duration {
@@ -67,12 +87,28 @@ mod duration_secs {
     }
 }
 
+fn default_target_sample_rate() -> Option<u32> {
+    Some(DEFAULT_TARGET_SAMPLE_RATE)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_window_slide_secs() -> u32 {
+    30
+}
+
 impl Default for ClipConfig {
     fn default() -> Self {
         Self {
             clip_length: DEFAULT_CLIP_LENGTH,
             num_clips: DEFAULT_NUM_CLIPS,
-            target_sample_rate: None,
+            target_sample_rate: default_target_sample_rate(),
+            normalize_loudness: true,
+            trim_silence: true,
+            window_slide_secs: default_window_slide_secs(),
+            chromaprint_preset: ChromaprintPreset::default(),
         }
     }
 }
@@ -113,6 +149,12 @@ pub struct AlignmentConfig {
     pub min_match_score: f32,
     #[serde(default = "default_prefer_start_clip")]
     pub prefer_start_clip: bool,
+    #[serde(default = "default_true")]
+    pub require_consistent_offsets: bool,
+    #[serde(default = "default_true")]
+    pub refine_offset_with_pcm: bool,
+    #[serde(default)]
+    pub try_all_tracks: bool,
 }
 
 fn default_min_match_score() -> f32 {
@@ -128,6 +170,9 @@ impl Default for AlignmentConfig {
         Self {
             min_match_score: default_min_match_score(),
             prefer_start_clip: default_prefer_start_clip(),
+            require_consistent_offsets: true,
+            refine_offset_with_pcm: true,
+            try_all_tracks: false,
         }
     }
 }
@@ -193,6 +238,19 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         AppConfig::default().validate().unwrap();
+    }
+
+    #[test]
+    fn default_num_clips_is_one() {
+        assert_eq!(ClipConfig::default().num_clips, 1);
+    }
+
+    #[test]
+    fn default_target_sample_rate_is_chromaprint_native() {
+        assert_eq!(
+            ClipConfig::default().target_sample_rate,
+            Some(DEFAULT_TARGET_SAMPLE_RATE)
+        );
     }
 
     #[test]

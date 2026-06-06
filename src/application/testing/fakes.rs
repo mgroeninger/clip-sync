@@ -110,10 +110,15 @@ impl MediaSession for FakeMediaSession {
 
         progress.progress(label, 1, 1);
         let sample_rate = 44_100;
-        Ok(MonoPcmClip::new(
-            sample_rate,
-            vec![1_i16; window.sample_count_at(sample_rate)],
-        ))
+        let count = window.sample_count_at(sample_rate);
+        let samples: Vec<i16> = (0..count)
+            .map(|index| {
+                let t = index as f32 / sample_rate as f32;
+                (f32::sin(440.0 * t * std::f32::consts::TAU) * (i16::MAX as f32 * 0.25))
+                    .round() as i16
+            })
+            .collect();
+        Ok(MonoPcmClip::new(sample_rate, samples))
     }
 }
 

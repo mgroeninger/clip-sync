@@ -2,11 +2,36 @@
 
 Tracked follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-06 (application-layer tests).
+Last updated: 2026-06-06 (alignment robustness).
 
 ---
 
-## High priority
+## Alignment measurement robustness
+
+**Status:** Done (2026-06-06).
+
+| Item | Location |
+|------|----------|
+| Confidence from segment length + ambiguity penalty | `infrastructure/chromaprint/aligner.rs` |
+| Segment clustering by offset | `infrastructure/chromaprint/aligner.rs` |
+| Weighted multi-clip offset fusion | `domain/alignment.rs` |
+| PCM preparation: trim silence, peak normalize, energy gate | `domain/pcm_preparation.rs` |
+| Default `target_sample_rate` = 11025 Hz | `application/config.rs` |
+| Rubato FFT resampling | `domain/resample.rs` |
+| Chromaprint preset selection (`test2`–`test5`) | `application/config.rs`, `infrastructure/chromaprint/` |
+| PCM offset refinement (coarse + short GCC) | `application/offset_refinement.rs` |
+| Multi-track fallback (`try_all_tracks`) | `application/align_videos.rs` |
+| Adaptive window slide (aligned sub-clip from A energy) | `domain/pcm_preparation.rs` |
+| Require consistent offsets (`require_consistent_offsets`) | `domain/alignment.rs`, `AlignmentConfig` |
+| End-clip validates start-clip (consistency check) | `domain/alignment.rs` |
+
+**Follow-up:**
+
+- `cross_correlate` dev oracle tests for Chromaprint offset validation
+
+---
+
+## High priority (other)
 
 ### Chromaprint adapter
 
@@ -93,12 +118,6 @@ Extract into one helper to avoid drift between probe and extract paths.
 - Add `tracing-appender` or file layer in `src/infrastructure/logging/mod.rs`
 - Rotate / flush policy TBD
 
-### Higher-quality resampling
-
-**Status:** `domain/resample.rs` uses linear interpolation when `target_sample_rate` is set.
-
-Acceptable for fingerprinting prep; Chromaprint also resamples internally. Consider `rubato` (already transitive via `rusty-chromaprint`) if quality matters.
-
 ### Committed test fixtures
 
 **Status:** MP4/MKV tests generate files via ffmpeg at runtime; skipped when ffmpeg is unavailable.
@@ -106,17 +125,9 @@ Acceptable for fingerprinting prep; Chromaprint also resamples internally. Consi
 - Add small binary fixtures under `tests/fixtures/` for CI without ffmpeg
 - Keep under size budget (PLAN: “kept small”)
 
-### Default `target_sample_rate`
-
-**Status:** Config default is `None` (native rate passed to fingerprinter when implemented).
-
-Consider defaulting to `11025` to match Chromaprint presets, or document that None is intentional.
-
 ---
 
 ## Recently resolved
-
-These were identified during the media reader review and addressed in the same pass:
 
 | Item | Resolution |
 |------|------------|
@@ -126,6 +137,8 @@ These were identified during the media reader review and addressed in the same p
 | `target_sample_rate` unwired | Resample in `align_videos` after extract |
 | Container format coverage | `isomp4` + `aac` features; MKV/MP4 tests with ffmpeg |
 | Strict partial decode on minor gaps | `sample_count_tolerance()` (~20 ms) before failing |
+| Higher-quality resampling | Rubato sinc resampler (was linear) |
+| Default `target_sample_rate` | Default 11025 Hz to match Chromaprint |
 
 ---
 
@@ -142,5 +155,6 @@ From [PLAN.md](PLAN.md) — not backlog unless scope changes:
 
 ## Suggested order of work
 
-1. Real-world file validation (multi-track video, MP3, long files)
-2. Performance (session reuse) and polish (logging, fixtures) as needed
+1. Finish alignment robustness (this pass)
+2. Real-world file validation (multi-track video, MP3, long files)
+3. Performance (session reuse) and polish (logging, fixtures) as needed

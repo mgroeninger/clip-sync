@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::Serialize;
 
 use crate::domain::ClipLabel;
@@ -28,6 +30,16 @@ pub struct ClipMatch {
     pub confidence: f32,
 }
 
+/// Shared timeline region implied by the start clip and recommended offset.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct TimelineOverlap {
+    pub video_a_start_secs: f64,
+    pub video_a_end_secs: f64,
+    pub video_b_start_secs: f64,
+    pub video_b_end_secs: f64,
+    pub shared_length_secs: f64,
+}
+
 /// Full alignment report for all extracted clip pairs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AlignmentResult {
@@ -39,6 +51,8 @@ pub struct AlignmentResult {
     pub recommended_offset_secs: Option<f64>,
     /// All aligned clip pairs report the same offset (within tolerance).
     pub offsets_consistent: bool,
+    /// Overlap on each file's timeline from the start clip match.
+    pub start_overlap: Option<TimelineOverlap>,
 }
 
 const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
@@ -48,6 +62,9 @@ pub fn build_alignment_result(
     estimates: &[ClipMatchEstimate],
     min_match_score: f32,
     prefer_start_clip: bool,
+    require_consistent_offsets: bool,
+    duration_a: Option<Duration>,
+    duration_b: Option<Duration>,
 ) -> AlignmentResult {
     debug_assert_eq!(windows.len(), estimates.len());
 
@@ -92,6 +109,15 @@ pub fn build_alignment_result(
         &aligned_offsets,
         offsets_consistent,
         prefer_start_clip,
+        require_consistent_offsets,
+    );
+
+    let start_overlap = compute_start_overlap(
+        &clips,
+        start_aligned,
+        recommended_offset_secs,
+        duration_a,
+        duration_b,
     );
 
     AlignmentResult {
@@ -100,7 +126,52 @@ pub fn build_alignment_result(
         end_aligned,
         recommended_offset_secs,
         offsets_consistent,
+        start_overlap,
     }
+}
+
+fn compute_start_overlap(
+    clips: &[ClipMatch],
+    start_aligned: bool,
+    recommended_offset_secs: Option<f64>,
+    duration_a: Option<Duration>,
+    duration_b: Option<Duration>,
+) -> Option<TimelineOverlap> {
+    if !start_aligned {
+        return None;
+    }
+    let offset = recommended_offset_secs?;
+    let start = clips.iter().find(|clip| clip.label == ClipLabel::Start)?;
+
+    let a_dur = duration_a.map(|d| d.as_secs_f64()).unwrap_or(f64::INFINITY);
+    let b_dur = duration_b.map(|d| d.as_secs_f64()).unwrap_or(f64::INFINITY);
+
+    let t_lo = start
+        .window_start_secs
+        .max(-offset)
+        .max(0.0);
+    let t_hi = start
+        .window_end_secs
+        .min(a_dur)
+        .min(b_dur - offset);
+
+    if t_hi <= t_lo {
+        return Some(TimelineOverlap {
+            video_a_start_secs: t_lo,
+            video_a_end_secs: t_lo,
+            video_b_start_secs: t_lo + offset,
+            video_b_end_secs: t_lo + offset,
+            shared_length_secs: 0.0,
+        });
+    }
+
+    Some(TimelineOverlap {
+        video_a_start_secs: t_lo,
+        video_a_end_secs: t_hi,
+        video_b_start_secs: t_lo + offset,
+        video_b_end_secs: t_hi + offset,
+        shared_length_secs: t_hi - t_lo,
+    })
 }
 
 fn choose_recommended_offset(
@@ -108,13 +179,22 @@ fn choose_recommended_offset(
     aligned_offsets: &[f64],
     offsets_consistent: bool,
     prefer_start_clip: bool,
+    require_consistent_offsets: bool,
 ) -> Option<f64> {
     if aligned_offsets.is_empty() {
         return None;
     }
 
+    if !offsets_consistent && require_consistent_offsets {
+        return None;
+    }
+
+    if let Some(fused) = weighted_offset_fusion(clips) {
+        return Some(fused);
+    }
+
     if offsets_consistent {
-        return Some(aligned_offsets[0]);
+        return aligned_offsets.first().copied();
     }
 
     let pick = |label: ClipLabel| {
@@ -132,6 +212,46 @@ fn choose_recommended_offset(
         pick(ClipLabel::End)
             .or_else(|| pick(ClipLabel::Start))
             .or_else(|| aligned_offsets.last().copied())
+    }
+}
+
+fn weighted_offset_fusion(clips: &[ClipMatch]) -> Option<f64> {
+    let mut weighted: Vec<(f64, f32)> = clips
+        .iter()
+        .filter_map(|clip| clip.offset_secs.map(|offset| (offset, clip.confidence)))
+        .collect();
+    if weighted.is_empty() {
+        return None;
+    }
+
+    let offsets: Vec<f64> = weighted.iter().map(|(offset, _)| *offset).collect();
+    let median = median_offset(&offsets);
+    weighted.retain(|(offset, _)| (*offset - median).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS);
+    if weighted.is_empty() {
+        return None;
+    }
+
+    let total_weight: f32 = weighted.iter().map(|(_, weight)| weight).sum();
+    if total_weight <= 0.0 {
+        return None;
+    }
+
+    Some(
+        weighted
+            .iter()
+            .map(|(offset, weight)| offset * f64::from(weight / total_weight))
+            .sum(),
+    )
+}
+
+fn median_offset(offsets: &[f64]) -> f64 {
+    let mut sorted = offsets.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted[mid]
+    } else {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
     }
 }
 
@@ -167,12 +287,32 @@ mod tests {
             },
         ];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true);
+        let result = build_alignment_result(
+            &windows,
+            &estimates,
+            0.5,
+            true,
+            true,
+            Some(Duration::from_secs(2700)),
+            Some(Duration::from_secs(2700)),
+        );
         assert!(result.start_aligned);
         assert_eq!(result.end_aligned, Some(true));
         assert!(result.offsets_consistent);
-        assert_eq!(result.recommended_offset_secs, Some(12.0));
+        assert!(
+            (result.recommended_offset_secs.unwrap() - 12.05).abs() < 0.1,
+            "expected weighted fusion near 12.05, got {:?}",
+            result.recommended_offset_secs
+        );
         assert_eq!(result.clips.len(), 2);
+
+        let overlap = result.start_overlap.expect("expected overlap");
+        assert_eq!(overlap.video_a_start_secs, 0.0);
+        assert_eq!(overlap.video_a_end_secs, 900.0);
+        let fused = result.recommended_offset_secs.unwrap();
+        assert!((overlap.video_b_start_secs - fused).abs() < 0.01);
+        assert!((overlap.video_b_end_secs - (900.0 + fused)).abs() < 0.01);
+        assert_eq!(overlap.shared_length_secs, 900.0);
     }
 
     #[test]
@@ -183,10 +323,11 @@ mod tests {
             confidence: 0.2,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true);
+        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
         assert!(!result.start_aligned);
         assert_eq!(result.end_aligned, None);
         assert_eq!(result.recommended_offset_secs, None);
+        assert!(result.start_overlap.is_none());
     }
 
     #[test]
@@ -197,8 +338,56 @@ mod tests {
             confidence: 0.95,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true);
+        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
         assert_eq!(result.end_aligned, None);
         assert!(result.start_aligned);
+    }
+
+    #[test]
+    fn omits_recommendation_when_offsets_disagree_and_consistency_required() {
+        let windows = vec![
+            window(0, 900, ClipLabel::Start),
+            window(1800, 2700, ClipLabel::End),
+        ];
+        let estimates = vec![
+            ClipMatchEstimate {
+                offset_secs: 10.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 20.0,
+                confidence: 0.9,
+            },
+        ];
+
+        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
+        assert!(!result.offsets_consistent);
+        assert_eq!(result.recommended_offset_secs, None);
+    }
+
+    #[test]
+    fn overlap_clamps_to_shorter_video_b() {
+        let windows = vec![window(0, 900, ClipLabel::Start)];
+        let estimates = vec![ClipMatchEstimate {
+            offset_secs: 12.0,
+            confidence: 0.9,
+        }];
+
+        let result = build_alignment_result(
+            &windows,
+            &estimates,
+            0.5,
+            true,
+            true,
+            Some(Duration::from_secs(900)),
+            Some(Duration::from_secs(850)),
+        );
+
+        let overlap = result.start_overlap.expect("expected overlap");
+        assert_eq!(overlap.video_a_start_secs, 0.0);
+        assert_eq!(overlap.video_a_end_secs, 838.0);
+        assert_eq!(overlap.video_b_start_secs, 12.0);
+        assert_eq!(overlap.video_b_end_secs, 850.0);
+        assert_eq!(overlap.shared_length_secs, 838.0);
     }
 }

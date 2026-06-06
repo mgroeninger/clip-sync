@@ -10,4 +10,6 @@ pub enum DomainError {
     InvalidDuration,
     #[error("empty clip")]
     EmptyClip,
+    #[error("insufficient audio content for fingerprinting")]
+    InsufficientAudio,
 }

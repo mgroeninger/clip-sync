@@ -1,0 +1,272 @@
+use std::time::Duration;
+
+use crate::domain::{DomainError, MonoPcmClip};
+
+/// Peak amplitude target for normalization (~−3 dBFS).
+const NORMALIZE_TARGET_PEAK: f32 = i16::MAX as f32 * 0.707;
+/// Fraction of peak used as silence threshold when trimming edges.
+const SILENCE_PEAK_FRACTION: f32 = 0.01;
+/// Minimum RMS (0–1 of full scale) required after preparation.
+const MIN_RMS_FRACTION: f32 = 0.002;
+/// Minimum retained audio after preparation (seconds).
+const MIN_RETAINED_SECS: f64 = 1.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PcmPreparationOptions {
+    pub normalize_loudness: bool,
+    pub trim_silence: bool,
+    pub window_slide_secs: u32,
+}
+
+impl Default for PcmPreparationOptions {
+    fn default() -> Self {
+        Self {
+            normalize_loudness: true,
+            trim_silence: true,
+            window_slide_secs: 30,
+        }
+    }
+}
+
+/// Expand a planned window so a shorter sub-clip can be slid to peak energy.
+pub fn expand_window_for_slide(
+    window: &crate::domain::ClipWindow,
+    slide_secs: u32,
+    duration: Duration,
+) -> crate::domain::ClipWindow {
+    if slide_secs == 0 {
+        return *window;
+    }
+
+    let slide = Duration::from_secs(u64::from(slide_secs));
+    let start = window.start.saturating_sub(slide);
+    let end = (window.end + slide).min(duration);
+    crate::domain::ClipWindow::new(start, end, window.label)
+}
+
+/// Pick aligned sub-clips of `target_duration` using peak energy in `left` only,
+/// so both clips stay on the same relative timeline.
+pub fn select_aligned_subclip_pair(
+    left: &MonoPcmClip,
+    right: &MonoPcmClip,
+    target_duration: Duration,
+) -> (MonoPcmClip, MonoPcmClip) {
+    let target_samples = left
+        .sample_rate
+        .saturating_mul(target_duration.as_secs() as u32)
+        .max(1) as usize;
+
+    if left.samples.len() <= target_samples && right.samples.len() <= target_samples {
+        return (left.clone(), right.clone());
+    }
+
+    let best_start = find_peak_subclip_start(&left.samples, target_samples);
+    let left_end = (best_start + target_samples).min(left.samples.len());
+    let right_end = (best_start + target_samples).min(right.samples.len());
+
+    let left_clip = MonoPcmClip {
+        sample_rate: left.sample_rate,
+        samples: left.samples[best_start..left_end].to_vec(),
+    };
+    let right_clip = MonoPcmClip {
+        sample_rate: right.sample_rate,
+        samples: right.samples[best_start..right_end].to_vec(),
+    };
+
+    (left_clip, right_clip)
+}
+
+fn find_peak_subclip_start(samples: &[i16], target_samples: usize) -> usize {
+    if samples.len() <= target_samples {
+        return 0;
+    }
+
+    let mut best_start = 0usize;
+    let mut best_rms = 0.0f32;
+    let step = (target_samples / 8).max(1);
+    let mut start = 0usize;
+
+    while start + target_samples <= samples.len() {
+        let rms = rms_of_slice(&samples[start..start + target_samples]);
+        if rms > best_rms {
+            best_rms = rms;
+            best_start = start;
+        }
+        start += step;
+    }
+
+    best_start
+}
+
+pub fn prepare_clip_for_fingerprint(
+    clip: &MonoPcmClip,
+    options: PcmPreparationOptions,
+) -> Result<MonoPcmClip, DomainError> {
+    if clip.samples.is_empty() {
+        return Err(DomainError::EmptyClip);
+    }
+
+    let mut prepared = clip.clone();
+
+    if options.trim_silence {
+        prepared = trim_edge_silence(&prepared);
+    }
+
+    if options.normalize_loudness {
+        prepared = peak_normalize(&prepared);
+    }
+
+    if !has_sufficient_audio(&prepared) {
+        return Err(DomainError::InsufficientAudio);
+    }
+
+    Ok(prepared)
+}
+
+pub fn has_sufficient_audio(clip: &MonoPcmClip) -> bool {
+    if clip.samples.is_empty() {
+        return false;
+    }
+
+    let min_samples = (f64::from(clip.sample_rate) * MIN_RETAINED_SECS).ceil() as usize;
+    if clip.samples.len() < min_samples {
+        return false;
+    }
+
+    rms_of_slice(&clip.samples) >= MIN_RMS_FRACTION * i16::MAX as f32
+}
+
+fn trim_edge_silence(clip: &MonoPcmClip) -> MonoPcmClip {
+    if clip.samples.is_empty() {
+        return clip.clone();
+    }
+
+    let peak = clip
+        .samples
+        .iter()
+        .map(|sample| sample.unsigned_abs())
+        .max()
+        .unwrap_or(0) as f32;
+    let threshold = (peak * SILENCE_PEAK_FRACTION).max(64.0);
+
+    let start = clip
+        .samples
+        .iter()
+        .position(|&sample| f32::from(sample.unsigned_abs()) >= threshold)
+        .unwrap_or(0);
+    let end = clip
+        .samples
+        .iter()
+        .rposition(|&sample| f32::from(sample.unsigned_abs()) >= threshold)
+        .map(|index| index + 1)
+        .unwrap_or(clip.samples.len());
+
+    if start >= end {
+        return clip.clone();
+    }
+
+    MonoPcmClip {
+        sample_rate: clip.sample_rate,
+        samples: clip.samples[start..end].to_vec(),
+    }
+}
+
+fn peak_normalize(clip: &MonoPcmClip) -> MonoPcmClip {
+    if clip.samples.is_empty() {
+        return clip.clone();
+    }
+
+    let peak = clip
+        .samples
+        .iter()
+        .map(|sample| sample.unsigned_abs())
+        .max()
+        .unwrap_or(0) as f32;
+    if peak <= 1.0 {
+        return clip.clone();
+    }
+
+    let scale = NORMALIZE_TARGET_PEAK / peak;
+    let samples = clip
+        .samples
+        .iter()
+        .map(|sample| {
+            (f32::from(*sample) * scale)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        })
+        .collect();
+
+    MonoPcmClip {
+        sample_rate: clip.sample_rate,
+        samples,
+    }
+}
+
+fn rms_of_slice(samples: &[i16]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let sum_sq: f64 = samples
+        .iter()
+        .map(|sample| {
+            let value = f64::from(*sample);
+            value * value
+        })
+        .sum();
+    (sum_sq / samples.len() as f64).sqrt() as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_removes_leading_silence() {
+        let clip = MonoPcmClip::new(1_000, {
+            let mut samples = vec![0_i16; 500];
+            samples.extend((0..500).map(|i| (i as i16 % 100) * 100));
+            samples
+        });
+
+        let trimmed = trim_edge_silence(&clip);
+        assert!(trimmed.samples.len() < clip.samples.len());
+        assert_ne!(trimmed.samples[0], 0);
+    }
+
+    #[test]
+    fn peak_normalize_scales_to_target() {
+        let clip = MonoPcmClip::new(1_000, vec![1_000; 1_000]);
+        let normalized = peak_normalize(&clip);
+        let peak = normalized
+            .samples
+            .iter()
+            .map(|s| s.unsigned_abs())
+            .max()
+            .unwrap();
+        assert!((peak as i32 - NORMALIZE_TARGET_PEAK as i32).abs() <= 2);
+    }
+
+    #[test]
+    fn aligned_subclip_pair_uses_left_energy_profile() {
+        let mut left_samples = vec![10_i16; 2_000];
+        for sample in &mut left_samples[800..1_200] {
+            *sample = 5_000;
+        }
+        let right_samples = vec![7_i16; 2_000];
+        let left = MonoPcmClip::new(1_000, left_samples);
+        let right = MonoPcmClip::new(1_000, right_samples);
+        let (left_clip, right_clip) =
+            select_aligned_subclip_pair(&left, &right, Duration::from_secs(1));
+        assert_eq!(left_clip.samples.len(), 1_000);
+        assert_eq!(right_clip.samples.len(), 1_000);
+        assert!(left_clip.samples.iter().any(|s| *s > 1_000));
+    }
+
+    #[test]
+    fn rejects_silent_clip() {
+        let clip = MonoPcmClip::new(44_100, vec![0; 44_100]);
+        assert!(prepare_clip_for_fingerprint(&clip, PcmPreparationOptions::default()).is_err());
+    }
+}

@@ -37,8 +37,9 @@ fn run_inner() -> Result<(), AppError> {
 
     let progress = StderrProgressReporter::new(config.logging.progress);
     let media_reader = SymphoniaMediaReader;
-    let fingerprinter = ChromaprintFingerprinter;
-    let aligner = ChromaprintAligner;
+    let preset = config.clip.chromaprint_preset;
+    let fingerprinter = ChromaprintFingerprinter::new(preset);
+    let aligner = ChromaprintAligner::new(preset);
 
     let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
     let response = use_case.execute(AlignVideosRequest {
