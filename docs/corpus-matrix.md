@@ -2,7 +2,7 @@
 
 Authoritative list of validation cases for real-world alignment testing. Each **Case ID** must appear in `tests/corpus/manifest.toml` when implemented.
 
-See [TEMP-corpus-implementation-plan.md](TEMP-corpus-implementation-plan.md) for implementation steps, generators, and harness design.
+See [corpus-validation.md](corpus-validation.md) for harness overview and [archive/corpus-implementation-plan.md](archive/corpus-implementation-plan.md) for the archived implementation plan.
 
 ---
 
@@ -72,17 +72,17 @@ See [TEMP-corpus-implementation-plan.md](TEMP-corpus-implementation-plan.md) for
 
 Mark when at least one case exists in the manifest **and** passes in CI:
 
-- [x] WAV positive (0s, +3s)
-- [ ] MP3 positive
-- [ ] MP4 AAC positive
-- [ ] MKV FLAC positive
-- [ ] Stereo downmix
-- [ ] Multi-track
+- [x] WAV positive (0s, +3s, −5s generated)
+- [x] MP3 positive
+- [x] MP4 AAC positive
+- [x] MKV FLAC positive
+- [x] Stereo downmix
+- [x] Multi-track
 - [x] Negative (no overlap)
-- [ ] Two-clip consistency
-- [ ] Duration-less MP3 open
-- [ ] Long smoke (ignored)
-- [ ] HE-AAC (feature-gated)
+- [x] Two-clip consistency
+- [x] Duration-less MP3 open
+- [x] Long smoke (ignored; `long_smoke_60m` in manifest)
+- [ ] HE-AAC (feature-gated; matrix only)
 
 ---
 
@@ -90,8 +90,32 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 
 | Case ID | In manifest | In `tests/corpus/` | Test passing |
 |---------|-------------|-------------------|--------------|
-| `wav_baseline_0s` | yes | yes | yes |
-| `wav_leader_3s` | yes | yes | yes |
-| `no_overlap_tone_vs_chirp` | yes | yes | yes |
+| `wav_baseline_0s` | yes | yes (committed WAV) | yes |
+| `wav_leader_3s` | yes | yes (committed WAV) | yes |
+| `no_overlap_tone_vs_chirp` | yes | yes (committed WAV) | yes |
+| `wav_b_ahead_5s` | yes | generated at test time | yes |
+| `mp3_leader_3s` | yes | generated (ffmpeg) | yes* |
+| `mp3_no_duration_tag` | yes | generated (ffmpeg) | yes* |
+| `mp4_aac_leader_3s` | yes | generated (ffmpeg) | yes* |
+| `mkv_flac_leader_3s` | yes | generated (ffmpeg) | yes* |
+| `mp4_stereo_leader_3s` | yes | generated (ffmpeg) | yes* |
+| `mp4_dual_track_decoy` | yes | generated (ffmpeg) | yes* |
+| `mp4_dual_track_wrong_default` | yes | generated (ffmpeg) | yes* |
+| `two_clip_consistent` | yes | generated at test time | yes |
+| `two_clip_inconsistent` | yes | generated at test time | yes |
+| `require_consistent_blocks` | yes | generated at test time | yes |
+| `long_smoke_60m` | yes | external (`#[ignore]`) | manual |
 
-Update this table as cases land.
+\* Requires `ffmpeg` on PATH; skipped when unavailable.
+
+### Matrix rows not yet in manifest
+
+| Case ID | Notes |
+|---------|-------|
+| `wav_leader_30s` | Large generated WAV; optional CI stretch |
+| `near_silence_window` | Blocked on clip-skip — see BACKLOG |
+| `he_aac_mp4_leader_3s` | Requires `--features he-aac` + ffmpeg |
+| `reencode_mp3_vs_mp4` | Cross-container pair (A=MP3, B=MP4) |
+| `refine_on_vs_off` | Config A/B comparison case |
+
+Update the status table as new cases land.

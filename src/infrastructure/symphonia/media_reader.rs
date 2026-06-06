@@ -1017,102 +1017,13 @@ mod tests {
     }
 
     #[cfg(feature = "ffmpeg-tests")]
-    mod ffmpeg {
-        use super::*;
-
-        pub(super) fn ffmpeg_available() -> bool {
-            std::process::Command::new("ffmpeg")
-                .arg("-version")
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false)
-        }
-
-        pub(super) fn write_container_fixture(
-            path: &Path,
-            format_args: &[&str],
-            audio_codec_args: &[&str],
-        ) -> bool {
-            if !ffmpeg_available() {
-                return false;
-            }
-
-            std::process::Command::new("ffmpeg")
-                .arg("-y")
-                .arg("-loglevel")
-                .arg("error")
-                .arg("-f")
-                .arg("lavfi")
-                .arg("-i")
-                .arg("sine=frequency=440:duration=3")
-                .args(format_args)
-                .args(audio_codec_args)
-                .arg(path)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-        }
-
-        #[cfg(feature = "he-aac")]
-        pub(super) fn write_he_aac_mp4_fixture(path: &Path) -> bool {
-            if !ffmpeg_available() {
-                return false;
-            }
-
-            let attempts: &[&[&str]] = &[
-                &["-c:a", "libfdk_aac", "-profile:a", "aac_he", "-b:a", "64k"],
-                &["-c:a", "aac", "-profile:a", "aac_he", "-b:a", "64k"],
-            ];
-
-            for audio_codec_args in attempts {
-                if write_container_fixture(path, &["-f", "mp4"], audio_codec_args) {
-                    return true;
-                }
-            }
-
-            false
-        }
-
-        #[cfg(feature = "he-aac")]
-        pub(super) fn write_he_aac_surround_mp4_fixture(path: &Path) -> bool {
-            if !ffmpeg_available() {
-                return false;
-            }
-
-            let attempts: &[&[&str]] = &[
-                &[
-                    "-c:a",
-                    "libfdk_aac",
-                    "-profile:a",
-                    "aac_he",
-                    "-ac",
-                    "6",
-                    "-b:a",
-                    "128k",
-                ],
-                &["-c:a", "aac", "-profile:a", "aac_he", "-ac", "6", "-b:a", "128k"],
-            ];
-
-            for audio_codec_args in attempts {
-                if write_container_fixture(path, &["-f", "mp4"], audio_codec_args) {
-                    return true;
-                }
-            }
-
-            false
-        }
-    }
-
-    #[cfg(feature = "ffmpeg-tests")]
     #[test]
     fn probe_and_extract_mkv_container() {
-        use ffmpeg::write_container_fixture;
+        use crate::application::testing::ffmpeg_util;
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tone.mkv");
-        if !write_container_fixture(&path, &["-f", "matroska"], &["-c:a", "flac"]) {
+        if !ffmpeg_util::write_lavfi_sine_container(&path, &["-f", "matroska"], &["-c:a", "flac"], 3) {
             eprintln!("skipping MKV test: ffmpeg unavailable or encode failed");
             return;
         }
@@ -1137,14 +1048,15 @@ mod tests {
     #[cfg(feature = "ffmpeg-tests")]
     #[test]
     fn probe_and_extract_mp4_container() {
-        use ffmpeg::write_container_fixture;
+        use crate::application::testing::ffmpeg_util;
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tone.mp4");
-        if !write_container_fixture(
+        if !ffmpeg_util::write_lavfi_sine_container(
             &path,
             &["-f", "mp4"],
             &["-c:a", "aac", "-b:a", "128k"],
+            3,
         ) {
             eprintln!("skipping MP4 test: ffmpeg unavailable or encode failed");
             return;
@@ -1170,11 +1082,11 @@ mod tests {
     #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
     #[test]
     fn probe_and_extract_he_aac_mp4_container() {
-        use ffmpeg::write_he_aac_mp4_fixture;
+        use crate::application::testing::ffmpeg_util;
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tone-he-aac.mp4");
-        if !write_he_aac_mp4_fixture(&path) {
+        if !ffmpeg_util::write_he_aac_mp4_fixture(&path) {
             eprintln!("skipping HE-AAC MP4 test: ffmpeg unavailable or HE-AAC encode failed");
             return;
         }
@@ -1211,11 +1123,11 @@ mod tests {
     #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
     #[test]
     fn probe_and_extract_he_aac_surround_mp4_container() {
-        use ffmpeg::write_he_aac_surround_mp4_fixture;
+        use crate::application::testing::ffmpeg_util;
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tone-he-aac-51.mp4");
-        if !write_he_aac_surround_mp4_fixture(&path) {
+        if !ffmpeg_util::write_he_aac_surround_mp4_fixture(&path) {
             eprintln!(
                 "skipping HE-AAC surround MP4 test: ffmpeg unavailable or HE-AAC 5.1 encode failed"
             );

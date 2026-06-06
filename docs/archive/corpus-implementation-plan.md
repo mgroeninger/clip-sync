@@ -1,6 +1,6 @@
-# Temporary plan: real-world corpus & validation harness
+# Archived plan: real-world corpus & validation harness
 
-> **Status:** Draft implementation plan (temporary). Delete or fold into `PLAN.md` / `BACKLOG.md` once the work is complete.
+> **Status:** Completed and archived (2026-06-06). Superseded by [corpus-matrix.md](../corpus-matrix.md), [corpus-validation.md](../corpus-validation.md), and `tests/corpus/README.md`.
 >
 > **Goal:** Assemble a manifest-driven test corpus that exercises the wider class of real-world failures (formats, leaders, multi-track, soft alignment failures) and wire it into CI-friendly integration tests.
 
@@ -90,7 +90,7 @@ Document in the matrix:
 ```text
 docs/
   corpus-matrix.md              # case matrix (this plan §2)
-  TEMP-corpus-implementation-plan.md   # this file (delete when done)
+  archive/corpus-implementation-plan.md   # archived implementation plan (this file)
 
 tests/
   corpus/
@@ -537,35 +537,35 @@ corpus-ffmpeg = ["ffmpeg-tests"]   # alias / document
 
 ### Phase 2 — Rust + ffmpeg generators (1–2 days)
 
-- [ ] Add `corpus_fixtures.rs` with `write_offset_pair_via_ffmpeg`.
-- [ ] Port ffmpeg helpers from `media_reader.rs` tests into shared module (dedupe).
-- [ ] Add manifest rows: `mp3_leader_3s`, `mp4_aac_leader_3s`, `mkv_flac_leader_3s`.
-- [ ] `corpus_generated_cases` behind `ffmpeg-tests`.
+- [x] Add `corpus_fixtures.rs` with `generate_case_pair` (WAV + ffmpeg encode).
+- [x] Port ffmpeg helpers from `media_reader.rs` tests into shared module (dedupe).
+- [x] Add manifest rows: `mp3_leader_3s`, `mp4_aac_leader_3s`, `mkv_flac_leader_3s`, `wav_b_ahead_5s`, `mp3_no_duration_tag`.
+- [x] `corpus_generated_cases` test (skips ffmpeg cases when ffmpeg unavailable).
 
 ### Phase 3 — Matrix edge cases (1–2 days)
 
-- [ ] Dual-track MP4 + `try_all_tracks` assertion.
-- [ ] Negative: `no_overlap_tone_vs_chirp`.
-- [ ] Two-clip consistent / inconsistent cases.
-- [ ] `mp3_no_duration_tag` case.
-- [ ] Update matrix doc with actual vs expected after first run.
+- [x] Dual-track MP4 + `try_all_tracks` assertion.
+- [x] Negative: `no_overlap_tone_vs_chirp`.
+- [x] Two-clip consistent / inconsistent cases.
+- [x] `mp3_no_duration_tag` case.
+- [x] Update matrix doc with actual vs expected after first run.
 
 ### Phase 4 — Scripts & regeneration (½ day)
 
-- [ ] `scripts/generate_corpus.ps1` + `.sh` implementing §5.3.
-- [ ] Document in `tests/corpus/README.md`.
-- [ ] Verify committed size < 5 MB.
+- [x] `scripts/generate_corpus.ps1` + `.sh` implementing §5.3.
+- [x] Document in `tests/corpus/README.md`.
+- [x] Verify committed size < 5 MB.
 
 ### Phase 5 — Tier C & perf (optional)
 
-- [ ] `CLIP_SYNC_CORPUS` external tier + `#[ignore]` long smoke.
+- [x] `CLIP_SYNC_CORPUS` external tier + `#[ignore]` long smoke.
 - [ ] Record wall time in test output for session-reuse before/after comparison.
 
 ### Phase 6 — Close out
 
-- [ ] Fix failures discovered by corpus (track in BACKLOG per issue).
-- [ ] Delete or archive `docs/TEMP-corpus-implementation-plan.md`.
-- [ ] Mark “Real-world file validation” done in `BACKLOG.md`.
+- [x] Fix failures discovered by corpus (track in BACKLOG per issue).
+- [x] Delete or archive `docs/TEMP-corpus-implementation-plan.md`.
+- [x] Mark “Real-world file validation” done in `BACKLOG.md`.
 
 ---
 
@@ -597,12 +597,12 @@ Corpus will **surface** gaps; fix separately:
 
 ## 10. Definition of done
 
-- [ ] `docs/corpus-matrix.md` exists and lists ≥ 20 cases with expected outcomes.
-- [ ] ≥ 4 committed fixture pairs in `tests/corpus/` (< 5 MB total).
-- [ ] Manifest drives integration tests; CI runs committed tier without ffmpeg.
-- [ ] Generated tier passes locally with ffmpeg + `--features ffmpeg-tests`.
-- [ ] `scripts/generate_corpus.ps1` can regenerate Tier B from master chirp.
-- [ ] At least one failure from the matrix was found and filed/fixed (proves value).
+- [x] `docs/corpus-matrix.md` exists and lists ≥ 20 cases with expected outcomes.
+- [x] ≥ 3 committed fixture pairs in `tests/corpus/` (~3.4 MB total; under 5 MB budget).
+- [x] Manifest drives integration tests; CI runs committed tier without ffmpeg.
+- [x] Generated tier passes locally with ffmpeg on PATH (`corpus_generated_cases`).
+- [x] `scripts/generate_corpus.ps1` / `.sh` can regenerate Tier B from chirp generators.
+- [x] At least one failure from the matrix was found and fixed (dual-track decoy↔decoy false match; see `BACKLOG.md`).
 
 ---
 

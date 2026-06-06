@@ -2,7 +2,7 @@
 
 Tracked follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-06 (alignment robustness).
+Last updated: 2026-06-06 (corpus validation complete).
 
 ---
 
@@ -54,7 +54,58 @@ Last updated: 2026-06-06 (alignment robustness).
 
 ---
 
+## Real-world corpus & validation
+
+**Status:** Done (2026-06-06).
+
+Manifest-driven integration tests under `tests/corpus/` with 16 cases (3 committed, 12 generated, 1 external `#[ignore]`). See [docs/corpus-validation.md](docs/corpus-validation.md) and [docs/corpus-matrix.md](docs/corpus-matrix.md).
+
+| Deliverable | Location |
+|-------------|----------|
+| Case matrix (20 scenarios) | `docs/corpus-matrix.md` |
+| Manifest + committed WAVs (~3.4 MB) | `tests/corpus/` |
+| Harness + generators | `src/application/testing/corpus_fixtures.rs` |
+| Regeneration scripts | `scripts/generate_corpus.ps1`, `scripts/generate_corpus.sh` |
+
+**Corpus findings (filed / resolved):**
+
+| Finding | Status |
+|---------|--------|
+| MP3 without duration tag fails open | Verified OK (`mp3_no_duration_tag`) |
+| Dual-track `try_all_tracks` false match (identical decoy) | **Fixed** — distinct decoy frequencies per file |
+| Wrong track when decoy has higher sample rate | Documented test (`mp4_dual_track_wrong_default`); use `try_all_tracks` or improve `select_best_track` |
+| Near-silence / `InsufficientAudio` aborts whole run | Follow-up below (clip-skip) |
+| Slow re-probe per clip on long media | Follow-up below (session reuse) |
+
+**Corpus follow-up (optional matrix rows):**
+
+- `wav_leader_30s`, `reencode_mp3_vs_mp4`, `refine_on_vs_off` — not in manifest yet
+- `near_silence_window` — blocked on clip-skip behavior
+- `he_aac_mp4_leader_3s` — `he-aac` feature + ffmpeg
+- Wall-time logging in corpus tests for session-reuse before/after
+
+---
+
 ## Medium priority
+
+### Clip-skip on soft alignment failures
+
+**Status:** Corpus case `near_silence_window` (matrix only) expects graceful handling when a clip window has insufficient audio.
+
+Near-silence or corrupt windows currently abort the run. Options:
+
+- Skip clip and continue when `InsufficientAudio` / low energy gate triggers
+- Surface partial result with per-clip skip reasons
+
+### Dual-track default track selection
+
+**Status:** Corpus proves `select_best_track` can pick the decoy when it has higher sample rate (`mp4_dual_track_wrong_default`).
+
+**Options:**
+
+- Document `try_all_tracks` for multi-track containers
+- Prefer first audio track when metadata ties
+- Reliable bitrate from probe (see below)
 
 ### Bitrate for track selection
 
@@ -120,9 +171,9 @@ Extract into one helper to avoid drift between probe and extract paths.
 
 ### Committed test fixtures
 
-**Status:** MP4/MKV tests generate files via ffmpeg at runtime; skipped when ffmpeg is unavailable.
+**Status:** Corpus committed tier has 3 WAV pairs (~3.4 MB). MP4/MKV/dual-track cases generate at test time via ffmpeg.
 
-- Add small binary fixtures under `tests/fixtures/` for CI without ffmpeg
+- Optional: add tiny committed MP3 for CI without ffmpeg
 - Keep under size budget (PLAN: “kept small”)
 
 ---
@@ -139,6 +190,8 @@ Extract into one helper to avoid drift between probe and extract paths.
 | Strict partial decode on minor gaps | `sample_count_tolerance()` (~20 ms) before failing |
 | Higher-quality resampling | Rubato sinc resampler (was linear) |
 | Default `target_sample_rate` | Default 11025 Hz to match Chromaprint |
+| Real-world corpus harness | 16 manifest cases; `corpus_committed` + `corpus_generated` tests |
+| Dual-track false match in corpus | Distinct decoy tones per file in generator |
 
 ---
 
@@ -156,5 +209,5 @@ From [PLAN.md](PLAN.md) — not backlog unless scope changes:
 ## Suggested order of work
 
 1. ~~Finish alignment robustness~~ (done 2026-06-06)
-2. **Real-world corpus & validation** — Phase 0–1 done (committed WAV + manifest + `corpus_committed_cases`); Phase 2+ in [docs/TEMP-corpus-implementation-plan.md](docs/TEMP-corpus-implementation-plan.md)
-3. Performance (session reuse) and polish (logging, fixtures) as needed
+2. ~~Real-world corpus & validation~~ (done 2026-06-06) — [docs/corpus-validation.md](docs/corpus-validation.md)
+3. Performance (session reuse) and polish (clip-skip, logging, optional matrix rows)

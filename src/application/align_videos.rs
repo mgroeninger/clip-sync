@@ -8,7 +8,7 @@ use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressRep
 use crate::domain::{
     build_alignment_result, clip_windows, expand_window_for_slide, prepare_clip_for_fingerprint,
     resample_mono_pcm, select_aligned_subclip_pair, select_best_track, AlignmentResult, AudioTrack,
-    ClipWindow, MediaSource, PcmPreparationOptions,
+    ClipMatchEstimate, ClipWindow, DomainError, MediaSource, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
@@ -164,8 +164,9 @@ where
             window_slide_secs: config.clip.window_slide_secs,
         };
 
-        let mut clips_a = Vec::with_capacity(extracted_a.raw_clips.len());
-        let mut clips_b = Vec::with_capacity(extracted_b.raw_clips.len());
+        self.progress.phase("Searching for match...");
+        let mut estimates = Vec::with_capacity(extracted_a.raw_clips.len());
+
         for (index, (raw_a, raw_b)) in extracted_a
             .raw_clips
             .iter()
@@ -173,43 +174,45 @@ where
             .enumerate()
         {
             let window = &extracted_a.windows[index];
-            let (mut clip_a, mut clip_b) = if config.clip.window_slide_secs > 0 {
+            let (clip_a, clip_b) = if config.clip.window_slide_secs > 0 {
                 select_aligned_subclip_pair(raw_a, raw_b, window.duration())
             } else {
                 (raw_a.clone(), raw_b.clone())
             };
-            clip_a = prepare_clip_for_fingerprint(&clip_a, prep_options).map_err(map_prepare_error)?;
-            clip_b = prepare_clip_for_fingerprint(&clip_b, prep_options).map_err(map_prepare_error)?;
-            clips_a.push(clip_a);
-            clips_b.push(clip_b);
-        }
 
-        self.progress.phase(&format!(
-            "Fingerprinting {} clips...",
-            clips_a.len() * 2
-        ));
-        let fingerprints_a: Vec<_> = clips_a
-            .iter()
-            .map(|clip| self.fingerprinter.fingerprint(clip))
-            .collect::<Result<_, _>>()?;
-        let fingerprints_b: Vec<_> = clips_b
-            .iter()
-            .map(|clip| self.fingerprinter.fingerprint(clip))
-            .collect::<Result<_, _>>()?;
+            let prepared_a = prepare_clip_for_fingerprint(&clip_a, prep_options);
+            let prepared_b = prepare_clip_for_fingerprint(&clip_b, prep_options);
 
-        self.progress.phase("Searching for match...");
-        let mut estimates = Vec::with_capacity(fingerprints_a.len());
+            if is_skippable_prepare_error(&prepared_a) || is_skippable_prepare_error(&prepared_b)
+            {
+                self.progress.phase(&format!(
+                    "{} clip [{}–{}]: skipped (insufficient audio)",
+                    clip_label_name(window.label),
+                    format_duration(window.start),
+                    format_duration(window.end),
+                ));
+                estimates.push(ClipMatchEstimate {
+                    offset_secs: 0.0,
+                    confidence: 0.0,
+                });
+                continue;
+            }
 
-        for (index, (left, right)) in fingerprints_a.iter().zip(fingerprints_b.iter()).enumerate()
-        {
-            let mut estimate = self.aligner.find_offset(left, right)?;
+            let clip_a = prepared_a.map_err(map_prepare_error)?;
+            let clip_b = prepared_b.map_err(map_prepare_error)?;
+
+            let fingerprint_a = self.fingerprinter.fingerprint(&clip_a)?;
+            let fingerprint_b = self.fingerprinter.fingerprint(&clip_b)?;
+
+            let mut estimate = self
+                .aligner
+                .find_offset(&fingerprint_a, &fingerprint_b)?;
             if config.alignment.refine_offset_with_pcm
                 && estimate.confidence >= config.alignment.min_match_score * 0.5
             {
-                estimate = refine_offset_estimate(&clips_a[index], &clips_b[index], estimate);
+                estimate = refine_offset_estimate(&clip_a, &clip_b, estimate);
             }
 
-            let window = &extracted_a.windows[index];
             self.progress.phase(&format!(
                 "{} clip [{}–{}]: {} (confidence: {:.2})",
                 clip_label_name(window.label),
@@ -295,9 +298,16 @@ where
     }
 }
 
-fn map_prepare_error(error: crate::domain::DomainError) -> AppError {
+fn is_skippable_prepare_error(result: &Result<_, DomainError>) -> bool {
+    matches!(
+        result,
+        Err(DomainError::InsufficientAudio) | Err(DomainError::EmptyClip)
+    )
+}
+
+fn map_prepare_error(error: DomainError) -> AppError {
     match error {
-        crate::domain::DomainError::InsufficientAudio | crate::domain::DomainError::EmptyClip => {
+        DomainError::InsufficientAudio | DomainError::EmptyClip => {
             AppError::Fingerprint(FingerprintError::InvalidPcm(
                 "insufficient audio content for fingerprinting".into(),
             ))

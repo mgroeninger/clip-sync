@@ -10,4 +10,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "fixture generation failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Done. Run: cargo test corpus_committed"
+Write-Host "Done. Run: cargo test corpus_"
+Write-Host "Generated-tier cases (MP3/MP4/MKV) build at test time; ffmpeg on PATH required for those."

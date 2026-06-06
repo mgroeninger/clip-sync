@@ -1,6 +1,6 @@
 # clip-sync test corpus (Tier B)
 
-Small committed audio fixtures for manifest-driven integration tests. See [docs/corpus-matrix.md](../../docs/corpus-matrix.md) and [docs/TEMP-corpus-implementation-plan.md](../../docs/TEMP-corpus-implementation-plan.md).
+Small committed audio fixtures for manifest-driven integration tests. See [docs/corpus-validation.md](../../docs/corpus-validation.md) and [docs/corpus-matrix.md](../../docs/corpus-matrix.md).
 
 ## Size budget
 
@@ -25,10 +25,18 @@ This overwrites `tests/corpus/wav/*.wav` from the synthetic chirp generators in 
 ## Run corpus tests
 
 ```powershell
-cargo test corpus_committed
+cargo test corpus_
 ```
 
-Tier-A generated cases (MP3/MP4 via ffmpeg) will be added in a later phase behind `--features ffmpeg-tests`.
+- **Committed** (`corpus_committed_cases`): always runs; uses `tests/corpus/wav/`.
+- **Generated** (`corpus_generated_cases`): builds chirp pairs at test time; MP3/MP4/MKV/dual-track cases require **ffmpeg** on PATH (skipped when missing). Pure WAV generated cases run without ffmpeg.
+- **External** (`corpus_external_cases`): `#[ignore]` long smoke; set `CLIP_SYNC_CORPUS` to a persistent directory and run with `--ignored`.
+
+Regenerate committed WAVs:
+
+```bash
+./scripts/generate_corpus.sh
+```
 
 ## Manifest
 

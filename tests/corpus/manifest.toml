@@ -32,3 +32,148 @@ video_a = "wav/chirp_a.wav"
 video_b = "wav/tone_b.wav"
 expect_aligned = false
 expect_recommended = false
+
+[[case]]
+id = "wav_b_ahead_5s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+offset_secs = 5
+delay_on = "a"
+expected_offset_secs = -5.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "mp3_leader_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp3"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mp3_no_duration_tag"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp3_no_duration"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mp4_aac_leader_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp4"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mkv_flac_leader_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mkv"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mp4_stereo_leader_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp4_stereo"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mp4_dual_track_decoy"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp4_dual"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+try_all_tracks = true
+prefer_program_track = true
+requires_ffmpeg = true
+
+[[case]]
+id = "mp4_dual_track_wrong_default"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp4_dual"
+offset_secs = 3
+expect_aligned = false
+expect_recommended = false
+try_all_tracks = false
+prefer_program_track = false
+requires_ffmpeg = true
+
+[[case]]
+id = "two_clip_consistent"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+total_secs = 120
+offset_secs = 12
+clip_length_secs = 60
+num_clips = 2
+expected_offset_secs = 12.0
+expect_aligned = true
+expect_recommended = true
+expect_offsets_consistent = true
+
+[[case]]
+id = "two_clip_inconsistent"
+tier = "generated"
+generator = "two_clip_inconsistent"
+format = "wav"
+total_secs = 120
+offset_secs = 12
+tail_silence_secs = 18
+clip_length_secs = 60
+num_clips = 2
+require_consistent_offsets = true
+expect_offsets_consistent = false
+expect_recommended = false
+
+[[case]]
+id = "require_consistent_blocks"
+tier = "generated"
+generator = "piecewise_offset_chirp"
+format = "wav"
+total_secs = 120
+offset_secs = 10
+offset_secs_end = 20
+clip_length_secs = 60
+num_clips = 2
+require_consistent_offsets = true
+expect_offsets_consistent = false
+expect_recommended = false
+
+[[case]]
+id = "long_smoke_60m"
+tier = "external"
+generator = "offset_chirp_pair"
+format = "wav"
+total_secs = 3600
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+ignore = true
