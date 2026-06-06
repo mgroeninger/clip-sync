@@ -4,7 +4,7 @@ Manifest-driven integration tests exercise real-world alignment scenarios: multi
 
 **Case matrix:** [corpus-matrix.md](corpus-matrix.md)  
 **Fixtures & commands:** [tests/corpus/README.md](../tests/corpus/README.md)  
-**Archived implementation plan:** [archive/corpus-implementation-plan.md](archive/corpus-implementation-plan.md)
+**Archived plans:** [corpus implementation](archive/corpus-implementation-plan.md), [session reuse](archive/session-reuse-plan.md)
 
 ---
 
@@ -34,6 +34,29 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 | Identical decoy on A/B caused false offset 0 | **Fixed:** distinct decoy tones (220 Hz vs 330 Hz) per file |
 | Default `select_best_track` on dual MP4 | Documented failure when decoy has higher sample rate (`mp4_dual_track_wrong_default`); use `try_all_tracks` |
 | Two-clip offset agreement | `require_consistent_offsets` blocks bad recommendations (`two_clip_inconsistent`, `require_consistent_blocks`) |
+| Redundant probe+open per clip window | **Fixed:** one probe per file per run; format reader + decoders reused ([session reuse plan](archive/session-reuse-plan.md)) |
+
+---
+
+## Multi-track containers (`try_all_tracks`)
+
+`select_best_track` picks a single audio track per file (higher sample rate wins). On dual-track MP4/MKV, a secondary commentary or effects track at 48 kHz can be chosen over the main 44.1 kHz program — corpus case `mp4_dual_track_wrong_default` documents the failure.
+
+When `try_all_tracks` is enabled, the aligner decodes every decodable track pair on A and B, scores each alignment, and keeps the highest-confidence result. The same media session and format reader are reused across track pairs and clip windows.
+
+**Enable via CLI:**
+
+```powershell
+clip-sync --try-all-tracks video_a.mp4 video_b.mp4
+```
+
+**Or in a config file** (`[alignment]` section):
+
+```toml
+try_all_tracks = true
+```
+
+Default is `false` because track-pair brute force multiplies decode work. Prefer enabling it when you know a container has multiple audio tracks or alignment looks wrong with the default pick.
 
 ---
 

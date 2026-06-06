@@ -4,7 +4,7 @@ use crate::domain::{DomainError, MonoPcmClip};
 
 /// Peak amplitude target for normalization (~−3 dBFS).
 const NORMALIZE_TARGET_PEAK: f32 = i16::MAX as f32 * 0.707;
-/// Fraction of peak used as silence threshold when trimming edges.
+/// Fraction of peak used as silence threshold when trimming trailing silence.
 const SILENCE_PEAK_FRACTION: f32 = 0.01;
 /// Minimum RMS (0–1 of full scale) required after preparation.
 const MIN_RMS_FRACTION: f32 = 0.002;
@@ -109,7 +109,7 @@ pub fn prepare_clip_for_fingerprint(
     let mut prepared = clip.clone();
 
     if options.trim_silence {
-        prepared = trim_edge_silence(&prepared);
+        prepared = trim_trailing_silence(&prepared);
     }
 
     if options.normalize_loudness {
@@ -136,7 +136,9 @@ pub fn has_sufficient_audio(clip: &MonoPcmClip) -> bool {
     rms_of_slice(&clip.samples) >= MIN_RMS_FRACTION * i16::MAX as f32
 }
 
-fn trim_edge_silence(clip: &MonoPcmClip) -> MonoPcmClip {
+/// Trim only trailing silence. Leading silence must be preserved so inter-file
+/// offsets are not collapsed when each file has different pre-roll padding.
+fn trim_trailing_silence(clip: &MonoPcmClip) -> MonoPcmClip {
     if clip.samples.is_empty() {
         return clip.clone();
     }
@@ -149,11 +151,6 @@ fn trim_edge_silence(clip: &MonoPcmClip) -> MonoPcmClip {
         .unwrap_or(0) as f32;
     let threshold = (peak * SILENCE_PEAK_FRACTION).max(64.0);
 
-    let start = clip
-        .samples
-        .iter()
-        .position(|&sample| f32::from(sample.unsigned_abs()) >= threshold)
-        .unwrap_or(0);
     let end = clip
         .samples
         .iter()
@@ -161,13 +158,13 @@ fn trim_edge_silence(clip: &MonoPcmClip) -> MonoPcmClip {
         .map(|index| index + 1)
         .unwrap_or(clip.samples.len());
 
-    if start >= end {
+    if end == 0 || end == clip.samples.len() {
         return clip.clone();
     }
 
     MonoPcmClip {
         sample_rate: clip.sample_rate,
-        samples: clip.samples[start..end].to_vec(),
+        samples: clip.samples[..end].to_vec(),
     }
 }
 
@@ -223,16 +220,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trim_removes_leading_silence() {
+    fn trim_preserves_leading_silence() {
         let clip = MonoPcmClip::new(1_000, {
             let mut samples = vec![0_i16; 500];
-            samples.extend((0..500).map(|i| (i as i16 % 100) * 100));
+            samples.extend((0..400).map(|i| (i as i16 % 100) * 100));
+            samples.extend(vec![0_i16; 100]);
             samples
         });
 
-        let trimmed = trim_edge_silence(&clip);
-        assert!(trimmed.samples.len() < clip.samples.len());
-        assert_ne!(trimmed.samples[0], 0);
+        let trimmed = trim_trailing_silence(&clip);
+        assert_eq!(trimmed.samples.len(), 900);
+        assert_eq!(trimmed.samples[0], 0);
+        assert_eq!(trimmed.samples[499], 0);
+    }
+
+    #[test]
+    fn trim_removes_trailing_silence() {
+        let clip = MonoPcmClip::new(1_000, {
+            let mut samples = vec![5_000_i16; 500];
+            samples.extend(vec![0_i16; 500]);
+            samples
+        });
+
+        let trimmed = trim_trailing_silence(&clip);
+        assert_eq!(trimmed.samples.len(), 500);
+        assert_eq!(trimmed.samples[499], 5_000);
     }
 
     #[test]

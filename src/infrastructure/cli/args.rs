@@ -44,6 +44,12 @@ pub struct Cli {
     /// Write logs to a file
     #[arg(long)]
     pub log_file: Option<PathBuf>,
+
+    /// Try every decodable audio track on both files and keep the best alignment.
+    /// Use for multi-track MP4/MKV when the default track pick may be wrong (e.g. commentary
+    /// at 48 kHz chosen over main program at 44.1 kHz). Slower: decodes each track pair.
+    #[arg(long)]
+    pub try_all_tracks: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

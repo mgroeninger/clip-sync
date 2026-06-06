@@ -63,7 +63,7 @@ Dependency rule: domain ← application ← infrastructure. No inward dependenci
 
 ### Domain policies (pure functions)
 
-- **`select_best_track(tracks) -> AudioTrack`** — Prefer higher sample rate, then channel count, then bitrate. Fail if no audio tracks.
+- **`select_best_track(tracks) -> AudioTrack`** — Prefer higher sample rate, then channel count, then bitrate. Fail if no audio tracks. On multi-track containers the default pick can be wrong; use `alignment.try_all_tracks` or `--try-all-tracks` to score every decodable track pair (see [docs/corpus-validation.md](docs/corpus-validation.md)).
 - **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy).
 
 ### Clip window policy
@@ -206,6 +206,7 @@ Application errors aggregate domain and port failures; infrastructure maps libra
 - Demux container, enumerate audio tracks, decode selected track.
 - Down-mix to mono during decode (or post-decode mix).
 - Honor `ClipWindow` time bounds; stream decode for long segments.
+- **Session reuse:** one probe and `FormatReader` per file per alignment run; per-track decoders cached across clip windows (see [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)).
 - Map Symphonia/decode failures → `MediaError` (see [docs/error-mapping.md](docs/error-mapping.md)).
 
 ### Chromaprint adapter (`Fingerprinter` + `Aligner`)
@@ -248,6 +249,9 @@ struct ClipConfig {
 struct AlignmentConfig {
     min_match_score: f32,             // minimum confidence to report success
     prefer_start_clip: bool,          // when clip-pair offsets disagree, prefer the first clip’s estimate
+    require_consistent_offsets: bool, // fail recommendation when multi-clip offsets disagree
+    refine_offset_with_pcm: bool,     // sub-second PCM refinement after Chromaprint coarse match
+    try_all_tracks: bool,             // brute-force all decodable track pairs (multi-track containers)
 }
 
 struct OutputConfig {
@@ -266,7 +270,7 @@ struct LoggingConfig {
 
 1. Built-in defaults (constants in `application` or `domain`).
 2. Optional config file: TOML at `--config` or `%APPDATA%/clip-sync/config.toml` (platform-specific path in infrastructure).
-3. CLI flags: `--clip-length`, `--num-clips`, `--log-level`, `--quiet`, etc.
+3. CLI flags: `--clip-length`, `--num-clips`, `--try-all-tracks`, `--log-level`, `--quiet`, etc.
 
 Invalid config → `ConfigError` at startup before media work begins (e.g. `clip_length < 1 min`, `num_clips < 1`).
 
@@ -408,6 +412,7 @@ Options:
   -q, --quiet                   Errors only; no progress
       --log-level <LEVEL>       Log level for tracing
       --log-file <FILE>         Write logs to file
+      --try-all-tracks          Try all decodable track pairs (multi-track MP4/MKV)
   -h, --help
   -V, --version
 ```

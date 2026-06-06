@@ -74,4 +74,7 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     if let Some(path) = &cli.log_file {
         config.logging.log_file = Some(path.clone());
     }
+    if cli.try_all_tracks {
+        config.alignment.try_all_tracks = true;
+    }
 }

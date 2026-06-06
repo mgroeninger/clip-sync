@@ -61,7 +61,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 ### Notes
 
 - `MP3*` — encoded with duration tag stripped (`-write_xing 0`) to stress probe fallback.
-- `2†` — decoy normalized louder than program; tests default `select_best_track` vs `try_all_tracks`.
+- `2†` — decoy normalized louder than program; tests default `select_best_track` vs `try_all_tracks` (`--try-all-tracks` or `alignment.try_all_tracks` in config; see [corpus-validation.md](corpus-validation.md)).
 - `‡` — `near_silence` / inconsistent cases may need clip-skip behavior; mark `ignore` until implemented.
 - `§` — B truncated or different in end window while start matches.
 - `‖` — synthetic two-window pair with different true offsets per window.
