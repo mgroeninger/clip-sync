@@ -372,10 +372,11 @@ fn extract_mono_window(
 
     let mut last_reported = 0_u64;
     let mut finished = false;
-    let mut stream_ended = false;
+    let mut allow_tail_padding = false;
 
     loop {
         if finished {
+            allow_tail_padding = true;
             break;
         }
         if let Some(target) = target_samples {
@@ -387,7 +388,7 @@ fn extract_mono_window(
         let packet = match format.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => {
-                stream_ended = true;
+                allow_tail_padding = true;
                 break;
             }
             Err(SymphoniaError::ResetRequired) => {
@@ -416,6 +417,7 @@ fn extract_mono_window(
                     continue;
                 }
                 if packet_start_sample >= end_sample {
+                    allow_tail_padding = true;
                     break;
                 }
             } else if let (Some(packet_start), Some(packet_end)) = (
@@ -426,6 +428,7 @@ fn extract_mono_window(
                     continue;
                 }
                 if packet_start >= window.end {
+                    allow_tail_padding = true;
                     break;
                 }
             }
@@ -435,7 +438,7 @@ fn extract_mono_window(
             Ok(decoded) => decoded,
             Err(SymphoniaError::DecodeError(_)) => continue,
             Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                stream_ended = true;
+                allow_tail_padding = true;
                 break;
             }
             Err(SymphoniaError::ResetRequired) => {
@@ -548,7 +551,7 @@ fn extract_mono_window(
 
     if mono_samples.len() < target {
         let shortfall = target - mono_samples.len();
-        let limit = decode_shortfall_limit(rate, target, stream_ended);
+        let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
         if shortfall > limit {
             return Err(fail_media(
                 path,
@@ -572,7 +575,7 @@ fn extract_mono_window(
             track = track.index,
             shortfall,
             target,
-            stream_ended,
+            allow_tail_padding,
             limit,
             "padding end-of-window decode gap with silence"
         );
@@ -693,10 +696,6 @@ fn seek_to_window_start(
 }
 
 fn sample_count_tolerance(sample_rate: u32) -> usize {
-    frame_boundary_tolerance(sample_rate)
-}
-
-fn frame_boundary_tolerance(sample_rate: u32) -> usize {
     // ~20 ms baseline; allow up to two HE-AAC SBR output frames (2048 samples each) for
     // container duration vs decodable sample boundary mismatch at window edges.
     const HE_AAC_FRAME_SAMPLES: usize = 2048;
@@ -705,13 +704,13 @@ fn frame_boundary_tolerance(sample_rate: u32) -> usize {
         .max(64)
 }
 
-fn decode_shortfall_limit(sample_rate: u32, target_samples: usize, stream_eof: bool) -> usize {
-    let frame = frame_boundary_tolerance(sample_rate);
-    if !stream_eof {
+fn decode_shortfall_limit(sample_rate: u32, target_samples: usize, allow_tail_padding: bool) -> usize {
+    let frame = sample_count_tolerance(sample_rate);
+    if !allow_tail_padding {
         return frame;
     }
 
-    // Container duration often extends past the last decodable sample; allow a bounded pad at EOF.
+    // Container timestamps often extend past the last decodable sample at window edges.
     const EOF_MAX_SECS: f64 = 2.0;
     let eof_cap = (f64::from(sample_rate) * EOF_MAX_SECS).ceil() as usize;
     let percent_cap = target_samples / 200; // 0.5%
@@ -857,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_shortfall_limit_allows_eof_tail_on_long_clips() {
+    fn decode_shortfall_limit_allows_tail_gap_on_long_clips() {
         let target = 43_200_000_usize;
         let limit = decode_shortfall_limit(48_000, target, true);
         assert!(limit >= 76_304, "limit was {limit}");
@@ -865,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_shortfall_limit_stays_strict_without_eof() {
+    fn decode_shortfall_limit_stays_strict_without_tail_padding() {
         assert_eq!(decode_shortfall_limit(48_000, 43_200_000, false), 4_096);
     }
 
