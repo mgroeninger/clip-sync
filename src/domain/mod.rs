@@ -25,6 +25,6 @@ pub use pcm_preparation::{
 };
 pub use policies::{
     clip_windows, decoded_timeline_extent, holdout_window_candidates, holdout_window_feasible,
-    pick_holdout_window, select_best_track,
+    select_best_track,
 };
 pub use resample::resample_mono_pcm;

@@ -58,6 +58,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | `he_aac_mp4_leader_3s` | A | MP4/HE-AAC | +3s | 1 | 1 | 120s | chirp | requires `he-aac` + ffmpeg |
 | `reencode_mp3_vs_mp4` | A | MP3 vs MP4 | +3s | 1 | 1 | 120s | chirp | cross-container pair; offset ≈ +3 |
 | `refine_on_vs_off` | A | WAV | +3s | 1 | 1 | 120s | chirp | both configs within tolerance |
+| `wav_high_rate_refine_3s` | A | WAV 44.1k | +3s | 1 | 1 | 120s | chirp | `refine_offset_high_rate`; offset ±50 ms |
 | `require_consistent_blocks` | A | WAV | +10/+20‖ | 1 | 1 | 180s | chirp | `num_clips=2`; no recommended offset |
 
 ### Notes
@@ -85,6 +86,7 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 - [x] Duration-less MP3 open
 - [x] Long smoke (ignored; `long_smoke_60m` in manifest)
 - [x] HE-AAC (feature-gated; `he_aac_mp4_leader_3s`, skip without `he-aac`)
+- [x] High-rate refinement (±50 ms; `wav_high_rate_refine_3s`)
 
 ---
 
@@ -111,6 +113,7 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `wav_leader_60s` | yes | generated at test time | yes |
 | `reencode_mp3_vs_mp4` | yes | generated (ffmpeg) | yes* |
 | `refine_on_vs_off` | yes | generated at test time | yes |
+| `wav_high_rate_refine_3s` | yes | generated at test time | yes |
 | `near_silence_window` | yes | generated at test time | yes |
 | `he_aac_mp4_leader_3s` | yes | generated (ffmpeg) | yes‡ |
 | `long_smoke_60m` | yes | external (`#[ignore]`) | manual |

@@ -17,7 +17,8 @@ The tool is intended for workflows where two recordings of the same event (e.g. 
    - Decode, down-mix to mono, and produce one PCM clip per window.
 4. Fingerprint all clips (same count per video).
 5. Compare fingerprints pairwise by clip index and compute offset (merging multiple estimates when `num_clips > 1`).
-6. Emit result (offset, confidence, diagnostics) via CLI output; log progress throughout.
+6. Optionally refine the recommended offset with a native-rate hold-out PCM pass (`refine_offset_high_rate`).
+7. Emit result (offset, confidence, diagnostics) via CLI output; log progress throughout.
 
 ```mermaid
 flowchart TD
@@ -251,6 +252,9 @@ struct AlignmentConfig {
     prefer_start_clip: bool,          // when clip-pair offsets disagree, prefer the first clip’s estimate
     require_consistent_offsets: bool, // fail recommendation when multi-clip offsets disagree
     refine_offset_with_pcm: bool,     // sub-second PCM refinement after Chromaprint coarse match
+    refine_offset_high_rate: bool,    // native-rate hold-out FFT pass after discovery (default off)
+    high_rate_refine_secs: u32,       // hold-out segment length (default 3)
+    high_rate_refine_max_adjustment_secs: f64, // max |adjustment| applied (default 0.1)
     try_all_tracks: bool,             // brute-force all decodable track pairs (multi-track containers)
 }
 
@@ -287,6 +291,7 @@ Invalid config → `ConfigError` at startup before media work begins (e.g. `clip
 | Extract | `Extracting clip 1/2 (video A): 42%` — throttled updates |
 | Fingerprint | `Fingerprinting 4 clips...` (2 × effective_num_clips) |
 | Align | `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)` |
+| High-rate refine | `High-rate offset refinement...` (when `--refine-offset-high-rate`) |
 | Done | `Start clip aligned: yes` / `Recommended offset: +12.340s (clip offsets agree)` |
 
 ## Output
@@ -311,6 +316,7 @@ struct AlignmentResult {
     end_aligned: Option<bool>,     // None when only one clip was extracted
     recommended_offset_secs: Option<f64>,
     offsets_consistent: bool,      // aligned clips agree within 0.5s
+    high_rate_refinement: Option<HighRateRefinement>, // present when flag on; adjustment applied to recommended_offset_secs
 }
 ```
 
@@ -413,6 +419,7 @@ Options:
       --log-level <LEVEL>       Log level for tracing
       --log-file <FILE>         Write logs to file
       --try-all-tracks          Try all decodable track pairs (multi-track MP4/MKV)
+      --refine-offset-high-rate Native-rate hold-out FFT refinement after discovery (default off)
   -h, --help
   -V, --version
 ```
@@ -435,6 +442,8 @@ clip-sync/
 │   │   ├── mod.rs
 │   │   ├── config.rs
 │   │   ├── align_videos.rs     # use case
+│   │   ├── high_rate_refinement.rs
+│   │   ├── offset_refinement.rs
 │   │   ├── ports.rs            # MediaReader, Fingerprinter, Aligner, ProgressReporter
 │   │   └── error.rs
 │   └── infrastructure/
@@ -462,6 +471,7 @@ clip-sync/
 ## Documentation
 
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, Symphonia mapping, diagnostic logging
+- [docs/archive/high-rate-offset-refinement-plan.md](docs/archive/high-rate-offset-refinement-plan.md) — native-rate hold-out refinement (completed 2026-06-06)
 - [BACKLOG.md](BACKLOG.md) — deferred work and follow-up items
 
 ## Dependencies (planned)

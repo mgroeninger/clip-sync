@@ -4,7 +4,7 @@ Manifest-driven integration tests exercise real-world alignment scenarios: multi
 
 **Case matrix:** [corpus-matrix.md](corpus-matrix.md)  
 **Fixtures & commands:** [tests/corpus/README.md](../tests/corpus/README.md)  
-**Archived plans:** [corpus implementation](archive/corpus-implementation-plan.md), [session reuse](archive/session-reuse-plan.md)
+**Archived plans:** [corpus implementation](archive/corpus-implementation-plan.md), [session reuse](archive/session-reuse-plan.md), [high-rate refinement](archive/high-rate-offset-refinement-plan.md)
 
 ---
 
@@ -35,6 +35,7 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 | Default `select_best_track` on dual MP4 | **Fixed:** first decodable track in mux order (`mp4_dual_track_wrong_default`); use `try_all_tracks` when program is not first |
 | Two-clip offset agreement | `require_consistent_offsets` blocks bad recommendations (`two_clip_inconsistent`, `require_consistent_blocks`) |
 | Redundant probe+open per clip window | **Fixed:** one probe per file per run; format reader + decoders reused ([session reuse plan](archive/session-reuse-plan.md)) |
+| Sub-50 ms residual after discovery on WAV | **Fixed:** optional high-rate hold-out refine (`wav_high_rate_refine_3s`, ±50 ms) |
 
 ---
 

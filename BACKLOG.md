@@ -32,6 +32,8 @@ Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 
 **Done (2026-06-06):** PCM template discover near coarse Chromaprint estimate (downsampled search + full-rate refine on coarse hint and top peaks); dynamic `pcm_lag_adjustment` range on long clips; corpus cases at 15 / 30 / 60 s leaders.
 
+**Also done (2026-06-06):** [High-rate hold-out refinement](#high-rate-hold-out-refinement) — native-rate FFT pass for sub-50 ms residual correction; corpus `wav_high_rate_refine_3s`. Plan: [archive/high-rate-offset-refinement-plan.md](docs/archive/high-rate-offset-refinement-plan.md).
+
 Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 
 ### Phase 4 — Edge cases and semantics
@@ -79,6 +81,18 @@ Implement repetition before or alongside verification (shared config section, sa
 **Resolution:** `pcm_discover_offset` in `offset_refinement.rs` — template match in a window around the coarse estimate (downsampled scan + full-rate refine on coarse hint and top peaks); expanded `pcm_lag_adjustment` cap on long clips. Corpus: `wav_leader_15s`, `wav_leader_30s`, `wav_leader_60s`.
 
 **References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/offset_refinement.rs`, `tests/corpus/manifest.toml`
+
+---
+
+### High-rate hold-out refinement
+
+**Status:** Done (2026-06-06).
+
+**Problem:** Discovery alignment (Chromaprint + 11 kHz PCM refine) can leave 20–50 ms residual error — audible as echo when tracks are overlaid.
+
+**Resolution:** Optional `apply_high_rate_refinement` after alignment: re-extract a short hold-out at native decode rate, FFT cross-correlate at lag ≈ 0, apply small adjustment capped at 0.1 s. Off by default; enable with `--refine-offset-high-rate` or `refine_offset_high_rate = true`. Corpus: `wav_high_rate_refine_3s` (±50 ms at 44.1 kHz).
+
+**References:** `src/application/high_rate_refinement.rs`, `src/application/offset_refinement.rs`, `src/domain/policies.rs`, [docs/archive/high-rate-offset-refinement-plan.md](docs/archive/high-rate-offset-refinement-plan.md)
 
 ---
 

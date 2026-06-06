@@ -501,6 +501,34 @@ mod tests {
     }
 
     #[test]
+    fn high_rate_refine_skips_when_window_infeasible() {
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(60),
+            ClipLabel::Start,
+        )];
+        let candidates = holdout_window_candidates(
+            Duration::from_secs(60),
+            &discovery,
+            Duration::from_secs(3),
+            3.0,
+        );
+        assert!(!candidates.is_empty());
+        assert!(
+            candidates.iter().all(|window| {
+                !holdout_window_feasible(
+                    window.start.as_secs_f64(),
+                    3.0,
+                    3.0,
+                    120.0,
+                    5.0,
+                )
+            }),
+            "short B duration should make every candidate infeasible"
+        );
+    }
+
+    #[test]
     fn decoded_timeline_extent_ignores_silence_padding() {
         let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start);
         let clip = MonoPcmClip {

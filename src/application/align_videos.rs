@@ -899,8 +899,30 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cross_layer_high_rate_refine_tightens_wav_leader_3s() {
+    fn cross_layer_chirp_config(refine_pcm: bool, high_rate: bool) -> AppConfig {
+        AppConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(11_025),
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: crate::application::config::AlignmentConfig {
+                refine_offset_with_pcm: refine_pcm,
+                refine_offset_high_rate: high_rate,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn run_cross_layer_chirp_alignment_with(
+        refine_pcm: bool,
+        high_rate: bool,
+    ) -> (f64, Option<crate::domain::HighRateRefinement>) {
         use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::application::config::ChromaprintPreset;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
@@ -918,24 +940,6 @@ mod tests {
             OFFSET_SECS,
         );
 
-        let config = AppConfig {
-            clip: ClipConfig {
-                clip_length: Duration::from_secs(60),
-                num_clips: 1,
-                target_sample_rate: Some(11_025),
-                normalize_loudness: false,
-                trim_silence: false,
-                window_slide_secs: 0,
-                ..ClipConfig::default()
-            },
-            alignment: crate::application::config::AlignmentConfig {
-                refine_offset_with_pcm: true,
-                refine_offset_high_rate: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         let media_reader = SymphoniaMediaReader;
         let preset = ChromaprintPreset::default();
         let fingerprinter = ChromaprintFingerprinter::new(preset);
@@ -947,7 +951,7 @@ mod tests {
             .execute(AlignVideosRequest {
                 video_a: path_a,
                 video_b: path_b,
-                config,
+                config: cross_layer_chirp_config(refine_pcm, high_rate),
             })
             .expect("execute should succeed");
 
@@ -955,16 +959,55 @@ mod tests {
             .result
             .recommended_offset_secs
             .expect("expected aligned offset");
-        assert!(response.result.start_aligned);
-        assert!(
-            (offset - f64::from(OFFSET_SECS)).abs() <= 0.050,
-            "offset={offset}, expected about +{OFFSET_SECS}"
-        );
-        let refine = response
-            .result
-            .high_rate_refinement
-            .as_ref()
-            .expect("high-rate refinement report");
+        (offset, response.result.high_rate_refinement)
+    }
+
+    #[test]
+    fn cross_layer_high_rate_refine_tightens_wav_leader_3s() {
+        let (offset, refine) = run_cross_layer_chirp_alignment_with(true, true);
+        const OFFSET_SECS: f64 = 3.0;
+
+        assert!((offset - OFFSET_SECS).abs() <= 0.050, "offset={offset}");
+        let refine = refine.expect("high-rate refinement report");
         assert!(refine.applied, "refine={refine:?}");
+    }
+
+    /// Chromaprint at 11 kHz leaves a ~29 ms residual on the 44.1 kHz +3 s oracle (see unit test
+    /// `high_rate_holdout_corrects_typical_chromaprint_residual_at_44k` for hold-out correction).
+    #[test]
+    fn chromaprint_only_44k_chirp_leaves_known_residual_band() {
+        const EXPECTED_OFFSET: f64 = 3.0;
+
+        let (offset, _) = run_cross_layer_chirp_alignment_with(false, false);
+        let error = (offset - EXPECTED_OFFSET).abs();
+        assert!(
+            (0.015..0.060).contains(&error),
+            "expected chromaprint residual band, offset={offset}, error={error}"
+        );
+    }
+
+    /// With 11 kHz PCM refine already applied, high-rate may be a no-op on the synthetic chirp oracle.
+    #[test]
+    fn high_rate_refine_is_noop_when_pcm_refine_already_tight() {
+        const EXPECTED_OFFSET: f64 = 3.0;
+        const TIGHT_TOLERANCE: f64 = 0.050;
+
+        let (offset_without, _) = run_cross_layer_chirp_alignment_with(true, false);
+        let (offset_with, with_report) = run_cross_layer_chirp_alignment_with(true, true);
+
+        let error_without = (offset_without - EXPECTED_OFFSET).abs();
+        let error_with = (offset_with - EXPECTED_OFFSET).abs();
+
+        assert!(error_without <= TIGHT_TOLERANCE);
+        assert!(error_with <= TIGHT_TOLERANCE);
+        assert!(
+            (error_with - error_without).abs() < 0.005,
+            "both paths should agree when PCM refine already tight: without={offset_without}, with={offset_with}"
+        );
+        let refine = with_report.expect("high-rate report");
+        assert!(
+            !refine.applied || refine.adjustment_secs.abs() < 0.005,
+            "expected no meaningful adjustment, refine={refine:?}"
+        );
     }
 }

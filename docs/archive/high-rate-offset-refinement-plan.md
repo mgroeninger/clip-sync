@@ -1,6 +1,19 @@
-# Temporary plan: high-rate hold-out PCM refinement
+# High-rate hold-out PCM refinement (archived)
 
-> **Status:** Implemented (2026-06-06). Archive to `docs/archive/high-rate-offset-refinement-plan.md` when corpus/docs follow-ups land.
+> **Status:** Completed and archived (2026-06-06). Implementation: `high_rate_refinement.rs`, `offset_refinement.rs`, `policies.rs`.
+
+## Completion verification
+
+| Criterion | Status | Notes |
+|-----------|--------|-------|
+| Phase 0: slice fix + 11 kHz tests | Done | `aligned_slice_starts_*`, `pcm_lag_fixes_*` |
+| Phase 0: Chromaprint residual baseline | Partial | Implicit in cross-layer test (discovery ±1 s → final ±50 ms) |
+| Phase 1: core logic + unit tests | Done | `refine_holdout_segment_lag`, `apply_high_rate_refinement`, window picker |
+| Phase 2: wire + cross-layer test | Done | `cross_layer_high_rate_refine_tightens_wav_leader_3s` |
+| Phase 2: skip / max-adjustment tests | Done | `high_rate_refine_skips_when_window_infeasible`, `refine_high_rate_respects_max_adjustment` |
+| Phase 3: reporting + CLI | Done | `HighRateRefinement`, `--refine-offset-high-rate` |
+| Phase 4: corpus | Done | `wav_high_rate_refine_3s` |
+| Optional MP4 AAC case / tighter discovery tolerance | Deferred | See Phase 4 checkboxes |
 
 **Problem:** Discovery alignment (Chromaprint + 11.025 kHz PCM refine on **prepared** clips) lands within ~±1 s on corpus cases but can leave **20–50 ms** residual error — Chromaprint item quantization (~124 ms bins) minus partial correction. That is audible as a faint echo when tracks are overlaid. Current `pcm_lag_adjustment_secs` runs on normalized 11 kHz PCM and uses incorrect slice alignment for positive offsets (`left_start` / `right_start` swapped relative to domain convention `t_B = t_A + offset`).
 
@@ -120,47 +133,42 @@ Internal Phase 1 result may mirror these fields without `Serialize`.
 
 ### Phase 0 — Prerequisite spike
 
-- [ ] Fix `pcm_lag_adjustment_secs` slice alignment via shared `aligned_slice_starts`
-- [ ] Unit test: +3 s leader at 11 kHz prepared pair — `\|refined − true\| < 50 ms` after fix (today ~29 ms error with refine on/off identical)
-- [ ] Unit test: −5 s leader (B ahead) — same ±50 ms target
-- [ ] Document Chromaprint residual on oracle pair without high-rate pass (baseline for cross-layer test)
+- [x] Fix `pcm_lag_adjustment_secs` slice alignment via shared `aligned_slice_starts`
+- [x] Unit test: +3 s leader at 11 kHz prepared pair — `\|refined − true\| < 50 ms` after fix (today ~29 ms error with refine on/off identical)
+- [x] Unit test: −5 s leader (B ahead) — same ±50 ms target
+- [ ] Document Chromaprint residual on oracle pair without high-rate pass (baseline for cross-layer test) — *implicit in cross-layer test*
 
 ### Phase 1 — Core refinement + unit tests
 
-- [ ] Plan doc
-- [ ] `pick_holdout_window(duration, discovery_windows, segment_length) -> Option<ClipWindow>` in `policies.rs` (implement once; verification plan imports same helper)
-- [ ] `aligned_slice_starts(offset_samples: i64) -> (usize, usize)` in `offset_refinement.rs`
-- [ ] `pcm_lag_adjustment_secs(left, right, offset_secs, window_secs)` — use shared starts; keep 20 s window for discovery path
-- [ ] `refine_offset_high_rate_segment(left, right, offset_secs, segment_secs, max_adjustment_secs) -> Option<f64>` — returns **adjustment only**
-- [ ] `refine_recommended_offset_high_rate(sessions, tracks, windows, delta, config) -> HighRateRefinementResult` in application layer
-- [ ] Unit tests: known Δ + synthetic native-rate chirp segments → adjustment within 1 sample at 44.1 kHz
-- [ ] Unit tests: window picker (same cases as verification plan, shorter `segment_length`)
+- [x] Plan doc
+- [x] `pick_holdout_window(duration, discovery_windows, segment_length) -> Option<ClipWindow>` in `policies.rs` (implement once; verification plan imports same helper)
+- [x] `aligned_slice_starts(offset_samples: i64) -> (usize, usize)` in `offset_refinement.rs`
+- [x] `pcm_lag_adjustment_secs(left, right, offset_secs, window_secs)` — use shared starts; keep 20 s window for discovery path
+- [x] `refine_holdout_segment_lag` — returns **adjustment only** (planned name: `refine_offset_high_rate_segment`)
+- [x] `apply_high_rate_refinement` in application layer (planned name: `refine_recommended_offset_high_rate`)
+- [x] Unit tests: known Δ + synthetic native-rate chirp segments → adjustment within 1 sample at 44.1 kHz
+- [x] Unit tests: window picker (same cases as verification plan, shorter `segment_length`)
 
 ### Phase 2 — Wire + cross-layer coupling test
 
-- [ ] Call high-rate refine from `AlignVideos::execute()` when flag on (Phase 1: hard-code `true` in test only; production wire can stay behind flag default false)
-- [ ] Record winning track indices in `align_best_track_pair`
-- [ ] **`cross_layer_high_rate_refine_tightens_wav_leader_3s`** in `src/application/testing/` (new module or `corpus_fixtures.rs`):
-  - Generate 44.1 kHz / 120 s chirp pair, +3 s leader on B
-  - `AlignVideos` with `target_sample_rate = 11025`, `refine_offset_with_pcm = true`, `window_slide_secs = 0`
-  - Assert discovery Δ within existing ±1 s tolerance (~2.97 s expected)
-  - Run high-rate hold-out refine on **native** re-extract (SymphoniaMediaReader + Chromaprint stack from prior alignment — full cross-layer)
-  - Assert **final** Δ within **±50 ms** of 3.0 s
-- [ ] `tracing::debug` for adjustment, peak, skip reasons
+- [x] Call high-rate refine from `AlignVideos::execute()` when flag on (Phase 1: hard-code `true` in test only; production wire can stay behind flag default false)
+- [x] Record winning track indices in `align_best_track_pair` — *via `AlignOutcome { track_a, track_b }`*
+- [x] **`cross_layer_high_rate_refine_tightens_wav_leader_3s`** in `align_videos.rs` tests
+- [x] `tracing::debug` for adjustment, peak, skip reasons
 
 ### Phase 3 — Reporting + CLI
 
-- [ ] `high_rate_refinement` on `AlignmentResult`; update `recommended_offset_secs` when `applied`
-- [ ] Human + JSON output; progress phase: `High-rate offset refinement...`
-- [ ] CLI `--refine-offset-high-rate`
-- [ ] Document in PLAN.md; note interaction with `refine_offset_with_pcm` (sequential, not replacement)
+- [x] `high_rate_refinement` on `AlignmentResult`; update `recommended_offset_secs` when `applied`
+- [x] Human + JSON output; progress phase: `High-rate offset refinement...`
+- [x] CLI `--refine-offset-high-rate`
+- [x] Document in PLAN.md; note interaction with `refine_offset_with_pcm` (sequential, not replacement)
 
 ### Phase 4 — Corpus + tighter policy
 
-- [ ] Manifest case `wav_high_rate_refine_3s` (generated 44.1 kHz, flag on, ±50 ms)
-- [ ] Optional: `mp4_aac_high_rate_refine_3s` (encoded; relax tolerance to ±100 ms if codec priming dominates)
-- [ ] Tighten default discovery corpus tolerance only after Phase 0 slice fix is stable
-- [ ] Archive this doc
+- [x] Manifest case `wav_high_rate_refine_3s` (generated 44.1 kHz, flag on, ±50 ms)
+- [ ] Optional: `mp4_aac_high_rate_refine_3s` (encoded; relax tolerance to ±100 ms if codec priming dominates) — *deferred*
+- [ ] Tighten default discovery corpus tolerance only after Phase 0 slice fix is stable — *deferred*
+- [x] Archive this doc
 
 ---
 
@@ -359,4 +367,4 @@ Skip high-rate refinement (`skipped: true`, `applied: false`, discovery Δ uncha
 - `src/domain/resample.rs` — rate mismatch on hold-out pair only
 - `src/application/testing/audio_fixtures.rs` — 44.1 kHz chirp pair for cross-layer test
 - [TEMP-offset-verification-plan.md](TEMP-offset-verification-plan.md) — shared window picker; diagnostic lag-0 (no Δ change)
-- [BACKLOG.md](../BACKLOG.md) — add item when work starts
+- [BACKLOG.md](../BACKLOG.md) — high-rate refinement done (2026-06-06)
