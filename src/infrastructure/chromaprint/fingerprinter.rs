@@ -112,6 +112,7 @@ mod tests {
         MonoPcmClip {
             sample_rate,
             samples,
+            decode_error_skips: 0,
         }
     }
 

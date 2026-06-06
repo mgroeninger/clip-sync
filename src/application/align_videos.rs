@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::application::config::AppConfig;
 use crate::application::error::{AppError, FingerprintError};
+use crate::application::high_rate_refinement::apply_high_rate_refinement;
 use crate::application::offset_refinement::refine_offset_estimate;
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
@@ -66,11 +67,25 @@ where
             .media_reader
             .open(&MediaSource::new(request.video_b.clone()))?;
 
-        let result = if request.config.alignment.try_all_tracks {
+        let outcome = if request.config.alignment.try_all_tracks {
             self.align_best_track_pair(&session_a, &session_b, &request)?
         } else {
             self.align_single_track_pair(&session_a, &session_b, &request)?
         };
+
+        let mut result = outcome.result;
+        apply_high_rate_refinement(
+            &session_a,
+            &session_b,
+            &outcome.track_a,
+            &outcome.track_b,
+            &outcome.discovery_windows,
+            outcome.duration_a,
+            outcome.duration_b,
+            &request.config.alignment,
+            &mut result,
+            self.progress,
+        );
 
         log_alignment_summary(&result, self.progress);
 
@@ -82,13 +97,21 @@ where
         session_a: &MR::Session,
         session_b: &MR::Session,
         request: &AlignVideosRequest,
-    ) -> Result<AlignmentResult, AppError> {
+    ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
         let extracted_a =
             self.extract_clips(session_a, &plan, &request.config.clip, "video A", None)?;
         let extracted_b =
             self.extract_clips(session_b, &plan, &request.config.clip, "video B", None)?;
-        self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)
+        let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
+        Ok(AlignmentOutcome {
+            result,
+            track_a: extracted_a.track,
+            track_b: extracted_b.track,
+            discovery_windows: extracted_a.windows,
+            duration_a: extracted_a.duration,
+            duration_b: extracted_b.duration,
+        })
     }
 
     fn align_best_track_pair(
@@ -96,7 +119,7 @@ where
         session_a: &MR::Session,
         session_b: &MR::Session,
         request: &AlignVideosRequest,
-    ) -> Result<AlignmentResult, AppError> {
+    ) -> Result<AlignmentOutcome, AppError> {
         let tracks_a = session_a.list_tracks()?;
         let tracks_b = session_b.list_tracks()?;
         let decodable_a: Vec<&AudioTrack> = tracks_a.iter().filter(|track| track.decodable).collect();
@@ -107,7 +130,7 @@ where
         }
 
         let plan = request.config.clip.as_plan();
-        let mut best: Option<(AlignmentResult, f32)> = None;
+        let mut best: Option<(AlignmentOutcome, f32)> = None;
 
         for track_a in &decodable_a {
             for track_b in &decodable_b {
@@ -131,13 +154,21 @@ where
                 )?;
                 let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
                 let score = mean_aligned_confidence(&result, request.config.alignment.min_match_score);
+                let outcome = AlignmentOutcome {
+                    result,
+                    track_a: extracted_a.track,
+                    track_b: extracted_b.track,
+                    discovery_windows: extracted_a.windows,
+                    duration_a: extracted_a.duration,
+                    duration_b: extracted_b.duration,
+                };
                 if best.as_ref().is_none_or(|(_, best_score)| score > *best_score) {
-                    best = Some((result, score));
+                    best = Some((outcome, score));
                 }
             }
         }
 
-        best.map(|(result, _)| result).ok_or_else(|| {
+        best.map(|(outcome, _)| outcome).ok_or_else(|| {
             AppError::Alignment(crate::application::error::AlignmentError::EngineFailed(
                 "no track pair produced an alignment".into(),
             ))
@@ -232,6 +263,8 @@ where
         Ok(build_alignment_result(
             &extracted_a.windows,
             &estimates,
+            &extracted_a.decode_skips,
+            &extracted_b.decode_skips,
             config.alignment.min_match_score,
             config.alignment.prefer_start_clip,
             config.alignment.require_consistent_offsets,
@@ -269,8 +302,21 @@ where
 
         self.progress.phase(&format_clip_plan(label, &windows));
 
-        let mut raw_clips = Vec::with_capacity(windows.len());
-        for (index, window) in windows.iter().enumerate() {
+        let mut extract_order: Vec<usize> = (0..windows.len()).collect();
+        if windows.len() > 1 {
+            extract_order.sort_by_key(|&index| windows[index].start);
+            let chronological: Vec<usize> = (0..windows.len()).collect();
+            if extract_order != chronological {
+                self.progress.phase(&format!(
+                    "Extracting {} clip(s) in chronological order ({label})",
+                    windows.len()
+                ));
+            }
+        }
+
+        let mut raw_clips: Vec<Option<MonoPcmClip>> = vec![None; windows.len()];
+        for (step, &index) in extract_order.iter().enumerate() {
+            let window = &windows[index];
             let extract_window = expand_window_for_slide(
                 window,
                 clip_config.window_slide_secs,
@@ -278,7 +324,7 @@ where
             );
             let progress_label = format!(
                 "Extracting clip {}/{} ({label}, {})",
-                index + 1,
+                step + 1,
                 windows.len(),
                 format_duration(window.duration())
             );
@@ -287,15 +333,35 @@ where
             if let Some(target_rate) = clip_config.target_sample_rate {
                 clip = resample_mono_pcm(&clip, target_rate);
             }
-            raw_clips.push(clip);
+            raw_clips[index] = Some(clip);
         }
+
+        let raw_clips: Vec<MonoPcmClip> = raw_clips
+            .into_iter()
+            .map(|clip| clip.expect("every clip window was extracted"))
+            .collect();
+        let decode_skips: Vec<u32> = raw_clips
+            .iter()
+            .map(|clip| clip.decode_error_skips)
+            .collect();
 
         Ok(ExtractedClips {
             raw_clips,
+            decode_skips,
             windows,
             duration,
+            track: track.clone(),
         })
     }
+}
+
+struct AlignmentOutcome {
+    result: AlignmentResult,
+    track_a: AudioTrack,
+    track_b: AudioTrack,
+    discovery_windows: Vec<ClipWindow>,
+    duration_a: std::time::Duration,
+    duration_b: std::time::Duration,
 }
 
 fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool {
@@ -332,8 +398,10 @@ fn mean_aligned_confidence(result: &AlignmentResult, min_match_score: f32) -> f3
 
 struct ExtractedClips {
     raw_clips: Vec<crate::domain::MonoPcmClip>,
+    decode_skips: Vec<u32>,
     windows: Vec<ClipWindow>,
     duration: std::time::Duration,
+    track: AudioTrack,
 }
 
 fn log_alignment_summary(result: &AlignmentResult, progress: &impl ProgressReporter) {
@@ -357,6 +425,17 @@ fn log_alignment_summary(result: &AlignmentResult, progress: &impl ProgressRepor
             }
         )),
         None => progress.phase("Recommended offset: none (no confident clip matches)"),
+    }
+
+    if let Some(refine) = &result.high_rate_refinement {
+        if refine.applied {
+            progress.phase(&format!(
+                "High-rate refinement: {:+.3}s adjustment (peak {:.2})",
+                refine.adjustment_secs, refine.correlation_peak
+            ));
+        } else if refine.skipped {
+            progress.phase("High-rate refinement skipped");
+        }
     }
 
     if let Some(overlap) = result.start_overlap {
@@ -800,5 +879,74 @@ mod tests {
             "confidence={}",
             response.result.clips[0].confidence
         );
+    }
+
+    #[test]
+    fn cross_layer_high_rate_refine_tightens_wav_leader_3s() {
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
+        use crate::application::config::ChromaprintPreset;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 120;
+        const OFFSET_SECS: u32 = 3;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_offset_chirp_wav_pair(
+            temp.path(),
+            SAMPLE_RATE,
+            TOTAL_SECS,
+            OFFSET_SECS,
+        );
+
+        let config = AppConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(11_025),
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: crate::application::config::AlignmentConfig {
+                refine_offset_with_pcm: true,
+                refine_offset_high_rate: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute should succeed");
+
+        let offset = response
+            .result
+            .recommended_offset_secs
+            .expect("expected aligned offset");
+        assert!(response.result.start_aligned);
+        assert!(
+            (offset - f64::from(OFFSET_SECS)).abs() <= 0.050,
+            "offset={offset}, expected about +{OFFSET_SECS}"
+        );
+        let refine = response
+            .result
+            .high_rate_refinement
+            .as_ref()
+            .expect("high-rate refinement report");
+        assert!(refine.applied, "refine={refine:?}");
     }
 }

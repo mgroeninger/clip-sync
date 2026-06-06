@@ -64,7 +64,5 @@ Default is `false` because track-pair brute force multiplies decode work. Prefer
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
-- `wav_leader_30s` case id uses **+15s** proxy (+30s exceeds Chromaprint on 60s clips)
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
-- Large-offset accuracy (`+30s`+) — engine / clip-length investigation

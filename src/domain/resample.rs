@@ -12,8 +12,8 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
     }
 
     let input_rate = clip.sample_rate as usize;
-    let output_rate = target_rate as usize;
 
+    let output_rate = target_rate as usize;
     let mut resampler = match FftFixedIn::<f32>::new(
         input_rate,
         output_rate,
@@ -60,6 +60,7 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
     MonoPcmClip {
         sample_rate: target_rate,
         samples,
+        decode_error_skips: clip.decode_error_skips,
     }
 }
 
@@ -85,6 +86,7 @@ fn linear_resample_fallback(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip
     MonoPcmClip {
         sample_rate: target_rate,
         samples: output,
+        decode_error_skips: clip.decode_error_skips,
     }
 }
 

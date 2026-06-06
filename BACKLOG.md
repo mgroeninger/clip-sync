@@ -18,20 +18,21 @@ Phased sequence based on impact, risk, and dependencies. Items within a phase ca
 
 Next: [Phase 2](#phase-2--maintainability-and-perf-do-next).
 
-### Phase 2 — Maintainability and perf (do next)
-|---|------|-----------|
-| 3 | [Split `media_reader.rs`](#split-media_readerrs) | ~1,400-line file blocks every Symphonia change |
-| 4 | [Sorted-window extraction](#sorted-window-extraction-session-reuse-follow-up) | Natural follow-up to session reuse; measurable multi-clip perf |
+### Phase 2 — Maintainability and perf ✅
 
-Do the split **before** bitrate probe, duration hardening, or decode logging refactors spread further.
+**Done (2026-06-06):** split symphonia into `duration`, `probe`, `session`, `extract`, `media_reader_tests`; chronological extract order in `extract_clips`.
 
-### Phase 3 — Algorithm research (parallel spike, not a quick fix)
+Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 
-| # | Item | Rationale |
-|---|------|-----------|
-| 5 | [Large-offset alignment accuracy](#large-offset-alignment-accuracy) | Needs measurement matrix (offset × clip length × preset); PCM refine ±1 s cannot fix coarse errors |
+| # | Item | Status |
+|---|------|--------|
+| 5 | [Large-offset alignment accuracy](#large-offset-alignment-accuracy) | Done |
 
-Run a spike before coding: decide product limit vs longer clips vs multi-pass alignment.
+### Phase 3 — Large-offset alignment ✅
+
+**Done (2026-06-06):** PCM template discover near coarse Chromaprint estimate (downsampled search + full-rate refine on coarse hint and top peaks); dynamic `pcm_lag_adjustment` range on long clips; corpus cases at 15 / 30 / 60 s leaders.
+
+Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 
 ### Phase 4 — Edge cases and semantics
 
@@ -71,50 +72,17 @@ Implement repetition before or alongside verification (shared config section, sa
 
 ### Large-offset alignment accuracy
 
-**Status:** Open — **research track**, not a quick fix.
+**Status:** Done (2026-06-06).
 
-**Problem:** Chromaprint degrades when leader offset is large relative to clip length. Corpus `wav_leader_30s` uses **+15 s** proxy; true **+30 s** on 60 s clips measures ~16 s. PCM refinement (`offset_refinement.rs`) only adjusts ±1 s around coarse estimate.
+**Problem:** Chromaprint degrades when leader offset is large relative to clip length. True **+30 s** on 60 s clips measured ~16 s; PCM refinement only adjusted ±1 s around coarse estimate.
 
-**Impact:** Long-start delays (minutes) may get plausible but wrong offsets.
-
-**Direction:**
-
-- Spike: matrix of leader offset × clip length × Chromaprint preset
-- Options: longer windows, preset tuning, multi-pass (coarse → seek → refine), extend PCM refine range when clips allow
-- Add corpus cases at 15 / 30 / 60 s with explicit tolerances; restore +30 s expectation when within bounds
+**Resolution:** `pcm_discover_offset` in `offset_refinement.rs` — template match in a window around the coarse estimate (downsampled scan + full-rate refine on coarse hint and top peaks); expanded `pcm_lag_adjustment` cap on long clips. Corpus: `wav_leader_15s`, `wav_leader_30s`, `wav_leader_60s`.
 
 **References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/offset_refinement.rs`, `tests/corpus/manifest.toml`
 
 ---
 
 ## Medium priority
-
-### Split `media_reader.rs`
-
-**Problem:** ~1,400 lines: probe, open, session cache, seek, decode, duration estimation, FDK-AAC, inline tests. Every codec change touches one file.
-
-**Impact:** Review fatigue, merge conflicts, slow onboarding.
-
-**Direction:** Split into `probe.rs`, `session.rs`, `extract.rs`, `duration.rs`; keep `error_mapping.rs`; move tests with modules. **No behaviour change** in the split PR.
-
-**References:** `src/infrastructure/symphonia/media_reader.rs`
-
----
-
-### Sorted-window extraction (session reuse follow-up)
-
-**Problem:** Session reuse keeps one format reader, but extracts seek in clip-plan order (start → end → interior). Non-monotonic order causes backward seeks on long files.
-
-**Impact:** Partial perf win from session reuse; redundant I/O on hour-long multi-clip runs.
-
-**Direction:**
-
-- Sort windows by start time before extract; map results back to clip index
-- Wall-time assertion on `two_clip_consistent` or new long multi-clip case
-
-**References:** `src/application/align_videos.rs`, [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
-
----
 
 ### Clip self-repetition check
 
@@ -325,11 +293,25 @@ Implement after or alongside repetition (shared config, same align loop).
 
 ### Phase 1 — Silent decode degradation
 
-**Done:** `DecodeError` skips logged at `debug`; aggregate `warn` when extract completes with skips; fail after 64 consecutive decode errors. Complements existing `decode_shortfall_limit`.
+**Done:** `DecodeError` skips logged at `debug`; aggregate `warn` when extract completes with skips; fail after 64 consecutive decode errors. Complements existing `decode_shortfall_limit`. Skip counts on `ClipMatch` (`video_a_decode_skips`, `video_b_decode_skips`) in JSON; human lines when `--verbose` / `show_diagnostics`.
 
-**Remaining:** surface skip count in `--verbose` / JSON (optional follow-up).
+**References:** `src/infrastructure/symphonia/extract.rs`, `src/domain/alignment.rs`, `src/infrastructure/cli/output.rs`
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`
+---
+
+### Phase 2 — Split `media_reader.rs`
+
+**Done:** `duration.rs`, `probe.rs`, `session.rs`, `extract.rs`, `media_reader_tests.rs`; `mod.rs` re-exports `SymphoniaMediaReader`.
+
+**References:** `src/infrastructure/symphonia/`
+
+---
+
+### Phase 2 — Sorted-window extraction
+
+**Done:** `extract_clips` sorts windows by start time before decode; results mapped back to clip index. Progress message when order differs from plan order.
+
+**References:** `src/application/align_videos.rs`
 
 ---
 
@@ -337,17 +319,15 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done:** One probe per file per run; format reader + per-track decoders reused across extracts. Shared `open_format_reader` + `probe_from_format`. `two_clip_consistent` has `max_wall_secs = 30`.
 
-**Remaining:** sorted-window extraction (medium priority).
-
 **References:** [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
 
 ---
 
 ### Multi-track documentation (`try_all_tracks`)
 
-**Done:** CLI `--try-all-tracks`, config `alignment.try_all_tracks`, PLAN and [corpus-validation.md](docs/corpus-validation.md) document dual-track behaviour and corpus cases (`mp4_dual_track_decoy`, `mp4_dual_track_wrong_default`).
+**Done:** CLI `--try-all-tracks`, config, PLAN, corpus-validation; default track policy fixed (Phase 1).
 
-**Remaining:** default track **policy** (high priority above).
+**References:** `docs/corpus-validation.md`
 
 ---
 

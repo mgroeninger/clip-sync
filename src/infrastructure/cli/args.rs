@@ -50,6 +50,10 @@ pub struct Cli {
     /// at 48 kHz chosen over main program at 44.1 kHz). Slower: decodes each track pair.
     #[arg(long)]
     pub try_all_tracks: bool,
+
+    /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment.
+    #[arg(long)]
+    pub refine_offset_high_rate: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

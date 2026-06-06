@@ -189,6 +189,7 @@ mod tests {
     fn tone_clip_from(sample_rate: u32, start_index: u64, seconds: u32) -> MonoPcmClip {
         MonoPcmClip {
             sample_rate,
+            decode_error_skips: 0,
             samples: tone_samples(
                 sample_rate,
                 start_index,
@@ -230,6 +231,7 @@ mod tests {
         MonoPcmClip {
             sample_rate,
             samples,
+            decode_error_skips: 0,
         }
     }
 

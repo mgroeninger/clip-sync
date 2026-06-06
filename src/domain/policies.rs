@@ -93,6 +93,64 @@ fn secs_to_duration(secs: f64) -> Duration {
     Duration::from_secs_f64(secs.max(0.0))
 }
 
+/// Pick a hold-out window on the shorter file's timeline, avoiding discovery windows when possible.
+pub fn pick_holdout_window(
+    duration: Duration,
+    discovery_windows: &[ClipWindow],
+    segment_length: Duration,
+) -> Option<ClipWindow> {
+    if duration < segment_length {
+        return None;
+    }
+
+    let segment_secs = segment_length.as_secs_f64();
+    let duration_secs = duration.as_secs_f64();
+
+    if discovery_windows.len() <= 1 {
+        let start_secs = duration_secs / 3.0;
+        let end_secs = (start_secs + segment_secs).min(duration_secs);
+        if end_secs - start_secs < segment_secs {
+            return None;
+        }
+        return Some(ClipWindow::new(
+            secs_to_duration(start_secs),
+            secs_to_duration(end_secs),
+            ClipLabel::Interior,
+        ));
+    }
+
+    let gap_start = discovery_windows.first()?.end.as_secs_f64();
+    let gap_end = discovery_windows.last()?.start.as_secs_f64();
+    let start_secs = if gap_end - gap_start >= segment_secs {
+        gap_start + (gap_end - gap_start - segment_secs) / 2.0
+    } else {
+        (duration_secs - segment_secs) / 2.0
+    };
+    let end_secs = start_secs + segment_secs;
+    if end_secs > duration_secs {
+        return None;
+    }
+
+    Some(ClipWindow::new(
+        secs_to_duration(start_secs),
+        secs_to_duration(end_secs),
+        ClipLabel::Interior,
+    ))
+}
+
+pub fn holdout_window_feasible(
+    window_start_secs: f64,
+    segment_length_secs: f64,
+    offset_secs: f64,
+    duration_a_secs: f64,
+    duration_b_secs: f64,
+) -> bool {
+    window_start_secs >= 0.0
+        && window_start_secs + segment_length_secs <= duration_a_secs
+        && window_start_secs + offset_secs >= 0.0
+        && window_start_secs + segment_length_secs + offset_secs <= duration_b_secs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +364,36 @@ mod tests {
             clip_windows(Duration::ZERO, &plan),
             Err(DomainError::InvalidDuration)
         );
+    }
+
+    #[test]
+    fn pick_holdout_window_middle_for_single_clip() {
+        let discovery = vec![ClipWindow::new(Duration::ZERO, mins(15), ClipLabel::Start)];
+        let window = pick_holdout_window(mins(60), &discovery, Duration::from_secs(3)).unwrap();
+        assert_eq!(window.start, Duration::from_secs(20));
+        assert_eq!(window.end, Duration::from_secs(23));
+    }
+
+    #[test]
+    fn pick_holdout_window_fits_two_clip_gap() {
+        let discovery = vec![
+            ClipWindow::new(Duration::ZERO, mins(15), ClipLabel::Start),
+            ClipWindow::new(mins(45), mins(60), ClipLabel::End),
+        ];
+        let window = pick_holdout_window(mins(60), &discovery, Duration::from_secs(3)).unwrap();
+        assert_eq!(window.start, Duration::from_secs(31));
+        assert_eq!(window.end, Duration::from_secs(34));
+    }
+
+    #[test]
+    fn pick_holdout_window_none_when_shorter_than_segment() {
+        let discovery = vec![ClipWindow::new(Duration::ZERO, mins(2), ClipLabel::Start)];
+        assert!(pick_holdout_window(mins(2), &discovery, Duration::from_secs(3)).is_none());
+    }
+
+    #[test]
+    fn holdout_window_feasible_respects_offset() {
+        assert!(holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 120.0));
+        assert!(!holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 12.0));
     }
 }

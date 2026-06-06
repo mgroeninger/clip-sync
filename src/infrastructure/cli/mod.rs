@@ -77,4 +77,7 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     if cli.try_all_tracks {
         config.alignment.try_all_tracks = true;
     }
+    if cli.refine_offset_high_rate {
+        config.alignment.refine_offset_high_rate = true;
+    }
 }

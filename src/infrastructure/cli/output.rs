@@ -4,7 +4,7 @@ use crate::domain::{AlignmentResult, ClipLabel, ClipMatch};
 
 pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<(), AppError> {
     match output.format {
-        OutputFormat::Human => print_human(result),
+        OutputFormat::Human => print_human(output.show_diagnostics, result),
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(result).unwrap());
         }
@@ -13,7 +13,7 @@ pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<
     Ok(())
 }
 
-fn print_human(result: &AlignmentResult) {
+fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
     println!("Alignment report");
     println!("  Start clip aligned: {}", yes_no(result.start_aligned));
 
@@ -22,7 +22,7 @@ fn print_human(result: &AlignmentResult) {
     }
 
     for clip in &result.clips {
-        println!("  {}", format_clip_line(clip));
+        println!("  {}", format_clip_line(clip, show_diagnostics));
     }
 
     match result.recommended_offset_secs {
@@ -53,13 +53,28 @@ fn print_human(result: &AlignmentResult) {
             format_timestamp(overlap.shared_length_secs)
         );
     }
+
+    if let Some(refine) = &result.high_rate_refinement {
+        if refine.applied {
+            println!(
+                "  High-rate refinement: {:+.3}s adjustment (peak {:.2})",
+                refine.adjustment_secs, refine.correlation_peak
+            );
+        } else if show_diagnostics {
+            let reason = refine
+                .skip_reason
+                .as_deref()
+                .unwrap_or("not applied");
+            println!("  High-rate refinement: skipped ({reason})");
+        }
+    }
 }
 
-fn format_clip_line(clip: &ClipMatch) -> String {
+fn format_clip_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
     let label = clip_label_name(clip.label);
     let window = format_window(clip.window_start_secs, clip.window_end_secs);
 
-    if clip.aligned {
+    let mut line = if clip.aligned {
         format!(
             "{label} clip {window}: aligned, offset {:+.3}s (confidence {:.2})",
             clip.offset_secs.unwrap_or(0.0),
@@ -70,7 +85,18 @@ fn format_clip_line(clip: &ClipMatch) -> String {
             "{label} clip {window}: not aligned (confidence {:.2})",
             clip.confidence
         )
+    };
+
+    if show_diagnostics {
+        if clip.video_a_decode_skips > 0 || clip.video_b_decode_skips > 0 {
+            line.push_str(&format!(
+                " [decode skips: A={}, B={}]",
+                clip.video_a_decode_skips, clip.video_b_decode_skips
+            ));
+        }
     }
+
+    line
 }
 
 fn format_window(start_secs: f64, end_secs: f64) -> String {

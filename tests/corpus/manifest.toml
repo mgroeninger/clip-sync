@@ -169,15 +169,38 @@ require_consistent_offsets = true
 expect_offsets_consistent = false
 expect_recommended = false
 
-# +30s exceeds Chromaprint accuracy on 60s clips (measures ~16s); use +15s as large-offset proxy.
+# PCM discover + refine recovers large Chromaprint error on 60s clips.
 [[case]]
-id = "wav_leader_30s"
+id = "wav_leader_15s"
 tier = "generated"
 generator = "offset_chirp_pair"
 format = "wav"
 total_secs = 120
 offset_secs = 15
 expected_offset_secs = 15.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "wav_leader_30s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+total_secs = 120
+offset_secs = 30
+expected_offset_secs = 30.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "wav_leader_60s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+total_secs = 180
+clip_length_secs = 120
+offset_secs = 60
+expected_offset_secs = 60.0
 expect_aligned = true
 expect_recommended = true
 
@@ -202,6 +225,20 @@ expected_offset_secs = 3.0
 expect_aligned = true
 expect_recommended = true
 compare_refine_pcm = true
+
+[[case]]
+id = "wav_high_rate_refine_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+sample_rate = 44100
+total_secs = 120
+offset_secs = 3
+expected_offset_secs = 3.0
+tolerance_secs = 0.05
+expect_aligned = true
+expect_recommended = true
+refine_offset_high_rate = true
 
 [[case]]
 id = "near_silence_window"

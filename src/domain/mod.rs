@@ -10,7 +10,8 @@ pub mod policies;
 pub mod resample;
 
 pub use alignment::{
-    AlignmentResult, ClipMatch, ClipMatchEstimate, Fingerprint, build_alignment_result,
+    AlignmentResult, ClipMatch, ClipMatchEstimate, Fingerprint, HighRateRefinement,
+    build_alignment_result, refresh_start_overlap,
 };
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
@@ -22,5 +23,5 @@ pub use pcm_preparation::{
     expand_window_for_slide, prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     PcmPreparationOptions,
 };
-pub use policies::{clip_windows, select_best_track};
+pub use policies::{clip_windows, holdout_window_feasible, pick_holdout_window, select_best_track};
 pub use resample::resample_mono_pcm;

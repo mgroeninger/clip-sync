@@ -126,6 +126,12 @@ pub struct CorpusCase {
     pub refine_offset_with_pcm: Option<bool>,
     #[serde(default)]
     pub compare_refine_pcm: bool,
+    #[serde(default)]
+    pub refine_offset_high_rate: Option<bool>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    #[serde(default)]
+    pub tolerance_secs: Option<f64>,
     pub expected_offset_secs: Option<f64>,
     pub expect_aligned: Option<bool>,
     pub expect_recommended: Option<bool>,
@@ -329,7 +335,7 @@ pub fn generate_case_pair(case: &CorpusCase, defaults: &CorpusDefaults) -> Gener
     require_ffmpeg(case);
 
     let total_secs = case.total_secs.unwrap_or(DEFAULT_TOTAL_SECS);
-    let sample_rate = defaults.target_sample_rate;
+    let sample_rate = case.sample_rate.unwrap_or(defaults.target_sample_rate);
 
     let temp = tempfile::tempdir().expect("tempdir");
     let dir = temp.path();
@@ -425,6 +431,9 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AppConfig {
     if let Some(refine_offset_with_pcm) = case.refine_offset_with_pcm {
         config.alignment.refine_offset_with_pcm = refine_offset_with_pcm;
     }
+    if let Some(refine_offset_high_rate) = case.refine_offset_high_rate {
+        config.alignment.refine_offset_high_rate = refine_offset_high_rate;
+    }
 
     config
 }
@@ -503,11 +512,13 @@ pub fn assert_corpus_expectations(
         let actual = result
             .recommended_offset_secs
             .unwrap_or_else(|| panic!("case {}: missing recommended offset", case.id));
+        let tolerance = case
+            .tolerance_secs
+            .unwrap_or(defaults.tolerance_secs);
         assert!(
-            (actual - expected_offset).abs() <= defaults.tolerance_secs,
-            "case {}: offset {actual}, expected {expected_offset} ± {}",
+            (actual - expected_offset).abs() <= tolerance,
+            "case {}: offset {actual}, expected {expected_offset} ± {tolerance}",
             case.id,
-            defaults.tolerance_secs
         );
     }
 

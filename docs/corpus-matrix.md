@@ -39,7 +39,9 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 |---------|------|--------|--------|----|-----|-----|---------|------------------|
 | `wav_baseline_0s` | B | WAV | 0 | 1 | 1 | 120s | chirp | aligned; offset ≈ 0; recommended |
 | `wav_leader_3s` | B | WAV | +3s | 1 | 1 | 120s | chirp | aligned; offset ≈ +3; recommended |
-| `wav_leader_30s` | A | WAV | +30s | 1 | 1 | 180s | chirp | aligned; offset ≈ +30; recommended |
+| `wav_leader_15s` | A | WAV | +15s | 1 | 1 | 120s | chirp | aligned; offset ≈ +15; recommended |
+| `wav_leader_30s` | A | WAV | +30s | 1 | 1 | 120s | chirp | aligned; offset ≈ +30; PCM discover; recommended |
+| `wav_leader_60s` | A | WAV | +60s | 1 | 1 | 180s / 120s clip | chirp | aligned; offset ≈ +60; recommended |
 | `wav_b_ahead_5s` | A | WAV | −5s | 1 | 1 | 120s | chirp | aligned; offset ≈ −5; recommended |
 | `mp3_leader_3s` | A | MP3 | +3s | 1 | 1 | 120s | chirp | aligned; offset ≈ +3; recommended |
 | `mp3_no_duration_tag` | A | MP3* | +3s | 1 | 1 | 120s | chirp | open OK; offset ≈ +3 |
@@ -104,7 +106,9 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `two_clip_consistent` | yes | generated at test time | yes |
 | `two_clip_inconsistent` | yes | generated at test time | yes |
 | `require_consistent_blocks` | yes | generated at test time | yes |
-| `wav_leader_30s` | yes | generated (+15s proxy†) | yes |
+| `wav_leader_15s` | yes | generated at test time | yes |
+| `wav_leader_30s` | yes | generated at test time | yes |
+| `wav_leader_60s` | yes | generated at test time | yes |
 | `reencode_mp3_vs_mp4` | yes | generated (ffmpeg) | yes* |
 | `refine_on_vs_off` | yes | generated at test time | yes |
 | `near_silence_window` | yes | generated at test time | yes |
@@ -112,7 +116,6 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `long_smoke_60m` | yes | external (`#[ignore]`) | manual |
 
 \* Requires `ffmpeg` on PATH; skipped when unavailable.  
-† Case id kept for matrix; true offset is **+15s** (+30s exceeds Chromaprint accuracy on 60s clips).  
 ‡ Requires `--features he-aac` + ffmpeg; skipped otherwise.
 
 Update the status table as new cases land.

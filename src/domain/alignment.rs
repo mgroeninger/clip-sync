@@ -28,6 +28,10 @@ pub struct ClipMatch {
     pub aligned: bool,
     pub offset_secs: Option<f64>,
     pub confidence: f32,
+    /// Corrupt decode packets skipped when extracting this clip from video A.
+    pub video_a_decode_skips: u32,
+    /// Corrupt decode packets skipped when extracting this clip from video B.
+    pub video_b_decode_skips: u32,
 }
 
 /// Shared timeline region implied by the start clip and recommended offset.
@@ -38,6 +42,20 @@ pub struct TimelineOverlap {
     pub video_b_start_secs: f64,
     pub video_b_end_secs: f64,
     pub shared_length_secs: f64,
+}
+
+/// Native-rate hold-out FFT correction applied after discovery alignment.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HighRateRefinement {
+    pub segment_start_secs: f64,
+    pub segment_length_secs: f64,
+    pub adjustment_secs: f64,
+    pub correlation_peak: f64,
+    pub applied: bool,
+    #[serde(default)]
+    pub skipped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
 }
 
 /// Full alignment report for all extracted clip pairs.
@@ -53,6 +71,8 @@ pub struct AlignmentResult {
     pub offsets_consistent: bool,
     /// Overlap on each file's timeline from the start clip match.
     pub start_overlap: Option<TimelineOverlap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub high_rate_refinement: Option<HighRateRefinement>,
 }
 
 const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
@@ -60,6 +80,8 @@ const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
 pub fn build_alignment_result(
     windows: &[ClipWindow],
     estimates: &[ClipMatchEstimate],
+    decode_skips_a: &[u32],
+    decode_skips_b: &[u32],
     min_match_score: f32,
     prefer_start_clip: bool,
     require_consistent_offsets: bool,
@@ -71,7 +93,8 @@ pub fn build_alignment_result(
     let clips: Vec<ClipMatch> = windows
         .iter()
         .zip(estimates.iter())
-        .map(|(window, estimate)| {
+        .enumerate()
+        .map(|(index, (window, estimate))| {
             let aligned = estimate.confidence >= min_match_score;
             ClipMatch {
                 label: window.label,
@@ -80,6 +103,8 @@ pub fn build_alignment_result(
                 aligned,
                 offset_secs: aligned.then_some(estimate.offset_secs),
                 confidence: estimate.confidence,
+                video_a_decode_skips: decode_skips_a.get(index).copied().unwrap_or(0),
+                video_b_decode_skips: decode_skips_b.get(index).copied().unwrap_or(0),
             }
         })
         .collect();
@@ -127,7 +152,22 @@ pub fn build_alignment_result(
         recommended_offset_secs,
         offsets_consistent,
         start_overlap,
+        high_rate_refinement: None,
     }
+}
+
+pub fn refresh_start_overlap(
+    result: &mut AlignmentResult,
+    duration_a: Duration,
+    duration_b: Duration,
+) {
+    result.start_overlap = compute_start_overlap(
+        &result.clips,
+        result.start_aligned,
+        result.recommended_offset_secs,
+        Some(duration_a),
+        Some(duration_b),
+    );
 }
 
 fn compute_start_overlap(
@@ -290,6 +330,8 @@ mod tests {
         let result = build_alignment_result(
             &windows,
             &estimates,
+            &[],
+            &[],
             0.5,
             true,
             true,
@@ -323,7 +365,7 @@ mod tests {
             confidence: 0.2,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
+        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
         assert!(!result.start_aligned);
         assert_eq!(result.end_aligned, None);
         assert_eq!(result.recommended_offset_secs, None);
@@ -338,7 +380,7 @@ mod tests {
             confidence: 0.95,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
+        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
         assert_eq!(result.end_aligned, None);
         assert!(result.start_aligned);
     }
@@ -360,7 +402,7 @@ mod tests {
             },
         ];
 
-        let result = build_alignment_result(&windows, &estimates, 0.5, true, true, None, None);
+        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
         assert!(!result.offsets_consistent);
         assert_eq!(result.recommended_offset_secs, None);
     }
@@ -376,6 +418,8 @@ mod tests {
         let result = build_alignment_result(
             &windows,
             &estimates,
+            &[],
+            &[],
             0.5,
             true,
             true,

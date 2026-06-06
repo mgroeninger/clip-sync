@@ -1,0 +1,187 @@
+use std::time::Duration;
+
+use tracing::debug;
+
+use crate::application::config::AlignmentConfig;
+use crate::application::offset_refinement::refine_holdout_segment_lag;
+use crate::application::ports::{MediaSession, ProgressReporter};
+use crate::domain::{
+    holdout_window_feasible, pick_holdout_window, refresh_start_overlap, AlignmentResult,
+    AudioTrack, ClipWindow, HighRateRefinement, MonoPcmClip,
+};
+
+pub fn apply_high_rate_refinement<MS: MediaSession>(
+    session_a: &MS,
+    session_b: &MS,
+    track_a: &AudioTrack,
+    track_b: &AudioTrack,
+    discovery_windows: &[ClipWindow],
+    duration_a: Duration,
+    duration_b: Duration,
+    alignment: &AlignmentConfig,
+    result: &mut AlignmentResult,
+    progress: &dyn ProgressReporter,
+) {
+    if !alignment.refine_offset_high_rate {
+        return;
+    }
+
+    let Some(offset_secs) = result.recommended_offset_secs else {
+        result.high_rate_refinement = Some(HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 0.0,
+            adjustment_secs: 0.0,
+            correlation_peak: 0.0,
+            applied: false,
+            skipped: true,
+            skip_reason: Some("no recommended offset".into()),
+        });
+        return;
+    };
+
+    progress.phase("High-rate offset refinement...");
+    let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
+    let segment_length_secs = segment_length.as_secs_f64();
+    let pick_duration = duration_a.min(duration_b);
+
+    let Some(holdout) = pick_holdout_window(pick_duration, discovery_windows, segment_length) else {
+        debug!("high-rate refine skipped: hold-out window unavailable");
+        result.high_rate_refinement = Some(HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs,
+            adjustment_secs: 0.0,
+            correlation_peak: 0.0,
+            applied: false,
+            skipped: true,
+            skip_reason: Some("hold-out window unavailable".into()),
+        });
+        return;
+    };
+
+    let window_start_secs = holdout.start.as_secs_f64();
+    let dur_a = duration_a.as_secs_f64();
+    let dur_b = duration_b.as_secs_f64();
+    if !holdout_window_feasible(
+        window_start_secs,
+        segment_length_secs,
+        offset_secs,
+        dur_a,
+        dur_b,
+    ) {
+        debug!("high-rate refine skipped: hold-out infeasible after offset shift");
+        result.high_rate_refinement = Some(HighRateRefinement {
+            segment_start_secs: window_start_secs,
+            segment_length_secs,
+            adjustment_secs: 0.0,
+            correlation_peak: 0.0,
+            applied: false,
+            skipped: true,
+            skip_reason: Some("hold-out window infeasible after offset shift".into()),
+        });
+        return;
+    }
+
+    let window_b_start = Duration::from_secs_f64(window_start_secs + offset_secs);
+    let window_b_end = Duration::from_secs_f64(window_start_secs + segment_length_secs + offset_secs);
+
+    let clip_a = match extract_native_holdout(
+        session_a,
+        track_a,
+        &holdout,
+        progress,
+        "Extracting high-rate hold-out (video A)",
+    ) {
+        Ok(clip) => clip,
+        Err(reason) => {
+            result.high_rate_refinement = Some(skipped_refinement(
+                window_start_secs,
+                segment_length_secs,
+                reason,
+            ));
+            return;
+        }
+    };
+    let clip_b = match extract_native_holdout(
+        session_b,
+        track_b,
+        &ClipWindow::new(window_b_start, window_b_end, holdout.label),
+        progress,
+        "Extracting high-rate hold-out (video B)",
+    ) {
+        Ok(clip) => clip,
+        Err(reason) => {
+            result.high_rate_refinement = Some(skipped_refinement(
+                window_start_secs,
+                segment_length_secs,
+                reason,
+            ));
+            return;
+        }
+    };
+
+    let Some((adjustment_secs, correlation_peak)) = refine_holdout_segment_lag(
+        &clip_a,
+        &clip_b,
+        alignment.high_rate_refine_max_adjustment_secs,
+    ) else {
+        debug!("high-rate refine skipped: correlation did not produce adjustment");
+        result.high_rate_refinement = Some(HighRateRefinement {
+            segment_start_secs: window_start_secs,
+            segment_length_secs,
+            adjustment_secs: 0.0,
+            correlation_peak: 0.0,
+            applied: false,
+            skipped: false,
+            skip_reason: Some("correlation produced no usable adjustment".into()),
+        });
+        return;
+    };
+
+    debug!(
+        adjustment_secs,
+        correlation_peak,
+        window_start_secs,
+        "high-rate offset refinement applied"
+    );
+
+    result.recommended_offset_secs = Some(offset_secs + adjustment_secs);
+    refresh_start_overlap(result, duration_a, duration_b);
+    result.high_rate_refinement = Some(HighRateRefinement {
+        segment_start_secs: window_start_secs,
+        segment_length_secs,
+        adjustment_secs,
+        correlation_peak,
+        applied: true,
+        skipped: false,
+        skip_reason: None,
+    });
+}
+
+fn extract_native_holdout<MS: MediaSession>(
+    session: &MS,
+    track: &AudioTrack,
+    window: &ClipWindow,
+    progress: &dyn ProgressReporter,
+    label: &str,
+) -> Result<MonoPcmClip, String> {
+    session
+        .extract_mono(track, window, progress, label)
+        .map_err(|error| error.to_string())
+}
+
+fn skipped_refinement(
+    segment_start_secs: f64,
+    segment_length_secs: f64,
+    reason: String,
+) -> HighRateRefinement {
+    debug!(reason, "high-rate refine skipped");
+    HighRateRefinement {
+        segment_start_secs,
+        segment_length_secs,
+        adjustment_secs: 0.0,
+        correlation_peak: 0.0,
+        applied: false,
+        skipped: true,
+        skip_reason: Some(reason),
+    }
+}

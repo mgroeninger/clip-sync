@@ -155,6 +155,23 @@ pub struct AlignmentConfig {
     pub refine_offset_with_pcm: bool,
     #[serde(default)]
     pub try_all_tracks: bool,
+    /// After discovery alignment, re-extract a short native-rate hold-out and FFT-refine Δ.
+    #[serde(default)]
+    pub refine_offset_high_rate: bool,
+    /// Hold-out segment length for high-rate refinement (seconds).
+    #[serde(default = "default_high_rate_refine_secs")]
+    pub high_rate_refine_secs: u32,
+    /// Maximum |adjustment| applied from high-rate refinement.
+    #[serde(default = "default_high_rate_refine_max_adjustment_secs")]
+    pub high_rate_refine_max_adjustment_secs: f64,
+}
+
+fn default_high_rate_refine_secs() -> u32 {
+    3
+}
+
+fn default_high_rate_refine_max_adjustment_secs() -> f64 {
+    0.1
 }
 
 fn default_min_match_score() -> f32 {
@@ -173,6 +190,9 @@ impl Default for AlignmentConfig {
             require_consistent_offsets: true,
             refine_offset_with_pcm: true,
             try_all_tracks: false,
+            refine_offset_high_rate: false,
+            high_rate_refine_secs: default_high_rate_refine_secs(),
+            high_rate_refine_max_adjustment_secs: default_high_rate_refine_max_adjustment_secs(),
         }
     }
 }
