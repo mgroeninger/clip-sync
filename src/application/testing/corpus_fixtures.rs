@@ -139,6 +139,8 @@ pub struct CorpusCase {
     #[serde(default)]
     pub requires_he_aac: bool,
     #[serde(default)]
+    pub max_wall_secs: Option<f64>,
+    #[serde(default)]
     pub ignore: bool,
 }
 
@@ -663,7 +665,18 @@ mod tests {
                 assert_corpus_expectations(case, &manifest.defaults, &result);
             }
 
-            eprintln!("case {}: {:.2?}", case.id, started.elapsed());
+            let elapsed = started.elapsed();
+            eprintln!("case {}: {:.2?}", case.id, elapsed);
+
+            if let Some(max_wall_secs) = case.max_wall_secs {
+                assert!(
+                    elapsed.as_secs_f64() <= max_wall_secs,
+                    "case {}: wall time {:.2?} exceeds {:.1}s budget",
+                    case.id,
+                    elapsed,
+                    max_wall_secs
+                );
+            }
         }
     }
 

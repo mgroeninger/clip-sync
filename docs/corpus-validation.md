@@ -42,6 +42,6 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
 - `wav_leader_30s` case id uses **+15s** proxy (+30s exceeds Chromaprint on 60s clips)
-- Session reuse for perf on multi-clip / long files
+- Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Improve `select_best_track` for dual-track containers (bitrate tiebreaker currently inert)
 - Large-offset accuracy (`+30s`+) — engine / clip-length investigation

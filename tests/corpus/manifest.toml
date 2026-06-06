@@ -137,6 +137,7 @@ expected_offset_secs = 12.0
 expect_aligned = true
 expect_recommended = true
 expect_offsets_consistent = true
+max_wall_secs = 30.0
 
 [[case]]
 id = "two_clip_inconsistent"

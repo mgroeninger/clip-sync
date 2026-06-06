@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
@@ -8,7 +9,7 @@ use symphonia::core::audio::{Channels, GenericAudioBufferRef};
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_VORBIS,
 };
-use symphonia::core::codecs::audio::{AudioCodecId, AudioDecoderOptions};
+use symphonia::core::codecs::audio::{AudioCodecId, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
@@ -37,7 +38,7 @@ impl MediaReader for SymphoniaMediaReader {
         let path = source.path();
         ensure_regular_file(path)?;
 
-        let (tracks, duration) = probe_media(path)?;
+        let (tracks, duration, io) = probe_media_reusable(path)?;
         if tracks.is_empty() {
             return Err(fail_media(
                 path,
@@ -73,13 +74,38 @@ impl MediaReader for SymphoniaMediaReader {
         Ok(SymphoniaMediaSession {
             path: path.to_path_buf(),
             tracks,
+            io: RefCell::new(io),
         })
+    }
+}
+
+struct CachedTrackDecoder {
+    decoder: Box<dyn AudioDecoder>,
+    time_base: Option<TimeBase>,
+}
+
+struct MediaIoState {
+    format: Box<dyn symphonia::core::formats::FormatReader>,
+    decoders: HashMap<u32, CachedTrackDecoder>,
+}
+
+impl MediaIoState {
+    fn new(format: Box<dyn symphonia::core::formats::FormatReader>) -> Self {
+        Self {
+            format,
+            decoders: HashMap::new(),
+        }
+    }
+
+    fn open(path: &Path) -> Result<Self, MediaError> {
+        Ok(Self::new(open_format_reader(path)?))
     }
 }
 
 pub struct SymphoniaMediaSession {
     path: PathBuf,
     tracks: Vec<AudioTrack>,
+    io: RefCell<Option<MediaIoState>>,
 }
 
 impl MediaSession for SymphoniaMediaSession {
@@ -94,11 +120,29 @@ impl MediaSession for SymphoniaMediaSession {
         progress: &dyn ProgressReporter,
         label: &str,
     ) -> Result<MonoPcmClip, MediaError> {
-        extract_mono_window(&self.path, track, window, progress, label)
+        ensure_regular_file(&self.path)?;
+
+        let mut io = self.io.borrow_mut();
+        if io.is_none() {
+            debug!(
+                path = %self.path.display(),
+                "reopening format reader for session (probe rewind was unavailable)"
+            );
+            *io = Some(MediaIoState::open(&self.path)?);
+        }
+
+        extract_mono_with_state(
+            &self.path,
+            io.as_mut().expect("session io initialized"),
+            track,
+            window,
+            progress,
+            label,
+        )
     }
 }
 
-fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
+fn open_format_reader(path: &Path) -> Result<Box<dyn symphonia::core::formats::FormatReader>, MediaError> {
     let mut hint = Hint::new();
     if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
         hint.with_extension(extension);
@@ -107,16 +151,103 @@ fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
     let file = File::open(path).map_err(|error| map_io_error(path, "open", error))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
-    let mut format = symphonia::default::get_probe()
+    symphonia::default::get_probe()
         .probe(
             &hint,
             mss,
             FormatOptions::default(),
             MetadataOptions::default(),
         )
-        .map_err(|error| map_probe_error(path, error))?;
+        .map_err(|error| map_probe_error(path, error))
+}
 
-    let media_duration = format_media_duration(format.as_ref());
+fn ensure_track_decoder(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+) -> Result<(), MediaError> {
+    let track_id = track.index;
+    if state.decoders.contains_key(&track_id) {
+        return Ok(());
+    }
+
+    let media_track = state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .ok_or_else(|| {
+            fail_media(
+                path,
+                "extract",
+                Some(track.index),
+                decode_failed(
+                    track.index,
+                    format!("track {track_id} not found in {}", path.display()),
+                ),
+            )
+        })?;
+
+    let audio_params = match media_track.codec_params.clone() {
+        Some(CodecParameters::Audio(params)) => params,
+        _ => {
+            return Err(fail_media(
+                path,
+                "extract",
+                Some(track.index),
+                decode_failed(track.index, "track has no audio codec parameters"),
+            ))
+        }
+    };
+
+    let decoder = codec_registry()
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
+        .map_err(|error| map_decoder_create_error(path, track.index, error))?;
+
+    state.decoders.insert(
+        track_id,
+        CachedTrackDecoder {
+            decoder,
+            time_base: media_track.time_base,
+        },
+    );
+
+    Ok(())
+}
+
+fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
+    let mut format = open_format_reader(path)?;
+    let result = probe_from_format(path, format.as_mut())?;
+    log_media_success(path, "probe");
+    Ok(result)
+}
+
+/// Probe once and retain the `FormatReader` for later extracts (no second probe on first clip).
+fn probe_media_reusable(
+    path: &Path,
+) -> Result<(Vec<AudioTrack>, Duration, Option<MediaIoState>), MediaError> {
+    let mut format = open_format_reader(path)?;
+    let (tracks, duration) = probe_from_format(path, format.as_mut())?;
+    let io = match rewind_format_reader(path, format.as_mut()) {
+        Ok(()) => Some(MediaIoState::new(format)),
+        Err(error) => {
+            debug!(
+                path = %path.display(),
+                error = %error,
+                "could not rewind format reader after probe; will reopen on extract"
+            );
+            None
+        }
+    };
+    log_media_success(path, "probe");
+    Ok((tracks, duration, io))
+}
+
+fn probe_from_format(
+    path: &Path,
+    format: &mut dyn symphonia::core::formats::FormatReader,
+) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
+    let media_duration = format_media_duration(format);
     let mut tracks = Vec::new();
     let mut duration = Duration::ZERO;
 
@@ -154,7 +285,7 @@ fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
         if let Some(estimated) = duration_from_chapters(format.chapters()) {
             duration = estimated;
         } else {
-            duration = scan_container_audio_duration(path, format.as_mut())?;
+            duration = scan_container_audio_duration(path, format)?;
         }
     }
 
@@ -166,8 +297,22 @@ fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
         }
     }
 
-    log_media_success(path, "probe");
     Ok((tracks, duration))
+}
+
+fn rewind_format_reader(
+    path: &Path,
+    format: &mut dyn symphonia::core::formats::FormatReader,
+) -> Result<(), MediaError> {
+    let time = Time::ZERO;
+    let seek_to = SeekTo::Time {
+        time,
+        track_id: None,
+    };
+    format
+        .seek(SeekMode::Accurate, seek_to)
+        .map_err(|error| map_seek_error(path, 0, 0.0, error))?;
+    Ok(())
 }
 
 fn is_audio_decodable(params: &symphonia::core::codecs::audio::AudioCodecParameters) -> bool {
@@ -272,8 +417,9 @@ fn scan_container_audio_duration(
     Ok(max_duration)
 }
 
-fn extract_mono_window(
+fn extract_mono_with_state(
     path: &Path,
+    state: &mut MediaIoState,
     track: &AudioTrack,
     window: &ClipWindow,
     progress: &dyn ProgressReporter,
@@ -288,66 +434,32 @@ fn extract_mono_window(
         ));
     }
 
-    ensure_regular_file(path)?;
-
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
-        hint.with_extension(extension);
-    }
-
-    let file = File::open(path).map_err(|error| map_io_error(path, "open", error))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut format = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(|error| map_probe_error(path, error))?;
-
     let track_id = track.index;
-    let media_track = format
+    ensure_track_decoder(path, state, track)?;
+
+    let cached = state.decoders.get(&track_id).expect("decoder cached");
+    let time_base = cached.time_base;
+    let sample_rate = state
+        .format
         .tracks()
         .iter()
         .find(|candidate| candidate.id == track_id)
-        .ok_or_else(|| {
-            fail_media(
-                path,
-                "extract",
-                Some(track.index),
-                decode_failed(
-                    track.index,
-                    format!("track {track_id} not found in {}", path.display()),
-                ),
-            )
-        })?;
-
-    let audio_params = match media_track.codec_params.clone() {
-        Some(CodecParameters::Audio(params)) => params,
-        _ => {
-            return Err(fail_media(
-                path,
-                "extract",
-                Some(track.index),
-                decode_failed(track.index, "track has no audio codec parameters"),
-            ))
-        }
-    };
-
-    let time_base = media_track.time_base;
-
-    let mut decoder = codec_registry()
-        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
-        .map_err(|error| map_decoder_create_error(path, track.index, error))?;
-
-    let sample_rate = audio_params
-        .sample_rate
-        .filter(|rate| *rate > 0)
+        .and_then(|media_track| match &media_track.codec_params {
+            Some(CodecParameters::Audio(params)) => params
+                .sample_rate
+                .filter(|rate| *rate > 0)
+                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
+            _ => None,
+        })
         .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
 
-    seek_to_window_start(path, format.as_mut(), track_id, window.start)?;
-    decoder.reset();
+    seek_to_window_start(path, state.format.as_mut(), track_id, window.start)?;
+    state
+        .decoders
+        .get_mut(&track_id)
+        .expect("decoder cached")
+        .decoder
+        .reset();
 
     let mut resolved_rate = sample_rate;
     let mut target_samples = resolved_rate.map(|rate| {
@@ -385,14 +497,19 @@ fn extract_mono_window(
             }
         }
 
-        let packet = match format.next_packet() {
+        let packet = match state.format.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => {
                 allow_tail_padding = true;
                 break;
             }
             Err(SymphoniaError::ResetRequired) => {
-                decoder.reset();
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
                 continue;
             }
             Err(error) => {
@@ -434,7 +551,13 @@ fn extract_mono_window(
             }
         }
 
-        let decoded = match decoder.decode(&packet) {
+        let decoded = match state
+            .decoders
+            .get_mut(&track_id)
+            .expect("decoder cached")
+            .decoder
+            .decode(&packet)
+        {
             Ok(decoded) => decoded,
             Err(SymphoniaError::DecodeError(_)) => continue,
             Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
@@ -442,7 +565,12 @@ fn extract_mono_window(
                 break;
             }
             Err(SymphoniaError::ResetRequired) => {
-                decoder.reset();
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
                 continue;
             }
             Err(error) => {
@@ -793,6 +921,21 @@ fn float_to_i16(sample: f32) -> i16 {
 }
 
 #[cfg(test)]
+impl SymphoniaMediaSession {
+    fn has_io_state(&self) -> bool {
+        self.io.borrow().is_some()
+    }
+
+    fn cached_decoder_count(&self) -> usize {
+        self.io
+            .borrow()
+            .as_ref()
+            .map(|io| io.decoders.len())
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
 
@@ -808,6 +951,21 @@ mod tests {
     impl ProgressReporter for NoopProgress {
         fn phase(&self, _message: &str) {}
         fn progress(&self, _label: &str, _current: u64, _total: u64) {}
+    }
+
+    fn session_extract_mono(
+        path: &Path,
+        track: &AudioTrack,
+        window: &ClipWindow,
+        label: &str,
+    ) -> MonoPcmClip {
+        let reader = SymphoniaMediaReader;
+        let session = reader
+            .open(&MediaSource::new(path))
+            .unwrap_or_else(|error| panic!("open session for {}: {error}", path.display()));
+        session
+            .extract_mono(track, window, &NoopProgress, label)
+            .unwrap_or_else(|error| panic!("extract from {}: {error}", path.display()))
     }
 
     fn write_test_wav(path: &Path, sample_rate: u32, seconds: u32) {
@@ -939,11 +1097,72 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip = extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "test")
-            .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "test");
 
         assert_eq!(clip.sample_rate, 44_100);
         assert_eq!(clip.samples.len(), 44_100);
+    }
+
+    #[test]
+    fn session_open_reuses_probe_format_reader() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("open_reuse.wav");
+        write_test_wav(&path, 44_100, 2);
+
+        let reader = SymphoniaMediaReader;
+        let session = reader.open(&MediaSource::new(&path)).unwrap();
+        assert!(
+            session.has_io_state(),
+            "open should retain format reader from probe (no second probe on first extract)"
+        );
+
+        let tracks = session.list_tracks().unwrap();
+        let window = ClipWindow::new(
+            Duration::from_secs(0),
+            Duration::from_secs(1),
+            ClipLabel::Start,
+        );
+        session
+            .extract_mono(&tracks[0], &window, &NoopProgress, "clip")
+            .unwrap();
+        assert_eq!(session.cached_decoder_count(), 1);
+    }
+
+    #[test]
+    fn session_reuses_format_reader_across_extracts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reuse.wav");
+        write_test_wav(&path, 44_100, 4);
+
+        let reader = SymphoniaMediaReader;
+        let session = reader.open(&MediaSource::new(&path)).unwrap();
+        let tracks = session.list_tracks().unwrap();
+
+        assert!(session.has_io_state());
+
+        let start_window = ClipWindow::new(
+            Duration::from_secs(0),
+            Duration::from_secs(1),
+            ClipLabel::Start,
+        );
+        let end_window = ClipWindow::new(
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+            ClipLabel::End,
+        );
+
+        let first = session
+            .extract_mono(&tracks[0], &start_window, &NoopProgress, "start")
+            .unwrap();
+        assert!(session.has_io_state());
+        assert_eq!(session.cached_decoder_count(), 1);
+
+        let second = session
+            .extract_mono(&tracks[0], &end_window, &NoopProgress, "end")
+            .unwrap();
+        assert_eq!(session.cached_decoder_count(), 1);
+        assert_eq!(first.samples.len(), 44_100);
+        assert_eq!(second.samples.len(), 44_100);
     }
 
     #[test]
@@ -981,8 +1200,7 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip = extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "test")
-            .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "test");
 
         assert!((clip.samples.len() as i64 - 44_100).abs() <= sample_count_tolerance(44_100) as i64);
         let peak = clip
@@ -1039,8 +1257,7 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip = extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "mkv")
-            .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "mkv");
         let expected = tracks[0].sample_rate as usize;
         assert!((clip.samples.len() as i64 - expected as i64).abs() <= sample_count_tolerance(tracks[0].sample_rate) as i64);
     }
@@ -1073,8 +1290,7 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip = extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "mp4")
-            .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "mp4");
         let expected = tracks[0].sample_rate as usize;
         assert!((clip.samples.len() as i64 - expected as i64).abs() <= sample_count_tolerance(tracks[0].sample_rate) as i64);
     }
@@ -1106,8 +1322,7 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip = extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "he-aac mp4")
-            .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "he-aac mp4");
         let expected = tracks[0].sample_rate as usize;
         assert!(
             (clip.samples.len() as i64 - expected as i64).abs()
@@ -1153,9 +1368,7 @@ mod tests {
             Duration::from_secs(2),
             ClipLabel::Interior,
         );
-        let clip =
-            extract_mono_window(&path, &tracks[0], &window, &NoopProgress, "he-aac surround mp4")
-                .unwrap();
+        let clip = session_extract_mono(&path, &tracks[0], &window, "he-aac surround mp4");
         let expected = tracks[0].sample_rate as usize;
         assert!(
             (clip.samples.len() as i64 - expected as i64).abs()
