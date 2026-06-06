@@ -23,6 +23,11 @@ pub trait MediaSession {
         progress: &dyn ProgressReporter,
         label: &str,
     ) -> Result<MonoPcmClip, MediaError>;
+
+    /// Rewind the underlying format reader and drop cached decoders before a distant seek.
+    fn reset_io(&self) -> Result<(), MediaError> {
+        Ok(())
+    }
 }
 
 pub trait Fingerprinter {

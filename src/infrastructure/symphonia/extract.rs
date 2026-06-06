@@ -57,188 +57,46 @@ pub(crate) fn extract_mono_with_state(
         })
         .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
 
-    seek_to_window_start(path, state.format.as_mut(), track_id, window.start)?;
-    state
-        .decoders
-        .get_mut(&track_id)
-        .expect("decoder cached")
-        .decoder
-        .reset();
-
-    let mut resolved_rate = sample_rate;
-    let mut target_samples = resolved_rate.map(|rate| {
-        let (start, end) = window_sample_bounds(window, rate);
-        end.saturating_sub(start) as usize
-    });
+    let max_attempts = if window.start.is_zero() { 1 } else { 2 };
     let mut mono_samples = Vec::new();
-    if let Some(rate) = resolved_rate {
-        mono_samples.reserve(window.sample_count_at(rate));
-    }
-    if let (Some(rate), Some(expected)) = (resolved_rate, target_samples) {
-        debug!(
-            path = %path.display(),
-            track = track.index,
-            window_start_secs = window.start.as_secs_f64(),
-            window_end_secs = window.end.as_secs_f64(),
-            expected_samples = expected,
-            sample_rate = rate,
-            "extracting mono clip"
-        );
-    }
-
-    let mut last_reported = 0_u64;
-    let mut finished = false;
-    let mut allow_tail_padding = false;
+    let mut resolved_rate = None::<u32>;
+    let mut target_samples = None::<usize>;
     let mut decode_error_skips = 0_u32;
-    let mut consecutive_decode_errors = 0_u32;
+    let mut allow_tail_padding = false;
 
-    loop {
-        if finished {
-            allow_tail_padding = true;
-            break;
-        }
-        if let Some(target) = target_samples {
-            if mono_samples.len() >= target {
-                break;
-            }
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                window_start_secs = window.start.as_secs_f64(),
+                "seek-based extract produced no audio; retrying via sequential scan from start"
+            );
         }
 
-        let packet = match state.format.next_packet() {
-            Ok(Some(packet)) => packet,
-            Ok(None) => {
-                allow_tail_padding = true;
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                state
-                    .decoders
-                    .get_mut(&track_id)
-                    .expect("decoder cached")
-                    .decoder
-                    .reset();
-                continue;
-            }
-            Err(error) => {
-                return Err(map_decode_loop_error(path, track.index, error));
-            }
+        let seek_start = if attempt == 0 {
+            window.start
+        } else {
+            Duration::ZERO
         };
-
-        if packet.track_id != track_id {
-            continue;
-        }
-
-        if let Some(time_base) = time_base {
-            if let Some(rate) = resolved_rate {
-                let (start_sample, end_sample) = window_sample_bounds(window, rate);
-                let packet_start_sample = timestamp_to_sample(packet.pts, time_base, rate);
-                let packet_end_sample = timestamp_to_sample(
-                    packet.pts.saturating_add(packet.dur),
-                    time_base,
-                    rate,
-                );
-                if packet_end_sample <= start_sample {
-                    continue;
-                }
-                if packet_start_sample >= end_sample {
-                    allow_tail_padding = true;
-                    break;
-                }
-            } else if let (Some(packet_start), Some(packet_end)) = (
-                timestamp_to_std_duration(packet.pts, time_base),
-                timestamp_to_std_duration(packet.pts.saturating_add(packet.dur), time_base),
-            ) {
-                if packet_end <= window.start {
-                    continue;
-                }
-                if packet_start >= window.end {
-                    allow_tail_padding = true;
-                    break;
-                }
-            }
-        }
-
-        let decoded = match state
+        seek_to_window_start(path, state.format.as_mut(), track_id, seek_start)?;
+        state
             .decoders
             .get_mut(&track_id)
             .expect("decoder cached")
             .decoder
-            .decode(&packet)
-        {
-            Ok(decoded) => {
-                consecutive_decode_errors = 0;
-                decoded
-            }
-            Err(SymphoniaError::DecodeError(detail)) => {
-                decode_error_skips += 1;
-                consecutive_decode_errors += 1;
-                debug!(
-                    path = %path.display(),
-                    track = track.index,
-                    skip_count = decode_error_skips,
-                    consecutive = consecutive_decode_errors,
-                    detail = %detail,
-                    "skipped corrupt decode packet"
-                );
-                if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
-                    return Err(fail_media(
-                        path,
-                        "extract",
-                        Some(track.index),
-                        decode_failed(
-                            track.index,
-                            format!(
-                                "too many consecutive decode errors ({decode_error_skips} packets skipped)"
-                            ),
-                        ),
-                    ));
-                }
-                continue;
-            }
-            Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                allow_tail_padding = true;
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                state
-                    .decoders
-                    .get_mut(&track_id)
-                    .expect("decoder cached")
-                    .decoder
-                    .reset();
-                continue;
-            }
-            Err(error) => {
-                return Err(map_decode_loop_error(path, track.index, error));
-            }
-        };
+            .reset();
 
-        if decoded.frames() == 0 {
-            continue;
+        resolved_rate = sample_rate;
+        target_samples = resolved_rate.map(|rate| {
+            let (start, end) = window_sample_bounds(window, rate);
+            end.saturating_sub(start) as usize
+        });
+        mono_samples.clear();
+        if let Some(rate) = resolved_rate {
+            mono_samples.reserve(window.sample_count_at(rate));
         }
-
-        if resolved_rate.is_none() {
-            resolved_rate = Some(decoded.spec().rate());
-            let rate = resolved_rate.unwrap_or(0);
-            if rate == 0 {
-                return Err(fail_media(
-                    path,
-                    "extract",
-                    Some(track.index),
-                    decode_failed(track.index, "missing sample rate"),
-                ));
-            }
-            let (start_sample, end_sample) = window_sample_bounds(window, rate);
-            let expected = end_sample.saturating_sub(start_sample) as usize;
-            if expected == 0 {
-                return Err(fail_media(
-                    path,
-                    "extract",
-                    Some(track.index),
-                    decode_failed(track.index, "clip window is too short to decode"),
-                ));
-            }
-            target_samples = Some(expected);
-            mono_samples.reserve(expected);
+        if let (Some(rate), Some(expected)) = (resolved_rate, target_samples) {
             debug!(
                 path = %path.display(),
                 track = track.index,
@@ -246,39 +104,209 @@ pub(crate) fn extract_mono_with_state(
                 window_end_secs = window.end.as_secs_f64(),
                 expected_samples = expected,
                 sample_rate = rate,
+                seek_start_secs = seek_start.as_secs_f64(),
                 "extracting mono clip"
             );
         }
 
-        let rate = resolved_rate.unwrap_or(0);
-        let target = target_samples.unwrap_or(0);
-        let (start_sample, end_sample) = window_sample_bounds(window, rate);
-        let packet_start_sample = time_base
-            .map(|base| timestamp_to_sample(packet.pts, base, rate))
-            .unwrap_or(start_sample);
-        let trim_start_frames = time_base
-            .map(|base| media_duration_to_frames(packet.trim_start, base, rate))
-            .unwrap_or(0);
+        let mut last_reported = 0_u64;
+        let mut finished = false;
+        allow_tail_padding = false;
+        decode_error_skips = 0_u32;
+        let mut consecutive_decode_errors = 0_u32;
 
-        finished = append_frames_in_window(
-            decoded,
-            &mut WindowCollectContext {
-                packet_start_sample,
-                window_start_sample: start_sample,
-                window_end_sample: end_sample,
-                trim_start_frames,
-                mono_samples: &mut mono_samples,
-                target_samples: target,
-            },
-        );
+        loop {
+            if finished {
+                allow_tail_padding = true;
+                break;
+            }
+            if let Some(target) = target_samples {
+                if mono_samples.len() >= target {
+                    break;
+                }
+            }
 
-        if mono_samples.len().saturating_sub(last_reported as usize) >= rate as usize / 2 {
-            progress.progress(
-                label,
-                mono_samples.len().min(target) as u64,
-                target as u64,
+            let packet = match state.format.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => {
+                    allow_tail_padding = true;
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    state
+                        .decoders
+                        .get_mut(&track_id)
+                        .expect("decoder cached")
+                        .decoder
+                        .reset();
+                    continue;
+                }
+                Err(error) => {
+                    return Err(map_decode_loop_error(path, track.index, error));
+                }
+            };
+
+            if packet.track_id != track_id {
+                continue;
+            }
+
+            if let Some(time_base) = time_base {
+                if let Some(rate) = resolved_rate {
+                    let (start_sample, end_sample) = window_sample_bounds(window, rate);
+                    let packet_start_sample = timestamp_to_sample(packet.pts, time_base, rate);
+                    let packet_end_sample = timestamp_to_sample(
+                        packet.pts.saturating_add(packet.dur),
+                        time_base,
+                        rate,
+                    );
+                    if packet_end_sample <= start_sample {
+                        continue;
+                    }
+                    if packet_start_sample >= end_sample {
+                        allow_tail_padding = true;
+                        break;
+                    }
+                } else if let (Some(packet_start), Some(packet_end)) = (
+                    timestamp_to_std_duration(packet.pts, time_base),
+                    timestamp_to_std_duration(packet.pts.saturating_add(packet.dur), time_base),
+                ) {
+                    if packet_end <= window.start {
+                        continue;
+                    }
+                    if packet_start >= window.end {
+                        allow_tail_padding = true;
+                        break;
+                    }
+                }
+            }
+
+            let decoded = match state
+                .decoders
+                .get_mut(&track_id)
+                .expect("decoder cached")
+                .decoder
+                .decode(&packet)
+            {
+                Ok(decoded) => {
+                    consecutive_decode_errors = 0;
+                    decoded
+                }
+                Err(SymphoniaError::DecodeError(detail)) => {
+                    decode_error_skips += 1;
+                    consecutive_decode_errors += 1;
+                    debug!(
+                        path = %path.display(),
+                        track = track.index,
+                        skip_count = decode_error_skips,
+                        consecutive = consecutive_decode_errors,
+                        detail = %detail,
+                        "skipped corrupt decode packet"
+                    );
+                    if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                        return Err(fail_media(
+                            path,
+                            "extract",
+                            Some(track.index),
+                            decode_failed(
+                                track.index,
+                                format!(
+                                    "too many consecutive decode errors ({decode_error_skips} packets skipped)"
+                                ),
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                    allow_tail_padding = true;
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    state
+                        .decoders
+                        .get_mut(&track_id)
+                        .expect("decoder cached")
+                        .decoder
+                        .reset();
+                    continue;
+                }
+                Err(error) => {
+                    return Err(map_decode_loop_error(path, track.index, error));
+                }
+            };
+
+            if decoded.frames() == 0 {
+                continue;
+            }
+
+            if resolved_rate.is_none() {
+                resolved_rate = Some(decoded.spec().rate());
+                let rate = resolved_rate.unwrap_or(0);
+                if rate == 0 {
+                    return Err(fail_media(
+                        path,
+                        "extract",
+                        Some(track.index),
+                        decode_failed(track.index, "missing sample rate"),
+                    ));
+                }
+                let (start_sample, end_sample) = window_sample_bounds(window, rate);
+                let expected = end_sample.saturating_sub(start_sample) as usize;
+                if expected == 0 {
+                    return Err(fail_media(
+                        path,
+                        "extract",
+                        Some(track.index),
+                        decode_failed(track.index, "clip window is too short to decode"),
+                    ));
+                }
+                target_samples = Some(expected);
+                mono_samples.reserve(expected);
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    window_start_secs = window.start.as_secs_f64(),
+                    window_end_secs = window.end.as_secs_f64(),
+                    expected_samples = expected,
+                    sample_rate = rate,
+                    "extracting mono clip"
+                );
+            }
+
+            let rate = resolved_rate.unwrap_or(0);
+            let target = target_samples.unwrap_or(0);
+            let (start_sample, end_sample) = window_sample_bounds(window, rate);
+            let packet_start_sample = time_base
+                .map(|base| timestamp_to_sample(packet.pts, base, rate))
+                .unwrap_or(start_sample);
+            let trim_start_frames = time_base
+                .map(|base| media_duration_to_frames(packet.trim_start, base, rate))
+                .unwrap_or(0);
+
+            finished = append_frames_in_window(
+                decoded,
+                &mut WindowCollectContext {
+                    packet_start_sample,
+                    window_start_sample: start_sample,
+                    window_end_sample: end_sample,
+                    trim_start_frames,
+                    mono_samples: &mut mono_samples,
+                    target_samples: target,
+                },
             );
-            last_reported = mono_samples.len().min(target) as u64;
+
+            if mono_samples.len().saturating_sub(last_reported as usize) >= rate as usize / 2 {
+                progress.progress(
+                    label,
+                    mono_samples.len().min(target) as u64,
+                    target as u64,
+                );
+                last_reported = mono_samples.len().min(target) as u64;
+            }
+        }
+
+        if !mono_samples.is_empty() {
+            break;
         }
     }
 
@@ -294,6 +322,7 @@ pub(crate) fn extract_mono_with_state(
 
     mono_samples.truncate(target);
     progress.progress(label, mono_samples.len() as u64, target as u64);
+    let decoded_sample_count = mono_samples.len();
 
     if mono_samples.is_empty() {
         return Err(fail_media(
@@ -368,6 +397,7 @@ pub(crate) fn extract_mono_with_state(
         sample_rate: rate,
         samples: mono_samples,
         decode_error_skips,
+        decoded_sample_count: (decoded_sample_count < target).then_some(decoded_sample_count),
     })
 }
 

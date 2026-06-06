@@ -68,11 +68,13 @@ pub fn select_aligned_subclip_pair(
         sample_rate: left.sample_rate,
         samples: left.samples[best_start..left_end].to_vec(),
         decode_error_skips: left.decode_error_skips,
+        decoded_sample_count: None,
     };
     let right_clip = MonoPcmClip {
         sample_rate: right.sample_rate,
         samples: right.samples[best_start..right_end].to_vec(),
         decode_error_skips: right.decode_error_skips,
+        decoded_sample_count: None,
     };
 
     (left_clip, right_clip)
@@ -168,6 +170,7 @@ fn trim_trailing_silence(clip: &MonoPcmClip) -> MonoPcmClip {
         sample_rate: clip.sample_rate,
         samples: clip.samples[..end].to_vec(),
         decode_error_skips: clip.decode_error_skips,
+        decoded_sample_count: clip.decoded_sample_count,
     }
 }
 
@@ -201,6 +204,7 @@ fn peak_normalize(clip: &MonoPcmClip) -> MonoPcmClip {
         sample_rate: clip.sample_rate,
         samples,
         decode_error_skips: clip.decode_error_skips,
+        decoded_sample_count: clip.decoded_sample_count,
     }
 }
 

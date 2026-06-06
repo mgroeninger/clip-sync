@@ -61,6 +61,7 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
         sample_rate: target_rate,
         samples,
         decode_error_skips: clip.decode_error_skips,
+        decoded_sample_count: clip.decoded_sample_count,
     }
 }
 
@@ -87,6 +88,7 @@ fn linear_resample_fallback(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip
         sample_rate: target_rate,
         samples: output,
         decode_error_skips: clip.decode_error_skips,
+        decoded_sample_count: clip.decoded_sample_count,
     }
 }
 

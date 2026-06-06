@@ -190,6 +190,7 @@ mod tests {
         MonoPcmClip {
             sample_rate,
             decode_error_skips: 0,
+            decoded_sample_count: None,
             samples: tone_samples(
                 sample_rate,
                 start_index,
@@ -232,6 +233,7 @@ mod tests {
             sample_rate,
             samples,
             decode_error_skips: 0,
+            decoded_sample_count: None,
         }
     }
 

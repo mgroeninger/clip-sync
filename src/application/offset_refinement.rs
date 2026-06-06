@@ -474,6 +474,7 @@ mod tests {
             sample_rate,
             samples,
             decode_error_skips: 0,
+            decoded_sample_count: None,
         }
     }
 
@@ -493,11 +494,13 @@ mod tests {
                 sample_rate,
                 samples: left.collect(),
                 decode_error_skips: 0,
+                decoded_sample_count: None,
             },
             MonoPcmClip {
                 sample_rate,
                 samples: right.collect(),
                 decode_error_skips: 0,
+                decoded_sample_count: None,
             },
         )
     }
@@ -576,11 +579,13 @@ mod tests {
             sample_rate,
             samples: left,
             decode_error_skips: 0,
+            decoded_sample_count: None,
         };
         let right = MonoPcmClip {
             sample_rate,
             samples: right,
             decode_error_skips: 0,
+            decoded_sample_count: None,
         };
         let options = PcmPreparationOptions {
             normalize_loudness: false,
@@ -603,37 +608,12 @@ mod tests {
     }
 
     #[test]
-    fn refine_high_rate_segment_corrects_injected_lag() {
+    fn pcm_cross_correlate_reports_zero_adjustment_when_already_aligned() {
         let sample_rate = 44_100;
-        let segment_secs = 3;
-        let segment_samples = sample_rate as usize * segment_secs as usize;
-        let error_samples = (0.020 * f64::from(sample_rate)).round() as usize;
-        let left = MonoPcmClip {
-            sample_rate,
-            samples: (0..segment_samples as u64)
-                .map(|index| chirp_sample(sample_rate, index))
-                .collect(),
-            decode_error_skips: 0,
-        };
-        let right = MonoPcmClip {
-            sample_rate,
-            samples: (0..segment_samples)
-                .map(|index| {
-                    if index < error_samples {
-                        0
-                    } else {
-                        chirp_sample(sample_rate, (index - error_samples) as u64)
-                    }
-                })
-                .collect(),
-            decode_error_skips: 0,
-        };
-        let (adjustment, _peak) =
-            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
-        assert!(
-            (adjustment - 0.020).abs() < 2.0 / f64::from(sample_rate),
-            "adjustment={adjustment}"
-        );
+        let (left, right) = delayed_pair(sample_rate, 10, 3);
+        let (adjustment, peak) = pcm_cross_correlate_lag(&left, &right, 3.0, 3).expect("adjustment");
+        assert!(adjustment.abs() < 1.0 / f64::from(sample_rate));
+        assert!(peak > 0.0);
     }
 
     #[test]

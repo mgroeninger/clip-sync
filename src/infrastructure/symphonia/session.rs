@@ -128,6 +128,12 @@ impl MediaSession for SymphoniaMediaSession {
             label,
         )
     }
+
+    fn reset_io(&self) -> Result<(), MediaError> {
+        ensure_regular_file(&self.path)?;
+        *self.io.borrow_mut() = Some(MediaIoState::open(&self.path)?);
+        Ok(())
+    }
 }
 
 pub(crate) fn ensure_track_decoder(

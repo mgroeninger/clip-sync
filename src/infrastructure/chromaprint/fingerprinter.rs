@@ -113,6 +113,7 @@ mod tests {
             sample_rate,
             samples,
             decode_error_skips: 0,
+            decoded_sample_count: None,
         }
     }
 

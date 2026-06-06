@@ -4,6 +4,7 @@ use crate::domain::audio_track::AudioTrack;
 use crate::domain::clip_plan::ClipPlan;
 use crate::domain::clip_window::{ClipLabel, ClipWindow};
 use crate::domain::error::DomainError;
+use crate::domain::mono_pcm_clip::MonoPcmClip;
 
 /// Pick the first decodable audio track in container order.
 ///
@@ -93,6 +94,21 @@ fn secs_to_duration(secs: f64) -> Duration {
     Duration::from_secs_f64(secs.max(0.0))
 }
 
+/// Latest timeline position covered by actually decoded samples (ignores end-of-window silence padding).
+pub fn decoded_timeline_extent(windows: &[ClipWindow], clips: &[MonoPcmClip]) -> Duration {
+    windows
+        .iter()
+        .zip(clips)
+        .map(|(window, clip)| {
+            let rate = f64::from(clip.sample_rate.max(1));
+            let decoded_secs = clip.effective_decoded_sample_count() as f64 / rate;
+            window.start.as_secs_f64() + decoded_secs
+        })
+        .map(Duration::from_secs_f64)
+        .max()
+        .unwrap_or(Duration::ZERO)
+}
+
 /// Pick a hold-out window on the shorter file's timeline, avoiding discovery windows when possible.
 pub fn pick_holdout_window(
     duration: Duration,
@@ -136,6 +152,89 @@ pub fn pick_holdout_window(
         secs_to_duration(end_secs),
         ClipLabel::Interior,
     ))
+}
+
+/// Hold-out placement candidates, most preferred first. Includes fallbacks for inflated duration metadata.
+pub fn holdout_window_candidates(
+    duration: Duration,
+    discovery_windows: &[ClipWindow],
+    segment_length: Duration,
+    offset_secs: f64,
+) -> Vec<ClipWindow> {
+    if duration < segment_length {
+        return Vec::new();
+    }
+
+    let duration_secs = duration.as_secs_f64();
+    let segment_secs = segment_length.as_secs_f64();
+    let mut candidates = Vec::new();
+
+    let mut push_unique = |window: ClipWindow| {
+        if window.end <= window.start {
+            return;
+        }
+        if candidates
+            .iter()
+            .any(|existing: &ClipWindow| {
+                (existing.start.as_secs_f64() - window.start.as_secs_f64()).abs() < 0.001
+            })
+        {
+            return;
+        }
+        candidates.push(window);
+    };
+
+    // Overlap-safe near-start windows first (avoids broken mid-file seeks on some MKV tracks).
+    let min_a_start = (-offset_secs).max(0.0);
+    if min_a_start + segment_secs <= duration_secs {
+        push_unique(ClipWindow::new(
+            secs_to_duration(min_a_start),
+            secs_to_duration(min_a_start + segment_secs),
+            ClipLabel::Interior,
+        ));
+    }
+    let overlap_interior = min_a_start + 30.0;
+    if overlap_interior + segment_secs <= duration_secs && overlap_interior > min_a_start + segment_secs {
+        push_unique(ClipWindow::new(
+            secs_to_duration(overlap_interior),
+            secs_to_duration(overlap_interior + segment_secs),
+            ClipLabel::Interior,
+        ));
+    }
+
+    if let Some(window) = pick_holdout_window(duration, discovery_windows, segment_length) {
+        push_unique(window);
+    }
+
+    let early_start = duration_secs / 6.0;
+    if early_start + segment_secs <= duration_secs {
+        push_unique(ClipWindow::new(
+            secs_to_duration(early_start),
+            secs_to_duration(early_start + segment_secs),
+            ClipLabel::Interior,
+        ));
+    }
+
+    if let Some(first) = discovery_windows.first() {
+        let after_discovery = first.end.as_secs_f64();
+        if after_discovery + segment_secs <= duration_secs {
+            push_unique(ClipWindow::new(
+                secs_to_duration(after_discovery),
+                secs_to_duration(after_discovery + segment_secs),
+                ClipLabel::Interior,
+            ));
+        }
+    }
+
+    if segment_secs <= duration_secs {
+        push_unique(ClipWindow::new(
+            Duration::ZERO,
+            secs_to_duration(segment_secs),
+            ClipLabel::Interior,
+        ));
+    }
+
+    candidates
 }
 
 pub fn holdout_window_feasible(
@@ -368,8 +467,10 @@ mod tests {
 
     #[test]
     fn pick_holdout_window_middle_for_single_clip() {
-        let discovery = vec![ClipWindow::new(Duration::ZERO, mins(15), ClipLabel::Start)];
-        let window = pick_holdout_window(mins(60), &discovery, Duration::from_secs(3)).unwrap();
+        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(15), ClipLabel::Start)];
+        let window =
+            pick_holdout_window(Duration::from_secs(60), &discovery, Duration::from_secs(3))
+                .unwrap();
         assert_eq!(window.start, Duration::from_secs(20));
         assert_eq!(window.end, Duration::from_secs(23));
     }
@@ -377,23 +478,66 @@ mod tests {
     #[test]
     fn pick_holdout_window_fits_two_clip_gap() {
         let discovery = vec![
-            ClipWindow::new(Duration::ZERO, mins(15), ClipLabel::Start),
-            ClipWindow::new(mins(45), mins(60), ClipLabel::End),
+            ClipWindow::new(Duration::ZERO, Duration::from_secs(15), ClipLabel::Start),
+            ClipWindow::new(Duration::from_secs(45), Duration::from_secs(60), ClipLabel::End),
         ];
-        let window = pick_holdout_window(mins(60), &discovery, Duration::from_secs(3)).unwrap();
-        assert_eq!(window.start, Duration::from_secs(31));
-        assert_eq!(window.end, Duration::from_secs(34));
+        let window =
+            pick_holdout_window(Duration::from_secs(60), &discovery, Duration::from_secs(3))
+                .unwrap();
+        assert!((window.start.as_secs_f64() - 28.5).abs() < 0.001);
+        assert!((window.end.as_secs_f64() - 31.5).abs() < 0.001);
     }
 
     #[test]
     fn pick_holdout_window_none_when_shorter_than_segment() {
-        let discovery = vec![ClipWindow::new(Duration::ZERO, mins(2), ClipLabel::Start)];
-        assert!(pick_holdout_window(mins(2), &discovery, Duration::from_secs(3)).is_none());
+        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(2), ClipLabel::Start)];
+        assert!(pick_holdout_window(Duration::from_secs(2), &discovery, Duration::from_secs(3)).is_none());
     }
 
     #[test]
     fn holdout_window_feasible_respects_offset() {
         assert!(holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 120.0));
         assert!(!holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 12.0));
+    }
+
+    #[test]
+    fn decoded_timeline_extent_ignores_silence_padding() {
+        let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start);
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![0; 441_000],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(203 * 44_100),
+        };
+        let extent = decoded_timeline_extent(&[window], &[clip]);
+        assert!((extent.as_secs_f64() - 203.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn holdout_candidates_include_early_fallback() {
+        let discovery =
+            vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start)];
+        let candidates = holdout_window_candidates(
+            Duration::from_secs(203),
+            &discovery,
+            Duration::from_secs(3),
+            0.0,
+        );
+        assert!(candidates.len() >= 2);
+        assert!(candidates.iter().any(|window| window.start.as_secs_f64() < 50.0));
+    }
+
+    #[test]
+    fn holdout_candidates_prefer_overlap_safe_start_for_negative_offset() {
+        let discovery =
+            vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start)];
+        let candidates = holdout_window_candidates(
+            Duration::from_secs(600),
+            &discovery,
+            Duration::from_secs(3),
+            -11.019,
+        );
+        let first = candidates.first().expect("candidate");
+        assert!((first.start.as_secs_f64() - 11.019).abs() < 0.001);
     }
 }

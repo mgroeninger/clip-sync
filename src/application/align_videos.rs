@@ -7,9 +7,10 @@ use crate::application::offset_refinement::refine_offset_estimate;
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::domain::{
-    build_alignment_result, clip_windows, expand_window_for_slide, prepare_clip_for_fingerprint,
-    resample_mono_pcm, select_aligned_subclip_pair, select_best_track, AlignmentResult, AudioTrack,
-    ClipMatchEstimate, ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
+    build_alignment_result, clip_windows, decoded_timeline_extent, expand_window_for_slide,
+    prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair, select_best_track,
+    AlignmentResult, AudioTrack, ClipMatchEstimate, ClipWindow, DomainError, MediaSource,
+    MonoPcmClip, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
@@ -82,6 +83,8 @@ where
             &outcome.discovery_windows,
             outcome.duration_a,
             outcome.duration_b,
+            outcome.decoded_extent_a,
+            outcome.decoded_extent_b,
             &request.config.alignment,
             &mut result,
             self.progress,
@@ -111,6 +114,8 @@ where
             discovery_windows: extracted_a.windows,
             duration_a: extracted_a.duration,
             duration_b: extracted_b.duration,
+            decoded_extent_a: extracted_a.decoded_extent,
+            decoded_extent_b: extracted_b.decoded_extent,
         })
     }
 
@@ -161,6 +166,8 @@ where
                     discovery_windows: extracted_a.windows,
                     duration_a: extracted_a.duration,
                     duration_b: extracted_b.duration,
+                    decoded_extent_a: extracted_a.decoded_extent,
+                    decoded_extent_b: extracted_b.decoded_extent,
                 };
                 if best.as_ref().is_none_or(|(_, best_score)| score > *best_score) {
                     best = Some((outcome, score));
@@ -345,11 +352,14 @@ where
             .map(|clip| clip.decode_error_skips)
             .collect();
 
+        let decoded_extent = decoded_timeline_extent(&windows, &raw_clips);
+
         Ok(ExtractedClips {
             raw_clips,
             decode_skips,
             windows,
             duration,
+            decoded_extent,
             track: track.clone(),
         })
     }
@@ -362,6 +372,8 @@ struct AlignmentOutcome {
     discovery_windows: Vec<ClipWindow>,
     duration_a: std::time::Duration,
     duration_b: std::time::Duration,
+    decoded_extent_a: std::time::Duration,
+    decoded_extent_b: std::time::Duration,
 }
 
 fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool {
@@ -401,6 +413,7 @@ struct ExtractedClips {
     decode_skips: Vec<u32>,
     windows: Vec<ClipWindow>,
     duration: std::time::Duration,
+    decoded_extent: std::time::Duration,
     track: AudioTrack,
 }
 
@@ -547,6 +560,11 @@ mod tests {
                 trim_silence: false,
                 window_slide_secs: 0,
                 ..ClipConfig::default()
+            },
+            alignment: crate::application::config::AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
             },
             ..Default::default()
         }

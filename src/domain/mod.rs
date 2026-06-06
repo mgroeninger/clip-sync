@@ -23,5 +23,8 @@ pub use pcm_preparation::{
     expand_window_for_slide, prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     PcmPreparationOptions,
 };
-pub use policies::{clip_windows, holdout_window_feasible, pick_holdout_window, select_best_track};
+pub use policies::{
+    clip_windows, decoded_timeline_extent, holdout_window_candidates, holdout_window_feasible,
+    pick_holdout_window, select_best_track,
+};
 pub use resample::resample_mono_pcm;

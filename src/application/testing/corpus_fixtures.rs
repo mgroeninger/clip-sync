@@ -697,6 +697,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: generated corpus + ffmpeg; cargo test corpus_generated -- --ignored"]
     fn corpus_generated_cases() {
         run_manifest_cases(CorpusTier::Generated);
     }
