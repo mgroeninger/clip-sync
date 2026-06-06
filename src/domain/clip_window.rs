@@ -24,4 +24,10 @@ impl ClipWindow {
     pub fn duration(&self) -> Duration {
         self.end.saturating_sub(self.start)
     }
+
+    pub fn sample_count_at(&self, sample_rate: u32) -> usize {
+        ((self.duration().as_secs_f64() * f64::from(sample_rate))
+            .floor()
+            .max(1.0)) as usize
+    }
 }

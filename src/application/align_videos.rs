@@ -204,10 +204,11 @@ fn format_clip_plan(label: &str, windows: &[ClipWindow]) -> String {
         .iter()
         .map(|window| {
             format!(
-                "[{}–{}] {}",
+                "[{}–{}] {} ({})",
                 format_duration(window.start),
                 format_duration(window.end),
-                clip_label_name(window.label)
+                clip_label_name(window.label),
+                format_duration(window.duration())
             )
         })
         .collect();
@@ -423,17 +424,14 @@ mod tests {
         let reader = FakeMediaReader::new()
             .with_session(
                 "a.wav",
-                FakeMediaSession::with_tracks(
-                    vec![crate::domain::AudioTrack {
-                        index: 0,
-                        codec: "test".into(),
-                        channels: 1,
-                        sample_rate: 44_100,
-                        bitrate: None,
-                        duration: None,
-                    }],
-                    mins(3),
-                ),
+                FakeMediaSession::with_tracks(vec![crate::domain::AudioTrack {
+                    index: 0,
+                    codec: "test".into(),
+                    channels: 1,
+                    sample_rate: 44_100,
+                    bitrate: None,
+                    duration: None,
+                }]),
             )
             .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
         let fingerprinter = FakeFingerprinter::new();

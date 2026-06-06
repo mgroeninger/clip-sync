@@ -77,6 +77,12 @@ pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindo
         ClipLabel::End,
     ));
 
+    for window in &windows {
+        if window.duration().is_zero() {
+            return Err(DomainError::EmptyClip);
+        }
+    }
+
     Ok(windows)
 }
 

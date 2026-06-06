@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use crate::domain::{
     AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
@@ -18,7 +16,6 @@ pub trait MediaReader {
 
 pub trait MediaSession {
     fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError>;
-    fn duration(&self) -> Result<Duration, MediaError>;
     fn extract_mono(
         &self,
         track: &AudioTrack,

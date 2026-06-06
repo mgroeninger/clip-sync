@@ -69,7 +69,6 @@ impl MediaReader for SymphoniaMediaReader {
         Ok(SymphoniaMediaSession {
             path: path.to_path_buf(),
             tracks,
-            duration,
         })
     }
 }
@@ -77,16 +76,11 @@ impl MediaReader for SymphoniaMediaReader {
 pub struct SymphoniaMediaSession {
     path: PathBuf,
     tracks: Vec<AudioTrack>,
-    duration: Duration,
 }
 
 impl MediaSession for SymphoniaMediaSession {
     fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
         Ok(self.tracks.clone())
-    }
-
-    fn duration(&self) -> Result<Duration, MediaError> {
-        Ok(self.duration)
     }
 
     fn extract_mono(
@@ -215,8 +209,10 @@ fn extract_mono_window(
         end.saturating_sub(start) as usize
     });
     let mut mono_samples = Vec::new();
+    if let Some(rate) = resolved_rate {
+        mono_samples.reserve(window.sample_count_at(rate));
+    }
     if let (Some(rate), Some(expected)) = (resolved_rate, target_samples) {
-        mono_samples.reserve(expected);
         debug!(
             path = %path.display(),
             track = track.index,
@@ -346,13 +342,15 @@ fn extract_mono_window(
 
         finished = append_frames_in_window(
             decoded,
-            packet_start_sample,
-            start_sample,
-            end_sample,
-            packet.trim_start(),
-            &mut sample_buffer,
-            &mut mono_samples,
-            target,
+            &mut WindowCollectContext {
+                packet_start_sample,
+                window_start_sample: start_sample,
+                window_end_sample: end_sample,
+                trim_start_frames: packet.trim_start(),
+                sample_buffer: &mut sample_buffer,
+                mono_samples: &mut mono_samples,
+                target_samples: target,
+            },
         );
 
         if mono_samples.len().saturating_sub(last_reported as usize) >= rate as usize / 2 {
@@ -424,21 +422,22 @@ fn extract_mono_window(
         "extracted mono clip"
     );
 
-    Ok(MonoPcmClip {
-        sample_rate: rate,
-        samples: mono_samples,
-    })
+    Ok(MonoPcmClip::new(rate, mono_samples))
 }
 
-fn append_frames_in_window(
-    decoded: AudioBufferRef<'_>,
+struct WindowCollectContext<'a> {
     packet_start_sample: u64,
     window_start_sample: u64,
     window_end_sample: u64,
     trim_start_frames: u32,
-    sample_buffer: &mut Option<SampleBuffer<f32>>,
-    mono_samples: &mut Vec<i16>,
+    sample_buffer: &'a mut Option<SampleBuffer<f32>>,
+    mono_samples: &'a mut Vec<i16>,
     target_samples: usize,
+}
+
+fn append_frames_in_window(
+    decoded: AudioBufferRef<'_>,
+    ctx: &mut WindowCollectContext<'_>,
 ) -> bool {
     let spec = *decoded.spec();
     let frame_count = decoded.frames();
@@ -449,30 +448,31 @@ fn append_frames_in_window(
     let channel_count = spec.channels.count().max(1);
     let required_samples = frame_count * channel_count;
 
-    let needs_new_buffer = sample_buffer
+    let needs_new_buffer = ctx
+        .sample_buffer
         .as_ref()
         .map(|buffer| buffer.capacity() < required_samples)
         .unwrap_or(true);
 
     if needs_new_buffer {
-        *sample_buffer = Some(SampleBuffer::<f32>::new(frame_count as u64, spec));
+        *ctx.sample_buffer = Some(SampleBuffer::<f32>::new(frame_count as u64, spec));
     }
 
-    let buffer = sample_buffer.as_mut().expect("sample buffer");
+    let buffer = ctx.sample_buffer.as_mut().expect("sample buffer");
     buffer.clear();
     buffer.copy_interleaved_ref(decoded);
 
-    let trim_start = trim_start_frames as usize;
+    let trim_start = ctx.trim_start_frames as usize;
     for frame_idx in trim_start..frame_count {
-        if mono_samples.len() >= target_samples {
+        if ctx.mono_samples.len() >= ctx.target_samples {
             return true;
         }
 
-        let sample_index = packet_start_sample + (frame_idx - trim_start) as u64;
-        if sample_index >= window_end_sample {
+        let sample_index = ctx.packet_start_sample + (frame_idx - trim_start) as u64;
+        if sample_index >= ctx.window_end_sample {
             return true;
         }
-        if sample_index < window_start_sample {
+        if sample_index < ctx.window_start_sample {
             continue;
         }
 
@@ -482,7 +482,7 @@ fn append_frames_in_window(
         } else {
             frame.iter().sum::<f32>() / frame.len() as f32
         };
-        mono_samples.push(float_to_i16(mono));
+        ctx.mono_samples.push(float_to_i16(mono));
     }
 
     false
@@ -524,11 +524,6 @@ fn seek_to_window_start(
         .map_err(|error| map_seek_error(path, track_id, start.as_secs_f64(), error))?;
 
     Ok(())
-}
-
-fn window_sample_count(window: &ClipWindow, sample_rate: u32) -> usize {
-    let (start, end) = window_sample_bounds(window, sample_rate);
-    end.saturating_sub(start) as usize
 }
 
 fn sample_count_tolerance(sample_rate: u32) -> usize {
@@ -618,13 +613,15 @@ mod tests {
     }
 
     #[test]
-    fn window_sample_count_rounds_up() {
+    fn window_sample_bounds_rounds_up() {
         let window = ClipWindow::new(
             Duration::from_millis(500),
             Duration::from_millis(1500),
             ClipLabel::Start,
         );
-        assert_eq!(window_sample_count(&window, 44_100), 44_100);
+        let (start, end) = window_sample_bounds(&window, 44_100);
+        assert_eq!(end.saturating_sub(start) as usize, 44_100);
+        assert_eq!(window.sample_count_at(44_100), 44_100);
     }
 
     #[test]
@@ -641,13 +638,15 @@ mod tests {
         let mut sample_buffer = None;
         append_frames_in_window(
             AudioBufferRef::F32(Cow::Owned(buffer)),
-            0,
-            0,
-            2,
-            0,
-            &mut sample_buffer,
-            &mut mono,
-            2,
+            &mut WindowCollectContext {
+                packet_start_sample: 0,
+                window_start_sample: 0,
+                window_end_sample: 2,
+                trim_start_frames: 0,
+                sample_buffer: &mut sample_buffer,
+                mono_samples: &mut mono,
+                target_samples: 2,
+            },
         );
 
         assert_eq!(mono.len(), 2);
@@ -667,13 +666,15 @@ mod tests {
         let mut sample_buffer = None;
         append_frames_in_window(
             AudioBufferRef::F32(Cow::Owned(buffer)),
-            9,
-            10,
-            20,
-            0,
-            &mut sample_buffer,
-            &mut mono,
-            1,
+            &mut WindowCollectContext {
+                packet_start_sample: 9,
+                window_start_sample: 10,
+                window_end_sample: 20,
+                trim_start_frames: 0,
+                sample_buffer: &mut sample_buffer,
+                mono_samples: &mut mono,
+                target_samples: 1,
+            },
         );
 
         assert_eq!(mono.len(), 1);
@@ -713,8 +714,9 @@ mod tests {
 
         let reader = SymphoniaMediaReader;
         let session = reader.open(&MediaSource::new(&path)).unwrap();
-        assert_eq!(session.list_tracks().unwrap().len(), 1);
-        assert!(session.duration().unwrap().as_secs() >= 1);
+        let tracks = session.list_tracks().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!(tracks[0].duration.unwrap().as_secs() >= 1);
     }
 
     #[test]

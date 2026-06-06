@@ -68,7 +68,6 @@ impl MediaReader for FakeMediaReader {
 #[derive(Clone)]
 pub struct FakeMediaSession {
     tracks: Vec<AudioTrack>,
-    duration: Duration,
     extract_error: Option<MediaError>,
 }
 
@@ -76,15 +75,13 @@ impl FakeMediaSession {
     pub fn with_duration(duration: Duration) -> Self {
         Self {
             tracks: vec![test_track(duration)],
-            duration,
             extract_error: None,
         }
     }
 
-    pub fn with_tracks(tracks: Vec<AudioTrack>, duration: Duration) -> Self {
+    pub fn with_tracks(tracks: Vec<AudioTrack>) -> Self {
         Self {
             tracks,
-            duration,
             extract_error: None,
         }
     }
@@ -100,10 +97,6 @@ impl MediaSession for FakeMediaSession {
         Ok(self.tracks.clone())
     }
 
-    fn duration(&self) -> Result<Duration, MediaError> {
-        Ok(self.duration)
-    }
-
     fn extract_mono(
         &self,
         _track: &AudioTrack,
@@ -117,11 +110,10 @@ impl MediaSession for FakeMediaSession {
 
         progress.progress(label, 1, 1);
         let sample_rate = 44_100;
-        let sample_count = window_sample_count(window, sample_rate);
-        Ok(MonoPcmClip {
+        Ok(MonoPcmClip::new(
             sample_rate,
-            samples: vec![1_i16; sample_count],
-        })
+            vec![1_i16; window.sample_count_at(sample_rate)],
+        ))
     }
 }
 
@@ -235,7 +227,3 @@ fn test_track(duration: Duration) -> AudioTrack {
     }
 }
 
-fn window_sample_count(window: &ClipWindow, sample_rate: u32) -> usize {
-    let seconds = window.end.saturating_sub(window.start).as_secs_f64();
-    ((seconds * f64::from(sample_rate)).floor().max(1.0)) as usize
-}

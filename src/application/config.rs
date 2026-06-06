@@ -11,7 +11,7 @@ pub const MIN_CLIP_LENGTH: Duration = Duration::from_secs(60);
 pub const DEFAULT_NUM_CLIPS: u32 = 2;
 pub const MIN_NUM_CLIPS: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub clip: ClipConfig,
@@ -21,17 +21,6 @@ pub struct AppConfig {
     pub output: OutputConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            clip: ClipConfig::default(),
-            alignment: AlignmentConfig::default(),
-            output: OutputConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {
