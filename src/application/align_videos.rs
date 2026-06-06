@@ -8,7 +8,7 @@ use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressRep
 use crate::domain::{
     build_alignment_result, clip_windows, expand_window_for_slide, prepare_clip_for_fingerprint,
     resample_mono_pcm, select_aligned_subclip_pair, select_best_track, AlignmentResult, AudioTrack,
-    ClipMatchEstimate, ClipWindow, DomainError, MediaSource, PcmPreparationOptions,
+    ClipMatchEstimate, ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
@@ -298,7 +298,7 @@ where
     }
 }
 
-fn is_skippable_prepare_error(result: &Result<_, DomainError>) -> bool {
+fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool {
     matches!(
         result,
         Err(DomainError::InsufficientAudio) | Err(DomainError::EmptyClip)

@@ -82,7 +82,7 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 - [x] Two-clip consistency
 - [x] Duration-less MP3 open
 - [x] Long smoke (ignored; `long_smoke_60m` in manifest)
-- [ ] HE-AAC (feature-gated; matrix only)
+- [x] HE-AAC (feature-gated; `he_aac_mp4_leader_3s`, skip without `he-aac`)
 
 ---
 
@@ -104,18 +104,15 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `two_clip_consistent` | yes | generated at test time | yes |
 | `two_clip_inconsistent` | yes | generated at test time | yes |
 | `require_consistent_blocks` | yes | generated at test time | yes |
+| `wav_leader_30s` | yes | generated (+15s proxy†) | yes |
+| `reencode_mp3_vs_mp4` | yes | generated (ffmpeg) | yes* |
+| `refine_on_vs_off` | yes | generated at test time | yes |
+| `near_silence_window` | yes | generated at test time | yes |
+| `he_aac_mp4_leader_3s` | yes | generated (ffmpeg) | yes‡ |
 | `long_smoke_60m` | yes | external (`#[ignore]`) | manual |
 
-\* Requires `ffmpeg` on PATH; skipped when unavailable.
-
-### Matrix rows not yet in manifest
-
-| Case ID | Notes |
-|---------|-------|
-| `wav_leader_30s` | Large generated WAV; optional CI stretch |
-| `near_silence_window` | Blocked on clip-skip — see BACKLOG |
-| `he_aac_mp4_leader_3s` | Requires `--features he-aac` + ffmpeg |
-| `reencode_mp3_vs_mp4` | Cross-container pair (A=MP3, B=MP4) |
-| `refine_on_vs_off` | Config A/B comparison case |
+\* Requires `ffmpeg` on PATH; skipped when unavailable.  
+† Case id kept for matrix; true offset is **+15s** (+30s exceeds Chromaprint accuracy on 60s clips).  
+‡ Requires `--features he-aac` + ffmpeg; skipped otherwise.
 
 Update the status table as new cases land.

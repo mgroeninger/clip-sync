@@ -9,9 +9,9 @@ use crate::application::config::{AppConfig, ClipConfig};
 use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::application::testing::audio_fixtures::{
-    write_offset_chirp_wav_pair, write_offset_chirp_wav_pair_with_delay,
-    write_piecewise_offset_chirp_pair, write_tone_wav, write_tone_wav_at_frequency,
-    write_two_clip_inconsistent_pair, ChirpDelayOn,
+    write_near_silence_wav_pair, write_offset_chirp_wav_pair,
+    write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair, write_tone_wav,
+    write_tone_wav_at_frequency, write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
 use crate::application::testing::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentResult;
@@ -122,6 +122,10 @@ pub struct CorpusCase {
     pub require_consistent_offsets: Option<bool>,
     #[serde(default)]
     pub try_all_tracks: Option<bool>,
+    #[serde(default)]
+    pub refine_offset_with_pcm: Option<bool>,
+    #[serde(default)]
+    pub compare_refine_pcm: bool,
     pub expected_offset_secs: Option<f64>,
     pub expect_aligned: Option<bool>,
     pub expect_recommended: Option<bool>,
@@ -132,6 +136,8 @@ pub struct CorpusCase {
     pub expect_exit_code: Option<u32>,
     #[serde(default)]
     pub requires_ffmpeg: bool,
+    #[serde(default)]
+    pub requires_he_aac: bool,
     #[serde(default)]
     pub ignore: bool,
 }
@@ -167,7 +173,9 @@ fn parse_encode_format(format: &str) -> Option<EncodeFormat> {
         "mp4" => Some(EncodeFormat::Mp4Aac),
         "mp4_stereo" => Some(EncodeFormat::Mp4AacStereo),
         "mkv" => Some(EncodeFormat::MkvFlac),
-        "wav" => None,
+        #[cfg(feature = "he-aac")]
+        "mp4_he_aac" => Some(EncodeFormat::Mp4HeAac),
+        "wav" | "cross_mp3_mp4" => None,
         _ => None,
     }
 }
@@ -175,7 +183,7 @@ fn parse_encode_format(format: &str) -> Option<EncodeFormat> {
 fn extension_for_format(format: &str) -> &'static str {
     match format {
         "mp3" | "mp3_no_duration" => "mp3",
-        "mp4" | "mp4_stereo" => "mp4",
+        "mp4" | "mp4_stereo" | "mp4_he_aac" => "mp4",
         "mkv" => "mkv",
         _ => "wav",
     }
@@ -235,6 +243,7 @@ fn write_chirp_pair_wavs(
                 offset_end,
             )
         }
+        Some("near_silence_pair") => write_near_silence_wav_pair(dir, sample_rate, total_secs),
         generator => panic!("case {}: unsupported generator {generator:?}", case.id),
     }
 }
@@ -249,13 +258,34 @@ fn encode_or_rename_pair(
         .format
         .as_deref()
         .expect("generated case needs format");
-    let ext = extension_for_format(format);
-    let path_a = dir.join(format!("{}_a.{ext}", case.id));
-    let path_b = dir.join(format!("{}_b.{ext}", case.id));
+    let (path_a, path_b) = if format == "cross_mp3_mp4" {
+        (
+            dir.join(format!("{}_a.mp3", case.id)),
+            dir.join(format!("{}_b.mp4", case.id)),
+        )
+    } else {
+        let ext = extension_for_format(format);
+        (
+            dir.join(format!("{}_a.{ext}", case.id)),
+            dir.join(format!("{}_b.{ext}", case.id)),
+        )
+    };
 
     if format == "wav" {
         std::fs::rename(&wav_a, &path_a).expect("rename generated a");
         std::fs::rename(&wav_b, &path_b).expect("rename generated b");
+        (path_a, path_b)
+    } else if format == "cross_mp3_mp4" {
+        assert!(
+            ffmpeg_util::encode_audio(&wav_a, &path_a, EncodeFormat::Mp3),
+            "case {}: ffmpeg encode a (mp3) failed",
+            case.id
+        );
+        assert!(
+            ffmpeg_util::encode_audio(&wav_b, &path_b, EncodeFormat::Mp4Aac),
+            "case {}: ffmpeg encode b (mp4) failed",
+            case.id
+        );
         (path_a, path_b)
     } else if format == "mp4_dual" {
         let total_secs = case.total_secs.unwrap_or(DEFAULT_TOTAL_SECS);
@@ -390,8 +420,31 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AppConfig {
     if let Some(try_all_tracks) = case.try_all_tracks {
         config.alignment.try_all_tracks = try_all_tracks;
     }
+    if let Some(refine_offset_with_pcm) = case.refine_offset_with_pcm {
+        config.alignment.refine_offset_with_pcm = refine_offset_with_pcm;
+    }
 
     config
+}
+
+pub fn run_corpus_case_with_config<MR, FP, AL, PR>(
+    use_case: &AlignVideos<'_, MR, FP, AL, PR>,
+    video_a: PathBuf,
+    video_b: PathBuf,
+    config: AppConfig,
+) -> Result<AlignmentResult, AppError>
+where
+    MR: MediaReader,
+    FP: Fingerprinter,
+    AL: Aligner,
+    PR: ProgressReporter,
+{
+    let response = use_case.execute(AlignVideosRequest {
+        video_a,
+        video_b,
+        config,
+    })?;
+    Ok(response.result)
 }
 
 pub fn run_corpus_case<MR, FP, AL, PR>(
@@ -407,12 +460,12 @@ where
     AL: Aligner,
     PR: ProgressReporter,
 {
-    let response = use_case.execute(AlignVideosRequest {
+    run_corpus_case_with_config(
+        use_case,
         video_a,
         video_b,
-        config: build_config(case, defaults),
-    })?;
-    Ok(response.result)
+        build_config(case, defaults),
+    )
 }
 
 pub fn assert_corpus_expectations(
@@ -558,7 +611,12 @@ mod tests {
                 eprintln!("skipping case {}: ffmpeg unavailable", case.id);
                 continue;
             }
+            if case.requires_he_aac && !cfg!(feature = "he-aac") {
+                eprintln!("skipping case {}: he-aac feature not enabled", case.id);
+                continue;
+            }
 
+            let started = std::time::Instant::now();
             let (_guard, video_a, video_b) =
                 resolve_case_paths(case, &manifest.defaults);
 
@@ -577,16 +635,35 @@ mod tests {
                 );
             }
 
-            let result = run_corpus_case(
-                &use_case,
-                case,
-                &manifest.defaults,
-                video_a,
-                video_b,
-            )
-            .unwrap_or_else(|error| panic!("case {} failed: {error}", case.id));
+            if case.compare_refine_pcm {
+                for refine in [true, false] {
+                    let mut config = build_config(case, &manifest.defaults);
+                    config.alignment.refine_offset_with_pcm = refine;
+                    let result = run_corpus_case_with_config(
+                        &use_case,
+                        video_a.clone(),
+                        video_b.clone(),
+                        config,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("case {} (refine={refine}) failed: {error}", case.id)
+                    });
+                    assert_corpus_expectations(case, &manifest.defaults, &result);
+                }
+            } else {
+                let result = run_corpus_case(
+                    &use_case,
+                    case,
+                    &manifest.defaults,
+                    video_a,
+                    video_b,
+                )
+                .unwrap_or_else(|error| panic!("case {} failed: {error}", case.id));
 
-            assert_corpus_expectations(case, &manifest.defaults, &result);
+                assert_corpus_expectations(case, &manifest.defaults, &result);
+            }
+
+            eprintln!("case {}: {:.2?}", case.id, started.elapsed());
         }
     }
 

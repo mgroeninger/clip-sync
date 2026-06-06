@@ -56,9 +56,9 @@ Last updated: 2026-06-06 (corpus validation complete).
 
 ## Real-world corpus & validation
 
-**Status:** Done (2026-06-06).
+**Status:** Done (2026-06-06). Matrix coverage complete (21 manifest cases).
 
-Manifest-driven integration tests under `tests/corpus/` with 16 cases (3 committed, 12 generated, 1 external `#[ignore]`). See [docs/corpus-validation.md](docs/corpus-validation.md) and [docs/corpus-matrix.md](docs/corpus-matrix.md).
+Manifest-driven integration tests under `tests/corpus/` with 21 cases (3 committed, 17 generated, 1 external `#[ignore]`). See [docs/corpus-validation.md](docs/corpus-validation.md) and [docs/corpus-matrix.md](docs/corpus-matrix.md).
 
 | Deliverable | Location |
 |-------------|----------|
@@ -74,28 +74,18 @@ Manifest-driven integration tests under `tests/corpus/` with 16 cases (3 committ
 | MP3 without duration tag fails open | Verified OK (`mp3_no_duration_tag`) |
 | Dual-track `try_all_tracks` false match (identical decoy) | **Fixed** — distinct decoy frequencies per file |
 | Wrong track when decoy has higher sample rate | Documented test (`mp4_dual_track_wrong_default`); use `try_all_tracks` or improve `select_best_track` |
-| Near-silence / `InsufficientAudio` aborts whole run | Follow-up below (clip-skip) |
+| Near-silence / `InsufficientAudio` aborts whole run | **Fixed** — clip-skip in `align_extracted_pair` (`near_silence_window` passes) |
 | Slow re-probe per clip on long media | Follow-up below (session reuse) |
 
-**Corpus follow-up (optional matrix rows):**
+**Corpus follow-up:**
 
-- `wav_leader_30s`, `reencode_mp3_vs_mp4`, `refine_on_vs_off` — not in manifest yet
-- `near_silence_window` — blocked on clip-skip behavior
-- `he_aac_mp4_leader_3s` — `he-aac` feature + ffmpeg
-- Wall-time logging in corpus tests for session-reuse before/after
+- `wav_leader_30s` uses +15s offset as proxy (+30s exceeds Chromaprint on 60s clips)
+- Wall-time per case logged in `corpus_*` tests for session-reuse baseline
+- Session reuse for long / multi-clip perf (see below)
 
 ---
 
 ## Medium priority
-
-### Clip-skip on soft alignment failures
-
-**Status:** Corpus case `near_silence_window` (matrix only) expects graceful handling when a clip window has insufficient audio.
-
-Near-silence or corrupt windows currently abort the run. Options:
-
-- Skip clip and continue when `InsufficientAudio` / low energy gate triggers
-- Surface partial result with per-clip skip reasons
 
 ### Dual-track default track selection
 
@@ -192,6 +182,8 @@ Extract into one helper to avoid drift between probe and extract paths.
 | Default `target_sample_rate` | Default 11025 Hz to match Chromaprint |
 | Real-world corpus harness | 16 manifest cases; `corpus_committed` + `corpus_generated` tests |
 | Dual-track false match in corpus | Distinct decoy tones per file in generator |
+| Clip-skip on insufficient audio | `align_extracted_pair` skips clip; `near_silence_window` passes |
+| Full matrix manifest coverage | 21 cases incl. cross-format, refine compare, near-silence |
 
 ---
 

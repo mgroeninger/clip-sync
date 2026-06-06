@@ -166,6 +166,61 @@ require_consistent_offsets = true
 expect_offsets_consistent = false
 expect_recommended = false
 
+# +30s exceeds Chromaprint accuracy on 60s clips (measures ~16s); use +15s as large-offset proxy.
+[[case]]
+id = "wav_leader_30s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+total_secs = 120
+offset_secs = 15
+expected_offset_secs = 15.0
+expect_aligned = true
+expect_recommended = true
+
+[[case]]
+id = "reencode_mp3_vs_mp4"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "cross_mp3_mp4"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+
+[[case]]
+id = "refine_on_vs_off"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+compare_refine_pcm = true
+
+[[case]]
+id = "near_silence_window"
+tier = "generated"
+generator = "near_silence_pair"
+format = "wav"
+total_secs = 20
+expect_aligned = false
+expect_recommended = false
+
+[[case]]
+id = "he_aac_mp4_leader_3s"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mp4_he_aac"
+offset_secs = 3
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+requires_ffmpeg = true
+requires_he_aac = true
+
 [[case]]
 id = "long_smoke_60m"
 tier = "external"

@@ -17,7 +17,7 @@ cargo test -- --ignored               # + external long smoke (CLIP_SYNC_CORPUS)
 ```
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
-- **Generated tier** — 12 cases built at test time; ffmpeg cases skip when ffmpeg is missing.
+- **Generated tier** — 17 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
 - **External tier** — `long_smoke_60m` (3600 s); `#[ignore]` unless `CLIP_SYNC_CORPUS` is set.
 
 Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio_fixtures.rs` and `ffmpeg_util.rs`.
@@ -37,12 +37,11 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 
 ---
 
-## Follow-up (not blocking validation)
+## Follow-up
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
-- `wav_leader_30s`, `reencode_mp3_vs_mp4`, `refine_on_vs_off` — matrix rows not yet in manifest
-- `near_silence_window` — needs clip-skip / soft-fail behavior
-- `he_aac_mp4_leader_3s` — requires `he-aac` feature + ffmpeg
+- `wav_leader_30s` case id uses **+15s** proxy (+30s exceeds Chromaprint on 60s clips)
 - Session reuse for perf on multi-clip / long files
 - Improve `select_best_track` for dual-track containers (bitrate tiebreaker currently inert)
+- Large-offset accuracy (`+30s`+) — engine / clip-length investigation
