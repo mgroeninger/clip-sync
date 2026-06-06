@@ -1,747 +1,375 @@
 # Backlog
 
-
-
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
-
-
 
 Last updated: 2026-06-06.
 
-
-
-Each item includes a **problem** (what is wrong today), **impact** (why it matters), and **direction** (concrete follow-up).
-
-
+Each item includes **problem**, **impact**, **direction**, and **references**. Temporary implementation plans live under `docs/TEMP-*.md`.
 
 ---
 
+## Recommended order of work
 
+Phased sequence based on impact, risk, and dependencies. Items within a phase can overlap; do not start later phases until earlier correctness work is merged.
+
+### Phase 1 — Silent wrong answers ✅
+
+**Done (2026-06-06):** first decodable track selection; decode skip logging + consecutive-error fail-fast.
+
+Next: [Phase 2](#phase-2--maintainability-and-perf-do-next).
+
+### Phase 2 — Maintainability and perf (do next)
+|---|------|-----------|
+| 3 | [Split `media_reader.rs`](#split-media_readerrs) | ~1,400-line file blocks every Symphonia change |
+| 4 | [Sorted-window extraction](#sorted-window-extraction-session-reuse-follow-up) | Natural follow-up to session reuse; measurable multi-clip perf |
+
+Do the split **before** bitrate probe, duration hardening, or decode logging refactors spread further.
+
+### Phase 3 — Algorithm research (parallel spike, not a quick fix)
+
+| # | Item | Rationale |
+|---|------|-----------|
+| 5 | [Large-offset alignment accuracy](#large-offset-alignment-accuracy) | Needs measurement matrix (offset × clip length × preset); PCM refine ±1 s cannot fix coarse errors |
+
+Run a spike before coding: decide product limit vs longer clips vs multi-pass alignment.
+
+### Phase 4 — Edge cases and semantics
+
+| # | Item | Rationale |
+|---|------|-----------|
+| 6 | [Duration-less files at open](#duration-less-files-at-open) | Partially done; audit remaining gaps |
+| 7 | [Chromaprint no match vs zero-confidence](#chromaprint-no-match-vs-zero-confidence-success) | Freeze user-visible failure contract before JSON changes |
+| 8 | [Bitrate for track selection](#bitrate-for-track-selection) | Probe or remove dead tiebreaker |
+
+### Phase 5 — Validation diagnostics (optional flags, off by default)
+
+| # | Item | Rationale |
+|---|------|-----------|
+| 9 | [Clip self-repetition check](#clip-self-repetition-check) | Surfaces ambiguous internal repeats; see [TEMP-clip-self-repetition-plan.md](docs/TEMP-clip-self-repetition-plan.md) |
+| 10 | [Hold-out offset verification](#hold-out-offset-verification) | Independent check for single-clip runs; shares `ValidationConfig`; see [TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md) |
+
+Implement repetition before or alongside verification (shared config section, same align loop).
+
+### Phase 6 — Architecture cleanup (when feature velocity slows)
+
+| # | Item |
+|---|------|
+| 11 | [Architecture layer leaks](#architecture-domain-and-application-layer-leaks) |
+| 12 | [`MediaSession` interior mutability](#mediasession-interior-mutability) — pair with `session.rs` split |
+| 13 | [Documentation drift (PLAN vs code)](#documentation-drift-plan-vs-code) — after policy decisions land |
+
+### Defer / opportunistic
+
+- [Memory use and PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) — document order-of-magnitude first; optimize when users report pain
+- [Binary-only crate (no `lib.rs`)](#binary-only-crate-no-librs) — when embedding or black-box tests are needed
+- [Log file appender](#log-file-appender), [committed test fixtures](#committed-test-fixtures), [test helper cross-layer coupling](#test-helper-cross-layer-coupling) — as CI/support needs arise
+- [Type and dependency polish](#type-and-dependency-polish), [stringly-typed port errors](#stringly-typed-port-errors), [silent resample fallback](#silent-resample-fallback) — incremental when touching those files
+
+---
 
 ## High priority
 
-
-
-### Dual-track default track selection
-
-
-
-**Problem:** `select_best_track` (`src/domain/policies.rs`) ranks tracks by sample rate, then **fewer** channels, then bitrate. Higher sample rate wins outright, so a secondary commentary or effects track with 48 kHz is chosen over the main 44.1 kHz program audio. The channel tiebreaker also prefers stereo over surround — the opposite of “highest quality” for many containers. Bitrate never breaks ties because it is always `None` at probe (see medium-priority item below).
-
-
-
-Corpus case `mp4_dual_track_wrong_default` demonstrates the failure. `try_all_tracks` brute-forces all decodable pairs and picks the best alignment score, but it is **off by default** and multiplies decode work.
-
-
-
-**Impact:** Wrong track → wrong offset with high confidence. Users with multi-track MP4/MKV get silently bad results unless they discover the hidden flag.
-
-
-
-**Direction:**
-
-
-
-- Revise domain policy: prefer first audio / program / default track on ties; do not assume higher sample rate means “main” mix
-
-- Consider enabling `try_all_tracks` by default when `list_tracks()` returns more than one decodable track (with perf guard)
-
-- Wire bitrate probe (below) or remove dead tiebreaker until data exists
-
-
-
-**References:** `src/domain/policies.rs`, `src/application/align_videos.rs` (`align_best_track_pair`), `tests/corpus/manifest.toml` (`mp4_dual_track_wrong_default`)
-
-
-
----
-
-
-
 ### Large-offset alignment accuracy
 
+**Status:** Open — **research track**, not a quick fix.
 
+**Problem:** Chromaprint degrades when leader offset is large relative to clip length. Corpus `wav_leader_30s` uses **+15 s** proxy; true **+30 s** on 60 s clips measures ~16 s. PCM refinement (`offset_refinement.rs`) only adjusts ±1 s around coarse estimate.
 
-**Problem:** Chromaprint matching is reliable for modest inter-file delays but degrades on large leaders relative to clip length. Corpus case `wav_leader_30s` uses a **+15 s** proxy; the true **+30 s** leader on 60 s clips measures ~16 s — roughly half the true offset. Clip length, fingerprint item duration, and coarse segment clustering all cap how far a match can be resolved in one window.
-
-
-
-PCM refinement (`offset_refinement.rs`) only adjusts within ±1 s of the coarse Chromaprint estimate, so it cannot recover a 14 s coarse error.
-
-
-
-**Impact:** Event recordings where one camera started much later (minutes, not seconds) may report a plausible-looking but wrong offset.
-
-
+**Impact:** Long-start delays (minutes) may get plausible but wrong offsets.
 
 **Direction:**
 
+- Spike: matrix of leader offset × clip length × Chromaprint preset
+- Options: longer windows, preset tuning, multi-pass (coarse → seek → refine), extend PCM refine range when clips allow
+- Add corpus cases at 15 / 30 / 60 s with explicit tolerances; restore +30 s expectation when within bounds
 
-
-- Investigate longer effective windows, Chromaprint preset tuning, or multi-pass alignment (coarse seek + refine)
-
-- Extend PCM refinement range when coarse confidence is high but clips are long enough to cross-correlate at larger lags
-
-- Restore +30 s expectation in manifest once within tolerance
-
-- Add corpus cases bracketing 15 s / 30 s / 60 s leaders with explicit tolerance notes
-
-
-
-**References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/offset_refinement.rs`, `tests/corpus/manifest.toml` (`wav_leader_30s`)
-
-
+**References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/offset_refinement.rs`, `tests/corpus/manifest.toml`
 
 ---
-
-
-
-### Silent decode degradation
-
-
-
-**Problem:** In the extract decode loop (`media_reader.rs`), `SymphoniaError::DecodeError` is caught and **`continue`** — corrupt or partial packets are dropped with no log, counter, or user-visible signal. Extraction can finish with truncated PCM that still fingerprints and may yield a confident false match.
-
-
-
-**Impact:** Damaged files, bad rips, and certain container edge cases produce garbage-in-garbage-out alignment instead of a clear media error.
-
-
-
-**Direction:**
-
-
-
-- Log each skip at `debug`; emit `warn` with aggregate count when extraction completes
-
-- Optionally fail after N consecutive decode errors or when sample count falls far below expected window size
-
-- Surface “partial extract” in diagnostics (`--verbose` / JSON output)
-
-
-
-**References:** `src/infrastructure/symphonia/media_reader.rs` (decode loop), `docs/error-mapping.md`
-
-
-
----
-
-
 
 ## Medium priority
 
-
-
-### Architecture: domain and application layer leaks
-
-
-
-**Problem:** [PLAN.md](PLAN.md) states the domain depends on nothing external and application orchestrates via ports. In practice:
-
-
-
-| Location | External dependency | Stated layer |
-
-|----------|---------------------|--------------|
-
-| `src/domain/resample.rs` | `rubato` | Domain (should be pure) |
-
-| `src/application/offset_refinement.rs` | `cross_correlate` | Application (should use a port) |
-
-| `src/domain/alignment.rs` | `serde::Serialize` on report types | Domain (serialization is presentation) |
-
-
-
-Resampling, PCM refinement, and JSON shape are not behind port traits; they are hard-wired in `AlignVideos`. Ports exist for decode, fingerprint, and align only.
-
-
-
-**Impact:** Harder to swap algorithms, test domain in isolation, or reuse the core as a library. Architecture docs diverge from code, which misleads future contributors.
-
-
-
-**Direction:**
-
-
-
-- Move `resample_mono_pcm` behind a `Resampler` port (adapter uses `rubato`); domain keeps `MonoPcmClip` and policy about target rate
-
-- Move PCM refinement behind an `OffsetRefiner` port (adapter uses `cross_correlate`)
-
-- Move `Serialize` to application/infrastructure DTOs; domain types stay plain structs
-
-- Update PLAN.md dependency table when done
-
-
-
-**References:** `src/domain/resample.rs`, `src/application/offset_refinement.rs`, `src/application/ports.rs`, `PLAN.md` § Architecture
-
-
-
----
-
-
-
 ### Split `media_reader.rs`
 
+**Problem:** ~1,400 lines: probe, open, session cache, seek, decode, duration estimation, FDK-AAC, inline tests. Every codec change touches one file.
 
+**Impact:** Review fatigue, merge conflicts, slow onboarding.
 
-**Problem:** `src/infrastructure/symphonia/media_reader.rs` is ~1,400 lines and owns probe, open, session cache, seek, decode loop, duration estimation, FDK-AAC integration, and a large inline test suite. Every codec or seek change touches one file.
-
-
-
-**Impact:** Review fatigue, merge conflicts, and fear of refactoring the decode path. Onboarding cost for Symphonia work is high.
-
-
-
-**Direction:** Split along natural seams, e.g.:
-
-
-
-- `probe.rs` — hint, open, track list, duration
-
-- `session.rs` — `SymphoniaMediaSession`, `MediaIoState`, decoder cache
-
-- `extract.rs` — seek-to-window, decode loop, mono downmix
-
-- `duration.rs` — container scan / fallback duration estimation
-
-- Keep `error_mapping.rs` as-is; re-export from `mod.rs`
-
-
+**Direction:** Split into `probe.rs`, `session.rs`, `extract.rs`, `duration.rs`; keep `error_mapping.rs`; move tests with modules. **No behaviour change** in the split PR.
 
 **References:** `src/infrastructure/symphonia/media_reader.rs`
 
-
-
 ---
-
-
-
-### `MediaSession` interior mutability
-
-
-
-**Problem:** `SymphoniaMediaSession` stores I/O in `RefCell<Option<MediaIoState>>`. `MediaSession::extract_mono` takes `&self` but mutates format reader and decoder cache. Production code relies on `expect("decoder cached")` and `expect("session io initialized")` for invariants the type system does not enforce.
-
-
-
-**Impact:** Surprising API (looks immutable), `RefCell` panic on re-entrant borrow, not `Sync`, and brittle refactors. Acceptable for single-threaded CLI today; awkward if the tool grows threads or embeds as a library.
-
-
-
-**Direction:**
-
-
-
-- Prefer `extract_mono(&mut self, …)` on the port trait (breaking change — update fakes and use case)
-
-- Or expose an explicit session handle with mutable extract API
-
-- Replace `expect()` with internal helpers that return `MediaError` if cache invariants break
-
-
-
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/application/ports.rs`, [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
-
-
-
----
-
-
-
-### Bitrate for track selection
-
-
-
-**Problem:** `AudioTrack.bitrate` is always `None` at probe. `select_best_track` compares bitrates as a final tiebreaker, but that branch is dead code. Policy looks more sophisticated than it is.
-
-
-
-**Impact:** Misleading domain policy; one less signal for dual-track disambiguation.
-
-
-
-**Direction:**
-
-
-
-- Parse codec-specific headers where available (e.g. MP3 frame headers, AAC ASC)
-
-- Wait for upstream Symphonia average-bitrate support
-
-- Or **remove** bitrate from `select_best_track` until a reliable source exists (prefer honest policy over noop tiebreaker)
-
-
-
-**References:** `src/infrastructure/symphonia/media_reader.rs` (`probe_from_format`), `src/domain/audio_track.rs`, `src/domain/policies.rs`
-
-
-
----
-
-
-
-### Duration-less files at open
-
-
-
-**Problem:** `open` rejects files when no track reports decodable duration (`n_frames` + `time_base`, or format metadata). Some streams and odd MP3 layouts decode successfully but fail at open. End-clip windows and `clip_windows()` require a non-zero duration.
-
-
-
-**Impact:** Valid-ish inputs fail early with “could not determine duration” instead of degrading to a single start clip or estimate-on-first-read.
-
-
-
-**Direction:**
-
-
-
-- Probe duration from format metadata where Symphonia exposes it
-
-- Decode-to-EOF fallback for duration estimation (slow; log and use sparingly)
-
-- Relax open validation when at least one track is decodable; fail at clip planning if duration still unknown
-
-
-
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/domain/policies.rs` (`clip_windows`)
-
-
-
----
-
-
-
-### Chromaprint “no match” vs zero-confidence success
-
-
-
-**Problem:** `ChromaprintAligner` returns `Ok(ClipMatchEstimate { offset_secs: 0.0, confidence: 0.0 })` when no segment matches or fingerprints are empty. That conflates “engine found nothing” with “offset is zero.” `AlignmentError::NoMatch` and `AmbiguousMatch` are defined and documented in [docs/error-mapping.md](docs/error-mapping.md) but marked `#[allow(dead_code)]` — unused.
-
-
-
-Aligner also detects ambiguous clusters (`select_best_segment`) but only downgrades confidence; it never surfaces `AmbiguousMatch`.
-
-
-
-**Impact:** Downstream fusion and logging cannot distinguish failure modes. Reserved error taxonomy docs promise semantics the code does not deliver.
-
-
-
-**Direction:**
-
-
-
-- Map empty segments → low-confidence `Ok` **or** `AlignmentError::NoMatch` consistently with error-mapping doc (pick one contract and test it)
-
-- Map high ambiguity → `AmbiguousMatch { candidates }` when engine-level failure is appropriate
-
-- Remove `dead_code` allows once wired; add adapter unit tests
-
-
-
-**References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/error.rs`, `docs/error-mapping.md`
-
-
-
----
-
-
-
-### Memory use and PCM cloning on long clips
-
-
-
-**Problem:** Default `clip_length` is 15 minutes. Each extract holds full window PCM in `Vec<i16>`. The align path clones clips for preparation (`prepare_clip_for_fingerprint` clones internally; `align_extracted_pair` clones when `window_slide_secs == 0`). Multi-clip × two videos × optional slide padding multiplies resident memory. There is no streaming or chunked fingerprinting.
-
-
-
-**Impact:** Long event recordings can use hundreds of MB RAM per run on modest hardware. Not a functional bug for v1, but a structural ceiling.
-
-
-
-**Direction:**
-
-
-
-- Document memory expectations in PLAN or README (order-of-magnitude for default config)
-
-- Reduce clones: in-place preparation where possible, `Cow` or slice views for fingerprint input
-
-- Longer term: stream PCM through fingerprinter in fixed-size chunks if `rusty-chromaprint` API allows
-
-
-
-**References:** `src/application/align_videos.rs`, `src/domain/pcm_preparation.rs`, `src/domain/mono_pcm_clip.rs`
-
-
-
----
-
-
 
 ### Sorted-window extraction (session reuse follow-up)
 
+**Problem:** Session reuse keeps one format reader, but extracts seek in clip-plan order (start → end → interior). Non-monotonic order causes backward seeks on long files.
 
-
-**Problem:** Session reuse keeps one format reader, but extracts still seek in clip-plan order. When windows are non-monotonic (start clip, end clip, interior), the reader may seek backward repeatedly — wasted I/O on long files compared to chronological decode order.
-
-
-
-**Impact:** Partial perf win from session reuse; multi-clip runs on hour-long files still do redundant seeking.
-
-
+**Impact:** Partial perf win from session reuse; redundant I/O on hour-long multi-clip runs.
 
 **Direction:**
 
+- Sort windows by start time before extract; map results back to clip index
+- Wall-time assertion on `two_clip_consistent` or new long multi-clip case
 
-
-- Sort windows by start time before extract loop; map results back to clip index
-
-- Add corpus wall-time assertion or benchmark on multi-clip long-media case
-
-
-
-**References:** `src/application/align_videos.rs` (`extract_clips`), [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
-
-
+**References:** `src/application/align_videos.rs`, [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
 
 ---
 
+### Clip self-repetition check
 
+**Status:** Not started. Plan: [TEMP-clip-self-repetition-plan.md](docs/TEMP-clip-self-repetition-plan.md).
+
+**Problem:** Clips with internal repetition (loops, duplicated segments) can produce ambiguous Chromaprint matches — cross-file alignment may latch wrong lag with high confidence.
+
+**Impact:** False positives on looped B-roll, rebroadcast segments, or repeated stings within a window.
+
+**Direction (phased):**
+
+- Phase 0: spike `match_fingerprints(&fp, &fp)` on synthetic repeat
+- Phase 1: `ValidationConfig`, `detect_clip_repetition`, wire in align loop, debug logging only
+- Phase 2: `repetition_a` / `repetition_b` on `ClipMatch`, JSON + CLI `--check-clip-repetition`
+- Phase 3: corpus `repeated_segment_in_clip`; optional confidence downgrade when repeat lag ≈ cross-file offset
+
+Off by default. Diagnostic only (exit 0 in v1).
+
+**References:** `docs/TEMP-clip-self-repetition-plan.md`, `src/infrastructure/chromaprint/aligner.rs`, `src/domain/alignment.rs`
+
+---
+
+### Hold-out offset verification
+
+**Status:** Not started. Plan: [TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md).
+
+**Problem:** With `num_clips == 1`, one Chromaprint window is the only evidence. Multi-clip runs compare offsets across windows but never verify “at lag Δ, do shifted regions actually match at zero lag?”
+
+**Impact:** Confident wrong Δ on single-clip runs has no independent check.
+
+**Direction:**
+
+- Shared `ValidationConfig` with repetition check (`verify_offset`, `min_verification_confidence`)
+- After `recommended_offset_secs`, extract hold-out windows shifted by Δ; score lag-0 similarity
+- Report `offset_verified` on `AlignmentResult`; keep offset + warn when unverified (v1)
+
+Implement after or alongside repetition (shared config, same align loop).
+
+**References:** `docs/TEMP-offset-verification-plan.md`, `src/application/align_videos.rs`
+
+---
+
+### Architecture: domain and application layer leaks
+
+**Problem:** PLAN says domain has no external deps; code uses `rubato` in `domain/resample.rs`, `cross_correlate` in `application/offset_refinement.rs`, and `serde::Serialize` on domain report types. Resample/refinement not behind ports.
+
+**Impact:** Harder to test domain in isolation; PLAN misleads contributors.
+
+**Direction:** `Resampler` and `OffsetRefiner` ports; move `Serialize` to application/infrastructure DTOs; update PLAN. Do after `media_reader` split to reduce parallel churn.
+
+**References:** `src/domain/resample.rs`, `src/application/offset_refinement.rs`, `src/application/ports.rs`, `PLAN.md`
+
+---
+
+### `MediaSession` interior mutability
+
+**Problem:** `SymphoniaMediaSession` uses `RefCell<Option<MediaIoState>>`; `extract_mono(&self)` mutates internally. Production code uses `expect("decoder cached")` for invariants.
+
+**Impact:** Surprising API, not `Sync`, brittle refactors.
+
+**Direction:** `extract_mono(&mut self, …)` on port trait (breaking); or explicit mutable session handle. Pair with `session.rs` extraction. Replace `expect()` with `MediaError` returns.
+
+**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/application/ports.rs`
+
+---
+
+### Bitrate for track selection
+
+**Problem:** `AudioTrack.bitrate` always `None` at probe; `select_best_track` bitrate tiebreaker is dead code.
+
+**Impact:** Misleading policy; missed signal for dual-track disambiguation.
+
+**Direction:** Parse codec headers where available; wait for Symphonia; or **remove** tiebreaker until data exists. Do **after** dual-track policy revision.
+
+**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/domain/policies.rs`
+
+---
+
+### Duration-less files at open
+
+**Status:** Partially addressed. `scan_container_audio_duration`, chapter metadata, and corpus case `mp3_no_duration_tag` exist. Some edge cases may still fail at open.
+
+**Problem:** End-clip windows need non-zero duration. Files that decode but lack track duration metadata historically failed early.
+
+**Impact:** Valid-ish inputs rejected instead of degrading gracefully.
+
+**Direction:** Audit remaining failures; relax open when decodable; fail at clip planning if duration still unknown after scan.
+
+**References:** `src/infrastructure/symphonia/media_reader.rs`, `tests/corpus/manifest.toml` (`mp3_no_duration_tag`)
+
+---
+
+### Chromaprint “no match” vs zero-confidence success
+
+**Problem:** Aligner returns `Ok` with zero confidence when no segment matches. `AlignmentError::NoMatch` / `AmbiguousMatch` are documented but unused (`dead_code`). Ambiguity only downgrades confidence.
+
+**Impact:** Failure modes conflated; error-mapping doc over-promises.
+
+**Direction:** Pick one contract (low-confidence `Ok` vs engine errors); wire variants; adapter tests. Do when JSON/failure model is ready to freeze.
+
+**References:** `src/infrastructure/chromaprint/aligner.rs`, `docs/error-mapping.md`
+
+---
+
+### Memory use and PCM cloning on long clips
+
+**Problem:** 15-minute default clips hold full PCM in memory; multiple clones along prepare/align path. No streaming fingerprinting.
+
+**Impact:** Hundreds of MB on long multi-clip runs; structural ceiling.
+
+**Direction:** Document expectations in PLAN; reduce clones (`Cow`, in-place prep); long-term chunked fingerprint if API allows.
+
+**References:** `src/application/align_videos.rs`, `src/domain/pcm_preparation.rs`
+
+---
 
 ## Low priority
 
-
-
 ### Silent resample fallback
 
+**Problem:** `resample_mono_pcm` silently falls back to linear interpolation when `rubato` fails. No log.
 
-
-**Problem:** `resample_mono_pcm` (`domain/resample.rs`) silently falls back to linear interpolation when `rubato` construction or `process_into_buffer` fails. No log, metric, or user-visible diagnostic.
-
-
-
-**Impact:** Poor resample quality can degrade fingerprint accuracy; failures are invisible in traces.
-
-
-
-**Direction:** Log at `warn` on fallback; consider surfacing in verbose diagnostics. Prefer moving resample to infrastructure (see architecture item) so logging is natural at the adapter boundary.
-
-
+**Direction:** `warn` on fallback; natural at infrastructure boundary after resample port move.
 
 **References:** `src/domain/resample.rs`
 
-
-
 ---
-
-
 
 ### Stringly-typed port errors
 
+**Problem:** Port errors use free-form `String` details; no `source()` chains for Symphonia context.
 
-
-**Problem:** `MediaError`, `FingerprintError`, and `AlignmentError` carry free-form `String` details (`OpenFailed`, `DecodeFailed { detail }`, etc.). User messages work via `thiserror`, but structured matching, `source()` chains, and stable adapter tests are harder. Symphonia context is flattened at mapping time.
-
-
-
-**Impact:** Debugging production failures relies on string parsing; error taxonomy drifts as adapters evolve.
-
-
-
-**Direction:**
-
-
-
-- Keep display strings for stderr; add optional structured fields or nested enums where Symphonia categories repeat
-
-- Preserve `#[source]` for I/O errors where appropriate
-
-- Document stable error codes in `docs/error-mapping.md` if JSON output adds machine-readable errors later
-
-
+**Direction:** Structured sub-enums where categories repeat; keep display strings for stderr.
 
 **References:** `src/application/error.rs`, `src/infrastructure/symphonia/error_mapping.rs`
 
-
-
 ---
-
-
 
 ### Type and dependency polish
 
+**Problem:** `Fingerprint` is bare `Vec<u32>`; `PartialEq` on float estimates; unused `anyhow` in `Cargo.toml`; sub-second truncation in subclip selection and config serde.
 
+**Direction:** Newtype `Fingerprint`; remove `anyhow`; document sub-second config limit.
 
-**Problem:** Several small inconsistencies between stated design and Rust types:
-
-
-
-- `Fingerprint` is a public `Vec<u32>`; PLAN describes an opaque blob — no newtype encapsulation
-
-- `ClipMatchEstimate` derives `PartialEq` on `f64`/`f32` — fragile for tests and domain comparisons
-
-- `anyhow` is listed in `Cargo.toml` but unused (project standardized on `thiserror`)
-
-- `select_aligned_subclip_pair` uses `target_duration.as_secs()` — sub-second targets truncate
-
-- Config serde stores `Duration` as whole seconds only (`duration_secs` module)
-
-
-
-**Impact:** Low severity individually; collectively signals “draft” type discipline.
-
-
-
-**Direction:**
-
-
-
-- Newtype `Fingerprint` with private field; accessors for adapter crates
-
-- Remove `PartialEq` from float-bearing estimates or compare with epsilon in tests only
-
-- Remove `anyhow` from dependencies
-
-- Document sub-second config limitation; use `as_secs_f64()` or sample-based counts in subclip selection if sub-second windows matter
-
-
-
-**References:** `src/domain/alignment.rs`, `Cargo.toml`, `src/domain/pcm_preparation.rs`, `src/application/config.rs`
-
-
+**References:** `src/domain/alignment.rs`, `Cargo.toml`, `src/application/config.rs`
 
 ---
-
-
 
 ### Binary-only crate (no `lib.rs`)
 
+**Problem:** Binary-only crate; composition root not reusable for integration tests or embedding.
 
-
-**Problem:** The crate is a single binary (`main.rs` → `infrastructure::cli::run`). Integration tests and external tools cannot depend on a stable library surface; wiring adapters to ports is duplicated wherever the full pipeline is needed outside unit tests with fakes.
-
-
-
-**Impact:** Harder to embed `clip-sync` in other Rust tools or run black-box integration tests against the real composition root.
-
-
-
-**Direction:**
-
-
-
-- Add `src/lib.rs` with `pub mod application`, `domain`, `infrastructure` (or re-export a narrow `clip_sync::run(config) -> Result<…>`)
-
-- Thin `main` calls lib; corpus/integration tests use lib API
-
-
+**Direction:** Add `lib.rs` with thin `main`; optional `clip_sync::run(config)`.
 
 **References:** `src/main.rs`, `src/infrastructure/cli/mod.rs`
 
-
-
 ---
-
-
 
 ### Test helper cross-layer coupling
 
+**Problem:** Infrastructure tests import `application::testing::ffmpeg_util`.
 
-
-**Problem:** Infrastructure unit tests in `media_reader.rs` import `application::testing::ffmpeg_util` (behind `ffmpeg-tests` feature). Application fakes live under `application::testing` but infrastructure tests depend upward on application test modules.
-
-
-
-**Impact:** Layer diagram is violated in test code; moving or splitting test helpers breaks adapter tests.
-
-
-
-**Direction:**
-
-
-
-- Move shared ffmpeg/WAV helpers to `tests/support/` or a `testing` module at crate root available to all `#[cfg(test)]` code
-
-- Keep fakes in application for use-case tests only
-
-
+**Direction:** Move shared helpers to `tests/support/` when splitting `media_reader` tests.
 
 **References:** `src/infrastructure/symphonia/media_reader.rs`, `src/application/testing/`
 
-
-
 ---
-
-
 
 ### Documentation drift (PLAN vs code)
 
+**Problem:** PLAN `num_clips` default vs code; incomplete domain error list; domain purity claim vs `rubato`.
 
+**Direction:** Audit PLAN after track policy and architecture refactors land.
 
-**Problem:** [PLAN.md](PLAN.md) and code disagree in places:
-
-
-
-- PLAN table: `num_clips` default **2**; `ClipConfig` default is **1**
-
-- PLAN domain error list omits `NoDecodableAudioTracks`, `InsufficientAudio`
-
-- PLAN claims domain has no external deps; `rubato` is in domain
-
-
-
-**Impact:** PLAN is treated as architecture contract; drift causes wrong assumptions in reviews and backlog prioritization.
-
-
-
-**Direction:** Audit PLAN against current defaults and module layout; update or add “implemented differences” footnotes until refactors land.
-
-
-
-**References:** `PLAN.md`, `src/application/config.rs`, `src/domain/`
-
-
+**References:** `PLAN.md`, `src/application/config.rs`
 
 ---
-
-
 
 ### Log file appender
 
+**Problem:** `--log-file` parsed but not implemented; init warns users.
 
+**Direction:** `tracing-appender` file layer in `src/infrastructure/logging/mod.rs`.
 
-**Problem:** `LoggingConfig.log_file` and `--log-file` are parsed into config; `init_tracing` warns that file logging is **not yet implemented**. Users may believe logs are being written to disk.
-
-
-
-**Impact:** Missing observability for long batch runs (when batch exists) or support scenarios.
-
-
-
-**Direction:**
-
-
-
-- Add `tracing-appender` or file layer in `src/infrastructure/logging/mod.rs`
-
-- Rotate / flush policy TBD; document in PLAN configuration section
-
-
-
-**References:** `src/infrastructure/logging/mod.rs`, `src/application/config.rs`
-
-
+**References:** `src/infrastructure/logging/mod.rs`
 
 ---
-
-
 
 ### Committed test fixtures
 
+**Problem:** Tier B is 3 WAV pairs; encoded formats need ffmpeg at test time.
 
+**Direction:** Optional tiny committed MP3 for CI without ffmpeg; document required features in corpus README.
 
-**Problem:** Corpus Tier B ships 3 WAV pairs (~3.4 MB). Encoded-format cases generate at test time via ffmpeg; CI without ffmpeg skips Tier A generated cases. No tiny committed MP3/AAC for codec smoke tests in minimal CI.
-
-
-
-**Impact:** Codec regressions may not run on every CI job unless ffmpeg + features are enabled.
-
-
-
-**Direction:**
-
-
-
-- Optional: tiny committed MP3 (or similar) under size budget for CI without ffmpeg
-
-- Keep total fixture size within PLAN “kept small” budget
-
-- Document required CI flags (`ffmpeg-tests`, `he-aac`) in corpus README
-
-
-
-**References:** `tests/corpus/`, `docs/corpus-validation.md`, `Cargo.toml` features
-
-
+**References:** `tests/corpus/`, `Cargo.toml` features
 
 ---
-
-
 
 ## Completed
 
+### Phase 1 — Dual-track default track selection
 
+**Done:** `select_best_track` returns the first decodable track in container order (no sample-rate / channel ranking). Unit tests + `mp4_dual_track_wrong_default` corpus case updated. `--try-all-tracks` still available when program is not muxed first.
 
-### Session reuse / re-probe (Phases 1–3 core)
-
-
-
-**Was:** `extract_mono` re-opened and re-probed on every clip window; typical 2-clip × 2-video run did redundant probe+open cycles after `open`.
-
-
-
-**Done:** One probe per file per alignment run (`probe_media_reusable` at `open`); format reader + per-track decoders reused across extracts. Shared `open_format_reader` + `probe_from_format` for probe and session paths. `two_clip_consistent` has `max_wall_secs = 30` in manifest.
-
-
-
-**Remaining:** sorted-window extraction (see medium priority above).
-
-
-
-**References:** [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md), `src/infrastructure/symphonia/media_reader.rs`
-
-
+**References:** `src/domain/policies.rs`, `tests/corpus/manifest.toml`, `PLAN.md`, `docs/corpus-validation.md`
 
 ---
 
+### Phase 1 — Silent decode degradation
 
+**Done:** `DecodeError` skips logged at `debug`; aggregate `warn` when extract completes with skips; fail after 64 consecutive decode errors. Complements existing `decode_shortfall_limit`.
+
+**Remaining:** surface skip count in `--verbose` / JSON (optional follow-up).
+
+**References:** `src/infrastructure/symphonia/media_reader.rs`
+
+---
+
+### Session reuse / re-probe
+
+**Done:** One probe per file per run; format reader + per-track decoders reused across extracts. Shared `open_format_reader` + `probe_from_format`. `two_clip_consistent` has `max_wall_secs = 30`.
+
+**Remaining:** sorted-window extraction (medium priority).
+
+**References:** [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)
+
+---
+
+### Multi-track documentation (`try_all_tracks`)
+
+**Done:** CLI `--try-all-tracks`, config `alignment.try_all_tracks`, PLAN and [corpus-validation.md](docs/corpus-validation.md) document dual-track behaviour and corpus cases (`mp4_dual_track_decoy`, `mp4_dual_track_wrong_default`).
+
+**Remaining:** default track **policy** (high priority above).
+
+---
+
+### Probe deduplication at open
+
+**Done:** `probe_media_reusable` at `open`; session path shares probe helpers with standalone probe.
+
+---
+
+### Decode shortfall limits
+
+**Done:** Extract fails when decoded sample count falls far below expected window (`decode_shortfall_limit`), with tail-padding tolerance on long clips. Does not replace decode-skip logging.
+
+**References:** `src/infrastructure/symphonia/media_reader.rs`
+
+---
 
 ## Explicitly out of scope (initial version)
 
-
-
 From [PLAN.md](PLAN.md) — not backlog unless scope changes:
 
-
-
 - Video frame / visual sync
-
 - Batch processing (> two files)
-
 - Writing aligned output files (report offset only)
-
 - Network or streaming sources
-
-
-
----
-
-
-
-## Suggested order of work
-
-
-
-1. Dual-track selection policy (`select_best_track` revision; `--try-all-tracks` is documented)
-
-2. Silent decode degradation logging / fail-fast thresholds (trust in PCM input)
-
-3. Large-offset accuracy (`wav_leader_30s` and related corpus cases)
-
-4. Split `media_reader.rs` (maintainability before more codec work)
-
-5. Architecture layer leaks (resample/refinement ports, serde out of domain)
-
-6. Duration-less open edge cases
-
-7. `MediaSession` mutability API cleanup
-
-8. Chromaprint `NoMatch` / `AmbiguousMatch` wiring
-
-9. Documentation sync (PLAN.md), type polish, log file appender, fixture/CI hardening
-
-

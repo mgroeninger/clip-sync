@@ -18,7 +18,10 @@ use symphonia::core::meta::{ChapterGroup, ChapterGroupItem};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration as MediaDuration, Time, TimeBase, Timestamp};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+/// Fail extract after this many consecutive packet decode errors.
+const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 64;
 
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
@@ -485,6 +488,8 @@ fn extract_mono_with_state(
     let mut last_reported = 0_u64;
     let mut finished = false;
     let mut allow_tail_padding = false;
+    let mut decode_error_skips = 0_u32;
+    let mut consecutive_decode_errors = 0_u32;
 
     loop {
         if finished {
@@ -558,8 +563,36 @@ fn extract_mono_with_state(
             .decoder
             .decode(&packet)
         {
-            Ok(decoded) => decoded,
-            Err(SymphoniaError::DecodeError(_)) => continue,
+            Ok(decoded) => {
+                consecutive_decode_errors = 0;
+                decoded
+            }
+            Err(SymphoniaError::DecodeError(detail)) => {
+                decode_error_skips += 1;
+                consecutive_decode_errors += 1;
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    skip_count = decode_error_skips,
+                    consecutive = consecutive_decode_errors,
+                    detail = %detail,
+                    "skipped corrupt decode packet"
+                );
+                if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                    return Err(fail_media(
+                        path,
+                        "extract",
+                        Some(track.index),
+                        decode_failed(
+                            track.index,
+                            format!(
+                                "too many consecutive decode errors ({decode_error_skips} packets skipped)"
+                            ),
+                        ),
+                    ));
+                }
+                continue;
+            }
             Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
                 allow_tail_padding = true;
                 break;
@@ -708,6 +741,17 @@ fn extract_mono_with_state(
             "padding end-of-window decode gap with silence"
         );
         mono_samples.resize(target, 0);
+    }
+
+    if decode_error_skips > 0 {
+        warn!(
+            path = %path.display(),
+            track = track.index,
+            decode_error_skips,
+            decoded_samples = mono_samples.len(),
+            target_samples = target,
+            "extract completed after skipping corrupt decode packets"
+        );
     }
 
     log_media_success(path, "extract");

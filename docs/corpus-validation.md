@@ -32,7 +32,7 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 | Stereo AAC downmix | Works (`mp4_stereo_leader_3s`) |
 | Dual-track MP4 with `try_all_tracks` | Works when program track is scored (`mp4_dual_track_decoy`) |
 | Identical decoy on A/B caused false offset 0 | **Fixed:** distinct decoy tones (220 Hz vs 330 Hz) per file |
-| Default `select_best_track` on dual MP4 | Documented failure when decoy has higher sample rate (`mp4_dual_track_wrong_default`); use `try_all_tracks` |
+| Default `select_best_track` on dual MP4 | **Fixed:** first decodable track in mux order (`mp4_dual_track_wrong_default`); use `try_all_tracks` when program is not first |
 | Two-clip offset agreement | `require_consistent_offsets` blocks bad recommendations (`two_clip_inconsistent`, `require_consistent_blocks`) |
 | Redundant probe+open per clip window | **Fixed:** one probe per file per run; format reader + decoders reused ([session reuse plan](archive/session-reuse-plan.md)) |
 
@@ -40,7 +40,7 @@ Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio
 
 ## Multi-track containers (`try_all_tracks`)
 
-`select_best_track` picks a single audio track per file (higher sample rate wins). On dual-track MP4/MKV, a secondary commentary or effects track at 48 kHz can be chosen over the main 44.1 kHz program — corpus case `mp4_dual_track_wrong_default` documents the failure.
+`select_best_track` picks the **first decodable audio track** in container mux order. When the main program is muxed first, dual-track MP4/MKV aligns correctly without extra flags (`mp4_dual_track_wrong_default`). When commentary or a decoy is muxed **before** the program, use `try_all_tracks`.
 
 When `try_all_tracks` is enabled, the aligner decodes every decodable track pair on A and B, scores each alignment, and keeps the highest-confidence result. The same media session and format reader are reused across track pairs and clip windows.
 
@@ -66,5 +66,5 @@ Tracked in [BACKLOG.md](../BACKLOG.md):
 
 - `wav_leader_30s` case id uses **+15s** proxy (+30s exceeds Chromaprint on 60s clips)
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
-- Improve `select_best_track` for dual-track containers (bitrate tiebreaker currently inert)
+- Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
 - Large-offset accuracy (`+30s`+) — engine / clip-length investigation

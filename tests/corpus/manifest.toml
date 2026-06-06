@@ -118,9 +118,11 @@ tier = "generated"
 generator = "offset_chirp_pair"
 format = "mp4_dual"
 offset_secs = 3
-expect_aligned = false
-expect_recommended = false
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
 try_all_tracks = false
+# Program muxed first at 11.025 kHz; decoy second at 48 kHz — default picks program track.
 prefer_program_track = false
 requires_ffmpeg = true
 

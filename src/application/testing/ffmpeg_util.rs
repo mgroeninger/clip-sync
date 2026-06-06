@@ -115,8 +115,8 @@ pub fn encode_audio(input_wav: &Path, output: &Path, format: EncodeFormat) -> bo
         .unwrap_or(false)
 }
 
-/// Mux program + decoy into a dual-track MP4. Higher `program_sample_rate` helps
-/// `select_best_track` prefer the program when `prefer_program_track` is true.
+/// Mux program + decoy into a dual-track MP4. Sample rates are set so corpus cases
+/// can exercise first-track selection vs higher-rate decoy on track two.
 pub fn encode_dual_track_mp4(
     program_wav: &Path,
     decoy_wav: &Path,

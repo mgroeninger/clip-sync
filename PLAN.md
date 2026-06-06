@@ -63,7 +63,7 @@ Dependency rule: domain ← application ← infrastructure. No inward dependenci
 
 ### Domain policies (pure functions)
 
-- **`select_best_track(tracks) -> AudioTrack`** — Prefer higher sample rate, then channel count, then bitrate. Fail if no audio tracks. On multi-track containers the default pick can be wrong; use `alignment.try_all_tracks` or `--try-all-tracks` to score every decodable track pair (see [docs/corpus-validation.md](docs/corpus-validation.md)).
+- **`select_best_track(tracks) -> AudioTrack`** — First decodable track in container order. Fail if no audio tracks. When the main program is not first, use `alignment.try_all_tracks` or `--try-all-tracks` (see [docs/corpus-validation.md](docs/corpus-validation.md)).
 - **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy).
 
 ### Clip window policy

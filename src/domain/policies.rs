@@ -5,6 +5,10 @@ use crate::domain::clip_plan::ClipPlan;
 use crate::domain::clip_window::{ClipLabel, ClipWindow};
 use crate::domain::error::DomainError;
 
+/// Pick the first decodable audio track in container order.
+///
+/// Multi-track files often mux the main program before commentary or effects tracks.
+/// Higher sample rate on a secondary track is not a reliable signal for "best" audio.
 pub fn select_best_track(tracks: &[AudioTrack]) -> Result<&AudioTrack, DomainError> {
     if tracks.is_empty() {
         return Err(DomainError::NoAudioTracks);
@@ -12,13 +16,7 @@ pub fn select_best_track(tracks: &[AudioTrack]) -> Result<&AudioTrack, DomainErr
 
     tracks
         .iter()
-        .filter(|track| track.decodable)
-        .max_by(|a, b| {
-            a.sample_rate
-                .cmp(&b.sample_rate)
-                .then(b.channels.cmp(&a.channels))
-                .then(a.bitrate.cmp(&b.bitrate))
-        })
+        .find(|track| track.decodable)
         .ok_or(DomainError::NoDecodableAudioTracks)
 }
 
@@ -105,14 +103,14 @@ mod tests {
     }
 
     #[test]
-    fn select_best_track_prefers_higher_sample_rate() {
+    fn select_best_track_prefers_first_decodable_in_container_order() {
         let tracks = vec![
             AudioTrack {
                 index: 0,
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 44_100,
-                bitrate: Some(128_000),
+                bitrate: None,
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -121,13 +119,39 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
-                bitrate: Some(128_000),
+                bitrate: None,
                 duration: Some(mins(60)),
                 decodable: true,
             },
         ];
 
-        assert_eq!(select_best_track(&tracks).unwrap().index, 1);
+        assert_eq!(select_best_track(&tracks).unwrap().index, 0);
+    }
+
+    #[test]
+    fn select_best_track_prefers_program_when_decoy_has_higher_sample_rate() {
+        let tracks = vec![
+            AudioTrack {
+                index: 0,
+                codec: "aac".into(),
+                channels: 2,
+                sample_rate: 11_025,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
+            },
+            AudioTrack {
+                index: 1,
+                codec: "aac".into(),
+                channels: 2,
+                sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
+            },
+        ];
+
+        assert_eq!(select_best_track(&tracks).unwrap().index, 0);
     }
 
     #[test]
@@ -175,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn select_best_track_prefers_fewer_channels_when_rates_match() {
+    fn select_best_track_prefers_first_track_when_sample_rates_match() {
         let tracks = vec![
             AudioTrack {
                 index: 0,
@@ -191,6 +215,32 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: true,
+            },
+        ];
+
+        assert_eq!(select_best_track(&tracks).unwrap().index, 0);
+    }
+
+    #[test]
+    fn select_best_track_skips_undecodable_leading_tracks() {
+        let tracks = vec![
+            AudioTrack {
+                index: 0,
+                codec: "ac3".into(),
+                channels: 6,
+                sample_rate: 48_000,
+                bitrate: None,
+                duration: Some(mins(60)),
+                decodable: false,
+            },
+            AudioTrack {
+                index: 1,
+                codec: "aac".into(),
+                channels: 2,
+                sample_rate: 44_100,
                 bitrate: None,
                 duration: Some(mins(60)),
                 decodable: true,

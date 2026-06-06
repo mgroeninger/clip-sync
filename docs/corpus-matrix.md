@@ -47,7 +47,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | `mkv_flac_leader_3s` | A | MKV/FLAC | +3s | 1 | 1 | 120s | chirp | aligned; offset ≈ +3; recommended |
 | `mp4_stereo_leader_3s` | A | MP4/AAC | +3s | 2 | 1 | 120s | chirp | aligned; offset ≈ +3; downmix OK |
 | `mp4_dual_track_decoy` | A | MP4/AAC | +3s | 1 | 2 | 120s | chirp+decoy | offset ≈ +3; program track selected |
-| `mp4_dual_track_wrong_default` | A | MP4/AAC | +3s | 1 | 2† | 120s | chirp+decoy | documents track-selection; may need `try_all_tracks` |
+| `mp4_dual_track_wrong_default` | A | MP4/AAC | +3s | 1 | 2† | 120s | chirp+decoy | default picks program (muxed first); offset ≈ +3 |
 | `no_overlap_tone_vs_chirp` | B | WAV | — | 1 | 1 | 60s | tone vs chirp | not aligned; no recommendation; exit 0 |
 | `near_silence_window` | B | WAV | 0 | 1 | 1 | 60s | near-silence | soft fail; see plan ‡ |
 | `two_clip_consistent` | A | WAV | +12s | 1 | 1 | 180s | chirp | `num_clips=2`; offsets_consistent; recommended |
@@ -61,7 +61,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 ### Notes
 
 - `MP3*` — encoded with duration tag stripped (`-write_xing 0`) to stress probe fallback.
-- `2†` — decoy normalized louder than program; tests default `select_best_track` vs `try_all_tracks` (`--try-all-tracks` or `alignment.try_all_tracks` in config; see [corpus-validation.md](corpus-validation.md)).
+- `2†` — program muxed first, decoy second at higher sample rate; default `select_best_track` picks program. Use `try_all_tracks` when program is not first (see [corpus-validation.md](corpus-validation.md)).
 - `‡` — `near_silence` / inconsistent cases may need clip-skip behavior; mark `ignore` until implemented.
 - `§` — B truncated or different in end window while start matches.
 - `‖` — synthetic two-window pair with different true offsets per window.
