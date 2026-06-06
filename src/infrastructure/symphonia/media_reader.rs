@@ -372,6 +372,7 @@ fn extract_mono_window(
 
     let mut last_reported = 0_u64;
     let mut finished = false;
+    let mut stream_ended = false;
 
     loop {
         if finished {
@@ -385,7 +386,10 @@ fn extract_mono_window(
 
         let packet = match format.next_packet() {
             Ok(Some(packet)) => packet,
-            Ok(None) => break,
+            Ok(None) => {
+                stream_ended = true;
+                break;
+            }
             Err(SymphoniaError::ResetRequired) => {
                 decoder.reset();
                 continue;
@@ -431,6 +435,7 @@ fn extract_mono_window(
             Ok(decoded) => decoded,
             Err(SymphoniaError::DecodeError(_)) => continue,
             Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                stream_ended = true;
                 break;
             }
             Err(SymphoniaError::ResetRequired) => {
@@ -543,7 +548,8 @@ fn extract_mono_window(
 
     if mono_samples.len() < target {
         let shortfall = target - mono_samples.len();
-        if shortfall > sample_count_tolerance(rate) {
+        let limit = decode_shortfall_limit(rate, target, stream_ended);
+        if shortfall > limit {
             return Err(fail_media(
                 path,
                 "extract",
@@ -560,6 +566,17 @@ fn extract_mono_window(
                 ),
             ));
         }
+
+        debug!(
+            path = %path.display(),
+            track = track.index,
+            shortfall,
+            target,
+            stream_ended,
+            limit,
+            "padding end-of-window decode gap with silence"
+        );
+        mono_samples.resize(target, 0);
     }
 
     log_media_success(path, "extract");
@@ -676,29 +693,49 @@ fn seek_to_window_start(
 }
 
 fn sample_count_tolerance(sample_rate: u32) -> usize {
-    (sample_rate as usize / 50).max(64)
+    frame_boundary_tolerance(sample_rate)
+}
+
+fn frame_boundary_tolerance(sample_rate: u32) -> usize {
+    // ~20 ms baseline; allow up to two HE-AAC SBR output frames (2048 samples each) for
+    // container duration vs decodable sample boundary mismatch at window edges.
+    const HE_AAC_FRAME_SAMPLES: usize = 2048;
+    (sample_rate as usize / 50)
+        .max(HE_AAC_FRAME_SAMPLES * 2)
+        .max(64)
+}
+
+fn decode_shortfall_limit(sample_rate: u32, target_samples: usize, stream_eof: bool) -> usize {
+    let frame = frame_boundary_tolerance(sample_rate);
+    if !stream_eof {
+        return frame;
+    }
+
+    // Container duration often extends past the last decodable sample; allow a bounded pad at EOF.
+    const EOF_MAX_SECS: f64 = 2.0;
+    let eof_cap = (f64::from(sample_rate) * EOF_MAX_SECS).ceil() as usize;
+    let percent_cap = target_samples / 200; // 0.5%
+    frame.max(eof_cap.min(percent_cap))
 }
 
 fn track_duration_from_track(track: &Track) -> Option<Duration> {
+    let mut candidates = Vec::new();
+
     if let Some(time_base) = track.time_base {
         if let Some(media_duration) = track.duration {
             if let Some(time) = media_ticks_to_time(media_duration, time_base) {
-                return Some(symphonia_time_to_std(time));
+                candidates.push(symphonia_time_to_std(time));
             }
         }
 
         if let Some(num_frames) = track.num_frames {
             if let Some(CodecParameters::Audio(params)) = &track.codec_params {
                 if let Some(rate) = params.sample_rate.filter(|rate| *rate > 0) {
-                    return Some(Duration::from_secs_f64(num_frames as f64 / f64::from(rate)));
+                    candidates.push(Duration::from_secs_f64(num_frames as f64 / f64::from(rate)));
                 }
-            }
-
-            if let Some(time) = media_ticks_to_time(
-                MediaDuration::new(num_frames),
-                time_base,
-            ) {
-                return Some(symphonia_time_to_std(time));
+            } else if let Some(time) = media_ticks_to_time(MediaDuration::new(num_frames), time_base)
+            {
+                candidates.push(symphonia_time_to_std(time));
             }
         }
     }
@@ -706,12 +743,12 @@ fn track_duration_from_track(track: &Track) -> Option<Duration> {
     if let Some(CodecParameters::Audio(params)) = &track.codec_params {
         if let (Some(num_frames), Some(rate)) = (track.num_frames, params.sample_rate) {
             if rate > 0 {
-                return Some(Duration::from_secs_f64(num_frames as f64 / f64::from(rate)));
+                candidates.push(Duration::from_secs_f64(num_frames as f64 / f64::from(rate)));
             }
         }
     }
 
-    None
+    candidates.into_iter().min()
 }
 
 fn media_ticks_to_time(ticks: MediaDuration, time_base: TimeBase) -> Option<Time> {
@@ -811,6 +848,25 @@ mod tests {
         let (start, end) = window_sample_bounds(&window, 44_100);
         assert_eq!(end.saturating_sub(start) as usize, 44_100);
         assert_eq!(window.sample_count_at(44_100), 44_100);
+    }
+
+    #[test]
+    fn sample_count_tolerance_allows_he_aac_end_boundary_gap() {
+        assert!(sample_count_tolerance(48_000) >= 4_096);
+        assert!(sample_count_tolerance(48_000) >= 3_136);
+    }
+
+    #[test]
+    fn decode_shortfall_limit_allows_eof_tail_on_long_clips() {
+        let target = 43_200_000_usize;
+        let limit = decode_shortfall_limit(48_000, target, true);
+        assert!(limit >= 76_304, "limit was {limit}");
+        assert!(limit <= 96_000, "limit was {limit}");
+    }
+
+    #[test]
+    fn decode_shortfall_limit_stays_strict_without_eof() {
+        assert_eq!(decode_shortfall_limit(48_000, 43_200_000, false), 4_096);
     }
 
     #[test]
