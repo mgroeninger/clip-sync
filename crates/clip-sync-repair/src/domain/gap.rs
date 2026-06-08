@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use clip_sync::AlignmentResult;
+use clip_sync::{AlignmentResult, TimelineOverlap};
+
+use crate::domain::track_match::TrackCompatibility;
 
 /// A silent window detected in video A's timeline.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -31,6 +33,11 @@ impl Gap {
 pub struct GapReport {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
+    /// Audio track comparison (channels/rate). `None` when B could not be opened or has no
+    /// decodable track — the scan still reports A's gaps.
+    pub track_compatibility: Option<TrackCompatibility>,
+    /// Shared timeline region from the alignment start clip. `None` when alignment failed.
+    pub overlap: Option<TimelineOverlap>,
     pub alignment: AlignmentResult,
     pub gaps: Vec<Gap>,
     pub scan_window_secs: u64,

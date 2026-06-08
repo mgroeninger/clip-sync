@@ -30,6 +30,8 @@ pub enum MediaError {
     DecodeFailed { track: u32, detail: String },
     #[error("seek failed: {0}")]
     SeekFailed(String),
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
-use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip};
+use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip, MultiChannelPcm};
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
 use crate::infrastructure::symphonia::error_mapping::{
     decode_failed, fail_media, log_media_success, map_decode_loop_error, map_seek_error,
@@ -401,6 +401,401 @@ pub(crate) fn extract_mono_with_state(
     })
 }
 
+/// Native-rate, all-channels counterpart to [`extract_mono_with_state`].
+///
+/// Tracking is in **frames** (one frame = one sample per channel); the interleaved output buffer
+/// holds `frames * channels` samples. Seek/retry, decode-skip, and tail-padding logic mirror the
+/// mono path so both extracts behave identically at window edges.
+pub(crate) fn extract_interleaved_with_state(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+    window: &ClipWindow,
+    progress: &dyn ProgressReporter,
+    label: &str,
+) -> Result<MultiChannelPcm, MediaError> {
+    if window.end <= window.start {
+        return Err(fail_media(
+            path,
+            "extract",
+            Some(track.index),
+            decode_failed(track.index, "clip window is empty"),
+        ));
+    }
+
+    let track_id = track.index;
+    ensure_track_decoder(path, state, track)?;
+
+    let cached = state.decoders.get(&track_id).expect("decoder cached");
+    let time_base = cached.time_base;
+    let sample_rate = state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .and_then(|media_track| match &media_track.codec_params {
+            Some(CodecParameters::Audio(params)) => params
+                .sample_rate
+                .filter(|rate| *rate > 0)
+                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
+            _ => None,
+        })
+        .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
+
+    let channels_hint = (track.channels as usize > 0).then_some(track.channels as usize);
+    let max_attempts = if window.start.is_zero() { 1 } else { 2 };
+    let mut out: Vec<i16> = Vec::new();
+    let mut resolved_rate = None::<u32>;
+    let mut channels = channels_hint;
+    let mut target_frames = None::<usize>;
+    let mut decode_error_skips = 0_u32;
+    let mut allow_tail_padding = false;
+
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                window_start_secs = window.start.as_secs_f64(),
+                "seek-based interleaved extract produced no audio; retrying via sequential scan from start"
+            );
+        }
+
+        let seek_start = if attempt == 0 {
+            window.start
+        } else {
+            Duration::ZERO
+        };
+        seek_to_window_start(path, state.format.as_mut(), track_id, seek_start)?;
+        state
+            .decoders
+            .get_mut(&track_id)
+            .expect("decoder cached")
+            .decoder
+            .reset();
+
+        resolved_rate = sample_rate;
+        target_frames = resolved_rate.map(|rate| {
+            let (start, end) = window_sample_bounds(window, rate);
+            end.saturating_sub(start) as usize
+        });
+        channels = channels_hint;
+        out.clear();
+        if let (Some(tf), Some(ch)) = (target_frames, channels) {
+            out.reserve(tf.saturating_mul(ch));
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                window_start_secs = window.start.as_secs_f64(),
+                window_end_secs = window.end.as_secs_f64(),
+                expected_frames = tf,
+                sample_rate = resolved_rate.unwrap_or(0),
+                channels = ch,
+                "extracting interleaved clip"
+            );
+        }
+
+        let mut last_reported = 0_u64;
+        let mut finished = false;
+        allow_tail_padding = false;
+        decode_error_skips = 0_u32;
+        let mut consecutive_decode_errors = 0_u32;
+
+        loop {
+            if finished {
+                allow_tail_padding = true;
+                break;
+            }
+            if let (Some(target), Some(ch)) = (target_frames, channels) {
+                if out.len() >= target * ch {
+                    break;
+                }
+            }
+
+            let packet = match state.format.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => {
+                    allow_tail_padding = true;
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    state
+                        .decoders
+                        .get_mut(&track_id)
+                        .expect("decoder cached")
+                        .decoder
+                        .reset();
+                    continue;
+                }
+                Err(error) => {
+                    return Err(map_decode_loop_error(path, track.index, error));
+                }
+            };
+
+            if packet.track_id != track_id {
+                continue;
+            }
+
+            if let Some(time_base) = time_base {
+                if let Some(rate) = resolved_rate {
+                    let (start_sample, end_sample) = window_sample_bounds(window, rate);
+                    let packet_start_sample = timestamp_to_sample(packet.pts, time_base, rate);
+                    let packet_end_sample = timestamp_to_sample(
+                        packet.pts.saturating_add(packet.dur),
+                        time_base,
+                        rate,
+                    );
+                    if packet_end_sample <= start_sample {
+                        continue;
+                    }
+                    if packet_start_sample >= end_sample {
+                        allow_tail_padding = true;
+                        break;
+                    }
+                } else if let (Some(packet_start), Some(packet_end)) = (
+                    timestamp_to_std_duration(packet.pts, time_base),
+                    timestamp_to_std_duration(packet.pts.saturating_add(packet.dur), time_base),
+                ) {
+                    if packet_end <= window.start {
+                        continue;
+                    }
+                    if packet_start >= window.end {
+                        allow_tail_padding = true;
+                        break;
+                    }
+                }
+            }
+
+            let decoded = match state
+                .decoders
+                .get_mut(&track_id)
+                .expect("decoder cached")
+                .decoder
+                .decode(&packet)
+            {
+                Ok(decoded) => {
+                    consecutive_decode_errors = 0;
+                    decoded
+                }
+                Err(SymphoniaError::DecodeError(detail)) => {
+                    decode_error_skips += 1;
+                    consecutive_decode_errors += 1;
+                    debug!(
+                        path = %path.display(),
+                        track = track.index,
+                        skip_count = decode_error_skips,
+                        consecutive = consecutive_decode_errors,
+                        detail = %detail,
+                        "skipped corrupt decode packet"
+                    );
+                    if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                        return Err(fail_media(
+                            path,
+                            "extract",
+                            Some(track.index),
+                            decode_failed(
+                                track.index,
+                                format!(
+                                    "too many consecutive decode errors ({decode_error_skips} packets skipped)"
+                                ),
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                    allow_tail_padding = true;
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    state
+                        .decoders
+                        .get_mut(&track_id)
+                        .expect("decoder cached")
+                        .decoder
+                        .reset();
+                    continue;
+                }
+                Err(error) => {
+                    return Err(map_decode_loop_error(path, track.index, error));
+                }
+            };
+
+            if decoded.frames() == 0 {
+                continue;
+            }
+
+            if resolved_rate.is_none() {
+                let rate = decoded.spec().rate();
+                if rate == 0 {
+                    return Err(fail_media(
+                        path,
+                        "extract",
+                        Some(track.index),
+                        decode_failed(track.index, "missing sample rate"),
+                    ));
+                }
+                resolved_rate = Some(rate);
+                let (start_sample, end_sample) = window_sample_bounds(window, rate);
+                let expected = end_sample.saturating_sub(start_sample) as usize;
+                if expected == 0 {
+                    return Err(fail_media(
+                        path,
+                        "extract",
+                        Some(track.index),
+                        decode_failed(track.index, "clip window is too short to decode"),
+                    ));
+                }
+                target_frames = Some(expected);
+            }
+
+            if channels.is_none() {
+                let ch = decoded.spec().channels().count().max(1);
+                channels = Some(ch);
+                out.reserve(target_frames.unwrap_or(0).saturating_mul(ch));
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    window_start_secs = window.start.as_secs_f64(),
+                    window_end_secs = window.end.as_secs_f64(),
+                    expected_frames = target_frames.unwrap_or(0),
+                    sample_rate = resolved_rate.unwrap_or(0),
+                    channels = ch,
+                    "extracting interleaved clip"
+                );
+            }
+
+            let rate = resolved_rate.unwrap_or(0);
+            let ch = channels.unwrap_or(1);
+            let target = target_frames.unwrap_or(0);
+            let (start_sample, end_sample) = window_sample_bounds(window, rate);
+            let packet_start_sample = time_base
+                .map(|base| timestamp_to_sample(packet.pts, base, rate))
+                .unwrap_or(start_sample);
+            let trim_start_frames = time_base
+                .map(|base| media_duration_to_frames(packet.trim_start, base, rate))
+                .unwrap_or(0);
+
+            finished = append_interleaved_frames_in_window(
+                decoded,
+                &mut InterleavedCollectContext {
+                    packet_start_frame: packet_start_sample,
+                    window_start_frame: start_sample,
+                    window_end_frame: end_sample,
+                    trim_start_frames,
+                    out: &mut out,
+                    channels: ch,
+                    target_frames: target,
+                },
+            );
+
+            let frames_collected = out.len() / ch;
+            if frames_collected.saturating_sub(last_reported as usize) >= rate as usize / 2 {
+                progress.progress(label, frames_collected.min(target) as u64, target as u64);
+                last_reported = frames_collected.min(target) as u64;
+            }
+        }
+
+        if !out.is_empty() {
+            break;
+        }
+    }
+
+    let rate = resolved_rate.ok_or_else(|| {
+        fail_media(
+            path,
+            "extract",
+            Some(track.index),
+            decode_failed(track.index, "missing sample rate"),
+        )
+    })?;
+    let ch = channels.unwrap_or(1);
+    let target = target_frames.unwrap_or(0);
+
+    out.truncate(target.saturating_mul(ch));
+    let frames_collected = out.len() / ch;
+    progress.progress(label, frames_collected as u64, target as u64);
+    let decoded_frame_count = frames_collected;
+
+    if out.is_empty() {
+        return Err(fail_media(
+            path,
+            "extract",
+            Some(track.index),
+            decode_failed(
+                track.index,
+                format!(
+                    "no audio decoded for window [{:.3}s–{:.3}s)",
+                    window.start.as_secs_f64(),
+                    window.end.as_secs_f64()
+                ),
+            ),
+        ));
+    }
+
+    if frames_collected < target {
+        let shortfall = target - frames_collected;
+        let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
+        if shortfall > limit {
+            return Err(fail_media(
+                path,
+                "extract",
+                Some(track.index),
+                decode_failed(
+                    track.index,
+                    format!(
+                        "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
+                        frames_collected,
+                        target,
+                        window.start.as_secs_f64(),
+                        window.end.as_secs_f64()
+                    ),
+                ),
+            ));
+        }
+
+        debug!(
+            path = %path.display(),
+            track = track.index,
+            shortfall,
+            target,
+            allow_tail_padding,
+            limit,
+            "padding end-of-window interleaved decode gap with silence"
+        );
+        out.resize(target.saturating_mul(ch), 0);
+    }
+
+    if decode_error_skips > 0 {
+        warn!(
+            path = %path.display(),
+            track = track.index,
+            decode_error_skips,
+            decoded_frames = frames_collected,
+            target_frames = target,
+            "interleaved extract completed after skipping corrupt decode packets"
+        );
+    }
+
+    log_media_success(path, "extract");
+    debug!(
+        path = %path.display(),
+        track = track.index,
+        sample_rate = rate,
+        channels = ch,
+        frames = out.len() / ch.max(1),
+        "extracted interleaved clip"
+    );
+
+    Ok(MultiChannelPcm {
+        sample_rate: rate,
+        channels: ch as u16,
+        samples: out,
+        decode_error_skips,
+        decoded_frame_count: (decoded_frame_count < target).then_some(decoded_frame_count),
+    })
+}
+
 pub(crate) struct WindowCollectContext<'a> {
     pub packet_start_sample: u64,
     pub window_start_sample: u64,
@@ -408,6 +803,58 @@ pub(crate) struct WindowCollectContext<'a> {
     pub trim_start_frames: u32,
     pub mono_samples: &'a mut Vec<i16>,
     pub target_samples: usize,
+}
+
+pub(crate) struct InterleavedCollectContext<'a> {
+    pub packet_start_frame: u64,
+    pub window_start_frame: u64,
+    pub window_end_frame: u64,
+    pub trim_start_frames: u32,
+    pub out: &'a mut Vec<i16>,
+    pub channels: usize,
+    pub target_frames: usize,
+}
+
+/// Appends in-window frames to `ctx.out` as interleaved `i16`, fixed at `ctx.channels` per frame.
+/// Packets with more source channels are truncated; fewer are zero-padded. Returns `true` when the
+/// target frame count is reached.
+pub(crate) fn append_interleaved_frames_in_window(
+    decoded: GenericAudioBufferRef<'_>,
+    ctx: &mut InterleavedCollectContext<'_>,
+) -> bool {
+    let frame_count = decoded.frames();
+    if frame_count == 0 {
+        return false;
+    }
+
+    let source_channels = decoded.spec().channels().count().max(1);
+    let mut interleaved = Vec::new();
+    decoded.copy_to_vec_interleaved(&mut interleaved);
+
+    let target_samples = ctx.target_frames.saturating_mul(ctx.channels);
+    let trim_start = ctx.trim_start_frames as usize;
+    for frame_idx in trim_start..frame_count {
+        if ctx.out.len() >= target_samples {
+            return true;
+        }
+
+        let frame_index = ctx.packet_start_frame + (frame_idx - trim_start) as u64;
+        if frame_index >= ctx.window_end_frame {
+            return true;
+        }
+        if frame_index < ctx.window_start_frame {
+            continue;
+        }
+
+        let frame_start = frame_idx * source_channels;
+        let frame = &interleaved[frame_start..frame_start + source_channels];
+        for channel in 0..ctx.channels {
+            let sample = frame.get(channel).copied().unwrap_or(0.0);
+            ctx.out.push(float_to_i16(sample));
+        }
+    }
+
+    false
 }
 
 pub(crate) fn append_frames_in_window(

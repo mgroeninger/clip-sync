@@ -1,6 +1,7 @@
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use crate::domain::{
     AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
+    MultiChannelPcm,
 };
 
 pub trait ProgressReporter {
@@ -23,6 +24,24 @@ pub trait MediaSession {
         progress: &dyn ProgressReporter,
         label: &str,
     ) -> Result<MonoPcmClip, MediaError>;
+
+    /// Native-rate, all-channels extract for the repair fill path.
+    ///
+    /// Unlike [`extract_mono`](Self::extract_mono) (which downmixes to mono at the fingerprint
+    /// rate), this preserves the source channel layout and sample rate. The default returns
+    /// [`MediaError::Unsupported`] so fakes opt in only when a test exercises the fill path.
+    fn extract_interleaved(
+        &self,
+        track: &AudioTrack,
+        window: &ClipWindow,
+        progress: &dyn ProgressReporter,
+        label: &str,
+    ) -> Result<MultiChannelPcm, MediaError> {
+        let _ = (track, window, progress, label);
+        Err(MediaError::Unsupported(
+            "extract_interleaved not implemented for this media session".into(),
+        ))
+    }
 
     /// Rewind the underlying format reader and drop cached decoders before a distant seek.
     fn reset_io(&self) -> Result<(), MediaError> {

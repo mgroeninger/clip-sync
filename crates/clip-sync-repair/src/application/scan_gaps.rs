@@ -1,14 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clip_sync::{
     align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
-    ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource, ProgressReporter,
+    AudioTrack, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource,
+    ProgressReporter,
 };
 
 use crate::application::error::RepairError;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
+use crate::domain::track_match::assess_track_compatibility;
 
 pub struct ScanGapsRequest {
     pub video_a: PathBuf,
@@ -64,17 +66,14 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             .duration
             .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
 
-        // Step 3: open video B if alignment produced an offset.
+        // Step 3: best-effort open of video B for track compatibility + energy probing.
+        // A missing or undecodable B never fails the scan — A's gaps are still reported, just
+        // marked unfillable with no compatibility. Energy probing additionally requires an offset.
         let offset_secs = alignment.recommended_offset_secs;
-        let b_session = if offset_secs.is_some() {
-            let source_b = MediaSource::new(request.video_b.clone());
-            let session_b = self.media_reader.open(&source_b).map_err(RepairError::Media)?;
-            let tracks_b = session_b.list_tracks().map_err(RepairError::Media)?;
-            let track_b = select_best_track(&tracks_b)?.clone();
-            Some((session_b, track_b))
-        } else {
-            None
-        };
+        let b_session = self.open_best_track(&request.video_b);
+        let track_compatibility = b_session
+            .as_ref()
+            .map(|(_, track_b)| assess_track_compatibility(&track_a, track_b));
 
         // Step 4: scan A in fixed-size chunks; detect silent windows.
         let chunk_secs = request.scan_window_secs as f64;
@@ -101,8 +100,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 let b_start = pos + offset_secs.unwrap_or(0.0);
                 let b_end = end + offset_secs.unwrap_or(0.0);
 
-                let b_has_energy = match &b_session {
-                    Some((session_b, track_b)) if b_start >= 0.0 => {
+                let b_has_energy = match (&b_session, offset_secs) {
+                    (Some((session_b, track_b)), Some(_)) if b_start >= 0.0 => {
                         let window_b = ClipWindow::new(
                             Duration::from_secs_f64(b_start),
                             Duration::from_secs_f64(b_end),
@@ -133,11 +132,23 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         Ok(GapReport {
             video_a: request.video_a,
             video_b: request.video_b,
+            track_compatibility,
+            overlap: alignment.start_overlap,
             alignment,
             gaps,
             scan_window_secs: request.scan_window_secs,
             silence_peak_fraction: request.silence_peak_fraction,
         })
+    }
+
+    /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
+    /// file is missing, unreadable, or has no decodable audio — keeps the scan report-only safe.
+    fn open_best_track(&self, path: &Path) -> Option<(MR::Session, AudioTrack)> {
+        let source = MediaSource::new(path.to_path_buf());
+        let session = self.media_reader.open(&source).ok()?;
+        let tracks = session.list_tracks().ok()?;
+        let track = select_best_track(&tracks).ok()?.clone();
+        Some((session, track))
     }
 }
 
@@ -422,6 +433,12 @@ mod tests {
 
         assert_eq!(report.gaps.len(), 1);
         assert!(report.gaps[0].b_has_energy);
+        // B opened successfully, so track compatibility is reported (1ch @ 11025 on both).
+        let compat = report
+            .track_compatibility
+            .as_ref()
+            .expect("compatibility should be present when B opens");
+        assert_eq!(compat.verdict, crate::domain::CompatibilityVerdict::Identical);
         assert!((report.gaps[0].video_a_start_secs - 0.0).abs() < 0.001);
         assert!((report.gaps[0].video_a_end_secs - 60.0).abs() < 0.001);
         assert!((report.gaps[0].video_b_start_secs - 0.0).abs() < 0.001);
@@ -459,6 +476,9 @@ mod tests {
         assert_eq!(report.gaps.len(), 1);
         assert!(!report.gaps[0].b_has_energy);
         assert!(!report.gaps[0].is_fillable());
+        // B (b.wav) is absent from the reader, so no compatibility could be assessed.
+        assert!(report.track_compatibility.is_none());
+        assert!(report.overlap.is_none());
     }
 
     #[test]
@@ -503,6 +523,8 @@ mod tests {
         let report = GapReport {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
+            track_compatibility: None,
+            overlap: None,
             alignment: aligned_result(Some(0.0)),
             gaps: vec![
                 Gap {

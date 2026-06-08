@@ -13,9 +13,11 @@ pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, 
 // --- domain (selected types) ---
 pub use domain::{
     AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipWindow, ClipLabel,
-    DomainError, Fingerprint, HighRateRefinement, MediaSource, MonoPcmClip,
+    DomainError, Fingerprint, HighRateRefinement, MediaSource, MonoPcmClip, MultiChannelPcm,
+    TimelineOverlap,
 };
 pub use domain::policies::select_best_track;
+pub use domain::{resample_interleaved, resample_mono_pcm};
 
 // --- default adapter types ---
 pub use infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};

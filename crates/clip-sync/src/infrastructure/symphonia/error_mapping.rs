@@ -57,6 +57,15 @@ pub fn log_media_failure(path: &Path, operation: &str, track: Option<u32>, error
                 "failed to seek in media"
             );
         }
+        MediaError::Unsupported(detail) => {
+            warn!(
+                path = %path.display(),
+                operation,
+                track,
+                detail = %detail,
+                "unsupported media operation"
+            );
+        }
     }
 }
 

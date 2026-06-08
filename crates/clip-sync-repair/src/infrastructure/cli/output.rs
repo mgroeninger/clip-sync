@@ -1,6 +1,6 @@
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
-use crate::domain::GapReport;
+use crate::domain::{CompatibilityVerdict, GapReport};
 use crate::infrastructure::config::OutputFormat;
 
 pub struct StdoutGapReporter {
@@ -30,6 +30,31 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         .unwrap_or_default();
 
     println!("Alignment: offset {offset}  confidence {confidence}");
+
+    if let Some(compat) = &report.track_compatibility {
+        let verdict = match compat.verdict {
+            CompatibilityVerdict::Identical => "identical",
+            CompatibilityVerdict::Compatible => "compatible (resample B)",
+            CompatibilityVerdict::Mismatch => "mismatch (fill blocked)",
+        };
+        println!(
+            "Tracks:    A {}ch @ {}Hz   B {}ch @ {}Hz   ({verdict})",
+            compat.a_channels, compat.a_sample_rate, compat.b_channels, compat.b_sample_rate,
+        );
+    } else {
+        println!("Tracks:    video B unavailable — compatibility not assessed");
+    }
+
+    if let Some(overlap) = &report.overlap {
+        println!(
+            "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)",
+            overlap.video_a_start_secs,
+            overlap.video_a_end_secs,
+            overlap.video_b_start_secs,
+            overlap.video_b_end_secs,
+            overlap.shared_length_secs,
+        );
+    }
     println!();
 
     if report.gaps.is_empty() {
@@ -71,12 +96,30 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::domain::gap::{Gap, GapReport};
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
+    use crate::domain::{CompatibilityVerdict, TrackCompatibility};
+    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap};
 
     fn minimal_report() -> GapReport {
+        let overlap = TimelineOverlap {
+            video_a_start_secs: 0.0,
+            video_a_end_secs: 900.0,
+            video_b_start_secs: 12.5,
+            video_b_end_secs: 912.5,
+            shared_length_secs: 900.0,
+        };
         GapReport {
             video_a: PathBuf::from("a.mp4"),
             video_b: PathBuf::from("b.mp4"),
+            track_compatibility: Some(TrackCompatibility {
+                a_channels: 6,
+                b_channels: 6,
+                a_sample_rate: 48_000,
+                b_sample_rate: 44_100,
+                channels_match: true,
+                rate_match: false,
+                verdict: CompatibilityVerdict::Compatible,
+            }),
+            overlap: Some(overlap),
             alignment: AlignmentResult {
                 clips: vec![ClipMatch {
                     label: ClipLabel::Start,
@@ -92,7 +135,7 @@ mod tests {
                 end_aligned: None,
                 recommended_offset_secs: Some(12.5),
                 offsets_consistent: true,
-                start_overlap: None,
+                start_overlap: Some(overlap),
                 high_rate_refinement: None,
             },
             gaps: vec![Gap {
@@ -114,6 +157,15 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert!(value["gaps"].is_array());
         assert_eq!(value["gaps"][0]["b_has_energy"], true);
+        assert_eq!(value["track_compatibility"]["verdict"], "compatible");
+        assert_eq!(value["track_compatibility"]["channels_match"], true);
+        assert_eq!(value["overlap"]["shared_length_secs"], 900.0);
+    }
+
+    #[test]
+    fn human_report_renders_without_error() {
+        // Smoke test: human formatting of compatibility + overlap must not panic.
+        super::print_human(&minimal_report()).expect("human render");
     }
 
     #[test]
