@@ -48,13 +48,6 @@ pub(crate) fn open_format_reader(
         .map_err(|error| map_probe_error(path, error))
 }
 
-pub(crate) fn probe_media(path: &Path) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
-    let mut format = open_format_reader(path)?;
-    let result = probe_from_format(path, format.as_mut())?;
-    log_media_success(path, "probe");
-    Ok(result)
-}
-
 /// Probe once and retain the `FormatReader` for later extracts (no second probe on first clip).
 pub(crate) fn probe_media_reusable(
     path: &Path,

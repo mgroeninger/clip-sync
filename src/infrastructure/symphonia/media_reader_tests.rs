@@ -9,7 +9,7 @@ use super::extract::{
     append_frames_in_window, decode_shortfall_limit, float_to_i16, sample_count_tolerance,
     window_sample_bounds, WindowCollectContext,
 };
-use super::probe::probe_media;
+use super::probe::probe_media_reusable;
 use super::session::SymphoniaMediaReader;
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
@@ -154,7 +154,7 @@ fn probe_and_extract_wav() {
     let path = temp.path().join("tone.wav");
     write_test_wav(&path, 44_100, 3);
 
-    let (tracks, duration) = probe_media(&path).unwrap();
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].sample_rate, 44_100);
     assert_eq!(tracks[0].channels, 2);
@@ -263,7 +263,7 @@ fn extract_window_skips_pre_window_audio() {
     let path = temp.path().join("split_tone.wav");
     write_split_tone_wav(&path, 44_100, 2);
 
-    let (tracks, _) = probe_media(&path).unwrap();
+    let (tracks, _, _) = probe_media_reusable(&path).unwrap();
     let window = ClipWindow::new(
         Duration::from_secs(1),
         Duration::from_secs(2),
@@ -315,7 +315,7 @@ fn probe_and_extract_mkv_container() {
         return;
     }
 
-    let (tracks, duration) = probe_media(&path).unwrap();
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
     assert_eq!(tracks.len(), 1);
     assert!(tracks[0].decodable);
     assert!(tracks[0].duration.unwrap().as_secs() >= 2);
@@ -348,7 +348,7 @@ fn probe_and_extract_mp4_container() {
         return;
     }
 
-    let (tracks, duration) = probe_media(&path).unwrap();
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
     assert_eq!(tracks.len(), 1);
     assert!(tracks[0].decodable);
     assert!(tracks[0].duration.unwrap().as_secs() >= 2);
@@ -376,7 +376,7 @@ fn probe_and_extract_he_aac_mp4_container() {
         return;
     }
 
-    let (tracks, duration) = probe_media(&path).unwrap();
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].codec, "aac");
     assert!(
@@ -418,7 +418,7 @@ fn probe_and_extract_he_aac_surround_mp4_container() {
         return;
     }
 
-    let (tracks, duration) = probe_media(&path).unwrap();
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].codec, "aac");
     assert!(

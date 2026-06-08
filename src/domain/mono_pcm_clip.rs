@@ -9,15 +9,6 @@ pub struct MonoPcmClip {
 }
 
 impl MonoPcmClip {
-    pub fn new(sample_rate: u32, samples: Vec<i16>) -> Self {
-        Self {
-            sample_rate,
-            samples,
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        }
-    }
-
     pub fn effective_decoded_sample_count(&self) -> usize {
         self.decoded_sample_count.unwrap_or(self.samples.len())
     }

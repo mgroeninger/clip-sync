@@ -118,7 +118,12 @@ impl MediaSession for FakeMediaSession {
                     .round() as i16
             })
             .collect();
-        Ok(MonoPcmClip::new(sample_rate, samples))
+        Ok(MonoPcmClip {
+            sample_rate,
+            samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        })
     }
 }
 

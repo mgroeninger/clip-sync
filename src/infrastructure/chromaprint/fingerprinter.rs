@@ -119,7 +119,12 @@ mod tests {
 
     #[test]
     fn rejects_empty_clip() {
-        let clip = MonoPcmClip::new(44_100, vec![]);
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         match fingerprint_clip(&clip, ChromaprintPreset::default()) {
             Err(FingerprintError::InvalidPcm(_)) => {}
             other => panic!("expected InvalidPcm, got {other:?}"),
@@ -128,7 +133,12 @@ mod tests {
 
     #[test]
     fn rejects_low_sample_rate() {
-        let clip = MonoPcmClip::new(1_000, vec![0; 2_000]);
+        let clip = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: vec![0; 2_000],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         match fingerprint_clip(&clip, ChromaprintPreset::default()) {
             Err(FingerprintError::InvalidPcm(_)) => {}
             other => panic!("expected InvalidPcm, got {other:?}"),

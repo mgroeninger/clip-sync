@@ -98,14 +98,24 @@ mod tests {
 
     #[test]
     fn resample_identity_when_rates_match() {
-        let clip = MonoPcmClip::new(44_100, vec![100, 200, 300]);
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![100, 200, 300],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         let resampled = resample_mono_pcm(&clip, 44_100);
         assert_eq!(resampled, clip);
     }
 
     #[test]
     fn resample_downscales_sample_count() {
-        let clip = MonoPcmClip::new(44_100, vec![0; 44_100]);
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![0; 44_100],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         let resampled = resample_mono_pcm(&clip, 11_025);
         assert_eq!(resampled.sample_rate, 11_025);
         let expected = 11_025;

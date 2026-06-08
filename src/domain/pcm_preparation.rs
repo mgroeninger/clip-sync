@@ -229,12 +229,17 @@ mod tests {
 
     #[test]
     fn trim_preserves_leading_silence() {
-        let clip = MonoPcmClip::new(1_000, {
-            let mut samples = vec![0_i16; 500];
-            samples.extend((0..400).map(|i| (i as i16 % 100) * 100));
-            samples.extend(vec![0_i16; 100]);
-            samples
-        });
+        let clip = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: {
+                let mut samples = vec![0_i16; 500];
+                samples.extend((0..400).map(|i| (i as i16 % 100) * 100));
+                samples.extend(vec![0_i16; 100]);
+                samples
+            },
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
 
         let trimmed = trim_trailing_silence(&clip);
         assert_eq!(trimmed.samples.len(), 900);
@@ -244,11 +249,16 @@ mod tests {
 
     #[test]
     fn trim_removes_trailing_silence() {
-        let clip = MonoPcmClip::new(1_000, {
-            let mut samples = vec![5_000_i16; 500];
-            samples.extend(vec![0_i16; 500]);
-            samples
-        });
+        let clip = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: {
+                let mut samples = vec![5_000_i16; 500];
+                samples.extend(vec![0_i16; 500]);
+                samples
+            },
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
 
         let trimmed = trim_trailing_silence(&clip);
         assert_eq!(trimmed.samples.len(), 500);
@@ -257,7 +267,12 @@ mod tests {
 
     #[test]
     fn peak_normalize_scales_to_target() {
-        let clip = MonoPcmClip::new(1_000, vec![1_000; 1_000]);
+        let clip = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: vec![1_000; 1_000],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         let normalized = peak_normalize(&clip);
         let peak = normalized
             .samples
@@ -275,8 +290,18 @@ mod tests {
             *sample = 5_000;
         }
         let right_samples = vec![7_i16; 2_000];
-        let left = MonoPcmClip::new(1_000, left_samples);
-        let right = MonoPcmClip::new(1_000, right_samples);
+        let left = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: left_samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let right = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: right_samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         let (left_clip, right_clip) =
             select_aligned_subclip_pair(&left, &right, Duration::from_secs(1));
         assert_eq!(left_clip.samples.len(), 1_000);
@@ -286,7 +311,12 @@ mod tests {
 
     #[test]
     fn rejects_silent_clip() {
-        let clip = MonoPcmClip::new(44_100, vec![0; 44_100]);
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![0; 44_100],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
         assert!(prepare_clip_for_fingerprint(&clip, PcmPreparationOptions::default()).is_err());
     }
 }
