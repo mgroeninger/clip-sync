@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-06.
+Last updated: 2026-06-08.
 
 Each item includes **problem**, **impact**, **direction**, and **references**. Temporary implementation plans live under `docs/TEMP-*.md`.
 
@@ -52,6 +52,20 @@ Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 | 10 | [Hold-out offset verification](#hold-out-offset-verification) | Independent check for single-clip runs; shares `ValidationConfig`; see [TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md) |
 
 Implement repetition before or alongside verification (shared config section, same align loop).
+
+### Repair write path (migration Phase 5 → R0–R5)
+
+**Status:** Not started. **Authoritative plan:** [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (supersedes the thin Phase 5 checklist in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md)).
+
+| Phase | Scope | Crate |
+|-------|--------|-------|
+| **R0–R1** | Native multi-channel `extract_interleaved` | lib |
+| **R2** | Track compatibility, overlap on report, alignment gate (optional B fields) | repair |
+| **R3** | Bidirectional silence scan + mutual-silence cross-check | repair |
+| **R4** | `PatchAudio`, gap fill, multi-channel WAV output | repair |
+| **R5** | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) | repair |
+
+**Prerequisite:** [Workspace repair Phase 4](#workspace-repair-phase-4-report-only) (shipped).
 
 ### Phase 6 — Architecture cleanup (when feature velocity slows)
 
@@ -294,6 +308,16 @@ Implement after or alongside repetition (shared config, same align loop).
 
 ---
 
+### Workspace repair Phase 4 (report-only)
+
+**Done (2026-06-08):** `clip-sync-repair` crate shipped — `ScanGaps`, `GapReport`, `GapReporter`, `RepairError`, CLI gap report (human + JSON). Integration test via `crates/clip-sync-repair/tests/scan_gaps_integration.rs`.
+
+**Next:** [Repair write path](#repair-write-path-migration-phase-5--r0r5) (R0–R5 in [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)).
+
+**References:** [docs/archive/workspace-refactor-gaps.md](docs/archive/workspace-refactor-gaps.md), `crates/clip-sync-repair/`, [docs/error-mapping.md](docs/error-mapping.md) (repair exit codes)
+
+---
+
 ### Phase 1 — Dual-track default track selection
 
 **Done:** `select_best_track` returns the first decodable track in container order (no sample-rate / channel ranking). Unit tests + `mp4_dual_track_wrong_default` corpus case updated. `--try-all-tracks` still available when program is not muxed first.
@@ -362,5 +386,6 @@ From [PLAN.md](PLAN.md) — not backlog unless scope changes:
 
 - Video frame / visual sync
 - Batch processing (> two files)
-- Writing aligned output files (report offset only)
+- Writing aligned output files from the **analyzer** (report offset only)
+- Patched repair output is **`clip-sync-repair`** only — see [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)
 - Network or streaming sources

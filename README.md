@@ -121,7 +121,7 @@ Report-only mode exits `0` when analysis completes. No files are written unless 
 
 Settings are merged in this order (later wins): built-in defaults → config file → CLI flags.
 
-The config file is TOML. Pass it with `--config`; if omitted, a platform default path is checked.
+The config file is TOML. Pass it with `--config`; if omitted, built-in defaults are used.
 
 ### Analyzer config (`clip-sync`)
 

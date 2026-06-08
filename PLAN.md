@@ -4,16 +4,16 @@
 
 `clip-sync` is a Rust workspace for synchronizing video recordings by comparing audio. The primary tool **`clip-sync`** aligns two video files: it opens each file, selects the best audio track, extracts clips, fingerprints them, and computes the time offset between matching segments.
 
-A companion tool **`clip-sync-repair`** (planned) reuses the same alignment engine to detect silent gaps in one recording and optionally patch them from an aligned partner file.
+A companion tool **`clip-sync-repair`** reuses the same alignment engine to detect silent gaps in one recording and (when the write path ships) patch them from an aligned partner file.
 
 The workspace is intended for workflows where two recordings of the same event (e.g. different cameras or re-encoded copies) need to be synchronized or repaired without manual scrubbing.
 
 | Application | Binary | Scope |
 |-------------|--------|-------|
 | **Analyzer** | `clip-sync` | Read-only: report offset and per-clip alignment |
-| **Repair** | `clip-sync-repair` | Gap scan (v1); optional patched output via ffmpeg (v2) |
+| **Repair** | `clip-sync-repair` | Gap scan (shipped); patched output via WAV + optional ffmpeg mux ([write-path plan](docs/TEMP-repair-write-path-plan.md)) |
 
-Implementation status: workspace extraction (Phases 1–2) is complete — the analyzer ships as `crates/clip-sync-cli` consuming `crates/clip-sync`. `clip-sync-repair` is planned (Phases 4–5). This document describes the **target** architecture; keep it aligned with the migration plan when decisions change.
+Implementation status: workspace migration Phases 1–4 are complete — the analyzer ships as `crates/clip-sync-cli`, report-only repair as `crates/clip-sync-repair`. The repair **write path** is tracked in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (feature phases R0–R5), which supersedes the thin migration Phase 5 stub in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md). This document describes the **target** architecture; keep it aligned with those plans when decisions change.
 
 ---
 
@@ -135,22 +135,23 @@ flowchart TB
 
 ## Repair workflow (`clip-sync-repair`)
 
-> **Phase naming:** Repair **workflow** phases below (report-only / write path) map to workspace **migration** phases 4 and 5 in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md).
+> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (not the thin Phase 5 checklist in the archived refactor plan).
 
-**Report-only (migration Phase 4):**
+**Report-only (migration Phase 4 — shipped):**
 
 1. Parse CLI arguments and load `RepairAppConfig` (align + repair + logging sections).
 2. Run in-process alignment via `clip_sync::align_with_defaults` (same offset semantics as analyzer).
 3. Scan video A timeline in chunks: extract mono PCM via `MediaSession`, detect internal silent runs.
-4. Map video B timeline using `recommended_offset_secs`.
-5. For each candidate gap: report whether B has energy and optional boundary correlation.
+4. Map video B timeline using `recommended_offset_secs` (skip B mapping when alignment produced no offset — see write-path plan § Alignment gate).
+5. For each candidate gap: report whether B has energy.
 6. Output gap table (human + JSON). Exit **0** when analysis completes. **No file writes.**
 
-**Write path (migration Phase 5, optional):**
+**Write path (R0–R5 in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)):**
 
-7. Splice B PCM into A PCM with short crossfade (`gap_fill`).
-8. Mux patched audio with original video via `MediaMuxer` adapter (ffmpeg subprocess).
-9. Write output file when `--output` is set and `--dry-run` is false.
+- **R0–R1 (lib):** native multi-channel `extract_interleaved` for fill-quality PCM.
+- **R2–R3 (repair):** track compatibility, overlap on report, bidirectional silence scan, mutual-silence cross-check.
+- **R4 (repair):** `PatchAudio` / `gap_fill` → multi-channel **WAV** (default deliverable; crossfade + optional normalization).
+- **R5 (repair, optional):** `RepairVideos` + `MediaMuxer` ffmpeg subprocess behind `ffmpeg-mux` feature.
 
 Repair always aligns in-process; it does not require piping JSON from a prior `clip-sync` run.
 
@@ -451,7 +452,7 @@ Own driving hexagon. Uses the library as a **downstream dependency** for alignme
 |------|-------------|
 | `Gap` | Start/end time of a silent run in video A |
 | `GapReport` | List of gaps with fillability, correlation, reason |
-| `GapFillPlan` | PCM splice regions for write path (migration Phase 5) |
+| `GapFillPlan` | PCM splice regions for write path ([R4](docs/TEMP-repair-write-path-plan.md)) |
 
 Pure policies: minimum gap duration, silence peak fraction (aligned with fingerprint prep), crossfade length.
 
@@ -460,7 +461,7 @@ Pure policies: minimum gap duration, silence peak fraction (aligned with fingerp
 | Use case | Description |
 |----------|-------------|
 | `ScanGaps` | Align → chunk-scan A → map B → produce `GapReport` |
-| `RepairVideos` | `ScanGaps` → `gap_fill` → `MediaMuxer` (migration Phase 5) |
+| `RepairVideos` | `ScanGaps` → `gap_fill` → `PatchedAudioWriter` (R4) → optional `MediaMuxer` (R5) |
 
 #### Ports
 
@@ -469,7 +470,7 @@ trait GapReporter {
     fn report(&self, report: &GapReport) -> Result<(), RepairError>;
 }
 
-trait MediaMuxer {   // migration Phase 5 implementation
+trait MediaMuxer {   // R5 (`ffmpeg-mux` feature)
     fn mux_video_with_replaced_audio(
         &self,
         source_video: &Path,
@@ -500,9 +501,10 @@ Do **not** extend lib `AppError` with repair variants. Wrap `AppError` at the al
 |--------|------|
 | `infrastructure/cli/` | Args, human/JSON gap output, exit codes |
 | `infrastructure/config.rs` | `RepairAppConfig`, `RepairConfig`, `load_repair_app_config` |
-| `infrastructure/ffmpeg_mux.rs` | `MediaMuxer` via ffmpeg subprocess (migration Phase 5) |
+| `infrastructure/wav_writer.rs` | `PatchedAudioWriter` via hound (R4) |
+| `infrastructure/ffmpeg_mux.rs` | `MediaMuxer` via ffmpeg subprocess (R5, `ffmpeg-mux` feature) |
 
-Repair does **not** require ffmpeg for report-only mode. ffmpeg on PATH is required only for patched output.
+Repair does **not** require ffmpeg for report-only mode or WAV output. ffmpeg on PATH is required only for video mux (`--mux`, R5).
 
 ---
 
@@ -764,7 +766,7 @@ Options:
   -V, --version
 ```
 
-### Repair (planned)
+### Repair (report-only shipped; write path R0–R5 planned)
 
 ```text
 clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>

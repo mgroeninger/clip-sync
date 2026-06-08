@@ -1,6 +1,6 @@
 # Temporary plan: workspace refactor (core library + CLI + repair)
 
-> **Status:** **Phases 1–3 complete (2026-06-07).** Archived to `docs/archive/workspace-refactor-plan.md`. Phase 4 (repair crate) tracked in BACKLOG.md.  
+> **Status:** **Phases 1–4 complete (2026-06-08).** Archived migration plan. Phase 4 (report-only repair) shipped. **Phase 5 (write path) superseded** by [docs/TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5).  
 > **Location:** Root `TEMP-*.md` for active work; move/archive when complete (see [BACKLOG.md](BACKLOG.md)).  
 > **Architecture reference:** [PLAN.md](PLAN.md) describes the **target** workspace architecture; this file is the **migration** plan. Keep both in sync when decisions change.
 
@@ -50,7 +50,7 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Features** | `he-aac` on lib; `ffmpeg-tests` on lib dev/integration tests only. |
 | **Versioning / release** | Single workspace version for v1 (all crates `0.1.0`). Publish policy TBD. |
 | **PLAN.md / BACKLOG** | [PLAN.md](PLAN.md) = target architecture (updated incrementally; complete by Phase 3). [BACKLOG.md](BACKLOG.md) — mark “Binary-only crate” done in Phase 2. |
-| **Phase numbering** | **Migration phases** (this doc): 0–5 workspace extraction. **Repair workflow phases** ([PLAN.md](PLAN.md) § Repair workflow): report-only = migration Phase 4; write path = migration Phase 5. |
+| **Phase numbering** | **Migration phases** (this doc): 0–5 workspace extraction. Phase 4 = report-only repair (shipped). Phase 5 = write-path umbrella — **superseded** by [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5). |
 
 ---
 
@@ -625,6 +625,8 @@ ScanGaps → gap_fill (application) → write temp WAV → MediaMuxer.mux → ou
 
 ### Phase 5 — Repair write path (optional, separate PR)
 
+> **Superseded:** Implement per [docs/TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5). The steps below are the original migration stub; kept for history only.
+
 **Goal:** Patched output when user opts in.
 
 | Step | Action |
@@ -792,9 +794,9 @@ clip-sync = { path = "../clip-sync", features = ["test-utils"] }
 | **2** | `cargo run -p clip-sync-cli -- A B` equivalent to pre-refactor; `run_align` + `load_app_config` in CLI. |
 | **3** | Corpus in lib; CLI adapter tests added; `test-utils` documented; docs paths updated. |
 | **4** | `clip-sync-repair A B` gap report; `RepairError` + `GapReporter`; `MediaMuxer` port defined. |
-| **5** | Patched output via ffmpeg; video stream copied. |
+| **5** | Patched output — see [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (WAV R4; ffmpeg mux R5). |
 
-**Archive trigger:** Phases **1–3** → archive as “core extraction done”; Phases **4–5** tracked in BACKLOG or a follow-up plan.
+**Archive trigger:** Phases **1–4** → archived as “core extraction + report-only repair done”; write path tracked in [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) and [BACKLOG.md](../../BACKLOG.md).
 
 ---
 
@@ -803,6 +805,6 @@ clip-sync = { path = "../clip-sync", features = ["test-utils"] }
 1. **PR A:** Phase 1 + 2 (workspace, lib hexagon, CLI hexagon) — highest priority.
 2. **PR B:** Phase 3 (test-utils, CLI adapter tests, doc refresh — corpus stays in lib).
 3. **PR C:** Phase 4 (repair hexagon, report-only) + lib `timeline_scan` if needed.
-4. **PR D:** Phase 5 (repair write path) — optional beta.
+4. **PR D:** Repair write path — optional; follow [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) R0–R5 (not the Phase 5 stub below).
 
 Do **not** combine PR A with repair logic.

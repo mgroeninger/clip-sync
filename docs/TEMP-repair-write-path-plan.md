@@ -456,7 +456,7 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 - `Cargo.toml` — `hound` dep, `[features] ffmpeg-mux`
 
 ### Other
-- [PLAN.md](../PLAN.md) — target repair architecture (§Repair workflow / application); update write-path section once WAV-first + feature flag land
-- [BACKLOG.md](../BACKLOG.md) — add tracking item
+- [PLAN.md](../PLAN.md) — target repair architecture (§Repair workflow); write-path section points here
+- [BACKLOG.md](../BACKLOG.md) — repair write path tracked under R0–R5
 - [docs/error-mapping.md](error-mapping.md) — repair exit codes (4 write, 6 mux)
 - [docs/archive/workspace-refactor-gaps.md](archive/workspace-refactor-gaps.md) — migration Phase 5 origin
