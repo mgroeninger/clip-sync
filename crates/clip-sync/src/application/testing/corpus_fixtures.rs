@@ -5,9 +5,9 @@ use serde::Deserialize;
 use tempfile::TempDir;
 
 use crate::application::align_videos::{AlignVideos, AlignVideosRequest};
-use crate::application::config::{AppConfig, ClipConfig};
+use crate::application::config::{AlignConfig, ClipConfig};
 use crate::application::error::AppError;
-use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
+use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
 use crate::application::testing::audio_fixtures::{
     write_near_silence_wav_pair, write_offset_chirp_wav_pair,
     write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair, write_tone_wav,
@@ -157,7 +157,13 @@ pub struct GeneratedCasePaths {
 }
 
 pub fn corpus_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("corpus")
+    if let Ok(root) = std::env::var("CLIP_SYNC_WORKSPACE_ROOT") {
+        return PathBuf::from(root).join("tests").join("corpus");
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests")
+        .join("corpus")
 }
 
 pub fn load_manifest() -> CorpusManifest {
@@ -402,13 +408,13 @@ fn generate_into(base: &Path, case: &CorpusCase, defaults: &CorpusDefaults) -> G
     paths
 }
 
-pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AppConfig {
+pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig {
     let clip_length_secs = case
         .clip_length_secs
         .unwrap_or(defaults.clip_length_secs);
     let num_clips = case.num_clips.unwrap_or(defaults.num_clips);
 
-    let mut config = AppConfig {
+    let mut config = AlignConfig {
         clip: ClipConfig {
             clip_length: Duration::from_secs(clip_length_secs),
             num_clips,
@@ -438,17 +444,16 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AppConfig {
     config
 }
 
-pub fn run_corpus_case_with_config<MR, FP, AL, PR>(
-    use_case: &AlignVideos<'_, MR, FP, AL, PR>,
+pub fn run_corpus_case_with_config<MR, FP, AL>(
+    use_case: &AlignVideos<'_, MR, FP, AL>,
     video_a: PathBuf,
     video_b: PathBuf,
-    config: AppConfig,
+    config: AlignConfig,
 ) -> Result<AlignmentResult, AppError>
 where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    PR: ProgressReporter,
 {
     let response = use_case.execute(AlignVideosRequest {
         video_a,
@@ -458,8 +463,8 @@ where
     Ok(response.result)
 }
 
-pub fn run_corpus_case<MR, FP, AL, PR>(
-    use_case: &AlignVideos<'_, MR, FP, AL, PR>,
+pub fn run_corpus_case<MR, FP, AL>(
+    use_case: &AlignVideos<'_, MR, FP, AL>,
     case: &CorpusCase,
     defaults: &CorpusDefaults,
     video_a: PathBuf,
@@ -469,7 +474,6 @@ where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    PR: ProgressReporter,
 {
     run_corpus_case_with_config(
         use_case,

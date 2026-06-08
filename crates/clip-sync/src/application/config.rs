@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -23,21 +22,16 @@ pub enum ChromaprintPreset {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct AppConfig {
+pub struct AlignConfig {
     #[serde(default)]
     pub clip: ClipConfig,
     #[serde(default)]
     pub alignment: AlignmentConfig,
-    #[serde(default)]
-    pub output: OutputConfig,
-    #[serde(default)]
-    pub logging: LoggingConfig,
 }
 
-impl AppConfig {
+impl AlignConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.clip.validate()?;
-        Ok(())
+        self.clip.validate()
     }
 }
 
@@ -53,6 +47,7 @@ pub struct ClipConfig {
     pub normalize_loudness: bool,
     #[serde(default = "default_true")]
     pub trim_silence: bool,
+    /// Extra seconds extracted either side of window for subclip sliding (0 = disabled).
     #[serde(default = "default_window_slide_secs")]
     pub window_slide_secs: u32,
     #[serde(default)]
@@ -197,67 +192,13 @@ impl Default for AlignmentConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OutputFormat {
-    #[default]
-    Human,
-    Json,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OutputConfig {
-    #[serde(default)]
-    pub format: OutputFormat,
-    #[serde(default)]
-    pub show_diagnostics: bool,
-}
-
-impl Default for OutputConfig {
-    fn default() -> Self {
-        Self {
-            format: OutputFormat::Human,
-            show_diagnostics: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LogLevel {
-    Error,
-    Warn,
-    #[default]
-    Info,
-    Debug,
-    Trace,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProgressMode {
-    #[default]
-    Auto,
-    Quiet,
-    Verbose,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    #[serde(default)]
-    pub level: LogLevel,
-    pub log_file: Option<PathBuf>,
-    #[serde(default)]
-    pub progress: ProgressMode,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn default_config_is_valid() {
-        AppConfig::default().validate().unwrap();
+        AlignConfig::default().validate().unwrap();
     }
 
     #[test]

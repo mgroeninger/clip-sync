@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::application::config::AppConfig;
+use crate::application::config::AlignConfig;
 use crate::application::error::{AppError, FingerprintError};
 use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
 use crate::application::offset_refinement::refine_offset_estimate;
@@ -15,7 +15,7 @@ use crate::domain::{
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
-    pub config: AppConfig,
+    pub config: AlignConfig,
 }
 
 #[derive(Debug)]
@@ -23,25 +23,24 @@ pub struct AlignVideosResponse {
     pub result: AlignmentResult,
 }
 
-pub struct AlignVideos<'a, MR, FP, AL, PR> {
+pub struct AlignVideos<'a, MR, FP, AL> {
     media_reader: &'a MR,
     fingerprinter: &'a FP,
     aligner: &'a AL,
-    progress: &'a PR,
+    progress: &'a dyn ProgressReporter,
 }
 
-impl<'a, MR, FP, AL, PR> AlignVideos<'a, MR, FP, AL, PR>
+impl<'a, MR, FP, AL> AlignVideos<'a, MR, FP, AL>
 where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    PR: ProgressReporter,
 {
     pub fn new(
         media_reader: &'a MR,
         fingerprinter: &'a FP,
         aligner: &'a AL,
-        progress: &'a PR,
+        progress: &'a dyn ProgressReporter,
     ) -> Self {
         Self {
             media_reader,
@@ -188,7 +187,7 @@ where
         &self,
         extracted_a: &ExtractedClips,
         extracted_b: &ExtractedClips,
-        config: &AppConfig,
+        config: &AlignConfig,
     ) -> Result<AlignmentResult, AppError> {
         if extracted_a.windows.len() != extracted_b.windows.len() {
             return Err(AppError::Alignment(
@@ -423,7 +422,7 @@ struct ExtractedClips {
     track: AudioTrack,
 }
 
-fn log_alignment_summary(result: &AlignmentResult, progress: &impl ProgressReporter) {
+fn log_alignment_summary(result: &AlignmentResult, progress: &dyn ProgressReporter) {
     progress.phase(&format!(
         "Start clip aligned: {}",
         yes_no(result.start_aligned)
@@ -545,7 +544,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::config::{AppConfig, ClipConfig};
+    use crate::application::config::{AlignConfig, AlignmentConfig, ClipConfig};
     use crate::application::error::{AlignmentError, AppError, ConfigError, FingerprintError, MediaError};
     use crate::application::testing::fakes::{
         FakeAligner, FakeFingerprinter, FakeMediaReader, FakeMediaSession, FakeProgressReporter,
@@ -556,8 +555,8 @@ mod tests {
         Duration::from_secs(m * 60)
     }
 
-    fn two_clip_config() -> AppConfig {
-        AppConfig {
+    fn two_clip_config() -> AlignConfig {
+        AlignConfig {
             clip: ClipConfig {
                 clip_length: mins(1),
                 num_clips: 2,
@@ -567,16 +566,15 @@ mod tests {
                 window_slide_secs: 0,
                 ..ClipConfig::default()
             },
-            alignment: crate::application::config::AlignmentConfig {
+            alignment: AlignmentConfig {
                 refine_offset_with_pcm: false,
                 refine_offset_high_rate: false,
                 ..Default::default()
             },
-            ..Default::default()
         }
     }
 
-    fn request(config: AppConfig) -> AlignVideosRequest {
+    fn request(config: AlignConfig) -> AlignVideosRequest {
         AlignVideosRequest {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
@@ -864,7 +862,7 @@ mod tests {
             OFFSET_SECS,
         );
 
-        let config = AppConfig {
+        let config = AlignConfig {
             clip: ClipConfig {
                 clip_length: Duration::from_secs(60),
                 num_clips: 1,
@@ -905,8 +903,8 @@ mod tests {
         );
     }
 
-    fn cross_layer_chirp_config(refine_pcm: bool, high_rate: bool) -> AppConfig {
-        AppConfig {
+    fn cross_layer_chirp_config(refine_pcm: bool, high_rate: bool) -> AlignConfig {
+        AlignConfig {
             clip: ClipConfig {
                 clip_length: Duration::from_secs(60),
                 num_clips: 1,
@@ -916,12 +914,11 @@ mod tests {
                 window_slide_secs: 0,
                 ..ClipConfig::default()
             },
-            alignment: crate::application::config::AlignmentConfig {
+            alignment: AlignmentConfig {
                 refine_offset_with_pcm: refine_pcm,
                 refine_offset_high_rate: high_rate,
                 ..Default::default()
             },
-            ..Default::default()
         }
     }
 

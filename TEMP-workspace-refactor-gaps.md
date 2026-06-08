@@ -13,7 +13,7 @@
 
 | Scope | Ready to implement? | Notes |
 |-------|-------------------|-------|
-| **PR A — Phases 1 + 2** (workspace, lib hexagon, CLI hexagon) | **Yes** | Minor gaps below; resolve during the PR |
+| **PR A — Phases 1 + 2** (workspace, lib hexagon, CLI hexagon) | **Done (2026-06-07)** | All pre-implementation gaps resolved; 98 tests green |
 | **PR B — Phase 3** (`test-utils`, CLI adapter tests, docs) | **Yes** | Depends on PR A |
 | **PR C — Phase 4** (repair report-only) | **No** | Scaffold only; see § Deferred scope |
 | **PR D — Phase 5** (repair write path) | **No** | Optional; depends on Phase 4 |
@@ -214,14 +214,14 @@ Facts confirmed against the repo at readiness review. No action unless the code 
 
 | Topic | Current state | Plan expectation |
 |-------|---------------|------------------|
-| Crate layout | Single binary at root; `main.rs` → `cli::run()` | Workspace with `crates/clip-sync`, `clip-sync-cli`, `clip-sync-repair` |
-| `AlignVideosRequest.config` | `AppConfig` | `AlignConfig` after Phase 2.6 |
-| Adapter wiring | Inline in `infrastructure/cli/mod.rs` | `default_pipeline::align_with_defaults` + `run_align` |
-| `align_videos` config usage | `clip` + `alignment` only | Safe to split `OutputConfig` / `LoggingConfig` out |
-| Corpus data | `tests/corpus/` (manifest, README, `wav/`) | Stays at workspace root |
-| `corpus_root()` | `CARGO_MANIFEST_DIR/tests/corpus` | `../..` from lib crate + env override |
-| `PLAN.md` | Target architecture documented | Aligned with migration plan |
-| `BACKLOG.md` | “Binary-only crate” still under Defer | Mark done in Phase 2.9 per parent plan |
+| Crate layout | **Done:** workspace with `crates/clip-sync`, `clip-sync-cli`; root is workspace only | As designed |
+| `AlignVideosRequest.config` | **Done:** `AlignConfig` | As designed |
+| Adapter wiring | **Done:** `default_pipeline::align_with_defaults` + `run_align` | As designed |
+| `align_videos` config usage | **Done:** `clip` + `alignment` only via `AlignConfig` | As designed |
+| Corpus data | `tests/corpus/` (manifest, README, `wav/`) | Stays at workspace root ✓ |
+| `corpus_root()` | **Done:** `../..` from lib `CARGO_MANIFEST_DIR` + `CLIP_SYNC_WORKSPACE_ROOT` override | As designed |
+| `PLAN.md` | Updated: implementation status reflects workspace complete | ✓ |
+| `BACKLOG.md` | Updated: “Binary-only crate” removed from Defer; workspace extraction added to Completed | ✓ |
 
 ---
 
@@ -238,19 +238,19 @@ Implement repetition/verification **after** PR A if they touch `align_videos.rs`
 
 ---
 
-## Pre-flight checklist (PR A)
+## Pre-flight checklist (PR A) — Complete
 
-Run before starting Phase 1; repeat before merging Phase 2.
+All items verified 2026-06-07. PR A shipped.
 
-- [ ] `cargo test` green on current `main`
-- [ ] `cargo test corpus_` green (baseline pass/fail for Tier A + B)
-- [ ] `testing_paths.rs` + `corpus_root()` fix included early in Phase 1 (gap 4)
-- [ ] `LoggingConfig` relocation included in config split (gap 1)
-- [ ] `HighRateRefinement` added to facade `domain` re-exports (gap 7)
-- [ ] `AlignVideosRequest` type change and all test helper updates in one commit (gap 3)
-- [ ] `anyhow` omitted from lib Cargo.toml; `serde_json` in CLI Cargo.toml (gap 9)
-- [ ] Phases 1 + 2 in one PR unless review size forces a split (gap 5)
-- [ ] After merge: `cargo run -p clip-sync-cli -- A B` matches pre-refactor output
+- [x] `cargo test` green on current `main`
+- [x] `cargo test corpus_` green (baseline pass/fail for Tier A + B)
+- [x] `corpus_root()` fix: `../..` from `CARGO_MANIFEST_DIR` + `CLIP_SYNC_WORKSPACE_ROOT` override (gap 4)
+- [x] `LoggingConfig` relocation to `infrastructure::logging` (gap 1)
+- [x] `HighRateRefinement` added to facade `domain` re-exports (gap 7)
+- [x] `AlignVideosRequest.config: AlignConfig`; all test helpers updated in same commit (gap 3)
+- [x] `anyhow` omitted from lib Cargo.toml; `serde_json` in CLI Cargo.toml (gap 9)
+- [x] Phases 1 + 2 in one PR; no intermediate binary (gap 5)
+- [ ] After merge: `cargo run -p clip-sync-cli -- A B` matches pre-refactor output (manual smoke test)
 
 ---
 
@@ -269,15 +269,15 @@ Run before starting Phase 1; repeat before merging Phase 2.
 
 | # | Gap | Severity | Resolve in | Status |
 |---|-----|----------|------------|--------|
-| 1 | `LoggingConfig` relocation | Low | PR A (Phase 1) | Open |
-| 2 | Example config TOML fixture | Low | PR A (Phase 2.7) | Open |
-| 3 | `OutputConfig` transition + `AlignVideosRequest` migration scope | Low | PR A (Phases 1–2) | Open |
-| 4 | `corpus_root()` critical path | Low | PR A (Phase 1.7) | Open |
-| 5 | Temporary root binary | Low | PR A (prefer skip) | Open |
+| 1 | `LoggingConfig` relocation | Low | PR A (Phase 1) | Resolved |
+| 2 | Example config TOML fixture | Low | PR B (Phase 3) | Open |
+| 3 | `OutputConfig` transition + `AlignVideosRequest` migration scope | Low | PR A (Phases 1–2) | Resolved |
+| 4 | `corpus_root()` critical path | Low | PR A (Phase 1.7) | Resolved |
+| 5 | Temporary root binary | Low | PR A (prefer skip) | Resolved — skipped |
 | 6 | Publish policy | None | Before crates.io publish | Open |
-| 7 | `HighRateRefinement` missing from facade | Low — correctness | PR A (Phase 1.3 facade) | Open |
+| 7 | `HighRateRefinement` missing from facade | Low — correctness | PR A (Phase 1.3 facade) | Resolved |
 | 8 | `window_slide_secs` undocumented in plan | Low — documentation | PR A (Phase 1 config docs) | Resolved |
-| 9 | Cargo.toml sketch inaccuracies (`anyhow` / `serde_json`) | Low | PR A (Phase 1.1) | Open |
+| 9 | Cargo.toml sketch inaccuracies (`anyhow` / `serde_json`) | Low | PR A (Phase 1.1) | Resolved |
 | 10 | Repair facade allow-list | Phase 4 | Before PR C | Deferred |
 | 11 | `timeline_scan` decision | Phase 4 | Spike in PR C | Deferred |
 | 12 | Repair algorithms / policies | Phase 4–5 | Follow-up spec | Deferred |

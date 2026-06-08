@@ -2,13 +2,10 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use crate::application::config::{AppConfig, ProgressMode};
-use crate::application::error::AppError;
-use crate::application::{AlignVideos, AlignVideosRequest};
-use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
-use crate::infrastructure::config::file::load_optional_config_file;
-use crate::infrastructure::logging::{init_tracing, StderrProgressReporter};
-use crate::infrastructure::symphonia::SymphoniaMediaReader;
+use clip_sync::{AppError, ProgressMode, init_tracing, StderrProgressReporter};
+
+use crate::application::run_align::run_align;
+use crate::infrastructure::config::{AppConfig, load_app_config};
 
 pub mod args;
 pub mod exit_code;
@@ -29,34 +26,24 @@ pub fn run() -> ExitCode {
 
 fn run_inner() -> Result<(), AppError> {
     let cli = Cli::parse();
-    let mut config = load_optional_config_file(cli.config.as_deref())?;
+    let mut config = load_app_config(cli.config.as_deref())?;
     apply_cli_overrides(&mut config, &cli);
     config.validate()?;
 
     init_tracing(&config.logging)?;
 
     let progress = StderrProgressReporter::new(config.logging.progress);
-    let media_reader = SymphoniaMediaReader;
-    let preset = config.clip.chromaprint_preset;
-    let fingerprinter = ChromaprintFingerprinter::new(preset);
-    let aligner = ChromaprintAligner::new(preset);
+    let result = run_align(&config, cli.video_a, cli.video_b, &progress)?;
 
-    let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
-    let response = use_case.execute(AlignVideosRequest {
-        video_a: cli.video_a,
-        video_b: cli.video_b,
-        config: config.clone(),
-    })?;
-
-    output::print_success(&config.output, &response.result)
+    output::print_success(&config.output, &result)
 }
 
 fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     if let Some(duration) = cli.clip_length {
-        config.clip.clip_length = duration;
+        config.align.clip.clip_length = duration;
     }
     if let Some(num_clips) = cli.num_clips {
-        config.clip.num_clips = num_clips;
+        config.align.clip.num_clips = num_clips;
     }
     if let Some(format) = cli.format {
         config.output.format = format.into();
@@ -75,9 +62,9 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
         config.logging.log_file = Some(path.clone());
     }
     if cli.try_all_tracks {
-        config.alignment.try_all_tracks = true;
+        config.align.alignment.try_all_tracks = true;
     }
     if cli.refine_offset_high_rate {
-        config.alignment.refine_offset_high_rate = true;
+        config.align.alignment.refine_offset_high_rate = true;
     }
 }

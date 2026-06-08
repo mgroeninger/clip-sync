@@ -1,0 +1,24 @@
+[package]
+name = "clip-sync-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Analyzer CLI for clip-sync"
+license = "Non-commercial"
+
+[[bin]]
+name = "clip-sync"
+path = "src/main.rs"
+
+[dependencies]
+clip-sync = { path = "../clip-sync" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+thiserror = "1"
+
+[dev-dependencies]
+clip-sync = { path = "../clip-sync", features = ["test-utils", "he-aac"] }
+hound = "3"
+tempfile = "3"

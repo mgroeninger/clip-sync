@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
-use crate::application::config::{LogLevel, OutputFormat};
+use clip_sync::LogLevel;
+
+use crate::infrastructure::config::OutputFormat;
 
 #[derive(Debug, Parser)]
 #[command(name = "clip-sync", about = "Align two videos by comparing audio fingerprints")]

@@ -239,7 +239,7 @@ pub fn encode_he_aac_mp4_from_wav(input_wav: &Path, output: &Path) -> bool {
             .arg("error")
             .arg("-i")
             .arg(input_wav)
-            .args(audio_codec_args)
+            .args(*audio_codec_args)
             .arg("-f")
             .arg("mp4")
             .arg(output)
@@ -256,7 +256,7 @@ pub fn encode_he_aac_mp4_from_wav(input_wav: &Path, output: &Path) -> bool {
     false
 }
 
-#[cfg(feature = "he-aac")]
+#[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
 pub fn write_he_aac_mp4_fixture(path: &Path) -> bool {
     if !ffmpeg_available() {
         return false;
@@ -276,7 +276,7 @@ pub fn write_he_aac_mp4_fixture(path: &Path) -> bool {
     false
 }
 
-#[cfg(feature = "he-aac")]
+#[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
 pub fn write_he_aac_surround_mp4_fixture(path: &Path) -> bool {
     if !ffmpeg_available() {
         return false;

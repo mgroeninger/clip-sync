@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use crate::application::config::AppConfig;
+use crate::application::config::AlignConfig;
 use crate::application::error::{AppError, ConfigError};
 
-pub fn load_optional_config_file(path: Option<&Path>) -> Result<AppConfig, AppError> {
+pub fn load_align_config(path: Option<&Path>) -> Result<AlignConfig, AppError> {
     let Some(path) = path else {
-        return Ok(AppConfig::default());
+        return Ok(AlignConfig::default());
     };
 
     let raw = std::fs::read_to_string(path)

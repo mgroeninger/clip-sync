@@ -1,5 +1,4 @@
 mod application;
-mod domain;
 mod infrastructure;
 
 use std::process::ExitCode;

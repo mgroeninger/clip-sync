@@ -1,11 +1,42 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use crate::application::config::{LogLevel, LoggingConfig};
 use crate::application::error::AppError;
 
 pub mod progress;
 
 pub use progress::StderrProgressReporter;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+    Trace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressMode {
+    #[default]
+    Auto,
+    Quiet,
+    Verbose,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub level: LogLevel,
+    pub log_file: Option<PathBuf>,
+    #[serde(default)]
+    pub progress: ProgressMode,
+}
 
 pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
     let level = match config.level {

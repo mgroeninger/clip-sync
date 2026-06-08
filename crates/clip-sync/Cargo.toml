@@ -1,0 +1,31 @@
+[package]
+name = "clip-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Align two videos by comparing audio fingerprints (library)"
+license = "Non-commercial"
+
+[features]
+default = []
+he-aac = ["dep:fdk-aac", "dep:symphonia-core"]
+ffmpeg-tests = []
+test-utils = ["dep:hound", "dep:tempfile"]
+
+[dependencies]
+rusty-chromaprint = "0.3"
+rubato = "0.16"
+cross_correlate = "0.3"
+serde = { version = "1", features = ["derive"] }
+symphonia = { version = "0.6", features = ["default", "isomp4", "aac", "mp3", "mkv", "flac"] }
+fdk-aac = { version = "0.8", optional = true }
+symphonia-core = { version = "0.6", optional = true }
+thiserror = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+hound = { version = "3", optional = true }
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+hound = "3"
+tempfile = "3"

@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::io::{IsTerminal, Write};
 
-use crate::application::config::ProgressMode;
+use crate::infrastructure::logging::ProgressMode;
 use crate::application::ports::ProgressReporter;
 
 pub struct StderrProgressReporter {

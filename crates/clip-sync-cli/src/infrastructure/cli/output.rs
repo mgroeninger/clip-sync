@@ -1,6 +1,6 @@
-use crate::application::config::{OutputConfig, OutputFormat};
-use crate::application::error::AppError;
-use crate::domain::{AlignmentResult, ClipLabel, ClipMatch};
+use clip_sync::{AppError, AlignmentResult, ClipLabel, ClipMatch};
+
+use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
 pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<(), AppError> {
     match output.format {

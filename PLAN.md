@@ -13,7 +13,7 @@ The workspace is intended for workflows where two recordings of the same event (
 | **Analyzer** | `clip-sync` | Read-only: report offset and per-clip alignment |
 | **Repair** | `clip-sync-repair` | Gap scan (v1); optional patched output via ffmpeg (v2) |
 
-Implementation status: the analyzer lives in a single binary crate today; workspace extraction is tracked in [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) (migration phases 0–5). This document describes the **target** architecture; keep it aligned with the migration plan when decisions change.
+Implementation status: workspace extraction (Phases 1–2) is complete — the analyzer ships as `crates/clip-sync-cli` consuming `crates/clip-sync`. `clip-sync-repair` is planned (Phases 4–5). This document describes the **target** architecture; keep it aligned with the migration plan when decisions change.
 
 ---
 

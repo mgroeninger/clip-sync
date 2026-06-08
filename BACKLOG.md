@@ -64,7 +64,6 @@ Implement repetition before or alongside verification (shared config section, sa
 ### Defer / opportunistic
 
 - [Memory use and PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) — document order-of-magnitude first; optimize when users report pain
-- [Binary-only crate (no `lib.rs`)](#binary-only-crate-no-librs) — when embedding or black-box tests are needed
 - [Log file appender](#log-file-appender), [committed test fixtures](#committed-test-fixtures), [test helper cross-layer coupling](#test-helper-cross-layer-coupling) — as CI/support needs arise
 - [Type and dependency polish](#type-and-dependency-polish), [stringly-typed port errors](#stringly-typed-port-errors), [silent resample fallback](#silent-resample-fallback) — incremental when touching those files
 
@@ -80,7 +79,7 @@ Implement repetition before or alongside verification (shared config section, sa
 
 **Resolution:** `pcm_discover_offset` in `offset_refinement.rs` — template match in a window around the coarse estimate (downsampled scan + full-rate refine on coarse hint and top peaks); expanded `pcm_lag_adjustment` cap on long clips. Corpus: `wav_leader_15s`, `wav_leader_30s`, `wav_leader_60s`.
 
-**References:** `src/infrastructure/chromaprint/aligner.rs`, `src/application/offset_refinement.rs`, `tests/corpus/manifest.toml`
+**References:** `crates/clip-sync/src/infrastructure/chromaprint/aligner.rs`, `crates/clip-sync/src/application/offset_refinement.rs`, `tests/corpus/manifest.toml`
 
 ---
 
@@ -92,7 +91,7 @@ Implement repetition before or alongside verification (shared config section, sa
 
 **Resolution:** Optional `apply_high_rate_refinement` after alignment: re-extract a short hold-out at native decode rate, FFT cross-correlate at lag ≈ 0, apply small adjustment capped at 0.1 s. Off by default; enable with `--refine-offset-high-rate` or `refine_offset_high_rate = true`. Corpus: `wav_high_rate_refine_3s` (±50 ms at 44.1 kHz).
 
-**References:** `src/application/high_rate_refinement.rs`, `src/application/offset_refinement.rs`, `src/domain/policies.rs`, [docs/archive/high-rate-offset-refinement-plan.md](docs/archive/high-rate-offset-refinement-plan.md)
+**References:** `crates/clip-sync/src/application/high_rate_refinement.rs`, `crates/clip-sync/src/application/offset_refinement.rs`, `crates/clip-sync/src/domain/policies.rs`, [docs/archive/high-rate-offset-refinement-plan.md](docs/archive/high-rate-offset-refinement-plan.md)
 
 ---
 
@@ -115,7 +114,7 @@ Implement repetition before or alongside verification (shared config section, sa
 
 Off by default. Diagnostic only (exit 0 in v1).
 
-**References:** `docs/TEMP-clip-self-repetition-plan.md`, `src/infrastructure/chromaprint/aligner.rs`, `src/domain/alignment.rs`
+**References:** `docs/TEMP-clip-self-repetition-plan.md`, `crates/clip-sync/src/infrastructure/chromaprint/aligner.rs`, `crates/clip-sync/src/domain/alignment.rs`
 
 ---
 
@@ -135,7 +134,7 @@ Off by default. Diagnostic only (exit 0 in v1).
 
 Implement after or alongside repetition (shared config, same align loop).
 
-**References:** `docs/TEMP-offset-verification-plan.md`, `src/application/align_videos.rs`
+**References:** `docs/TEMP-offset-verification-plan.md`, `crates/clip-sync/src/application/align_videos.rs`
 
 ---
 
@@ -147,7 +146,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** `Resampler` and `OffsetRefiner` ports; move `Serialize` to application/infrastructure DTOs; update PLAN. Do after `media_reader` split to reduce parallel churn.
 
-**References:** `src/domain/resample.rs`, `src/application/offset_refinement.rs`, `src/application/ports.rs`, `PLAN.md`
+**References:** `crates/clip-sync/src/domain/resample.rs`, `crates/clip-sync/src/application/offset_refinement.rs`, `crates/clip-sync/src/application/ports.rs`, `PLAN.md`
 
 ---
 
@@ -159,7 +158,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** `extract_mono(&mut self, …)` on port trait (breaking); or explicit mutable session handle. Pair with `session.rs` extraction. Replace `expect()` with `MediaError` returns.
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/application/ports.rs`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/session.rs`, `crates/clip-sync/src/application/ports.rs`
 
 ---
 
@@ -171,7 +170,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Parse codec headers where available; wait for Symphonia; or **remove** tiebreaker until data exists. Do **after** dual-track policy revision.
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/domain/policies.rs`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/probe.rs`, `crates/clip-sync/src/domain/policies.rs`
 
 ---
 
@@ -185,7 +184,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Audit remaining failures; relax open when decodable; fail at clip planning if duration still unknown after scan.
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `tests/corpus/manifest.toml` (`mp3_no_duration_tag`)
+**References:** `crates/clip-sync/src/infrastructure/symphonia/session.rs`, `tests/corpus/manifest.toml` (`mp3_no_duration_tag`)
 
 ---
 
@@ -197,7 +196,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Pick one contract (low-confidence `Ok` vs engine errors); wire variants; adapter tests. Do when JSON/failure model is ready to freeze.
 
-**References:** `src/infrastructure/chromaprint/aligner.rs`, `docs/error-mapping.md`
+**References:** `crates/clip-sync/src/infrastructure/chromaprint/aligner.rs`, `docs/error-mapping.md`
 
 ---
 
@@ -209,7 +208,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Document expectations in PLAN; reduce clones (`Cow`, in-place prep); long-term chunked fingerprint if API allows.
 
-**References:** `src/application/align_videos.rs`, `src/domain/pcm_preparation.rs`
+**References:** `crates/clip-sync/src/application/align_videos.rs`, `crates/clip-sync/src/domain/pcm_preparation.rs`
 
 ---
 
@@ -221,7 +220,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** `warn` on fallback; natural at infrastructure boundary after resample port move.
 
-**References:** `src/domain/resample.rs`
+**References:** `crates/clip-sync/src/domain/resample.rs`
 
 ---
 
@@ -231,7 +230,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Structured sub-enums where categories repeat; keep display strings for stderr.
 
-**References:** `src/application/error.rs`, `src/infrastructure/symphonia/error_mapping.rs`
+**References:** `crates/clip-sync/src/application/error.rs`, `crates/clip-sync/src/infrastructure/symphonia/error_mapping.rs`
 
 ---
 
@@ -241,17 +240,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Newtype `Fingerprint`; remove `anyhow`; document sub-second config limit.
 
-**References:** `src/domain/alignment.rs`, `Cargo.toml`, `src/application/config.rs`
-
----
-
-### Binary-only crate (no `lib.rs`)
-
-**Problem:** Binary-only crate; composition root not reusable for integration tests or embedding.
-
-**Direction:** Add `lib.rs` with thin `main`; optional `clip_sync::run(config)`.
-
-**References:** `src/main.rs`, `src/infrastructure/cli/mod.rs`
+**References:** `crates/clip-sync/src/domain/alignment.rs`, `crates/clip-sync/Cargo.toml`, `crates/clip-sync/src/application/config.rs`
 
 ---
 
@@ -261,7 +250,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Move shared helpers to `tests/support/` when splitting `media_reader` tests.
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`, `src/application/testing/`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/`, `crates/clip-sync/src/application/testing/`
 
 ---
 
@@ -271,7 +260,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Direction:** Audit PLAN after track policy and architecture refactors land.
 
-**References:** `PLAN.md`, `src/application/config.rs`
+**References:** `PLAN.md`, `crates/clip-sync/src/application/config.rs`
 
 ---
 
@@ -279,9 +268,9 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Problem:** `--log-file` parsed but not implemented; init warns users.
 
-**Direction:** `tracing-appender` file layer in `src/infrastructure/logging/mod.rs`.
+**Direction:** `tracing-appender` file layer in `crates/clip-sync/src/infrastructure/logging/mod.rs`.
 
-**References:** `src/infrastructure/logging/mod.rs`
+**References:** `crates/clip-sync/src/infrastructure/logging/mod.rs`
 
 ---
 
@@ -297,11 +286,19 @@ Implement after or alongside repetition (shared config, same align loop).
 
 ## Completed
 
+### Workspace extraction (Phases 1–2)
+
+**Done (2026-06-07):** Single binary crate restructured into a three-crate Cargo workspace: `crates/clip-sync` (alignment library), `crates/clip-sync-cli` (analyzer binary), workspace root `Cargo.toml`. Facade `lib.rs` is the only public surface of the library. `AlignConfig` split from `AppConfig`; `LoggingConfig` moved to `infrastructure::logging`. Corpus path uses `CLIP_SYNC_WORKSPACE_ROOT` env override + `../..` from `CARGO_MANIFEST_DIR`.
+
+**References:** [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md), `crates/clip-sync/src/lib.rs`, `crates/clip-sync-cli/`
+
+---
+
 ### Phase 1 — Dual-track default track selection
 
 **Done:** `select_best_track` returns the first decodable track in container order (no sample-rate / channel ranking). Unit tests + `mp4_dual_track_wrong_default` corpus case updated. `--try-all-tracks` still available when program is not muxed first.
 
-**References:** `src/domain/policies.rs`, `tests/corpus/manifest.toml`, `PLAN.md`, `docs/corpus-validation.md`
+**References:** `crates/clip-sync/src/domain/policies.rs`, `tests/corpus/manifest.toml`, `PLAN.md`, `docs/corpus-validation.md`
 
 ---
 
@@ -309,7 +306,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done:** `DecodeError` skips logged at `debug`; aggregate `warn` when extract completes with skips; fail after 64 consecutive decode errors. Complements existing `decode_shortfall_limit`. Skip counts on `ClipMatch` (`video_a_decode_skips`, `video_b_decode_skips`) in JSON; human lines when `--verbose` / `show_diagnostics`.
 
-**References:** `src/infrastructure/symphonia/extract.rs`, `src/domain/alignment.rs`, `src/infrastructure/cli/output.rs`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/extract.rs`, `crates/clip-sync/src/domain/alignment.rs`, `crates/clip-sync-cli/src/infrastructure/cli/output.rs`
 
 ---
 
@@ -317,7 +314,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done:** `duration.rs`, `probe.rs`, `session.rs`, `extract.rs`, `media_reader_tests.rs`; `mod.rs` re-exports `SymphoniaMediaReader`.
 
-**References:** `src/infrastructure/symphonia/`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/`
 
 ---
 
@@ -325,7 +322,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done:** `extract_clips` sorts windows by start time before decode; results mapped back to clip index. Progress message when order differs from plan order.
 
-**References:** `src/application/align_videos.rs`
+**References:** `crates/clip-sync/src/application/align_videos.rs`
 
 ---
 
@@ -355,7 +352,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done:** Extract fails when decoded sample count falls far below expected window (`decode_shortfall_limit`), with tail-padding tolerance on long clips. Does not replace decode-skip logging.
 
-**References:** `src/infrastructure/symphonia/media_reader.rs`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/session.rs`
 
 ---
 
