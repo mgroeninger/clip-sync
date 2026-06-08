@@ -159,6 +159,16 @@ pub struct AlignmentConfig {
     /// Maximum |adjustment| applied from high-rate refinement.
     #[serde(default = "default_high_rate_refine_max_adjustment_secs")]
     pub high_rate_refine_max_adjustment_secs: f64,
+    /// End clip: refine around the start-clip offset instead of independent Chromaprint discovery.
+    #[serde(default = "default_true")]
+    pub refine_end_clip_around_start_offset: bool,
+    /// PCM search radius (seconds) when refining the end clip around the start offset.
+    #[serde(default = "default_end_clip_refine_radius_secs")]
+    pub end_clip_refine_radius_secs: f64,
+}
+
+fn default_end_clip_refine_radius_secs() -> f64 {
+    5.0
 }
 
 fn default_high_rate_refine_secs() -> u32 {
@@ -188,6 +198,8 @@ impl Default for AlignmentConfig {
             refine_offset_high_rate: false,
             high_rate_refine_secs: default_high_rate_refine_secs(),
             high_rate_refine_max_adjustment_secs: default_high_rate_refine_max_adjustment_secs(),
+            refine_end_clip_around_start_offset: true,
+            end_clip_refine_radius_secs: default_end_clip_refine_radius_secs(),
         }
     }
 }

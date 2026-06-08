@@ -1,3 +1,5 @@
+use clip_sync::ClipLabel;
+
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
 use crate::domain::{CompatibilityVerdict, GapReport};
@@ -32,6 +34,27 @@ fn format_human(report: &GapReport) -> String {
         .unwrap_or_default();
 
     out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+
+    if report.alignment.clips.len() > 1 {
+        for clip in &report.alignment.clips {
+            let label = clip_label_name(clip.label);
+            if let Some(clip_offset) = clip.offset_secs {
+                out.push_str(&format!(
+                    "  {label} clip: {clip_offset:+.3}s  (confidence {:.2})\n",
+                    clip.confidence
+                ));
+            }
+        }
+    }
+
+    if let Some(drift) = report.alignment.offset_drift_secs {
+        if !report.alignment.offsets_consistent {
+            out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
+            if report.alignment.recommended_offset_secs.is_some() {
+                out.push_str("           using start-clip offset for fill (clip offsets disagree)\n");
+            }
+        }
+    }
 
     if let Some(compat) = &report.track_compatibility {
         let verdict = match compat.verdict {
@@ -109,6 +132,14 @@ fn format_human(report: &GapReport) -> String {
     out
 }
 
+fn clip_label_name(label: ClipLabel) -> &'static str {
+    match label {
+        ClipLabel::Start => "Start",
+        ClipLabel::Interior => "Interior",
+        ClipLabel::End => "End",
+    }
+}
+
 fn print_human(report: &GapReport) -> Result<(), RepairError> {
     print!("{}", format_human(report));
     Ok(())
@@ -165,6 +196,7 @@ mod tests {
                 end_aligned: None,
                 recommended_offset_secs: Some(12.5),
                 offsets_consistent: true,
+                offset_drift_secs: None,
                 start_overlap: Some(overlap),
                 high_rate_refinement: None,
             },
@@ -215,6 +247,7 @@ mod tests {
                 end_aligned: None,
                 recommended_offset_secs: None,
                 offsets_consistent: true,
+                offset_drift_secs: None,
                 start_overlap: None,
                 high_rate_refinement: None,
             },
@@ -230,6 +263,43 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
         }
+    }
+
+    #[test]
+    fn human_report_shows_drift_when_clips_disagree() {
+        let mut report = minimal_report();
+        report.alignment.clips = vec![
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: true,
+                offset_secs: Some(-10.956),
+                confidence: 0.94,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+            },
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: 5280.0,
+                window_end_secs: 6180.0,
+                aligned: true,
+                offset_secs: Some(-11.2),
+                confidence: 0.94,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+            },
+        ];
+        report.alignment.end_aligned = Some(true);
+        report.alignment.offsets_consistent = false;
+        report.alignment.offset_drift_secs = Some(-0.244);
+        report.alignment.recommended_offset_secs = Some(-10.956);
+
+        let text = super::format_human(&report);
+        assert!(text.contains("Start clip: -10.956s"));
+        assert!(text.contains("End clip: -11.200s"));
+        assert!(text.contains("Drift:"));
+        assert!(text.contains("using start-clip offset for fill"));
     }
 
     #[test]

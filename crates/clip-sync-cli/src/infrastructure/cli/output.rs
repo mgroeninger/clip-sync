@@ -31,11 +31,19 @@ fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
             offset,
             if result.offsets_consistent {
                 "clip offsets agree"
+            } else if result.start_aligned {
+                "clip offsets disagree; using start clip"
             } else {
                 "clip offsets disagree"
             }
         ),
         None => println!("  Recommended offset: none"),
+    }
+
+    if let Some(drift) = result.offset_drift_secs {
+        if !result.offsets_consistent {
+            println!("  Offset drift (end − start): {:+.3}s", drift);
+        }
     }
 
     if let Some(overlap) = result.start_overlap {

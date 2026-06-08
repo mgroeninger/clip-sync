@@ -146,22 +146,55 @@ pub fn refine_offset_estimate(
     estimate
 }
 
-/// Slide a template from `left` across `right`, searching near `coarse_offset_secs`.
-fn pcm_discover_offset(
+/// Refine offset near a prior estimate (e.g. start-clip Δ) using constrained PCM search.
+///
+/// Used for end-clip validation: detect drift within `search_radius_secs` without a full
+/// Chromaprint rediscovery pass.
+pub fn refine_offset_around_prior(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
-    coarse_offset_secs: f64,
+    prior: ClipMatchEstimate,
+    search_radius_secs: f64,
+) -> ClipMatchEstimate {
+    if prior.confidence <= 0.0 || search_radius_secs <= 0.0 {
+        return prior;
+    }
+
+    let mut estimate = if let Some((discovered_offset, score)) =
+        pcm_search_near_offset(left, right, prior.offset_secs, search_radius_secs)
+    {
+        ClipMatchEstimate {
+            offset_secs: discovered_offset,
+            confidence: prior.confidence.max(correlation_to_confidence(score)),
+        }
+    } else {
+        prior
+    };
+
+    if let Some((adjustment, _)) =
+        pcm_cross_correlate_lag(left, right, estimate.offset_secs, REFINE_WINDOW_SECS)
+    {
+        if adjustment.abs() <= search_radius_secs {
+            estimate.offset_secs += adjustment;
+        }
+    }
+
+    estimate
+}
+
+/// Slide a template from `left` across `right`, searching near `center_offset_secs`.
+fn pcm_search_near_offset(
+    left: &MonoPcmClip,
+    right: &MonoPcmClip,
+    center_offset_secs: f64,
+    search_radius_secs: f64,
 ) -> Option<(f64, f64)> {
-    if left.sample_rate != right.sample_rate || left.sample_rate == 0 {
+    if left.sample_rate != right.sample_rate || left.sample_rate == 0 || search_radius_secs <= 0.0
+    {
         return None;
     }
 
     let rate = left.sample_rate;
-    let min_samples = rate as usize * MIN_DISCOVER_CLIP_SECS as usize;
-    if left.samples.len() < min_samples || right.samples.len() < min_samples {
-        return None;
-    }
-
     let left_start = first_audio_index(&left.samples);
     let template_samples = (rate as usize * DISCOVER_TEMPLATE_SECS as usize)
         .min(left.samples.len().saturating_sub(left_start))
@@ -178,13 +211,10 @@ fn pcm_discover_offset(
         return None;
     }
 
-    let clip_secs = left.samples.len() as f64 / f64::from(rate);
-    let search_secs = (clip_secs * DISCOVER_SEARCH_FRACTION)
-        .clamp(DISCOVER_SEARCH_FLOOR_SECS, DISCOVER_SEARCH_CAP_SECS);
-    let predicted_right_sample = (left_start as f64 + coarse_offset_secs * f64::from(rate))
+    let predicted_right_sample = (left_start as f64 + center_offset_secs * f64::from(rate))
         .round()
         .clamp(0.0, right.samples.len().saturating_sub(1) as f64) as usize;
-    let search_samples = (search_secs * f64::from(rate)).round() as usize;
+    let search_samples = (search_radius_secs * f64::from(rate)).round() as usize;
     let min_right_sample = predicted_right_sample.saturating_sub(search_samples);
     let max_right_sample = (predicted_right_sample + search_samples).min(right.samples.len());
     let max_start = right.samples.len().saturating_sub(template_samples);
@@ -241,7 +271,7 @@ fn pcm_discover_offset(
             let score = normalized_correlation(&template, &segment);
             let offset_secs =
                 right_start as f64 / f64::from(rate) - left_start as f64 / f64::from(rate);
-            let distance = (offset_secs - coarse_offset_secs).abs();
+            let distance = (offset_secs - center_offset_secs).abs();
             let better = score > best_full_score + DISCOVER_SCORE_TIE_EPSILON
                 || (score >= best_full_score - DISCOVER_SCORE_TIE_EPSILON
                     && distance < best_distance);
@@ -261,6 +291,28 @@ fn pcm_discover_offset(
     let offset_secs =
         best_sample as f64 / f64::from(rate) - left_start as f64 / f64::from(rate);
     Some((offset_secs, best_full_score))
+}
+
+/// Slide a template from `left` across `right`, searching near `coarse_offset_secs`.
+fn pcm_discover_offset(
+    left: &MonoPcmClip,
+    right: &MonoPcmClip,
+    coarse_offset_secs: f64,
+) -> Option<(f64, f64)> {
+    if left.sample_rate != right.sample_rate || left.sample_rate == 0 {
+        return None;
+    }
+
+    let rate = left.sample_rate;
+    let min_samples = rate as usize * MIN_DISCOVER_CLIP_SECS as usize;
+    if left.samples.len() < min_samples || right.samples.len() < min_samples {
+        return None;
+    }
+
+    let clip_secs = left.samples.len() as f64 / f64::from(rate);
+    let search_secs = (clip_secs * DISCOVER_SEARCH_FRACTION)
+        .clamp(DISCOVER_SEARCH_FLOOR_SECS, DISCOVER_SEARCH_CAP_SECS);
+    pcm_search_near_offset(left, right, coarse_offset_secs, search_secs)
 }
 
 fn max_refine_adjustment_secs(_left: &MonoPcmClip) -> f64 {
@@ -622,6 +674,30 @@ mod tests {
     #[test]
     fn aligned_slice_starts_negative_offset() {
         assert_eq!(aligned_slice_starts(-5_000), (5_000, 0));
+    }
+
+    #[test]
+    fn refine_around_prior_finds_offset_within_radius() {
+        let sample_rate = 11_025;
+        let (left, right) = delayed_pair(sample_rate, 60, 3);
+        let options = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left = prepare_clip_for_fingerprint(&left, options).unwrap();
+        let right = prepare_clip_for_fingerprint(&right, options).unwrap();
+
+        let prior = ClipMatchEstimate {
+            offset_secs: 1.0,
+            confidence: 0.9,
+        };
+        let refined = refine_offset_around_prior(&left, &right, prior, 5.0);
+        assert!(
+            (refined.offset_secs - 3.0).abs() < 0.15,
+            "refined={}",
+            refined.offset_secs
+        );
     }
 
     #[test]

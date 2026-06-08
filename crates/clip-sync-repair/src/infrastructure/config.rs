@@ -10,6 +10,8 @@ pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
 fn default_repair_align_config() -> AlignConfig {
     let mut align = AlignConfig::default();
     align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;
+    // Keep start-clip offset for fill when end disagrees; drift is surfaced in the report.
+    align.alignment.require_consistent_offsets = false;
     align
 }
 
@@ -89,7 +91,7 @@ fn default_silence_hold_ms() -> u64 {
     500
 }
 fn default_absolute_silence_rms() -> f32 {
-    20.0
+    33.0
 }
 fn default_true() -> bool {
     true
@@ -214,11 +216,22 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
         Err(_) => false,
     };
 
+    let require_consistent_explicit = match toml::from_str::<toml::Table>(&text) {
+        Ok(table) => table
+            .get("alignment")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|alignment| alignment.contains_key("require_consistent_offsets")),
+        Err(_) => false,
+    };
+
     let mut config: RepairAppConfig = toml::from_str(&text)
         .map_err(|e| AppError::Config(ConfigError::Parse(e.to_string())))?;
 
     if !num_clips_explicit {
         config.align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;
+    }
+    if !require_consistent_explicit {
+        config.align.alignment.require_consistent_offsets = false;
     }
 
     Ok(config)
@@ -232,6 +245,13 @@ mod tests {
     fn repair_app_config_defaults_to_two_clips() {
         let config = RepairAppConfig::default();
         assert_eq!(config.align.clip.num_clips, REPAIR_DEFAULT_NUM_CLIPS);
+    }
+
+    #[test]
+    fn repair_app_config_allows_inconsistent_clip_offsets() {
+        let config = RepairAppConfig::default();
+        assert!(!config.align.alignment.require_consistent_offsets);
+        assert!(config.align.alignment.prefer_start_clip);
     }
 
     #[test]
@@ -266,5 +286,39 @@ num_clips = 1
 
         let config = load_repair_app_config(Some(&path)).expect("load config");
         assert_eq!(config.align.clip.num_clips, 1);
+    }
+
+    #[test]
+    fn load_config_applies_repair_require_consistent_when_omitted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert!(!config.align.alignment.require_consistent_offsets);
+    }
+
+    #[test]
+    fn load_config_respects_explicit_require_consistent_true() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[alignment]
+require_consistent_offsets = true
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert!(config.align.alignment.require_consistent_offsets);
     }
 }

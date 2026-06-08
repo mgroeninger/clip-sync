@@ -69,6 +69,9 @@ pub struct AlignmentResult {
     pub recommended_offset_secs: Option<f64>,
     /// All aligned clip pairs report the same offset (within tolerance).
     pub offsets_consistent: bool,
+    /// End-clip offset minus start-clip offset when both clips aligned; diagnostic drift signal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_drift_secs: Option<f64>,
     /// Overlap on each file's timeline from the start clip match.
     pub start_overlap: Option<TimelineOverlap>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -152,6 +155,8 @@ pub fn build_alignment_result(
             (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
         });
 
+    let offset_drift_secs = compute_offset_drift(&clips);
+
     let recommended_offset_secs = choose_recommended_offset(
         &clips,
         &aligned_offsets,
@@ -174,6 +179,7 @@ pub fn build_alignment_result(
         end_aligned,
         recommended_offset_secs,
         offsets_consistent,
+        offset_drift_secs,
         start_overlap,
         high_rate_refinement: None,
     }
@@ -235,6 +241,18 @@ fn compute_start_overlap(
         video_b_end_secs: t_hi + offset,
         shared_length_secs: t_hi - t_lo,
     })
+}
+
+fn compute_offset_drift(clips: &[ClipMatch]) -> Option<f64> {
+    let start = clips
+        .iter()
+        .find(|clip| clip.label == ClipLabel::Start)?
+        .offset_secs?;
+    let end = clips
+        .iter()
+        .find(|clip| clip.label == ClipLabel::End)?
+        .offset_secs?;
+    Some(end - start)
 }
 
 fn choose_recommended_offset(
@@ -450,6 +468,33 @@ mod tests {
         let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
         assert!(!result.offsets_consistent);
         assert_eq!(result.recommended_offset_secs, None);
+        assert!((result.offset_drift_secs.unwrap() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn recommends_start_when_inconsistent_and_consistency_not_required() {
+        let windows = vec![
+            window(0, 900, ClipLabel::Start),
+            window(1800, 2700, ClipLabel::End),
+        ];
+        let estimates = vec![
+            ClipMatchEstimate {
+                offset_secs: 10.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 20.0,
+                confidence: 0.9,
+            },
+        ];
+
+        let mut policy = default_policy();
+        policy.require_consistent_offsets = false;
+
+        let result = build_alignment_result(report_input(&windows, &estimates, None, None), policy);
+        assert!(!result.offsets_consistent);
+        assert_eq!(result.recommended_offset_secs, Some(10.0));
+        assert!((result.offset_drift_secs.unwrap() - 10.0).abs() < 0.01);
     }
 
     #[test]

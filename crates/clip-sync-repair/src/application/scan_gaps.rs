@@ -513,6 +513,7 @@ mod tests {
             end_aligned: None,
             recommended_offset_secs: offset,
             offsets_consistent: true,
+            offset_drift_secs: None,
             start_overlap: None,
             high_rate_refinement: None,
         }

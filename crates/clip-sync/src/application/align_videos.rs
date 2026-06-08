@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use crate::application::config::AlignConfig;
 use crate::application::error::{AppError, FingerprintError};
 use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
-use crate::application::offset_refinement::refine_offset_estimate;
+use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::domain::{
     build_alignment_result, clip_windows, decoded_timeline_extent, expand_window_for_slide,
     prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair, select_best_track,
-    AlignmentMergePolicy, AlignmentResult, AudioTrack, ClipMatchEstimate, ClipPairReportInput,
+    AlignmentMergePolicy, AlignmentResult, AudioTrack, ClipLabel, ClipMatchEstimate,
+    ClipPairReportInput,
     ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
@@ -205,6 +206,7 @@ where
 
         self.progress.phase("Searching for match...");
         let mut estimates = Vec::with_capacity(extracted_a.raw_clips.len());
+        let mut start_prior: Option<ClipMatchEstimate> = None;
 
         for (index, (raw_a, raw_b)) in extracted_a
             .raw_clips
@@ -240,23 +242,57 @@ where
             let clip_a = prepared_a.map_err(map_prepare_error)?;
             let clip_b = prepared_b.map_err(map_prepare_error)?;
 
-            let fingerprint_a = self.fingerprinter.fingerprint(&clip_a)?;
-            let fingerprint_b = self.fingerprinter.fingerprint(&clip_b)?;
+            let use_end_prior = window.label == ClipLabel::End
+                && config.alignment.refine_end_clip_around_start_offset
+                && start_prior.is_some_and(|prior| {
+                    prior.confidence >= config.alignment.min_match_score * 0.5
+                });
 
-            let mut estimate = self
-                .aligner
-                .find_offset(&fingerprint_a, &fingerprint_b)?;
-            if config.alignment.refine_offset_with_pcm
-                && estimate.confidence >= config.alignment.min_match_score * 0.5
-            {
-                estimate = refine_offset_estimate(&clip_a, &clip_b, estimate);
+            let estimate = if use_end_prior {
+                let prior = start_prior.expect("checked above");
+                if config.alignment.refine_offset_with_pcm {
+                    refine_offset_around_prior(
+                        &clip_a,
+                        &clip_b,
+                        prior,
+                        config.alignment.end_clip_refine_radius_secs,
+                    )
+                } else {
+                    prior
+                }
+            } else {
+                let fingerprint_a = self.fingerprinter.fingerprint(&clip_a)?;
+                let fingerprint_b = self.fingerprinter.fingerprint(&clip_b)?;
+
+                let mut chromaprint_estimate = self
+                    .aligner
+                    .find_offset(&fingerprint_a, &fingerprint_b)?;
+                if config.alignment.refine_offset_with_pcm
+                    && chromaprint_estimate.confidence >= config.alignment.min_match_score * 0.5
+                {
+                    chromaprint_estimate =
+                        refine_offset_estimate(&clip_a, &clip_b, chromaprint_estimate);
+                }
+                chromaprint_estimate
+            };
+
+            if window.label == ClipLabel::Start && estimate.confidence > 0.0 {
+                start_prior = Some(estimate);
             }
 
             self.progress.phase(&format!(
-                "{} clip [{}–{}]: {} (confidence: {:.2})",
+                "{} clip [{}–{}]{}: {} (confidence: {:.2})",
                 clip_label_name(window.label),
                 format_duration(window.start),
                 format_duration(window.end),
+                if use_end_prior {
+                    format!(
+                        " (refined ±{:.0}s around start)",
+                        config.alignment.end_clip_refine_radius_secs
+                    )
+                } else {
+                    String::new()
+                },
                 if estimate.confidence >= config.alignment.min_match_score {
                     format!("offset {:+.3}s", estimate.offset_secs)
                 } else {
@@ -432,12 +468,20 @@ fn log_alignment_summary(result: &AlignmentResult, progress: &dyn ProgressReport
         progress.phase(&format!("End clip aligned: {}", yes_no(end_aligned)));
     }
 
+    if let Some(drift) = result.offset_drift_secs {
+        if !result.offsets_consistent {
+            progress.phase(&format!("Offset drift (end − start): {:+.3}s", drift));
+        }
+    }
+
     match result.recommended_offset_secs {
         Some(offset) => progress.phase(&format!(
             "Recommended offset: {:+.3}s ({})",
             offset,
             if result.offsets_consistent {
                 "clip offsets agree"
+            } else if result.start_aligned {
+                "clip offsets disagree; using start clip"
             } else {
                 "clip offsets disagree; using configured preference"
             }
@@ -782,7 +826,7 @@ mod tests {
             .expect("execute should succeed");
 
         let seen = fingerprinter.seen_sample_rates();
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 2, "end clip skips Chromaprint when refining around start");
         assert!(seen.iter().all(|rate| *rate == 11_025));
     }
 
@@ -832,6 +876,7 @@ mod tests {
         let mut config = two_clip_config();
         config.alignment.prefer_start_clip = true;
         config.alignment.require_consistent_offsets = false;
+        config.alignment.refine_end_clip_around_start_offset = false;
 
         let response = use_case
             .execute(request(config))
@@ -841,6 +886,32 @@ mod tests {
         assert_eq!(response.result.recommended_offset_secs, Some(10.0));
         assert_eq!(response.result.clips[0].label, ClipLabel::Start);
         assert_eq!(response.result.clips[1].label, ClipLabel::End);
+    }
+
+    #[test]
+    fn execute_end_clip_uses_start_offset_when_constrained_refine_enabled() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimates(vec![
+            ClipMatchEstimate {
+                offset_secs: 10.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 20.0,
+                confidence: 0.9,
+            },
+        ]);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(request(two_clip_config()))
+            .expect("execute should succeed");
+
+        assert!(response.result.offsets_consistent);
+        assert_eq!(response.result.clips[0].offset_secs, Some(10.0));
+        assert_eq!(response.result.clips[1].offset_secs, Some(10.0));
     }
 
     #[test]
@@ -1040,6 +1111,79 @@ mod tests {
         assert!(
             (0.015..0.060).contains(&error),
             "expected chromaprint residual band, offset={offset}, error={error}"
+        );
+    }
+
+    #[test]
+    fn two_clip_end_refines_around_start_on_constant_offset_wav() {
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
+        use crate::application::config::ChromaprintPreset;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 180;
+        const CLIP_SECS: u64 = 60;
+        const OFFSET_SECS: f64 = 3.0;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_offset_chirp_wav_pair(
+            temp.path(),
+            SAMPLE_RATE,
+            TOTAL_SECS,
+            OFFSET_SECS as u32,
+        );
+
+        let config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(CLIP_SECS),
+                num_clips: 2,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            ..Default::default()
+        };
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute should succeed");
+
+        assert_eq!(response.result.clips.len(), 2);
+        assert!(response.result.start_aligned);
+        assert_eq!(response.result.end_aligned, Some(true));
+        assert!(response.result.offsets_consistent);
+
+        let start_offset = response.result.clips[0]
+            .offset_secs
+            .expect("start offset");
+        let end_offset = response.result.clips[1]
+            .offset_secs
+            .expect("end offset");
+        assert!(
+            (start_offset - OFFSET_SECS).abs() < 1.0,
+            "start_offset={start_offset}"
+        );
+        assert!(
+            (end_offset - OFFSET_SECS).abs() < 1.0,
+            "end_offset={end_offset}"
+        );
+        assert!(
+            (end_offset - start_offset).abs() < 0.5,
+            "start={start_offset}, end={end_offset}"
         );
     }
 }

@@ -113,11 +113,13 @@ impl SilenceRunScanner {
 /// Returns true if `samples` represent silence.
 ///
 /// A block is silent when either:
-/// - all samples are zero, or
-/// - `RMS < absolute_rms_floor` (catches codec noise in otherwise-silent gaps), or
-/// - `RMS < peak × silence_peak_fraction` (catches sparse transients in a sea of zeros).
+/// - peak amplitude is zero, or
+/// - `peak < absolute_rms_floor` — matches ffmpeg's `silencedetect` semantics: silence when the
+///   peak is below an absolute amplitude floor (default ≈ −60 dBFS = 33 on the i16 scale), or
+/// - `RMS < peak × silence_peak_fraction` — catches codec noise: a block whose RMS is negligible
+///   relative to its own peak (i.e. a few isolated transients in a sea of zeros).
 ///
-/// Pass `absolute_rms_floor = 0.0` to disable the absolute check.
+/// Pass `absolute_rms_floor = 0.0` to disable the peak-floor check.
 pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor: f32) -> bool {
     if samples.is_empty() {
         return true;
@@ -129,13 +131,12 @@ pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor
         return true;
     }
 
-    let rms = rms_i16(samples);
-
-    if absolute_rms_floor > 0.0 && rms < absolute_rms_floor {
+    // Peak-based absolute floor: matches ffmpeg silencedetect with noise=-60dB.
+    if absolute_rms_floor > 0.0 && peak < absolute_rms_floor {
         return true;
     }
 
-    rms < peak * silence_peak_fraction
+    rms_i16(samples) < peak * silence_peak_fraction
 }
 
 fn rms_i16(samples: &[i16]) -> f32 {
@@ -255,11 +256,15 @@ mod tests {
 
     #[test]
     fn absolute_floor_catches_low_level_codec_noise() {
-        // All samples at ±1 — relative check (RMS ≈ 1 vs peak = 1) would NOT flag as silent,
-        // but the absolute floor should.
+        // All samples at ±1: peak = 1, RMS ≈ 1.
+        // Relative check alone (RMS ≈ peak → fraction ≈ 1.0 >> 0.01) would NOT flag as silent.
+        // Peak-floor check: peak(1) < floor(2) → silent.
         let samples: Vec<i16> = (0..11_025).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
         assert!(!is_silent(&samples, 0.01, 0.0), "no floor: should not be silent");
-        assert!(is_silent(&samples, 0.01, 2.0), "floor=2: RMS≈1 < 2 → silent");
+        assert!(is_silent(&samples, 0.01, 2.0), "floor=2: peak=1 < 2 → silent");
+        // A signal with peak above the floor is NOT classified silent by the floor check alone.
+        let loud_samples: Vec<i16> = (0..11_025).map(|i| if i % 2 == 0 { 5 } else { -5 }).collect();
+        assert!(!is_silent(&loud_samples, 0.01, 2.0), "floor=2: peak=5 > 2 → not silent by floor");
     }
 
     fn sine_samples(rate: u32, secs: f64) -> Vec<i16> {
