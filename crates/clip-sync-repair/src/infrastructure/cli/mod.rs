@@ -10,9 +10,11 @@ use clip_sync::{init_tracing, StderrProgressReporter, SymphoniaMediaReader};
 use clip_sync::AppError;
 
 use crate::application::error::RepairError;
-use crate::application::ports::GapReporter;
+use crate::application::patch_audio::{PatchAudio, PatchAudioRequest};
+use crate::application::ports::{GapReporter, PatchedAudioWriter};
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use crate::infrastructure::config::load_repair_app_config;
+use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 
 use self::args::Args;
 use self::exit_code::exit_code_for;
@@ -50,6 +52,16 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     } else if args.no_scan_both {
         config.repair.scan_both = false;
     }
+    if let Some(wav_path) = args.wav {
+        config.repair.output.wav_path = Some(wav_path);
+        config.repair.dry_run = false;
+    }
+    if args.no_normalize {
+        config.repair.normalize_fill = false;
+    }
+    if let Some(ms) = args.crossfade_ms {
+        config.repair.crossfade_ms = ms;
+    }
 
     config.align.validate()
         .map_err(|e| RepairError::Align(AppError::Config(e)))?;
@@ -75,8 +87,30 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
 
     let report = ScanGaps::new(&media_reader, &progress).execute(request)?;
 
+    // If not dry-run and a WAV output path is set, patch and write.
+    // Capture the result rather than short-circuiting with `?` so the gap report is
+    // always printed even when the write step fails.
+    let write_result: Result<(), RepairError> = if !config.repair.dry_run {
+        if let Some(ref wav_path) = config.repair.output.wav_path {
+            let patch_request = PatchAudioRequest {
+                report: report.clone(),
+                normalize_fill: config.repair.normalize_fill,
+                normalize_window_secs: config.repair.normalize_window_secs,
+                max_fill_gain_db: config.repair.max_fill_gain_db,
+                min_fill_correlation: config.repair.min_fill_correlation,
+            };
+            PatchAudio::new(&media_reader, &progress)
+                .execute(patch_request, config.repair.crossfade_ms)
+                .and_then(|patched| WavPatchedAudioWriter.write(&patched, wav_path))
+        } else {
+            Ok(())
+        }
+    } else {
+        Ok(())
+    };
+
     let reporter = StdoutGapReporter { format: args.format };
     reporter.report(&report)?;
 
-    Ok(())
+    write_result
 }

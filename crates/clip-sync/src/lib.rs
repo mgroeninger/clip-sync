@@ -18,6 +18,7 @@ pub use domain::{
 };
 pub use domain::policies::select_best_track;
 pub use domain::{resample_interleaved, resample_mono_pcm};
+pub use application::offset_refinement::normalized_correlation;
 
 // --- default adapter types ---
 pub use infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};

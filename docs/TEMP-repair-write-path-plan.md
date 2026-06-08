@@ -1,10 +1,10 @@
 # Temporary plan: repair write path (track match, multi-channel patch, WAV + optional ffmpeg)
 
-> **Status:** In progress (2026-06-08). **R0–R3** shipped. **Next:** lib extract hardening → R4 → R5. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
+> **Status:** In progress (2026-06-08). **R0–R4** shipped. **Next:** R5. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
 
 **Problem (original):** `clip-sync-repair` shipped as report-only (migration Phase 4). It aligned A and B and scanned A for silent runs but could not compare track layouts, surface overlap, patch audio, or emit multi-channel output.
 
-**Remaining gaps:** bidirectional silence scan, mutual-silence cross-check, gap fill + WAV write, optional ffmpeg mux; lib `extract.rs` perf/maintainability before full-timeline decode in R4.
+**Remaining gaps:** optional ffmpeg mux (R5, behind feature flag).
 
 **Goal:** Extend the repair hexagon to the full workflow:
 
@@ -55,9 +55,9 @@ Locked before implementation. Change only with an explicit plan revision.
 | **R0** spike | lib | ✅ Done | Validated via R1 tests (stereo, mid-file seek, resampler path) |
 | **R1** native extraction | lib | ✅ Done | `MultiChannelPcm`, `extract_interleaved`, `MediaError::Unsupported`, `TimelineOverlap` re-export, `resample_interleaved` on facade |
 | **R2** | repair | ✅ Done | `track_match`, compatibility + overlap on report, `Option<f64>` B fields, alignment gate, CLI human/JSON polish |
-| **Lib extract hardening** | lib | ☐ Open | Scratch buffer reuse (**before R4**); shared decode scaffold (**at R4 kickoff**, recommended) |
+| **Lib extract hardening** | lib | ✅ Done | Scratch buffer reuse shipped (2026-06-08); shared decode scaffold deferred to R4 kickoff |
 | **R3** | repair | ✅ Done | Bidirectional scan + `gap_offset_agreement` (2026-06-08) |
-| **R4** | repair | ☐ Open | `PatchAudio`, gap fill, multi-channel WAV |
+| **R4** | repair | ✅ Done | `PatchAudio`, gap fill, multi-channel WAV, `--wav` flag (2026-06-08) |
 | **R5** | repair | ☐ Open | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) |
 
 ### Recommended order of work
@@ -327,20 +327,23 @@ pub struct GapOffsetAgreement {
 **Repair (`clip-sync-repair`)**
 
 - [ ] `Cargo.toml` — promote `hound` to dependency; add `[features] default = []; ffmpeg-mux = []`
-- [ ] `domain/gap_fill.rs` — `FillRegion`, `GapFillPlan`; build plan from fillable gaps (gate on `min_fill_correlation` + channel match)
+- [x] `domain/gap_fill.rs` — `FillRegion`, `GapFillPlan`; build plan from fillable gaps (channel match + overlap)
+- [x] `application/patch_audio.rs` — `min_fill_correlation` boundary gate via `normalized_correlation` (pre-gap A border vs B fill start)
 - [ ] `domain/policies.rs` — `compute_fill_gain`, `apply_crossfade`, `rms_interleaved` + unit tests
 - [ ] `application/ports.rs` — `PatchedAudioWriter { fn write(&self, audio: &MultiChannelPcm, path: &Path) -> Result<(), RepairError>; }`
 - [ ] `application/patch_audio.rs` — `PatchAudio`: extract A native full timeline (chunked), for each `FillRegion` extract B via `extract_interleaved`, resample if needed, normalize, crossfade-splice → patched `MultiChannelPcm`
 - [ ] `infrastructure/wav_writer.rs` — `WavPatchedAudioWriter` (hound, multi-channel)
 - [ ] `application/error.rs` — `RepairError::Write(io)`; map to exit code 4
 - [ ] `infrastructure/cli/{args,mod}.rs` — `--wav`, `--no-normalize`, `--crossfade-ms`, write-mode wiring
-- [ ] Tests: gap-fill splice on synthetic stereo (gap in A, energy in B) → patched WAV has B audio in gap, A elsewhere; normalization gain bounded; crossfade continuity; integration test writing a real WAV via Symphonia
+- [x] Tests: gap-fill splice, correlation reject, normalization, resample, CLI `--wav` — see `tests/patch_audio_integration.rs`, `tests/cli_wav_integration.rs`; crossfade continuity in `policies` unit tests
 
 **Lib:** consumes R1 `extract_interleaved`; **requires lib extract hardening** (scratch buffer) for acceptable full-timeline performance
 
 ### Lib extract hardening (R4 prerequisite, lib only)
 
 Not a repair phase number. Address after R3 (or in parallel if R4 is blocked only on repair work). Do **not** fold into R2 — wrong crate/layer.
+
+**Authoritative scaffold plan:** [TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md) (sink trait + `run_extract_decode_loop` phases).
 
 **Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a fresh `Vec` per decoded packet (`copy_to_vec_interleaved`). On a 30-minute stereo 48 kHz full-timeline extract (R4 `PatchAudio`), that is tens of thousands of heap allocations on the hot path. `extract_mono_with_state` and `extract_interleaved_with_state` are ~300 lines duplicated; seek/retry/decode-skip fixes must be mirrored manually.
 
@@ -408,7 +411,7 @@ Repair conflates two jobs if treated as one pipeline:
 recommended_offset_secs.is_some()
 && gap.is_fillable()                    # B mapped + b_has_energy
 && gap within shared overlap (if known)
-&& boundary correlation >= min_fill_correlation   # when correlation is implemented
+&& boundary correlation >= min_fill_correlation   # implemented in PatchAudio (skipped when below threshold)
 && track_compatibility.verdict != Mismatch        # channel layout
 ```
 
@@ -468,8 +471,11 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 | `gap_offset_disagreement_flagged` | R3 | repair | wrong silence layout → `agrees = false` |
 | `compute_fill_gain_clamps_to_max_db` | R4 | repair | gain bounded |
 | `apply_crossfade_is_continuous` | R4 | repair | no discontinuity at seam |
-| `patch_inserts_b_audio_into_a_gap` | R4 | repair | gap region energy from B; rest from A |
-| `patched_wav_roundtrip` (integration) | R4 | repair | real Symphonia → WAV written, channel count preserved |
+| `patch_audio_fills_gap_in_stereo_wav` | R4 ✅ | repair | gap region energy from B; pre/post-gap from A |
+| `patch_audio_skips_fill_when_boundary_correlation_below_threshold` | R4 ✅ | repair | mismatched B frequency → gap stays silent |
+| `patch_audio_normalizes_fill_loudness_to_a_border` | R4 ✅ | repair | normalized gap RMS ≈ A border |
+| `patch_audio_resamples_b_when_sample_rates_differ` | R4 ✅ | repair | B 48 kHz → A 44.1 kHz fill works |
+| `cli_scan_and_wav_writes_patched_output` | R4 ✅ | repair | CLI `--wav` end-to-end on chirp fixtures |
 | `mux_arg_rejected_without_feature` | R5 | repair | `--mux` errors when feature off |
 | `ffmpeg_arg_construction` | R5 | repair | correct ffmpeg argv |
 | `mux_writes_video` (`#[ignore]`) | R5 | repair | needs ffmpeg on PATH |

@@ -112,6 +112,7 @@ fn append_frames_in_window_downmixes_stereo() {
     buffer.plane_mut(1).unwrap()[1] = 0.5;
 
     let mut mono = Vec::new();
+    let mut scratch = Vec::new();
     append_frames_in_window(
         GenericAudioBufferRef::F32(&buffer),
         &mut WindowCollectContext {
@@ -122,6 +123,7 @@ fn append_frames_in_window_downmixes_stereo() {
             mono_samples: &mut mono,
             target_samples: 2,
         },
+        &mut scratch,
     );
 
     assert_eq!(mono.len(), 2);
@@ -138,6 +140,7 @@ fn append_frames_in_window_skips_before_window_start() {
     buffer.plane_mut(0).unwrap()[1] = 0.25;
 
     let mut mono = Vec::new();
+    let mut scratch = Vec::new();
     append_frames_in_window(
         GenericAudioBufferRef::F32(&buffer),
         &mut WindowCollectContext {
@@ -148,6 +151,7 @@ fn append_frames_in_window_skips_before_window_start() {
             mono_samples: &mut mono,
             target_samples: 1,
         },
+        &mut scratch,
     );
 
     assert_eq!(mono.len(), 1);
@@ -530,6 +534,7 @@ fn append_interleaved_frames_in_window_keeps_channels() {
     buffer.plane_mut(1).unwrap()[1] = 0.25;
 
     let mut out = Vec::new();
+    let mut scratch = Vec::new();
     append_interleaved_frames_in_window(
         GenericAudioBufferRef::F32(&buffer),
         &mut InterleavedCollectContext {
@@ -541,6 +546,7 @@ fn append_interleaved_frames_in_window_keeps_channels() {
             channels: 2,
             target_frames: 2,
         },
+        &mut scratch,
     );
 
     // Two frames × two channels, interleaved, with no downmix.

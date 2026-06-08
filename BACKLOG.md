@@ -55,7 +55,7 @@ Implement repetition before or alongside verification (shared config section, sa
 
 ### Repair write path (migration Phase 5 → R0–R5) — **in progress**
 
-**Status:** R0–R3 shipped (2026-06-08). **Next:** [lib extract hardening](#symphonia-extract-loop-hardening) → R4 → R5.
+**Status:** R0–R4 shipped (2026-06-08). **Next:** R5 (ffmpeg mux, `ffmpeg-mux` feature).
 
 **Authoritative plan:** [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (supersedes the thin Phase 5 checklist in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md)).
 
@@ -63,9 +63,9 @@ Implement repetition before or alongside verification (shared config section, sa
 |---------------|--------|-------|--------|
 | **R0–R1** | `MultiChannelPcm`, `extract_interleaved`, `resample_interleaved`, `TimelineOverlap` re-export | lib | ✅ Done |
 | **R2** | Track compatibility, overlap, alignment gate (`Option<f64>` B fields), CLI polish | repair | ✅ Done |
-| **Lib extract hardening** | Scratch buffer reuse; optional shared mono/interleaved decode scaffold | lib | ☐ Open — **before / at R4** |
+| **Lib extract hardening** | Scratch buffer reuse; optional shared mono/interleaved decode scaffold | lib | ✅ Done (scratch buffer); scaffold at R4 kickoff |
 | **R3** | Bidirectional silence scan + `gap_offset_agreement` | repair | ✅ Done |
-| **R4** | `PatchAudio`, gap fill, multi-channel WAV | repair | ☐ Open |
+| **R4** | `PatchAudio`, gap fill, multi-channel WAV | repair | ✅ Done |
 | **R5** | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) | repair | ☐ Open |
 
 **Prerequisite:** [Workspace repair Phase 4](#workspace-repair-phase-4-report-only) (shipped).
@@ -142,7 +142,7 @@ Implement repetition before or alongside verification (shared config section, sa
 
 ### Symphonia extract loop hardening
 
-**Status:** Not started. Plan: [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § Lib extract hardening.
+**Status:** Scratch buffer done; scaffold not started. Plan: [TEMP-extract-scaffold-plan.md](docs/TEMP-extract-scaffold-plan.md) (authoritative); summary in [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § Lib extract hardening.
 
 **Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a new `Vec` per decoded packet. `extract_mono_with_state` and `extract_interleaved_with_state` duplicate ~300 lines of seek/retry/decode-skip logic (R1 intentionally mirrored mono).
 

@@ -6,6 +6,15 @@ pub trait GapReporter {
     fn report(&self, report: &GapReport) -> Result<(), RepairError>;
 }
 
+/// Output port: writes patched audio to a file (e.g. WAV).
+pub trait PatchedAudioWriter {
+    fn write(
+        &self,
+        audio: &clip_sync::MultiChannelPcm,
+        path: &std::path::Path,
+    ) -> Result<(), RepairError>;
+}
+
 /// Output port stub for Phase 5: muxes replacement audio into video.
 /// Not implemented until Phase 5; defined here to keep the port layer complete.
 pub trait MediaMuxer {

@@ -15,7 +15,7 @@ pub fn exit_code_for(error: &RepairError) -> ExitCode {
     match error {
         RepairError::Config(_) => ExitCode::from(2),
         RepairError::Domain(_) => ExitCode::from(3),
-        RepairError::Media(_) | RepairError::Io(_) => ExitCode::from(4),
+        RepairError::Media(_) | RepairError::Io(_) | RepairError::Write(_) => ExitCode::from(4),
         RepairError::Align(_) => ExitCode::from(5),
     }
 }

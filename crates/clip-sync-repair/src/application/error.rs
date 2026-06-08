@@ -21,4 +21,8 @@ pub enum RepairError {
     /// Output or report I/O failure.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Error writing the patched audio output file.
+    #[error("write error: {0}")]
+    Write(std::io::Error),
 }

@@ -58,6 +58,7 @@ pub(crate) fn extract_mono_with_state(
         .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
 
     let max_attempts = if window.start.is_zero() { 1 } else { 2 };
+    let mut scratch = Vec::<f32>::new();
     let mut mono_samples = Vec::new();
     let mut resolved_rate = None::<u32>;
     let mut target_samples = None::<usize>;
@@ -293,6 +294,7 @@ pub(crate) fn extract_mono_with_state(
                     mono_samples: &mut mono_samples,
                     target_samples: target,
                 },
+                &mut scratch,
             );
 
             if mono_samples.len().saturating_sub(last_reported as usize) >= rate as usize / 2 {
@@ -444,6 +446,7 @@ pub(crate) fn extract_interleaved_with_state(
 
     let channels_hint = (track.channels as usize > 0).then_some(track.channels as usize);
     let max_attempts = if window.start.is_zero() { 1 } else { 2 };
+    let mut scratch = Vec::<f32>::new();
     let mut out: Vec<i16> = Vec::new();
     let mut resolved_rate = None::<u32>;
     let mut channels = channels_hint;
@@ -687,6 +690,7 @@ pub(crate) fn extract_interleaved_with_state(
                     channels: ch,
                     target_frames: target,
                 },
+                &mut scratch,
             );
 
             let frames_collected = out.len() / ch;
@@ -819,9 +823,13 @@ pub(crate) struct InterleavedCollectContext<'a> {
 /// Appends in-window frames to `ctx.out` as interleaved `i16`, fixed at `ctx.channels` per frame.
 /// Packets with more source channels are truncated; fewer are zero-padded. Returns `true` when the
 /// target frame count is reached.
+///
+/// `scratch` is a caller-owned buffer reused across packets to avoid per-call heap allocation;
+/// its contents on entry are irrelevant and will be overwritten.
 pub(crate) fn append_interleaved_frames_in_window(
     decoded: GenericAudioBufferRef<'_>,
     ctx: &mut InterleavedCollectContext<'_>,
+    scratch: &mut Vec<f32>,
 ) -> bool {
     let frame_count = decoded.frames();
     if frame_count == 0 {
@@ -829,8 +837,9 @@ pub(crate) fn append_interleaved_frames_in_window(
     }
 
     let source_channels = decoded.spec().channels().count().max(1);
-    let mut interleaved = Vec::new();
-    decoded.copy_to_vec_interleaved(&mut interleaved);
+    scratch.clear();
+    decoded.copy_to_vec_interleaved(scratch);
+    let interleaved = &*scratch;
 
     let target_samples = ctx.target_frames.saturating_mul(ctx.channels);
     let trim_start = ctx.trim_start_frames as usize;
@@ -858,9 +867,12 @@ pub(crate) fn append_interleaved_frames_in_window(
     false
 }
 
+/// `scratch` is a caller-owned buffer reused across packets to avoid per-call heap allocation;
+/// its contents on entry are irrelevant and will be overwritten.
 pub(crate) fn append_frames_in_window(
     decoded: GenericAudioBufferRef<'_>,
     ctx: &mut WindowCollectContext<'_>,
+    scratch: &mut Vec<f32>,
 ) -> bool {
     let frame_count = decoded.frames();
     if frame_count == 0 {
@@ -868,8 +880,9 @@ pub(crate) fn append_frames_in_window(
     }
 
     let channel_count = decoded.spec().channels().count().max(1);
-    let mut interleaved = Vec::new();
-    decoded.copy_to_vec_interleaved(&mut interleaved);
+    scratch.clear();
+    decoded.copy_to_vec_interleaved(scratch);
+    let interleaved = &*scratch;
 
     let trim_start = ctx.trim_start_frames as usize;
     for frame_idx in trim_start..frame_count {

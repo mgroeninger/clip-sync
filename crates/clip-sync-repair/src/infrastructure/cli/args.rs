@@ -44,4 +44,16 @@ pub struct Args {
     /// Disable bidirectional silence scan.
     #[arg(long, overrides_with = "scan_both")]
     pub no_scan_both: bool,
+
+    /// Write patched audio to a WAV file (implies write mode).
+    #[arg(long, value_name = "PATH")]
+    pub wav: Option<PathBuf>,
+
+    /// Disable loudness normalization of fill segments.
+    #[arg(long)]
+    pub no_normalize: bool,
+
+    /// Crossfade duration at gap boundaries (ms).
+    #[arg(long, value_name = "MS")]
+    pub crossfade_ms: Option<u64>,
 }

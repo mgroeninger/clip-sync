@@ -418,7 +418,7 @@ fn choose_downsample(template_samples: usize, right_samples: usize) -> usize {
     factor.max(1)
 }
 
-fn normalized_correlation(left: &[f64], right: &[f64]) -> f64 {
+pub fn normalized_correlation(left: &[f64], right: &[f64]) -> f64 {
     debug_assert_eq!(left.len(), right.len());
     if left.is_empty() {
         return 0.0;
