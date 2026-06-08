@@ -335,7 +335,7 @@ pub fn pcm_cross_correlate_lag(
     let correlation = Correlate::create_real_f64(
         left_f64.len(),
         right_f64.len(),
-        CrossCorrelationMode::Valid,
+        CrossCorrelationMode::Full,
     )
     .ok()?;
     let corr = correlation.correlate_managed(&left_f64, &right_f64).ok()?;
@@ -348,7 +348,7 @@ pub fn pcm_cross_correlate_lag(
                 .unwrap_or(std::cmp::Ordering::Equal)
         })?;
 
-    let center = corr.len() / 2;
+    let center = (left_f64.len() + right_f64.len()).saturating_sub(1) / 2;
     let lag_samples = peak_index as i64 - center as i64;
     let adjustment = -lag_samples as f64 / f64::from(target_rate);
     Some((adjustment, peak_value.abs()))
@@ -524,30 +524,95 @@ mod tests {
         )
     }
 
-    fn holdout_clip_pair_at(
-        left_full: &MonoPcmClip,
-        right_full: &MonoPcmClip,
-        window_start_secs: f64,
+    fn tone_holdout_segment(sample_rate: u32, seconds: u32, freq_hz: f64) -> MonoPcmClip {
+        let count = sample_rate as usize * seconds as usize;
+        let rate = f64::from(sample_rate);
+        let samples: Vec<i16> = (0..count)
+            .map(|i| {
+                let t = i as f64 / rate;
+                ((TAU as f64 * freq_hz * t).sin() * (i16::MAX as f64 * 0.5)).round() as i16
+            })
+            .collect();
+        MonoPcmClip {
+            sample_rate,
+            samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        }
+    }
+
+    /// Hold-out pair when discovery underestimated offset: right lags left by `lag_secs`.
+    fn holdout_tone_pair_with_lag(
+        sample_rate: u32,
         segment_secs: u32,
-        discovery_offset_secs: f64,
+        lag_secs: f64,
     ) -> (MonoPcmClip, MonoPcmClip) {
-        let rate = left_full.sample_rate;
-        let start = (window_start_secs * f64::from(rate)).round() as usize;
-        let len = rate as usize * segment_secs as usize;
-        let right_start =
-            ((window_start_secs + discovery_offset_secs) * f64::from(rate)).round() as usize;
-
-        let slice = |clip: &MonoPcmClip, from: usize| -> MonoPcmClip {
-            let end = (from + len).min(clip.samples.len());
-            MonoPcmClip {
-                sample_rate: clip.sample_rate,
-                samples: clip.samples[from..end].to_vec(),
-                decode_error_skips: 0,
-                decoded_sample_count: None,
-            }
+        let left = tone_holdout_segment(sample_rate, segment_secs, 440.0);
+        let lag_samples = (lag_secs * f64::from(sample_rate)).round() as usize;
+        let mut right_samples = vec![0i16; lag_samples];
+        right_samples.extend_from_slice(&left.samples[..left.samples.len().saturating_sub(lag_samples)]);
+        right_samples.resize(left.samples.len(), 0);
+        let right = MonoPcmClip {
+            sample_rate,
+            samples: right_samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
         };
+        (left, right)
+    }
 
-        (slice(left_full, start), slice(right_full, right_start))
+    #[test]
+    fn refine_high_rate_segment_known_lag() {
+        let sample_rate = 44_100;
+        let lag_secs = 0.020;
+        let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
+        let (adjustment, peak) =
+            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
+        assert!((adjustment - lag_secs).abs() < 0.003, "adjustment={adjustment}");
+        assert!(peak > 0.0);
+    }
+
+    #[test]
+    fn refine_high_rate_respects_max_adjustment() {
+        let sample_rate = 44_100;
+        let lag_secs = 0.020;
+        let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
+        assert!(
+            refine_holdout_segment_lag(&left, &right, 0.1)
+                .expect("within cap")
+                .0
+                .abs()
+                > 0.0
+        );
+        assert!(refine_holdout_segment_lag(&left, &right, 0.010).is_none());
+    }
+
+    #[test]
+    fn high_rate_holdout_corrects_typical_chromaprint_residual_at_44k() {
+        let sample_rate = 44_100;
+        let lag_secs = 3.0 - 2.971_428_573_131_561;
+        let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
+        let (adjustment, peak) =
+            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
+        assert!(peak > 0.0);
+        assert!(
+            (adjustment - lag_secs).abs() < 0.005,
+            "adjustment={adjustment}, lag_secs={lag_secs}"
+        );
+    }
+
+    #[test]
+    fn pcm_cross_correlate_at_44k_corrects_chromaprint_coarse() {
+        let sample_rate = 44_100;
+        let (left, right) = delayed_pair(sample_rate, 120, 3);
+        let coarse = 2.971_428_573_131_561;
+        let (adjustment, peak) =
+            pcm_cross_correlate_lag(&left, &right, coarse, 3).expect("adjustment");
+        assert!(peak > 0.0);
+        assert!(
+            (coarse + adjustment - 3.0).abs() < 0.015,
+            "coarse={coarse}, adjustment={adjustment}"
+        );
     }
 
     #[test]
@@ -640,43 +705,6 @@ mod tests {
         let (adjustment, peak) = pcm_cross_correlate_lag(&left, &right, 3.0, 3).expect("adjustment");
         assert!(adjustment.abs() < 1.0 / f64::from(sample_rate));
         assert!(peak > 0.0);
-    }
-
-    #[test]
-    fn high_rate_holdout_corrects_typical_chromaprint_residual_at_44k() {
-        let sample_rate = 44_100;
-        let (full_left, full_right) = delayed_pair(sample_rate, 120, 3);
-        let coarse = 2.971_428_573_131_561;
-        let (left, right) = holdout_clip_pair_at(&full_left, &full_right, 30.0, 3, coarse);
-
-        let (adjustment, peak) =
-            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
-        assert!(peak > 0.0);
-        assert!(
-            (coarse + adjustment - 3.0).abs() < 0.015,
-            "coarse={coarse}, adjustment={adjustment}"
-        );
-    }
-
-    #[test]
-    fn refine_high_rate_segment_known_lag() {
-        let sample_rate = 44_100;
-        let (full_left, full_right) = delayed_pair(sample_rate, 120, 3);
-        let coarse = 3.0 - 0.020;
-        let (left, right) = holdout_clip_pair_at(&full_left, &full_right, 30.0, 3, coarse);
-        let (adjustment, peak) =
-            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
-        assert!((coarse + adjustment - 3.0).abs() < 0.003, "adjustment={adjustment}");
-        assert!(peak > 0.0);
-    }
-
-    #[test]
-    fn refine_high_rate_respects_max_adjustment() {
-        let sample_rate = 44_100;
-        let (full_left, full_right) = delayed_pair(sample_rate, 120, 3);
-        let coarse = 3.0 - 0.500;
-        let (left, right) = holdout_clip_pair_at(&full_left, &full_right, 30.0, 3, coarse);
-        assert!(refine_holdout_segment_lag(&left, &right, 0.1).is_none());
     }
 
     #[test]

@@ -25,7 +25,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 
 | Assertion | Default |
 |-----------|---------|
-| `recommended_offset_secs` | ±1.0 s of expected |
+| `recommended_offset_secs` | ±0.15 s default (WAV discovery); encoded ±0.25 s; large leaders ±1.0–1.5 s; high-rate ±0.05–0.1 s |
 | `confidence` (positive cases) | ≥ 0.5 |
 | `exit_code` | 0 unless case notes hard error |
 | `clip_length` (tests) | 60 s |
@@ -59,6 +59,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | `reencode_mp3_vs_mp4` | A | MP3 vs MP4 | +3s | 1 | 1 | 120s | chirp | cross-container pair; offset ≈ +3 |
 | `refine_on_vs_off` | A | WAV | +3s | 1 | 1 | 120s | chirp | both configs within tolerance |
 | `wav_high_rate_refine_3s` | A | WAV 44.1k | +3s | 1 | 1 | 120s | chirp | `refine_offset_high_rate`; offset ±50 ms |
+| `mp4_aac_high_rate_refine_3s` | A | MP4/AAC 44.1k | +3s | 1 | 1 | 120s | chirp | high-rate refine; offset ±100 ms |
 | `require_consistent_blocks` | A | WAV | +10/+20‖ | 1 | 1 | 180s | chirp | `num_clips=2`; no recommended offset |
 
 ### Notes
@@ -86,7 +87,8 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 - [x] Duration-less MP3 open
 - [x] Long smoke (ignored; `long_smoke_60m` in manifest)
 - [x] HE-AAC (feature-gated; `he_aac_mp4_leader_3s`, skip without `he-aac`)
-- [x] High-rate refinement (±50 ms; `wav_high_rate_refine_3s`)
+- [x] High-rate refinement (±50 ms WAV; `wav_high_rate_refine_3s`)
+- [x] High-rate on encoded AAC (±100 ms; `mp4_aac_high_rate_refine_3s`)
 
 ---
 
@@ -114,6 +116,7 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `reencode_mp3_vs_mp4` | yes | generated (ffmpeg) | yes* |
 | `refine_on_vs_off` | yes | generated at test time | yes |
 | `wav_high_rate_refine_3s` | yes | generated at test time | yes |
+| `mp4_aac_high_rate_refine_3s` | yes | generated (ffmpeg) | yes* |
 | `near_silence_window` | yes | generated at test time | yes |
 | `he_aac_mp4_leader_3s` | yes | generated (ffmpeg) | yes‡ |
 | `long_smoke_60m` | yes | external (`#[ignore]`) | manual |

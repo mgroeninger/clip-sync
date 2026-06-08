@@ -972,20 +972,6 @@ mod tests {
         assert!(refine.applied, "refine={refine:?}");
     }
 
-    /// Chromaprint at 11 kHz leaves a ~29 ms residual on the 44.1 kHz +3 s oracle (see unit test
-    /// `high_rate_holdout_corrects_typical_chromaprint_residual_at_44k` for hold-out correction).
-    #[test]
-    fn chromaprint_only_44k_chirp_leaves_known_residual_band() {
-        const EXPECTED_OFFSET: f64 = 3.0;
-
-        let (offset, _) = run_cross_layer_chirp_alignment_with(false, false);
-        let error = (offset - EXPECTED_OFFSET).abs();
-        assert!(
-            (0.015..0.060).contains(&error),
-            "expected chromaprint residual band, offset={offset}, error={error}"
-        );
-    }
-
     /// With 11 kHz PCM refine already applied, high-rate may be a no-op on the synthetic chirp oracle.
     #[test]
     fn high_rate_refine_is_noop_when_pcm_refine_already_tight() {
@@ -1008,6 +994,49 @@ mod tests {
         assert!(
             !refine.applied || refine.adjustment_secs.abs() < 0.005,
             "expected no meaningful adjustment, refine={refine:?}"
+        );
+    }
+
+    /// Chromaprint-only leaves a measurable residual on the 44.1 kHz oracle; high-rate tightens it.
+    #[test]
+    fn high_rate_refine_tightens_when_pcm_refine_disabled() {
+        const EXPECTED_OFFSET: f64 = 3.0;
+        const TIGHT_TOLERANCE: f64 = 0.050;
+
+        let (offset_without, without_report) = run_cross_layer_chirp_alignment_with(false, false);
+        let (offset_with, with_report) = run_cross_layer_chirp_alignment_with(false, true);
+
+        let error_without = (offset_without - EXPECTED_OFFSET).abs();
+        let error_with = (offset_with - EXPECTED_OFFSET).abs();
+
+        assert!(
+            error_without > 0.010,
+            "chromaprint-only should leave residual, offset={offset_without}, error={error_without}"
+        );
+        assert!(
+            error_with <= TIGHT_TOLERANCE,
+            "high-rate should tighten, offset={offset_with}, error={error_with}"
+        );
+        assert!(
+            error_with < error_without,
+            "without={offset_without} (err={error_without}), with={offset_with} (err={error_with})"
+        );
+
+        let refine = with_report.expect("high-rate report");
+        assert!(refine.applied, "refine={refine:?}");
+        assert!(without_report.is_none());
+    }
+
+    /// Documents the chromaprint-only residual band on the +3 s 44.1 kHz oracle (~29 ms).
+    #[test]
+    fn chromaprint_only_44k_chirp_leaves_known_residual_band() {
+        const EXPECTED_OFFSET: f64 = 3.0;
+
+        let (offset, _) = run_cross_layer_chirp_alignment_with(false, false);
+        let error = (offset - EXPECTED_OFFSET).abs();
+        assert!(
+            (0.015..0.060).contains(&error),
+            "expected chromaprint residual band, offset={offset}, error={error}"
         );
     }
 }

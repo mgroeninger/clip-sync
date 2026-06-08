@@ -65,7 +65,7 @@ fn default_num_clips() -> u32 {
 }
 
 fn default_tolerance_secs() -> f64 {
-    1.0
+    0.15
 }
 
 fn default_min_confidence() -> f32 {

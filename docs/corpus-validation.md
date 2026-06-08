@@ -17,7 +17,7 @@ cargo test -- --ignored               # + external long smoke (CLIP_SYNC_CORPUS)
 ```
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
-- **Generated tier** — 17 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
+- **Generated tier** — 19 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
 - **External tier** — `long_smoke_60m` (3600 s); `#[ignore]` unless `CLIP_SYNC_CORPUS` is set.
 
 Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio_fixtures.rs` and `ffmpeg_util.rs`.

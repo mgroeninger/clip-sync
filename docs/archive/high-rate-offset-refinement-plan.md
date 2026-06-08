@@ -13,7 +13,7 @@
 | Phase 2: skip / max-adjustment tests | Done | `high_rate_refine_skips_when_window_infeasible`, `refine_high_rate_respects_max_adjustment` |
 | Phase 3: reporting + CLI | Done | `HighRateRefinement`, `--refine-offset-high-rate` |
 | Phase 4: corpus | Done | `wav_high_rate_refine_3s` |
-| Optional MP4 AAC case / tighter discovery tolerance | Deferred | See Phase 4 checkboxes |
+| Optional MP4 AAC case / tighter discovery tolerance | Done | `mp4_aac_high_rate_refine_3s`; default ±150 ms |
 
 **Problem:** Discovery alignment (Chromaprint + 11.025 kHz PCM refine on **prepared** clips) lands within ~±1 s on corpus cases but can leave **20–50 ms** residual error — Chromaprint item quantization (~124 ms bins) minus partial correction. That is audible as a faint echo when tracks are overlaid. Current `pcm_lag_adjustment_secs` runs on normalized 11 kHz PCM and uses incorrect slice alignment for positive offsets (`left_start` / `right_start` swapped relative to domain convention `t_B = t_A + offset`).
 
@@ -49,7 +49,7 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Window placement** | Reuse shared `pick_holdout_window(duration, discovery_windows, segment_length)` in `src/domain/policies.rs` (same heuristic as verification plan: middle-third for one clip, gap for two+, midpoint fallback). **v1:** skip when `duration < segment_length` (no shorter slice). |
 | **Timeline extract** | Given start `T` on A and recommended Δ: `A[T, T+L)`, `B[T + Δ, T + L + Δ)` (domain sign convention). Skip when either file cannot supply full `L` after shift. |
 | **`try_all_tracks`** | Re-extract hold-out on **winning** `(track_a, track_b)` only. Record winning track indices during search (same pattern as verification / repetition plans). |
-| **Correlation method** | Reuse `cross_correlate` FFT (`CrossCorrelationMode::Valid`) on `f64` samples — same crate as `pcm_lag_adjustment_secs`. Normalized time-domain correlation optional guard before applying adjustment. |
+| **Correlation method** | Reuse `cross_correlate` FFT (`CrossCorrelationMode::Full`) on `f64` samples — same crate as `pcm_lag_adjustment_secs`. Normalized time-domain correlation optional guard before applying adjustment. |
 | **Slice alignment** | Shared helper `aligned_slice_starts(offset_samples) -> (left_start, right_start)` with `left_start = max(0, -offset_samples)`, `right_start = max(0, offset_samples)`. Used by **both** fixed `pcm_lag_adjustment_secs` and high-rate pass. |
 | **Sub-sample peak** | v1: integer peak only. Revisit parabolic interpolation if WAV oracle still exceeds ±50 ms after slice fix. |
 | **Hook location** | `AlignVideos::execute()` after discovery alignment, **before** optional offset verification (when that plan lands). Order: align → **high-rate refine** → verify → summary. |
@@ -166,8 +166,8 @@ Internal Phase 1 result may mirror these fields without `Serialize`.
 ### Phase 4 — Corpus + tighter policy
 
 - [x] Manifest case `wav_high_rate_refine_3s` (generated 44.1 kHz, flag on, ±50 ms)
-- [ ] Optional: `mp4_aac_high_rate_refine_3s` (encoded; relax tolerance to ±100 ms if codec priming dominates) — *deferred*
-- [ ] Tighten default discovery corpus tolerance only after Phase 0 slice fix is stable — *deferred*
+- [ ] Optional: `mp4_aac_high_rate_refine_3s` — **done** (±100 ms tolerance)
+- [ ] Tighten default discovery corpus tolerance — **done** (default ±150 ms; per-case overrides for leaders and encoded formats)
 - [x] Archive this doc
 
 ---
