@@ -19,12 +19,14 @@ Implementation references:
 
 | Layer | Location |
 |-------|----------|
-| Error enums | `src/application/error.rs`, `src/domain/error.rs` |
-| Symphonia mapping | `src/infrastructure/symphonia/error_mapping.rs` |
-| Exit codes | `src/infrastructure/cli/exit_code.rs` |
-| CLI output on failure | `src/infrastructure/cli/mod.rs` |
+| Error enums (lib) | `crates/clip-sync/src/application/error.rs`, `crates/clip-sync/src/domain/error.rs` |
+| Symphonia mapping | `crates/clip-sync/src/infrastructure/symphonia/error_mapping.rs` |
+| Analyzer exit codes | `crates/clip-sync-cli/src/infrastructure/cli/exit_code.rs` |
+| Analyzer CLI output on failure | `crates/clip-sync-cli/src/infrastructure/cli/mod.rs` |
+| Repair error enum | `crates/clip-sync-repair/src/application/error.rs` |
+| Repair exit codes | `crates/clip-sync-repair/src/infrastructure/cli/exit_code.rs` |
 
-## Exit codes
+## Exit codes — `clip-sync` (analyzer)
 
 | Code | Category | When |
 |------|----------|------|
@@ -36,6 +38,20 @@ Implementation references:
 | 6 | Alignment | Alignment engine failure |
 
 All non-zero codes print a single user-safe line to **stderr**. The process does not print a report to stdout on failure.
+
+## Exit codes — `clip-sync-repair` (repair, Phase 4)
+
+`RepairError` wraps both lib `AppError` and repair-specific variants.
+
+| Code | `RepairError` variant | When |
+|------|-----------------------|------|
+| 0 | — | Gap analysis complete (gaps found or not) |
+| 2 | `Config(String)` | Invalid config, argument, or validation failure |
+| 3 | `Domain(DomainError)` | No decodable audio track in A or B |
+| 4 | `Media(MediaError)` or `Io(std::io::Error)` | File I/O or decode failure during gap scan |
+| 5 | `Align(AppError)` | Any failure from the alignment sub-flow |
+
+Low-confidence alignment (no matching segment) is **not** an error — the gap report still prints with `recommended_offset_secs: null` and `b_has_energy: false` for all gaps.
 
 ## User messages
 

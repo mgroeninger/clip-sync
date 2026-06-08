@@ -15,6 +15,7 @@ pub use domain::{
     AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipWindow, ClipLabel,
     DomainError, Fingerprint, HighRateRefinement, MediaSource, MonoPcmClip,
 };
+pub use domain::policies::select_best_track;
 
 // --- default adapter types ---
 pub use infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
