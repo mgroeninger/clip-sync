@@ -54,6 +54,29 @@ video_a = "wav/quiet_no_gap_a.wav"
 # Must produce zero gaps — guards against false-positive regressions.
 expected_gaps = []
 
+[[case]]
+id    = "stereo_mid_gap_2s"
+tier  = "committed"
+video_a = "wav/stereo_mid_gap_2s_a.wav"
+# Both channels zeroed in the gap — multichannel scan must still detect it.
+[[case.expected_gaps]]
+start_secs = 14.0
+end_secs   = 16.0
+
+[[case]]
+id    = "stereo_hot_left_no_gap"
+tier  = "committed"
+video_a = "wav/stereo_hot_left_no_gap_a.wav"
+# Chirp on left only, right silent. Mean-downmix would falsely look quieter.
+expected_gaps = []
+
+[[case]]
+id    = "stereo_partial_gap_no_detect"
+tier  = "committed"
+video_a = "wav/stereo_partial_gap_a.wav"
+# Gap on right channel only; left still has chirp — not silence (ffmpeg all-channel rule).
+expected_gaps = []
+
 # ── generated cases (WAV files created at test time) ─────────────────────────
 # Run with: cargo test -p clip-sync-repair gap_corpus_generated -- --ignored
 
@@ -89,15 +112,51 @@ total_secs = 30
 amplitude_fraction = 0.05
 expected_gaps = []
 
+[[case]]
+id        = "generated_stereo_symmetric_gap"
+tier      = "generated"
+generator = "zeroed_chirp"
+channels  = 2
+total_secs = 30
+[[case.gap_segments]]
+start_secs = 10.0
+end_secs   = 12.0
+[[case.expected_gaps]]
+start_secs = 10.0
+end_secs   = 12.0
+
+[[case]]
+id        = "generated_stereo_hot_left_no_gap"
+tier      = "generated"
+generator = "asymmetric_channels"
+channels  = 2
+hot_channel = 0
+total_secs = 30
+expected_gaps = []
+
+[[case]]
+id        = "generated_stereo_partial_gap_ignored"
+tier      = "generated"
+generator = "partial_channel_gap"
+channels  = 2
+gap_channel = 1
+total_secs = 30
+[[case.gap_segments]]
+start_secs = 10.0
+end_secs   = 12.0
+expected_gaps = []
+
 # ── external cases (real media files; set CLIP_SYNC_GAP_CORPUS to file dir) ──
 # Run with: CLIP_SYNC_GAP_CORPUS=F:\Video cargo test -p clip-sync-repair gap_corpus_external -- --ignored
 #
 # Ground truth derived from: ffmpeg -i 1.mkv -af silencedetect=noise=-60dB:d=1 -f null -
+# ffmpeg default (mono=0): all channels must be below the noise floor — matches our scanner.
 
 [[case]]
 id      = "real_mkv_1"
 tier    = "external"
 video_a = "1.mkv"
+# 5.1 AAC; validates multichannel silence on real media.
 # ffmpeg reports these 5 silence periods at -60dB with 1s minimum duration.
 tolerance_secs = 0.5
 [[case.expected_gaps]]

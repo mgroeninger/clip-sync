@@ -13,8 +13,8 @@ pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, 
 // --- domain (selected types) ---
 pub use domain::{
     AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipWindow, ClipLabel,
-    DomainError, Fingerprint, HighRateRefinement, MediaSource, MonoPcmClip, MonoScanBucket,
-    MultiChannelPcm,
+    DomainError, Fingerprint, HighRateRefinement, InterleavedScanBucket, MediaSource, MonoPcmClip,
+    MonoScanBucket, MultiChannelPcm,
     TimelineOverlap,
 };
 pub use domain::policies::select_best_track;

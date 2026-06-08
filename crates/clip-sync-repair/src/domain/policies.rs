@@ -1,4 +1,4 @@
-use clip_sync::MonoPcmClip;
+use clip_sync::MultiChannelPcm;
 
 /// A contiguous silent region on a media timeline (seconds).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,24 +46,37 @@ impl SilenceRunScanner {
     }
 
     /// Classify `pcm` (starting at `timeline_start_secs` on the file timeline) into blocks.
-    pub fn feed(&mut self, pcm: &MonoPcmClip, timeline_start_secs: f64) {
+    ///
+    /// Silence requires every channel in a block to pass [`is_silent_interleaved`] (ffmpeg
+    /// `silencedetect` default: all channels quiet simultaneously).
+    pub fn feed(&mut self, pcm: &MultiChannelPcm, timeline_start_secs: f64) {
         if self.block_secs <= 0.0 || pcm.samples.is_empty() {
             return;
         }
 
-        let block_samples = (self.block_secs * f64::from(pcm.sample_rate))
+        let channels = pcm.channels.max(1) as usize;
+        let rate = pcm.sample_rate;
+        let block_frames = (self.block_secs * f64::from(rate))
             .round()
             .max(1.0) as usize;
-        let rate = pcm.sample_rate;
+        let total_frames = pcm.frames();
 
-        let mut offset = 0usize;
-        while offset < pcm.samples.len() {
-            let end = (offset + block_samples).min(pcm.samples.len());
-            let block_start_secs = timeline_start_secs + offset as f64 / f64::from(rate);
-            let block_end_secs = timeline_start_secs + end as f64 / f64::from(rate);
-            let block = &pcm.samples[offset..end];
+        let mut offset_frames = 0usize;
+        while offset_frames < total_frames {
+            let end_frames = (offset_frames + block_frames).min(total_frames);
+            let block_start_secs =
+                timeline_start_secs + offset_frames as f64 / f64::from(rate);
+            let block_end_secs = timeline_start_secs + end_frames as f64 / f64::from(rate);
+            let block_start = offset_frames * channels;
+            let block_end = end_frames * channels;
+            let block = &pcm.samples[block_start..block_end];
 
-            if is_silent(block, self.silence_peak_fraction, self.absolute_rms_floor) {
+            if is_silent_interleaved(
+                block,
+                channels,
+                self.silence_peak_fraction,
+                self.absolute_rms_floor,
+            ) {
                 self.held_count = 0;
                 if self.run_start.is_none() {
                     self.run_start = Some(block_start_secs);
@@ -81,7 +94,7 @@ impl SilenceRunScanner {
                 }
             }
 
-            offset = end;
+            offset_frames = end_frames;
         }
     }
 
@@ -121,22 +134,66 @@ impl SilenceRunScanner {
 ///
 /// Pass `absolute_rms_floor = 0.0` to disable the peak-floor check.
 pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor: f32) -> bool {
+    is_silent_interleaved(samples, 1, silence_peak_fraction, absolute_rms_floor)
+}
+
+/// Returns true when every channel in the interleaved block passes [`is_silent`].
+///
+/// Matches ffmpeg `silencedetect` with `mono=0` (default): all channels must be quiet.
+pub fn is_silent_interleaved(
+    samples: &[i16],
+    channels: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+) -> bool {
+    let channels = channels.max(1);
     if samples.is_empty() {
         return true;
     }
+    let frames = samples.len() / channels;
+    if frames == 0 {
+        return true;
+    }
+    (0..channels).all(|channel| {
+        is_silent_channel(
+            samples,
+            channel,
+            channels,
+            frames,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    })
+}
 
-    let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32;
+fn is_silent_channel(
+    samples: &[i16],
+    channel: usize,
+    channels: usize,
+    frames: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+) -> bool {
+    let mut peak = 0u32;
+    let mut sum_sq = 0f64;
+    for frame in 0..frames {
+        let sample = samples[frame * channels + channel];
+        peak = peak.max(u32::from(sample.unsigned_abs()));
+        let v = f64::from(sample);
+        sum_sq += v * v;
+    }
 
-    if peak == 0.0 {
+    if peak == 0 {
         return true;
     }
 
-    // Peak-based absolute floor: matches ffmpeg silencedetect with noise=-60dB.
-    if absolute_rms_floor > 0.0 && peak < absolute_rms_floor {
+    let peak_f = peak as f32;
+    if absolute_rms_floor > 0.0 && peak_f < absolute_rms_floor {
         return true;
     }
 
-    rms_i16(samples) < peak * silence_peak_fraction
+    let rms = (sum_sq / frames as f64).sqrt() as f32;
+    rms < peak_f * silence_peak_fraction
 }
 
 fn rms_i16(samples: &[i16]) -> f32 {
@@ -226,6 +283,17 @@ pub fn apply_crossfade(into: &mut [i16], fill: &[i16], channels: usize, crossfad
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clip_sync::MultiChannelPcm;
+
+    fn mono_pcm(rate: u32, samples: Vec<i16>) -> MultiChannelPcm {
+        MultiChannelPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+        }
+    }
 
     #[test]
     fn empty_clip_is_silent() {
@@ -282,12 +350,7 @@ mod tests {
         samples.extend(std::iter::repeat_n(0i16, (rate as f64 * 3.0).round() as usize));
         samples.extend(sine_samples(rate, 5.0));
 
-        let pcm = MonoPcmClip {
-            sample_rate: rate,
-            samples,
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        };
+        let pcm = mono_pcm(rate, samples);
 
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
@@ -304,18 +367,8 @@ mod tests {
         let block_secs = 0.25;
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
 
-        let first = MonoPcmClip {
-            sample_rate: rate,
-            samples: vec![0i16; (rate as f64 * 2.0).round() as usize],
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        };
-        let second = MonoPcmClip {
-            sample_rate: rate,
-            samples: vec![0i16; (rate as f64 * 2.0).round() as usize],
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        };
+        let first = mono_pcm(rate, vec![0i16; (rate as f64 * 2.0).round() as usize]);
+        let second = mono_pcm(rate, vec![0i16; (rate as f64 * 2.0).round() as usize]);
 
         scanner.feed(&first, 0.0);
         scanner.feed(&second, 2.0);
@@ -334,12 +387,7 @@ mod tests {
         samples.extend(vec![0i16; (rate as f64 * 0.5).round() as usize]);
         samples.extend(sine_samples(rate, 2.0));
 
-        let pcm = MonoPcmClip {
-            sample_rate: rate,
-            samples,
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        };
+        let pcm = mono_pcm(rate, samples);
 
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
@@ -359,7 +407,7 @@ mod tests {
         samples.extend(sine_samples(rate, block_secs));
         samples.extend(vec![0i16; block_samples * 8]);
 
-        let pcm = MonoPcmClip { sample_rate: rate, samples, decode_error_skips: 0, decoded_sample_count: None };
+        let pcm = mono_pcm(rate, samples);
 
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 1, 0.0);
         scanner.feed(&pcm, 0.0);
@@ -382,11 +430,33 @@ mod tests {
         samples.extend(sine_samples(rate, block_secs));
         samples.extend(vec![0i16; block_samples * 8]);
 
-        let pcm = MonoPcmClip { sample_rate: rate, samples, decode_error_skips: 0, decoded_sample_count: None };
+        let pcm = mono_pcm(rate, samples);
 
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
         assert_eq!(scanner.finish().len(), 2, "hold=0 should split at the noisy block");
+    }
+
+    #[test]
+    fn stereo_left_only_is_not_silent_when_right_is_quiet() {
+        let rate = 11_025u32;
+        let frames = rate as usize;
+        let mut samples = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let tone = (f32::sin(i as f32 * 0.3) * 8_000.0) as i16;
+            samples.push(tone);
+            samples.push(0);
+        }
+        assert!(
+            !is_silent_interleaved(&samples, 2, 0.01, 0.0),
+            "one hot channel should prevent silence"
+        );
+    }
+
+    #[test]
+    fn stereo_both_channels_quiet_is_silent() {
+        let samples = vec![0i16; 11_025 * 2];
+        assert!(is_silent_interleaved(&samples, 2, 0.01, 0.0));
     }
 
     #[test]

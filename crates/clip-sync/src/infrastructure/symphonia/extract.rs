@@ -11,7 +11,9 @@ use tracing::{debug, warn};
 
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
-use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip, MonoScanBucket, MultiChannelPcm};
+use crate::domain::{
+    AudioTrack, ClipWindow, InterleavedScanBucket, MonoPcmClip, MonoScanBucket, MultiChannelPcm,
+};
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
 use crate::infrastructure::symphonia::error_mapping::{
     decode_failed, fail_media, log_media_success, map_decode_loop_error, map_seek_error,
@@ -742,6 +744,306 @@ pub(crate) fn scan_mono_buckets_with_state(
     Ok(())
 }
 
+/// Decode a track sequentially from the start and emit fixed-duration interleaved PCM buckets.
+///
+/// Buckets are defined by **decoded frame count** (`bucket_secs * sample_rate`); each bucket holds
+/// `frames * channels` interleaved samples. Used by gap scans for multichannel silence detection.
+pub(crate) fn scan_interleaved_buckets_with_state(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+    bucket_secs: f64,
+    progress: &dyn ProgressReporter,
+    label: &str,
+    on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
+) -> Result<(), MediaError> {
+    if bucket_secs <= 0.0 {
+        return Err(fail_media(
+            path,
+            "scan",
+            Some(track.index),
+            decode_failed(track.index, "bucket duration must be positive"),
+        ));
+    }
+
+    let track_id = track.index;
+    ensure_track_decoder(path, state, track)?;
+
+    seek_to_window_start(
+        path,
+        state.format.as_mut(),
+        track_id,
+        Duration::ZERO,
+        track.duration,
+    )?;
+    state
+        .decoders
+        .get_mut(&track_id)
+        .expect("decoder cached")
+        .decoder
+        .reset();
+
+    let time_base = state
+        .decoders
+        .get(&track_id)
+        .expect("decoder cached")
+        .time_base;
+    let sample_rate = state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .and_then(|media_track| match &media_track.codec_params {
+            Some(CodecParameters::Audio(params)) => params
+                .sample_rate
+                .filter(|rate| *rate > 0)
+                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
+            _ => None,
+        })
+        .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
+
+    let channels_hint = (track.channels > 0).then_some(track.channels as usize);
+    let mut scratch = Vec::<f32>::new();
+    let mut bucket_buf = Vec::<i16>::new();
+    let mut resolved_rate = None::<u32>;
+    let mut channels = channels_hint;
+    let mut bucket_frame_capacity = None::<usize>;
+    let mut bucket_index = 0_u64;
+    let mut decode_error_skips = 0_u32;
+    let mut consecutive_decode_errors = 0_u32;
+    let mut last_reported = 0_u64;
+
+    let estimated_total_frames = track.duration.and_then(|duration| {
+        sample_rate.map(|rate| {
+            (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64
+        })
+    });
+
+    let emit_full_bucket = |buf: &mut Vec<i16>,
+                            frame_capacity: usize,
+                            ch: usize,
+                            index: &mut u64,
+                            rate: u32,
+                            skips: u32,
+                            on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>|
+     -> Result<(), MediaError> {
+        let sample_capacity = frame_capacity.saturating_mul(ch);
+        while buf.len() >= sample_capacity {
+            let samples: Vec<i16> = buf.drain(..sample_capacity).collect();
+            let start_secs = *index as f64 * bucket_secs;
+            let end_secs = start_secs + bucket_secs;
+            *index += 1;
+            on_bucket(InterleavedScanBucket {
+                start_secs,
+                end_secs,
+                pcm: MultiChannelPcm {
+                    sample_rate: rate,
+                    channels: ch as u16,
+                    samples,
+                    decode_error_skips: skips,
+                    decoded_frame_count: None,
+                },
+            })?;
+        }
+        Ok(())
+    };
+
+    loop {
+        let packet = match state.format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(SymphoniaError::ResetRequired) => {
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
+                continue;
+            }
+            Err(error) => return Err(map_decode_loop_error(path, track.index, error)),
+        };
+
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        let decoded = match state
+            .decoders
+            .get_mut(&track_id)
+            .expect("decoder cached")
+            .decoder
+            .decode(&packet)
+        {
+            Ok(decoded) => {
+                consecutive_decode_errors = 0;
+                decoded
+            }
+            Err(SymphoniaError::DecodeError(detail)) => {
+                decode_error_skips += 1;
+                consecutive_decode_errors += 1;
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    skip_count = decode_error_skips,
+                    consecutive = consecutive_decode_errors,
+                    detail = %detail,
+                    "skipped corrupt decode packet during sequential interleaved scan"
+                );
+                if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                    return Err(fail_media(
+                        path,
+                        "scan",
+                        Some(track.index),
+                        decode_failed(
+                            track.index,
+                            format!(
+                                "too many consecutive decode errors during sequential scan ({decode_error_skips} packets skipped)"
+                            ),
+                        ),
+                    ));
+                }
+                continue;
+            }
+            Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => {
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
+                continue;
+            }
+            Err(error) => return Err(map_decode_loop_error(path, track.index, error)),
+        };
+
+        if decoded.frames() == 0 {
+            continue;
+        }
+
+        if resolved_rate.is_none() {
+            let rate = decoded.spec().rate();
+            if rate == 0 {
+                return Err(fail_media(
+                    path,
+                    "scan",
+                    Some(track.index),
+                    decode_failed(track.index, "missing sample rate during sequential scan"),
+                ));
+            }
+            resolved_rate = Some(rate);
+            let frame_capacity = (bucket_secs * f64::from(rate)).round() as usize;
+            if frame_capacity == 0 {
+                return Err(fail_media(
+                    path,
+                    "scan",
+                    Some(track.index),
+                    decode_failed(track.index, "bucket duration too small for sample rate"),
+                ));
+            }
+            bucket_frame_capacity = Some(frame_capacity);
+        }
+
+        if channels.is_none() {
+            let ch = decoded.spec().channels().count().max(1);
+            channels = Some(ch);
+            if let Some(frame_capacity) = bucket_frame_capacity {
+                bucket_buf.reserve(frame_capacity.saturating_mul(ch));
+            }
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                bucket_secs,
+                bucket_frames = bucket_frame_capacity.unwrap_or(0),
+                sample_rate = resolved_rate.unwrap_or(0),
+                channels = ch,
+                "starting sequential interleaved bucket scan"
+            );
+        }
+
+        let rate = resolved_rate.unwrap_or(0);
+        let ch = channels.unwrap_or(1);
+        let frame_capacity = bucket_frame_capacity.unwrap_or(0);
+        let trim_start_frames = time_base
+            .map(|base| media_duration_to_frames(packet.trim_start, base, rate))
+            .unwrap_or(0);
+
+        append_interleaved_frames_sequential(
+            decoded,
+            &mut bucket_buf,
+            ch,
+            &mut scratch,
+            trim_start_frames,
+        );
+
+        emit_full_bucket(
+            &mut bucket_buf,
+            frame_capacity,
+            ch,
+            &mut bucket_index,
+            rate,
+            decode_error_skips,
+            on_bucket,
+        )?;
+
+        if let Some(estimated) = estimated_total_frames {
+            let frames_buffered = bucket_buf.len() / ch;
+            let current_frames = bucket_index
+                .saturating_mul(frame_capacity as u64)
+                .saturating_add(frames_buffered as u64);
+            if current_frames.saturating_sub(last_reported) >= u64::from(rate) / 2 {
+                progress.progress(label, current_frames.min(estimated), estimated);
+                last_reported = current_frames.min(estimated);
+            }
+        }
+    }
+
+    let rate = resolved_rate.ok_or_else(|| {
+        fail_media(
+            path,
+            "scan",
+            Some(track.index),
+            decode_failed(track.index, "no audio decoded during sequential scan"),
+        )
+    })?;
+    let ch = channels.unwrap_or(1);
+    if !bucket_buf.is_empty() {
+        let frames = bucket_buf.len() / ch;
+        let start_secs = bucket_index as f64 * bucket_secs;
+        let end_secs = start_secs + frames as f64 / f64::from(rate);
+        on_bucket(InterleavedScanBucket {
+            start_secs,
+            end_secs,
+            pcm: MultiChannelPcm {
+                sample_rate: rate,
+                channels: ch as u16,
+                samples: std::mem::take(&mut bucket_buf),
+                decode_error_skips,
+                decoded_frame_count: None,
+            },
+        })?;
+    }
+
+    if let Some(estimated) = estimated_total_frames {
+        progress.progress(label, estimated, estimated);
+    }
+
+    if decode_error_skips > 0 {
+        warn!(
+            path = %path.display(),
+            track = track.index,
+            decode_error_skips,
+            "sequential interleaved bucket scan completed after skipping corrupt decode packets"
+        );
+    }
+
+    log_media_success(path, "scan");
+    Ok(())
+}
+
 /// Native-rate, all-channels counterpart to [`extract_mono_with_state`].
 ///
 /// Tracking is in **frames** (one frame = one sample per channel); the interleaved output buffer
@@ -1239,6 +1541,36 @@ pub(crate) fn append_interleaved_frames_in_window(
     }
 
     false
+}
+
+/// Append all frames from a decoded packet as interleaved `i16` (decode order).
+pub(crate) fn append_interleaved_frames_sequential(
+    decoded: GenericAudioBufferRef<'_>,
+    out: &mut Vec<i16>,
+    channels: usize,
+    scratch: &mut Vec<f32>,
+    trim_start_frames: u32,
+) {
+    let frame_count = decoded.frames();
+    if frame_count == 0 {
+        return;
+    }
+
+    let source_channels = decoded.spec().channels().count().max(1);
+    let channels = channels.max(1);
+    scratch.clear();
+    decoded.copy_to_vec_interleaved(scratch);
+    let interleaved = &*scratch;
+
+    let trim_start = trim_start_frames as usize;
+    for frame_idx in trim_start..frame_count {
+        let frame_start = frame_idx * source_channels;
+        let frame = &interleaved[frame_start..frame_start + source_channels];
+        for channel in 0..channels {
+            let sample = frame.get(channel).copied().unwrap_or(0.0);
+            out.push(float_to_i16(sample));
+        }
+    }
 }
 
 /// Append all frames from a decoded packet as downmixed mono samples (decode order).

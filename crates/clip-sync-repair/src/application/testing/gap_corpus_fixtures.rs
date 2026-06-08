@@ -107,6 +107,15 @@ pub struct GapCorpusCase {
     /// Segments to zero out in the generated A file.
     #[serde(default)]
     pub gap_segments: Vec<GapSegment>,
+    /// Channel count for generated WAVs (default 1). Committed cases use the file on disk.
+    #[serde(default)]
+    pub channels: Option<u16>,
+    /// For `asymmetric_channels`: index of the channel that carries the chirp (default 0).
+    #[serde(default)]
+    pub hot_channel: Option<u16>,
+    /// For `partial_channel_gap`: index of the channel zeroed in `gap_segments` (default 1).
+    #[serde(default)]
+    pub gap_channel: Option<u16>,
     /// Ground truth: the gaps the scanner should detect.
     #[serde(default)]
     pub expected_gaps: Vec<ExpectedGap>,
@@ -181,18 +190,62 @@ fn chirp_sample(sample_rate: u32, index: u64) -> i16 {
     (f64::sin(std::f64::consts::TAU * freq * t) * f64::from(i16::MAX) * 0.5).round() as i16
 }
 
-fn write_mono_wav(path: &Path, sample_rate: u32, samples: impl IntoIterator<Item = i16>) {
-    let spec = WavSpec {
-        channels: 1,
+fn wav_spec(sample_rate: u32, channels: u16) -> WavSpec {
+    WavSpec {
+        channels: channels.max(1),
         sample_rate,
         bits_per_sample: 16,
         sample_format: SampleFormat::Int,
-    };
-    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    }
+}
+
+fn write_mono_wav(path: &Path, sample_rate: u32, samples: impl IntoIterator<Item = i16>) {
+    write_interleaved_wav(path, sample_rate, 1, samples);
+}
+
+fn write_interleaved_wav(
+    path: &Path,
+    sample_rate: u32,
+    channels: u16,
+    samples: impl IntoIterator<Item = i16>,
+) {
+    let mut writer = WavWriter::create(path, wav_spec(sample_rate, channels)).expect("create wav");
     for s in samples {
         writer.write_sample(s).expect("write sample");
     }
     writer.finalize().expect("finalize wav");
+}
+
+fn symmetric_stereo_chirp_frames(
+    sample_rate: u32,
+    total_frames: u64,
+    amplitude_fraction: f64,
+) -> Vec<i16> {
+    let mut samples = Vec::with_capacity(total_frames as usize * 2);
+    for i in 0..total_frames {
+        let sample = (chirp_sample(sample_rate, i) as f64 * amplitude_fraction).round() as i16;
+        samples.push(sample);
+        samples.push(sample);
+    }
+    samples
+}
+
+fn asymmetric_stereo_chirp_frames(
+    sample_rate: u32,
+    total_frames: u64,
+    hot_channel: u16,
+    amplitude_fraction: f64,
+) -> Vec<i16> {
+    let channels = 2u16;
+    let hot = hot_channel.min(channels - 1) as usize;
+    let mut samples = Vec::with_capacity(total_frames as usize * channels as usize);
+    for i in 0..total_frames {
+        let hot_sample = (chirp_sample(sample_rate, i) as f64 * amplitude_fraction).round() as i16;
+        for ch in 0..channels as usize {
+            samples.push(if ch == hot { hot_sample } else { 0 });
+        }
+    }
+    samples
 }
 
 fn zero_wav_segments(path: &Path, sample_rate: u32, segments: &[GapSegment]) {
@@ -213,30 +266,75 @@ fn zero_wav_segments(path: &Path, sample_rate: u32, segments: &[GapSegment]) {
 /// Zero exact sample ranges. Unlike `zero_wav_segments`, no rounding from float seconds —
 /// use this when segments must align to scanner block boundaries to avoid partial-block leakage.
 fn zero_wav_sample_ranges(path: &Path, sample_rate: u32, ranges: &[(usize, usize)]) {
-    if ranges.is_empty() {
+    zero_interleaved_frame_ranges(path, sample_rate, ranges, None);
+}
+
+/// Zero frame ranges in an interleaved WAV. When `channel` is `Some(ch)`, only that channel
+/// is zeroed per frame; when `None`, every channel in the range is zeroed.
+fn zero_interleaved_frame_ranges(
+    path: &Path,
+    sample_rate: u32,
+    frame_ranges: &[(usize, usize)],
+    channel: Option<u16>,
+) {
+    if frame_ranges.is_empty() {
         return;
     }
     let mut reader = WavReader::open(path).expect("open wav");
+    let channels = reader.spec().channels.max(1);
     let mut samples: Vec<i16> = reader
         .samples::<i16>()
         .map(|s| s.expect("read sample"))
         .collect();
-    for &(start, end) in ranges {
-        for s in samples.iter_mut().take(end).skip(start) {
-            *s = 0;
+    for &(start_frame, end_frame) in frame_ranges {
+        for frame in start_frame..end_frame {
+            if let Some(ch) = channel {
+                let idx = frame * channels as usize + ch.min(channels - 1) as usize;
+                if let Some(sample) = samples.get_mut(idx) {
+                    *sample = 0;
+                }
+            } else {
+                let base = frame * channels as usize;
+                for sample in samples
+                    .iter_mut()
+                    .skip(base)
+                    .take(channels as usize)
+                {
+                    *sample = 0;
+                }
+            }
         }
     }
-    let spec = WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: SampleFormat::Int,
-    };
-    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    let mut writer =
+        WavWriter::create(path, wav_spec(sample_rate, channels)).expect("create wav");
     for s in samples {
         writer.write_sample(s).expect("write sample");
     }
     writer.finalize().expect("finalize wav");
+}
+
+fn zero_wav_segments_interleaved(
+    path: &Path,
+    sample_rate: u32,
+    segments: &[GapSegment],
+    channel: Option<u16>,
+) {
+    if segments.is_empty() {
+        return;
+    }
+    let ranges: Vec<(usize, usize)> = segments
+        .iter()
+        .map(|seg| {
+            let start = (seg.start_secs * f64::from(sample_rate)).round() as usize;
+            let end = (seg.end_secs * f64::from(sample_rate)).round() as usize;
+            (start, end)
+        })
+        .collect();
+    zero_interleaved_frame_ranges(path, sample_rate, &ranges, channel);
+}
+
+fn case_channels(case: &GapCorpusCase) -> u16 {
+    case.channels.unwrap_or(1).max(1)
 }
 
 pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> GeneratedCasePaths {
@@ -246,15 +344,72 @@ pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> 
     let total_samples = u64::from(sample_rate) * u64::from(total_secs);
     let path = temp.path().join("a.wav");
 
+    let channels = case_channels(case);
+    let fraction = f64::from(case.amplitude_fraction.unwrap_or(1.0));
+
     match case.generator.as_deref().unwrap_or("zeroed_chirp") {
         "quiet_chirp" => {
-            let fraction = f64::from(case.amplitude_fraction.unwrap_or(0.05));
-            let samples = (0..total_samples)
-                .map(|i| (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16);
-            write_mono_wav(&path, sample_rate, samples);
+            let amp = f64::from(case.amplitude_fraction.unwrap_or(0.05));
+            if channels == 1 {
+                let samples = (0..total_samples)
+                    .map(|i| (chirp_sample(sample_rate, i) as f64 * amp).round() as i16);
+                write_mono_wav(&path, sample_rate, samples);
+            } else {
+                write_interleaved_wav(
+                    &path,
+                    sample_rate,
+                    channels,
+                    symmetric_stereo_chirp_frames(sample_rate, total_samples, amp),
+                );
+            }
+        }
+        "asymmetric_channels" => {
+            assert!(
+                channels >= 2,
+                "asymmetric_channels generator requires channels >= 2"
+            );
+            let hot = case.hot_channel.unwrap_or(0);
+            write_interleaved_wav(
+                &path,
+                sample_rate,
+                channels,
+                asymmetric_stereo_chirp_frames(sample_rate, total_samples, hot, fraction),
+            );
+        }
+        "partial_channel_gap" => {
+            assert!(
+                channels >= 2,
+                "partial_channel_gap generator requires channels >= 2"
+            );
+            if channels == 2 {
+                write_interleaved_wav(
+                    &path,
+                    sample_rate,
+                    2,
+                    symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
+                );
+            } else {
+                let samples = (0..total_samples).flat_map(|i| {
+                    let s = (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16;
+                    std::iter::repeat_n(s, channels as usize)
+                });
+                write_interleaved_wav(&path, sample_rate, channels, samples);
+            }
+            let gap_ch = case.gap_channel.unwrap_or(1);
+            zero_wav_segments_interleaved(&path, sample_rate, &case.gap_segments, Some(gap_ch));
+        }
+        "zeroed_chirp" if channels > 1 => {
+            write_interleaved_wav(
+                &path,
+                sample_rate,
+                channels,
+                symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
+            );
+            zero_wav_segments_interleaved(&path, sample_rate, &case.gap_segments, None);
         }
         _ => {
-            let samples = (0..total_samples).map(|i| chirp_sample(sample_rate, i));
+            let samples = (0..total_samples)
+                .map(|i| (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16);
             write_mono_wav(&path, sample_rate, samples);
             zero_wav_segments(&path, sample_rate, &case.gap_segments);
         }
@@ -311,6 +466,51 @@ pub fn write_committed_wav_fixtures() {
     let samples = (0..total_samples)
         .map(|i| (chirp_sample(rate, i) as f64 * fraction).round() as i16);
     write_mono_wav(&path, rate, samples);
+
+    // 5. stereo_mid_gap_2s_a.wav — both channels share a 2s gap (mirror of mid_2s_a).
+    let path = wav_dir.join("stereo_mid_gap_2s_a.wav");
+    write_interleaved_wav(
+        &path,
+        rate,
+        2,
+        symmetric_stereo_chirp_frames(rate, total_samples, 1.0),
+    );
+    zero_wav_segments_interleaved(
+        &path,
+        rate,
+        &[GapSegment {
+            start_secs: 14.0,
+            end_secs: 16.0,
+        }],
+        None,
+    );
+
+    // 6. stereo_hot_left_no_gap_a.wav — chirp on L only, R silent; must not report gaps.
+    let path = wav_dir.join("stereo_hot_left_no_gap_a.wav");
+    write_interleaved_wav(
+        &path,
+        rate,
+        2,
+        asymmetric_stereo_chirp_frames(rate, total_samples, 0, 1.0),
+    );
+
+    // 7. stereo_partial_gap_a.wav — chirp on L throughout; R zeroed in [14, 16) only.
+    let path = wav_dir.join("stereo_partial_gap_a.wav");
+    write_interleaved_wav(
+        &path,
+        rate,
+        2,
+        asymmetric_stereo_chirp_frames(rate, total_samples, 0, 1.0),
+    );
+    zero_wav_segments_interleaved(
+        &path,
+        rate,
+        &[GapSegment {
+            start_secs: 14.0,
+            end_secs: 16.0,
+        }],
+        Some(1),
+    );
 }
 
 // ── scan runner & assertions ──────────────────────────────────────────────────

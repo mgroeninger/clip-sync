@@ -3,6 +3,9 @@
 Known-answer tests for the `ScanGaps` silence scanner, kept separate from the
 alignment corpus in `tests/corpus/`.
 
+Silence is detected on **native multichannel PCM** (all channels must be quiet
+per block — ffmpeg `silencedetect` default, `mono=0`).
+
 ## Tiers
 
 - **Committed** (`gap_corpus_committed`): always runs in CI; uses pre-generated WAV
@@ -33,23 +36,37 @@ cargo test -p clip-sync-repair gap_corpus_external -- --ignored
 cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 ```
 
-The fixtures are synthetic chirp WAVs (11 025 Hz, mono, i16) with specific
-sample ranges zeroed to create known silence regions. They are small enough
-(≈ 2 MB total) to commit directly.
+The fixtures are synthetic chirp WAVs (11 025 Hz, i16) with specific sample ranges
+zeroed to create known silence regions. Mono and stereo committed files are small
+enough (≈ 4 MB total) to commit directly.
 
 ## Adding a case
 
 1. For **committed**: add a row to `manifest.toml` referencing an existing or new
    file in `wav/`, then add a generator call in `write_committed_wav_fixtures()`.
 2. For **generated**: add a `[[case]]` with `tier = "generated"` and a `generator`
-   name. The `zeroed_chirp` generator accepts `gap_segments`; `quiet_chirp` accepts
-   `amplitude_fraction`.
+   name:
+   - `zeroed_chirp` — full chirp; optional `channels` (default 1); `gap_segments`
+     zero all channels in each segment
+   - `quiet_chirp` — low-amplitude chirp; optional `channels`
+   - `asymmetric_channels` — chirp on `hot_channel` (default 0), others silent;
+     requires `channels >= 2`
+   - `partial_channel_gap` — chirp on all channels, then zero `gap_segments` on
+     `gap_channel` (default 1) only; requires `channels >= 2`
 3. For **external**: record the ground truth with ffmpeg:
    ```
    ffmpeg -i FILE.mkv -af silencedetect=noise=-60dB:d=1 -f null -
    ```
    Then add a `[[case]]` with `tier = "external"` and populate `expected_gaps`.
 
+## Multichannel cases (committed)
+
+| Case ID | Layout | Expected |
+|---------|--------|----------|
+| `stereo_mid_gap_2s` | Both channels silent in gap | 1 gap |
+| `stereo_hot_left_no_gap` | Chirp L, silent R | No gaps |
+| `stereo_partial_gap_no_detect` | Chirp L; R zeroed in gap only | No gaps |
+
 ## Size budget
 
-Committed WAVs: < 5 MB total (currently ≈ 2 MB).
+Committed WAVs: < 5 MB total (currently ≈ 4 MB with stereo fixtures).

@@ -12,6 +12,14 @@ pub struct MultiChannelPcm {
     pub decoded_frame_count: Option<usize>,
 }
 
+/// One fixed-duration bucket from a sequential interleaved timeline scan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterleavedScanBucket {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub pcm: MultiChannelPcm,
+}
+
 impl MultiChannelPcm {
     pub fn frames(&self) -> usize {
         self.samples.len() / self.channels.max(1) as usize

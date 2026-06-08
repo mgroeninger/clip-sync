@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clip_sync::{
     align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
-    AudioTrack, DomainError, MediaError, MediaReader, MediaSession, MediaSource, MonoScanBucket,
-    ProgressReporter,
+    AudioTrack, DomainError, InterleavedScanBucket, MediaError, MediaReader, MediaSession,
+    MediaSource, ProgressReporter,
 };
 
 use crate::application::cross_check::{
@@ -105,7 +105,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         );
         let mut last_fed_end_secs: Option<f64> = None;
 
-        let mut scan_a = |bucket: MonoScanBucket| -> Result<(), MediaError> {
+        let mut scan_a = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
             if last_fed_end_secs
                 .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
             {
@@ -117,7 +117,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         };
 
         session_a
-            .scan_mono_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
+            .scan_interleaved_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
             .map_err(RepairError::Media)?;
 
         // Step 5: scan B's native timeline sequentially to build its silence map.
@@ -218,7 +218,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let progress = self.progress;
         let mut last_fed_end_secs: Option<f64> = None;
 
-        let mut on_bucket = |bucket: MonoScanBucket| -> Result<(), MediaError> {
+        let mut on_bucket = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
             if last_fed_end_secs
                 .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
             {
@@ -230,7 +230,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         };
 
         if session
-            .scan_mono_buckets(track, decode_chunk_secs, progress, "scan-b", &mut on_bucket)
+            .scan_interleaved_buckets(track, decode_chunk_secs, progress, "scan-b", &mut on_bucket)
             .is_err()
         {
             return scanner
@@ -272,10 +272,40 @@ mod tests {
     use clip_sync::testing::fakes::FakeProgressReporter;
     use clip_sync::{
         AlignmentResult, AudioTrack, ClipLabel, ClipMatch, ClipWindow, MediaError, MediaSession,
-        MediaSource, MonoPcmClip,
+        MediaSource, MonoPcmClip, MultiChannelPcm,
     };
 
     use super::*;
+
+    fn mono_clip_to_multichannel(clip: MonoPcmClip, channels: u16) -> MultiChannelPcm {
+        let channels = channels.max(1);
+        if channels == 1 {
+            return MultiChannelPcm {
+                sample_rate: clip.sample_rate,
+                channels: 1,
+                samples: clip.samples,
+                decode_error_skips: clip.decode_error_skips,
+                decoded_frame_count: clip.decoded_sample_count,
+            };
+        }
+
+        let mut samples =
+            Vec::with_capacity(clip.samples.len().saturating_mul(channels as usize));
+        for sample in clip.samples {
+            for _ in 0..channels {
+                samples.push(sample);
+            }
+        }
+        MultiChannelPcm {
+            sample_rate: clip.sample_rate,
+            channels,
+            samples,
+            decode_error_skips: clip.decode_error_skips,
+            decoded_frame_count: clip
+                .decoded_sample_count
+                .map(|frames| frames * channels as usize),
+        }
+    }
 
     // --- minimal fakes ---
 
@@ -307,6 +337,17 @@ mod tests {
                 decoded_sample_count: None,
             })
         }
+
+        fn extract_interleaved(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            let clip = self.extract_mono(track, window, progress, label)?;
+            Ok(mono_clip_to_multichannel(clip, track.channels))
+        }
     }
 
     impl MediaSession for SilentSession {
@@ -329,6 +370,17 @@ mod tests {
                 decode_error_skips: 0,
                 decoded_sample_count: None,
             })
+        }
+
+        fn extract_interleaved(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            let clip = self.extract_mono(track, window, progress, label)?;
+            Ok(mono_clip_to_multichannel(clip, track.channels))
         }
     }
 
@@ -398,6 +450,17 @@ mod tests {
             }
             SilentSession(self.duration).extract_mono(track, window, progress, label)
         }
+
+        fn extract_interleaved(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            let clip = self.extract_mono(track, window, progress, label)?;
+            Ok(mono_clip_to_multichannel(clip, track.channels))
+        }
     }
 
     impl MediaSession for TailSeekFailSession {
@@ -427,6 +490,17 @@ mod tests {
                 decode_error_skips: 0,
                 decoded_sample_count: None,
             })
+        }
+
+        fn extract_interleaved(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            let clip = self.extract_mono(track, window, progress, label)?;
+            Ok(mono_clip_to_multichannel(clip, track.channels))
         }
     }
 
@@ -491,6 +565,21 @@ mod tests {
                 Self::Silent(s) => s.extract_mono(track, window, progress, label),
                 Self::TailSeekFail(s) => s.extract_mono(track, window, progress, label),
                 Self::SkipWindow(s) => s.extract_mono(track, window, progress, label),
+            }
+        }
+
+        fn extract_interleaved(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            match self {
+                Self::Loud(s) => s.extract_interleaved(track, window, progress, label),
+                Self::Silent(s) => s.extract_interleaved(track, window, progress, label),
+                Self::TailSeekFail(s) => s.extract_interleaved(track, window, progress, label),
+                Self::SkipWindow(s) => s.extract_interleaved(track, window, progress, label),
             }
         }
     }
