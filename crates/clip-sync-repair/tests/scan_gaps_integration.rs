@@ -81,6 +81,8 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
             decode_chunk_secs: 10,
             scan_block_secs: 0.25,
             silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            silence_hold_blocks: 0,
             min_gap_secs: 25.0,
             scan_both: true,
             gap_offset_tolerance_secs: 0.5,
@@ -116,4 +118,46 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
     );
     assert!(silent_gap.is_fillable());
     assert!(report.fillable_count() >= 1);
+}
+
+#[test]
+fn execute_detects_short_two_second_gap() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) = write_offset_chirp_wav_pair(
+        temp.path(),
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        OFFSET_SECS,
+    );
+    // Mute a 2-second window in A — the minimum realistic gap we care about detecting.
+    zero_wav_segment(&path_a, SAMPLE_RATE, 40, 42);
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let scan = ScanGaps::new(&media_reader, &progress);
+
+    let report = scan
+        .execute(ScanGapsRequest {
+            video_a: path_a,
+            video_b: path_b,
+            align: aligned_chirp_config(),
+            decode_chunk_secs: 10,
+            scan_block_secs: 0.25,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            silence_hold_blocks: 0,
+            min_gap_secs: 1.0,
+            scan_both: false,
+            gap_offset_tolerance_secs: 0.5,
+        })
+        .expect("scan should succeed");
+
+    let gap = report
+        .gaps
+        .iter()
+        .find(|g| (g.video_a_start_secs - 40.0).abs() < 0.5 && (g.video_a_end_secs - 42.0).abs() < 0.5)
+        .expect("should detect the 2-second gap near t=40s");
+
+    assert!(gap.b_has_energy, "B should have audio at the corresponding position");
+    assert!(gap.duration_secs() >= 1.5, "gap should be at least 1.5s, got {}s", gap.duration_secs());
 }

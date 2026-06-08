@@ -26,6 +26,14 @@ pub struct RepairConfig {
     /// Decode chunk size (seconds) for sequential PCM scan — not gap detection granularity.
     #[serde(default = "default_decode_chunk_secs", alias = "scan_window_secs")]
     pub decode_chunk_secs: u64,
+    /// Number of consecutive non-silent blocks to absorb before closing a silence run.
+    /// Derived from `silence_hold_ms / scan_block_ms`; use `silence_hold_blocks()`.
+    #[serde(default = "default_silence_hold_ms")]
+    pub silence_hold_ms: u64,
+    /// Absolute RMS floor (0–32767 scale) below which a block is always silent regardless of peak.
+    /// Catches low-level codec noise in compressed-audio gaps. Set to 0 to disable.
+    #[serde(default = "default_absolute_silence_rms")]
+    pub absolute_silence_rms: f32,
     /// Also scan B's native timeline for silence to produce `gap_offset_agreement`.
     #[serde(default = "default_true")]
     pub scan_both: bool,
@@ -68,6 +76,12 @@ fn default_scan_block_ms() -> u64 {
 fn default_decode_chunk_secs() -> u64 {
     10
 }
+fn default_silence_hold_ms() -> u64 {
+    500
+}
+fn default_absolute_silence_rms() -> f32 {
+    20.0
+}
 fn default_true() -> bool {
     true
 }
@@ -94,6 +108,8 @@ impl Default for RepairConfig {
             silence_peak_fraction: default_silence_peak_fraction(),
             scan_block_ms: default_scan_block_ms(),
             decode_chunk_secs: default_decode_chunk_secs(),
+            silence_hold_ms: default_silence_hold_ms(),
+            absolute_silence_rms: default_absolute_silence_rms(),
             scan_both: default_true(),
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
@@ -121,6 +137,13 @@ impl RepairConfig {
 
     pub fn min_gap_secs(&self) -> f64 {
         self.min_gap_ms as f64 / 1000.0
+    }
+
+    pub fn silence_hold_blocks(&self) -> u32 {
+        if self.scan_block_ms == 0 {
+            return 0;
+        }
+        (self.silence_hold_ms as f64 / self.scan_block_ms as f64).ceil() as u32
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {

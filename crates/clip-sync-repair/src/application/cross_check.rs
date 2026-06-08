@@ -1,9 +1,61 @@
+use clip_sync::TimelineOverlap;
+
 use crate::domain::gap::GapOffsetAgreement;
+use crate::domain::gap::interval_fully_within_window;
 
 /// A silence interval on a single file's native timeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SilenceInterval {
     pub start_secs: f64,
     pub end_secs: f64,
+}
+
+/// Keep only intervals fully contained in the alignment overlap on each native timeline.
+pub fn filter_intervals_for_cross_check(
+    a_intervals: &[SilenceInterval],
+    b_intervals: &[SilenceInterval],
+    overlap: &TimelineOverlap,
+) -> (Vec<SilenceInterval>, Vec<SilenceInterval>) {
+    let a = a_intervals
+        .iter()
+        .filter(|interval| {
+            interval_fully_within_window(
+                interval.start_secs,
+                interval.end_secs,
+                overlap.video_a_start_secs,
+                overlap.video_a_end_secs,
+            )
+        })
+        .cloned()
+        .collect();
+    let b = b_intervals
+        .iter()
+        .filter(|interval| {
+            interval_fully_within_window(
+                interval.start_secs,
+                interval.end_secs,
+                overlap.video_b_start_secs,
+                overlap.video_b_end_secs,
+            )
+        })
+        .cloned()
+        .collect();
+    (a, b)
+}
+
+/// Compare alignment offset with a silence-structure estimate, using only overlap-contained intervals.
+pub fn check_gap_offset_agreement_in_overlap(
+    a_intervals: &[SilenceInterval],
+    b_intervals: &[SilenceInterval],
+    overlap: Option<&TimelineOverlap>,
+    recommended_offset_secs: f64,
+    tolerance_secs: f64,
+) -> Option<GapOffsetAgreement> {
+    let (a, b) = match overlap {
+        Some(ov) => filter_intervals_for_cross_check(a_intervals, b_intervals, ov),
+        None => (a_intervals.to_vec(), b_intervals.to_vec()),
+    };
+    check_gap_offset_agreement(&a, &b, recommended_offset_secs, tolerance_secs)
 }
 
 /// Compare the Chromaprint alignment offset with one derived from silence-structure overlap.
@@ -143,5 +195,55 @@ mod tests {
         let result = check_gap_offset_agreement(&a, &b, 8.0, 0.5).expect("should compute");
         assert!(!result.agrees, "delta {} should exceed tolerance 0.5", result.delta_secs);
         assert!((result.delta_secs - 3.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn cross_check_excludes_intervals_outside_overlap() {
+        use clip_sync::TimelineOverlap;
+
+        // True offset −10.956: A [100,101] ↔ B [89.044, 90.044] on native clocks.
+        let overlap = TimelineOverlap {
+            video_a_start_secs: 10.956,
+            video_a_end_secs: 900.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 889.044,
+            shared_length_secs: 889.044,
+        };
+        let a = [
+            interval(0.0, 16.0),    // pre-roll — outside overlap
+            interval(100.0, 101.0), // inside overlap
+            interval(5979.0, 6180.0), // tail — outside overlap
+        ];
+        let b = [
+            interval(0.0, 16.0),
+            interval(89.044, 90.044),
+            interval(5968.0, 6169.0),
+        ];
+
+        let (a_in, b_in) = filter_intervals_for_cross_check(&a, &b, &overlap);
+        assert_eq!(a_in.len(), 1, "A pre-roll and tail should be excluded");
+        assert_eq!(b_in.len(), 2, "B leading silence is still inside B overlap [0, 889]");
+        assert!((a_in[0].start_secs - 100.0).abs() < 1e-6);
+
+        let result = check_gap_offset_agreement_in_overlap(&a, &b, Some(&overlap), -10.956, 0.5)
+            .expect("overlap-contained pair should agree");
+        assert!(result.agrees, "expected agreement, got delta {}", result.delta_secs);
+    }
+
+    #[test]
+    fn cross_check_returns_none_when_overlap_filters_all_intervals_on_one_side() {
+        use clip_sync::TimelineOverlap;
+
+        let overlap = TimelineOverlap {
+            video_a_start_secs: 10.0,
+            video_a_end_secs: 60.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 50.0,
+            shared_length_secs: 50.0,
+        };
+        let a = [interval(0.0, 5.0)];
+        let b = [interval(20.0, 25.0)];
+
+        assert!(check_gap_offset_agreement_in_overlap(&a, &b, Some(&overlap), 0.0, 0.5).is_none());
     }
 }

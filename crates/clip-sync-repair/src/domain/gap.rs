@@ -41,6 +41,18 @@ impl Gap {
     }
 }
 
+/// True when `[start_secs, end_secs]` lies entirely inside a timeline window.
+///
+/// Used by fill planning and silence cross-check gating.
+pub fn interval_fully_within_window(
+    start_secs: f64,
+    end_secs: f64,
+    window_start_secs: f64,
+    window_end_secs: f64,
+) -> bool {
+    start_secs >= window_start_secs && end_secs <= window_end_secs
+}
+
 /// Full gap scan report produced by `ScanGaps`.
 #[derive(Debug, Clone, Serialize)]
 pub struct GapReport {

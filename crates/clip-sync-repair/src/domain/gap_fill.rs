@@ -1,4 +1,5 @@
 use crate::domain::gap::GapReport;
+use crate::domain::gap::interval_fully_within_window;
 use crate::domain::track_match::CompatibilityVerdict;
 
 /// Describes one region where B audio will be spliced into A.
@@ -44,10 +45,13 @@ pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan
         .iter()
         .filter(|g| g.is_fillable())
         .filter(|g| {
-            // If an overlap is known, only include gaps fully within A's overlap window.
             if let Some(ref ov) = report.overlap {
-                g.video_a_start_secs >= ov.video_a_start_secs
-                    && g.video_a_end_secs <= ov.video_a_end_secs
+                interval_fully_within_window(
+                    g.video_a_start_secs,
+                    g.video_a_end_secs,
+                    ov.video_a_start_secs,
+                    ov.video_a_end_secs,
+                )
             } else {
                 true
             }

@@ -7,7 +7,7 @@ use clip_sync::{
     MediaSource, MonoScanBucket, ProgressReporter,
 };
 
-use crate::application::cross_check::{check_gap_offset_agreement, SilenceInterval};
+use crate::application::cross_check::{check_gap_offset_agreement_in_overlap, SilenceInterval};
 use crate::application::error::RepairError;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
@@ -23,6 +23,10 @@ pub struct ScanGapsRequest {
     pub scan_block_secs: f64,
     /// Fraction of peak amplitude below which a block is considered silent.
     pub silence_peak_fraction: f32,
+    /// Absolute RMS floor (0–32767 scale) below which a block is always silent regardless of peak.
+    pub absolute_silence_rms: f32,
+    /// Consecutive non-silent blocks to absorb before closing a silence run.
+    pub silence_hold_blocks: u32,
     /// Minimum silent-window duration (seconds) to include in the gap report.
     pub min_gap_secs: f64,
     /// When true, also scan B's native timeline for silence and compute `gap_offset_agreement`.
@@ -88,10 +92,15 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let min_gap_secs = request.min_gap_secs;
         let progress = self.progress;
 
+        let absolute_silence_rms = request.absolute_silence_rms;
+        let silence_hold_blocks = request.silence_hold_blocks;
+
         let mut scanner_a = policies::SilenceRunScanner::new(
             request.scan_block_secs,
             silence_peak_fraction,
             min_gap_secs,
+            silence_hold_blocks,
+            absolute_silence_rms,
         );
         let mut last_fed_end_secs: Option<f64> = None;
 
@@ -124,7 +133,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                         ClipLabel::Interior,
                     );
                     match session_b.extract_mono(track_b, &window_b, progress, "scan-b") {
-                        Ok(pcm_b) => !policies::is_silent(&pcm_b, silence_peak_fraction),
+                        Ok(pcm_b) => !policies::is_silent(&pcm_b.samples, silence_peak_fraction, absolute_silence_rms),
                         Err(_) => false,
                     }
                 }
@@ -149,6 +158,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                     decode_chunk_secs,
                     request.scan_block_secs,
                     request.silence_peak_fraction,
+                    absolute_silence_rms,
+                    silence_hold_blocks,
                     request.min_gap_secs,
                 ),
                 None => vec![],
@@ -166,9 +177,10 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             })
             .collect();
         let gap_offset_agreement = alignment.recommended_offset_secs.and_then(|offset| {
-            check_gap_offset_agreement(
+            check_gap_offset_agreement_in_overlap(
                 &a_intervals,
                 &b_intervals,
+                alignment.start_overlap.as_ref(),
                 offset,
                 request.gap_offset_tolerance_secs,
             )
@@ -196,12 +208,16 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         decode_chunk_secs: f64,
         scan_block_secs: f64,
         silence_peak_fraction: f32,
+        absolute_rms_floor: f32,
+        hold_blocks: u32,
         min_gap_secs: f64,
     ) -> Vec<SilenceInterval> {
         let mut scanner = policies::SilenceRunScanner::new(
             scan_block_secs,
             silence_peak_fraction,
             min_gap_secs,
+            hold_blocks,
+            absolute_rms_floor,
         );
         let progress = self.progress;
         let mut last_fed_end_secs: Option<f64> = None;
@@ -514,6 +530,8 @@ mod tests {
             decode_chunk_secs,
             scan_block_secs: 0.25,
             silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            silence_hold_blocks: 0,
             min_gap_secs: 1.0,
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
@@ -570,7 +588,7 @@ mod tests {
             decode_error_skips: 0,
             decoded_sample_count: None,
         };
-        assert!(!policies::is_silent(&loud_clip, 0.01));
+        assert!(!policies::is_silent(&loud_clip.samples, 0.01, 0.0));
 
         let dur = Duration::from_secs(120);
         let reader = FixedReader::new()

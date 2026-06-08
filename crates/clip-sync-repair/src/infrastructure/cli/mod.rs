@@ -84,6 +84,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         decode_chunk_secs: config.repair.decode_chunk_secs,
         scan_block_secs: config.repair.scan_block_secs(),
         silence_peak_fraction: config.repair.silence_peak_fraction,
+        absolute_silence_rms: config.repair.absolute_silence_rms,
+        silence_hold_blocks: config.repair.silence_hold_blocks(),
         min_gap_secs: config.repair.min_gap_secs(),
         scan_both: config.repair.scan_both,
         gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,

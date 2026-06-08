@@ -11,18 +11,31 @@ pub struct SilentRun {
 pub struct SilenceRunScanner {
     block_secs: f64,
     silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
     min_gap_secs: f64,
+    /// How many consecutive non-silent blocks to tolerate before closing a run.
+    hold_blocks: u32,
+    held_count: u32,
     run_start: Option<f64>,
     run_end: Option<f64>,
     runs: Vec<SilentRun>,
 }
 
 impl SilenceRunScanner {
-    pub fn new(block_secs: f64, silence_peak_fraction: f32, min_gap_secs: f64) -> Self {
+    pub fn new(
+        block_secs: f64,
+        silence_peak_fraction: f32,
+        min_gap_secs: f64,
+        hold_blocks: u32,
+        absolute_rms_floor: f32,
+    ) -> Self {
         Self {
             block_secs,
             silence_peak_fraction,
+            absolute_rms_floor,
             min_gap_secs,
+            hold_blocks,
+            held_count: 0,
             run_start: None,
             run_end: None,
             runs: Vec::new(),
@@ -45,20 +58,23 @@ impl SilenceRunScanner {
             let end = (offset + block_samples).min(pcm.samples.len());
             let block_start_secs = timeline_start_secs + offset as f64 / f64::from(rate);
             let block_end_secs = timeline_start_secs + end as f64 / f64::from(rate);
-            let block = MonoPcmClip {
-                sample_rate: rate,
-                samples: pcm.samples[offset..end].to_vec(),
-                decode_error_skips: 0,
-                decoded_sample_count: None,
-            };
+            let block = &pcm.samples[offset..end];
 
-            if is_silent(&block, self.silence_peak_fraction) {
+            if is_silent(block, self.silence_peak_fraction, self.absolute_rms_floor) {
+                self.held_count = 0;
                 if self.run_start.is_none() {
                     self.run_start = Some(block_start_secs);
                 }
                 self.run_end = Some(block_end_secs);
-            } else {
-                self.close_open_run();
+            } else if self.run_start.is_some() {
+                // In an active run: absorb up to `hold_blocks` consecutive non-silent blocks.
+                if self.held_count < self.hold_blocks {
+                    self.held_count += 1;
+                    self.run_end = Some(block_end_secs);
+                } else {
+                    self.held_count = 0;
+                    self.close_open_run();
+                }
             }
 
             offset = end;
@@ -73,6 +89,7 @@ impl SilenceRunScanner {
 
     /// Break an open silent run when decoded PCM has a timeline hole (e.g. skipped decode chunk).
     pub fn note_pcm_discontinuity(&mut self) {
+        self.held_count = 0;
         self.close_open_run();
     }
 
@@ -89,29 +106,32 @@ impl SilenceRunScanner {
     }
 }
 
-/// Returns true if the clip's RMS energy is below `silence_peak_fraction` of its peak amplitude.
+/// Returns true if `samples` represent silence.
 ///
-/// Used for short analysis blocks during silence-run scanning and for whole-window B fillability
-/// probes. A fully-zero clip (e.g. padding at end of file) is considered silent.
-pub fn is_silent(clip: &MonoPcmClip, silence_peak_fraction: f32) -> bool {
-    if clip.samples.is_empty() {
+/// A block is silent when either:
+/// - all samples are zero, or
+/// - `RMS < absolute_rms_floor` (catches codec noise in otherwise-silent gaps), or
+/// - `RMS < peak × silence_peak_fraction` (catches sparse transients in a sea of zeros).
+///
+/// Pass `absolute_rms_floor = 0.0` to disable the absolute check.
+pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor: f32) -> bool {
+    if samples.is_empty() {
         return true;
     }
 
-    let peak = clip
-        .samples
-        .iter()
-        .map(|s| s.unsigned_abs())
-        .max()
-        .unwrap_or(0) as f32;
+    let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32;
 
     if peak == 0.0 {
         return true;
     }
 
-    let threshold = peak * silence_peak_fraction;
-    let rms = rms_i16(&clip.samples);
-    rms < threshold
+    let rms = rms_i16(samples);
+
+    if absolute_rms_floor > 0.0 && rms < absolute_rms_floor {
+        return true;
+    }
+
+    rms < peak * silence_peak_fraction
 }
 
 fn rms_i16(samples: &[i16]) -> f32 {
@@ -202,23 +222,14 @@ pub fn apply_crossfade(into: &mut [i16], fill: &[i16], channels: usize, crossfad
 mod tests {
     use super::*;
 
-    fn clip(samples: Vec<i16>) -> MonoPcmClip {
-        MonoPcmClip {
-            sample_rate: 44_100,
-            samples,
-            decode_error_skips: 0,
-            decoded_sample_count: None,
-        }
-    }
-
     #[test]
     fn empty_clip_is_silent() {
-        assert!(is_silent(&clip(vec![]), 0.01));
+        assert!(is_silent(&[], 0.01, 0.0));
     }
 
     #[test]
     fn all_zeros_is_silent() {
-        assert!(is_silent(&clip(vec![0; 1000]), 0.01));
+        assert!(is_silent(&vec![0i16; 1000], 0.01, 0.0));
     }
 
     #[test]
@@ -226,7 +237,7 @@ mod tests {
         let samples: Vec<i16> = (0..1000)
             .map(|i| (f32::sin(i as f32 * 0.1) * 10_000.0) as i16)
             .collect();
-        assert!(!is_silent(&clip(samples), 0.01));
+        assert!(!is_silent(&samples, 0.01, 0.0));
     }
 
     #[test]
@@ -235,7 +246,16 @@ mod tests {
         // 1 spike in 11025 zeros: RMS = sqrt(10000/11025) ≈ 0.95 < 1.0 → silent.
         let mut samples = vec![0i16; 11_025];
         samples[0] = 100;
-        assert!(is_silent(&clip(samples), 0.01));
+        assert!(is_silent(&samples, 0.01, 0.0));
+    }
+
+    #[test]
+    fn absolute_floor_catches_low_level_codec_noise() {
+        // All samples at ±1 — relative check (RMS ≈ 1 vs peak = 1) would NOT flag as silent,
+        // but the absolute floor should.
+        let samples: Vec<i16> = (0..11_025).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
+        assert!(!is_silent(&samples, 0.01, 0.0), "no floor: should not be silent");
+        assert!(is_silent(&samples, 0.01, 2.0), "floor=2: RMS≈1 < 2 → silent");
     }
 
     fn sine_samples(rate: u32, secs: f64) -> Vec<i16> {
@@ -260,7 +280,7 @@ mod tests {
             decoded_sample_count: None,
         };
 
-        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
         let runs = scanner.finish();
 
@@ -273,7 +293,7 @@ mod tests {
     fn silence_run_scanner_merges_runs_across_feed_calls() {
         let rate = 11_025u32;
         let block_secs = 0.25;
-        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
 
         let first = MonoPcmClip {
             sample_rate: rate,
@@ -312,9 +332,52 @@ mod tests {
             decoded_sample_count: None,
         };
 
-        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
         assert!(scanner.finish().is_empty());
+    }
+
+    #[test]
+    fn silence_run_scanner_hold_bridges_single_noisy_block() {
+        // Build the signal aligned to block boundaries so the noisy region occupies
+        // exactly one block and doesn't bleed into adjacent blocks.
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let block_samples = (block_secs * rate as f64).round() as usize;
+
+        // 8 silent blocks + 1 noisy block + 8 silent blocks
+        let mut samples = vec![0i16; block_samples * 8];
+        samples.extend(sine_samples(rate, block_secs));
+        samples.extend(vec![0i16; block_samples * 8]);
+
+        let pcm = MonoPcmClip { sample_rate: rate, samples, decode_error_skips: 0, decoded_sample_count: None };
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 1, 0.0);
+        scanner.feed(&pcm, 0.0);
+        let runs = scanner.finish();
+
+        assert_eq!(runs.len(), 1, "hold=1 should merge across the single noisy block");
+        // Total span is 17 blocks = 4.25s; duration should be close to that.
+        assert!(runs[0].end_secs - runs[0].start_secs >= 4.0,
+            "merged run should span most of the 4.25s signal, got {}s", runs[0].end_secs - runs[0].start_secs);
+    }
+
+    #[test]
+    fn silence_run_scanner_hold_zero_splits_on_any_noise() {
+        // Same block-aligned signal but hold=0 → two separate runs.
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let block_samples = (block_secs * rate as f64).round() as usize;
+
+        let mut samples = vec![0i16; block_samples * 8];
+        samples.extend(sine_samples(rate, block_secs));
+        samples.extend(vec![0i16; block_samples * 8]);
+
+        let pcm = MonoPcmClip { sample_rate: rate, samples, decode_error_skips: 0, decoded_sample_count: None };
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
+        scanner.feed(&pcm, 0.0);
+        assert_eq!(scanner.finish().len(), 2, "hold=0 should split at the noisy block");
     }
 
     #[test]
