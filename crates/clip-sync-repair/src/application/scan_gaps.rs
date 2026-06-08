@@ -17,8 +17,10 @@ pub struct ScanGapsRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
     pub align: AlignConfig,
-    /// Duration of each scan window when checking A's timeline for silence.
-    pub scan_window_secs: u64,
+    /// Decode chunk size (seconds) for sequential PCM scan.
+    pub decode_chunk_secs: u64,
+    /// Analysis block size (seconds) for silence-run detection within decoded PCM.
+    pub scan_block_secs: f64,
     /// Fraction of peak amplitude below which a block is considered silent.
     pub silence_peak_fraction: f32,
     /// Minimum silent-window duration (seconds) to include in the gap report.
@@ -80,53 +82,63 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             .as_ref()
             .map(|(_, track_b)| assess_track_compatibility(&track_a, track_b));
 
-        // Step 4: sequential sample-bucket scan on A (no per-window seek).
-        let chunk_secs = request.scan_window_secs as f64;
-        let mut gaps = Vec::new();
+        // Step 4: sequential decode + block-level silence-run detection on A.
+        let decode_chunk_secs = request.decode_chunk_secs as f64;
         let silence_peak_fraction = request.silence_peak_fraction;
         let min_gap_secs = request.min_gap_secs;
         let progress = self.progress;
 
+        let mut scanner_a = policies::SilenceRunScanner::new(
+            request.scan_block_secs,
+            silence_peak_fraction,
+            min_gap_secs,
+        );
+        let mut last_fed_end_secs: Option<f64> = None;
+
         let mut scan_a = |bucket: MonoScanBucket| -> Result<(), MediaError> {
-            let pos = bucket.start_secs;
-            let end = bucket.end_secs;
-            let window_secs = end - pos;
-            if policies::is_silent(&bucket.pcm, silence_peak_fraction)
-                && window_secs >= min_gap_secs
+            if last_fed_end_secs
+                .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
             {
-                let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
-
-                let b_has_energy = match (&b_session, b_positions) {
-                    (Some((session_b, track_b)), Some((b_start, b_end))) if b_start >= 0.0 => {
-                        let window_b = ClipWindow::new(
-                            Duration::from_secs_f64(b_start),
-                            Duration::from_secs_f64(b_end),
-                            ClipLabel::Interior,
-                        );
-                        match session_b.extract_mono(track_b, &window_b, progress, "scan-b") {
-                            Ok(pcm_b) => {
-                                !policies::is_silent(&pcm_b, silence_peak_fraction)
-                            }
-                            Err(_) => false,
-                        }
-                    }
-                    _ => false,
-                };
-
-                gaps.push(Gap {
-                    video_a_start_secs: pos,
-                    video_a_end_secs: end,
-                    video_b_start_secs: b_positions.map(|(s, _)| s),
-                    video_b_end_secs: b_positions.map(|(_, e)| e),
-                    b_has_energy,
-                });
+                scanner_a.note_pcm_discontinuity();
             }
+            scanner_a.feed(&bucket.pcm, bucket.start_secs);
+            last_fed_end_secs = Some(bucket.end_secs);
             Ok(())
         };
 
         session_a
-            .scan_mono_buckets(&track_a, chunk_secs, progress, "scan-a", &mut scan_a)
+            .scan_mono_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
             .map_err(RepairError::Media)?;
+
+        let mut gaps = Vec::new();
+        for run in scanner_a.finish() {
+            let pos = run.start_secs;
+            let end = run.end_secs;
+            let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
+
+            let b_has_energy = match (&b_session, b_positions) {
+                (Some((session_b, track_b)), Some((b_start, b_end))) if b_start >= 0.0 => {
+                    let window_b = ClipWindow::new(
+                        Duration::from_secs_f64(b_start),
+                        Duration::from_secs_f64(b_end),
+                        ClipLabel::Interior,
+                    );
+                    match session_b.extract_mono(track_b, &window_b, progress, "scan-b") {
+                        Ok(pcm_b) => !policies::is_silent(&pcm_b, silence_peak_fraction),
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            };
+
+            gaps.push(Gap {
+                video_a_start_secs: pos,
+                video_a_end_secs: end,
+                video_b_start_secs: b_positions.map(|(s, _)| s),
+                video_b_end_secs: b_positions.map(|(_, e)| e),
+                b_has_energy,
+            });
+        }
 
         // Step 5: optionally scan B's native timeline for silence (bidirectional scan).
         let b_intervals: Vec<SilenceInterval> = if request.scan_both {
@@ -134,7 +146,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 Some((session_b, track_b)) => self.scan_silence_intervals(
                     session_b,
                     track_b,
-                    chunk_secs,
+                    decode_chunk_secs,
+                    request.scan_block_secs,
                     request.silence_peak_fraction,
                     request.min_gap_secs,
                 ),
@@ -169,7 +182,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             alignment,
             gaps,
             gap_offset_agreement,
-            scan_window_secs: request.scan_window_secs,
+            decode_chunk_secs: request.decode_chunk_secs,
+            scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
             silence_peak_fraction: request.silence_peak_fraction,
         })
     }
@@ -179,32 +193,52 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         &self,
         session: &MR::Session,
         track: &AudioTrack,
-        chunk_secs: f64,
+        decode_chunk_secs: f64,
+        scan_block_secs: f64,
         silence_peak_fraction: f32,
         min_gap_secs: f64,
     ) -> Vec<SilenceInterval> {
-        let mut intervals = Vec::new();
+        let mut scanner = policies::SilenceRunScanner::new(
+            scan_block_secs,
+            silence_peak_fraction,
+            min_gap_secs,
+        );
         let progress = self.progress;
+        let mut last_fed_end_secs: Option<f64> = None;
 
         let mut on_bucket = |bucket: MonoScanBucket| -> Result<(), MediaError> {
-            let span = bucket.end_secs - bucket.start_secs;
-            if policies::is_silent(&bucket.pcm, silence_peak_fraction) && span >= min_gap_secs {
-                intervals.push(SilenceInterval {
-                    start_secs: bucket.start_secs,
-                    end_secs: bucket.end_secs,
-                });
+            if last_fed_end_secs
+                .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
+            {
+                scanner.note_pcm_discontinuity();
             }
+            scanner.feed(&bucket.pcm, bucket.start_secs);
+            last_fed_end_secs = Some(bucket.end_secs);
             Ok(())
         };
 
         if session
-            .scan_mono_buckets(track, chunk_secs, progress, "scan-b-bi", &mut on_bucket)
+            .scan_mono_buckets(track, decode_chunk_secs, progress, "scan-b-bi", &mut on_bucket)
             .is_err()
         {
-            return intervals;
+            return scanner
+                .finish()
+                .into_iter()
+                .map(|run| SilenceInterval {
+                    start_secs: run.start_secs,
+                    end_secs: run.end_secs,
+                })
+                .collect();
         }
 
-        intervals
+        scanner
+            .finish()
+            .into_iter()
+            .map(|run| SilenceInterval {
+                start_secs: run.start_secs,
+                end_secs: run.end_secs,
+            })
+            .collect()
     }
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
@@ -472,14 +506,15 @@ mod tests {
         }
     }
 
-    fn scan_request(a: &str, b: &str, scan_window_secs: u64) -> ScanGapsRequest {
+    fn scan_request(a: &str, b: &str, decode_chunk_secs: u64) -> ScanGapsRequest {
         ScanGapsRequest {
             video_a: PathBuf::from(a),
             video_b: PathBuf::from(b),
             align: AlignConfig::default(),
-            scan_window_secs,
+            decode_chunk_secs,
+            scan_block_secs: 0.25,
             silence_peak_fraction: 0.01,
-            min_gap_secs: 30.0,
+            min_gap_secs: 1.0,
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
         }
@@ -545,28 +580,6 @@ mod tests {
         let source_b = MediaSource::new(PathBuf::from("b.wav"));
         assert!(reader.open(&source_a).is_ok());
         assert!(reader.open(&source_b).is_ok());
-    }
-
-    #[test]
-    fn scan_detects_gap_in_silent_a_with_loud_b() {
-        let dur = Duration::from_secs(60);
-        let silent_reader = FixedReader::new()
-            .with("a.wav", SessionKind::Silent, dur)
-            .with("b.wav", SessionKind::Loud, dur);
-        let progress = FakeProgressReporter;
-
-        let source_a = MediaSource::new(PathBuf::from("a.wav"));
-        let session_a = silent_reader.open(&source_a).unwrap();
-        let tracks = session_a.list_tracks().unwrap();
-        let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(60), ClipLabel::Interior);
-        let pcm_a = session_a.extract_mono(&tracks[0], &window, &progress, "test").unwrap();
-        assert!(policies::is_silent(&pcm_a, 0.01));
-
-        let source_b = MediaSource::new(PathBuf::from("b.wav"));
-        let session_b = silent_reader.open(&source_b).unwrap();
-        let tracks_b = session_b.list_tracks().unwrap();
-        let pcm_b = session_b.extract_mono(&tracks_b[0], &window, &progress, "test").unwrap();
-        assert!(!policies::is_silent(&pcm_b, 0.01));
     }
 
     #[test]
@@ -694,7 +707,8 @@ mod tests {
                 },
             ],
             gap_offset_agreement: None,
-            scan_window_secs: 60,
+            decode_chunk_secs: 60,
+            scan_block_ms: 250,
             silence_peak_fraction: 0.01,
         };
 

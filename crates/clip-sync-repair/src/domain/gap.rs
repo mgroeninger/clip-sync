@@ -18,7 +18,7 @@ pub struct GapOffsetAgreement {
     pub agrees: bool,
 }
 
-/// A silent window detected in video A's timeline.
+/// A silent region detected in video A's timeline.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Gap {
     pub video_a_start_secs: f64,
@@ -55,7 +55,11 @@ pub struct GapReport {
     pub gaps: Vec<Gap>,
     /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
-    pub scan_window_secs: u64,
+    /// Decode chunk size used during sequential scan (seconds).
+    #[serde(alias = "scan_window_secs")]
+    pub decode_chunk_secs: u64,
+    /// Analysis block size used for silence-run detection (milliseconds).
+    pub scan_block_ms: u64,
     pub silence_peak_fraction: f32,
 }
 

@@ -142,7 +142,8 @@ mod tests {
             alignment: make_alignment(Some(0.0)),
             gaps,
             gap_offset_agreement: None,
-            scan_window_secs: 60,
+            decode_chunk_secs: 60,
+            scan_block_ms: 250,
             silence_peak_fraction: 0.01,
         }
     }

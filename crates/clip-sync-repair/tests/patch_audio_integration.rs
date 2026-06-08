@@ -156,7 +156,8 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         alignment: make_alignment(0.0),
         gaps: vec![default_gap()],
         gap_offset_agreement: None,
-        scan_window_secs: 60,
+        decode_chunk_secs: 60,
+        scan_block_ms: 250,
         silence_peak_fraction: 0.01,
     }
 }

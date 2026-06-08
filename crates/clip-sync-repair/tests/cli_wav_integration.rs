@@ -6,7 +6,7 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 const SAMPLE_RATE: u32 = 44_100;
 const TOTAL_SECS: u32 = 120;
 const OFFSET_SECS: u32 = 3;
-// 30 s silence aligned to one scan window, fully inside the 60 s overlap on A.
+// 30 s silence in the middle of A; detected via block-level scan (no bucket alignment needed).
 const SILENT_START_SECS: u32 = 30;
 const SILENT_END_SECS: u32 = 60;
 
@@ -93,8 +93,6 @@ scan_both = false
             out_wav.to_str().expect("out utf8"),
             "--min-gap-ms",
             "25000",
-            "--scan-window-secs",
-            "30",
             "--no-scan-both",
         ])
         .status()

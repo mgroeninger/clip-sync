@@ -577,8 +577,10 @@ TOML on disk is **unchanged** for analyzer users — top-level `[clip]`, `[align
 [logging]
 
 [repair]
-min_gap_ms = 100
+min_gap_ms = 1000
 silence_peak_fraction = 0.01
+scan_block_ms = 250
+decode_chunk_secs = 10
 min_fill_correlation = 0.35
 crossfade_ms = 10
 dry_run = true                      # default true until mux phase

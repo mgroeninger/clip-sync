@@ -1,9 +1,98 @@
 use clip_sync::MonoPcmClip;
 
+/// A contiguous silent region on a media timeline (seconds).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SilentRun {
+    pub start_secs: f64,
+    pub end_secs: f64,
+}
+
+/// Accumulates silent runs by classifying PCM in fixed-duration analysis blocks.
+pub struct SilenceRunScanner {
+    block_secs: f64,
+    silence_peak_fraction: f32,
+    min_gap_secs: f64,
+    run_start: Option<f64>,
+    run_end: Option<f64>,
+    runs: Vec<SilentRun>,
+}
+
+impl SilenceRunScanner {
+    pub fn new(block_secs: f64, silence_peak_fraction: f32, min_gap_secs: f64) -> Self {
+        Self {
+            block_secs,
+            silence_peak_fraction,
+            min_gap_secs,
+            run_start: None,
+            run_end: None,
+            runs: Vec::new(),
+        }
+    }
+
+    /// Classify `pcm` (starting at `timeline_start_secs` on the file timeline) into blocks.
+    pub fn feed(&mut self, pcm: &MonoPcmClip, timeline_start_secs: f64) {
+        if self.block_secs <= 0.0 || pcm.samples.is_empty() {
+            return;
+        }
+
+        let block_samples = (self.block_secs * f64::from(pcm.sample_rate))
+            .round()
+            .max(1.0) as usize;
+        let rate = pcm.sample_rate;
+
+        let mut offset = 0usize;
+        while offset < pcm.samples.len() {
+            let end = (offset + block_samples).min(pcm.samples.len());
+            let block_start_secs = timeline_start_secs + offset as f64 / f64::from(rate);
+            let block_end_secs = timeline_start_secs + end as f64 / f64::from(rate);
+            let block = MonoPcmClip {
+                sample_rate: rate,
+                samples: pcm.samples[offset..end].to_vec(),
+                decode_error_skips: 0,
+                decoded_sample_count: None,
+            };
+
+            if is_silent(&block, self.silence_peak_fraction) {
+                if self.run_start.is_none() {
+                    self.run_start = Some(block_start_secs);
+                }
+                self.run_end = Some(block_end_secs);
+            } else {
+                self.close_open_run();
+            }
+
+            offset = end;
+        }
+    }
+
+    /// Close any open run and return all detected intervals.
+    pub fn finish(mut self) -> Vec<SilentRun> {
+        self.close_open_run();
+        self.runs
+    }
+
+    /// Break an open silent run when decoded PCM has a timeline hole (e.g. skipped decode chunk).
+    pub fn note_pcm_discontinuity(&mut self) {
+        self.close_open_run();
+    }
+
+    fn close_open_run(&mut self) {
+        let (Some(start), Some(end)) = (self.run_start.take(), self.run_end.take()) else {
+            return;
+        };
+        if end - start >= self.min_gap_secs {
+            self.runs.push(SilentRun {
+                start_secs: start,
+                end_secs: end,
+            });
+        }
+    }
+}
+
 /// Returns true if the clip's RMS energy is below `silence_peak_fraction` of its peak amplitude.
 ///
-/// Leading silence is preserved by `ScanGaps` window placement, so a fully-zero clip
-/// (e.g., padding at end of file) is considered silent.
+/// Used for short analysis blocks during silence-run scanning and for whole-window B fillability
+/// probes. A fully-zero clip (e.g. padding at end of file) is considered silent.
 pub fn is_silent(clip: &MonoPcmClip, silence_peak_fraction: f32) -> bool {
     if clip.samples.is_empty() {
         return true;
@@ -147,6 +236,85 @@ mod tests {
         let mut samples = vec![0i16; 11_025];
         samples[0] = 100;
         assert!(is_silent(&clip(samples), 0.01));
+    }
+
+    fn sine_samples(rate: u32, secs: f64) -> Vec<i16> {
+        let count = (rate as f64 * secs).round() as usize;
+        (0..count)
+            .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
+            .collect()
+    }
+
+    #[test]
+    fn silence_run_scanner_detects_three_second_gap() {
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let mut samples = sine_samples(rate, 5.0);
+        samples.extend(std::iter::repeat_n(0i16, (rate as f64 * 3.0).round() as usize));
+        samples.extend(sine_samples(rate, 5.0));
+
+        let pcm = MonoPcmClip {
+            sample_rate: rate,
+            samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+        scanner.feed(&pcm, 0.0);
+        let runs = scanner.finish();
+
+        assert_eq!(runs.len(), 1);
+        assert!((runs[0].start_secs - 5.0).abs() < block_secs);
+        assert!((runs[0].end_secs - 8.0).abs() < block_secs);
+    }
+
+    #[test]
+    fn silence_run_scanner_merges_runs_across_feed_calls() {
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+
+        let first = MonoPcmClip {
+            sample_rate: rate,
+            samples: vec![0i16; (rate as f64 * 2.0).round() as usize],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let second = MonoPcmClip {
+            sample_rate: rate,
+            samples: vec![0i16; (rate as f64 * 2.0).round() as usize],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+
+        scanner.feed(&first, 0.0);
+        scanner.feed(&second, 2.0);
+        let runs = scanner.finish();
+
+        assert_eq!(runs.len(), 1);
+        assert!((runs[0].start_secs - 0.0).abs() < 0.001);
+        assert!((runs[0].end_secs - 4.0).abs() < block_secs);
+    }
+
+    #[test]
+    fn silence_run_scanner_ignores_gaps_shorter_than_min() {
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let mut samples = sine_samples(rate, 2.0);
+        samples.extend(vec![0i16; (rate as f64 * 0.5).round() as usize]);
+        samples.extend(sine_samples(rate, 2.0));
+
+        let pcm = MonoPcmClip {
+            sample_rate: rate,
+            samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0);
+        scanner.feed(&pcm, 0.0);
+        assert!(scanner.finish().is_empty());
     }
 
     #[test]

@@ -74,14 +74,15 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ### Repair (`RepairConfig` in `crates/clip-sync-repair/src/infrastructure/config.rs`)
 
-Extend the existing struct (current fields: `min_gap_ms`, `silence_peak_fraction`, `scan_window_secs`):
+Extend the existing struct (current fields: `min_gap_ms`, `silence_peak_fraction`, `scan_block_ms`, `decode_chunk_secs`):
 
 ```rust
 pub struct RepairConfig {
     // existing
     pub min_gap_ms: u64,
     pub silence_peak_fraction: f32,
-    pub scan_window_secs: u64,
+    pub scan_block_ms: u64,
+    pub decode_chunk_secs: u64,
 
     // R3 — bidirectional scan + cross-check
     #[serde(default = "default_true")]
@@ -123,9 +124,10 @@ TOML:
 
 ```toml
 [repair]
-min_gap_ms = 100
+min_gap_ms = 1000
 silence_peak_fraction = 0.01
-scan_window_secs = 60
+scan_block_ms = 250
+decode_chunk_secs = 10
 scan_both = true
 min_fill_correlation = 0.35
 crossfade_ms = 10

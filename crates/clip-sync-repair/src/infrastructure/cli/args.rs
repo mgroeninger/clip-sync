@@ -33,9 +33,13 @@ pub struct Args {
     #[arg(long, value_name = "FRACTION")]
     pub silence_fraction: Option<f32>,
 
-    /// Override: scan window size (seconds).
-    #[arg(long, value_name = "SECS")]
-    pub scan_window_secs: Option<u64>,
+    /// Override: decode chunk size for sequential scan (seconds).
+    #[arg(long, value_name = "SECS", alias = "scan-window-secs")]
+    pub decode_chunk_secs: Option<u64>,
+
+    /// Override: analysis block size for silence detection (ms).
+    #[arg(long, value_name = "MS")]
+    pub scan_block_ms: Option<u64>,
 
     /// Enable bidirectional silence scan (scan B's timeline too) — on by default.
     #[arg(long, overrides_with = "no_scan_both")]

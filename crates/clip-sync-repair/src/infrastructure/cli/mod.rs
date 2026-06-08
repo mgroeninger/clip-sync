@@ -44,8 +44,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     if let Some(f) = args.silence_fraction {
         config.repair.silence_peak_fraction = f;
     }
-    if let Some(s) = args.scan_window_secs {
-        config.repair.scan_window_secs = s;
+    if let Some(s) = args.decode_chunk_secs {
+        config.repair.decode_chunk_secs = s;
+    }
+    if let Some(ms) = args.scan_block_ms {
+        config.repair.scan_block_ms = ms;
     }
     if args.scan_both {
         config.repair.scan_both = true;
@@ -78,7 +81,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         video_a: args.video_a,
         video_b: args.video_b,
         align: config.align,
-        scan_window_secs: config.repair.scan_window_secs,
+        decode_chunk_secs: config.repair.decode_chunk_secs,
+        scan_block_secs: config.repair.scan_block_secs(),
         silence_peak_fraction: config.repair.silence_peak_fraction,
         min_gap_secs: config.repair.min_gap_secs(),
         scan_both: config.repair.scan_both,

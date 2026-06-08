@@ -20,9 +20,12 @@ pub struct RepairConfig {
     /// Fraction of peak amplitude below which a block is considered silent.
     #[serde(default = "default_silence_peak_fraction")]
     pub silence_peak_fraction: f32,
-    /// Duration of each scan window when checking A's timeline for silence (seconds).
-    #[serde(default = "default_scan_window_secs")]
-    pub scan_window_secs: u64,
+    /// Analysis block size (ms) when scanning for silent runs in decoded PCM.
+    #[serde(default = "default_scan_block_ms")]
+    pub scan_block_ms: u64,
+    /// Decode chunk size (seconds) for sequential PCM scan — not gap detection granularity.
+    #[serde(default = "default_decode_chunk_secs", alias = "scan_window_secs")]
+    pub decode_chunk_secs: u64,
     /// Also scan B's native timeline for silence to produce `gap_offset_agreement`.
     #[serde(default = "default_true")]
     pub scan_both: bool,
@@ -54,13 +57,16 @@ pub struct RepairConfig {
 }
 
 fn default_min_gap_ms() -> u64 {
-    100
+    1_000
 }
 fn default_silence_peak_fraction() -> f32 {
     0.01
 }
-fn default_scan_window_secs() -> u64 {
-    60
+fn default_scan_block_ms() -> u64 {
+    250
+}
+fn default_decode_chunk_secs() -> u64 {
+    10
 }
 fn default_true() -> bool {
     true
@@ -86,7 +92,8 @@ impl Default for RepairConfig {
         Self {
             min_gap_ms: default_min_gap_ms(),
             silence_peak_fraction: default_silence_peak_fraction(),
-            scan_window_secs: default_scan_window_secs(),
+            scan_block_ms: default_scan_block_ms(),
+            decode_chunk_secs: default_decode_chunk_secs(),
             scan_both: default_true(),
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
@@ -108,6 +115,10 @@ pub struct RepairOutputConfig {
 }
 
 impl RepairConfig {
+    pub fn scan_block_secs(&self) -> f64 {
+        self.scan_block_ms as f64 / 1000.0
+    }
+
     pub fn min_gap_secs(&self) -> f64 {
         self.min_gap_ms as f64 / 1000.0
     }
@@ -119,9 +130,15 @@ impl RepairConfig {
                 reason: "must be between 0 and 1 exclusive".into(),
             });
         }
-        if self.scan_window_secs == 0 {
+        if self.decode_chunk_secs == 0 {
             return Err(ConfigError::InvalidValue {
-                field: "scan_window_secs".into(),
+                field: "decode_chunk_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.scan_block_ms == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "scan_block_ms".into(),
                 reason: "must be greater than zero".into(),
             });
         }
