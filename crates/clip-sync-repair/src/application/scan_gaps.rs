@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clip_sync::{
     align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
-    AudioTrack, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource,
-    ProgressReporter,
+    AudioTrack, ClipLabel, ClipWindow, DomainError, MediaError, MediaReader, MediaSession,
+    MediaSource, MonoScanBucket, ProgressReporter,
 };
 
 use crate::application::cross_check::{check_gap_offset_agreement, SilenceInterval};
@@ -67,9 +67,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
         let track_a = select_best_track(&tracks_a)?.clone();
 
-        let duration_a = track_a
-            .duration
-            .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
+        if track_a.duration.is_none() {
+            return Err(RepairError::Domain(DomainError::InvalidDuration));
+        }
 
         // Step 3: best-effort open of video B for track compatibility + energy probing.
         // A missing or undecodable B never fails the scan — A's gaps are still reported, just
@@ -80,29 +80,20 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             .as_ref()
             .map(|(_, track_b)| assess_track_compatibility(&track_a, track_b));
 
-        // Step 4: scan A in fixed-size chunks; detect silent windows.
+        // Step 4: sequential sample-bucket scan on A (no per-window seek).
         let chunk_secs = request.scan_window_secs as f64;
-        let total_secs = duration_a.as_secs_f64();
         let mut gaps = Vec::new();
-        let mut pos = 0.0f64;
+        let silence_peak_fraction = request.silence_peak_fraction;
+        let min_gap_secs = request.min_gap_secs;
+        let progress = self.progress;
 
-        while pos < total_secs {
-            let end = (pos + chunk_secs).min(total_secs);
-            let window_a = ClipWindow::new(
-                Duration::from_secs_f64(pos),
-                Duration::from_secs_f64(end),
-                ClipLabel::Interior,
-            );
-
-            let pcm_a = session_a
-                .extract_mono(&track_a, &window_a, self.progress, "scan-a")
-                .map_err(RepairError::Media)?;
-
+        let mut scan_a = |bucket: MonoScanBucket| -> Result<(), MediaError> {
+            let pos = bucket.start_secs;
+            let end = bucket.end_secs;
             let window_secs = end - pos;
-            if policies::is_silent(&pcm_a, request.silence_peak_fraction)
-                && window_secs >= request.min_gap_secs
+            if policies::is_silent(&bucket.pcm, silence_peak_fraction)
+                && window_secs >= min_gap_secs
             {
-                // B positions are only meaningful when alignment produced an offset.
                 let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
 
                 let b_has_energy = match (&b_session, b_positions) {
@@ -112,9 +103,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                             Duration::from_secs_f64(b_end),
                             ClipLabel::Interior,
                         );
-                        match session_b.extract_mono(track_b, &window_b, self.progress, "scan-b") {
+                        match session_b.extract_mono(track_b, &window_b, progress, "scan-b") {
                             Ok(pcm_b) => {
-                                !policies::is_silent(&pcm_b, request.silence_peak_fraction)
+                                !policies::is_silent(&pcm_b, silence_peak_fraction)
                             }
                             Err(_) => false,
                         }
@@ -130,17 +121,23 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                     b_has_energy,
                 });
             }
+            Ok(())
+        };
 
-            pos = end;
-        }
+        session_a
+            .scan_mono_buckets(&track_a, chunk_secs, progress, "scan-a", &mut scan_a)
+            .map_err(RepairError::Media)?;
 
         // Step 5: optionally scan B's native timeline for silence (bidirectional scan).
-        // Only possible when B opened successfully and has a known duration.
         let b_intervals: Vec<SilenceInterval> = if request.scan_both {
             match &b_session {
-                Some((session_b, track_b)) => {
-                    self.scan_silence_intervals(session_b, track_b, chunk_secs, request.silence_peak_fraction, request.min_gap_secs)
-                }
+                Some((session_b, track_b)) => self.scan_silence_intervals(
+                    session_b,
+                    track_b,
+                    chunk_secs,
+                    request.silence_peak_fraction,
+                    request.min_gap_secs,
+                ),
                 None => vec![],
             }
         } else {
@@ -150,10 +147,18 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
         let a_intervals: Vec<SilenceInterval> = gaps
             .iter()
-            .map(|g| SilenceInterval { start_secs: g.video_a_start_secs, end_secs: g.video_a_end_secs })
+            .map(|g| SilenceInterval {
+                start_secs: g.video_a_start_secs,
+                end_secs: g.video_a_end_secs,
+            })
             .collect();
         let gap_offset_agreement = alignment.recommended_offset_secs.and_then(|offset| {
-            check_gap_offset_agreement(&a_intervals, &b_intervals, offset, request.gap_offset_tolerance_secs)
+            check_gap_offset_agreement(
+                &a_intervals,
+                &b_intervals,
+                offset,
+                request.gap_offset_tolerance_secs,
+            )
         });
 
         Ok(GapReport {
@@ -169,8 +174,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         })
     }
 
-    /// Scan a session's timeline for silence intervals. Returns intervals on the session's native
-    /// clock. Silently drops any windows where extraction fails (best-effort, non-fatal).
+    /// Sequential sample-bucket silence scan on a session's native timeline.
     fn scan_silence_intervals(
         &self,
         session: &MR::Session,
@@ -179,27 +183,27 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         silence_peak_fraction: f32,
         min_gap_secs: f64,
     ) -> Vec<SilenceInterval> {
-        let total_secs = match track.duration {
-            Some(d) => d.as_secs_f64(),
-            None => return vec![],
+        let mut intervals = Vec::new();
+        let progress = self.progress;
+
+        let mut on_bucket = |bucket: MonoScanBucket| -> Result<(), MediaError> {
+            let span = bucket.end_secs - bucket.start_secs;
+            if policies::is_silent(&bucket.pcm, silence_peak_fraction) && span >= min_gap_secs {
+                intervals.push(SilenceInterval {
+                    start_secs: bucket.start_secs,
+                    end_secs: bucket.end_secs,
+                });
+            }
+            Ok(())
         };
 
-        let mut intervals = Vec::new();
-        let mut pos = 0.0f64;
-        while pos < total_secs {
-            let end = (pos + chunk_secs).min(total_secs);
-            let window = ClipWindow::new(
-                Duration::from_secs_f64(pos),
-                Duration::from_secs_f64(end),
-                ClipLabel::Interior,
-            );
-            if let Ok(pcm) = session.extract_mono(track, &window, self.progress, "scan-b-bi") {
-                if policies::is_silent(&pcm, silence_peak_fraction) && (end - pos) >= min_gap_secs {
-                    intervals.push(SilenceInterval { start_secs: pos, end_secs: end });
-                }
-            }
-            pos = end;
+        if session
+            .scan_mono_buckets(track, chunk_secs, progress, "scan-b-bi", &mut on_bucket)
+            .is_err()
+        {
+            return intervals;
         }
+
         intervals
     }
 
@@ -297,6 +301,10 @@ mod tests {
     enum SessionKind {
         Loud,
         Silent,
+        /// Loud until `window.start >= fail_from_secs`, then `SeekFailed`.
+        TailSeekFail { fail_from_secs: f64 },
+        /// Silent except `DecodeFailed` when `skip_start <= window.start < skip_end`.
+        SkipWindow { skip_start: f64, skip_end: f64 },
     }
 
     struct FixedReader(HashMap<PathBuf, (SessionKind, Duration)>);
@@ -309,6 +317,70 @@ mod tests {
         fn with(mut self, path: &str, kind: SessionKind, dur: Duration) -> Self {
             self.0.insert(PathBuf::from(path), (kind, dur));
             self
+        }
+    }
+
+    struct TailSeekFailSession {
+        duration: Duration,
+        fail_from_secs: f64,
+    }
+
+    struct SkipWindowSession {
+        duration: Duration,
+        skip_start: f64,
+        skip_end: f64,
+    }
+
+    impl MediaSession for SkipWindowSession {
+        fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+            Ok(vec![loud_track(self.duration)])
+        }
+
+        fn extract_mono(
+            &self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MonoPcmClip, MediaError> {
+            let start = window.start.as_secs_f64();
+            if start >= self.skip_start && start < self.skip_end {
+                return Err(MediaError::DecodeFailed {
+                    track: track.index,
+                    detail: "skipped scan window".into(),
+                });
+            }
+            SilentSession(self.duration).extract_mono(track, window, progress, label)
+        }
+    }
+
+    impl MediaSession for TailSeekFailSession {
+        fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+            Ok(vec![loud_track(self.duration)])
+        }
+
+        fn extract_mono(
+            &self,
+            _track: &AudioTrack,
+            window: &ClipWindow,
+            _progress: &dyn clip_sync::ProgressReporter,
+            _label: &str,
+        ) -> Result<MonoPcmClip, MediaError> {
+            if window.start.as_secs_f64() >= self.fail_from_secs {
+                return Err(MediaError::SeekFailed("tail seek".into()));
+            }
+            let rate = 11_025u32;
+            let secs = (window.end - window.start).as_secs_f64();
+            let count = (rate as f64 * secs) as usize;
+            let samples: Vec<i16> = (0..count)
+                .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
+                .collect();
+            Ok(MonoPcmClip {
+                sample_rate: rate,
+                samples,
+                decode_error_skips: 0,
+                decoded_sample_count: None,
+            })
         }
     }
 
@@ -326,6 +398,20 @@ mod tests {
             Ok(match kind {
                 SessionKind::Loud => DispatchSession::Loud(LoudSession(*dur)),
                 SessionKind::Silent => DispatchSession::Silent(SilentSession(*dur)),
+                SessionKind::TailSeekFail { fail_from_secs } => {
+                    DispatchSession::TailSeekFail(TailSeekFailSession {
+                        duration: *dur,
+                        fail_from_secs: *fail_from_secs,
+                    })
+                }
+                SessionKind::SkipWindow {
+                    skip_start,
+                    skip_end,
+                } => DispatchSession::SkipWindow(SkipWindowSession {
+                    duration: *dur,
+                    skip_start: *skip_start,
+                    skip_end: *skip_end,
+                }),
             })
         }
     }
@@ -333,6 +419,8 @@ mod tests {
     enum DispatchSession {
         Loud(LoudSession),
         Silent(SilentSession),
+        TailSeekFail(TailSeekFailSession),
+        SkipWindow(SkipWindowSession),
     }
 
     impl MediaSession for DispatchSession {
@@ -340,6 +428,8 @@ mod tests {
             match self {
                 Self::Loud(s) => s.list_tracks(),
                 Self::Silent(s) => s.list_tracks(),
+                Self::TailSeekFail(s) => s.list_tracks(),
+                Self::SkipWindow(s) => s.list_tracks(),
             }
         }
 
@@ -353,6 +443,8 @@ mod tests {
             match self {
                 Self::Loud(s) => s.extract_mono(track, window, progress, label),
                 Self::Silent(s) => s.extract_mono(track, window, progress, label),
+                Self::TailSeekFail(s) => s.extract_mono(track, window, progress, label),
+                Self::SkipWindow(s) => s.extract_mono(track, window, progress, label),
             }
         }
     }
@@ -434,8 +526,6 @@ mod tests {
 
     #[test]
     fn loud_pcm_is_not_classified_as_silent() {
-        // ScanGaps::execute calls align_with_defaults which requires real media;
-        // this test verifies the policy layer independently using a fake reader.
         let loud_samples: Vec<i16> = (0..11_025)
             .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
             .collect();
@@ -447,7 +537,6 @@ mod tests {
         };
         assert!(!policies::is_silent(&loud_clip, 0.01));
 
-        // Confirm the fake reader can open both sessions.
         let dur = Duration::from_secs(120);
         let reader = FixedReader::new()
             .with("a.wav", SessionKind::Loud, dur)
@@ -466,7 +555,6 @@ mod tests {
             .with("b.wav", SessionKind::Loud, dur);
         let progress = FakeProgressReporter;
 
-        // Open A and extract a window; confirm it's silent.
         let source_a = MediaSource::new(PathBuf::from("a.wav"));
         let session_a = silent_reader.open(&source_a).unwrap();
         let tracks = session_a.list_tracks().unwrap();
@@ -474,7 +562,6 @@ mod tests {
         let pcm_a = session_a.extract_mono(&tracks[0], &window, &progress, "test").unwrap();
         assert!(policies::is_silent(&pcm_a, 0.01));
 
-        // Open B and extract the same window; confirm it has energy.
         let source_b = MediaSource::new(PathBuf::from("b.wav"));
         let session_b = silent_reader.open(&source_b).unwrap();
         let tracks_b = session_b.list_tracks().unwrap();
@@ -497,7 +584,6 @@ mod tests {
 
         assert_eq!(report.gaps.len(), 1);
         assert!(report.gaps[0].b_has_energy);
-        // B opened successfully, so track compatibility is reported (1ch @ 11025 on both).
         let compat = report
             .track_compatibility
             .as_ref()
@@ -542,7 +628,6 @@ mod tests {
         assert!(report.gaps[0].video_b_start_secs.is_none());
         assert!(report.gaps[0].video_b_end_secs.is_none());
         assert!(!report.gaps[0].is_fillable());
-        // B (b.wav) is absent from the reader, so no compatibility could be assessed.
         assert!(report.track_compatibility.is_none());
         assert!(report.overlap.is_none());
     }
@@ -622,8 +707,6 @@ mod tests {
 
     #[test]
     fn scan_both_produces_agreement_when_silence_colocated() {
-        // Both A and B are fully silent with offset 0 — silence-based offset should agree with
-        // the alignment offset (also 0).
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with("a.wav", SessionKind::Silent, dur)
@@ -639,7 +722,9 @@ mod tests {
             .scan_after_alignment(request, aligned_result(Some(0.0)))
             .expect("scan should succeed");
 
-        let agreement = report.gap_offset_agreement.expect("agreement should be present when both timelines have silence");
+        let agreement = report
+            .gap_offset_agreement
+            .expect("agreement should be present when both timelines have silence");
         assert!(agreement.agrees, "colocated silence should agree");
         assert!(agreement.delta_secs < 0.001, "delta should be ~0");
     }
@@ -657,13 +742,11 @@ mod tests {
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
             .expect("scan should succeed");
 
-        // scan_both defaults to false in scan_request helper.
         assert!(report.gap_offset_agreement.is_none());
     }
 
     #[test]
     fn scan_both_absent_when_alignment_failed() {
-        // Even if scan_both is enabled, gap_offset_agreement is None without a recommended offset.
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with("a.wav", SessionKind::Silent, dur)
@@ -679,5 +762,55 @@ mod tests {
             .expect("scan should succeed");
 
         assert!(report.gap_offset_agreement.is_none());
+    }
+
+    #[test]
+    fn scan_both_stops_b_scan_at_tail_seek_failure() {
+        let dur = Duration::from_secs(125);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with(
+                "b.wav",
+                SessionKind::TailSeekFail { fail_from_secs: 118.0 },
+                dur,
+            );
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("tail seek on B should not fail the scan");
+
+        assert!(report.gaps.is_empty());
+    }
+
+    #[test]
+    fn scan_continues_past_midfile_extract_failure() {
+        let dur = Duration::from_secs(180);
+        let reader = FixedReader::new()
+            .with(
+                "a.wav",
+                SessionKind::SkipWindow {
+                    skip_start: 60.0,
+                    skip_end: 120.0,
+                },
+                dur,
+            )
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(
+            report.gaps.len(),
+            2,
+            "expected gaps in [0,60) and [120,180); mid-file failure must not truncate scan"
+        );
     }
 }

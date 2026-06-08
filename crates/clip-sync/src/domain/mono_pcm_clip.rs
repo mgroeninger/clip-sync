@@ -13,3 +13,11 @@ impl MonoPcmClip {
         self.decoded_sample_count.unwrap_or(self.samples.len())
     }
 }
+
+/// One fixed-duration bucket from a sequential mono timeline scan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonoScanBucket {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub pcm: MonoPcmClip,
+}

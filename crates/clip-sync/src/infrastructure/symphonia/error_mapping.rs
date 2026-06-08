@@ -6,6 +6,10 @@ use tracing::{debug, error, warn};
 
 use crate::application::error::MediaError;
 
+/// Seek/decode positions within this many seconds of reported track duration are treated as
+/// expected tail-boundary conditions (MKV/AAC metadata vs decoder seek range).
+pub(crate) const NEAR_TRACK_END_TOLERANCE_SECS: f64 = 2.0;
+
 pub fn decode_failed(track: u32, detail: impl Into<String>) -> MediaError {
     MediaError::DecodeFailed {
         track,
@@ -79,6 +83,39 @@ pub fn fail_media(
     error
 }
 
+/// Like [`fail_media`] but downgrades expected partial-decode situations from ERROR to WARN.
+pub fn warn_partial_decode(
+    path: &Path,
+    operation: &str,
+    track: Option<u32>,
+    error: MediaError,
+    window_end_secs: f64,
+    track_duration_secs: Option<f64>,
+) -> MediaError {
+    match &error {
+        MediaError::DecodeFailed { track: t, detail } => {
+            let near_track_end = track_duration_secs
+                .map(|duration| window_end_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS)
+                .unwrap_or(false);
+            let reason = if near_track_end {
+                "near track end (metadata/decoder boundary)"
+            } else {
+                "after seek (timestamp/sample boundary mismatch)"
+            };
+            warn!(
+                path = %path.display(),
+                operation,
+                track = t,
+                detail = %detail,
+                reason,
+                "partial media decode"
+            );
+        }
+        _ => log_media_failure(path, operation, track, &error),
+    }
+    error
+}
+
 pub fn map_io_error(path: &Path, operation: &str, error: io::Error) -> MediaError {
     let media_error = io_error(path, operation, error);
     log_media_failure(path, operation, None, &media_error);
@@ -121,10 +158,36 @@ pub fn map_seek_error(
     track: u32,
     start_secs: f64,
     error: SymphoniaError,
+    track_duration_secs: Option<f64>,
 ) -> MediaError {
+    let expected_tail_seek = is_expected_tail_seek(&error, start_secs, track_duration_secs);
     let media_error = seek_error(path, track, start_secs, error);
-    log_media_failure(path, "seek", Some(track), &media_error);
+    if expected_tail_seek {
+        if let MediaError::SeekFailed(detail) = &media_error {
+            warn!(
+                path = %path.display(),
+                operation = "seek",
+                track,
+                detail = %detail,
+                "seek near track end (metadata/decoder boundary)"
+            );
+        }
+    } else {
+        log_media_failure(path, "seek", Some(track), &media_error);
+    }
     media_error
+}
+
+fn is_expected_tail_seek(
+    error: &SymphoniaError,
+    start_secs: f64,
+    track_duration_secs: Option<f64>,
+) -> bool {
+    let Some(duration) = track_duration_secs else {
+        return false;
+    };
+    matches!(error, SymphoniaError::SeekError(SeekErrorKind::OutOfRange))
+        && start_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS
 }
 
 fn io_error(path: &Path, operation: &str, error: io::Error) -> MediaError {
@@ -284,5 +347,31 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let error = ensure_regular_file(temp.path()).unwrap_err();
         assert!(matches!(error, MediaError::OpenFailed(_)));
+    }
+
+    #[test]
+    fn tail_out_of_range_seek_maps_to_seek_failed() {
+        let path = Path::new("test.mkv");
+        let error = map_seek_error(
+            path,
+            2,
+            600.0,
+            SymphoniaError::SeekError(SeekErrorKind::OutOfRange),
+            Some(600.064),
+        );
+        assert!(matches!(error, MediaError::SeekFailed(_)));
+    }
+
+    #[test]
+    fn mid_file_out_of_range_seek_still_maps_to_seek_failed() {
+        let path = Path::new("test.mkv");
+        let error = map_seek_error(
+            path,
+            2,
+            120.0,
+            SymphoniaError::SeekError(SeekErrorKind::OutOfRange),
+            Some(600.064),
+        );
+        assert!(matches!(error, MediaError::SeekFailed(_)));
     }
 }

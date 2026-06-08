@@ -19,7 +19,7 @@ use super::session::{CachedTrackDecoder, MediaIoState, SymphoniaMediaReader};
 use crate::infrastructure::symphonia::session::ensure_track_decoder;
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
-use crate::domain::{AudioTrack, ClipLabel, ClipWindow, MediaSource, MonoPcmClip, MultiChannelPcm};
+use crate::domain::{AudioTrack, ClipLabel, ClipWindow, MediaSource, MonoPcmClip, MonoScanBucket, MultiChannelPcm};
 
 struct NoopProgress;
 
@@ -242,6 +242,34 @@ fn session_reuses_format_reader_across_extracts() {
     assert_eq!(session.cached_decoder_count(), 1);
     assert_eq!(first.samples.len(), 44_100);
     assert_eq!(second.samples.len(), 44_100);
+}
+
+#[test]
+fn scan_mono_buckets_emits_full_sample_windows() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("bucket_scan.wav");
+    write_test_wav(&path, 44_100, 4);
+
+    let reader = SymphoniaMediaReader;
+    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let tracks = session.list_tracks().unwrap();
+
+    let mut buckets = Vec::new();
+    let mut collect = |bucket: MonoScanBucket| -> Result<(), MediaError> {
+        buckets.push(bucket);
+        Ok(())
+    };
+
+    session
+        .scan_mono_buckets(&tracks[0], 1.0, &NoopProgress, "scan", &mut collect)
+        .unwrap();
+
+    assert_eq!(buckets.len(), 4);
+    for bucket in &buckets[..3] {
+        assert_eq!(bucket.pcm.samples.len(), 44_100);
+        assert!((bucket.end_secs - bucket.start_secs - 1.0).abs() < 0.001);
+    }
+    assert_eq!(buckets[3].pcm.samples.len(), 44_100);
 }
 
 #[test]

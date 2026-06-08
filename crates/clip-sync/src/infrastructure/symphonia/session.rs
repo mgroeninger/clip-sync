@@ -9,13 +9,13 @@ use tracing::debug;
 
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
-use crate::domain::{AudioTrack, ClipWindow, MediaSource, MonoPcmClip, MultiChannelPcm};
+use crate::domain::{AudioTrack, ClipWindow, MediaSource, MonoPcmClip, MonoScanBucket, MultiChannelPcm};
 use crate::infrastructure::symphonia::codec_registry::codec_registry;
 use crate::infrastructure::symphonia::error_mapping::{
     decode_failed, ensure_regular_file, fail_media, log_media_success, map_decoder_create_error,
 };
 use crate::infrastructure::symphonia::extract::{
-    extract_interleaved_with_state, extract_mono_with_state,
+    extract_interleaved_with_state, extract_mono_with_state, scan_mono_buckets_with_state,
 };
 use crate::infrastructure::symphonia::probe::{open_format_reader, probe_media_reusable};
 
@@ -156,6 +156,36 @@ impl MediaSession for SymphoniaMediaSession {
             window,
             progress,
             label,
+        )
+    }
+
+    fn scan_mono_buckets(
+        &self,
+        track: &AudioTrack,
+        bucket_secs: f64,
+        progress: &dyn ProgressReporter,
+        label: &str,
+        on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
+    ) -> Result<(), MediaError> {
+        ensure_regular_file(&self.path)?;
+
+        let mut io = self.io.borrow_mut();
+        if io.is_none() {
+            debug!(
+                path = %self.path.display(),
+                "reopening format reader for session (probe rewind was unavailable)"
+            );
+            *io = Some(MediaIoState::open(&self.path)?);
+        }
+
+        scan_mono_buckets_with_state(
+            &self.path,
+            io.as_mut().expect("session io initialized"),
+            track,
+            bucket_secs,
+            progress,
+            label,
+            on_bucket,
         )
     }
 

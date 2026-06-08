@@ -20,7 +20,7 @@ pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
 pub use alignment::TimelineOverlap;
 pub use media_source::MediaSource;
-pub use mono_pcm_clip::MonoPcmClip;
+pub use mono_pcm_clip::{MonoPcmClip, MonoScanBucket};
 pub use multichannel_pcm::MultiChannelPcm;
 pub use pcm_preparation::{
     expand_window_for_slide, prepare_clip_for_fingerprint, select_aligned_subclip_pair,

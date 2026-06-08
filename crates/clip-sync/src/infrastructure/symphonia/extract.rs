@@ -11,10 +11,11 @@ use tracing::{debug, warn};
 
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
-use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip, MultiChannelPcm};
+use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip, MonoScanBucket, MultiChannelPcm};
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
 use crate::infrastructure::symphonia::error_mapping::{
     decode_failed, fail_media, log_media_success, map_decode_loop_error, map_seek_error,
+    warn_partial_decode,
 };
 use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoState};
 
@@ -80,7 +81,13 @@ pub(crate) fn extract_mono_with_state(
         } else {
             Duration::ZERO
         };
-        seek_to_window_start(path, state.format.as_mut(), track_id, seek_start)?;
+        seek_to_window_start(
+            path,
+            state.format.as_mut(),
+            track_id,
+            seek_start,
+            track.duration,
+        )?;
         state
             .decoders
             .get_mut(&track_id)
@@ -346,21 +353,31 @@ pub(crate) fn extract_mono_with_state(
         let shortfall = target - mono_samples.len();
         let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
         if shortfall > limit {
-            return Err(fail_media(
-                path,
-                "extract",
-                Some(track.index),
-                decode_failed(
-                    track.index,
-                    format!(
-                        "partial clip decoded: got {} of {} samples for window [{:.3}s–{:.3}s)",
-                        mono_samples.len(),
-                        target,
-                        window.start.as_secs_f64(),
-                        window.end.as_secs_f64()
-                    ),
+            let error = decode_failed(
+                track.index,
+                format!(
+                    "partial clip decoded: got {} of {} samples for window [{:.3}s–{:.3}s)",
+                    mono_samples.len(),
+                    target,
+                    window.start.as_secs_f64(),
+                    window.end.as_secs_f64()
                 ),
-            ));
+            );
+            // Tail-padding flag means the loop ended at a natural boundary (EOF or a
+            // packet past the window end). Use WARN so callers that handle the error
+            // gracefully (e.g. gap scan, high-rate holdout) don't log alarming ERRORs.
+            return Err(if allow_tail_padding {
+                warn_partial_decode(
+                    path,
+                    "extract",
+                    Some(track.index),
+                    error,
+                    window.end.as_secs_f64(),
+                    track.duration.map(|d| d.as_secs_f64()),
+                )
+            } else {
+                fail_media(path, "extract", Some(track.index), error)
+            });
         }
 
         debug!(
@@ -401,6 +418,284 @@ pub(crate) fn extract_mono_with_state(
         decode_error_skips,
         decoded_sample_count: (decoded_sample_count < target).then_some(decoded_sample_count),
     })
+}
+
+/// Decode a track sequentially from the start and emit fixed-size sample buckets.
+///
+/// Buckets are defined by **decoded sample count** (`bucket_secs * sample_rate`), not packet
+/// timestamps, so gap scans avoid per-window seek imprecision on MKV/AAC.
+pub(crate) fn scan_mono_buckets_with_state(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+    bucket_secs: f64,
+    progress: &dyn ProgressReporter,
+    label: &str,
+    on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
+) -> Result<(), MediaError> {
+    if bucket_secs <= 0.0 {
+        return Err(fail_media(
+            path,
+            "scan",
+            Some(track.index),
+            decode_failed(track.index, "bucket duration must be positive"),
+        ));
+    }
+
+    let track_id = track.index;
+    ensure_track_decoder(path, state, track)?;
+
+    seek_to_window_start(
+        path,
+        state.format.as_mut(),
+        track_id,
+        Duration::ZERO,
+        track.duration,
+    )?;
+    state
+        .decoders
+        .get_mut(&track_id)
+        .expect("decoder cached")
+        .decoder
+        .reset();
+
+    let time_base = state
+        .decoders
+        .get(&track_id)
+        .expect("decoder cached")
+        .time_base;
+    let sample_rate = state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .and_then(|media_track| match &media_track.codec_params {
+            Some(CodecParameters::Audio(params)) => params
+                .sample_rate
+                .filter(|rate| *rate > 0)
+                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
+            _ => None,
+        })
+        .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
+
+    let mut scratch = Vec::<f32>::new();
+    let mut bucket_buf = Vec::<i16>::new();
+    let mut resolved_rate = None::<u32>;
+    let mut bucket_capacity = None::<usize>;
+    let mut bucket_index = 0_u64;
+    let mut decode_error_skips = 0_u32;
+    let mut consecutive_decode_errors = 0_u32;
+    let mut last_reported = 0_u64;
+
+    let estimated_total_samples = track.duration.and_then(|duration| {
+        sample_rate.map(|rate| {
+            (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64
+        })
+    });
+
+    let emit_full_bucket = |buf: &mut Vec<i16>,
+                            capacity: usize,
+                            index: &mut u64,
+                            rate: u32,
+                            skips: u32,
+                            on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>|
+     -> Result<(), MediaError> {
+        while buf.len() >= capacity {
+            let samples: Vec<i16> = buf.drain(..capacity).collect();
+            let start_secs = *index as f64 * bucket_secs;
+            let end_secs = start_secs + bucket_secs;
+            *index += 1;
+            on_bucket(MonoScanBucket {
+                start_secs,
+                end_secs,
+                pcm: MonoPcmClip {
+                    sample_rate: rate,
+                    samples,
+                    decode_error_skips: skips,
+                    decoded_sample_count: None,
+                },
+            })?;
+        }
+        Ok(())
+    };
+
+    loop {
+        let packet = match state.format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(SymphoniaError::ResetRequired) => {
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
+                continue;
+            }
+            Err(error) => return Err(map_decode_loop_error(path, track.index, error)),
+        };
+
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        let decoded = match state
+            .decoders
+            .get_mut(&track_id)
+            .expect("decoder cached")
+            .decoder
+            .decode(&packet)
+        {
+            Ok(decoded) => {
+                consecutive_decode_errors = 0;
+                decoded
+            }
+            Err(SymphoniaError::DecodeError(detail)) => {
+                decode_error_skips += 1;
+                consecutive_decode_errors += 1;
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    skip_count = decode_error_skips,
+                    consecutive = consecutive_decode_errors,
+                    detail = %detail,
+                    "skipped corrupt decode packet during sequential scan"
+                );
+                if consecutive_decode_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                    return Err(fail_media(
+                        path,
+                        "scan",
+                        Some(track.index),
+                        decode_failed(
+                            track.index,
+                            format!(
+                                "too many consecutive decode errors during sequential scan ({decode_error_skips} packets skipped)"
+                            ),
+                        ),
+                    ));
+                }
+                continue;
+            }
+            Err(SymphoniaError::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => {
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
+                continue;
+            }
+            Err(error) => return Err(map_decode_loop_error(path, track.index, error)),
+        };
+
+        if decoded.frames() == 0 {
+            continue;
+        }
+
+        if resolved_rate.is_none() {
+            let rate = decoded.spec().rate();
+            if rate == 0 {
+                return Err(fail_media(
+                    path,
+                    "scan",
+                    Some(track.index),
+                    decode_failed(track.index, "missing sample rate during sequential scan"),
+                ));
+            }
+            resolved_rate = Some(rate);
+            let capacity = (bucket_secs * f64::from(rate)).round() as usize;
+            if capacity == 0 {
+                return Err(fail_media(
+                    path,
+                    "scan",
+                    Some(track.index),
+                    decode_failed(track.index, "bucket duration too small for sample rate"),
+                ));
+            }
+            bucket_capacity = Some(capacity);
+            bucket_buf.reserve(capacity);
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                bucket_secs,
+                bucket_samples = capacity,
+                sample_rate = rate,
+                "starting sequential mono bucket scan"
+            );
+        }
+
+        let rate = resolved_rate.unwrap_or(0);
+        let capacity = bucket_capacity.unwrap_or(0);
+        let trim_start_frames = time_base
+            .map(|base| media_duration_to_frames(packet.trim_start, base, rate))
+            .unwrap_or(0);
+
+        append_mono_frames_sequential(decoded, &mut bucket_buf, &mut scratch, trim_start_frames);
+
+        emit_full_bucket(
+            &mut bucket_buf,
+            capacity,
+            &mut bucket_index,
+            rate,
+            decode_error_skips,
+            on_bucket,
+        )?;
+
+        if let Some(estimated) = estimated_total_samples {
+            if bucket_buf.len().saturating_add(bucket_index as usize * capacity)
+                .saturating_sub(last_reported as usize)
+                >= rate as usize / 2
+            {
+                let current = bucket_index
+                    .saturating_mul(capacity as u64)
+                    .saturating_add(bucket_buf.len() as u64);
+                progress.progress(label, current.min(estimated), estimated);
+                last_reported = current;
+            }
+        }
+    }
+
+    let rate = resolved_rate.ok_or_else(|| {
+        fail_media(
+            path,
+            "scan",
+            Some(track.index),
+            decode_failed(track.index, "no audio decoded during sequential scan"),
+        )
+    })?;
+    if !bucket_buf.is_empty() {
+        let start_secs = bucket_index as f64 * bucket_secs;
+        let end_secs = start_secs + bucket_buf.len() as f64 / f64::from(rate);
+        on_bucket(MonoScanBucket {
+            start_secs,
+            end_secs,
+            pcm: MonoPcmClip {
+                sample_rate: rate,
+                samples: std::mem::take(&mut bucket_buf),
+                decode_error_skips,
+                decoded_sample_count: None,
+            },
+        })?;
+    }
+
+    if let Some(estimated) = estimated_total_samples {
+        progress.progress(label, estimated, estimated);
+    }
+
+    if decode_error_skips > 0 {
+        warn!(
+            path = %path.display(),
+            track = track.index,
+            decode_error_skips,
+            "sequential bucket scan completed after skipping corrupt decode packets"
+        );
+    }
+
+    log_media_success(path, "scan");
+    Ok(())
 }
 
 /// Native-rate, all-channels counterpart to [`extract_mono_with_state`].
@@ -469,7 +764,13 @@ pub(crate) fn extract_interleaved_with_state(
         } else {
             Duration::ZERO
         };
-        seek_to_window_start(path, state.format.as_mut(), track_id, seek_start)?;
+        seek_to_window_start(
+            path,
+            state.format.as_mut(),
+            track_id,
+            seek_start,
+            track.duration,
+        )?;
         state
             .decoders
             .get_mut(&track_id)
@@ -742,21 +1043,28 @@ pub(crate) fn extract_interleaved_with_state(
         let shortfall = target - decoded_frame_count;
         let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
         if shortfall > limit {
-            return Err(fail_media(
-                path,
-                "extract",
-                Some(track.index),
-                decode_failed(
-                    track.index,
-                    format!(
-                        "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
-                        decoded_frame_count,
-                        target,
-                        window.start.as_secs_f64(),
-                        window.end.as_secs_f64()
-                    ),
+            let error = decode_failed(
+                track.index,
+                format!(
+                    "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
+                    decoded_frame_count,
+                    target,
+                    window.start.as_secs_f64(),
+                    window.end.as_secs_f64()
                 ),
-            ));
+            );
+            return Err(if allow_tail_padding {
+                warn_partial_decode(
+                    path,
+                    "extract",
+                    Some(track.index),
+                    error,
+                    window.end.as_secs_f64(),
+                    track.duration.map(|d| d.as_secs_f64()),
+                )
+            } else {
+                fail_media(path, "extract", Some(track.index), error)
+            });
         }
 
         debug!(
@@ -867,6 +1175,36 @@ pub(crate) fn append_interleaved_frames_in_window(
     false
 }
 
+/// Append all frames from a decoded packet as downmixed mono samples (decode order).
+pub(crate) fn append_mono_frames_sequential(
+    decoded: GenericAudioBufferRef<'_>,
+    out: &mut Vec<i16>,
+    scratch: &mut Vec<f32>,
+    trim_start_frames: u32,
+) {
+    let frame_count = decoded.frames();
+    if frame_count == 0 {
+        return;
+    }
+
+    let channel_count = decoded.spec().channels().count().max(1);
+    scratch.clear();
+    decoded.copy_to_vec_interleaved(scratch);
+    let interleaved = &*scratch;
+
+    let trim_start = trim_start_frames as usize;
+    for frame_idx in trim_start..frame_count {
+        let frame_start = frame_idx * channel_count;
+        let frame = &interleaved[frame_start..frame_start + channel_count];
+        let mono = if frame.is_empty() {
+            0.0
+        } else {
+            frame.iter().sum::<f32>() / frame.len() as f32
+        };
+        out.push(float_to_i16(mono));
+    }
+}
+
 /// `scratch` is a caller-owned buffer reused across packets to avoid per-call heap allocation;
 /// its contents on entry are irrelevant and will be overwritten.
 pub(crate) fn append_frames_in_window(
@@ -942,6 +1280,7 @@ fn seek_to_window_start(
     format: &mut dyn symphonia::core::formats::FormatReader,
     track_id: u32,
     start: Duration,
+    track_duration: Option<Duration>,
 ) -> Result<(), MediaError> {
     let time = Time::try_new(start.as_secs() as i64, start.subsec_nanos()).ok_or_else(|| {
         MediaError::SeekFailed(format!(
@@ -956,9 +1295,15 @@ fn seek_to_window_start(
         track_id: Some(track_id),
     };
 
-    format
-        .seek(SeekMode::Accurate, seek_to)
-        .map_err(|error| map_seek_error(path, track_id, start.as_secs_f64(), error))?;
+    format.seek(SeekMode::Accurate, seek_to).map_err(|error| {
+        map_seek_error(
+            path,
+            track_id,
+            start.as_secs_f64(),
+            error,
+            track_duration.map(|d| d.as_secs_f64()),
+        )
+    })?;
 
     Ok(())
 }

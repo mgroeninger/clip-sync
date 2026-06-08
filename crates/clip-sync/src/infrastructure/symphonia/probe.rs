@@ -137,7 +137,7 @@ fn rewind_format_reader(
     };
     format
         .seek(SeekMode::Accurate, seek_to)
-        .map_err(|error| map_seek_error(path, 0, 0.0, error))?;
+        .map_err(|error| map_seek_error(path, 0, 0.0, error, None))?;
     Ok(())
 }
 
