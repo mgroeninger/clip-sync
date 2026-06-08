@@ -183,8 +183,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clip-sync",
+ "hound",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "toml",
  "tracing",

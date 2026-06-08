@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clip_sync::{
-    align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, ClipLabel, ClipWindow,
-    MediaReader, MediaSession, MediaSource, ProgressReporter,
+    align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
+    ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource, ProgressReporter,
 };
 
 use crate::application::error::RepairError;
@@ -35,28 +35,34 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         }
     }
 
-    pub fn execute(self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
-        // Step 1: align A and B using the lib pipeline.
+    pub fn execute(&self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
         let alignment = align_with_defaults(
             AlignVideosRequest {
                 video_a: request.video_a.clone(),
                 video_b: request.video_b.clone(),
-                config: request.align,
+                config: request.align.clone(),
             },
             self.progress,
         )?;
 
+        self.scan_after_alignment(request, alignment)
+    }
+
+    /// Gap scan after alignment — unit-testable without the align sub-flow.
+    pub(crate) fn scan_after_alignment(
+        &self,
+        request: ScanGapsRequest,
+        alignment: AlignmentResult,
+    ) -> Result<GapReport, RepairError> {
         // Step 2: open video A media session and select its best audio track.
         let source_a = MediaSource::new(request.video_a.clone());
         let session_a = self.media_reader.open(&source_a).map_err(RepairError::Media)?;
         let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
         let track_a = select_best_track(&tracks_a)?.clone();
 
-        let duration_a = track_a.duration.ok_or_else(|| {
-            RepairError::Config(
-                "cannot determine duration of video A; cannot scan for gaps".into(),
-            )
-        })?;
+        let duration_a = track_a
+            .duration
+            .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
 
         // Step 3: open video B if alignment produced an offset.
         let offset_secs = alignment.recommended_offset_secs;
@@ -280,37 +286,76 @@ mod tests {
 
     // --- helpers ---
 
-    fn aligned_result(offset: f64) -> AlignmentResult {
+    fn aligned_result(offset: Option<f64>) -> AlignmentResult {
         AlignmentResult {
             clips: vec![ClipMatch {
                 label: ClipLabel::Start,
                 window_start_secs: 0.0,
                 window_end_secs: 60.0,
-                aligned: true,
-                offset_secs: Some(offset),
-                confidence: 0.9,
+                aligned: offset.is_some(),
+                offset_secs: offset,
+                confidence: if offset.is_some() { 0.9 } else { 0.0 },
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
             }],
-            start_aligned: true,
+            start_aligned: offset.is_some(),
             end_aligned: None,
-            recommended_offset_secs: Some(offset),
+            recommended_offset_secs: offset,
             offsets_consistent: true,
             start_overlap: None,
             high_rate_refinement: None,
         }
     }
 
-    /// Build a `ScanGapsRequest` with defaults, overriding the alignment result
-    /// via a pre-computed result injected through a fake reader that wraps it.
-    ///
-    /// Since `align_with_defaults` calls `SymphoniaMediaReader` internally,
-    /// we test `ScanGaps` by injecting a `FixedReader` whose sessions have known
-    /// duration; the alignment result is what comes from the align sub-flow.
-    ///
-    /// To unit-test gap detection independently of the aligner, we test
-    /// `policies::is_silent` directly and only do integration-style tests
-    /// for `ScanGaps::execute` using fakes that simulate a common scenario.
+    fn scan_request(a: &str, b: &str, scan_window_secs: u64) -> ScanGapsRequest {
+        ScanGapsRequest {
+            video_a: PathBuf::from(a),
+            video_b: PathBuf::from(b),
+            align: AlignConfig::default(),
+            scan_window_secs,
+            silence_peak_fraction: 0.01,
+            min_gap_secs: 30.0,
+        }
+    }
+
+    struct NoDurationSession;
+
+    impl MediaSession for NoDurationSession {
+        fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+            Ok(vec![AudioTrack {
+                index: 0,
+                codec: "pcm".into(),
+                channels: 1,
+                sample_rate: 11_025,
+                bitrate: None,
+                duration: None,
+                decodable: true,
+            }])
+        }
+
+        fn extract_mono(
+            &self,
+            _track: &AudioTrack,
+            _window: &ClipWindow,
+            _progress: &dyn clip_sync::ProgressReporter,
+            _label: &str,
+        ) -> Result<MonoPcmClip, MediaError> {
+            Err(MediaError::DecodeFailed {
+                track: 0,
+                detail: "not reached".into(),
+            })
+        }
+    }
+
+    struct NoDurationReader;
+
+    impl clip_sync::MediaReader for NoDurationReader {
+        type Session = NoDurationSession;
+
+        fn open(&self, _source: &MediaSource) -> Result<NoDurationSession, MediaError> {
+            Ok(NoDurationSession)
+        }
+    }
 
     #[test]
     fn loud_pcm_is_not_classified_as_silent() {
@@ -363,13 +408,102 @@ mod tests {
     }
 
     #[test]
+    fn scan_after_alignment_detects_silent_gap_with_fillable_b() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!(report.gaps[0].b_has_energy);
+        assert!((report.gaps[0].video_a_start_secs - 0.0).abs() < 0.001);
+        assert!((report.gaps[0].video_a_end_secs - 60.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_start_secs - 0.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_end_secs - 60.0).abs() < 0.001);
+        assert!(report.gaps[0].is_fillable());
+    }
+
+    #[test]
+    fn scan_after_alignment_loud_a_finds_no_gaps() {
+        let dur = Duration::from_secs(120);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert!(report.gaps.is_empty());
+    }
+
+    #[test]
+    fn scan_after_alignment_with_failed_alignment_marks_b_unfillable() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new().with("a.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(None))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!(!report.gaps[0].b_has_energy);
+        assert!(!report.gaps[0].is_fillable());
+    }
+
+    #[test]
+    fn scan_after_alignment_applies_offset_to_b_timeline() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(3.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!((report.gaps[0].video_b_start_secs - 3.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_end_secs - 63.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn scan_after_alignment_unknown_duration_returns_invalid_duration() {
+        use crate::infrastructure::cli::exit_code::exit_code_for;
+        use std::process::ExitCode;
+
+        let reader = NoDurationReader;
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let err = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .expect_err("missing duration should fail");
+
+        assert!(matches!(err, RepairError::Domain(DomainError::InvalidDuration)));
+        assert_eq!(exit_code_for(&err), ExitCode::from(3));
+    }
+
+    #[test]
     fn gap_report_fillable_count_counts_b_energy_gaps() {
         use crate::domain::gap::{Gap, GapReport};
 
         let report = GapReport {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
-            alignment: aligned_result(0.0),
+            alignment: aligned_result(Some(0.0)),
             gaps: vec![
                 Gap {
                     video_a_start_secs: 0.0,

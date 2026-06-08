@@ -1,11 +1,10 @@
-# Temporary: workspace refactor — implementation gaps
+# Workspace refactor — implementation gaps (archived)
 
-> **Status:** Active companion to [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md).  
-> **Purpose:** Pre-implementation gaps, ambiguities, and deferred scope identified during readiness review (2026-06-07).  
-> **Archive:** Fold resolved items into the main plan or delete this file when Phases 1–3 ship.
+> **Status:** Archived. Phases 1–4 complete (2026-06-07 / 2026-06-08). All items resolved or intentionally deferred to Phase 5.  
+> **Purpose:** Pre-implementation gaps, ambiguities, and deferred scope identified during readiness review (2026-06-07).
 
-**Parent plan:** [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md)  
-**Architecture reference:** [PLAN.md](PLAN.md)
+**Parent plan:** [workspace-refactor-plan.md](workspace-refactor-plan.md)  
+**Architecture reference:** [PLAN.md](../../PLAN.md)
 
 ---
 
@@ -14,11 +13,11 @@
 | Scope | Ready to implement? | Notes |
 |-------|-------------------|-------|
 | **PR A — Phases 1 + 2** (workspace, lib hexagon, CLI hexagon) | **Done (2026-06-07)** | All pre-implementation gaps resolved; 98 tests green |
-| **PR B — Phase 3** (`test-utils`, CLI adapter tests, docs) | **Yes** | Depends on PR A |
-| **PR C — Phase 4** (repair report-only) | **No** | Scaffold only; see § Deferred scope |
+| **PR B — Phase 3** (`test-utils`, CLI adapter tests, docs) | **Done (2026-06-07)** | 120 tests green |
+| **PR C — Phase 4** (repair report-only) | **Done (2026-06-08)** | `clip-sync-repair` crate shipped; 120 tests green |
 | **PR D — Phase 5** (repair write path) | **No** | Optional; depends on Phase 4 |
 
-**Overall:** Phases **1–3** are ready to start. Phases **4–5** should wait until core extraction is merged.
+**Overall:** Phases **1–4** are complete. Phase 5 (ffmpeg write path) is optional and deferred.
 
 ---
 
@@ -42,19 +41,9 @@ These are not architectural blockers. Address them in the same PRs as the parent
 
 ---
 
-### 2. Example config file for CLI round-trip test (Low)
+### 2. Example config file for CLI round-trip test (Low) — Resolved (Phase 3)
 
-**What the plan says:** Phase 2.7 — “round-trip deserialize from an existing example config file.”
-
-**Current code:** No committed `.toml` config fixture. `README.md` contains inline TOML examples only.
-
-**Gap:** Implementer must invent a fixture path or inline TOML in the test.
-
-**Resolution (suggested):**
-
-- Add `crates/clip-sync-cli/tests/fixtures/analyzer.toml` (or workspace `tests/fixtures/analyzer.toml`) with the four sections: `[clip]`, `[alignment]`, `[output]`, `[logging]`.
-- Copy values from `README.md` § Analyzer config.
-- `config_roundtrip.rs` deserializes via `load_app_config`, asserts key fields, optionally round-trips serialize.
+`crates/clip-sync-cli/tests/fixtures/analyzer.toml` added in Phase 3. `config_roundtrip.rs` deserializes via `load_app_config` and asserts key fields.
 
 ---
 
@@ -167,44 +156,35 @@ No code change needed; this is a documentation-only gap. Address when editing co
 
 ## Intentionally deferred scope (Phases 4–5)
 
-Not ready for implementation. Track in BACKLOG or a follow-up plan after Phases 1–3 archive.
+Items 10–14 below were deferred at gaps-review time. All are now resolved by Phase 4. Phase 5 items (ffmpeg write path, `RepairVideos`, `FfmpegMediaMuxer`) remain deferred.
 
-### Facade repair allow-list (placeholders)
+### Facade repair allow-list — Resolved (Phase 4)
 
-Parent plan § Library public API and § Repair facade allow-list use incomplete exports:
+Only `select_best_track` from `domain::policies` was needed; re-exported on the lib facade. No `pcm_preparation` or `offset_refinement` symbols required — the repair crate implements its own `is_silent` policy in `repair/domain/policies.rs`. Verified zero `clip_sync::infrastructure::` or `clip_sync::domain::` non-facade imports in the repair crate.
 
-```rust
-pub use domain::pcm_preparation::{/* silence / peak helpers used by repair — see allow-list */};
-pub use application::offset_refinement::{aligned_slice_starts, /* boundary correlation fns */};
-```
+### `timeline_scan` helper — Resolved (Phase 4, not needed)
 
-**Before Phase 4:** Finalize which `pcm_preparation` and `offset_refinement` symbols repair needs (e.g. silence threshold helpers, `pcm_cross_correlate_lag`, `refine_holdout_segment_lag`) and add them to the facade allow-list table.
+Chunked scan via repeated `MediaSession::extract_mono` calls suffices. `timeline_scan` helper was not added to the lib.
 
-### `timeline_scan` helper (conditional)
+### Repair domain and use cases — Resolved (Phase 4)
 
-Parent plan: add `application::timeline_scan` in lib Phase 4 **if** gap scan cannot be built from repeated `MediaSession::extract_mono` calls alone.
+Implemented:
 
-**Before Phase 4:** Spike chunked scan on a long fixture; decide whether the helper is required.
+- `domain/gap.rs` — `Gap`, `GapReport`
+- `domain/policies.rs` — `is_silent` (RMS vs peak-fraction threshold); 4 unit tests
+- `application/scan_gaps.rs` — `ScanGaps<MR>` use case; `execute` calls `align_with_defaults` → chunked extract → `GapReport`
+- `application/ports.rs` — `GapReporter` port; `MediaMuxer` stub (Phase 5)
+- `infrastructure/cli/` — `run()`, `Args`, `StdoutGapReporter`, `exit_code_for`
 
-### Repair domain and use cases (sketch only)
+Phase 5 (`RepairVideos`, `gap_fill`, `FfmpegMediaMuxer`) remains deferred.
 
-Defined at high level only:
+### Repair config loader — Resolved (Phase 4)
 
-- `domain/gap.rs`, `domain/policies.rs` — min gap, silence threshold as pure fns
-- `ScanGaps` — align → chunked extract → detect silent runs → `GapReport`
-- `RepairVideos` / `gap_fill` / `FfmpegMediaMuxer` — Phase 5
+`load_repair_app_config` implemented in `infrastructure/config.rs`. TOML config with `[repair]` section; `AlignConfig` flattened for backward compatibility. CLI flags override loaded values.
 
-**Missing detail:** Gap detection algorithm, chunk overlap policy, fillability correlation thresholds, PCM splice + crossfade behaviour.
+### Repair exit codes documentation — Resolved (Phase 4)
 
-### Repair config loader (optional in v1)
-
-Parent plan: “v1 may accept CLI flags only; TOML loader optional in Phase 4.”
-
-Decide flags-only vs `load_repair_app_config` before scaffolding `clip-sync-repair`.
-
-### Repair exit codes documentation
-
-`docs/error-mapping.md` has analyzer paths only (`src/application/error.rs`, `src/infrastructure/cli/exit_code.rs`). Phase 4.8 adds repair exit codes — file does not exist yet in repair crate.
+`docs/error-mapping.md` updated with full repair exit-code table and updated implementation reference paths.
 
 ---
 
@@ -270,7 +250,7 @@ All items verified 2026-06-07. PR A shipped.
 | # | Gap | Severity | Resolve in | Status |
 |---|-----|----------|------------|--------|
 | 1 | `LoggingConfig` relocation | Low | PR A (Phase 1) | Resolved |
-| 2 | Example config TOML fixture | Low | PR B (Phase 3) | Open |
+| 2 | Example config TOML fixture | Low | PR B (Phase 3) | Resolved |
 | 3 | `OutputConfig` transition + `AlignVideosRequest` migration scope | Low | PR A (Phases 1–2) | Resolved |
 | 4 | `corpus_root()` critical path | Low | PR A (Phase 1.7) | Resolved |
 | 5 | Temporary root binary | Low | PR A (prefer skip) | Resolved — skipped |
@@ -278,10 +258,8 @@ All items verified 2026-06-07. PR A shipped.
 | 7 | `HighRateRefinement` missing from facade | Low — correctness | PR A (Phase 1.3 facade) | Resolved |
 | 8 | `window_slide_secs` undocumented in plan | Low — documentation | PR A (Phase 1 config docs) | Resolved |
 | 9 | Cargo.toml sketch inaccuracies (`anyhow` / `serde_json`) | Low | PR A (Phase 1.1) | Resolved |
-| 10 | Repair facade allow-list | Phase 4 | Before PR C | Deferred |
-| 11 | `timeline_scan` decision | Phase 4 | Spike in PR C | Deferred |
-| 12 | Repair algorithms / policies | Phase 4–5 | Follow-up spec | Deferred |
-| 13 | Repair config loader choice | Phase 4 | PR C planning | Deferred |
-| 14 | Repair exit codes in docs | Phase 4.8 | PR C | Deferred |
-
-When an item is resolved, update **Status** here and optionally fold the resolution into [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) so the main plan stays the single source of truth.
+| 10 | Repair facade allow-list | Phase 4 | PR C | Resolved — `select_best_track` only |
+| 11 | `timeline_scan` decision | Phase 4 | PR C | Resolved — not needed |
+| 12 | Repair algorithms / policies | Phase 4–5 | PR C | Resolved — `is_silent` in repair domain |
+| 13 | Repair config loader choice | Phase 4 | PR C | Resolved — `load_repair_app_config` with TOML |
+| 14 | Repair exit codes in docs | Phase 4.8 | PR C | Resolved — `docs/error-mapping.md` updated |

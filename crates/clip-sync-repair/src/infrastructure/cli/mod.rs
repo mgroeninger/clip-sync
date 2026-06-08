@@ -7,6 +7,8 @@ use std::process::ExitCode;
 use clap::Parser;
 use clip_sync::{init_tracing, StderrProgressReporter, SymphoniaMediaReader};
 
+use clip_sync::AppError;
+
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
@@ -22,6 +24,7 @@ pub fn run() -> ExitCode {
     match run_inner(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            tracing::debug!(error = %e, "clip-sync-repair failed");
             eprintln!("error: {e}");
             exit_code_for(&e)
         }
@@ -43,6 +46,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         config.repair.scan_window_secs = s;
     }
 
+    config.align.validate()
+        .map_err(|e| RepairError::Align(AppError::Config(e)))?;
     config.repair.validate().map_err(|e| {
         RepairError::Config(e.to_string())
     })?;

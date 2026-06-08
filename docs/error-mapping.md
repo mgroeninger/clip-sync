@@ -47,7 +47,7 @@ All non-zero codes print a single user-safe line to **stderr**. The process does
 |------|-----------------------|------|
 | 0 | — | Gap analysis complete (gaps found or not) |
 | 2 | `Config(String)` | Invalid config, argument, or validation failure |
-| 3 | `Domain(DomainError)` | No decodable audio track in A or B |
+| 3 | `Domain(DomainError)` | No decodable audio track in A or B, or video A duration unknown during gap scan (`InvalidDuration`) |
 | 4 | `Media(MediaError)` or `Io(std::io::Error)` | File I/O or decode failure during gap scan |
 | 5 | `Align(AppError)` | Any failure from the alignment sub-flow |
 

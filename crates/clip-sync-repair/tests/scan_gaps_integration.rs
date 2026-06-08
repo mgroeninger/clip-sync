@@ -1,0 +1,116 @@
+use std::path::Path;
+use std::time::Duration;
+
+use clip_sync::ClipConfig;
+use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;
+use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::{AlignConfig, SymphoniaMediaReader};
+use clip_sync_repair::application::{ScanGaps, ScanGapsRequest};
+use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+
+const SAMPLE_RATE: u32 = 44_100;
+const TOTAL_SECS: u32 = 120;
+const OFFSET_SECS: u32 = 3;
+const SILENT_START_SECS: u32 = 60;
+const SILENT_END_SECS: u32 = 90;
+
+fn zero_wav_segment(path: &Path, sample_rate: u32, start_secs: u32, end_secs: u32) {
+    let mut reader = WavReader::open(path).expect("open wav");
+    let samples: Vec<i16> = reader
+        .samples::<i16>()
+        .map(|sample| sample.expect("read sample"))
+        .collect();
+
+    let start = u64::from(sample_rate) * u64::from(start_secs);
+    let end = u64::from(sample_rate) * u64::from(end_secs);
+    let mut muted = samples;
+    for sample in muted.iter_mut().take(end as usize).skip(start as usize) {
+        *sample = 0;
+    }
+
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    for sample in muted {
+        writer.write_sample(sample).expect("write sample");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
+fn aligned_chirp_config() -> AlignConfig {
+    AlignConfig {
+        clip: ClipConfig {
+            clip_length: Duration::from_secs(60),
+            num_clips: 1,
+            target_sample_rate: Some(SAMPLE_RATE),
+            ..ClipConfig::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) = write_offset_chirp_wav_pair(
+        temp.path(),
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        OFFSET_SECS,
+    );
+    zero_wav_segment(
+        &path_a,
+        SAMPLE_RATE,
+        SILENT_START_SECS,
+        SILENT_END_SECS,
+    );
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let scan = ScanGaps::new(&media_reader, &progress);
+
+    let report = scan
+        .execute(ScanGapsRequest {
+            video_a: path_a,
+            video_b: path_b,
+            align: aligned_chirp_config(),
+            scan_window_secs: 30,
+            silence_peak_fraction: 0.01,
+            min_gap_secs: 25.0,
+        })
+        .expect("full execute path should succeed");
+
+    let offset = report
+        .alignment
+        .recommended_offset_secs
+        .expect("alignment should produce an offset");
+    assert!(
+        (offset - f64::from(OFFSET_SECS)).abs() < 1.0,
+        "offset={offset}, expected about +{OFFSET_SECS}"
+    );
+
+    assert!(
+        !report.gaps.is_empty(),
+        "expected at least one silent gap in video A"
+    );
+
+    let silent_gap = report
+        .gaps
+        .iter()
+        .find(|gap| {
+            (gap.video_a_start_secs - f64::from(SILENT_START_SECS)).abs() < 1.0
+                && (gap.video_a_end_secs - f64::from(SILENT_END_SECS)).abs() < 1.0
+        })
+        .expect("expected a gap covering the muted A segment");
+
+    assert!(
+        silent_gap.b_has_energy,
+        "video B should have audio at the aligned position"
+    );
+    assert!(silent_gap.is_fillable());
+    assert!(report.fillable_count() >= 1);
+}
