@@ -10,6 +10,30 @@ pub struct SilenceInterval {
     pub end_secs: f64,
 }
 
+/// Returns `true` if `[start, end]` on B's native timeline contains any non-silent audio.
+///
+/// Intervals must be sorted by `start_secs` (as produced by `SilenceRunScanner`). A range is
+/// considered to have energy if any sub-second of it is not covered by a silence interval.
+pub fn b_has_energy_in_range(b_intervals: &[SilenceInterval], start: f64, end: f64) -> bool {
+    if start >= end {
+        return false;
+    }
+    let mut covered_up_to = start;
+    for interval in b_intervals {
+        if interval.end_secs <= start {
+            continue;
+        }
+        if interval.start_secs >= end {
+            break;
+        }
+        if interval.start_secs > covered_up_to {
+            return true;
+        }
+        covered_up_to = covered_up_to.max(interval.end_secs);
+    }
+    covered_up_to < end
+}
+
 /// Keep only intervals fully contained in the alignment overlap on each native timeline.
 pub fn filter_intervals_for_cross_check(
     a_intervals: &[SilenceInterval],

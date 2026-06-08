@@ -1,13 +1,14 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use clip_sync::{
     align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
-    AudioTrack, ClipLabel, ClipWindow, DomainError, MediaError, MediaReader, MediaSession,
-    MediaSource, MonoScanBucket, ProgressReporter,
+    AudioTrack, DomainError, MediaError, MediaReader, MediaSession, MediaSource, MonoScanBucket,
+    ProgressReporter,
 };
 
-use crate::application::cross_check::{check_gap_offset_agreement_in_overlap, SilenceInterval};
+use crate::application::cross_check::{
+    b_has_energy_in_range, check_gap_offset_agreement_in_overlap, SilenceInterval,
+};
 use crate::application::error::RepairError;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
@@ -119,23 +120,33 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             .scan_mono_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
             .map_err(RepairError::Media)?;
 
+        // Step 5: scan B's native timeline sequentially to build its silence map.
+        // Used for both per-gap energy lookup (replaces per-gap seeks) and the cross-check.
+        // Only meaningful when we have a B session and an alignment offset.
+        let b_intervals: Vec<SilenceInterval> =
+            match (&b_session, offset_secs) {
+                (Some((session_b, track_b)), Some(_)) => self.scan_silence_intervals(
+                    session_b,
+                    track_b,
+                    decode_chunk_secs,
+                    request.scan_block_secs,
+                    request.silence_peak_fraction,
+                    absolute_silence_rms,
+                    silence_hold_blocks,
+                    request.min_gap_secs,
+                ),
+                _ => vec![],
+            };
+
         let mut gaps = Vec::new();
         for run in scanner_a.finish() {
             let pos = run.start_secs;
             let end = run.end_secs;
             let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
 
-            let b_has_energy = match (&b_session, b_positions) {
-                (Some((session_b, track_b)), Some((b_start, b_end))) if b_start >= 0.0 => {
-                    let window_b = ClipWindow::new(
-                        Duration::from_secs_f64(b_start),
-                        Duration::from_secs_f64(b_end),
-                        ClipLabel::Interior,
-                    );
-                    match session_b.extract_mono(track_b, &window_b, progress, "scan-b") {
-                        Ok(pcm_b) => !policies::is_silent(&pcm_b.samples, silence_peak_fraction, absolute_silence_rms),
-                        Err(_) => false,
-                    }
+            let b_has_energy = match b_positions {
+                Some((b_start, b_end)) if b_start >= 0.0 => {
+                    b_has_energy_in_range(&b_intervals, b_start, b_end)
                 }
                 _ => false,
             };
@@ -149,25 +160,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             });
         }
 
-        // Step 5: optionally scan B's native timeline for silence (bidirectional scan).
-        let b_intervals: Vec<SilenceInterval> = if request.scan_both {
-            match &b_session {
-                Some((session_b, track_b)) => self.scan_silence_intervals(
-                    session_b,
-                    track_b,
-                    decode_chunk_secs,
-                    request.scan_block_secs,
-                    request.silence_peak_fraction,
-                    absolute_silence_rms,
-                    silence_hold_blocks,
-                    request.min_gap_secs,
-                ),
-                None => vec![],
-            }
-        } else {
-            vec![]
-        };
-
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
         let a_intervals: Vec<SilenceInterval> = gaps
             .iter()
@@ -176,15 +168,19 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 end_secs: g.video_a_end_secs,
             })
             .collect();
-        let gap_offset_agreement = alignment.recommended_offset_secs.and_then(|offset| {
-            check_gap_offset_agreement_in_overlap(
-                &a_intervals,
-                &b_intervals,
-                alignment.start_overlap.as_ref(),
-                offset,
-                request.gap_offset_tolerance_secs,
-            )
-        });
+        let gap_offset_agreement = if request.scan_both {
+            alignment.recommended_offset_secs.and_then(|offset| {
+                check_gap_offset_agreement_in_overlap(
+                    &a_intervals,
+                    &b_intervals,
+                    alignment.start_overlap.as_ref(),
+                    offset,
+                    request.gap_offset_tolerance_secs,
+                )
+            })
+        } else {
+            None
+        };
 
         Ok(GapReport {
             video_a: request.video_a,
@@ -234,7 +230,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         };
 
         if session
-            .scan_mono_buckets(track, decode_chunk_secs, progress, "scan-b-bi", &mut on_bucket)
+            .scan_mono_buckets(track, decode_chunk_secs, progress, "scan-b", &mut on_bucket)
             .is_err()
         {
             return scanner
