@@ -8,6 +8,7 @@ pub use application::config::{
 };
 pub use application::default_pipeline::align_with_defaults;
 pub use application::{AlignVideos, AlignVideosRequest, AlignVideosResponse, AppError, ConfigError};
+pub use application::error::{AlignmentError, FingerprintError, MediaError};
 pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
 // --- domain (selected types) ---
 pub use domain::{

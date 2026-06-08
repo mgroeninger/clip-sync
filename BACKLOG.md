@@ -290,7 +290,7 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done (2026-06-07):** Single binary crate restructured into a three-crate Cargo workspace: `crates/clip-sync` (alignment library), `crates/clip-sync-cli` (analyzer binary), workspace root `Cargo.toml`. Facade `lib.rs` is the only public surface of the library. `AlignConfig` split from `AppConfig`; `LoggingConfig` moved to `infrastructure::logging`. Corpus path uses `CLIP_SYNC_WORKSPACE_ROOT` env override + `../..` from `CARGO_MANIFEST_DIR`.
 
-**References:** [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md), `crates/clip-sync/src/lib.rs`, `crates/clip-sync-cli/`
+**References:** [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md), `crates/clip-sync/src/lib.rs`, `crates/clip-sync-cli/`
 
 ---
 

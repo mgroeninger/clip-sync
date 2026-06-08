@@ -11,7 +11,7 @@ Keep total committed fixtures under **5 MB**. Current clips are 20–30 s mono 1
 From the repo root (requires Rust toolchain):
 
 ```powershell
-cargo test regenerate_committed_wav_fixtures -- --ignored --nocapture
+cargo test -p clip-sync regenerate_committed_wav_fixtures -- --ignored --nocapture
 ```
 
 Or:
@@ -20,12 +20,12 @@ Or:
 .\scripts\generate_corpus.ps1
 ```
 
-This overwrites `tests/corpus/wav/*.wav` from the synthetic chirp generators in `src/application/testing/`.
+This overwrites `tests/corpus/wav/*.wav` from the synthetic chirp generators in `crates/clip-sync/src/application/testing/`.
 
 ## Run corpus tests
 
 ```powershell
-cargo test corpus_
+cargo test -p clip-sync corpus_
 ```
 
 - **Committed** (`corpus_committed_cases`): always runs; uses `tests/corpus/wav/`.

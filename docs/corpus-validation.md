@@ -11,16 +11,17 @@ Manifest-driven integration tests exercise real-world alignment scenarios: multi
 ## Quick start
 
 ```powershell
-cargo test corpus_                    # committed + generated (~60s with ffmpeg)
-cargo test -- --ignored               # + external long smoke (CLIP_SYNC_CORPUS)
-.\scripts\generate_corpus.ps1         # regenerate committed WAV fixtures
+cargo test -p clip-sync corpus_                                          # committed + generated (~60s with ffmpeg)
+cargo test -p clip-sync -- --ignored                                     # + external long smoke (CLIP_SYNC_CORPUS)
+cargo test -p clip-sync --features he-aac,test-utils corpus_            # + HE-AAC cases
+.\scripts\generate_corpus.ps1                                            # regenerate committed WAV fixtures
 ```
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
 - **Generated tier** — 19 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
 - **External tier** — `long_smoke_60m` (3600 s); `#[ignore]` unless `CLIP_SYNC_CORPUS` is set.
 
-Harness code: `src/application/testing/corpus_fixtures.rs`, generators in `audio_fixtures.rs` and `ffmpeg_util.rs`.
+Harness code: `crates/clip-sync/src/application/testing/corpus_fixtures.rs`, generators in `audio_fixtures.rs` and `ffmpeg_util.rs`.
 
 ---
 

@@ -24,7 +24,7 @@ clip-sync/                              # workspace root
 ├── Cargo.toml                          # [workspace] members only
 ├── PLAN.md
 ├── BACKLOG.md
-├── TEMP-workspace-refactor-plan.md     # migration plan → archive when phases 1–3 done
+├── docs/archive/workspace-refactor-plan.md  # migration plan (phases 1–3 complete; 4–5 tracked in BACKLOG)
 ├── docs/                               # corpus-matrix, corpus-validation, error-mapping, …
 ├── scripts/                            # generate_corpus.ps1 / .sh
 ├── tests/
@@ -135,7 +135,7 @@ flowchart TB
 
 ## Repair workflow (`clip-sync-repair`)
 
-> **Phase naming:** Repair **workflow** phases below (report-only / write path) map to workspace **migration** phases 4 and 5 in [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md).
+> **Phase naming:** Repair **workflow** phases below (report-only / write path) map to workspace **migration** phases 4 and 5 in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md).
 
 **Report-only (migration Phase 4):**
 
@@ -787,11 +787,11 @@ Options:
 
 ### Current (pre-workspace)
 
-Single crate at repo root — see [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) for migration phases.
+Single crate at repo root — see [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) for migration phases.
 
 ### Target
 
-Same tree as [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) § Target layout. Summary:
+Same tree as [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) § Target layout. Summary:
 
 ```text
 clip-sync/
@@ -807,8 +807,7 @@ clip-sync/
     │       ├── application/
     │       │   ├── align_videos.rs, config.rs, default_pipeline.rs, error.rs
     │       │   ├── high_rate_refinement.rs, offset_refinement.rs, ports.rs
-    │       │   └── testing/            # test-utils: fakes, audio_fixtures, corpus_fixtures; #[cfg(test)]: ffmpeg_util
-    │       ├── testing_paths.rs        # workspace_root(), corpus_root()
+    │       │   └── testing/            # test-utils: fakes, audio_fixtures, corpus_fixtures, ffmpeg_util
     │       └── infrastructure/
     │           ├── chromaprint/, symphonia/
     │           ├── config/file.rs      # load_align_config
@@ -845,7 +844,7 @@ clip-sync/
 | **Repair use cases** | repair application | Fake `MediaReader`, fake `MediaMuxer`, synthetic PCM gaps |
 | **Repair ffmpeg** | repair infrastructure | `#[ignore]` integration test (like corpus generated tier) |
 
-Corpus manifest and committed WAVs stay at workspace **`tests/corpus/`** (data only — not Rust tests). Harness (`corpus_fixtures.rs`) and `corpus_*` test functions stay in the **library** — they exercise `AlignVideos` + default adapters, not the CLI. `corpus_root()` resolves via `testing_paths` (`CARGO_MANIFEST_DIR/../..`, or `CLIP_SYNC_WORKSPACE_ROOT`). Full layout and rejected alternatives: [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) § Documents and tests.
+Corpus manifest and committed WAVs stay at workspace **`tests/corpus/`** (data only — not Rust tests). Harness (`corpus_fixtures.rs`) and `corpus_*` test functions stay in the **library** — they exercise `AlignVideos` + default adapters, not the CLI. `corpus_root()` resolves via `corpus_fixtures.rs` (`CARGO_MANIFEST_DIR/../..`, or `CLIP_SYNC_WORKSPACE_ROOT`). Full layout and rejected alternatives: [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) § Documents and tests.
 
 ### CI commands (after workspace migration)
 
@@ -913,7 +912,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | Document | Scope |
 |----------|--------|
 | [PLAN.md](PLAN.md) | Target architecture (this file) |
-| [TEMP-workspace-refactor-plan.md](TEMP-workspace-refactor-plan.md) | Workspace migration phases 0–5; archive when phases 1–3 complete |
+| [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) | Workspace migration phases 0–5; phases 1–3 complete (2026-06-07) |
 | [BACKLOG.md](BACKLOG.md) | Deferred work |
 | [docs/error-mapping.md](docs/error-mapping.md) | Exit codes, user messages, Symphonia mapping |
 | [docs/corpus-validation.md](docs/corpus-validation.md) | Corpus tiers, CI commands, findings |
