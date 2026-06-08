@@ -1,25 +1,50 @@
 # Temporary plan: clip self-repetition check
 
-> **Status:** Phase 0 complete (2026-06-06). Phase 1 not started. Archive to `docs/archive/clip-self-repetition-plan.md` when shipped.
+> **Status:** Phase 0 complete (2026-06-06). Phase 1 not started. Workspace refactor (Phases 1–4) complete — paths below are **`crates/clip-sync`** + **`crates/clip-sync-cli`**. Archive to `docs/archive/clip-self-repetition-plan.md` when shipped.
+
+**Problem:** A clip whose audio repeats internally (loop, rebroadcast, duplicated segment) can produce ambiguous Chromaprint matches — both cross-file alignment and offset verification may latch onto the wrong lag with high confidence.
+
+**Goal:** Optional per-clip diagnostic that fingerprints each **prepared** clip against itself, detects strong non-zero internal repeats, and surfaces findings on `ClipMatch`. Off by default (`align.validation.check_clip_repetition` on `AlignConfig`). Diagnostic only — never changes exit code or clears `recommended_offset_secs` in v1.
+
+**Workspace split:** Engine logic in **`crates/clip-sync`** (library hexagon). Flags, TOML load, and stdout formatting in **`crates/clip-sync-cli`**. **`clip-sync-repair`** consumes `align_with_defaults` / embedded `AlignmentResult` only — no repair-specific repetition UI in v1 (enable via shared `[validation]` in repair TOML if needed). See [Config](#config) and [Phases](#phases).
+
+---
+
+## Current codebase baseline
+
+Audit against the tree **after** workspace migration (2026-06-08). Use this table to pick up work without re-reading the repo.
+
+| Area | Path | Current state | Target phase |
+|------|------|---------------|--------------|
+| **AlignConfig** | `crates/clip-sync/src/application/config.rs` | `{ clip, alignment }` only — **no `validation` field** | 1 |
+| **AppConfig** | `crates/clip-sync-cli/src/infrastructure/config.rs` | Flattens `align: AlignConfig` + `output` + `logging` | 2 (TOML `[validation]`) |
+| **Align loop** | `crates/clip-sync/src/application/align_videos.rs` | `align_extracted_pair(extracted_a, extracted_b, config)` → `build_alignment_result`; `align_best_track_pair` → `AlignmentOutcome { result, track_a, track_b, … }` | 1–2 |
+| **ClipMatch** | `crates/clip-sync/src/domain/alignment.rs` | No `repetition` field; `AlignmentResult` has `offset_drift_secs`, `start_overlap`, `high_rate_refinement` | 2 |
+| **MonoPcmClip** | `crates/clip-sync/src/domain/mono_pcm_clip.rs` | `effective_decoded_sample_count()` only — **no `duration_secs()`** | 1 |
+| **Segment helpers** | `aligner.rs` | Private `select_best_segment`, `segment_confidence` | 1 → `matching.rs` |
+| **Spike helpers** | `repetition_spike.rs` | `pub(crate)` `select_best_nonzero_lag_segment`, duplicate segment helpers; **`#[cfg(test)]` in `mod.rs`** | 1 → promote to `matching.rs` / `repetition.rs` |
+| **Production detect** | — | **Missing** (`repetition.rs`) | 1 |
+| **CLI flags** | `clip-sync-cli/.../cli/args.rs` (`Cli`) | No `--check-clip-repetition` | 2 |
+| **CLI overrides** | `clip-sync-cli/.../cli/mod.rs` | `apply_cli_overrides` sets clip/alignment/output/logging only | 2 |
+| **Human output** | `clip-sync-cli/.../cli/output.rs` | `format_clip_line(clip, show_diagnostics)` — no repetition lines | 2 |
+| **JSON output** | same | `serde_json::to_string_pretty(result)` — picks up `ClipMatch.repetition` once on domain types | 2 |
+| **Corpus harness** | `crates/clip-sync/src/application/testing/corpus_fixtures.rs` | Workspace `tests/corpus/manifest.toml` | 3 |
+| **Repair** | `clip-sync-repair` | `ScanGaps` → `align_with_defaults(AlignConfig)`; gap report embeds full `AlignmentResult` | — (inherits lib JSON when flag on) |
+
+**Phase 0 artifact:** `crates/clip-sync/src/infrastructure/chromaprint/repetition_spike.rs` — spike tests + half-vs-half prototype. Do **not** ship spike API to users; Phase 1 copies proven logic into `repetition.rs` and shared `matching.rs`.
 
 ### Phase 0 outcome (2026-06-06)
 
 | Check | Result |
 |-------|--------|
 | `match_fingerprints(&fp, &fp)` on 10s@0 + 10s@30 synthetic clip | **Rejected** — library returns a single lag-0 segment only (`repetition_spike.rs` tests). |
-| Default preset `item_duration_in_seconds()` | **~0.124 s** (Test2). `min_lag_secs` ≈ **4.95 s** (40 items). |
-| **Fallback chosen** | **Half-vs-half** fingerprint match at timeline midpoint, with `\|lag_items\| > 1` and `\|lag_secs − duration/2\| ≤ 3 s` guard. |
+| Default preset `item_duration_in_seconds()` | **~0.124 s** (Test2). `min_lag_secs` ≈ **4.95 s** (`MIN_LAG_ITEMS = 40` in spike). |
+| **Fallback chosen** | **Half-vs-half** fingerprint match at timeline midpoint, with `\|lag_items\| > 1` and `\|lag_secs − duration/2\| ≤ 3 s` guard (`HALF_LAG_MIDPOINT_TOLERANCE_SECS`). |
 | Synthetic repeat (silent gaps) | Detects lag **~32.5 s** on 60 s clip (confidence ≥ 0.5). |
 | Monotonic chirp control | **No finding** (midpoint guard rejects ~41 s false peak). |
 | Chirp-filled repeat (Phase 3 corpus shape) | **Not detected** in spike — tone block drowned by chirp; corpus fixture may need stronger tone or PCM assist in Phase 3. |
 
-Phase 1 detection should implement half-vs-half (not full self-match). Revise [Detection algorithm](#detection-algorithm) before coding.
-
-**Problem:** A clip whose audio repeats internally (loop, rebroadcast, duplicated segment) can produce ambiguous Chromaprint matches — both cross-file alignment and offset verification may latch onto the wrong lag with high confidence.
-
-**Goal:** Optional per-clip diagnostic that fingerprints each **prepared** clip against itself, detects strong non-zero internal repeats, and surfaces findings on `ClipMatch`. Off by default (`align.validation.check_clip_repetition` on `AlignConfig`). Diagnostic only — never changes exit code or clears `recommended_offset_secs` in v1.
-
-**Workspace split:** Engine logic in **`crates/clip-sync`** (library hexagon). Flags, TOML load, and stdout formatting in **`crates/clip-sync-cli`**. See [Config](#config) and [Phases](#phases).
+Phase 1 detection should implement half-vs-half (not full self-match). Promote spike helpers from `repetition_spike.rs` into `matching.rs` / `repetition.rs`; keep spike tests as regression guard.
 
 ---
 
@@ -33,12 +58,13 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Input audio** | Same prepared PCM / fingerprints used for cross-file match: after `prepare_clip_for_fingerprint`, and after `select_aligned_subclip_pair` when `window_slide_secs > 0`. Not raw extracts. |
 | **Which files** | Check **both** video A and video B for each clip index in the align loop. |
 | **Report model** | `repetition: Option<ClipRepetitionReport>` on `ClipMatch` when check ran; `None` on `ClipMatch` when check was off (field omitted from JSON). |
-| **`try_all_tracks`** | Run repetition only for the **winning** track pair after `align_best_track_pair` selects it. Retain `winning_track_a` / `winning_track_b` in the search loop. Do not check every candidate pair during search. |
+| **`try_all_tracks`** | Run repetition only for the **winning** track pair. `align_best_track_pair` returns `AlignmentOutcome { track_a, track_b, result, … }`; post-selection pass re-extracts that pair via `extract_clips(..., Some(&track))`. Do not check every candidate pair during search. |
 | **Lag-zero exclusion** | Always drop segments with internal lag in `[-1, +1]` items before clustering. Lag ≈ 0 is expected self-similarity, not a repeat. |
 | **`lag_secs` sign** | Report **positive** duration only: “content near the start of the clip reappears approximately `lag_secs` later.” Normalize `abs(offset2 - offset1) * item_secs`. |
 | **Detection threshold** | `validation.min_repetition_confidence` (default `0.5`). Independent knob from `alignment.min_match_score`. |
 | **Short clips** | Return `None` when prepared clip duration `< 2 * min_lag_secs` (~10 s with default `min_lag_items`). |
-| **Skipped / empty clips** | Skip check when fingerprint is empty (prepare failure, insufficient audio) — same as aligner. |
+| **Skipped / empty clips** | Skip check when prepare fails (`InsufficientAudio` / `EmptyClip` — same branches as align loop) or fingerprint is empty. |
+| **End clip prior path** | When `use_end_prior` skips cross-file fingerprinting, still fingerprint prepared A/B for repetition if `collect_repetition` (extra `fingerprinter.fingerprint` calls only). |
 | **Clip duration** | Add `MonoPcmClip::duration_secs()` in `crates/clip-sync/src/domain/mono_pcm_clip.rs`. |
 | **Shared matching helpers** | Extract helpers to `crates/clip-sync/src/infrastructure/chromaprint/matching.rs` as `pub(crate)`; used by `aligner.rs` and `repetition.rs`. |
 | **Architecture** | Detection in lib `infrastructure/chromaprint/repetition.rs`; report types in lib `domain/alignment.rs`. No new port trait in v1. CLI only formats existing `AlignmentResult`. |
@@ -57,7 +83,19 @@ Shared with [TEMP-offset-verification-plan.md](TEMP-offset-verification-plan.md)
 
 ### Library (`AlignConfig.validation`)
 
-`ValidationConfig` lives on **`AlignConfig`** in `crates/clip-sync/src/application/config.rs` — it drives `AlignVideos`, not the CLI crate.
+`ValidationConfig` is **not in the tree yet**. Add it on **`AlignConfig`** in `crates/clip-sync/src/application/config.rs` — it drives `AlignVideos` / `align_with_defaults`, not the CLI crate.
+
+**Current `AlignConfig` (today):**
+
+```rust
+pub struct AlignConfig {
+    pub clip: ClipConfig,
+    pub alignment: AlignmentConfig,
+    // validation: ValidationConfig,  // Phase 1 — add with #[serde(default)]
+}
+```
+
+**Target (Phase 1):**
 
 ```rust
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -87,8 +125,9 @@ fn default_min_repetition_confidence() -> f32 {
 }
 ```
 
-- `load_align_config` (lib) deserializes `[clip]`, `[alignment]`, `[validation]`.
-- `AlignVideosRequest.config` is `AlignConfig`; use `config.validation.check_clip_repetition` in the align loop.
+- `load_align_config` in `crates/clip-sync/src/infrastructure/config/file.rs` deserializes top-level `[clip]`, `[alignment]`, `[validation]` into `AlignConfig`.
+- `AlignVideosRequest.config` is `AlignConfig`; use `config.validation.check_clip_repetition` in `align_extracted_pair`.
+- `AlignConfig::validate()` today only calls `clip.validate()` — no extra validation rules for `[validation]` in v1.
 
 ### CLI (`AppConfig` — TOML + flags only)
 
@@ -115,7 +154,8 @@ min_verification_confidence = 0.5
 ```
 
 - No extra validation rules on `ValidationConfig` for v1.
-- **CLI Phase 2:** `--check-clip-repetition` → `config.align.validation.check_clip_repetition = true` in `apply_cli_overrides`.
+- **CLI Phase 2:** `--check-clip-repetition` on `Cli` in `args.rs` → `config.align.validation.check_clip_repetition = true` in `apply_cli_overrides` (`cli/mod.rs`).
+- Human verbose lines use existing `config.output.show_diagnostics` (set by `--verbose` today).
 - When flag is **off**, `ClipMatch.repetition` stays `None` → key omitted via `#[serde(skip_serializing_if = "Option::is_none")]` (lib domain serde; JSON printing is CLI `output.rs`).
 
 When enabled, fingerprint each prepared clip once and reuse that fingerprint for cross-file match and self-match.
@@ -182,39 +222,41 @@ impl MonoPcmClip {
 
 - [x] `match_fingerprints(&fp, &fp)` on synthetic 10s-block-at-0-and-30s clip — **lag-0 only; not viable**
 - [x] Record `item_duration_in_seconds()` for default preset (~0.124 s Test2; `min_lag_secs` ~4.95 s)
-- [x] **Fallback:** half-vs-half fingerprint split + midpoint guard (`crates/clip-sync/src/infrastructure/chromaprint/repetition_spike.rs`)
+- [x] **Fallback:** half-vs-half fingerprint split + midpoint guard (`crates/clip-sync/src/infrastructure/chromaprint/repetition_spike.rs`, compiled under `#[cfg(test)]` in `mod.rs`)
 - [x] Outcome recorded at top of this doc
 
 **CLI:** none
 
 ### Phase 1 — Core detection (lib only)
 
-**Lib (`clip-sync`)**
+**Lib (`crates/clip-sync`)**
 
-- [ ] `ValidationConfig` nested in `AlignConfig` (full struct including offset-verification fields)
-- [ ] `MonoPcmClip::duration_secs()`
-- [ ] `infrastructure/chromaprint/matching.rs` — `pub(crate)` `select_best_segment`, `segment_confidence`, `select_best_nonzero_lag_segment`
-- [ ] `infrastructure/chromaprint/repetition.rs` — `detect_clip_repetition(...)`
-- [ ] `application/align_videos.rs` — `align_extracted_pair(..., collect_repetition: bool)`; read `config.validation.check_clip_repetition`
-- [ ] Collect `Vec<ClipRepetitionDiagnostics>` parallel to `estimates`; `tracing::debug` only
+- [ ] `ValidationConfig` on `AlignConfig` (full struct including offset-verification fields for shared TOML)
+- [ ] `MonoPcmClip::duration_secs()` on `crates/clip-sync/src/domain/mono_pcm_clip.rs`
+- [ ] `infrastructure/chromaprint/matching.rs` — **new**; move `select_best_segment`, `segment_confidence`, `select_best_nonzero_lag_segment` from `aligner.rs` + `repetition_spike.rs`
+- [ ] `infrastructure/chromaprint/repetition.rs` — **new** `detect_clip_repetition(...)` (production API; port logic from `spike_detect_internal_repeat` / half-vs-half path)
+- [ ] `infrastructure/chromaprint/mod.rs` — `mod matching; mod repetition;` (keep `repetition_spike` under `#[cfg(test)]`)
+- [ ] `application/align_videos.rs` — inside per-clip loop (after `prepare_clip_for_fingerprint`, alongside existing `fingerprinter.fingerprint` for cross-file match): optional self-check when `config.validation.check_clip_repetition`
+- [ ] Collect `Vec<ClipRepetitionDiagnostics>` parallel to `estimates`; `tracing::debug` only — **do not** extend `build_alignment_result` yet
 - [ ] Unit tests (see [Tests](#tests)); **`ClipMatch.repetition` still unset**
 
-**CLI:** none
+**CLI (`clip-sync-cli`):** none
 
 ### Phase 2 — Reporting (lib domain + CLI stdout)
 
-**Lib (`clip-sync`)**
+**Lib (`crates/clip-sync`)**
 
-- [ ] Extend `build_alignment_result` to accept `Option<&[ClipRepetitionDiagnostics]>` when flag was on
-- [ ] Set `ClipMatch.repetition = Some(ClipRepetitionReport { a, b })` for every clip when flag was on
-- [ ] `try_all_tracks`: retain winning tracks in loop; post-selection `align_extracted_pair(collect_repetition: true)`; merge `repetition` into `best.clips` only
+- [ ] Add `repetition: Option<ClipRepetitionReport>` to `ClipMatch` in `domain/alignment.rs`
+- [ ] After `build_alignment_result`, merge `ClipRepetitionDiagnostics` into `result.clips[i].repetition` when flag was on (or extend `ClipPairReportInput` — prefer post-merge to avoid changing merge policy signatures)
+- [ ] `try_all_tracks`: after search, re-`extract_clips` on `AlignmentOutcome.track_a` / `track_b`, run repetition collection only, merge into `outcome.result.clips`
 - [ ] Lib tests: `align_json_repetition_object_when_flag_on`, `align_json_no_repetition_key_when_flag_off`, `try_all_tracks_repetition_on_winner_only` (assert `AlignmentResult` / `serde_json`, not stdout)
 
-**CLI (`clip-sync-cli`)**
+**CLI (`crates/clip-sync-cli`)**
 
-- [ ] `infrastructure/cli/args.rs` — `--check-clip-repetition`
-- [ ] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: `config.align.validation.check_clip_repetition = true`
-- [ ] `infrastructure/cli/output.rs` — human line per clip when finding present or `show_diagnostics` / `--verbose`
+- [ ] `infrastructure/cli/args.rs` — `--check-clip-repetition` on `Cli`
+- [ ] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: set `config.align.validation.check_clip_repetition = true`
+- [ ] `infrastructure/cli/output.rs` — extend `format_clip_line` (or adjacent lines): repetition when finding present or `show_diagnostics`
+- [ ] `tests/fixtures/analyzer.toml` — optional `[validation]` example block
 - [ ] `tests/config_roundtrip.rs` — TOML `[validation]` round-trip via `AppConfig`
 - [ ] `tests/cli_output.rs` — `align_human_shows_repeat_line`, `align_human_verbose_shows_none`
 - [ ] Document in [PLAN.md](../PLAN.md) and [docs/corpus-validation.md](corpus-validation.md)
@@ -239,10 +281,13 @@ impl MonoPcmClip {
 
 ```text
 crates/clip-sync/src/infrastructure/chromaprint/
-  matching.rs    # pub(crate) segment selection + confidence (shared)
-  repetition.rs  # detect_clip_repetition
-  aligner.rs     # uses matching.rs
-  mod.rs         # mod matching; mod repetition;
+  mod.rs           # pub mod matching; pub mod repetition; #[cfg(test)] mod repetition_spike;
+  matching.rs      # pub(crate) segment selection + confidence (shared)
+  repetition.rs    # detect_clip_repetition (production)
+  repetition_spike.rs  # Phase 0 tests + spike API (test-only module)
+  aligner.rs       # uses matching.rs (refactor from private fns)
+  fingerprinter.rs
+  config.rs
 ```
 
 ### Detection API
@@ -295,59 +340,63 @@ else:
 
 ### Integration (`align_extracted_pair`)
 
+**Current signature (today):**
+
+```rust
+fn align_extracted_pair(
+    &self,
+    extracted_a: &ExtractedClips,
+    extracted_b: &ExtractedClips,
+    config: &AlignConfig,
+) -> Result<AlignmentResult, AppError>
+```
+
+Per-clip loop already: `prepare_clip_for_fingerprint` → (optional subclip) → cross-file `fingerprinter.fingerprint` + `aligner.find_offset` → PCM refine → `estimates.push`. Hook repetition **after prepare**, reusing the same prepared `MonoPcmClip` and the cross-file fingerprints when available.
+
 ```text
-fn align_extracted_pair(..., collect_repetition: bool) -> (AlignmentResult, Option<Vec<ClipRepetitionDiagnostics>>)
-  // Phase 1: diagnostics returned separately or stored; Phase 2: merged into ClipMatch
-
-for each clip index:
+for each clip index in align_extracted_pair:
   prepare clip_a, clip_b (existing)
-  if skippable prepare error → push zero estimate; push empty diagnostics; continue
+  if skippable prepare / skip_unreliable_end → push zero estimate; push empty diagnostics; continue
 
-  fingerprint_a, fingerprint_b (existing)
+  fingerprint_a, fingerprint_b for cross-file match (existing)
+  // End-prior path: still fingerprint prepared clips for repetition when collect_repetition
 
-  if collect_repetition:
-      repetition_a = detect_clip_repetition(&fingerprint_a, clip_a.duration_secs(), ...)
-      repetition_b = detect_clip_repetition(&fingerprint_b, clip_b.duration_secs(), ...)
+  if config.validation.check_clip_repetition:
+      repetition_a = detect_clip_repetition(&fingerprint_a, clip_a.duration_secs(), preset, min_conf)
+      repetition_b = detect_clip_repetition(&fingerprint_b, clip_b.duration_secs(), preset, min_conf)
       debug!(?repetition_a, ?repetition_b, "clip self-repetition")
   else:
       repetition_a, repetition_b = None
 
-  estimate = find_offset(...) (existing)
-  estimate = refine_offset_with_pcm(...) (existing)
-  alignment_confidence = estimate.confidence   // pre-downgrade; used for aligned in Phase 3
+  estimate = find_offset / refine (existing)
+  Phase 3: track alignment_confidence vs display_confidence for downgrade
 
-  Phase 3: display_confidence = estimate.confidence; if should_downgrade(...) { display_confidence *= 0.5 }
+  push estimate; push ClipRepetitionDiagnostics { a: repetition_a, b: repetition_b }
 
-  push estimate + display_confidence + alignment_confidence; push ClipRepetitionDiagnostics { a, b }
-
-build_alignment_result(..., repetitions, display_confidences, alignment_confidences)
+build_alignment_result(...)   // Phase 1: no repetition on ClipMatch yet
+Phase 2: merge diagnostics → clips[].repetition on returned AlignmentResult
 ```
 
-**`align_single_track_pair`:** one call with `collect_repetition: config.validation.check_clip_repetition` (on `AlignConfig`).
+**`align_single_track_pair`:** one `align_extracted_pair` call; repetition gated by `config.validation.check_clip_repetition`.
 
-**`try_all_tracks` path:**
+**`try_all_tracks` path (matches `AlignmentOutcome` in code today):**
 
 ```text
-align_best_track_pair:
-  mut winning_a, winning_b = first decodable pair
-  mut best = None
+align_best_track_pair(session_a, session_b, request):
+  mut best: Option<(AlignmentOutcome, f32)> = None
   for track_a in decodable_a:
     for track_b in decodable_b:
-      (result, _) = align_extracted_pair(..., collect_repetition: false)
-      if score > best_score:
-        best = Some(result)
-        winning_a = track_a
-        winning_b = track_b
-  if config.validation.check_clip_repetition:
-      (_, diagnostics) = align_extracted_pair(
-          extract(session_a, winning_a), extract(session_b, winning_b),
-          collect_repetition: true,
-      )
-      merge diagnostics into best.clips[].repetition (offsets/confidence unchanged)
-  return best
-```
+      extracted_a/b = extract_clips(..., Some(track))
+      result = align_extracted_pair(..., collect_repetition: false)  // Phase 1: flag off in search
+      if score > best: best = Some(AlignmentOutcome { result, track_a: extracted_a.track, track_b: extracted_b.track, ... })
 
-The post-selection pass re-decodes and re-fingerprints the winning pair only (acceptable cost; avoids detection during search).
+  if config.validation.check_clip_repetition:
+      let outcome = best?;
+      re-extract winning pair only
+      run repetition-only pass (or align_extracted_pair with repetition flag, discard alignment recompute)
+      merge diagnostics into outcome.result.clips[].repetition
+  return best.outcome
+```
 
 ### Confidence downgrade (Phase 3)
 
@@ -392,7 +441,9 @@ fn should_downgrade(
 
 **JSON** (flag off): no `repetition` key on clips.
 
-**Human** — **CLI only** (`crates/clip-sync-cli/src/infrastructure/cli/output.rs`):
+**Human** — **CLI only** (`crates/clip-sync-cli/src/infrastructure/cli/output.rs`, `print_human` / `format_clip_line`):
+
+Uses `show_diagnostics` from `OutputConfig` (CLI `--verbose` sets this today).
 
 **Human** (repetition found):
 
@@ -401,7 +452,7 @@ fn should_downgrade(
     video A: internal repeat ~30.0s (confidence 0.72)
 ```
 
-**Human** (`--verbose`, no repetition):
+**Human** (`--verbose` / `show_diagnostics`, no repetition):
 
 ```text
   Start clip [0:00–1:00]: aligned, offset +3.000s (confidence 0.85)
@@ -454,26 +505,34 @@ Choruses, applause, and steady test tones may trigger repetition. Output is a **
 
 ### Library (`crates/clip-sync`)
 
-- `src/infrastructure/chromaprint/matching.rs` — **new** shared segment selection
-- `src/infrastructure/chromaprint/repetition.rs` — **new** `detect_clip_repetition`
-- `src/infrastructure/chromaprint/repetition_spike.rs` — Phase 0 spike (existing)
-- `src/infrastructure/chromaprint/aligner.rs` — uses `matching.rs`
-- `src/application/align_videos.rs` — `align_extracted_pair`, `align_best_track_pair`
-- `src/domain/alignment.rs` — `RepetitionFinding`, `ClipRepetitionReport`, `ClipMatch`
-- `src/domain/mono_pcm_clip.rs` — `duration_secs()`
-- `src/domain/pcm_preparation.rs` — `prepare_clip_for_fingerprint`, `select_aligned_subclip_pair`
-- `src/application/config.rs` — `ValidationConfig` on `AlignConfig`
-- `src/application/testing/audio_fixtures.rs`, `corpus_fixtures.rs` — generator + manifest
+| File | Status |
+|------|--------|
+| `src/infrastructure/chromaprint/matching.rs` | **New** — extract from `aligner.rs` + spike |
+| `src/infrastructure/chromaprint/repetition.rs` | **New** — `detect_clip_repetition` |
+| `src/infrastructure/chromaprint/repetition_spike.rs` | **Exists** — Phase 0 spike + tests (`#[cfg(test)]` in `mod.rs`) |
+| `src/infrastructure/chromaprint/aligner.rs` | **Exists** — refactor to use `matching.rs` |
+| `src/application/align_videos.rs` | **Exists** — `align_extracted_pair`, `align_best_track_pair`, `AlignmentOutcome` |
+| `src/domain/alignment.rs` | **Exists** — extend `ClipMatch`; `build_alignment_result` |
+| `src/domain/mono_pcm_clip.rs` | **Exists** — add `duration_secs()` |
+| `src/domain/pcm_preparation.rs` | **Exists** — `prepare_clip_for_fingerprint`, `select_aligned_subclip_pair` |
+| `src/application/config.rs` | **Exists** — add `ValidationConfig` on `AlignConfig` |
+| `src/infrastructure/config/file.rs` | **Exists** — `load_align_config` |
+| `src/application/testing/audio_fixtures.rs`, `corpus_fixtures.rs` | **Exists** — Phase 3 generator + `tests/corpus/manifest.toml` |
 
 ### CLI (`crates/clip-sync-cli`)
 
-- `src/infrastructure/cli/args.rs`, `mod.rs` — `--check-clip-repetition`, `apply_cli_overrides`
-- `src/infrastructure/cli/output.rs` — human repetition lines
-- `src/infrastructure/config.rs` — `AppConfig` (flattens `AlignConfig` including `[validation]`)
-- `tests/cli_output.rs`, `tests/config_roundtrip.rs` — adapter tests
+| File | Status |
+|------|--------|
+| `src/application/run_align.rs` | **Exists** — `align_with_defaults`; no repetition logic here |
+| `src/infrastructure/cli/args.rs` | **Exists** — add flag on `Cli` |
+| `src/infrastructure/cli/mod.rs` | **Exists** — `apply_cli_overrides`, `run_inner` |
+| `src/infrastructure/cli/output.rs` | **Exists** — human + JSON print |
+| `src/infrastructure/config.rs` | **Exists** — `AppConfig` flattens `AlignConfig` |
+| `tests/cli_output.rs`, `tests/config_roundtrip.rs` | **Exists** — extend for validation / repetition lines |
 
 ### Other
 
 - [TEMP-offset-verification-plan.md](TEMP-offset-verification-plan.md) — shared `ValidationConfig`
-- [PLAN.md](../PLAN.md) — target architecture
-- [BACKLOG.md](../BACKLOG.md) — tracking item
+- [PLAN.md](../PLAN.md) — workspace layout (`crates/clip-sync`, `crates/clip-sync-cli`)
+- [BACKLOG.md](../BACKLOG.md) — Phase 5 validation diagnostics
+- `crates/clip-sync-repair` — embeds `AlignmentResult` in `GapReport`; repetition appears in nested JSON when enabled via repair TOML `[validation]`

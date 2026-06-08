@@ -1,15 +1,38 @@
 # Temporary plan: hold-out offset verification
 
-> **Status:** Not started. Archive to `docs/archive/offset-verification-plan.md` when shipped.
+> **Status:** Not started (verification module). **Partial infrastructure shipped:** hold-out window placement + feasibility helpers in lib `domain/policies.rs` (added for high-rate refinement). Workspace refactor (Phases 1–4) complete — paths below are **`crates/clip-sync`** + **`crates/clip-sync-cli`**. Archive to `docs/archive/offset-verification-plan.md` when shipped.
 
 **Problem:** With `num_clips == 1`, a single Chromaprint window is the only evidence for the recommended offset. A confident but wrong Δ has no independent check. Multi-clip runs compare offsets across windows but never test “at lag 0, do these shifted regions actually match?”
 
 **Goal:** Optional second pass: given `recommended_offset_secs`, extract a hold-out window from each file (B shifted by Δ) and score **direct similarity at zero lag**. Off by default (`align.validation.verify_offset` on `AlignConfig`); enabled via config or CLI flag.
 
-**Workspace split:** Hold-out logic and `AlignmentResult.offset_verification` in **`crates/clip-sync`**. `--verify-offset`, TOML, and human lines in **`crates/clip-sync-cli`**. See [Config](#config) and [Phases](#phases).
+**Workspace split:** Hold-out logic and `AlignmentResult.offset_verification` in **`crates/clip-sync`**. `--verify-offset`, TOML, and human lines in **`crates/clip-sync-cli`**. **`clip-sync-repair`** embeds `AlignmentResult` in `GapReport` — verification appears in nested JSON when enabled via repair TOML `[validation]`. See [Config](#config) and [Phases](#phases).
 
 ---
 
+## Current codebase baseline
+
+Audit against the tree **after** workspace migration (2026-06-08).
+
+| Area | Path | Current state | Target phase |
+|------|------|---------------|--------------|
+| **AlignConfig** | `crates/clip-sync/src/application/config.rs` | `{ clip, alignment }` only — **no `validation` field** | 1 |
+| **AppConfig** | `crates/clip-sync-cli/src/infrastructure/config.rs` | Flattens `align` + `output` + `logging` | 2 |
+| **`execute()` hook** | `crates/clip-sync/src/application/align_videos.rs` | Align → `apply_high_rate_refinement(...)` → `log_alignment_summary` | 1 (insert verify **after** high-rate, before summary) |
+| **AlignmentOutcome** | same | `{ result, track_a, track_b, discovery_windows, duration_a/b, decoded_extent_a/b }` — same shape as `HighRateRefinementInput` | 1 |
+| **Hold-out placement** | `crates/clip-sync/src/domain/policies.rs` | **`pick_holdout_window`**, **`holdout_window_candidates`**, **`holdout_window_feasible`** — shipped for high-rate refine | 1 (reuse; do **not** add `pick_verification_window`) |
+| **Hold-out tests** | `policies.rs` `#[cfg(test)]` | `pick_holdout_window_*`, `holdout_window_feasible_*`, candidate tests | 1 (extend for verify-specific cases) |
+| **High-rate template** | `crates/clip-sync/src/application/high_rate_refinement.rs` | Post-align pass: candidates → feasibility → extract → score; sets `HighRateRefinement` on result | 1 (mirror pattern for verify) |
+| **Verification module** | — | **Missing** (`application/offset_verification.rs`) | 1 |
+| **OffsetVerification type** | `domain/alignment.rs` | **Missing** on `AlignmentResult` (has `high_rate_refinement`, `offset_drift_secs`, `start_overlap`) | 2 |
+| **Lag-0 score** | `infrastructure/chromaprint/aligner.rs` | `find_offset` via `Aligner` port (Option A) | 1 |
+| **PCM fallback** | `application/offset_refinement.rs` | `normalized_correlation` on facade (`clip_sync::normalized_correlation`) — Option B if Option A false-passes | 0 / defer |
+| **CLI** | `clip-sync-cli/.../cli/args.rs` (`Cli`) | No `--verify-offset` | 2 |
+| **Corpus** | `application/testing/corpus_fixtures.rs` | `tests/corpus/manifest.toml` at workspace root | 3 |
+
+**Naming:** This plan originally said `pick_verification_window`; the implemented API is **`pick_holdout_window`**. Verification uses the same helpers as high-rate refinement, but segment length = **`clip.clip_length`** (not `alignment.high_rate_refine_secs`).
+
+---
 ## Decisions
 
 Locked before implementation. Change only with an explicit plan revision.
@@ -21,22 +44,22 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Lag-0 scoring (Phase 1)** | **Option A:** reuse `find_offset` on hold-out fingerprints; require `\|offset_secs\| ≤ 0.5` (same constant as `OFFSET_AGREEMENT_TOLERANCE_SECS`) and `confidence ≥ validation.min_verification_confidence`. Option B (explicit lag-0 / PCM) only if corpus or unit tests show false passes. |
 | **PCM prep** | Same pipeline as discovery: resample to `target_sample_rate`, then `prepare_clip_for_fingerprint` (normalize / trim). **No** `expand_window_for_slide` on hold-out — fixed `[T, T + L)` extract only. **No** `select_aligned_subclip_pair` on hold-out. |
 | **PCM refinement** | `refine_offset_with_pcm` applies to discovery clips only. Verification uses final recommended Δ; does not re-refine. |
-| **Window placement duration** | `pick_verification_window(min(duration_a, duration_b), discovery_windows, clip_length)`. After picking `T`, skip if either file cannot supply a full `clip_length` slice at the shifted positions (see [Skip conditions](#skip-conditions)). |
-| **Short media (`duration < clip_length`)** | Skip verification (`pick_verification_window` → `None`). Hold-out would coincide with the sole discovery window; no shorter verify slice in v1. |
+| **Window placement duration** | Reuse **`holdout_window_candidates(min(dur_a, dur_b, decoded_extent_*), discovery_windows, clip_length, Δ)`** then **`holdout_window_feasible`** (same as `high_rate_refinement.rs`). Primary picker inside candidates: **`pick_holdout_window`**. Segment length = **`config.clip.clip_length`**, not `high_rate_refine_secs`. |
+| **Short media (`duration < clip_length`)** | Skip verification (`pick_holdout_window` / empty candidates → skip). Hold-out would coincide with the sole discovery window; no shorter verify slice in v1. |
 | **`num_clips > 2`** | Supported via gap heuristic: `[windows[0].end, windows.last().start)` when gap ≥ `clip_length`; else timeline midpoint (overlap risk accepted). Same as two-clip fallback. |
 | **Overlap with discovery** | Prefer non-overlapping hold-out vs logical discovery `ClipWindow`s. When gap is too small, midpoint may overlap — still run; log `tracing::debug` overlap warning. |
-| **Hook location** | `AlignVideos::execute()` after `align_single_track_pair` / `align_best_track_pair` returns, while sessions are still open. **Not** inside `align_extracted_pair`. |
-| **`try_all_tracks`** | Re-extract hold-out on the **winning** `(track_a, track_b)` only. Record winning track indices during search (same pattern as repetition plan Phase 2). |
+| **Hook location** | `AlignVideos::execute()` **after** `apply_high_rate_refinement`, **before** `log_alignment_summary`, while `session_a` / `session_b` are still open. Pass `AlignmentOutcome` fields (same as `HighRateRefinementInput`). **Not** inside `align_extracted_pair`. |
+| **`try_all_tracks`** | `align_best_track_pair` already returns **`AlignmentOutcome { track_a, track_b, … }`**. Verification uses that winning pair only (no search-loop changes). |
 | **Skip / absent semantics** | Flag off → `offset_verification: None` (JSON field omitted via `skip_serializing_if`). Flag on + skip → `Some(OffsetVerification { verified: false, skipped: true, .. })`. Flag on + ran → `skipped: false`. |
 | **Truncation** | Any hold-out extract shorter than `clip_length` after clamping → treat as skip (`skipped: true`), not partial scoring. |
 | **Threshold knob** | `validation.min_verification_confidence` (default `0.5`). **No CLI flag for threshold in v1** — TOML / `AlignConfig` only. |
-| **Architecture** | `pick_verification_window` in lib `domain/policies.rs` (pure). Hold-out extract + score in lib `application/offset_verification.rs`; reuse `Aligner` / `Fingerprinter` ports. CLI formats `AlignmentResult` only. No new port trait in v1. |
+| **Architecture** | Window pickers in lib **`domain/policies.rs`** (**exist**). Hold-out extract + lag-0 score in lib **`application/offset_verification.rs`** (**new**); reuse `Aligner` / `Fingerprinter` ports + `extract_mono` (discovery rate). CLI formats `AlignmentResult` only. No new port trait in v1. |
 | **Phase 1 scope** | Core logic + unit tests + `tracing::debug` only. No stdout / JSON / CLI / `AlignmentResult` field until Phase 2. |
 | **Human / JSON (Phase 2)** | When flag on, always emit `offset_verification` in JSON. Human warning when `verified == false` and not skipped; `--verbose` shows skip reason. |
 | **Repetition interaction (Phase 3)** | After lag-0 score, if `check_clip_repetition`: run `detect_clip_repetition` on hold-out prepared clips; if `should_downgrade(repetition_*, recommended_offset_secs)` (±1 s, same helper as repetition plan), multiply **verification** `confidence` by `0.5` before threshold check. |
 | **Execution order** | Discovery alignment (and discovery repetition, if enabled) completes first; verification is a separate pass in `execute()`. |
 | **Corpus fail path** | **Unit test** `verify_offset_fails_wrong_delta` only (inject wrong Δ). Corpus adds **pass** case `verify_offset_pass`; no manifest fail case in v1. |
-| **POC risk** | Phase 0 spike: confirm Option A returns ≈0 lag + high confidence on matching hold-out chirp pair, and fails on same pair with Δ + 5s. |
+| **POC risk** | Phase 0 spike: confirm Option A (`find_offset` on prepared hold-out clips) returns ≈0 lag + high confidence on matching hold-out chirp pair, and fails with intentional wrong Δ (+5s). Window placement de-risked by existing `pick_holdout_window` tests. |
 
 ---
 
@@ -46,7 +69,19 @@ Shared with [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.m
 
 ### Library (`AlignConfig.validation`)
 
-`ValidationConfig` on **`AlignConfig`** in `crates/clip-sync/src/application/config.rs`:
+`ValidationConfig` is **not in the tree yet**. Add on **`AlignConfig`** in `crates/clip-sync/src/application/config.rs` — shared with [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md).
+
+**Current `AlignConfig` (today):**
+
+```rust
+pub struct AlignConfig {
+    pub clip: ClipConfig,
+    pub alignment: AlignmentConfig,
+    // validation: ValidationConfig,  // Phase 1 — add with #[serde(default)]
+}
+```
+
+**Target (Phase 1):**
 
 ```rust
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -79,7 +114,8 @@ fn default_min_verification_confidence() -> f32 {
 ```
 
 - `AlignVideos::execute()` reads `config.validation.verify_offset`.
-- `load_align_config` deserializes `[validation]` with `[clip]` and `[alignment]`.
+- `load_align_config` in `crates/clip-sync/src/infrastructure/config/file.rs` deserializes `[validation]` with `[clip]` and `[alignment]`.
+- `AlignConfig::validate()` today only calls `clip.validate()` — no extra validation rules for `[validation]` in v1.
 
 ### CLI (`AppConfig` — TOML + flags only)
 
@@ -93,7 +129,8 @@ verify_offset = false
 min_verification_confidence = 0.5
 ```
 
-- **CLI Phase 2:** `--verify-offset` → `config.align.validation.verify_offset = true` in `apply_cli_overrides`.
+- **CLI Phase 2:** `--verify-offset` on `Cli` in `args.rs` → `config.align.validation.verify_offset = true` in `apply_cli_overrides` (`cli/mod.rs`).
+- Human verbose / skip lines use `config.output.show_diagnostics` (`--verbose` sets this today).
 - When flag is **off**, omit `offset_verification` from JSON via `#[serde(skip_serializing_if = "Option::is_none")]` on lib `AlignmentResult`.
 
 **Behaviour when verification fails (score below threshold, not skipped):**
@@ -107,8 +144,7 @@ Skip verification (emit `skipped: true`, `verified: false`) when:
 
 - `verify_offset` is false (omit field entirely).
 - No `recommended_offset_secs` (no alignment or `require_consistent_offsets` blocked recommendation).
-- `pick_verification_window` returns `None` (`duration < clip_length`, or zero duration).
-- Hold-out window would extend past either file’s timeline after applying Δ (full `clip_length` required on both sides).
+- `holdout_window_candidates(...)` returns empty, or no candidate passes **`holdout_window_feasible`** (full `clip_length` required on both sides after Δ).
 - Either hold-out extract fails (`InsufficientAudio` / `EmptyClip`).
 - Either prepared hold-out clip yields an empty fingerprint.
 
@@ -149,44 +185,46 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 
 ### Phase 0 — Spike
 
-**Lib**
+**Lib (`crates/clip-sync`)**
 
-- [ ] Option A on synthetic hold-out: matching +3s chirp pair → `\|offset_secs\| ≤ 0.5`, confidence ≥ 0.5
+- [ ] Option A on synthetic hold-out: matching +3s chirp pair → `\|offset_secs\| ≤ 0.5`, confidence ≥ 0.5 (`Aligner::find_offset` on prepared hold-out clips @ `target_sample_rate`)
 - [ ] Same pair with intentional wrong Δ (+5s) → fails threshold or `\|offset_secs\| > 0.5`
-- [ ] Record whether false passes warrant Option B before Phase 1 ships
+- [ ] Record whether false passes warrant Option B (`normalized_correlation` on prepared PCM) before Phase 1 ships
+- [x] Hold-out **window** placement de-risked — `pick_holdout_window` + tests already in `domain/policies.rs`
 
 **CLI:** none
 
 ### Phase 1 — Hold-out extract + lag-0 score (lib only)
 
-**Lib (`clip-sync`)**
+**Lib (`crates/clip-sync`)**
 
-- [ ] `ValidationConfig` nested in `AlignConfig` (full struct with repetition fields — shared with repetition plan)
-- [ ] `domain/policies.rs` — `pick_verification_window(duration, existing_windows, clip_length) -> Option<ClipWindow>`
-- [ ] `application/offset_verification.rs` — **new** `verify_offset_at_holdout(...)` → internal `VerificationResult`
-- [ ] Lag-0 score via `find_offset` + tolerance check (Option A)
-- [ ] `application/align_videos.rs` — wire in `execute()` after alignment, before `log_alignment_summary`; winning tracks for `try_all_tracks`
-- [ ] `ProgressReporter::phase("Verifying offset at hold-out window...")` when running (lib port; no CLI code)
-- [ ] Unit tests: window picker, known Δ + chirp → verified; wrong Δ → not verified; negative Δ; skip when `duration < clip_length`
-- [ ] **`AlignmentResult.offset_verification` not set yet** — debug / internal struct only
+- [ ] `ValidationConfig` on `AlignConfig` (full struct with repetition fields — shared with repetition plan)
+- [x] `domain/policies.rs` — **`pick_holdout_window`**, **`holdout_window_candidates`**, **`holdout_window_feasible`** (reuse; extend tests only if verify needs new edge cases)
+- [ ] `application/offset_verification.rs` — **new** `apply_offset_verification(...)` (mirror `apply_high_rate_refinement` structure; segment length = `clip.clip_length`)
+- [ ] Hold-out extract via existing **`MediaSession::extract_mono`** @ `target_sample_rate` → `prepare_clip_for_fingerprint` (no `expand_window_for_slide`, no subclip slide)
+- [ ] Lag-0 score via `Aligner::find_offset` + tolerance check (Option A); compare lag to **`OFFSET_AGREEMENT_TOLERANCE_SECS` (0.5)** in `domain/alignment.rs`
+- [ ] `application/align_videos.rs` — call from `execute()` after `apply_high_rate_refinement`, before `log_alignment_summary`; pass `AlignmentOutcome` / shared input struct
+- [ ] `ProgressReporter::phase("Verifying offset at hold-out window...")` when running
+- [ ] Unit tests: verify pass/fail/wrong-Δ/skip (see [Tests](#tests)); window picker tests largely **exist** in `policies.rs`
+- [ ] **`AlignmentResult.offset_verification` not set yet** — internal `VerificationResult` + `tracing::debug` only
 
-**CLI:** none
+**CLI (`clip-sync-cli`):** none
 
 ### Phase 2 — Reporting (lib domain + CLI stdout)
 
-**Lib (`clip-sync`)**
+**Lib (`crates/clip-sync`)**
 
-- [ ] Add `offset_verification: Option<OffsetVerification>` to `AlignmentResult`
-- [ ] Merge Phase 1 `VerificationResult` into returned `AlignmentResult`
-- [ ] `try_all_tracks`: record winning tracks; verification uses that pair only
-- [ ] Lib tests: `AlignmentResult` JSON shape when flag on/off/skipped (`serde_json`)
+- [ ] Add `offset_verification: Option<OffsetVerification>` to `AlignmentResult` in `domain/alignment.rs`
+- [ ] `apply_offset_verification` writes `result.offset_verification` when flag on (including skip cases)
+- [ ] Lib tests: `AlignmentResult` JSON shape when flag on/off/skipped (`serde_json` in `align_videos` or domain tests)
 - [ ] Document in [PLAN.md](../PLAN.md); note redundancy when `num_clips >= 2` and offsets already agree
 
-**CLI (`clip-sync-cli`)**
+**CLI (`crates/clip-sync-cli`)**
 
-- [ ] `infrastructure/cli/args.rs` — `--verify-offset`
+- [ ] `infrastructure/cli/args.rs` — `--verify-offset` on `Cli`
 - [ ] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: `config.align.validation.verify_offset = true`
-- [ ] `infrastructure/cli/output.rs` — human warning when `verified == false` and not skipped; verbose skip reason
+- [ ] `infrastructure/cli/output.rs` — after recommended-offset block: warn when `verified == false` and not skipped; verbose skip reason via `show_diagnostics`
+- [ ] `tests/fixtures/analyzer.toml` — optional `[validation]` example
 - [ ] `tests/config_roundtrip.rs` — TOML `[validation] verify_offset = true`
 - [ ] `tests/cli_output.rs` — human lines for verified / unverified / skipped
 
@@ -205,47 +243,51 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 
 ## Design
 
-### Hold-out window placement
+### Hold-out window placement (already implemented)
 
-Pick a window on the **shorter** file’s timeline that does not overlap discovery windows when possible.
+Window pickers live in **`crates/clip-sync/src/domain/policies.rs`**. Verification reuses the same API as **`apply_high_rate_refinement`** (`high_rate_refinement.rs`), but with **`segment_length = config.clip.clip_length`**.
 
 ```text
-pick_verification_window(duration, windows, clip_length):
-  if duration < clip_length:
-    return None
-  if windows.len() == 1:
-    # Single discovery clip at start — use middle third
-    T = duration / 3
-    return [T, min(T + clip_length, duration))
-  if windows.len() >= 2:
-    # Start/end (or start/interior/end): gap between first.end and last.start
-    gap_start = windows[0].end
-    gap_end = windows.last().start
-    if gap_end - gap_start >= clip_length:
-      T = gap_start + (gap_end - gap_start - clip_length) / 2
-      return [T, T + clip_length)
-    else:
-      # Short gap — timeline midpoint; may overlap discovery windows
-      T = (duration - clip_length) / 2
-      return [T, T + clip_length)
+pick_duration = min(duration_a, duration_b, decoded_extent_a, decoded_extent_b)
+candidates = holdout_window_candidates(pick_duration, discovery_windows, clip_length, Δ)
+for holdout in candidates:
+  if holdout_window_feasible(holdout.start, clip_length_secs, Δ, dur_a, dur_b):
+    try extract + score; break on success
 ```
 
-Feasibility after picking `T` (use per-file durations `dur_a`, `dur_b` and recommended Δ):
+Core placement logic (inside `holdout_window_candidates` → `pick_holdout_window`):
+
+```text
+pick_holdout_window(duration, windows, segment_length):
+  if duration < segment_length: return None
+  if windows.len() <= 1:
+    T = duration / 3
+    return [T, min(T + segment_length, duration))
+  gap_start = windows[0].end; gap_end = windows.last().start
+  if gap_end - gap_start >= segment_length:
+    T = gap_start + (gap_end - gap_start - segment_length) / 2
+  else:
+    T = (duration - segment_length) / 2   # may overlap discovery — debug log
+  return [T, T + segment_length)
+```
+
+`holdout_window_candidates` also prepends overlap-safe near-start windows (important for negative Δ and MKV seek quirks) — prefer trying candidates in order, same as high-rate refine.
+
+Feasibility (existing **`holdout_window_feasible`**):
 
 ```text
 A needs: 0 <= T  and  T + L <= dur_a
 B needs: 0 <= T + Δ  and  T + L + Δ <= dur_b
-If either fails → skip (skipped: true)
+If no candidate feasible → skip (skipped: true)
 ```
 
-Verification extracts (same track indices as winning alignment):
+Verification extracts (winning tracks from `AlignmentOutcome`):
 
 ```text
-A: [T, T + L)
-B: [T + Δ, T + L + Δ)
+A: extract_mono(track_a, [T, T + L)) @ target_sample_rate
+B: extract_mono(track_b, [T + Δ, T + L + Δ)) @ target_sample_rate
+→ prepare_clip_for_fingerprint → fingerprint → aligner.find_offset
 ```
-
-Then resample → `prepare_clip_for_fingerprint` → fingerprint → `find_offset`.
 
 ### Lag-0 similarity
 
@@ -253,7 +295,7 @@ Then resample → `prepare_clip_for_fingerprint` → fingerprint → `find_offse
 estimate = find_offset(fp_a, fp_b)
 verified = !skipped
   && estimate.confidence >= min_verification_confidence
-  && estimate.offset_secs.abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS  // 0.5
+  && estimate.offset_secs.abs() <= 0.5   // OFFSET_AGREEMENT_TOLERANCE_SECS in domain/alignment.rs (private; use same constant)
 ```
 
 Optional PCM sanity check (reuse `offset_refinement` cross-correlate on hold-out slice) — defer unless Option A produces false passes in corpus.
@@ -264,31 +306,40 @@ Optional PCM sanity check (reuse `offset_refinement` cross-correlate on hold-out
 |----------|--------------|
 | `num_clips >= 2` + `offsets_consistent` | Verification still runs when flag on; most useful for `num_clips == 1`. Document as supplementary lag-0 evidence. |
 | `require_consistent_offsets` | Runs before verification; no recommendation → skip verify |
+| `refine_offset_high_rate` | Runs **before** verification; verify uses **post-refinement** `recommended_offset_secs`. Same hold-out helpers, different segment length and scoring. |
 | `refine_offset_with_pcm` | Discovery only; verification uses final recommended Δ |
 | `check_clip_repetition` | Phase 3: repetition on hold-out clips may ×0.5 verification confidence (see Decisions) |
 
 ```text
-execute():
-  open sessions
-  result = align_single_track_pair(...) or align_best_track_pair(...)
-  if validation.verify_offset && result.recommended_offset_secs.is_some():
-      progress: "Verifying offset at hold-out window..."
-      T = pick_verification_window(min(dur_a, dur_b), discovery_windows, L)
-      if T is None or !feasible(T, Δ, dur_a, dur_b):
-          offset_verification = { verified: false, skipped: true, skip_reason: ... }
-      else:
-          extract A[T, T+L), B[T+Δ, T+L+Δ) on winning tracks
-          prepare + fingerprint + find_offset → confidence
-          Phase 3: optional repetition downgrade on hold-out clips
-          verified = confidence >= threshold && |lag| <= 0.5
-          offset_verification = { ..., skipped: false }
-  else if verify_offset:
-      offset_verification = None   // flag off
-  log_alignment_summary
-  return
+execute() — current structure (align_videos.rs):
+  open session_a, session_b
+  outcome = align_single_track_pair(...) OR align_best_track_pair(...)
+  mut result = outcome.result
+  apply_high_rate_refinement(&HighRateRefinementInput { sessions, tracks, discovery_windows, durations, ... }, ...)
+  // INSERT Phase 1:
+  if config.validation.verify_offset:
+      apply_offset_verification(&VerificationInput { same fields as high-rate + clip config }, &mut result, ...)
+  log_alignment_summary(&result, ...)
+  return AlignVideosResponse { result }
 ```
 
-Phase 1: store result internally / debug log only; Phase 2: attach to lib `AlignmentResult`. CLI prints via existing JSON/human formatters.
+Inside `apply_offset_verification` when flag on and `recommended_offset_secs` is `Some(Δ)`:
+
+```text
+progress: "Verifying offset at hold-out window..."
+candidates = holdout_window_candidates(..., clip_length, Δ)
+if no feasible candidate:
+    offset_verification = { verified: false, skipped: true, skip_reason: ... }
+else:
+    extract A/B hold-out → prepare → fingerprint → find_offset → confidence
+    Phase 3: optional repetition downgrade on hold-out clips
+    verified = confidence >= threshold && |estimate.offset_secs| <= 0.5
+    offset_verification = { windows..., skipped: false, ... }
+When flag off: leave result.offset_verification = None (Phase 2 serde omit)
+When flag on but no recommendation: Some({ skipped: true, ... })
+```
+
+Phase 1: store result internally / `debug!` only; Phase 2: set `result.offset_verification`. CLI prints via existing JSON/human formatters (`print_success` / `serde_json::to_string_pretty`).
 
 ### Output (Phase 2)
 
@@ -324,7 +375,9 @@ Phase 1: store result internally / debug log only; Phase 2: attach to lib `Align
 }
 ```
 
-**Human** — **CLI only** (`crates/clip-sync-cli/src/infrastructure/cli/output.rs`):
+**Human** — **CLI only** (`crates/clip-sync-cli/src/infrastructure/cli/output.rs`, `print_human`):
+
+Uses `show_diagnostics` for verbose skip lines (`--verbose` sets this today).
 
 **Human** (unverified, not skipped):
 
@@ -332,7 +385,7 @@ Phase 1: store result internally / debug log only; Phase 2: attach to lib `Align
   Recommended offset: +3.000s (not independently verified; hold-out confidence 0.32)
 ```
 
-**Human** (`--verbose`, skipped):
+**Human** (`--verbose` / `show_diagnostics`, skipped):
 
 ```text
   Offset verification skipped: hold-out window unavailable
@@ -344,13 +397,14 @@ Phase 1: store result internally / debug log only; Phase 2: attach to lib `Align
 
 | Test | Phase | Crate | Asserts |
 |------|-------|-------|---------|
-| `pick_verification_window_middle_for_single_clip` | 1 | lib | 60s media, 15s clip, one discovery window → hold-out in middle third |
-| `pick_verification_window_fits_two_clip_gap` | 1 | lib | 60s, start+end windows → hold-out in gap |
-| `pick_verification_window_none_when_shorter_than_clip` | 1 | lib | `duration < clip_length` → `None` |
+| `pick_holdout_window_middle_for_single_clip` | — | lib | **Exists** in `policies.rs` |
+| `pick_holdout_window_fits_two_clip_gap` | — | lib | **Exists** in `policies.rs` |
+| `pick_holdout_window_none_when_shorter_than_segment` | — | lib | **Exists** in `policies.rs` |
+| `holdout_window_feasible_respects_offset` | — | lib | **Exists** in `policies.rs` |
 | `verify_offset_passes_known_leader` | 1 | lib | +3s chirp, correct Δ → `verified = true` |
 | `verify_offset_passes_negative_delta` | 1 | lib | B-ahead chirp, correct negative Δ → `verified = true` |
 | `verify_offset_fails_wrong_delta` | 1 | lib | Intentionally wrong Δ → `verified = false` |
-| `verify_offset_skips_when_window_infeasible` | 1 | lib | Δ pushes B window past `dur_b` → `skipped = true` |
+| `verify_offset_skips_when_window_infeasible` | 1 | lib | Δ pushes B past `dur_b` → `skipped = true` |
 | `alignment_result_json_offset_verification` | 2 | lib | Flag on → JSON includes `offset_verification`; flag off → field omitted |
 | `cli_human_unverified_offset` | 2 | CLI | Human line when `verified == false` |
 | `cli_human_verbose_skip_reason` | 2 | CLI | Verbose shows skip reason |
@@ -379,23 +433,33 @@ Extend `CorpusCase` with optional `verify_offset: bool` and `expect_offset_verif
 
 ### Library (`crates/clip-sync`)
 
-- `src/application/align_videos.rs` — `execute()` post-alignment hook
-- `src/application/offset_verification.rs` — **new** hold-out verify module
-- `src/domain/alignment.rs` — `OffsetVerification`, extend `AlignmentResult`
-- `src/domain/policies.rs` — `clip_windows`, `pick_verification_window`
-- `src/application/config.rs` — `ValidationConfig` on `AlignConfig`
-- `src/infrastructure/chromaprint/aligner.rs` — `find_offset` / Option A
-- `src/application/testing/corpus_fixtures.rs` — corpus case (Phase 3)
+| File | Status |
+|------|--------|
+| `src/application/align_videos.rs` | **Exists** — `execute()`, `AlignmentOutcome`; insert verify after high-rate |
+| `src/application/high_rate_refinement.rs` | **Exists** — template for post-align hold-out pass |
+| `src/application/offset_verification.rs` | **New** — `apply_offset_verification` |
+| `src/domain/policies.rs` | **Exists** — `pick_holdout_window`, `holdout_window_candidates`, `holdout_window_feasible` + tests |
+| `src/domain/alignment.rs` | **Exists** — add `OffsetVerification`; extend `AlignmentResult` |
+| `src/application/config.rs` | **Exists** — add `ValidationConfig` on `AlignConfig` |
+| `src/infrastructure/config/file.rs` | **Exists** — `load_align_config` |
+| `src/infrastructure/chromaprint/aligner.rs` | **Exists** — `find_offset` (Option A) |
+| `src/application/offset_refinement.rs` | **Exists** — `normalized_correlation` on facade (Option B fallback) |
+| `src/application/testing/corpus_fixtures.rs` | **Exists** — corpus case (Phase 3) |
 
 ### CLI (`crates/clip-sync-cli`)
 
-- `src/infrastructure/cli/args.rs`, `mod.rs` — `--verify-offset`, `apply_cli_overrides`
-- `src/infrastructure/cli/output.rs` — human verification lines
-- `src/infrastructure/config.rs` — `AppConfig`
-- `tests/cli_output.rs`, `tests/config_roundtrip.rs`
+| File | Status |
+|------|--------|
+| `src/application/run_align.rs` | **Exists** — `align_with_defaults`; no verify logic here |
+| `src/infrastructure/cli/args.rs` | **Exists** — add `--verify-offset` on `Cli` |
+| `src/infrastructure/cli/mod.rs` | **Exists** — `apply_cli_overrides`, `run_inner` |
+| `src/infrastructure/cli/output.rs` | **Exists** — extend `print_human` for verification lines |
+| `src/infrastructure/config.rs` | **Exists** — `AppConfig` flattens `AlignConfig` |
+| `tests/cli_output.rs`, `tests/config_roundtrip.rs` | **Exists** — extend for verification |
 
 ### Other
 
-- [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md) — shared `ValidationConfig`, `should_downgrade`, `detect_clip_repetition`
-- [PLAN.md](../PLAN.md) — target architecture
-- [BACKLOG.md](../BACKLOG.md) — tracking item
+- [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md) — shared `ValidationConfig`, `should_downgrade`, `detect_clip_repetition` (Phase 3)
+- [PLAN.md](../PLAN.md) — workspace layout (`crates/clip-sync`, `crates/clip-sync-cli`)
+- [BACKLOG.md](../BACKLOG.md) — Phase 5 validation diagnostics
+- `crates/clip-sync-repair` — `GapReport.alignment` includes `offset_verification` when enabled
