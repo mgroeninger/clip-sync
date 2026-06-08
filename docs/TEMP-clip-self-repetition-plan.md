@@ -1,6 +1,19 @@
 # Temporary plan: clip self-repetition check
 
-> **Status:** Not started. **Blocked on Phase 0 spike** — do not begin Phase 1 until self `match_fingerprints` is validated (or fallback is chosen). Archive to `docs/archive/clip-self-repetition-plan.md` when shipped.
+> **Status:** Phase 0 complete (2026-06-06). Phase 1 not started. Archive to `docs/archive/clip-self-repetition-plan.md` when shipped.
+
+### Phase 0 outcome (2026-06-06)
+
+| Check | Result |
+|-------|--------|
+| `match_fingerprints(&fp, &fp)` on 10s@0 + 10s@30 synthetic clip | **Rejected** — library returns a single lag-0 segment only (`repetition_spike.rs` tests). |
+| Default preset `item_duration_in_seconds()` | **~0.124 s** (Test2). `min_lag_secs` ≈ **4.95 s** (40 items). |
+| **Fallback chosen** | **Half-vs-half** fingerprint match at timeline midpoint, with `\|lag_items\| > 1` and `\|lag_secs − duration/2\| ≤ 3 s` guard. |
+| Synthetic repeat (silent gaps) | Detects lag **~32.5 s** on 60 s clip (confidence ≥ 0.5). |
+| Monotonic chirp control | **No finding** (midpoint guard rejects ~41 s false peak). |
+| Chirp-filled repeat (Phase 3 corpus shape) | **Not detected** in spike — tone block drowned by chirp; corpus fixture may need stronger tone or PCM assist in Phase 3. |
+
+Phase 1 detection should implement half-vs-half (not full self-match). Revise [Detection algorithm](#detection-algorithm) before coding.
 
 **Problem:** A clip whose audio repeats internally (loop, rebroadcast, duplicated segment) can produce ambiguous Chromaprint matches — both cross-file alignment and offset verification may latch onto the wrong lag with high confidence.
 
@@ -14,7 +27,7 @@ Locked before implementation. Change only with an explicit plan revision.
 
 | Topic | Decision |
 |-------|----------|
-| **Phase 0 gate** | **Blocking.** Phase 1+ work starts only after Phase 0 confirms self-match (or documents half-vs-half fallback). |
+| **Phase 0 gate** | **Done (2026-06-06).** Full self-match rejected; half-vs-half + midpoint guard chosen. See spike module. |
 | **Input audio** | Same prepared PCM / fingerprints used for cross-file match: after `prepare_clip_for_fingerprint`, and after `select_aligned_subclip_pair` when `window_slide_secs > 0`. Not raw extracts. |
 | **Which files** | Check **both** video A and video B for each clip index in the align loop. |
 | **Report model** | `repetition: Option<ClipRepetitionReport>` on `ClipMatch` when check ran; `None` on `ClipMatch` when check was off (field omitted from JSON). |
@@ -127,12 +140,12 @@ impl MonoPcmClip {
 
 ## Phases
 
-### Phase 0 — Spike (blocking)
+### Phase 0 — Spike (blocking) ✅
 
-- [ ] `match_fingerprints(&fp, &fp)` on synthetic 10s-block-at-0-and-30s clip returns non-zero-lag segments above threshold
-- [ ] Record `item_duration_in_seconds()` for default preset (feeds `min_lag_secs`)
-- [ ] If library behaves poorly on identical streams, implement and document **fallback**: fingerprint first half vs second half only when `clip_duration >= 2 * min_lag_secs`
-- [ ] Note outcome at top of this doc (pass / fallback required)
+- [x] `match_fingerprints(&fp, &fp)` on synthetic 10s-block-at-0-and-30s clip — **lag-0 only; not viable**
+- [x] Record `item_duration_in_seconds()` for default preset (~0.124 s Test2; `min_lag_secs` ~4.95 s)
+- [x] **Fallback:** half-vs-half fingerprint split + midpoint guard (`src/infrastructure/chromaprint/repetition_spike.rs`)
+- [x] Outcome recorded at top of this doc
 
 ### Phase 1 — Core detection
 
@@ -193,21 +206,28 @@ pub fn detect_clip_repetition(
 | Best non-zero cluster confidence `< min_confidence` | `None` |
 | Phase 0 fallback path | Half-vs-half match only if full self-match unusable |
 
-### Detection algorithm
+### Detection algorithm (Phase 1 — revise from Phase 0 spike)
+
+Phase 0 rejected full self-match. Phase 1 should use **half-vs-half** on the prepared clip fingerprint:
 
 ```text
 fp = fingerprint(prepared_clip)
-segments = match_fingerprints(&fp.data, &fp.data, config)
+mid_item = round((clip_duration_secs / 2) / item_secs)
+(left, right) = split fp.data at mid_item
+segments = match_fingerprints(left, right, config)
 
 segments' = segments where |offset2 - offset1| > 1 item
 (segment, ambiguous) = select_best_nonzero_lag_segment(segments')
-confidence = segment_confidence(segment.score, segment.items_count, ambiguous)
+lag_secs = (clip_duration_secs / 2) + |offset2 - offset1| * item_secs
+if |lag_secs - clip_duration_secs/2| > 3.0 → None   # reject monotonic-chirp false peak
+confidence = segment_confidence(...)
 if confidence >= min_repetition_confidence:
-  lag_secs = abs(offset2 - offset1) * item_secs
   → Some(RepetitionFinding { lag_secs, confidence, items_count })
 else:
   → None
 ```
+
+**Limitations (document in Phase 1):** detects repeats aligned near the clip midpoint (corpus fixture shape). General repeats at other lags need a future approach (e.g. PCM template scan). Chirp-heavy clips may miss repeats when the duplicated block is fingerprint-quiet.
 
 | Constant | Value | Rationale |
 |----------|-------|-----------|
@@ -349,7 +369,7 @@ Choruses, applause, and steady test tones may trigger repetition. Output is a **
 
 | Test | Phase | Asserts |
 |------|-------|---------|
-| Phase 0 spike | 0 | Self-match or fallback produces lag ≈ 30s on synthetic repeat |
+| Phase 0 spike | 0 | Half-vs-half on silent-gap repeat → lag ≈ 30–32.5 s; full self-match lag-0 only; chirp control none |
 | `detect_clip_repetition_none_on_chirp` | 1 | Monotonic chirp → `None` |
 | `detect_clip_repetition_none_on_empty` | 1 | Empty fingerprint → `None` |
 | `detect_clip_repetition_none_when_too_short` | 1 | 8s clip → `None` |

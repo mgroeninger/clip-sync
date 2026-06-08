@@ -13,7 +13,7 @@ static HE_AAC_CODEC_REGISTRY: OnceLock<CodecRegistry> = OnceLock::new();
 pub fn codec_registry() -> &'static CodecRegistry {
     #[cfg(not(feature = "he-aac"))]
     {
-        return symphonia::default::get_codecs();
+        symphonia::default::get_codecs()
     }
 
     #[cfg(feature = "he-aac")]

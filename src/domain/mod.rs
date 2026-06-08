@@ -10,8 +10,8 @@ pub mod policies;
 pub mod resample;
 
 pub use alignment::{
-    AlignmentResult, ClipMatch, ClipMatchEstimate, Fingerprint, HighRateRefinement,
-    build_alignment_result, refresh_start_overlap,
+    AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
+    Fingerprint, HighRateRefinement, build_alignment_result, refresh_start_overlap,
 };
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;

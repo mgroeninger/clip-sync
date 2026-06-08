@@ -87,13 +87,11 @@ fn format_clip_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
         )
     };
 
-    if show_diagnostics {
-        if clip.video_a_decode_skips > 0 || clip.video_b_decode_skips > 0 {
-            line.push_str(&format!(
-                " [decode skips: A={}, B={}]",
-                clip.video_a_decode_skips, clip.video_b_decode_skips
-            ));
-        }
+    if show_diagnostics && (clip.video_a_decode_skips > 0 || clip.video_b_decode_skips > 0) {
+        line.push_str(&format!(
+            " [decode skips: A={}, B={}]",
+            clip.video_a_decode_skips, clip.video_b_decode_skips
+        ));
     }
 
     line

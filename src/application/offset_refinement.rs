@@ -180,8 +180,7 @@ fn pcm_discover_offset(
 
     let clip_secs = left.samples.len() as f64 / f64::from(rate);
     let search_secs = (clip_secs * DISCOVER_SEARCH_FRACTION)
-        .min(DISCOVER_SEARCH_CAP_SECS)
-        .max(DISCOVER_SEARCH_FLOOR_SECS);
+        .clamp(DISCOVER_SEARCH_FLOOR_SECS, DISCOVER_SEARCH_CAP_SECS);
     let predicted_right_sample = (left_start as f64 + coarse_offset_secs * f64::from(rate))
         .round()
         .clamp(0.0, right.samples.len().saturating_sub(1) as f64) as usize;

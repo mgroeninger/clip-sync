@@ -2,15 +2,15 @@ use std::path::PathBuf;
 
 use crate::application::config::AppConfig;
 use crate::application::error::{AppError, FingerprintError};
-use crate::application::high_rate_refinement::apply_high_rate_refinement;
+use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
 use crate::application::offset_refinement::refine_offset_estimate;
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::domain::{
     build_alignment_result, clip_windows, decoded_timeline_extent, expand_window_for_slide,
     prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair, select_best_track,
-    AlignmentResult, AudioTrack, ClipMatchEstimate, ClipWindow, DomainError, MediaSource,
-    MonoPcmClip, PcmPreparationOptions,
+    AlignmentMergePolicy, AlignmentResult, AudioTrack, ClipMatchEstimate, ClipPairReportInput,
+    ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
@@ -76,15 +76,17 @@ where
 
         let mut result = outcome.result;
         apply_high_rate_refinement(
-            &session_a,
-            &session_b,
-            &outcome.track_a,
-            &outcome.track_b,
-            &outcome.discovery_windows,
-            outcome.duration_a,
-            outcome.duration_b,
-            outcome.decoded_extent_a,
-            outcome.decoded_extent_b,
+            &HighRateRefinementInput {
+                session_a: &session_a,
+                session_b: &session_b,
+                track_a: &outcome.track_a,
+                track_b: &outcome.track_b,
+                discovery_windows: &outcome.discovery_windows,
+                duration_a: outcome.duration_a,
+                duration_b: outcome.duration_b,
+                decoded_extent_a: outcome.decoded_extent_a,
+                decoded_extent_b: outcome.decoded_extent_b,
+            },
             &request.config.alignment,
             &mut result,
             self.progress,
@@ -268,15 +270,19 @@ where
         }
 
         Ok(build_alignment_result(
-            &extracted_a.windows,
-            &estimates,
-            &extracted_a.decode_skips,
-            &extracted_b.decode_skips,
-            config.alignment.min_match_score,
-            config.alignment.prefer_start_clip,
-            config.alignment.require_consistent_offsets,
-            Some(extracted_a.duration),
-            Some(extracted_b.duration),
+            ClipPairReportInput {
+                windows: &extracted_a.windows,
+                estimates: &estimates,
+                decode_skips_a: &extracted_a.decode_skips,
+                decode_skips_b: &extracted_b.decode_skips,
+                duration_a: Some(extracted_a.duration),
+                duration_b: Some(extracted_b.duration),
+            },
+            AlignmentMergePolicy {
+                min_match_score: config.alignment.min_match_score,
+                prefer_start_clip: config.alignment.prefer_start_clip,
+                require_consistent_offsets: config.alignment.require_consistent_offsets,
+            },
         ))
     }
 

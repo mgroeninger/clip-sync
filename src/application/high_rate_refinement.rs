@@ -10,20 +10,35 @@ use crate::domain::{
     AudioTrack, ClipWindow, HighRateRefinement, MonoPcmClip,
 };
 
+pub struct HighRateRefinementInput<'a, MS: MediaSession> {
+    pub session_a: &'a MS,
+    pub session_b: &'a MS,
+    pub track_a: &'a AudioTrack,
+    pub track_b: &'a AudioTrack,
+    pub discovery_windows: &'a [ClipWindow],
+    pub duration_a: Duration,
+    pub duration_b: Duration,
+    pub decoded_extent_a: Duration,
+    pub decoded_extent_b: Duration,
+}
+
 pub fn apply_high_rate_refinement<MS: MediaSession>(
-    session_a: &MS,
-    session_b: &MS,
-    track_a: &AudioTrack,
-    track_b: &AudioTrack,
-    discovery_windows: &[ClipWindow],
-    duration_a: Duration,
-    duration_b: Duration,
-    decoded_extent_a: Duration,
-    decoded_extent_b: Duration,
+    input: &HighRateRefinementInput<'_, MS>,
     alignment: &AlignmentConfig,
     result: &mut AlignmentResult,
     progress: &dyn ProgressReporter,
 ) {
+    let &HighRateRefinementInput {
+        session_a,
+        session_b,
+        track_a,
+        track_b,
+        discovery_windows,
+        duration_a,
+        duration_b,
+        decoded_extent_a,
+        decoded_extent_b,
+    } = input;
     if !alignment.refine_offset_high_rate {
         return;
     }

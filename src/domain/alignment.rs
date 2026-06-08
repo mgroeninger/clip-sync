@@ -77,17 +77,40 @@ pub struct AlignmentResult {
 
 const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
 
+/// Per-clip alignment inputs for building an [`AlignmentResult`].
+pub struct ClipPairReportInput<'a> {
+    pub windows: &'a [ClipWindow],
+    pub estimates: &'a [ClipMatchEstimate],
+    pub decode_skips_a: &'a [u32],
+    pub decode_skips_b: &'a [u32],
+    pub duration_a: Option<Duration>,
+    pub duration_b: Option<Duration>,
+}
+
+/// Policy for merging multi-clip estimates into a single recommendation.
+pub struct AlignmentMergePolicy {
+    pub min_match_score: f32,
+    pub prefer_start_clip: bool,
+    pub require_consistent_offsets: bool,
+}
+
 pub fn build_alignment_result(
-    windows: &[ClipWindow],
-    estimates: &[ClipMatchEstimate],
-    decode_skips_a: &[u32],
-    decode_skips_b: &[u32],
-    min_match_score: f32,
-    prefer_start_clip: bool,
-    require_consistent_offsets: bool,
-    duration_a: Option<Duration>,
-    duration_b: Option<Duration>,
+    clips: ClipPairReportInput<'_>,
+    policy: AlignmentMergePolicy,
 ) -> AlignmentResult {
+    let ClipPairReportInput {
+        windows,
+        estimates,
+        decode_skips_a,
+        decode_skips_b,
+        duration_a,
+        duration_b,
+    } = clips;
+    let AlignmentMergePolicy {
+        min_match_score,
+        prefer_start_clip,
+        require_consistent_offsets,
+    } = policy;
     debug_assert_eq!(windows.len(), estimates.len());
 
     let clips: Vec<ClipMatch> = windows
@@ -310,6 +333,30 @@ mod tests {
         ClipWindow::new(Duration::from_secs(start), Duration::from_secs(end), label)
     }
 
+    fn report_input<'a>(
+        windows: &'a [ClipWindow],
+        estimates: &'a [ClipMatchEstimate],
+        duration_a: Option<Duration>,
+        duration_b: Option<Duration>,
+    ) -> ClipPairReportInput<'a> {
+        ClipPairReportInput {
+            windows,
+            estimates,
+            decode_skips_a: &[],
+            decode_skips_b: &[],
+            duration_a,
+            duration_b,
+        }
+    }
+
+    fn default_policy() -> AlignmentMergePolicy {
+        AlignmentMergePolicy {
+            min_match_score: 0.5,
+            prefer_start_clip: true,
+            require_consistent_offsets: true,
+        }
+    }
+
     #[test]
     fn reports_start_and_end_alignment_separately() {
         let windows = vec![
@@ -328,15 +375,13 @@ mod tests {
         ];
 
         let result = build_alignment_result(
-            &windows,
-            &estimates,
-            &[],
-            &[],
-            0.5,
-            true,
-            true,
-            Some(Duration::from_secs(2700)),
-            Some(Duration::from_secs(2700)),
+            report_input(
+                &windows,
+                &estimates,
+                Some(Duration::from_secs(2700)),
+                Some(Duration::from_secs(2700)),
+            ),
+            default_policy(),
         );
         assert!(result.start_aligned);
         assert_eq!(result.end_aligned, Some(true));
@@ -365,7 +410,7 @@ mod tests {
             confidence: 0.2,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
+        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
         assert!(!result.start_aligned);
         assert_eq!(result.end_aligned, None);
         assert_eq!(result.recommended_offset_secs, None);
@@ -380,7 +425,7 @@ mod tests {
             confidence: 0.95,
         }];
 
-        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
+        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
         assert_eq!(result.end_aligned, None);
         assert!(result.start_aligned);
     }
@@ -402,7 +447,7 @@ mod tests {
             },
         ];
 
-        let result = build_alignment_result(&windows, &estimates, &[], &[], 0.5, true, true, None, None);
+        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
         assert!(!result.offsets_consistent);
         assert_eq!(result.recommended_offset_secs, None);
     }
@@ -416,15 +461,13 @@ mod tests {
         }];
 
         let result = build_alignment_result(
-            &windows,
-            &estimates,
-            &[],
-            &[],
-            0.5,
-            true,
-            true,
-            Some(Duration::from_secs(900)),
-            Some(Duration::from_secs(850)),
+            report_input(
+                &windows,
+                &estimates,
+                Some(Duration::from_secs(900)),
+                Some(Duration::from_secs(850)),
+            ),
+            default_policy(),
         );
 
         let overlap = result.start_overlap.expect("expected overlap");
