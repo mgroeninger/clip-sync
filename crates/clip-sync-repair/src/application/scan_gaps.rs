@@ -313,25 +313,10 @@ mod tests {
     /// for `ScanGaps::execute` using fakes that simulate a common scenario.
 
     #[test]
-    fn scan_reports_no_gaps_when_a_is_loud() {
-        let dur = Duration::from_secs(120);
-        let reader = FixedReader::new()
-            .with("a.wav", SessionKind::Loud, dur)
-            .with("b.wav", SessionKind::Loud, dur);
-        let progress = FakeProgressReporter;
-
-        // Build the result manually so we don't need a real Chromaprint run.
-        // ScanGaps calls align_with_defaults internally; we test the scan phase
-        // independently of alignment by confirming that a loud A produces zero gaps.
-        //
-        // Note: ScanGaps calls align_with_defaults first, which requires real media.
-        // This test focuses on the policy layer directly instead.
-
-        let result = aligned_result(0.0);
-        assert!(!result.start_aligned == false); // alignment is mocked outside
-
-        // Directly exercise the policy layer:
-        let loud_samples: Vec<i16> = (0..11025)
+    fn loud_pcm_is_not_classified_as_silent() {
+        // ScanGaps::execute calls align_with_defaults which requires real media;
+        // this test verifies the policy layer independently using a fake reader.
+        let loud_samples: Vec<i16> = (0..11_025)
             .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
             .collect();
         let loud_clip = MonoPcmClip {
@@ -342,7 +327,11 @@ mod tests {
         };
         assert!(!policies::is_silent(&loud_clip, 0.01));
 
-        // Confirm reader can open both paths.
+        // Confirm the fake reader can open both sessions.
+        let dur = Duration::from_secs(120);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Loud, dur);
         let source_a = MediaSource::new(PathBuf::from("a.wav"));
         let source_b = MediaSource::new(PathBuf::from("b.wav"));
         assert!(reader.open(&source_a).is_ok());

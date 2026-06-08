@@ -1,14 +1,14 @@
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
-use crate::domain::{Gap, GapReport};
+use crate::domain::GapReport;
+use crate::infrastructure::config::OutputFormat;
 
 pub struct StdoutGapReporter {
-    pub format: super::super::config::OutputFormat,
+    pub format: OutputFormat,
 }
 
 impl GapReporter for StdoutGapReporter {
     fn report(&self, report: &GapReport) -> Result<(), RepairError> {
-        use super::super::config::OutputFormat;
         match self.format {
             OutputFormat::Human => print_human(report),
             OutputFormat::Json => print_json(report),

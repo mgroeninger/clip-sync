@@ -5,7 +5,7 @@ pub mod output;
 use std::process::ExitCode;
 
 use clap::Parser;
-use clip_sync::{init_tracing, ProgressMode, StderrProgressReporter, SymphoniaMediaReader};
+use clip_sync::{init_tracing, StderrProgressReporter, SymphoniaMediaReader};
 
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
