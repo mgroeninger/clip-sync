@@ -4,7 +4,9 @@
 
 **Problem:** With `num_clips == 1`, a single Chromaprint window is the only evidence for the recommended offset. A confident but wrong Δ has no independent check. Multi-clip runs compare offsets across windows but never test “at lag 0, do these shifted regions actually match?”
 
-**Goal:** Optional second pass: given `recommended_offset_secs`, extract a hold-out window from each file (B shifted by Δ) and score **direct similarity at zero lag**. Off by default; enabled via config.
+**Goal:** Optional second pass: given `recommended_offset_secs`, extract a hold-out window from each file (B shifted by Δ) and score **direct similarity at zero lag**. Off by default (`align.validation.verify_offset` on `AlignConfig`); enabled via config or CLI flag.
+
+**Workspace split:** Hold-out logic and `AlignmentResult.offset_verification` in **`crates/clip-sync`**. `--verify-offset`, TOML, and human lines in **`crates/clip-sync-cli`**. See [Config](#config) and [Phases](#phases).
 
 ---
 
@@ -27,8 +29,8 @@ Locked before implementation. Change only with an explicit plan revision.
 | **`try_all_tracks`** | Re-extract hold-out on the **winning** `(track_a, track_b)` only. Record winning track indices during search (same pattern as repetition plan Phase 2). |
 | **Skip / absent semantics** | Flag off → `offset_verification: None` (JSON field omitted via `skip_serializing_if`). Flag on + skip → `Some(OffsetVerification { verified: false, skipped: true, .. })`. Flag on + ran → `skipped: false`. |
 | **Truncation** | Any hold-out extract shorter than `clip_length` after clamping → treat as skip (`skipped: true`), not partial scoring. |
-| **Threshold knob** | `validation.min_verification_confidence` (default `0.5`, same scale as `alignment.min_match_score`). Config only in v1 — no CLI override. |
-| **Architecture** | `pick_verification_window` in `src/domain/policies.rs` (pure). Hold-out extract + score in `src/application/` (e.g. `offset_verification.rs`); reuse `Aligner` / `Fingerprinter` ports. No new port trait in v1. |
+| **Threshold knob** | `validation.min_verification_confidence` (default `0.5`). **No CLI flag for threshold in v1** — TOML / `AlignConfig` only. |
+| **Architecture** | `pick_verification_window` in lib `domain/policies.rs` (pure). Hold-out extract + score in lib `application/offset_verification.rs`; reuse `Aligner` / `Fingerprinter` ports. CLI formats `AlignmentResult` only. No new port trait in v1. |
 | **Phase 1 scope** | Core logic + unit tests + `tracing::debug` only. No stdout / JSON / CLI / `AlignmentResult` field until Phase 2. |
 | **Human / JSON (Phase 2)** | When flag on, always emit `offset_verification` in JSON. Human warning when `verified == false` and not skipped; `--verbose` shows skip reason. |
 | **Repetition interaction (Phase 3)** | After lag-0 score, if `check_clip_repetition`: run `detect_clip_repetition` on hold-out prepared clips; if `should_downgrade(repetition_*, recommended_offset_secs)` (±1 s, same helper as repetition plan), multiply **verification** `confidence` by `0.5` before threshold check. |
@@ -40,21 +42,27 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ## Config
 
-Same `ValidationConfig` section as [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md). Implement the **full** struct once when either feature lands:
+Shared with [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md). Implement the **full** `ValidationConfig` once when either feature lands.
 
-```toml
-[validation]
-check_clip_repetition = false          # repetition plan
-min_repetition_confidence = 0.5
-verify_offset = false
-min_verification_confidence = 0.5
-```
+### Library (`AlignConfig.validation`)
+
+`ValidationConfig` on **`AlignConfig`** in `crates/clip-sync/src/application/config.rs`:
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AlignConfig {
+    #[serde(default)]
+    pub clip: ClipConfig,
+    #[serde(default)]
+    pub alignment: AlignmentConfig,
+    #[serde(default)]
+    pub validation: ValidationConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ValidationConfig {
     #[serde(default)]
-    pub check_clip_repetition: bool,
+    pub check_clip_repetition: bool,          // repetition plan
     #[serde(default = "default_min_repetition_confidence")]
     pub min_repetition_confidence: f32,
     /// After alignment, extract hold-out clips shifted by recommended offset and score lag-0 match.
@@ -70,13 +78,28 @@ fn default_min_verification_confidence() -> f32 {
 }
 ```
 
-- CLI mirror (Phase 2): `--verify-offset` → `config.validation.verify_offset = true` in `apply_cli_overrides`.
-- When flag is **off**, omit `offset_verification` from JSON via `#[serde(skip_serializing_if = "Option::is_none")]` on `AlignmentResult`.
+- `AlignVideos::execute()` reads `config.validation.verify_offset`.
+- `load_align_config` deserializes `[validation]` with `[clip]` and `[alignment]`.
+
+### CLI (`AppConfig` — TOML + flags only)
+
+Top-level TOML unchanged — `[validation]` flattens via `AppConfig.align`:
+
+```toml
+[validation]
+check_clip_repetition = false
+min_repetition_confidence = 0.5
+verify_offset = false
+min_verification_confidence = 0.5
+```
+
+- **CLI Phase 2:** `--verify-offset` → `config.align.validation.verify_offset = true` in `apply_cli_overrides`.
+- When flag is **off**, omit `offset_verification` from JSON via `#[serde(skip_serializing_if = "Option::is_none")]` on lib `AlignmentResult`.
 
 **Behaviour when verification fails (score below threshold, not skipped):**
 
-- `offset_verification.verified = false`; keep `recommended_offset_secs`.
-- Exit code **0**; human line warns that offset was not independently verified (Phase 2).
+- **Lib:** `offset_verification.verified = false`; keep `recommended_offset_secs`.
+- **CLI Phase 2:** exit code **0**; human line warns that offset was not independently verified.
 
 ### Skip conditions
 
@@ -92,6 +115,8 @@ Skip verification (emit `skipped: true`, `verified: false`) when:
 ---
 
 ## Types
+
+All types in **`crates/clip-sync/src/domain/alignment.rs`** (library).
 
 ```rust
 /// Hold-out lag-0 check (Phase 2 on AlignmentResult; Phase 1 internal struct may omit Serialize).
@@ -124,34 +149,57 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 
 ### Phase 0 — Spike
 
+**Lib**
+
 - [ ] Option A on synthetic hold-out: matching +3s chirp pair → `\|offset_secs\| ≤ 0.5`, confidence ≥ 0.5
 - [ ] Same pair with intentional wrong Δ (+5s) → fails threshold or `\|offset_secs\| > 0.5`
 - [ ] Record whether false passes warrant Option B before Phase 1 ships
 
-### Phase 1 — Hold-out extract + lag-0 score
+**CLI:** none
 
-- [ ] Plan doc
-- [ ] `ValidationConfig` on `AppConfig` (full struct with repetition fields)
-- [ ] `pick_verification_window(duration, existing_windows, clip_length) -> Option<ClipWindow>` in `policies.rs`
-- [ ] `verify_offset_at_holdout(...)` → internal `VerificationResult` (mirror `OffsetVerification` fields)
+### Phase 1 — Hold-out extract + lag-0 score (lib only)
+
+**Lib (`clip-sync`)**
+
+- [ ] `ValidationConfig` nested in `AlignConfig` (full struct with repetition fields — shared with repetition plan)
+- [ ] `domain/policies.rs` — `pick_verification_window(duration, existing_windows, clip_length) -> Option<ClipWindow>`
+- [ ] `application/offset_verification.rs` — **new** `verify_offset_at_holdout(...)` → internal `VerificationResult`
 - [ ] Lag-0 score via `find_offset` + tolerance check (Option A)
-- [ ] Wire in `AlignVideos::execute()` after alignment, before `log_alignment_summary`
+- [ ] `application/align_videos.rs` — wire in `execute()` after alignment, before `log_alignment_summary`; winning tracks for `try_all_tracks`
+- [ ] `ProgressReporter::phase("Verifying offset at hold-out window...")` when running (lib port; no CLI code)
 - [ ] Unit tests: window picker, known Δ + chirp → verified; wrong Δ → not verified; negative Δ; skip when `duration < clip_length`
+- [ ] **`AlignmentResult.offset_verification` not set yet** — debug / internal struct only
 
-### Phase 2 — Reporting + CLI
+**CLI:** none
+
+### Phase 2 — Reporting (lib domain + CLI stdout)
+
+**Lib (`clip-sync`)**
 
 - [ ] Add `offset_verification: Option<OffsetVerification>` to `AlignmentResult`
-- [ ] Merge Phase 1 `VerificationResult` into response
-- [ ] Human + JSON output; progress phase: `Verifying offset at hold-out window...`
-- [ ] CLI `--verify-offset`
-- [ ] `try_all_tracks`: record winning tracks; verification uses that pair
-- [ ] Document in PLAN.md; note redundancy when `num_clips >= 2` and offsets already agree
+- [ ] Merge Phase 1 `VerificationResult` into returned `AlignmentResult`
+- [ ] `try_all_tracks`: record winning tracks; verification uses that pair only
+- [ ] Lib tests: `AlignmentResult` JSON shape when flag on/off/skipped (`serde_json`)
+- [ ] Document in [PLAN.md](../PLAN.md); note redundancy when `num_clips >= 2` and offsets already agree
 
-### Phase 3 — Corpus + repetition cross-check
+**CLI (`clip-sync-cli`)**
 
-- [ ] `detect_clip_repetition` on hold-out prepared clips when both flags on; apply `should_downgrade` to verification confidence
-- [ ] Corpus case `verify_offset_pass` (see [Corpus](#corpus))
-- [ ] Archive this doc
+- [ ] `infrastructure/cli/args.rs` — `--verify-offset`
+- [ ] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: `config.align.validation.verify_offset = true`
+- [ ] `infrastructure/cli/output.rs` — human warning when `verified == false` and not skipped; verbose skip reason
+- [ ] `tests/config_roundtrip.rs` — TOML `[validation] verify_offset = true`
+- [ ] `tests/cli_output.rs` — human lines for verified / unverified / skipped
+
+### Phase 3 — Corpus + repetition cross-check (lib only)
+
+**Lib (`clip-sync`)**
+
+- [ ] `detect_clip_repetition` on hold-out prepared clips when both flags on; apply `should_downgrade` to verification confidence (from repetition plan)
+- [ ] Test `verification_downgrade_when_holdout_repeats`
+- [ ] `application/testing/corpus_fixtures.rs` — case `verify_offset_pass`; extend `CorpusCase` with `verify_offset` / `expect_offset_verified`
+- [ ] Archive this doc → `docs/archive/offset-verification-plan.md`
+
+**CLI:** none (prints lib-populated `offset_verification` field)
 
 ---
 
@@ -240,9 +288,11 @@ execute():
   return
 ```
 
-Phase 1: store result internally / debug log only; Phase 2: attach to `AlignmentResult`.
+Phase 1: store result internally / debug log only; Phase 2: attach to lib `AlignmentResult`. CLI prints via existing JSON/human formatters.
 
 ### Output (Phase 2)
+
+**JSON** — lib `AlignmentResult` serde; CLI `output.rs` prints when `OutputFormat::Json`.
 
 **JSON** (`--format json`, flag on, verification ran):
 
@@ -274,6 +324,8 @@ Phase 1: store result internally / debug log only; Phase 2: attach to `Alignment
 }
 ```
 
+**Human** — **CLI only** (`crates/clip-sync-cli/src/infrastructure/cli/output.rs`):
+
 **Human** (unverified, not skipped):
 
 ```text
@@ -290,17 +342,21 @@ Phase 1: store result internally / debug log only; Phase 2: attach to `Alignment
 
 ## Tests
 
-| Test | Phase | Asserts |
-|------|-------|---------|
-| `pick_verification_window_middle_for_single_clip` | 1 | 60s media, 15s clip, one discovery window → hold-out in middle third |
-| `pick_verification_window_fits_two_clip_gap` | 1 | 60s, start+end windows → hold-out in gap |
-| `pick_verification_window_none_when_shorter_than_clip` | 1 | `duration < clip_length` → `None` |
-| `verify_offset_passes_known_leader` | 1 | +3s chirp, correct Δ → `verified = true` |
-| `verify_offset_passes_negative_delta` | 1 | B-ahead chirp, correct negative Δ → `verified = true` |
-| `verify_offset_fails_wrong_delta` | 1 | Intentionally wrong Δ → `verified = false` |
-| `verify_offset_skips_when_window_infeasible` | 1 | Δ pushes B window past `dur_b` → `skipped = true` |
-| `verification_downgrade_when_holdout_repeats` | 3 | Hold-out repeat lag ≈ Δ → confidence ×0.5 may flip `verified` |
-| Corpus `verify_offset_pass` | 3 | End-to-end `num_clips = 1`, flag on, +3s leader |
+| Test | Phase | Crate | Asserts |
+|------|-------|-------|---------|
+| `pick_verification_window_middle_for_single_clip` | 1 | lib | 60s media, 15s clip, one discovery window → hold-out in middle third |
+| `pick_verification_window_fits_two_clip_gap` | 1 | lib | 60s, start+end windows → hold-out in gap |
+| `pick_verification_window_none_when_shorter_than_clip` | 1 | lib | `duration < clip_length` → `None` |
+| `verify_offset_passes_known_leader` | 1 | lib | +3s chirp, correct Δ → `verified = true` |
+| `verify_offset_passes_negative_delta` | 1 | lib | B-ahead chirp, correct negative Δ → `verified = true` |
+| `verify_offset_fails_wrong_delta` | 1 | lib | Intentionally wrong Δ → `verified = false` |
+| `verify_offset_skips_when_window_infeasible` | 1 | lib | Δ pushes B window past `dur_b` → `skipped = true` |
+| `alignment_result_json_offset_verification` | 2 | lib | Flag on → JSON includes `offset_verification`; flag off → field omitted |
+| `cli_human_unverified_offset` | 2 | CLI | Human line when `verified == false` |
+| `cli_human_verbose_skip_reason` | 2 | CLI | Verbose shows skip reason |
+| `config_verify_offset_roundtrip` | 2 | CLI | TOML `verify_offset = true` via `AppConfig` |
+| `verification_downgrade_when_holdout_repeats` | 3 | lib | Hold-out repeat lag ≈ Δ → confidence ×0.5 may flip `verified` |
+| Corpus `verify_offset_pass` | 3 | lib | End-to-end `num_clips = 1`, flag on, +3s leader |
 
 ### Corpus
 
@@ -315,16 +371,31 @@ Phase 1: store result internally / debug log only; Phase 2: attach to `Alignment
 | Assert | `offset_verification.verified == true`, `skipped == false` |
 | Assert | `offset_verification.confidence >= 0.5` |
 
-Extend `CorpusCase` with optional `verify_offset: bool` and `expect_offset_verified: Option<bool>` when implementing Phase 3.
+Extend `CorpusCase` with optional `verify_offset: bool` and `expect_offset_verified: Option<bool>` when implementing Phase 3 (lib `corpus_fixtures.rs`).
 
 ---
 
 ## References
 
+### Library (`crates/clip-sync`)
+
 - `src/application/align_videos.rs` — `execute()` post-alignment hook
-- `src/application/offset_verification.rs` — new module (name TBD)
-- `src/domain/alignment.rs` — extend `AlignmentResult`
+- `src/application/offset_verification.rs` — **new** hold-out verify module
+- `src/domain/alignment.rs` — `OffsetVerification`, extend `AlignmentResult`
 - `src/domain/policies.rs` — `clip_windows`, `pick_verification_window`
+- `src/application/config.rs` — `ValidationConfig` on `AlignConfig`
 - `src/infrastructure/chromaprint/aligner.rs` — `find_offset` / Option A
-- [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md) — shared `ValidationConfig`, `should_downgrade`
-- [BACKLOG.md](../BACKLOG.md) — add items when work starts
+- `src/application/testing/corpus_fixtures.rs` — corpus case (Phase 3)
+
+### CLI (`crates/clip-sync-cli`)
+
+- `src/infrastructure/cli/args.rs`, `mod.rs` — `--verify-offset`, `apply_cli_overrides`
+- `src/infrastructure/cli/output.rs` — human verification lines
+- `src/infrastructure/config.rs` — `AppConfig`
+- `tests/cli_output.rs`, `tests/config_roundtrip.rs`
+
+### Other
+
+- [TEMP-clip-self-repetition-plan.md](TEMP-clip-self-repetition-plan.md) — shared `ValidationConfig`, `should_downgrade`, `detect_clip_repetition`
+- [PLAN.md](../PLAN.md) — target architecture
+- [BACKLOG.md](../BACKLOG.md) — tracking item
