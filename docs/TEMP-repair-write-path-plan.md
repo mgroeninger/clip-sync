@@ -1,8 +1,10 @@
 # Temporary plan: repair write path (track match, multi-channel patch, WAV + optional ffmpeg)
 
-> **Status:** Not started. Archive to `docs/archive/repair-write-path-plan.md` when shipped.
+> **Status:** In progress (2026-06-08). **R0–R1** and **R2 core** shipped in code; **R2 completion**, **lib extract hardening**, **R3–R5** remain. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
 
-**Problem:** `clip-sync-repair` today is report-only (migration Phase 4). It aligns A and B, scans A for silent runs, and flags whether B has energy at the aligned position (`Gap.b_has_energy`). It cannot answer "do the tracks match (surround/stereo)?", cannot patch B's audio into A, has no normalization, scans only one direction (A→B), and the whole media pipeline is **mono-only** (`MediaSession::extract_mono` → `MonoPcmClip`).
+**Problem (original):** `clip-sync-repair` shipped as report-only (migration Phase 4). It aligned A and B and scanned A for silent runs but could not compare track layouts, surface overlap, patch audio, or emit multi-channel output.
+
+**Remaining gaps:** alignment-gate semantics on `Gap` (optional B fields), bidirectional silence scan, mutual-silence cross-check, gap fill + WAV write, optional ffmpeg mux; lib `extract.rs` perf/maintainability before full-timeline decode in R4.
 
 **Goal:** Extend the repair hexagon to the full workflow:
 
@@ -39,9 +41,34 @@ Locked before implementation. Change only with an explicit plan revision.
 | **dry-run semantics** | `--dry-run` (default **true** until write path ships, then default **false** once `--output`/`--wav` given) gates all file writes. Report-only when no output path set. |
 | **Repair errors** | Extend `RepairError` with `Write(io)` (reuse code 4) and `Mux(String)` (new exit code **6**). Keep `Align` boundary wrapping. |
 | **No lib AppError changes** | All new failure modes are repair-local. ffmpeg/mux never touches lib. |
-| **Phasing** | R0 spike → R1 native extraction (lib) → R2 track match + surface overlap → R3 bidirectional scan + cross-check → R4 gap-fill + WAV → R5 ffmpeg mux (feature). Each phase ships green with tests. |
+| **Phasing** | R0–R1 (lib extract) → R2 (repair report) → **R2 completion** → R3 → **lib extract hardening** (before R4) → R4 → R5. Each slice ships green with tests. |
+| **Lib extract hardening** | Not a numbered repair phase. `append_*` reuse one `Vec<f32>` scratch per extract loop (before R4). Optional shared mono/interleaved decode scaffold at R4 kickoff. Plane-direct Symphonia read deferred. |
 
-> **Phase naming:** `R0`–`R5` are *repair feature* phases. They sit on top of completed migration Phase 4 (report-only) and supersede the single deferred "migration Phase 5 (ffmpeg write path)" with a finer breakdown.
+> **Phase naming:** `R0`–`R5` are *repair feature* phases. They sit on top of completed migration Phase 4 (report-only) and supersede the single deferred "migration Phase 5 (ffmpeg write path)" with a finer breakdown. **R2 completion** and **lib extract hardening** are follow-ups tracked here and in [BACKLOG.md](../BACKLOG.md) — not "R1.5" (R2 is already partially shipped).
+
+---
+
+## Implementation status
+
+| Phase / slice | Crate | Status | Notes |
+|---------------|-------|--------|-------|
+| **R0** spike | lib | ✅ Done | Validated via R1 tests (stereo, mid-file seek, resampler path) |
+| **R1** native extraction | lib | ✅ Done | `MultiChannelPcm`, `extract_interleaved`, `MediaError::Unsupported`, `TimelineOverlap` re-export, `resample_interleaved` on facade |
+| **R2** core | repair | ✅ Done | `track_match`, `GapReport.track_compatibility` + `overlap`, CLI human/JSON |
+| **R2 completion** | repair | ☐ Open | `Option<f64>` B fields, alignment gate (no `unwrap_or(0.0)`), human note — **before R3** |
+| **Lib extract hardening** | lib | ☐ Open | Scratch buffer reuse (**before R4**); shared decode scaffold (**at R4 kickoff**, recommended) |
+| **R3** | repair | ☐ Open | Bidirectional scan + `gap_offset_agreement` |
+| **R4** | repair | ☐ Open | `PatchAudio`, gap fill, multi-channel WAV |
+| **R5** | repair | ☐ Open | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) |
+
+### Recommended order of work
+
+```text
+1. R2 completion          (repair — alignment gate / JSON null B fields)
+2. R3                     (repair — bidirectional scan + cross-check)
+3. Lib extract hardening  (lib — scratch buffer; optional scaffold)
+4. R4 → R5                (repair write path)
+```
 
 ---
 
@@ -229,8 +256,8 @@ impl Gap {
 }
 
 // add to GapReport
-pub track_compatibility: TrackCompatibility,
-pub overlap: Option<TimelineOverlap>,            // copied from alignment.start_overlap
+pub track_compatibility: Option<TrackCompatibility>,  // None when B unavailable
+pub overlap: Option<TimelineOverlap>,                  // copied from alignment.start_overlap
 pub gap_offset_agreement: Option<GapOffsetAgreement>,  // R3 cross-check
 
 pub struct GapOffsetAgreement {
@@ -241,45 +268,57 @@ pub struct GapOffsetAgreement {
 }
 ```
 
-`TimelineOverlap` is already re-exported? **No** — audit facade; add `TimelineOverlap` to the `domain` re-export block in lib `lib.rs` (same fix pattern as `HighRateRefinement`, gap #7 in the archived refactor doc).
+`TimelineOverlap` — re-exported on lib facade in R1 (`domain/mod.rs` + `lib.rs`).
 
 ---
 
 ## Phases
 
-### R0 — Spike: native multi-channel extraction
+### R0 — Spike: native multi-channel extraction ✅
 
 **Lib (`clip-sync`)**
 
-- [ ] Prototype `extract_interleaved` for one stereo WAV via existing Symphonia session; confirm interleaved i16, correct frame count, native rate
-- [ ] Confirm session reuse / seek path works for an arbitrary mid-file window (not just `start == 0`)
-- [ ] Record whether resampling B→A rate needs `rubato` (lib) or a repair-local linear fallback suffices
+- [x] Prototype `extract_interleaved` for one stereo WAV via existing Symphonia session; confirm interleaved i16, correct frame count, native rate
+- [x] Confirm session reuse / seek path works for an arbitrary mid-file window (not just `start == 0`)
+- [x] Resampling B→A: `resample_interleaved` on facade (per-channel rubato via `resample_mono_pcm`)
 
 **Repair:** none
 
-### R1 — Native extraction port (lib only)
+### R1 — Native extraction port (lib only) ✅
 
 **Lib (`clip-sync`)**
 
-- [ ] `domain/multichannel_pcm.rs` — `MultiChannelPcm`; facade re-export
-- [ ] `MediaError::Unsupported(String)` (if absent)
-- [ ] `MediaSession::extract_interleaved` default + `SymphoniaMediaSession` impl — mirror `extract_mono_with_state` in `extract.rs`, skip the mono-downmix step, use the existing `decoded.copy_to_vec_interleaved()` call already present in that file
-- [ ] `domain/resample.rs` / facade — add `resample_interleaved` (per-channel rubato via `resample_mono_pcm`) + `pub use` in `lib.rs`
-- [ ] Re-export `TimelineOverlap` on facade `domain` block
-- [ ] Lib tests: stereo extract frame count, channel deinterleave round-trip, mid-file window, decode-skip surfaced
+- [x] `domain/multichannel_pcm.rs` — `MultiChannelPcm`; facade re-export
+- [x] `MediaError::Unsupported(String)`
+- [x] `MediaSession::extract_interleaved` default + `SymphoniaMediaSession` impl — mirrors `extract_mono_with_state` (intentional duplication; see **Lib extract hardening**)
+- [x] `domain/resample.rs` / facade — `resample_interleaved` + `resample_mono_pcm` re-export
+- [x] Re-export `TimelineOverlap` on facade `domain` block
+- [x] Lib tests: stereo frame count, mid-file window, channel preservation, default port `Unsupported`
 
 **Repair:** none
+
+**Known follow-up (not R1 scope):** per-packet `Vec` alloc in `append_*`; duplicated decode loops — see **Lib extract hardening**.
 
 ### R2 — Track compatibility + surface overlap (repair, report-only)
 
+**R2 core ✅ (shipped)**
+
 **Repair (`clip-sync-repair`)**
 
-- [ ] `domain/track_match.rs` — `assess_track_compatibility` + unit tests (identical / rate-only / channel mismatch)
-- [ ] `application/scan_gaps.rs` — capture `track_a`/`track_b`, build `TrackCompatibility`; copy `alignment.start_overlap` into report
-- [ ] `application/scan_gaps.rs` — **alignment gate:** when `recommended_offset_secs` is `None`, still emit A silent windows; set `video_b_*` to `None`, skip B session open and `b_has_energy` probe (never `unwrap_or(0.0)` on B positions)
-- [ ] `domain/gap.rs` — `video_b_start_secs` / `video_b_end_secs` → `Option<f64>`; tighten `is_fillable()`; add `track_compatibility`, `overlap` to `GapReport` (grep for `Gap {` and `Gap::` construction sites first to know full blast radius before changing the field types)
-- [ ] `infrastructure/cli/output.rs` — human + JSON lines for track match + overlap window; when offset is `none`, note that gaps are A-only (not fillable)
-- [ ] Tests: report includes compatibility + overlap; JSON shape; failed alignment → A gaps present, `video_b_*` null, `fillable_count == 0`
+- [x] `domain/track_match.rs` — `assess_track_compatibility` + unit tests (identical / rate-only / channel mismatch)
+- [x] `application/scan_gaps.rs` — best-effort B open; build `TrackCompatibility`; copy `alignment.start_overlap` into report
+- [x] `domain/gap.rs` — `track_compatibility: Option<TrackCompatibility>`, `overlap: Option<TimelineOverlap>` on `GapReport`
+- [x] `infrastructure/cli/output.rs` — human + JSON for track match + overlap
+- [x] Tests: compatibility in report; JSON shape; human render smoke test
+
+**R2 completion ☐ (before R3)**
+
+Align code with **Alignment gate** decision and `Gap` types below. Energy probing already skips when offset is `None`; remaining gaps:
+
+- [ ] `domain/gap.rs` — `video_b_start_secs` / `video_b_end_secs` → `Option<f64>`; `is_fillable()` requires `video_b_start_secs.is_some() && b_has_energy`
+- [ ] `application/scan_gaps.rs` — when `recommended_offset_secs` is `None`: never `unwrap_or(0.0)` on B positions; emit `video_b_*: None` (grep all `Gap {` / `Gap::` construction sites)
+- [ ] `infrastructure/cli/output.rs` — when alignment failed, note that B timeline mapping was skipped (gaps A-only / unfillable)
+- [ ] Tests: `failed_alignment_emits_a_gaps_without_b_mapping` — A gaps present, `video_b_*` null in JSON, `fillable_count == 0`
 
 **Lib:** none
 
@@ -309,7 +348,21 @@ pub struct GapOffsetAgreement {
 - [ ] `infrastructure/cli/{args,mod}.rs` — `--wav`, `--no-normalize`, `--crossfade-ms`, write-mode wiring
 - [ ] Tests: gap-fill splice on synthetic stereo (gap in A, energy in B) → patched WAV has B audio in gap, A elsewhere; normalization gain bounded; crossfade continuity; integration test writing a real WAV via Symphonia
 
-**Lib:** none (consumes R1 `extract_interleaved`)
+**Lib:** consumes R1 `extract_interleaved`; **requires lib extract hardening** (scratch buffer) for acceptable full-timeline performance
+
+### Lib extract hardening (R4 prerequisite, lib only)
+
+Not a repair phase number. Address after R3 (or in parallel if R4 is blocked only on repair work). Do **not** fold into R2 — wrong crate/layer.
+
+**Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a fresh `Vec` per decoded packet (`copy_to_vec_interleaved`). On a 30-minute stereo 48 kHz full-timeline extract (R4 `PatchAudio`), that is tens of thousands of heap allocations on the hot path. `extract_mono_with_state` and `extract_interleaved_with_state` are ~300 lines duplicated; seek/retry/decode-skip fixes must be mirrored manually.
+
+**Lib (`clip-sync`)**
+
+- [ ] **Scratch buffer (before R4):** one `Vec<f32>` per extract attempt, passed into `append_*`; `scratch.clear()` per packet. Touches both mono and interleaved paths.
+- [ ] **Shared decode scaffold (at R4 kickoff, recommended):** extract packet loop (seek/retry, decode-skip, tail-padding, progress) into a shared inner function; mono vs interleaved differ only at the append/sink step.
+- [ ] Tests: existing `media_reader_tests` + append unit tests stay green; no behavior change expected for scratch-only PR.
+
+**Defer:** plane-direct Symphonia read (skip `copy_to_vec_interleaved`) — optional polish if profiling shows scratch reuse is insufficient.
 
 ### R5 — ffmpeg video mux (behind `ffmpeg-mux` feature)
 
@@ -417,11 +470,12 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 
 | Test | Phase | Crate | Asserts |
 |------|-------|-------|---------|
-| `extract_interleaved_stereo_frame_count` | R1 | lib | frames == rate × secs; channels == 2 |
-| `extract_interleaved_midfile_window` | R1 | lib | mid-file seek returns expected window |
-| `assess_compat_identical / rate_only / channel_mismatch` | R2 | repair | verdict mapping |
-| `report_includes_compatibility_and_overlap` | R2 | repair | fields populated; JSON shape |
-| `failed_alignment_emits_a_gaps_without_b_mapping` | R2 | repair | `recommended_offset_secs: null` → A gaps listed, `video_b_*` null, `fillable_count == 0` |
+| `extract_interleaved_stereo_frame_count` | R1 ✅ | lib | frames == rate × secs; channels == 2 |
+| `extract_interleaved_midfile_window` | R1 ✅ | lib | mid-file seek returns expected window |
+| `append_*_reuses_scratch_buffer` | lib hardening | lib | no per-packet alloc; same PCM output as before |
+| `assess_compat_identical / rate_only / channel_mismatch` | R2 ✅ | repair | verdict mapping |
+| `report_includes_compatibility_and_overlap` | R2 ✅ | repair | fields populated; JSON shape |
+| `failed_alignment_emits_a_gaps_without_b_mapping` | R2 completion | repair | `recommended_offset_secs: null` → A gaps listed, `video_b_*` null, `fillable_count == 0` |
 | `silence_offset_recovered_from_mutual_gaps` | R3 | repair | co-located silence → Δ ≈ true offset |
 | `gap_offset_disagreement_flagged` | R3 | repair | wrong silence layout → `agrees = false` |
 | `compute_fill_gain_clamps_to_max_db` | R4 | repair | gain bounded |
@@ -436,9 +490,10 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 
 ## Open questions
 
-- ~~**Resampler reuse** — resolved: add `resample_interleaved` to the facade in R1; see Decisions table.~~
+- ~~**Resampler reuse** — resolved: `resample_interleaved` on facade (R1).~~
+- ~~**TimelineOverlap facade** — resolved: re-exported (R1).~~
 - **Channel up/downmix:** v1 skips fill on channel-count mismatch. A future phase could map stereo→5.1 fronts or downmix. Out of scope until a corpus case needs it.
-- **Streaming write:** full-timeline A in memory is the simple v1 choice. Chunked encode is deferred until users hit memory pain (mirrors lib BACKLOG "Memory use and PCM cloning").
+- **Streaming write:** full-timeline A in memory is the simple v1 choice. Chunked encode is deferred until users hit memory pain (mirrors lib BACKLOG "Memory use and PCM cloning"). Distinct from **per-packet scratch alloc** (lib extract hardening — address before R4).
 
 ---
 

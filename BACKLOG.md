@@ -53,17 +53,21 @@ Next: [Phase 4](#phase-4--edge-cases-and-semantics).
 
 Implement repetition before or alongside verification (shared config section, same align loop).
 
-### Repair write path (migration Phase 5 → R0–R5)
+### Repair write path (migration Phase 5 → R0–R5) — **in progress**
 
-**Status:** Not started. **Authoritative plan:** [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (supersedes the thin Phase 5 checklist in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md)).
+**Status:** R0–R1 and R2 core shipped (2026-06-08). **Next:** [R2 completion](#repair-r2-completion-alignment-gate) → R3 → [lib extract hardening](#symphonia-extract-loop-hardening) → R4 → R5.
 
-| Phase | Scope | Crate |
-|-------|--------|-------|
-| **R0–R1** | Native multi-channel `extract_interleaved` | lib |
-| **R2** | Track compatibility, overlap on report, alignment gate (optional B fields) | repair |
-| **R3** | Bidirectional silence scan + mutual-silence cross-check | repair |
-| **R4** | `PatchAudio`, gap fill, multi-channel WAV output | repair |
-| **R5** | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) | repair |
+**Authoritative plan:** [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (supersedes the thin Phase 5 checklist in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md)).
+
+| Phase / slice | Scope | Crate | Status |
+|---------------|--------|-------|--------|
+| **R0–R1** | `MultiChannelPcm`, `extract_interleaved`, `resample_interleaved`, `TimelineOverlap` re-export | lib | ✅ Done |
+| **R2 core** | `track_match`, `GapReport` compatibility + overlap, CLI output | repair | ✅ Done |
+| **R2 completion** | `Option<f64>` B fields, alignment gate (no bogus B positions when offset missing) | repair | ☐ Open — **before R3** |
+| **Lib extract hardening** | Scratch buffer reuse; optional shared mono/interleaved decode scaffold | lib | ☐ Open — **before / at R4** |
+| **R3** | Bidirectional silence scan + `gap_offset_agreement` | repair | ☐ Open |
+| **R4** | `PatchAudio`, gap fill, multi-channel WAV | repair | ☐ Open |
+| **R5** | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) | repair | ☐ Open |
 
 **Prerequisite:** [Workspace repair Phase 4](#workspace-repair-phase-4-report-only) (shipped).
 
@@ -84,6 +88,56 @@ Implement repetition before or alongside verification (shared config section, sa
 ---
 
 ## High priority
+
+### Repair R2 completion (alignment gate)
+
+**Status:** Not started. Plan: [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § R2 completion.
+
+**Problem:** R2 core reports track compatibility and overlap, but `Gap.video_b_*` are still plain `f64`. When `recommended_offset_secs` is `None`, scan uses `offset_secs.unwrap_or(0.0)` — bogus B timeline positions in JSON. Plan requires `null` B fields and explicit human note that B mapping was skipped.
+
+**Impact:** R3 mutual-silence cross-check and JSON consumers can misread failed-alignment reports; fill semantics leak into scan output.
+
+**Direction:**
+
+- `video_b_start_secs` / `video_b_end_secs` → `Option<f64>` on `Gap`
+- `is_fillable()` requires `video_b_start_secs.is_some() && b_has_energy`
+- `scan_gaps.rs`: never map B positions without a recommended offset
+- CLI: note when gaps are A-only
+- Test: `failed_alignment_emits_a_gaps_without_b_mapping`
+
+**When:** Before R3.
+
+**References:** `crates/clip-sync-repair/src/domain/gap.rs`, `crates/clip-sync-repair/src/application/scan_gaps.rs`, `crates/clip-sync-repair/src/infrastructure/cli/output.rs`
+
+---
+
+### Repair R3 — bidirectional scan + mutual-silence cross-check
+
+**Status:** Not started. Plan: [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § R3.
+
+**Problem:** Gap scan is one-directional (A→B). Co-occurring silence in both files could independently verify `recommended_offset_secs`.
+
+**Direction:** Scan B timeline when `scan_both`; `silence_based_offset` + `GapOffsetAgreement` on report (diagnostic only — never overrides alignment).
+
+**When:** After R2 completion.
+
+**References:** `crates/clip-sync-repair/src/application/cross_check.rs` (new), `scan_gaps.rs`
+
+---
+
+### Repair R4–R5 — patch audio, WAV, optional ffmpeg mux
+
+**Status:** Not started. Plan: [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § R4–R5.
+
+**Problem:** No write path — report-only tool cannot emit patched multi-channel WAV or remuxed video.
+
+**Direction:** R4: `PatchAudio`, normalization, crossfade, `hound` WAV writer. R5: `RepairVideos` + `ffmpeg-mux` feature + subprocess mux adapter.
+
+**When:** After R3 and lib extract hardening (scratch buffer at minimum).
+
+**References:** `crates/clip-sync-repair/`, `docs/error-mapping.md`
+
+---
 
 ### Large-offset alignment accuracy
 
@@ -110,6 +164,26 @@ Implement repetition before or alongside verification (shared config section, sa
 ---
 
 ## Medium priority
+
+### Symphonia extract loop hardening
+
+**Status:** Not started. Plan: [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) § Lib extract hardening.
+
+**Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a new `Vec` per decoded packet. `extract_mono_with_state` and `extract_interleaved_with_state` duplicate ~300 lines of seek/retry/decode-skip logic (R1 intentionally mirrored mono).
+
+**Impact:** Full-timeline `extract_interleaved` in R4 `PatchAudio` hits tens of thousands of allocations per run. Future mono-path fixes may not propagate to interleaved without manual mirroring.
+
+**Direction:**
+
+1. **Before R4:** reuse one `Vec<f32>` scratch buffer per extract loop in `extract.rs` (mono + interleaved).
+2. **At R4 kickoff (recommended):** shared decode-loop scaffold; mono vs interleaved differ only at append/sink.
+3. **Defer:** plane-direct Symphonia reads instead of `copy_to_vec_interleaved`.
+
+**When:** Scratch before R4; scaffold when opening R4 work.
+
+**References:** `crates/clip-sync/src/infrastructure/symphonia/extract.rs`, `media_reader_tests.rs`
+
+---
 
 ### Clip self-repetition check
 
@@ -312,9 +386,29 @@ Implement after or alongside repetition (shared config, same align loop).
 
 **Done (2026-06-08):** `clip-sync-repair` crate shipped — `ScanGaps`, `GapReport`, `GapReporter`, `RepairError`, CLI gap report (human + JSON). Integration test via `crates/clip-sync-repair/tests/scan_gaps_integration.rs`.
 
-**Next:** [Repair write path](#repair-write-path-migration-phase-5--r0r5) (R0–R5 in [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)).
+**Next:** [Repair write path](#repair-write-path-migration-phase-5--r0r5) — R2 completion, then R3–R5 ([TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)).
 
 **References:** [docs/archive/workspace-refactor-gaps.md](docs/archive/workspace-refactor-gaps.md), `crates/clip-sync-repair/`, [docs/error-mapping.md](docs/error-mapping.md) (repair exit codes)
+
+---
+
+### Repair write path R0–R1 (lib native extraction)
+
+**Done (2026-06-08):** `MultiChannelPcm`, `MediaSession::extract_interleaved`, `SymphoniaMediaSession` impl, `MediaError::Unsupported`, facade re-exports (`MultiChannelPcm`, `TimelineOverlap`, `resample_interleaved`, `resample_mono_pcm`). Lib tests in `media_reader_tests.rs`.
+
+**Known follow-up:** [Symphonia extract loop hardening](#symphonia-extract-loop-hardening) (not part of R1 scope).
+
+**References:** `crates/clip-sync/src/domain/multichannel_pcm.rs`, `crates/clip-sync/src/infrastructure/symphonia/extract.rs`, [TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)
+
+---
+
+### Repair write path R2 core (track match + overlap)
+
+**Done (2026-06-08):** `domain/track_match.rs`, `GapReport.track_compatibility` + `overlap`, best-effort B open, CLI human/JSON for tracks and overlap.
+
+**Next:** [R2 completion](#repair-r2-completion-alignment-gate) (optional B fields, alignment gate).
+
+**References:** `crates/clip-sync-repair/src/domain/track_match.rs`, `scan_gaps.rs`, `infrastructure/cli/output.rs`
 
 ---
 

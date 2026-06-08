@@ -712,10 +712,11 @@ pub(crate) fn extract_interleaved_with_state(
     let ch = channels.unwrap_or(1);
     let target = target_frames.unwrap_or(0);
 
+    // Capture the true decoded frame count before truncation: this is what gets stored in
+    // MultiChannelPcm.decoded_frame_count to indicate whether silence padding was applied.
+    let decoded_frame_count = out.len() / ch;
     out.truncate(target.saturating_mul(ch));
-    let frames_collected = out.len() / ch;
-    progress.progress(label, frames_collected as u64, target as u64);
-    let decoded_frame_count = frames_collected;
+    progress.progress(label, decoded_frame_count.min(target) as u64, target as u64);
 
     if out.is_empty() {
         return Err(fail_media(
@@ -733,8 +734,8 @@ pub(crate) fn extract_interleaved_with_state(
         ));
     }
 
-    if frames_collected < target {
-        let shortfall = target - frames_collected;
+    if decoded_frame_count < target {
+        let shortfall = target - decoded_frame_count;
         let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
         if shortfall > limit {
             return Err(fail_media(
@@ -745,7 +746,7 @@ pub(crate) fn extract_interleaved_with_state(
                     track.index,
                     format!(
                         "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
-                        frames_collected,
+                        decoded_frame_count,
                         target,
                         window.start.as_secs_f64(),
                         window.end.as_secs_f64()
@@ -771,7 +772,7 @@ pub(crate) fn extract_interleaved_with_state(
             path = %path.display(),
             track = track.index,
             decode_error_skips,
-            decoded_frames = frames_collected,
+            decoded_frames = decoded_frame_count,
             target_frames = target,
             "interleaved extract completed after skipping corrupt decode packets"
         );
@@ -783,7 +784,7 @@ pub(crate) fn extract_interleaved_with_state(
         track = track.index,
         sample_rate = rate,
         channels = ch,
-        frames = out.len() / ch.max(1),
+        frames = out.len() / ch,
         "extracted interleaved clip"
     );
 

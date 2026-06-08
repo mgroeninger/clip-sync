@@ -97,11 +97,11 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             if policies::is_silent(&pcm_a, request.silence_peak_fraction)
                 && window_secs >= request.min_gap_secs
             {
-                let b_start = pos + offset_secs.unwrap_or(0.0);
-                let b_end = end + offset_secs.unwrap_or(0.0);
+                // B positions are only meaningful when alignment produced an offset.
+                let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
 
-                let b_has_energy = match (&b_session, offset_secs) {
-                    (Some((session_b, track_b)), Some(_)) if b_start >= 0.0 => {
+                let b_has_energy = match (&b_session, b_positions) {
+                    (Some((session_b, track_b)), Some((b_start, b_end))) if b_start >= 0.0 => {
                         let window_b = ClipWindow::new(
                             Duration::from_secs_f64(b_start),
                             Duration::from_secs_f64(b_end),
@@ -120,8 +120,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 gaps.push(Gap {
                     video_a_start_secs: pos,
                     video_a_end_secs: end,
-                    video_b_start_secs: b_start,
-                    video_b_end_secs: b_end,
+                    video_b_start_secs: b_positions.map(|(s, _)| s),
+                    video_b_end_secs: b_positions.map(|(_, e)| e),
                     b_has_energy,
                 });
             }
@@ -441,8 +441,8 @@ mod tests {
         assert_eq!(compat.verdict, crate::domain::CompatibilityVerdict::Identical);
         assert!((report.gaps[0].video_a_start_secs - 0.0).abs() < 0.001);
         assert!((report.gaps[0].video_a_end_secs - 60.0).abs() < 0.001);
-        assert!((report.gaps[0].video_b_start_secs - 0.0).abs() < 0.001);
-        assert!((report.gaps[0].video_b_end_secs - 60.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_start_secs.unwrap() - 0.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_end_secs.unwrap() - 60.0).abs() < 0.001);
         assert!(report.gaps[0].is_fillable());
     }
 
@@ -475,6 +475,8 @@ mod tests {
 
         assert_eq!(report.gaps.len(), 1);
         assert!(!report.gaps[0].b_has_energy);
+        assert!(report.gaps[0].video_b_start_secs.is_none());
+        assert!(report.gaps[0].video_b_end_secs.is_none());
         assert!(!report.gaps[0].is_fillable());
         // B (b.wav) is absent from the reader, so no compatibility could be assessed.
         assert!(report.track_compatibility.is_none());
@@ -495,8 +497,8 @@ mod tests {
             .expect("scan should succeed");
 
         assert_eq!(report.gaps.len(), 1);
-        assert!((report.gaps[0].video_b_start_secs - 3.0).abs() < 0.001);
-        assert!((report.gaps[0].video_b_end_secs - 63.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_start_secs.unwrap() - 3.0).abs() < 0.001);
+        assert!((report.gaps[0].video_b_end_secs.unwrap() - 63.0).abs() < 0.001);
     }
 
     #[test]
@@ -530,15 +532,15 @@ mod tests {
                 Gap {
                     video_a_start_secs: 0.0,
                     video_a_end_secs: 60.0,
-                    video_b_start_secs: 0.0,
-                    video_b_end_secs: 60.0,
+                    video_b_start_secs: Some(0.0),
+                    video_b_end_secs: Some(60.0),
                     b_has_energy: true,
                 },
                 Gap {
                     video_a_start_secs: 120.0,
                     video_a_end_secs: 180.0,
-                    video_b_start_secs: 120.0,
-                    video_b_end_secs: 180.0,
+                    video_b_start_secs: Some(120.0),
+                    video_b_end_secs: Some(180.0),
                     b_has_energy: false,
                 },
             ],

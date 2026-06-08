@@ -11,9 +11,10 @@ use crate::domain::track_match::TrackCompatibility;
 pub struct Gap {
     pub video_a_start_secs: f64,
     pub video_a_end_secs: f64,
-    /// Corresponding position in video B (via recommended_offset_secs).
-    pub video_b_start_secs: f64,
-    pub video_b_end_secs: f64,
+    /// Corresponding position in video B, mapped via `recommended_offset_secs`.
+    /// `None` when alignment failed or produced no offset — B cannot be probed.
+    pub video_b_start_secs: Option<f64>,
+    pub video_b_end_secs: Option<f64>,
     /// Whether video B has audio energy at this position (potential fill source).
     pub b_has_energy: bool,
 }
@@ -24,7 +25,7 @@ impl Gap {
     }
 
     pub fn is_fillable(&self) -> bool {
-        self.b_has_energy
+        self.video_b_start_secs.is_some() && self.b_has_energy
     }
 }
 

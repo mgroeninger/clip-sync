@@ -141,8 +141,8 @@ mod tests {
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
                 video_a_end_secs: 60.0,
-                video_b_start_secs: 12.5,
-                video_b_end_secs: 72.5,
+                video_b_start_secs: Some(12.5),
+                video_b_end_secs: Some(72.5),
                 b_has_energy: true,
             }],
             scan_window_secs: 60,
@@ -173,8 +173,8 @@ mod tests {
         let gap = Gap {
             video_a_start_secs: 100.0,
             video_a_end_secs: 160.0,
-            video_b_start_secs: 112.5,
-            video_b_end_secs: 172.5,
+            video_b_start_secs: Some(112.5),
+            video_b_end_secs: Some(172.5),
             b_has_energy: false,
         };
         assert!((gap.duration_secs() - 60.0).abs() < 0.001);
