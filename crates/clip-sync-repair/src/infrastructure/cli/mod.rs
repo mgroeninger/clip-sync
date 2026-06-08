@@ -65,6 +65,9 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     if let Some(ms) = args.crossfade_ms {
         config.repair.crossfade_ms = ms;
     }
+    if let Some(num_clips) = args.num_clips {
+        config.align.clip.num_clips = num_clips;
+    }
 
     config.align.validate()
         .map_err(|e| RepairError::Align(AppError::Config(e)))?;

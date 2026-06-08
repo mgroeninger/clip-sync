@@ -150,7 +150,8 @@ level = "warn"
 ### Repair config (`clip-sync-repair`)
 
 ```toml
-[clip]          # same keys as analyzer
+[clip]          # repair defaults num_clips = 2 (analyzer default is 1)
+num_clips = 2
 [alignment]     # same keys as analyzer
 [logging]       # same keys as analyzer
 

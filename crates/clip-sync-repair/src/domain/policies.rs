@@ -17,7 +17,10 @@ pub struct SilenceRunScanner {
     hold_blocks: u32,
     held_count: u32,
     run_start: Option<f64>,
-    run_end: Option<f64>,
+    /// End of the last confirmed-silent block. Reported gap boundaries use this, not
+    /// `held_end`, so held non-silent blocks at the tail of a run are never included in
+    /// the output interval (avoiding boundary bloat past actual silence).
+    silent_tail: Option<f64>,
     runs: Vec<SilentRun>,
 }
 
@@ -37,7 +40,7 @@ impl SilenceRunScanner {
             hold_blocks,
             held_count: 0,
             run_start: None,
-            run_end: None,
+            silent_tail: None,
             runs: Vec::new(),
         }
     }
@@ -65,12 +68,13 @@ impl SilenceRunScanner {
                 if self.run_start.is_none() {
                     self.run_start = Some(block_start_secs);
                 }
-                self.run_end = Some(block_end_secs);
+                // Advance the confirmed-silent boundary past any previously held blocks.
+                self.silent_tail = Some(block_end_secs);
             } else if self.run_start.is_some() {
-                // In an active run: absorb up to `hold_blocks` consecutive non-silent blocks.
+                // In an active run: absorb up to `hold_blocks` consecutive non-silent blocks
+                // without updating `silent_tail` — gap boundaries stay tight.
                 if self.held_count < self.hold_blocks {
                     self.held_count += 1;
-                    self.run_end = Some(block_end_secs);
                 } else {
                     self.held_count = 0;
                     self.close_open_run();
@@ -94,7 +98,7 @@ impl SilenceRunScanner {
     }
 
     fn close_open_run(&mut self) {
-        let (Some(start), Some(end)) = (self.run_start.take(), self.run_end.take()) else {
+        let (Some(start), Some(end)) = (self.run_start.take(), self.silent_tail.take()) else {
             return;
         };
         if end - start >= self.min_gap_secs {

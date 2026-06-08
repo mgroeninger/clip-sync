@@ -184,10 +184,10 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 
 Clips are defined by two settings only:
 
-| Setting | Default | Minimum | Description |
-|---------|---------|---------|-------------|
-| `clip_length` | 15 min | 1 min | Target duration of each extracted window |
-| `num_clips` | 1 | 1 | How many windows to extract per video |
+| Setting | Analyzer default | Repair default | Minimum | Description |
+|---------|------------------|----------------|---------|-------------|
+| `clip_length` | 15 min | 15 min | 1 min | Target duration of each extracted window |
+| `num_clips` | 1 | **2** | 1 | How many windows to extract per video |
 
 There is no separate max-size or threshold setting. Effective clip count and window positions are derived from duration, `clip_length`, and `num_clips`.
 
@@ -572,7 +572,8 @@ TOML on disk is **unchanged** for analyzer users — top-level `[clip]`, `[align
 ### `RepairAppConfig` (repair CLI)
 
 ```toml
-[clip]          # same conventions as analyzer
+[clip]          # repair defaults num_clips = 2 (analyzer default is 1)
+num_clips = 2
 [alignment]
 [logging]
 

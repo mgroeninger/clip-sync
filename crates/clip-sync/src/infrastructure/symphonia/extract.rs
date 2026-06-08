@@ -15,12 +15,34 @@ use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip, MonoScanBucket, MultiCh
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
 use crate::infrastructure::symphonia::error_mapping::{
     decode_failed, fail_media, log_media_success, map_decode_loop_error, map_seek_error,
-    warn_partial_decode,
+    warn_partial_decode, NEAR_TRACK_END_TOLERANCE_SECS,
 };
 use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoState};
 
 /// Fail extract after this many consecutive packet decode errors.
 pub(crate) const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 64;
+
+/// Minimum fraction of a tail clip that must decode before we pad the remainder (fingerprinting).
+const TAIL_CLIP_MIN_DECODE_PERCENT: usize = 95;
+
+fn tail_partial_clip_acceptable(
+    decoded_count: usize,
+    target_count: usize,
+    allow_tail_padding: bool,
+    window_end_secs: f64,
+    track_duration_secs: Option<f64>,
+) -> bool {
+    if !allow_tail_padding || target_count == 0 {
+        return false;
+    }
+    let Some(duration) = track_duration_secs else {
+        return false;
+    };
+    if window_end_secs < duration - NEAR_TRACK_END_TOLERANCE_SECS {
+        return false;
+    }
+    decoded_count * 100 >= target_count * TAIL_CLIP_MIN_DECODE_PERCENT
+}
 
 pub(crate) fn extract_mono_with_state(
     path: &Path,
@@ -352,7 +374,17 @@ pub(crate) fn extract_mono_with_state(
     if mono_samples.len() < target {
         let shortfall = target - mono_samples.len();
         let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
-        if shortfall > limit {
+        let window_end_secs = window.end.as_secs_f64();
+        let track_duration_secs = track.duration.map(|d| d.as_secs_f64());
+        if shortfall > limit
+            && !tail_partial_clip_acceptable(
+                mono_samples.len(),
+                target,
+                allow_tail_padding,
+                window_end_secs,
+                track_duration_secs,
+            )
+        {
             let error = decode_failed(
                 track.index,
                 format!(
@@ -360,7 +392,7 @@ pub(crate) fn extract_mono_with_state(
                     mono_samples.len(),
                     target,
                     window.start.as_secs_f64(),
-                    window.end.as_secs_f64()
+                    window_end_secs
                 ),
             );
             // Tail-padding flag means the loop ended at a natural boundary (EOF or a
@@ -372,23 +404,35 @@ pub(crate) fn extract_mono_with_state(
                     "extract",
                     Some(track.index),
                     error,
-                    window.end.as_secs_f64(),
-                    track.duration.map(|d| d.as_secs_f64()),
+                    window_end_secs,
+                    track_duration_secs,
                 )
             } else {
                 fail_media(path, "extract", Some(track.index), error)
             });
         }
 
-        debug!(
-            path = %path.display(),
-            track = track.index,
-            shortfall,
-            target,
-            allow_tail_padding,
-            limit,
-            "padding end-of-window decode gap with silence"
-        );
+        if shortfall > limit {
+            warn!(
+                path = %path.display(),
+                track = track.index,
+                shortfall,
+                target,
+                decoded = mono_samples.len(),
+                window_end_secs,
+                "near-track-end partial clip; padding remainder with silence"
+            );
+        } else {
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                shortfall,
+                target,
+                allow_tail_padding,
+                limit,
+                "padding end-of-window decode gap with silence"
+            );
+        }
         mono_samples.resize(target, 0);
     }
 
@@ -1042,7 +1086,17 @@ pub(crate) fn extract_interleaved_with_state(
     if decoded_frame_count < target {
         let shortfall = target - decoded_frame_count;
         let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
-        if shortfall > limit {
+        let window_end_secs = window.end.as_secs_f64();
+        let track_duration_secs = track.duration.map(|d| d.as_secs_f64());
+        if shortfall > limit
+            && !tail_partial_clip_acceptable(
+                decoded_frame_count,
+                target,
+                allow_tail_padding,
+                window_end_secs,
+                track_duration_secs,
+            )
+        {
             let error = decode_failed(
                 track.index,
                 format!(
@@ -1050,7 +1104,7 @@ pub(crate) fn extract_interleaved_with_state(
                     decoded_frame_count,
                     target,
                     window.start.as_secs_f64(),
-                    window.end.as_secs_f64()
+                    window_end_secs
                 ),
             );
             return Err(if allow_tail_padding {
@@ -1059,23 +1113,35 @@ pub(crate) fn extract_interleaved_with_state(
                     "extract",
                     Some(track.index),
                     error,
-                    window.end.as_secs_f64(),
-                    track.duration.map(|d| d.as_secs_f64()),
+                    window_end_secs,
+                    track_duration_secs,
                 )
             } else {
                 fail_media(path, "extract", Some(track.index), error)
             });
         }
 
-        debug!(
-            path = %path.display(),
-            track = track.index,
-            shortfall,
-            target,
-            allow_tail_padding,
-            limit,
-            "padding end-of-window interleaved decode gap with silence"
-        );
+        if shortfall > limit {
+            warn!(
+                path = %path.display(),
+                track = track.index,
+                shortfall,
+                target,
+                decoded = decoded_frame_count,
+                window_end_secs,
+                "near-track-end partial clip; padding remainder with silence"
+            );
+        } else {
+            debug!(
+                path = %path.display(),
+                track = track.index,
+                shortfall,
+                target,
+                allow_tail_padding,
+                limit,
+                "padding end-of-window interleaved decode gap with silence"
+            );
+        }
         out.resize(target.saturating_mul(ch), 0);
     }
 
@@ -1337,4 +1403,43 @@ pub(crate) fn decode_shortfall_limit(
 pub(crate) fn float_to_i16(sample: f32) -> i16 {
     let scaled = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i32;
     scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+#[cfg(test)]
+mod tail_clip_tests {
+    use super::tail_partial_clip_acceptable;
+
+    #[test]
+    fn accepts_mkv_style_tail_shortfall_for_end_clip() {
+        // Observed on long MKV/AAC end-clip extract: ~99.6% decoded, ~3.9s short of 15m window.
+        assert!(tail_partial_clip_acceptable(
+            44_454_896,
+            44_640_000,
+            true,
+            6180.033,
+            Some(6180.0),
+        ));
+    }
+
+    #[test]
+    fn rejects_midfile_partial_even_when_eof_flag_set() {
+        assert!(!tail_partial_clip_acceptable(
+            44_454_896,
+            44_640_000,
+            true,
+            3000.0,
+            Some(6180.0),
+        ));
+    }
+
+    #[test]
+    fn rejects_tail_clip_with_too_little_decoded_audio() {
+        assert!(!tail_partial_clip_acceptable(
+            20_000_000,
+            44_640_000,
+            true,
+            6180.0,
+            Some(6180.0),
+        ));
+    }
 }

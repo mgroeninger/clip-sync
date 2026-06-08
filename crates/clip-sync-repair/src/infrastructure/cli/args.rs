@@ -60,4 +60,8 @@ pub struct Args {
     /// Crossfade duration at gap boundaries (ms).
     #[arg(long, value_name = "MS")]
     pub crossfade_ms: Option<u64>,
+
+    /// Override: number of alignment clips per video (repair default: 2).
+    #[arg(long, value_name = "N")]
+    pub num_clips: Option<u32>,
 }

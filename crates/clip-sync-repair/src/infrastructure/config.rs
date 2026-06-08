@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
 
+/// Default clip count for repair alignment (start + end windows on long media).
+pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
+
+fn default_repair_align_config() -> AlignConfig {
+    let mut align = AlignConfig::default();
+    align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;
+    align
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
@@ -169,7 +178,7 @@ impl RepairConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairAppConfig {
     #[serde(flatten)]
     pub align: AlignConfig,
@@ -177,6 +186,16 @@ pub struct RepairAppConfig {
     pub repair: RepairConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+}
+
+impl Default for RepairAppConfig {
+    fn default() -> Self {
+        Self {
+            align: default_repair_align_config(),
+            repair: RepairConfig::default(),
+            logging: LoggingConfig::default(),
+        }
+    }
 }
 
 pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, AppError> {
@@ -187,6 +206,65 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
     let text = std::fs::read_to_string(path)
         .map_err(|_| AppError::Config(ConfigError::FileRead(path.to_path_buf())))?;
 
-    toml::from_str::<RepairAppConfig>(&text)
-        .map_err(|e| AppError::Config(ConfigError::Parse(e.to_string())))
+    let num_clips_explicit = match toml::from_str::<toml::Table>(&text) {
+        Ok(table) => table
+            .get("clip")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|clip| clip.contains_key("num_clips")),
+        Err(_) => false,
+    };
+
+    let mut config: RepairAppConfig = toml::from_str(&text)
+        .map_err(|e| AppError::Config(ConfigError::Parse(e.to_string())))?;
+
+    if !num_clips_explicit {
+        config.align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;
+    }
+
+    Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repair_app_config_defaults_to_two_clips() {
+        let config = RepairAppConfig::default();
+        assert_eq!(config.align.clip.num_clips, REPAIR_DEFAULT_NUM_CLIPS);
+    }
+
+    #[test]
+    fn load_config_applies_repair_num_clips_when_omitted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert_eq!(config.align.clip.num_clips, REPAIR_DEFAULT_NUM_CLIPS);
+    }
+
+    #[test]
+    fn load_config_respects_explicit_num_clips_one() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[clip]
+num_clips = 1
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert_eq!(config.align.clip.num_clips, 1);
+    }
 }
