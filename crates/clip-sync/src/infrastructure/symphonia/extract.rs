@@ -1341,6 +1341,82 @@ pub(crate) fn window_sample_bounds(window: &ClipWindow, sample_rate: u32) -> (u6
     )
 }
 
+/// Scan packets from a tail seek through EOF to find the last decodable timestamp on `track`.
+pub(crate) fn scan_track_decodable_extent(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+    container_duration: Duration,
+) -> Result<Option<Duration>, MediaError> {
+    const TAIL_PROBE_SECS: f64 = 120.0;
+
+    let track_id = track.index;
+    let media_track = state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .ok_or_else(|| {
+            fail_media(
+                path,
+                "extent_scan",
+                Some(track_id),
+                decode_failed(track_id, format!("track {track_id} not found")),
+            )
+        })?;
+
+    let time_base = match media_track.time_base {
+        Some(time_base) => time_base,
+        None => return Ok(None),
+    };
+
+    let probe_start = container_duration
+        .saturating_sub(Duration::from_secs_f64(TAIL_PROBE_SECS))
+        .min(container_duration);
+
+    seek_to_window_start(
+        path,
+        state.format.as_mut(),
+        track_id,
+        probe_start,
+        Some(container_duration),
+    )?;
+
+    let mut max_end = probe_start;
+    loop {
+        match state.format.next_packet() {
+            Ok(Some(packet)) => {
+                if packet.track_id != track_id {
+                    continue;
+                }
+                let end_ts = packet.pts.saturating_add(packet.dur);
+                if let Some(time) = time_base.calc_time(end_ts) {
+                    max_end = max_end.max(
+                        crate::infrastructure::symphonia::duration::symphonia_time_to_std(time),
+                    );
+                }
+            }
+            Ok(None) => break,
+            Err(SymphoniaError::ResetRequired) => continue,
+            Err(error) => return Err(map_decode_loop_error(path, track_id, error)),
+        }
+    }
+
+    if max_end <= probe_start && probe_start > Duration::ZERO {
+        return Ok(None);
+    }
+
+    debug!(
+        path = %path.display(),
+        track = track_id,
+        container_secs = container_duration.as_secs_f64(),
+        decodable_secs = max_end.as_secs_f64(),
+        "tail packet scan decodable extent"
+    );
+
+    Ok(Some(max_end.min(container_duration)))
+}
+
 fn seek_to_window_start(
     path: &Path,
     format: &mut dyn symphonia::core::formats::FormatReader,

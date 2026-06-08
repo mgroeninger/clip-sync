@@ -27,7 +27,8 @@ pub use pcm_preparation::{
     PcmPreparationOptions,
 };
 pub use policies::{
-    clip_windows, decoded_timeline_extent, holdout_window_candidates, holdout_window_feasible,
-    select_best_track,
+    clip_windows_with_options, decoded_timeline_extent,
+    end_clip_extract_unreliable, holdout_window_candidates,
+    holdout_window_feasible, truncate_padded_tail, ClipPlanningOptions, select_best_track,
 };
 pub use resample::{resample_interleaved, resample_mono_pcm};

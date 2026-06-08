@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
@@ -16,6 +17,7 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     extract_interleaved_with_state, extract_mono_with_state, scan_mono_buckets_with_state,
+    scan_track_decodable_extent,
 };
 use crate::infrastructure::symphonia::probe::{open_format_reader, probe_media_reusable};
 
@@ -193,6 +195,32 @@ impl MediaSession for SymphoniaMediaSession {
         ensure_regular_file(&self.path)?;
         *self.io.borrow_mut() = Some(MediaIoState::open(&self.path)?);
         Ok(())
+    }
+
+    fn track_decodable_extent(&self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
+        ensure_regular_file(&self.path)?;
+
+        let container_duration = track.duration.filter(|value| !value.is_zero()).ok_or(
+            MediaError::DecodeFailed {
+                track: track.index,
+                detail: "missing track duration for decodable extent scan".into(),
+            },
+        )?;
+
+        let mut io = self.io.borrow_mut();
+        if io.is_none() {
+            *io = Some(MediaIoState::open(&self.path)?);
+        }
+
+        let extent = scan_track_decodable_extent(
+            &self.path,
+            io.as_mut().expect("session io initialized"),
+            track,
+            container_duration,
+        )?;
+        drop(io);
+        self.reset_io()?;
+        Ok(extent)
     }
 }
 

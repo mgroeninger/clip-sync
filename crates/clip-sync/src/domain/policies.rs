@@ -21,7 +21,34 @@ pub fn select_best_track(tracks: &[AudioTrack]) -> Result<&AudioTrack, DomainErr
         .ok_or(DomainError::NoDecodableAudioTracks)
 }
 
-pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindow>, DomainError> {
+/// Optional bounds when placing multi-clip windows near the file tail.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClipPlanningOptions {
+    /// Last decodable packet end time; end clip is anchored here instead of container duration.
+    pub decodable_extent: Option<Duration>,
+    /// Inset before `decodable_extent` (or container end) for the end clip window.
+    pub end_tail_inset: Duration,
+}
+
+pub fn effective_timeline_end(
+    container_duration: Duration,
+    decodable_extent: Option<Duration>,
+    end_tail_inset: Duration,
+) -> Duration {
+    let mut end = container_duration;
+    if let Some(extent) = decodable_extent {
+        end = end.min(extent);
+    }
+    end.saturating_sub(end_tail_inset)
+        .max(Duration::from_secs(1))
+        .min(container_duration)
+}
+
+pub fn clip_windows_with_options(
+    duration: Duration,
+    plan: &ClipPlan,
+    options: ClipPlanningOptions,
+) -> Result<Vec<ClipWindow>, DomainError> {
     if duration.is_zero() {
         return Err(DomainError::InvalidDuration);
     }
@@ -45,6 +72,23 @@ pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindo
         )]);
     }
 
+    let timeline_end = effective_timeline_end(
+        duration,
+        options.decodable_extent,
+        options.end_tail_inset,
+    );
+    if timeline_end < clip_length {
+        let end = timeline_end.min(clip_length);
+        if end.is_zero() {
+            return Err(DomainError::EmptyClip);
+        }
+        return Ok(vec![ClipWindow::new(
+            Duration::ZERO,
+            end,
+            ClipLabel::Start,
+        )]);
+    }
+
     let n = effective_num_clips;
     let mut windows = Vec::with_capacity(n as usize);
 
@@ -55,16 +99,16 @@ pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindo
     ));
 
     if n > 2 {
-        let duration_secs = duration.as_secs_f64();
+        let timeline_secs = timeline_end.as_secs_f64();
         let clip_secs = clip_length.as_secs_f64();
 
         for i in 1..(n - 1) {
-            let seg_start_secs = duration_secs * f64::from(i) / f64::from(n);
-            let seg_end_secs = duration_secs * f64::from(i + 1) / f64::from(n);
+            let seg_start_secs = timeline_secs * f64::from(i) / f64::from(n);
+            let seg_end_secs = timeline_secs * f64::from(i + 1) / f64::from(n);
             let center_secs = (seg_start_secs + seg_end_secs) / 2.0;
             let half = clip_secs / 2.0;
             let start_secs = (center_secs - half).max(0.0);
-            let end_secs = (start_secs + clip_secs).min(duration_secs);
+            let end_secs = (start_secs + clip_secs).min(timeline_secs);
 
             windows.push(ClipWindow::new(
                 secs_to_duration(start_secs),
@@ -74,10 +118,10 @@ pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindo
         }
     }
 
-    let end_start = duration.saturating_sub(clip_length);
+    let end_start = timeline_end.saturating_sub(clip_length);
     windows.push(ClipWindow::new(
         end_start,
-        duration,
+        timeline_end,
         ClipLabel::End,
     ));
 
@@ -88,6 +132,40 @@ pub fn clip_windows(duration: Duration, plan: &ClipPlan) -> Result<Vec<ClipWindo
     }
 
     Ok(windows)
+}
+
+/// Drop silence padding appended when a tail extract ended before the planned window end.
+pub fn truncate_padded_tail(mut clip: MonoPcmClip) -> MonoPcmClip {
+    if let Some(decoded) = clip.decoded_sample_count {
+        if decoded < clip.samples.len() {
+            clip.samples.truncate(decoded);
+        }
+        clip.decoded_sample_count = None;
+    }
+    clip
+}
+
+/// Whether an end-clip extract is too incomplete or corrupt for alignment.
+pub fn end_clip_extract_unreliable(
+    clip: &MonoPcmClip,
+    window: &ClipWindow,
+    min_decode_fraction: f64,
+    max_decode_skips: u32,
+) -> bool {
+    if window.label != ClipLabel::End {
+        return false;
+    }
+    if clip.decode_error_skips > max_decode_skips {
+        return true;
+    }
+    let rate = clip.sample_rate.max(1);
+    let expected = window.sample_count_at(rate);
+    if expected == 0 {
+        return true;
+    }
+    let decoded = clip.effective_decoded_sample_count();
+    let threshold = min_decode_fraction.clamp(0.0, 1.0);
+    (decoded as f64) < (expected as f64) * threshold
 }
 
 fn secs_to_duration(secs: f64) -> Duration {
@@ -454,6 +532,55 @@ mod tests {
         assert_eq!(windows[1].end, mins(35));
         assert_eq!(windows[2].start, mins(50));
         assert_eq!(windows[2].end, mins(60));
+    }
+
+    #[test]
+    fn clip_windows_clamps_end_to_decodable_extent_with_inset() {
+        let plan = ClipPlan::new(mins(15), 2);
+        let container = Duration::from_secs_f64(6180.033);
+        let extent = Duration::from_secs_f64(6176.0);
+        let windows = clip_windows_with_options(
+            container,
+            &plan,
+            ClipPlanningOptions {
+                decodable_extent: Some(extent),
+                end_tail_inset: Duration::from_secs(1),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(windows.len(), 2);
+        let end = &windows[1];
+        assert_eq!(end.label, ClipLabel::End);
+        assert!((end.end.as_secs_f64() - 6175.0).abs() < 0.01);
+        assert!((end.start.as_secs_f64() - (6175.0 - 900.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn end_clip_extract_unreliable_when_tail_padding_exceeds_threshold() {
+        let window = ClipWindow::new(Duration::from_secs(5280), Duration::from_secs(6180), ClipLabel::End);
+        let expected = window.sample_count_at(48_000);
+        let decoded = (expected as f64 * 0.94) as usize;
+        let clip = MonoPcmClip {
+            sample_rate: 48_000,
+            samples: vec![0; expected],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(decoded),
+        };
+        assert!(end_clip_extract_unreliable(&clip, &window, 0.95, 8));
+    }
+
+    #[test]
+    fn truncate_padded_tail_removes_synthetic_silence() {
+        let clip = MonoPcmClip {
+            sample_rate: 48_000,
+            samples: vec![1; 100],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(80),
+        };
+        let trimmed = truncate_padded_tail(clip);
+        assert_eq!(trimmed.samples.len(), 80);
+        assert!(trimmed.decoded_sample_count.is_none());
     }
 
     #[test]

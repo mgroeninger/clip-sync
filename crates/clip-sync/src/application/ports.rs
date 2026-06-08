@@ -50,6 +50,12 @@ pub trait MediaSession {
         Ok(())
     }
 
+    /// Last decodable packet end for a track (tail scan). Default: unknown.
+    fn track_decodable_extent(&self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
+        let _ = track;
+        Ok(None)
+    }
+
     /// Scan a track by decoding sequentially from the start and invoking `on_bucket` for each
     /// fixed-duration sample bucket (avoids per-window seek on long files).
     ///

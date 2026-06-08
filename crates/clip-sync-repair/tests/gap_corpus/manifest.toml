@@ -1,0 +1,117 @@
+version = 1
+
+# ── defaults applied to all cases unless overridden ──────────────────────────
+[defaults]
+scan_block_ms        = 250
+silence_peak_fraction = 0.01
+absolute_silence_floor = 33.0   # peak-based, ≈ −60 dBFS; matches ffmpeg silencedetect default
+min_gap_ms           = 1000
+silence_hold_ms      = 500
+tolerance_secs       = 0.3      # per-boundary tolerance for start/end assertions
+sample_rate          = 11025
+
+# ── committed cases (WAV files in tests/gap_corpus/wav/) ─────────────────────
+# These run in CI without any external tools.
+# Regenerate with: cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
+
+[[case]]
+id    = "leading_silence_16s"
+tier  = "committed"
+video_a = "wav/leading_16s_a.wav"
+[[case.expected_gaps]]
+start_secs = 0.0
+end_secs   = 16.0
+
+[[case]]
+id    = "mid_gap_2s"
+tier  = "committed"
+video_a = "wav/mid_2s_a.wav"
+[[case.expected_gaps]]
+start_secs = 14.0
+end_secs   = 16.0
+
+[[case]]
+id    = "multi_gap"
+tier  = "committed"
+video_a = "wav/multi_gap_a.wav"
+# Three 2-second gaps. Silence regions are block-aligned (250ms blocks at 11025 Hz = 2756 samples),
+# so detected boundaries may differ by ≤0.25s from nominal; tolerance covers this.
+[[case.expected_gaps]]
+start_secs = 3.0
+end_secs   = 5.0
+[[case.expected_gaps]]
+start_secs = 13.0
+end_secs   = 15.0
+[[case.expected_gaps]]
+start_secs = 23.0
+end_secs   = 25.0
+
+[[case]]
+id    = "quiet_content_no_false_positive"
+tier  = "committed"
+video_a = "wav/quiet_no_gap_a.wav"
+# Chirp at 5% amplitude (peak ≈ 1638 on i16 scale, ≈ −26 dBFS).
+# Must produce zero gaps — guards against false-positive regressions.
+expected_gaps = []
+
+# ── generated cases (WAV files created at test time) ─────────────────────────
+# Run with: cargo test -p clip-sync-repair gap_corpus_generated -- --ignored
+
+[[case]]
+id        = "generated_short_gap_above_min"
+tier      = "generated"
+generator = "zeroed_chirp"
+total_secs = 30
+min_gap_ms = 1000
+[[case.gap_segments]]
+start_secs = 10.0
+end_secs   = 11.5
+[[case.expected_gaps]]
+start_secs = 10.0
+end_secs   = 11.5
+
+[[case]]
+id        = "generated_gap_below_min_not_reported"
+tier      = "generated"
+generator = "zeroed_chirp"
+total_secs = 30
+min_gap_ms = 2000
+[[case.gap_segments]]
+start_secs = 10.0
+end_secs   = 11.0  # 1s gap, below 2s min_gap_ms → should not appear
+expected_gaps = []
+
+[[case]]
+id        = "generated_quiet_no_gap"
+tier      = "generated"
+generator = "quiet_chirp"
+total_secs = 30
+amplitude_fraction = 0.05
+expected_gaps = []
+
+# ── external cases (real media files; set CLIP_SYNC_GAP_CORPUS to file dir) ──
+# Run with: CLIP_SYNC_GAP_CORPUS=F:\Video cargo test -p clip-sync-repair gap_corpus_external -- --ignored
+#
+# Ground truth derived from: ffmpeg -i 1.mkv -af silencedetect=noise=-60dB:d=1 -f null -
+
+[[case]]
+id      = "real_mkv_1"
+tier    = "external"
+video_a = "1.mkv"
+# ffmpeg reports these 5 silence periods at -60dB with 1s minimum duration.
+tolerance_secs = 0.5
+[[case.expected_gaps]]
+start_secs = 0.0
+end_secs   = 16.31
+[[case.expected_gaps]]
+start_secs = 1183.38
+end_secs   = 1184.67
+[[case.expected_gaps]]
+start_secs = 1484.35
+end_secs   = 1485.63
+[[case.expected_gaps]]
+start_secs = 4873.17
+end_secs   = 4875.71
+[[case.expected_gaps]]
+start_secs = 5974.25
+end_secs   = 6179.97

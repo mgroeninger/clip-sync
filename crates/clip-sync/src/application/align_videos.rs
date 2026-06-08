@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::application::config::AlignConfig;
 use crate::application::error::{AppError, FingerprintError};
@@ -7,10 +8,11 @@ use crate::application::offset_refinement::{refine_offset_around_prior, refine_o
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::domain::{
-    build_alignment_result, clip_windows, decoded_timeline_extent, expand_window_for_slide,
-    prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair, select_best_track,
+    build_alignment_result, clip_windows_with_options, decoded_timeline_extent,
+    end_clip_extract_unreliable, expand_window_for_slide, prepare_clip_for_fingerprint,
+    resample_mono_pcm, select_aligned_subclip_pair, select_best_track, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentResult, AudioTrack, ClipLabel, ClipMatchEstimate,
-    ClipPairReportInput,
+    ClipPairReportInput, ClipPlanningOptions,
     ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
 };
 pub struct AlignVideosRequest {
@@ -104,10 +106,22 @@ where
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
-        let extracted_a =
-            self.extract_clips(session_a, &plan, &request.config.clip, "video A", None)?;
-        let extracted_b =
-            self.extract_clips(session_b, &plan, &request.config.clip, "video B", None)?;
+        let extracted_a = self.extract_clips(
+            session_a,
+            &plan,
+            &request.config.clip,
+            &request.config.alignment,
+            "video A",
+            None,
+        )?;
+        let extracted_b = self.extract_clips(
+            session_b,
+            &plan,
+            &request.config.clip,
+            &request.config.alignment,
+            "video B",
+            None,
+        )?;
         let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
         Ok(AlignmentOutcome {
             result,
@@ -149,6 +163,7 @@ where
                     session_a,
                     &plan,
                     &request.config.clip,
+                    &request.config.alignment,
                     "video A",
                     Some(track_a),
                 )?;
@@ -156,6 +171,7 @@ where
                     session_b,
                     &plan,
                     &request.config.clip,
+                    &request.config.alignment,
                     "video B",
                     Some(track_b),
                 )?;
@@ -215,10 +231,22 @@ where
             .enumerate()
         {
             let window = &extracted_a.windows[index];
-            let (clip_a, clip_b) = if config.clip.window_slide_secs > 0 {
-                select_aligned_subclip_pair(raw_a, raw_b, window.duration())
+            let end_clip_unreliable = window.label == ClipLabel::End
+                && (extracted_a.end_clip_unreliable || extracted_b.end_clip_unreliable);
+
+            let (raw_a, raw_b) = if window.label == ClipLabel::End {
+                (
+                    truncate_padded_tail(raw_a.clone()),
+                    truncate_padded_tail(raw_b.clone()),
+                )
             } else {
                 (raw_a.clone(), raw_b.clone())
+            };
+
+            let (clip_a, clip_b) = if config.clip.window_slide_secs > 0 {
+                select_aligned_subclip_pair(&raw_a, &raw_b, window.duration())
+            } else {
+                (raw_a, raw_b)
             };
 
             let prepared_a = prepare_clip_for_fingerprint(&clip_a, prep_options);
@@ -229,6 +257,19 @@ where
                 self.progress.phase(&format!(
                     "{} clip [{}–{}]: skipped (insufficient audio)",
                     clip_label_name(window.label),
+                    format_duration(window.start),
+                    format_duration(window.end),
+                ));
+                estimates.push(ClipMatchEstimate {
+                    offset_secs: 0.0,
+                    confidence: 0.0,
+                });
+                continue;
+            }
+
+            if end_clip_unreliable && config.alignment.skip_unreliable_end_clip {
+                self.progress.phase(&format!(
+                    "end clip [{}–{}]: skipped (unreliable tail extract)",
                     format_duration(window.start),
                     format_duration(window.end),
                 ));
@@ -326,6 +367,7 @@ where
         session: &MR::Session,
         plan: &crate::domain::ClipPlan,
         clip_config: &crate::application::config::ClipConfig,
+        alignment_config: &crate::application::config::AlignmentConfig,
         label: &str,
         track: Option<&AudioTrack>,
     ) -> Result<ExtractedClips, AppError> {
@@ -346,7 +388,45 @@ where
         let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
             AppError::Domain(crate::domain::DomainError::InvalidDuration),
         )?;
-        let windows = clip_windows(duration, plan)?;
+
+        let decodable_extent = if plan.num_clips >= 2
+            && alignment_config.clamp_end_clip_to_decodable_extent
+        {
+            match session.track_decodable_extent(track) {
+                Ok(extent) => extent,
+                Err(_) => {
+                    self.progress.phase(&format!(
+                        "{label}: tail extent scan failed; using container duration for end clip"
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(extent) = decodable_extent {
+            if extent + Duration::from_secs(1) < duration {
+                self.progress.phase(&format!(
+                    "{label}: decodable extent {:.0}s (container {:.0}s)",
+                    extent.as_secs_f64(),
+                    duration.as_secs_f64()
+                ));
+            }
+        }
+
+        let planning = ClipPlanningOptions {
+            decodable_extent,
+            end_tail_inset: Duration::from_secs_f64(
+                alignment_config.end_clip_tail_inset_secs.max(0.0),
+            ),
+        };
+        let windows = clip_windows_with_options(duration, plan, planning)?;
+        let timeline_end = windows
+            .iter()
+            .find(|window| window.label == ClipLabel::End)
+            .map(|window| window.end)
+            .unwrap_or(duration);
 
         self.progress.phase(&format_clip_plan(label, &windows));
 
@@ -368,7 +448,7 @@ where
             let extract_window = expand_window_for_slide(
                 window,
                 clip_config.window_slide_secs,
-                duration,
+                timeline_end,
             );
             let progress_label = format!(
                 "Extracting clip {}/{} ({label}, {})",
@@ -394,6 +474,15 @@ where
             .collect();
 
         let decoded_extent = decoded_timeline_extent(&windows, &raw_clips);
+        let end_clip_unreliable = windows.iter().zip(raw_clips.iter()).any(|(window, clip)| {
+            window.label == ClipLabel::End
+                && end_clip_extract_unreliable(
+                    clip,
+                    window,
+                    alignment_config.min_end_clip_decode_fraction,
+                    alignment_config.max_end_clip_decode_skips,
+                )
+        });
 
         Ok(ExtractedClips {
             raw_clips,
@@ -402,6 +491,7 @@ where
             duration,
             decoded_extent,
             track: track.clone(),
+            end_clip_unreliable,
         })
     }
 }
@@ -456,6 +546,7 @@ struct ExtractedClips {
     duration: std::time::Duration,
     decoded_extent: std::time::Duration,
     track: AudioTrack,
+    end_clip_unreliable: bool,
 }
 
 fn log_alignment_summary(result: &AlignmentResult, progress: &dyn ProgressReporter) {

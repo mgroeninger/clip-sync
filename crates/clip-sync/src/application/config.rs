@@ -165,6 +165,33 @@ pub struct AlignmentConfig {
     /// PCM search radius (seconds) when refining the end clip around the start offset.
     #[serde(default = "default_end_clip_refine_radius_secs")]
     pub end_clip_refine_radius_secs: f64,
+    /// Place the end alignment window at decodable audio extent, not container duration.
+    #[serde(default = "default_true")]
+    pub clamp_end_clip_to_decodable_extent: bool,
+    /// Inset (seconds) before decodable extent when anchoring the end clip window.
+    #[serde(default = "default_end_clip_tail_inset_secs")]
+    pub end_clip_tail_inset_secs: f64,
+    /// Skip end-clip alignment when tail extract decoded too little audio or had decode skips.
+    #[serde(default = "default_true")]
+    pub skip_unreliable_end_clip: bool,
+    /// Minimum decoded fraction of the end window required to align the end clip.
+    #[serde(default = "default_min_end_clip_decode_fraction")]
+    pub min_end_clip_decode_fraction: f64,
+    /// End clip is unreliable when decode skips exceed this count.
+    #[serde(default = "default_max_end_clip_decode_skips")]
+    pub max_end_clip_decode_skips: u32,
+}
+
+fn default_end_clip_tail_inset_secs() -> f64 {
+    1.0
+}
+
+fn default_min_end_clip_decode_fraction() -> f64 {
+    0.95
+}
+
+fn default_max_end_clip_decode_skips() -> u32 {
+    8
 }
 
 fn default_end_clip_refine_radius_secs() -> f64 {
@@ -200,6 +227,11 @@ impl Default for AlignmentConfig {
             high_rate_refine_max_adjustment_secs: default_high_rate_refine_max_adjustment_secs(),
             refine_end_clip_around_start_offset: true,
             end_clip_refine_radius_secs: default_end_clip_refine_radius_secs(),
+            clamp_end_clip_to_decodable_extent: true,
+            end_clip_tail_inset_secs: default_end_clip_tail_inset_secs(),
+            skip_unreliable_end_clip: true,
+            min_end_clip_decode_fraction: default_min_end_clip_decode_fraction(),
+            max_end_clip_decode_skips: default_max_end_clip_decode_skips(),
         }
     }
 }
