@@ -16,7 +16,9 @@ impl GapReporter for StdoutGapReporter {
     }
 }
 
-fn print_human(report: &GapReport) -> Result<(), RepairError> {
+fn format_human(report: &GapReport) -> String {
+    let mut out = String::new();
+
     let offset = report
         .alignment
         .recommended_offset_secs
@@ -29,7 +31,7 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         .map(|c| format!("{:.2}", c.confidence))
         .unwrap_or_default();
 
-    println!("Alignment: offset {offset}  confidence {confidence}");
+    out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
 
     if let Some(compat) = &report.track_compatibility {
         let verdict = match compat.verdict {
@@ -37,50 +39,78 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
             CompatibilityVerdict::Compatible => "compatible (resample B)",
             CompatibilityVerdict::Mismatch => "mismatch (fill blocked)",
         };
-        println!(
-            "Tracks:    A {}ch @ {}Hz   B {}ch @ {}Hz   ({verdict})",
+        out.push_str(&format!(
+            "Tracks:    A {}ch @ {}Hz   B {}ch @ {}Hz   ({verdict})\n",
             compat.a_channels, compat.a_sample_rate, compat.b_channels, compat.b_sample_rate,
-        );
+        ));
     } else {
-        println!("Tracks:    video B unavailable — compatibility not assessed");
+        out.push_str("Tracks:    video B unavailable — compatibility not assessed\n");
     }
 
     if let Some(overlap) = &report.overlap {
-        println!(
-            "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)",
+        out.push_str(&format!(
+            "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)\n",
             overlap.video_a_start_secs,
             overlap.video_a_end_secs,
             overlap.video_b_start_secs,
             overlap.video_b_end_secs,
             overlap.shared_length_secs,
-        );
+        ));
     }
-    println!();
+
+    if let Some(agreement) = &report.gap_offset_agreement {
+        let verdict = if agreement.agrees { "AGREE" } else { "MISMATCH" };
+        out.push_str(&format!(
+            "Cross-chk: silence-based {:+.3}s vs alignment {:+.3}s  (Δ {:.3}s — {verdict})\n",
+            agreement.silence_based_offset_secs,
+            agreement.alignment_offset_secs,
+            agreement.delta_secs,
+        ));
+        if !agreement.agrees {
+            out.push_str(
+                "           WARNING: silence structure disagrees with Chromaprint alignment\n",
+            );
+        }
+    }
+
+    out.push('\n');
 
     if report.gaps.is_empty() {
-        println!("No gaps detected in video A.");
-        return Ok(());
+        out.push_str("No gaps detected in video A.\n");
+        return out;
     }
 
-    println!(
-        "Gaps detected in video A ({} total, {} fillable):",
+    out.push_str(&format!(
+        "Gaps detected in video A ({} total, {} fillable):\n",
         report.gaps.len(),
         report.fillable_count()
-    );
-    println!();
+    ));
+    if report.alignment.recommended_offset_secs.is_none() {
+        out.push_str("  B timeline mapping skipped (no alignment offset).\n");
+    }
+    out.push('\n');
 
     for (i, gap) in report.gaps.iter().enumerate() {
-        let fillable = if gap.b_has_energy { "fillable" } else { "unfillable" };
-        println!(
-            "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}",
+        let fillable = if gap.is_fillable() {
+            "fillable"
+        } else {
+            "unfillable"
+        };
+        out.push_str(&format!(
+            "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}\n",
             i + 1,
             gap.video_a_start_secs,
             gap.video_a_end_secs,
             gap.duration_secs(),
             fillable,
-        );
+        ));
     }
 
+    out
+}
+
+fn print_human(report: &GapReport) -> Result<(), RepairError> {
+    print!("{}", format_human(report));
     Ok(())
 }
 
@@ -145,6 +175,7 @@ mod tests {
                 video_b_end_secs: Some(72.5),
                 b_has_energy: true,
             }],
+            gap_offset_agreement: None,
             scan_window_secs: 60,
             silence_peak_fraction: 0.01,
         }
@@ -162,10 +193,98 @@ mod tests {
         assert_eq!(value["overlap"]["shared_length_secs"], 900.0);
     }
 
+    fn failed_alignment_report() -> GapReport {
+        GapReport {
+            video_a: PathBuf::from("a.mp4"),
+            video_b: PathBuf::from("b.mp4"),
+            track_compatibility: None,
+            overlap: None,
+            alignment: AlignmentResult {
+                clips: vec![ClipMatch {
+                    label: ClipLabel::Start,
+                    window_start_secs: 0.0,
+                    window_end_secs: 900.0,
+                    aligned: false,
+                    offset_secs: None,
+                    confidence: 0.2,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                }],
+                start_aligned: false,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                start_overlap: None,
+                high_rate_refinement: None,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 60.0,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
+                b_has_energy: false,
+            }],
+            gap_offset_agreement: None,
+            scan_window_secs: 60,
+            silence_peak_fraction: 0.01,
+        }
+    }
+
     #[test]
     fn human_report_renders_without_error() {
-        // Smoke test: human formatting of compatibility + overlap must not panic.
         super::print_human(&minimal_report()).expect("human render");
+    }
+
+    #[test]
+    fn human_report_shows_cross_check_agreement() {
+        use crate::domain::gap::GapOffsetAgreement;
+        let mut report = minimal_report();
+        report.gap_offset_agreement = Some(GapOffsetAgreement {
+            silence_based_offset_secs: 12.48,
+            alignment_offset_secs: 12.5,
+            delta_secs: 0.02,
+            agrees: true,
+        });
+        let text = super::format_human(&report);
+        assert!(text.contains("Cross-chk"), "expected cross-check line");
+        assert!(text.contains("AGREE"));
+        assert!(!text.contains("WARNING"));
+    }
+
+    #[test]
+    fn human_report_shows_cross_check_mismatch_warning() {
+        use crate::domain::gap::GapOffsetAgreement;
+        let mut report = minimal_report();
+        report.gap_offset_agreement = Some(GapOffsetAgreement {
+            silence_based_offset_secs: 7.0,
+            alignment_offset_secs: 12.5,
+            delta_secs: 5.5,
+            agrees: false,
+        });
+        let text = super::format_human(&report);
+        assert!(text.contains("MISMATCH"));
+        assert!(text.contains("WARNING"));
+    }
+
+    #[test]
+    fn human_failed_alignment_notes_b_mapping_skipped() {
+        let text = super::format_human(&failed_alignment_report());
+        assert!(
+            text.contains("B timeline mapping skipped"),
+            "expected B mapping skipped note in human output"
+        );
+        assert!(text.contains("unfillable"));
+    }
+
+    #[test]
+    fn json_failed_alignment_null_b_timeline_fields() {
+        let report = failed_alignment_report();
+        let json = serde_json::to_string(&report).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(value["alignment"]["recommended_offset_secs"], serde_json::Value::Null);
+        assert_eq!(value["gaps"][0]["video_b_start_secs"], serde_json::Value::Null);
+        assert_eq!(value["gaps"][0]["video_b_end_secs"], serde_json::Value::Null);
+        assert_eq!(value["gaps"][0]["b_has_energy"], false);
     }
 
     #[test]

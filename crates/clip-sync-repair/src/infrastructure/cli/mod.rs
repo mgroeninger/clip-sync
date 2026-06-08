@@ -45,6 +45,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     if let Some(s) = args.scan_window_secs {
         config.repair.scan_window_secs = s;
     }
+    if args.scan_both {
+        config.repair.scan_both = true;
+    } else if args.no_scan_both {
+        config.repair.scan_both = false;
+    }
 
     config.align.validate()
         .map_err(|e| RepairError::Align(AppError::Config(e)))?;
@@ -64,6 +69,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         scan_window_secs: config.repair.scan_window_secs,
         silence_peak_fraction: config.repair.silence_peak_fraction,
         min_gap_secs: config.repair.min_gap_secs(),
+        scan_both: config.repair.scan_both,
+        gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
     };
 
     let report = ScanGaps::new(&media_reader, &progress).execute(request)?;

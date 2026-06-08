@@ -81,6 +81,8 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
             scan_window_secs: 30,
             silence_peak_fraction: 0.01,
             min_gap_secs: 25.0,
+            scan_both: true,
+            gap_offset_tolerance_secs: 0.5,
         })
         .expect("full execute path should succeed");
 

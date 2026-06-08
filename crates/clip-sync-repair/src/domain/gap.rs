@@ -6,6 +6,18 @@ use clip_sync::{AlignmentResult, TimelineOverlap};
 
 use crate::domain::track_match::TrackCompatibility;
 
+/// Diagnostic comparison of the Chromaprint alignment offset vs the silence-structure-derived
+/// offset produced by the R3 bidirectional scan cross-check.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GapOffsetAgreement {
+    pub silence_based_offset_secs: f64,
+    pub alignment_offset_secs: f64,
+    /// Absolute difference between the two estimates.
+    pub delta_secs: f64,
+    /// `true` when `delta_secs` is within the configured tolerance.
+    pub agrees: bool,
+}
+
 /// A silent window detected in video A's timeline.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Gap {
@@ -41,6 +53,8 @@ pub struct GapReport {
     pub overlap: Option<TimelineOverlap>,
     pub alignment: AlignmentResult,
     pub gaps: Vec<Gap>,
+    /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
+    pub gap_offset_agreement: Option<GapOffsetAgreement>,
     pub scan_window_secs: u64,
     pub silence_peak_fraction: f32,
 }

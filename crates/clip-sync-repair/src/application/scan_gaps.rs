@@ -7,6 +7,7 @@ use clip_sync::{
     ProgressReporter,
 };
 
+use crate::application::cross_check::{check_gap_offset_agreement, SilenceInterval};
 use crate::application::error::RepairError;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
@@ -22,6 +23,10 @@ pub struct ScanGapsRequest {
     pub silence_peak_fraction: f32,
     /// Minimum silent-window duration (seconds) to include in the gap report.
     pub min_gap_secs: f64,
+    /// When true, also scan B's native timeline for silence and compute `gap_offset_agreement`.
+    pub scan_both: bool,
+    /// Tolerance (seconds) for the silence-based vs alignment offset agreement check.
+    pub gap_offset_tolerance_secs: f64,
 }
 
 pub struct ScanGaps<'r, MR: MediaReader> {
@@ -129,6 +134,28 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             pos = end;
         }
 
+        // Step 5: optionally scan B's native timeline for silence (bidirectional scan).
+        // Only possible when B opened successfully and has a known duration.
+        let b_intervals: Vec<SilenceInterval> = if request.scan_both {
+            match &b_session {
+                Some((session_b, track_b)) => {
+                    self.scan_silence_intervals(session_b, track_b, chunk_secs, request.silence_peak_fraction, request.min_gap_secs)
+                }
+                None => vec![],
+            }
+        } else {
+            vec![]
+        };
+
+        // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
+        let a_intervals: Vec<SilenceInterval> = gaps
+            .iter()
+            .map(|g| SilenceInterval { start_secs: g.video_a_start_secs, end_secs: g.video_a_end_secs })
+            .collect();
+        let gap_offset_agreement = alignment.recommended_offset_secs.and_then(|offset| {
+            check_gap_offset_agreement(&a_intervals, &b_intervals, offset, request.gap_offset_tolerance_secs)
+        });
+
         Ok(GapReport {
             video_a: request.video_a,
             video_b: request.video_b,
@@ -136,9 +163,44 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             overlap: alignment.start_overlap,
             alignment,
             gaps,
+            gap_offset_agreement,
             scan_window_secs: request.scan_window_secs,
             silence_peak_fraction: request.silence_peak_fraction,
         })
+    }
+
+    /// Scan a session's timeline for silence intervals. Returns intervals on the session's native
+    /// clock. Silently drops any windows where extraction fails (best-effort, non-fatal).
+    fn scan_silence_intervals(
+        &self,
+        session: &MR::Session,
+        track: &AudioTrack,
+        chunk_secs: f64,
+        silence_peak_fraction: f32,
+        min_gap_secs: f64,
+    ) -> Vec<SilenceInterval> {
+        let total_secs = match track.duration {
+            Some(d) => d.as_secs_f64(),
+            None => return vec![],
+        };
+
+        let mut intervals = Vec::new();
+        let mut pos = 0.0f64;
+        while pos < total_secs {
+            let end = (pos + chunk_secs).min(total_secs);
+            let window = ClipWindow::new(
+                Duration::from_secs_f64(pos),
+                Duration::from_secs_f64(end),
+                ClipLabel::Interior,
+            );
+            if let Ok(pcm) = session.extract_mono(track, &window, self.progress, "scan-b-bi") {
+                if policies::is_silent(&pcm, silence_peak_fraction) && (end - pos) >= min_gap_secs {
+                    intervals.push(SilenceInterval { start_secs: pos, end_secs: end });
+                }
+            }
+            pos = end;
+        }
+        intervals
     }
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
@@ -326,6 +388,8 @@ mod tests {
             scan_window_secs,
             silence_peak_fraction: 0.01,
             min_gap_secs: 30.0,
+            scan_both: false,
+            gap_offset_tolerance_secs: 0.5,
         }
     }
 
@@ -544,6 +608,7 @@ mod tests {
                     b_has_energy: false,
                 },
             ],
+            gap_offset_agreement: None,
             scan_window_secs: 60,
             silence_peak_fraction: 0.01,
         };
@@ -553,5 +618,66 @@ mod tests {
         assert!(report.gaps[0].is_fillable());
         assert!(!report.gaps[1].is_fillable());
         assert!((report.gaps[0].duration_secs() - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn scan_both_produces_agreement_when_silence_colocated() {
+        // Both A and B are fully silent with offset 0 — silence-based offset should agree with
+        // the alignment offset (also 0).
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.scan_both = true;
+        request.gap_offset_tolerance_secs = 0.5;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        let agreement = report.gap_offset_agreement.expect("agreement should be present when both timelines have silence");
+        assert!(agreement.agrees, "colocated silence should agree");
+        assert!(agreement.delta_secs < 0.001, "delta should be ~0");
+    }
+
+    #[test]
+    fn scan_both_absent_when_scan_both_disabled() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        // scan_both defaults to false in scan_request helper.
+        assert!(report.gap_offset_agreement.is_none());
+    }
+
+    #[test]
+    fn scan_both_absent_when_alignment_failed() {
+        // Even if scan_both is enabled, gap_offset_agreement is None without a recommended offset.
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(None))
+            .expect("scan should succeed");
+
+        assert!(report.gap_offset_agreement.is_none());
     }
 }

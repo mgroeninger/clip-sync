@@ -36,4 +36,12 @@ pub struct Args {
     /// Override: scan window size (seconds).
     #[arg(long, value_name = "SECS")]
     pub scan_window_secs: Option<u64>,
+
+    /// Enable bidirectional silence scan (scan B's timeline too) — on by default.
+    #[arg(long, overrides_with = "no_scan_both")]
+    pub scan_both: bool,
+
+    /// Disable bidirectional silence scan.
+    #[arg(long, overrides_with = "scan_both")]
+    pub no_scan_both: bool,
 }

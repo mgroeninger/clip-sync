@@ -1,10 +1,10 @@
 # Temporary plan: repair write path (track match, multi-channel patch, WAV + optional ffmpeg)
 
-> **Status:** In progress (2026-06-08). **R0–R1** and **R2 core** shipped in code; **R2 completion**, **lib extract hardening**, **R3–R5** remain. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
+> **Status:** In progress (2026-06-08). **R0–R3** shipped. **Next:** lib extract hardening → R4 → R5. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
 
 **Problem (original):** `clip-sync-repair` shipped as report-only (migration Phase 4). It aligned A and B and scanned A for silent runs but could not compare track layouts, surface overlap, patch audio, or emit multi-channel output.
 
-**Remaining gaps:** alignment-gate semantics on `Gap` (optional B fields), bidirectional silence scan, mutual-silence cross-check, gap fill + WAV write, optional ffmpeg mux; lib `extract.rs` perf/maintainability before full-timeline decode in R4.
+**Remaining gaps:** bidirectional silence scan, mutual-silence cross-check, gap fill + WAV write, optional ffmpeg mux; lib `extract.rs` perf/maintainability before full-timeline decode in R4.
 
 **Goal:** Extend the repair hexagon to the full workflow:
 
@@ -41,10 +41,10 @@ Locked before implementation. Change only with an explicit plan revision.
 | **dry-run semantics** | `--dry-run` (default **true** until write path ships, then default **false** once `--output`/`--wav` given) gates all file writes. Report-only when no output path set. |
 | **Repair errors** | Extend `RepairError` with `Write(io)` (reuse code 4) and `Mux(String)` (new exit code **6**). Keep `Align` boundary wrapping. |
 | **No lib AppError changes** | All new failure modes are repair-local. ffmpeg/mux never touches lib. |
-| **Phasing** | R0–R1 (lib extract) → R2 (repair report) → **R2 completion** → R3 → **lib extract hardening** (before R4) → R4 → R5. Each slice ships green with tests. |
+| **Phasing** | R0–R1 (lib extract) → R2 (repair report + alignment gate) → R3 → **lib extract hardening** (before R4) → R4 → R5. Each slice ships green with tests. |
 | **Lib extract hardening** | Not a numbered repair phase. `append_*` reuse one `Vec<f32>` scratch per extract loop (before R4). Optional shared mono/interleaved decode scaffold at R4 kickoff. Plane-direct Symphonia read deferred. |
 
-> **Phase naming:** `R0`–`R5` are *repair feature* phases. They sit on top of completed migration Phase 4 (report-only) and supersede the single deferred "migration Phase 5 (ffmpeg write path)" with a finer breakdown. **R2 completion** and **lib extract hardening** are follow-ups tracked here and in [BACKLOG.md](../BACKLOG.md) — not "R1.5" (R2 is already partially shipped).
+> **Phase naming:** `R0`–`R5` are *repair feature* phases. They sit on top of completed migration Phase 4 (report-only) and supersede the single deferred "migration Phase 5 (ffmpeg write path)" with a finer breakdown. **Lib extract hardening** is tracked here and in [BACKLOG.md](../BACKLOG.md) — not a repair phase number.
 
 ---
 
@@ -54,20 +54,18 @@ Locked before implementation. Change only with an explicit plan revision.
 |---------------|-------|--------|-------|
 | **R0** spike | lib | ✅ Done | Validated via R1 tests (stereo, mid-file seek, resampler path) |
 | **R1** native extraction | lib | ✅ Done | `MultiChannelPcm`, `extract_interleaved`, `MediaError::Unsupported`, `TimelineOverlap` re-export, `resample_interleaved` on facade |
-| **R2** core | repair | ✅ Done | `track_match`, `GapReport.track_compatibility` + `overlap`, CLI human/JSON |
-| **R2 completion** | repair | ☐ Open | `Option<f64>` B fields, alignment gate (no `unwrap_or(0.0)`), human note — **before R3** |
+| **R2** | repair | ✅ Done | `track_match`, compatibility + overlap on report, `Option<f64>` B fields, alignment gate, CLI human/JSON polish |
 | **Lib extract hardening** | lib | ☐ Open | Scratch buffer reuse (**before R4**); shared decode scaffold (**at R4 kickoff**, recommended) |
-| **R3** | repair | ☐ Open | Bidirectional scan + `gap_offset_agreement` |
+| **R3** | repair | ✅ Done | Bidirectional scan + `gap_offset_agreement` (2026-06-08) |
 | **R4** | repair | ☐ Open | `PatchAudio`, gap fill, multi-channel WAV |
 | **R5** | repair | ☐ Open | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) |
 
 ### Recommended order of work
 
 ```text
-1. R2 completion          (repair — alignment gate / JSON null B fields)
-2. R3                     (repair — bidirectional scan + cross-check)
-3. Lib extract hardening  (lib — scratch buffer; optional scaffold)
-4. R4 → R5                (repair write path)
+1. R3                     (repair — bidirectional scan + cross-check)
+2. Lib extract hardening  (lib — scratch buffer; optional scaffold)
+3. R4 → R5                (repair write path)
 ```
 
 ---
@@ -299,26 +297,16 @@ pub struct GapOffsetAgreement {
 
 **Known follow-up (not R1 scope):** per-packet `Vec` alloc in `append_*`; duplicated decode loops — see **Lib extract hardening**.
 
-### R2 — Track compatibility + surface overlap (repair, report-only)
-
-**R2 core ✅ (shipped)**
+### R2 — Track compatibility + surface overlap (repair, report-only) ✅
 
 **Repair (`clip-sync-repair`)**
 
 - [x] `domain/track_match.rs` — `assess_track_compatibility` + unit tests (identical / rate-only / channel mismatch)
 - [x] `application/scan_gaps.rs` — best-effort B open; build `TrackCompatibility`; copy `alignment.start_overlap` into report
-- [x] `domain/gap.rs` — `track_compatibility: Option<TrackCompatibility>`, `overlap: Option<TimelineOverlap>` on `GapReport`
-- [x] `infrastructure/cli/output.rs` — human + JSON for track match + overlap
-- [x] Tests: compatibility in report; JSON shape; human render smoke test
-
-**R2 completion ☐ (before R3)**
-
-Align code with **Alignment gate** decision and `Gap` types below. Energy probing already skips when offset is `None`; remaining gaps:
-
-- [ ] `domain/gap.rs` — `video_b_start_secs` / `video_b_end_secs` → `Option<f64>`; `is_fillable()` requires `video_b_start_secs.is_some() && b_has_energy`
-- [ ] `application/scan_gaps.rs` — when `recommended_offset_secs` is `None`: never `unwrap_or(0.0)` on B positions; emit `video_b_*: None` (grep all `Gap {` / `Gap::` construction sites)
-- [ ] `infrastructure/cli/output.rs` — when alignment failed, note that B timeline mapping was skipped (gaps A-only / unfillable)
-- [ ] Tests: `failed_alignment_emits_a_gaps_without_b_mapping` — A gaps present, `video_b_*` null in JSON, `fillable_count == 0`
+- [x] `domain/gap.rs` — `track_compatibility` + `overlap` on `GapReport`; `video_b_*: Option<f64>`; `is_fillable()` requires B mapping + energy
+- [x] `application/scan_gaps.rs` — alignment gate: `b_positions = offset_secs.map(...)`; no `unwrap_or(0.0)` on B timeline
+- [x] `infrastructure/cli/output.rs` — human + JSON for track match + overlap; `is_fillable()` for gap labels; B-mapping-skipped note when offset is `None`
+- [x] Tests: compatibility + overlap in report; `scan_after_alignment_with_failed_alignment_marks_b_unfillable`; `json_failed_alignment_null_b_timeline_fields`; `human_failed_alignment_notes_b_mapping_skipped`
 
 **Lib:** none
 
@@ -475,7 +463,7 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 | `append_*_reuses_scratch_buffer` | lib hardening | lib | no per-packet alloc; same PCM output as before |
 | `assess_compat_identical / rate_only / channel_mismatch` | R2 ✅ | repair | verdict mapping |
 | `report_includes_compatibility_and_overlap` | R2 ✅ | repair | fields populated; JSON shape |
-| `failed_alignment_emits_a_gaps_without_b_mapping` | R2 completion | repair | `recommended_offset_secs: null` → A gaps listed, `video_b_*` null, `fillable_count == 0` |
+| `failed_alignment` null B fields (scan + JSON + human) | R2 ✅ | repair | offset `null` → A gaps listed, `video_b_*` null, human B-mapping-skipped note |
 | `silence_offset_recovered_from_mutual_gaps` | R3 | repair | co-located silence → Δ ≈ true offset |
 | `gap_offset_disagreement_flagged` | R3 | repair | wrong silence layout → `agrees = false` |
 | `compute_fill_gain_clamps_to_max_db` | R4 | repair | gain bounded |

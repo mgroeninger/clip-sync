@@ -23,6 +23,12 @@ pub struct RepairConfig {
     /// Duration of each scan window when checking A's timeline for silence (seconds).
     #[serde(default = "default_scan_window_secs")]
     pub scan_window_secs: u64,
+    /// Also scan B's native timeline for silence to produce `gap_offset_agreement`.
+    #[serde(default = "default_true")]
+    pub scan_both: bool,
+    /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.
+    #[serde(default = "default_gap_offset_tolerance_secs")]
+    pub gap_offset_tolerance_secs: f64,
 }
 
 fn default_min_gap_ms() -> u64 {
@@ -34,6 +40,12 @@ fn default_silence_peak_fraction() -> f32 {
 fn default_scan_window_secs() -> u64 {
     60
 }
+fn default_true() -> bool {
+    true
+}
+fn default_gap_offset_tolerance_secs() -> f64 {
+    0.5
+}
 
 impl Default for RepairConfig {
     fn default() -> Self {
@@ -41,6 +53,8 @@ impl Default for RepairConfig {
             min_gap_ms: default_min_gap_ms(),
             silence_peak_fraction: default_silence_peak_fraction(),
             scan_window_secs: default_scan_window_secs(),
+            scan_both: default_true(),
+            gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
         }
     }
 }
