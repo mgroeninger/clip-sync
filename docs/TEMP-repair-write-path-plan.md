@@ -27,7 +27,8 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Where multi-channel decode lives** | Extend lib port `MediaSession` with `extract_interleaved(...) -> MultiChannelPcm` (default impl returns `MediaError::Unsupported` so existing fakes don't break); implement in `SymphoniaMediaSession`; re-export `MultiChannelPcm` on the facade. **Not** a second symphonia dependency in repair. |
 | **PCM sample format** | `i16` interleaved, consistent with `MonoPcmClip`. f32 deferred — revisit only if normalization/crossfade clipping shows up in tests. |
 | **Track compatibility verdict** | Pure policy `assess_track_compatibility(&AudioTrack a, &AudioTrack b) -> TrackCompatibility`. Verdict ∈ `Identical | Compatible | Mismatch`. Channel-count mismatch → `Mismatch` (no auto up/downmix in v1); sample-rate mismatch → `Compatible` (resample B to A on fill). Report always; **never** hard-fail in report-only mode. |
-| **Fill channel/rate handling** | Patch into A's native track layout. If B's channel count differs → fill is **skipped** for that gap with `reason = "track layout mismatch"` (still reported). If B's rate differs → resample B segment to A's rate (reuse lib `resample` via a facade helper or repair-local linear fallback — see [Open questions](#open-questions)). |
+| **Fill channel/rate handling** | Patch into A's native track layout. If B's channel count differs → fill is **skipped** for that gap with `reason = "track layout mismatch"` (still reported). If B's rate differs → resample B segment to A's rate via `resample_interleaved` on the lib facade (see **Resampler** row). |
+| **Resampler** | Add `resample_interleaved(samples: &[i16], channels: u16, from_rate: u32, to_rate: u32) -> Vec<i16>` to the lib facade in R1 alongside `MultiChannelPcm`. Implement per-channel using the existing rubato-backed `resample_mono_pcm` in `domain/resample.rs` (deinterleave → resample each channel → reinterleave). `resample_mono_pcm` is already in `domain/mod.rs` but not on the public facade; add it there too. |
 | **Bidirectional scan** | Scan B's own timeline for silence in addition to probing B at A's gap positions. Default **on** when write path runs; configurable `scan_both`. Reuse `is_silent`. |
 | **Mutual-silence cross-check** | Independent offset estimate: find the shift that maximizes overlap of A-silence and B-silence intervals; compare to `recommended_offset_secs`. Report `gap_offset_agreement` (delta in seconds + agree bool within tolerance). Diagnostic only in v1 — never overrides alignment offset. |
 | **Alignment gate (scan vs fill)** | **Scan** and **fill** are separate concerns. Low-confidence alignment (`recommended_offset_secs: none`) is **not** an error (exit **0**). Still scan A for silence on A's clock (and B on B's clock when `scan_both`). **Do not** map B timeline positions or probe `b_has_energy` without a recommended offset. **Do not** early-return with an empty gap list solely because alignment failed — R3 needs silence intervals for mutual-silence cross-check. **Patch** (R4) gates on `recommended_offset_secs`, shared overlap, `b_has_energy`, `min_fill_correlation`, and channel match. |
@@ -262,7 +263,8 @@ pub struct GapOffsetAgreement {
 
 - [ ] `domain/multichannel_pcm.rs` — `MultiChannelPcm`; facade re-export
 - [ ] `MediaError::Unsupported(String)` (if absent)
-- [ ] `MediaSession::extract_interleaved` default + `SymphoniaMediaSession` impl (reuse decode-skip + shortfall logic from `extract.rs`)
+- [ ] `MediaSession::extract_interleaved` default + `SymphoniaMediaSession` impl — mirror `extract_mono_with_state` in `extract.rs`, skip the mono-downmix step, use the existing `decoded.copy_to_vec_interleaved()` call already present in that file
+- [ ] `domain/resample.rs` / facade — add `resample_interleaved` (per-channel rubato via `resample_mono_pcm`) + `pub use` in `lib.rs`
 - [ ] Re-export `TimelineOverlap` on facade `domain` block
 - [ ] Lib tests: stereo extract frame count, channel deinterleave round-trip, mid-file window, decode-skip surfaced
 
@@ -275,7 +277,7 @@ pub struct GapOffsetAgreement {
 - [ ] `domain/track_match.rs` — `assess_track_compatibility` + unit tests (identical / rate-only / channel mismatch)
 - [ ] `application/scan_gaps.rs` — capture `track_a`/`track_b`, build `TrackCompatibility`; copy `alignment.start_overlap` into report
 - [ ] `application/scan_gaps.rs` — **alignment gate:** when `recommended_offset_secs` is `None`, still emit A silent windows; set `video_b_*` to `None`, skip B session open and `b_has_energy` probe (never `unwrap_or(0.0)` on B positions)
-- [ ] `domain/gap.rs` — `video_b_start_secs` / `video_b_end_secs` → `Option<f64>`; tighten `is_fillable()`; add `track_compatibility`, `overlap` to `GapReport`
+- [ ] `domain/gap.rs` — `video_b_start_secs` / `video_b_end_secs` → `Option<f64>`; tighten `is_fillable()`; add `track_compatibility`, `overlap` to `GapReport` (grep for `Gap {` and `Gap::` construction sites first to know full blast radius before changing the field types)
 - [ ] `infrastructure/cli/output.rs` — human + JSON lines for track match + overlap window; when offset is `none`, note that gaps are A-only (not fillable)
 - [ ] Tests: report includes compatibility + overlap; JSON shape; failed alignment → A gaps present, `video_b_*` null, `fillable_count == 0`
 
@@ -434,7 +436,7 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 
 ## Open questions
 
-- **Resampler reuse:** the lib has `resample_mono_pcm` in `domain/resample.rs` (rubato-backed with linear fallback) but it is **mono-only and not on the facade**. Either add a facade `resample_interleaved` helper (per-channel rubato), or implement a repair-local linear resampler. Prefer the facade helper for quality; accept a repair-local linear fallback for v1 if facade churn is undesirable.
+- ~~**Resampler reuse** — resolved: add `resample_interleaved` to the facade in R1; see Decisions table.~~
 - **Channel up/downmix:** v1 skips fill on channel-count mismatch. A future phase could map stereo→5.1 fronts or downmix. Out of scope until a corpus case needs it.
 - **Streaming write:** full-timeline A in memory is the simple v1 choice. Chunked encode is deferred until users hit memory pain (mirrors lib BACKLOG "Memory use and PCM cloning").
 
