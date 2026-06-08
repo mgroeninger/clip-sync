@@ -1,0 +1,22 @@
+# Example analyzer config (see README.md § Analyzer config).
+# clip_length is seconds in TOML (900 = 15 minutes).
+
+[clip]
+clip_length = 900
+num_clips = 1
+normalize_loudness = true
+trim_silence = true
+
+[alignment]
+min_match_score = 0.3
+refine_offset_with_pcm = true
+refine_offset_high_rate = false
+high_rate_refine_secs = 3
+try_all_tracks = false
+
+[output]
+format = "human"
+show_diagnostics = false
+
+[logging]
+level = "warn"

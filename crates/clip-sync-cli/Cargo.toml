@@ -5,6 +5,10 @@ edition = "2021"
 description = "Analyzer CLI for clip-sync"
 license = "Non-commercial"
 
+[lib]
+name = "clip_sync_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "clip-sync"
 path = "src/main.rs"

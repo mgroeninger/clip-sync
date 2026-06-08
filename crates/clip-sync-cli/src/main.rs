@@ -1,8 +1,5 @@
-mod application;
-mod infrastructure;
-
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    infrastructure::cli::run()
+    clip_sync_cli::infrastructure::cli::run()
 }

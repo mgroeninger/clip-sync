@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tracing_subscriber::EnvFilter;
 
 use crate::application::error::AppError;
 
@@ -38,7 +37,10 @@ pub struct LoggingConfig {
     pub progress: ProgressMode,
 }
 
+#[cfg(feature = "default-tracing")]
 pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
+    use tracing_subscriber::EnvFilter;
+
     let level = match config.level {
         LogLevel::Error => "error",
         LogLevel::Warn => "warn",

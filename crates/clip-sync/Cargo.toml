@@ -6,7 +6,8 @@ description = "Align two videos by comparing audio fingerprints (library)"
 license = "Non-commercial"
 
 [features]
-default = []
+default = ["default-tracing"]
+default-tracing = ["dep:tracing-subscriber"]
 he-aac = ["dep:fdk-aac", "dep:symphonia-core"]
 ffmpeg-tests = []
 test-utils = ["dep:hound", "dep:tempfile"]
@@ -22,7 +23,7 @@ symphonia-core = { version = "0.6", optional = true }
 thiserror = "1"
 toml = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 hound = { version = "3", optional = true }
 tempfile = { version = "3", optional = true }
 
