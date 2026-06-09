@@ -1,6 +1,6 @@
 # Temporary plan: AC-3 / E-AC-3 decode via oxideav-ac3
 
-> **Status:** A0 + A1 + A2 complete (2026-06-09). A3 remaining. Archive to `docs/archive/ac3-decode-plan.md` when shipped and validated on real media (e.g. dual-track MP4 with 2ch AAC + 6ch surround).
+> **Status:** Shipped and validated (2026-06-09). Archived to [`docs/archive/ac3-decode-plan.md`](archive/ac3-decode-plan.md). This file can be deleted.
 
 **Problem:** Symphonia demuxes AC-3 and E-AC-3 from MP4/MKV (`dac3` / `dec3` atoms → `CODEC_ID_AC3` / `CODEC_ID_EAC3`) but ships **no decoder**. Probe marks those tracks `decodable: false`. `select_best_track` picks the first decodable stream — often 2ch AAC — while video A is 6ch. Repair reports `mismatch (fill blocked)` even when B contains a matching surround program on an undecodable AC-3 track.
 
@@ -96,7 +96,7 @@ align + scan + patch (repair)
 - [x] Implement `Ac3Decoder` (`AudioDecoder` + `RegisterableAudioDecoder`).
 - [x] Register for `CODEC_ID_AC3` and `CODEC_ID_EAC3`.
 - [x] Extend `probe.rs` `codec_name` mapping: `"ac3"` / `"eac3"` (human-readable).
-- [ ] Unit test: decodability probe returns true for AC-3 params when feature on.
+- [x] Unit test: decodability probe returns true for AC-3 params when feature on.
 
 ### A2 — Channel-matching track selection (lib + repair)
 
@@ -106,10 +106,10 @@ align + scan + patch (repair)
 
 ### A3 — Validation & docs
 
-- [ ] Ignored-by-default corpus test: dual-track MP4 (2ch AAC + 6ch AC-3), align + repair smoke when `ac3` enabled.
-- [ ] Manual validation: licensed pair → `repairable_count > 0`, patch allowed, at least one gap patched (listening optional).
-- [ ] README: feature flag, limitations (oxideav maturity), `ffprobe` tip for stream layout.
-- [ ] Archive this doc; add one-line entry to `BACKLOG.md` if item existed there.
+- [x] Ignored-by-default corpus test: dual-track MP4 (2ch AAC + 6ch AC-3), align + repair smoke when `ac3` enabled.
+- [x] Manual validation: licensed pair → `repairable_count > 0`, patch allowed, at least one gap patched (listening optional).
+- [x] README: feature flag, limitations (oxideav maturity), `ffprobe` tip for stream layout.
+- [x] Archive this doc; add one-line entry to `BACKLOG.md` if item existed there.
 
 ---
 

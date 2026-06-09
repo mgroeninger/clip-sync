@@ -76,8 +76,10 @@ fn trim_ffmpeg_stderr(stderr: &str) -> String {
 }
 
 fn parse_progress_out_time_ms(line: &str) -> Option<u64> {
+    // Despite the "_ms" suffix, ffmpeg's -progress output emits microseconds here.
     line.strip_prefix("out_time_ms=")
         .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|us| us / 1000)
 }
 
 fn probe_media_duration_ms(path: &Path) -> Option<u64> {
@@ -316,7 +318,9 @@ mod tests {
 
     #[test]
     fn parse_progress_out_time_ms_reads_ffmpeg_progress_line() {
-        assert_eq!(parse_progress_out_time_ms("out_time_ms=12345"), Some(12345));
+        // ffmpeg emits microseconds; we convert to ms
+        assert_eq!(parse_progress_out_time_ms("out_time_ms=12345000"), Some(12345));
+        assert_eq!(parse_progress_out_time_ms("out_time_ms=500"), Some(0));
         assert_eq!(parse_progress_out_time_ms("progress=continue"), None);
     }
 

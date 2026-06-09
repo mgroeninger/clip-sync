@@ -208,6 +208,68 @@ fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
     base + u16::from(lfeon)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia::core::codecs::audio::well_known::{CODEC_ID_AC3, CODEC_ID_EAC3};
+
+    fn ac3_params(codec: AudioCodecId) -> AudioCodecParameters {
+        AudioCodecParameters {
+            codec,
+            sample_rate: Some(48_000),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(feature = "ac3")]
+    #[test]
+    fn ac3_params_are_decodable_when_feature_enabled() {
+        assert!(
+            is_audio_decodable(&ac3_params(CODEC_ID_AC3)),
+            "AC-3 params should be decodable when the ac3 feature is enabled"
+        );
+    }
+
+    #[cfg(feature = "ac3")]
+    #[test]
+    fn eac3_params_are_decodable_when_feature_enabled() {
+        assert!(
+            is_audio_decodable(&ac3_params(CODEC_ID_EAC3)),
+            "E-AC-3 params should be decodable when the ac3 feature is enabled"
+        );
+    }
+
+    #[cfg(not(feature = "ac3"))]
+    #[test]
+    fn ac3_params_are_not_decodable_without_feature() {
+        assert!(
+            !is_audio_decodable(&ac3_params(CODEC_ID_AC3)),
+            "AC-3 params should not be decodable when the ac3 feature is disabled"
+        );
+    }
+
+    #[test]
+    fn dac3_channel_count_5_1() {
+        // acmod=7 (5 channels) + lfeon=1 → 6 channels
+        // byte[1] = acmod(7)<<3 | lfeon(1)<<2 | ... = 0b00111100 = 0x3C
+        let extra = [0x00u8, 0x3C, 0x00];
+        assert_eq!(ac3_channels_from_dac3(&extra), 6);
+    }
+
+    #[test]
+    fn dac3_channel_count_stereo() {
+        // acmod=2 (stereo) + lfeon=0 → 2 channels
+        // byte[1] = acmod(2)<<3 | lfeon(0)<<2 = 0b00010000 = 0x10
+        let extra = [0x00u8, 0x10, 0x00];
+        assert_eq!(ac3_channels_from_dac3(&extra), 2);
+    }
+
+    #[test]
+    fn dac3_channel_count_too_short_returns_zero() {
+        assert_eq!(ac3_channels_from_dac3(&[0x00, 0x3C]), 0);
+    }
+}
+
 fn codec_name(codec: AudioCodecId) -> String {
     match codec {
         CODEC_ID_AAC => "aac".into(),

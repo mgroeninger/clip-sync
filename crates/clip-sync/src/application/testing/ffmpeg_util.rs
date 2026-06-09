@@ -276,6 +276,50 @@ pub fn write_he_aac_mp4_fixture(path: &Path) -> bool {
     false
 }
 
+/// Build a dual-track MP4: track 0 = 2ch AAC, track 1 = 6ch AC-3 (channels duplicated from input).
+/// Used to smoke-test channel-matching track selection with an AC-3 surround program alongside
+/// an AAC stereo fallback.
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+pub fn write_dual_track_aac_ac3_mp4(source_wav: &Path, output: &Path) -> bool {
+    if !ffmpeg_available() {
+        return false;
+    }
+    Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            source_wav.to_str().unwrap_or(""),
+            "-i",
+            source_wav.to_str().unwrap_or(""),
+            "-map",
+            "0:a",
+            "-map",
+            "1:a",
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "128k",
+            "-c:a:1",
+            "ac3",
+            "-b:a:1",
+            "384k",
+            "-ac:a:1",
+            "6",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+            output.to_str().unwrap_or(""),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 pub fn write_ac3_surround_mp4_fixture(path: &Path) -> bool {
     write_lavfi_sine_container(

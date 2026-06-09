@@ -18,6 +18,7 @@ default = []
 ffmpeg-mux = ["dep:tempfile"]
 he-aac = ["clip-sync/he-aac"]
 ac3 = ["clip-sync/ac3"]
+ffmpeg-tests = ["clip-sync/ffmpeg-tests"]
 
 [dependencies]
 clip-sync = { path = "../clip-sync" }

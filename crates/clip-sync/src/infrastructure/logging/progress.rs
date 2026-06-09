@@ -46,6 +46,7 @@ impl ProgressReporter for StderrProgressReporter {
 
         let mut stderr = std::io::stderr().lock();
         self.finish_progress_line(&mut stderr);
+        self.last_percent.set(None);
         let _ = writeln!(stderr, "{message}");
     }
 
@@ -76,10 +77,6 @@ impl ProgressReporter for StderrProgressReporter {
         }
         self.last_percent.set(Some(percent));
         let _ = writeln!(stderr, "{label}: {percent}%");
-
-        if current >= total {
-            self.last_percent.set(None);
-        }
     }
 }
 

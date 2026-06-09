@@ -9,6 +9,9 @@ use clip_sync_repair::application::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+use clip_sync::testing::ffmpeg_util;
+
 const SAMPLE_RATE: u32 = 44_100;
 const TOTAL_SECS: u32 = 120;
 const OFFSET_SECS: u32 = 3;
@@ -163,4 +166,69 @@ fn execute_detects_short_two_second_gap() {
 
     assert!(gap.b_has_energy, "B should have audio at the corresponding position");
     assert!(gap.duration_secs() >= 1.5, "gap should be at least 1.5s, got {}s", gap.duration_secs());
+}
+
+/// Smoke test: B is a dual-track MP4 (2ch AAC + 6ch AC-3). The pipeline should select a
+/// decodable track, align, detect the silent gap in A, and report B energy at that position.
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+#[test]
+fn ac3_dual_track_b_scan_detects_gap() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skipping ac3_dual_track_b_scan_detects_gap: ffmpeg unavailable");
+        return;
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b_wav) = write_offset_chirp_wav_pair(
+        temp.path(),
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        OFFSET_SECS,
+    );
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
+
+    let path_b_mp4 = temp.path().join("b_dual_ac3.mp4");
+    if !ffmpeg_util::write_dual_track_aac_ac3_mp4(&path_b_wav, &path_b_mp4) {
+        eprintln!("skipping: ffmpeg could not encode dual-track AAC+AC-3 MP4");
+        return;
+    }
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let aligner = SymphoniaAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+
+    let report = scan
+        .execute(ScanGapsRequest {
+            video_a: path_a,
+            video_b: path_b_mp4,
+            align: aligned_chirp_config(),
+            decode_chunk_secs: 10,
+            scan_block_secs: 0.25,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            silence_hold_blocks: 0,
+            min_gap_secs: 25.0,
+            scan_both: true,
+            gap_offset_tolerance_secs: 0.5,
+        })
+        .expect("scan should succeed with dual-track AC-3 B");
+
+    assert!(
+        !report.gaps.is_empty(),
+        "expected at least one silent gap in video A"
+    );
+    let silent_gap = report
+        .gaps
+        .iter()
+        .find(|gap| {
+            (gap.video_a_start_secs - f64::from(SILENT_START_SECS)).abs() < 1.0
+                && (gap.video_a_end_secs - f64::from(SILENT_END_SECS)).abs() < 1.0
+        })
+        .expect("expected a gap covering the muted A segment");
+    assert!(
+        silent_gap.b_has_energy,
+        "dual-track B (AAC + AC-3) should have audio at the aligned gap position"
+    );
+    assert!(silent_gap.is_fillable());
 }
