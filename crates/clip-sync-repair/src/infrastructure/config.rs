@@ -12,6 +12,8 @@ fn default_repair_align_config() -> AlignConfig {
     align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;
     // Keep start-clip offset for fill when end disagrees; drift is surfaced in the report.
     align.alignment.require_consistent_offsets = false;
+    // Sub-sample offset refinement is worth the extra cost for repair accuracy.
+    align.alignment.refine_offset_high_rate = true;
     align
 }
 
@@ -216,13 +218,13 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
         Err(_) => false,
     };
 
-    let require_consistent_explicit = match toml::from_str::<toml::Table>(&text) {
-        Ok(table) => table
-            .get("alignment")
-            .and_then(toml::Value::as_table)
-            .is_some_and(|alignment| alignment.contains_key("require_consistent_offsets")),
-        Err(_) => false,
-    };
+    let alignment_table = toml::from_str::<toml::Table>(&text)
+        .ok()
+        .and_then(|t| t.get("alignment").and_then(toml::Value::as_table).cloned())
+        .unwrap_or_default();
+
+    let require_consistent_explicit = alignment_table.contains_key("require_consistent_offsets");
+    let high_rate_explicit = alignment_table.contains_key("refine_offset_high_rate");
 
     let mut config: RepairAppConfig = toml::from_str(&text)
         .map_err(|e| AppError::Config(ConfigError::Parse(e.to_string())))?;
@@ -232,6 +234,9 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
     }
     if !require_consistent_explicit {
         config.align.alignment.require_consistent_offsets = false;
+    }
+    if !high_rate_explicit {
+        config.align.alignment.refine_offset_high_rate = true;
     }
 
     Ok(config)
@@ -303,6 +308,31 @@ dry_run = true
 
         let config = load_repair_app_config(Some(&path)).expect("load config");
         assert!(!config.align.alignment.require_consistent_offsets);
+    }
+
+    #[test]
+    fn repair_app_config_enables_high_rate_refinement_by_default() {
+        let config = RepairAppConfig::default();
+        assert!(config.align.alignment.refine_offset_high_rate);
+    }
+
+    #[test]
+    fn load_config_applies_high_rate_refinement_when_omitted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(&path, "[repair]\ndry_run = true\n").expect("write config");
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert!(config.align.alignment.refine_offset_high_rate);
+    }
+
+    #[test]
+    fn load_config_respects_explicit_high_rate_refinement_false() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(&path, "[alignment]\nrefine_offset_high_rate = false\n")
+            .expect("write config");
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert!(!config.align.alignment.refine_offset_high_rate);
     }
 
     #[test]
