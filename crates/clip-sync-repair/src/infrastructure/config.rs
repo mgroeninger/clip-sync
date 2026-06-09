@@ -53,10 +53,16 @@ pub struct RepairConfig {
     /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.
     #[serde(default = "default_gap_offset_tolerance_secs")]
     pub gap_offset_tolerance_secs: f64,
-    /// Minimum normalized Pearson correlation between A's pre-gap border audio and the
-    /// start of B's fill segment. Regions below this threshold are skipped during patch.
+    /// Minimum normalized Pearson correlation at each gap seam (pre and post). Regions below
+    /// this threshold on either seam are skipped during patch.
     #[serde(default = "default_min_fill_correlation")]
     pub min_fill_correlation: f32,
+    /// Extra B audio (seconds) extracted on each side of the mapped gap for boundary alignment.
+    #[serde(default = "default_fill_align_margin_secs")]
+    pub fill_align_margin_secs: f64,
+    /// Maximum slide (seconds) when searching for the best-matching B fill position.
+    #[serde(default = "default_max_fill_align_adjustment_secs")]
+    pub max_fill_align_adjustment_secs: f64,
     /// Crossfade duration at gap boundaries (ms).
     #[serde(default = "default_crossfade_ms")]
     pub crossfade_ms: u64,
@@ -104,6 +110,12 @@ fn default_gap_offset_tolerance_secs() -> f64 {
 fn default_min_fill_correlation() -> f32 {
     0.35
 }
+fn default_fill_align_margin_secs() -> f64 {
+    1.0
+}
+fn default_max_fill_align_adjustment_secs() -> f64 {
+    0.5
+}
 fn default_crossfade_ms() -> u64 {
     10
 }
@@ -126,6 +138,8 @@ impl Default for RepairConfig {
             scan_both: default_true(),
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
+            fill_align_margin_secs: default_fill_align_margin_secs(),
+            max_fill_align_adjustment_secs: default_max_fill_align_adjustment_secs(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
             normalize_window_secs: default_normalize_window_secs(),
@@ -136,11 +150,38 @@ impl Default for RepairConfig {
     }
 }
 
+fn default_video_codec() -> String {
+    "copy".into()
+}
+
+fn default_audio_codec() -> String {
+    "aac".into()
+}
+
 /// Output configuration for the repair tool.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairOutputConfig {
     /// Write patched audio to this WAV file.
     pub wav_path: Option<PathBuf>,
+    /// Mux patched audio into video A via ffmpeg (R5, requires `ffmpeg-mux` feature).
+    pub video_path: Option<PathBuf>,
+    /// Video stream codec for mux (`copy` preserves the source stream).
+    #[serde(default = "default_video_codec")]
+    pub video_codec: String,
+    /// Audio stream codec for mux (patched WAV is encoded with this codec).
+    #[serde(default = "default_audio_codec")]
+    pub audio_codec: String,
+}
+
+impl Default for RepairOutputConfig {
+    fn default() -> Self {
+        Self {
+            wav_path: None,
+            video_path: None,
+            video_codec: default_video_codec(),
+            audio_codec: default_audio_codec(),
+        }
+    }
 }
 
 impl RepairConfig {
@@ -176,6 +217,13 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "scan_block_ms".into(),
                 reason: "must be greater than zero".into(),
+            });
+        }
+        #[cfg(not(feature = "ffmpeg-mux"))]
+        if self.output.video_path.is_some() {
+            return Err(ConfigError::InvalidValue {
+                field: "repair.output.video_path".into(),
+                reason: "requires building clip-sync-repair with --features ffmpeg-mux".into(),
             });
         }
         Ok(())

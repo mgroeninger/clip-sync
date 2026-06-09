@@ -15,8 +15,20 @@ pub trait PatchedAudioWriter {
     ) -> Result<(), RepairError>;
 }
 
-/// Output port stub for Phase 5: muxes replacement audio into video.
-/// Not implemented until Phase 5; defined here to keep the port layer complete.
+/// Options passed to [`MediaMuxer::mux_video_with_replaced_audio`].
+#[derive(Debug, Clone)]
+pub struct MuxOptions {
+    pub video_codec: String,
+    pub audio_codec: String,
+}
+
+/// Output port: muxes replacement audio into a video container (R5, `ffmpeg-mux` feature).
 pub trait MediaMuxer {
-    // Phase 5: fn mux_video_with_replaced_audio(...) -> Result<(), MuxError>;
+    fn mux_video_with_replaced_audio(
+        &self,
+        source_video: &std::path::Path,
+        replacement_audio_wav: &std::path::Path,
+        output: &std::path::Path,
+        options: &MuxOptions,
+    ) -> Result<(), RepairError>;
 }

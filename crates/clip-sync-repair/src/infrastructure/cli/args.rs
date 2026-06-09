@@ -53,6 +53,10 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub wav: Option<PathBuf>,
 
+    /// Mux patched audio into video A (implies write mode; requires `ffmpeg-mux` build feature).
+    #[arg(long, value_name = "PATH")]
+    pub mux: Option<PathBuf>,
+
     /// Disable loudness normalization of fill segments.
     #[arg(long)]
     pub no_normalize: bool,

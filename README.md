@@ -109,11 +109,11 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <FILE>` | — | Config file path |
-| `--dry-run` | `true` | Report gaps only; do not write output |
-| `-o, --output <PATH>` | — | Output path (required when `--no-dry-run`) |
+| `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
+| `--mux <PATH>` | — | Mux patched audio into video A (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`) |
 | `--format <human\|json>` | `human` | Output format |
 
-Report-only mode exits `0` when analysis completes. No files are written unless `--no-dry-run` and `--output` are both set (requires `ffmpeg` on `PATH`).
+Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
 ---
 
@@ -165,7 +165,8 @@ crossfade_ms = 10
 dry_run = true
 
 [repair.output]
-path = "repaired.mp4"
+wav_path = "patched.wav"
+# video_path = "repaired.mp4"   # requires `--features ffmpeg-mux`
 video_codec = "copy"
 audio_codec = "aac"
 ```

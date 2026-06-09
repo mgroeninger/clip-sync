@@ -1,4 +1,4 @@
-use clip_sync::MultiChannelPcm;
+use clip_sync::{normalized_correlation, MultiChannelPcm};
 
 /// A contiguous silent region on a media timeline (seconds).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -226,6 +226,187 @@ pub fn compute_fill_gain(a_border_rms: f32, b_segment_rms: f32, max_gain_db: f64
     let max_gain = 10f32.powf((max_gain_db / 20.0) as f32);
     let min_gain = 1.0 / max_gain;
     gain.clamp(min_gain, max_gain)
+}
+
+/// Result of sliding a candidate B segment to match A's pre- and post-gap borders.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FillAlignment {
+    /// Frame index into the extended B buffer where the fill should start.
+    pub start_frame: usize,
+    pub pre_correlation: f64,
+    pub post_correlation: f64,
+}
+
+/// Downmix interleaved i16 PCM to mono `f64` (channel average).
+pub fn interleaved_to_mono(samples: &[i16], channels: usize) -> Vec<f64> {
+    let channels = channels.max(1);
+    samples
+        .chunks(channels)
+        .map(|frame| frame.iter().map(|&s| f64::from(s)).sum::<f64>() / channels as f64)
+        .collect()
+}
+
+/// Slide a candidate B window to maximize agreement with A's borders at both gap seams.
+///
+/// `nominal_start_frame` is where the coarse offset maps the fill inside `b_extended`.
+/// Search is limited to ±`max_adjustment_frames` around that position.
+pub fn align_fill_segment(
+    a_pre_border: &[f64],
+    a_post_border: &[f64],
+    b_extended: &[f64],
+    gap_frames: usize,
+    nominal_start_frame: usize,
+    correlate_frames: usize,
+    max_adjustment_frames: usize,
+) -> Option<FillAlignment> {
+    if gap_frames == 0 || correlate_frames == 0 || a_pre_border.is_empty() || a_post_border.is_empty()
+    {
+        return None;
+    }
+
+    let pre_window = correlate_frames.min(a_pre_border.len());
+    let post_window = correlate_frames.min(a_post_border.len());
+    if pre_window == 0 || post_window == 0 {
+        return None;
+    }
+
+    let mut best: Option<FillAlignment> = None;
+
+    for delta in -(max_adjustment_frames as i64)..=(max_adjustment_frames as i64) {
+        let start = nominal_start_frame as i64 + delta;
+        if start < 0 {
+            continue;
+        }
+        let start = start as usize;
+        if start + gap_frames > b_extended.len() || start + gap_frames + post_window > b_extended.len()
+        {
+            continue;
+        }
+
+        if start < pre_window {
+            continue;
+        }
+
+        let pre_corr = normalized_correlation(
+            &a_pre_border[a_pre_border.len() - pre_window..],
+            &b_extended[start - pre_window..start],
+        );
+        let post_corr = normalized_correlation(
+            &a_post_border[..post_window],
+            &b_extended[start + gap_frames..start + gap_frames + post_window],
+        );
+        let score = (pre_corr + post_corr) * 0.5;
+
+        let is_better = |candidate: &FillAlignment| -> bool {
+            let candidate_score = (candidate.pre_correlation + candidate.post_correlation) * 0.5;
+            if score > candidate_score + f64::EPSILON {
+                return true;
+            }
+            if (score - candidate_score).abs() > f64::EPSILON {
+                return false;
+            }
+            let candidate_delta = candidate.start_frame.abs_diff(nominal_start_frame);
+            let new_delta = start.abs_diff(nominal_start_frame);
+            new_delta < candidate_delta
+        };
+
+        if best.as_ref().is_none_or(is_better) {
+            best = Some(FillAlignment {
+                start_frame: start,
+                pre_correlation: pre_corr,
+                post_correlation: post_corr,
+            });
+        }
+    }
+
+    best
+}
+
+fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
+    (a_weight * a + b_weight * b)
+        .round()
+        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+/// Splice `b_fill` into `a_samples` at the gap, crossfading against A's real border audio.
+///
+/// `gap_start_frame` / `gap_end_frame` are frame indices (not interleaved sample indices).
+pub fn apply_seam_crossfade(
+    a_samples: &mut [i16],
+    b_fill: &[i16],
+    channels: usize,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    crossfade_frames: usize,
+) {
+    let channels = channels.max(1);
+    let total_frames = a_samples.len() / channels;
+    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    if gap_frames == 0 || b_fill.len() < gap_frames * channels {
+        return;
+    }
+
+    let pre_available = gap_start_frame;
+    let post_available = total_frames.saturating_sub(gap_end_frame);
+    let cf = crossfade_frames
+        .min(gap_frames / 2)
+        .min(pre_available)
+        .min(post_available);
+
+    if cf == 0 {
+        for frame in gap_start_frame..gap_end_frame {
+            for ch in 0..channels {
+                let idx = frame * channels + ch;
+                let b_idx = (frame - gap_start_frame) * channels + ch;
+                a_samples[idx] = b_fill[b_idx];
+            }
+        }
+        return;
+    }
+
+    // Fade-in: blend A's pre-gap tail with the head of the fill.
+    for i in 0..cf {
+        let frame = gap_start_frame - cf + i;
+        let t = i as f32 / cf as f32;
+        let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
+        let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
+        for ch in 0..channels {
+            let a_idx = frame * channels + ch;
+            let b_idx = i * channels + ch;
+            a_samples[a_idx] = blend_samples(
+                a_samples[a_idx] as f32,
+                b_fill[b_idx] as f32,
+                a_w,
+                b_w,
+            );
+        }
+    }
+
+    // Middle: pure fill (offset by `cf` frames consumed in the fade-in).
+    for frame in gap_start_frame..(gap_end_frame - cf) {
+        for ch in 0..channels {
+            let a_idx = frame * channels + ch;
+            let b_idx = (frame - gap_start_frame + cf) * channels + ch;
+            a_samples[a_idx] = b_fill[b_idx];
+        }
+    }
+
+    // Fade-out: blend fill tail with A's post-gap head across the seam.
+    for i in 0..cf {
+        let t = i as f32 / cf as f32;
+        let b_w = (t * std::f32::consts::FRAC_PI_2).cos();
+        let a_w = (t * std::f32::consts::FRAC_PI_2).sin();
+        let b_frame = gap_frames - cf + i;
+        for ch in 0..channels {
+            let b_val = b_fill[b_frame * channels + ch] as f32;
+            let post_idx = (gap_end_frame + i) * channels + ch;
+            let a_val = a_samples[post_idx] as f32;
+            let blended = blend_samples(a_val, b_val, a_w, b_w);
+            let gap_idx = (gap_end_frame - cf + i) * channels + ch;
+            a_samples[gap_idx] = blended;
+            a_samples[post_idx] = blended;
+        }
+    }
 }
 
 /// Equal-power crossfade: blend `fill` into `into` at both seams.
@@ -502,5 +683,79 @@ mod tests {
             let diff = (into[i] as i32 - into[i - 1] as i32).abs();
             assert!(diff <= 500, "jump of {diff} between frame {} and {} (values {} {})", i-1, i, into[i-1], into[i]);
         }
+    }
+
+    #[test]
+    fn align_fill_segment_finds_shifted_match() {
+        let rate = 441.0;
+        let chirp = |i: usize| {
+            let t = i as f64 / rate;
+            (std::f32::consts::TAU as f64 * 120.0 * t * t).sin() * 10_000.0
+        };
+
+        let pre: Vec<f64> = (0..120).map(chirp).collect();
+        let fill: Vec<f64> = (120..320).map(chirp).collect();
+        let post: Vec<f64> = (320..440).map(chirp).collect();
+
+        let mut extended = vec![0.0; 30];
+        extended.extend(&pre);
+        extended.extend(&fill);
+        extended.extend(&post);
+        extended.extend([0.0; 80]);
+
+        let gap_frames = fill.len();
+        let true_start = 30 + pre.len();
+        let nominal = true_start + 15;
+
+        let alignment = align_fill_segment(
+            &pre,
+            &post,
+            &extended,
+            gap_frames,
+            nominal,
+            80,
+            20,
+        )
+        .expect("alignment");
+
+        assert!(
+            alignment.start_frame.abs_diff(true_start) <= 2,
+            "expected start near {true_start}, got {}",
+            alignment.start_frame
+        );
+        assert!(alignment.pre_correlation > 0.9);
+        assert!(alignment.post_correlation > 0.9);
+        assert!(
+            alignment.start_frame.abs_diff(true_start) < nominal.abs_diff(true_start),
+            "alignment should be closer to true start than nominal was"
+        );
+    }
+
+    #[test]
+    fn apply_seam_crossfade_blends_from_border_not_silence() {
+        // Layout: [pre-border loud][gap silent][post-border loud]
+        let cf = 4usize;
+        let gap_start = 10usize;
+        let gap_end = 20usize;
+        let total = 30usize;
+        let gap_frames = gap_end - gap_start;
+
+        let mut a = vec![0i16; total];
+        for s in &mut a[0..gap_start] {
+            *s = 8_000;
+        }
+        for s in &mut a[gap_end..total] {
+            *s = 8_000;
+        }
+
+        let b_fill = vec![4_000i16; gap_frames];
+        apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
+
+        assert!(
+            a[gap_start] > 1_000,
+            "first gap frame should blend from loud pre-border, got {}",
+            a[gap_start]
+        );
+        assert_eq!(a[gap_start + cf], 4_000, "middle should be pure fill");
     }
 }

@@ -148,6 +148,23 @@ fn default_gap() -> Gap {
     }
 }
 
+fn patch_request(
+    report: GapReport,
+    normalize_fill: bool,
+    normalize_window_secs: f64,
+    min_fill_correlation: f32,
+) -> PatchAudioRequest {
+    PatchAudioRequest {
+        report,
+        normalize_fill,
+        normalize_window_secs,
+        max_fill_gain_db: 12.0,
+        min_fill_correlation,
+        fill_align_margin_secs: 1.0,
+        max_fill_align_adjustment_secs: 0.5,
+    }
+}
+
 fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> GapReport {
     GapReport {
         video_a: path_a,
@@ -218,18 +235,17 @@ fn patch_audio_fills_gap_in_stereo_wav() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
 
-    let request = PatchAudioRequest {
-        report: make_report(
+    let request = patch_request(
+        make_report(
             fixture.path_a,
             fixture.path_b,
             stereo_identical_compat(SAMPLE_RATE),
         ),
-        normalize_fill: false,
-        normalize_window_secs: 5.0,
-        max_fill_gain_db: 12.0,
+        false,
+        5.0,
         // Both A's pre-gap border and B's fill are 440 Hz sine; correlation is ~1.0.
-        min_fill_correlation: 0.35,
-    };
+        0.35,
+    );
 
     let (samples, sample_rate, channels) = patch_to_samples(request, 10);
     assert_eq!(sample_rate, SAMPLE_RATE);
@@ -257,17 +273,16 @@ fn patch_audio_skips_fill_when_boundary_correlation_below_threshold() {
     // A borders are 440 Hz; B fill is 2200 Hz — uncorrelated at the seam.
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 2200.0, 16_000.0);
 
-    let request = PatchAudioRequest {
-        report: make_report(
+    let request = patch_request(
+        make_report(
             fixture.path_a,
             fixture.path_b,
             stereo_identical_compat(SAMPLE_RATE),
         ),
-        normalize_fill: false,
-        normalize_window_secs: 5.0,
-        max_fill_gain_db: 12.0,
-        min_fill_correlation: 0.35,
-    };
+        false,
+        5.0,
+        0.35,
+    );
 
     let (samples, _, _) = patch_to_samples(request, 10);
 
@@ -289,31 +304,29 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 2_500.0);
 
     let (unnormalized, _, _) = patch_to_samples(
-        PatchAudioRequest {
-            report: make_report(
+        patch_request(
+            make_report(
                 fixture.path_a.clone(),
                 fixture.path_b.clone(),
                 stereo_identical_compat(SAMPLE_RATE),
             ),
-            normalize_fill: false,
-            normalize_window_secs: 2.0,
-            max_fill_gain_db: 12.0,
-            min_fill_correlation: 0.35,
-        },
+            false,
+            2.0,
+            0.35,
+        ),
         10,
     );
     let (normalized, _, _) = patch_to_samples(
-        PatchAudioRequest {
-            report: make_report(
+        patch_request(
+            make_report(
                 fixture.path_a,
                 fixture.path_b,
                 stereo_identical_compat(SAMPLE_RATE),
             ),
-            normalize_fill: true,
-            normalize_window_secs: 2.0,
-            max_fill_gain_db: 12.0,
-            min_fill_correlation: 0.35,
-        },
+            true,
+            2.0,
+            0.35,
+        ),
         10,
     );
 
@@ -345,14 +358,13 @@ fn patch_audio_resamples_b_when_sample_rates_differ() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, RATE_B, 440.0, 16_000.0);
 
-    let request = PatchAudioRequest {
-        report: make_report(fixture.path_a, fixture.path_b, stereo_compatible_diff_rate()),
-        normalize_fill: false,
-        normalize_window_secs: 5.0,
-        max_fill_gain_db: 12.0,
+    let request = patch_request(
+        make_report(fixture.path_a, fixture.path_b, stereo_compatible_diff_rate()),
+        false,
+        5.0,
         // Resampler phase at the seam can depress correlation slightly; isolate resample behaviour.
-        min_fill_correlation: -1.0,
-    };
+        -1.0,
+    );
 
     let (samples, sample_rate, channels) = patch_to_samples(request, 10);
     assert_eq!(sample_rate, SAMPLE_RATE, "output should be at A's native rate");
@@ -363,4 +375,51 @@ fn patch_audio_resamples_b_when_sample_rates_differ() {
         gap_rms > 100.0,
         "gap should be filled after resampling B from {RATE_B} Hz, got rms={gap_rms}"
     );
+}
+
+#[test]
+fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
+    const SHIFT_SECS: f64 = 0.05;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+
+    let mut gap = default_gap();
+    // Simulate a coarse alignment error: mapped B window is 50 ms late.
+    gap.video_b_start_secs = Some(GAP_START + SHIFT_SECS);
+    gap.video_b_end_secs = Some(GAP_END + SHIFT_SECS);
+
+    let mut report = make_report(
+        fixture.path_a,
+        fixture.path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    report.gaps = vec![gap];
+
+    let request = patch_request(report, false, 2.0, 0.35);
+
+    let (samples, _, _) = patch_to_samples(request, 10);
+
+    let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    assert!(
+        gap_rms > 100.0,
+        "aligned fill should recover shifted B mapping, got rms={gap_rms}"
+    );
+
+    // Seam should stay continuous across the gap (no audible dip at boundaries).
+    let pre_last = rms_region(&samples, SAMPLE_RATE, CHANNELS, 2.9, 3.0);
+    let gap_open = rms_region(&samples, SAMPLE_RATE, CHANNELS, 3.0, 3.1);
+    let gap_close = rms_region(&samples, SAMPLE_RATE, CHANNELS, 5.9, 6.0);
+    let post_first = rms_region(&samples, SAMPLE_RATE, CHANNELS, 6.0, 6.1);
+
+    assert!(pre_last > 100.0, "pre-gap should stay loud, got rms={pre_last}");
+    assert!(
+        gap_open > pre_last * 0.5,
+        "gap opening should not dip to silence (pre={pre_last}, open={gap_open})"
+    );
+    assert!(
+        gap_close > pre_last * 0.5,
+        "gap closing should not dip to silence (pre={pre_last}, close={gap_close})"
+    );
+    assert!(post_first > 100.0, "post-gap should stay loud, got rms={post_first}");
 }

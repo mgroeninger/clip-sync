@@ -25,4 +25,8 @@ pub enum RepairError {
     /// Error writing the patched audio output file.
     #[error("write error: {0}")]
     Write(std::io::Error),
+
+    /// ffmpeg mux failure (missing binary, non-zero exit, or stderr message).
+    #[error("mux error: {0}")]
+    Mux(String),
 }

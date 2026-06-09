@@ -1,14 +1,15 @@
 use std::time::Duration;
 
 use clip_sync::{
-    normalized_correlation, select_best_track, ClipLabel, ClipWindow, DomainError, MediaReader,
-    MediaSession, MediaSource, MultiChannelPcm, ProgressReporter, resample_interleaved,
+    select_best_track, AudioTrack, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession,
+    MediaSource, MultiChannelPcm, ProgressReporter, resample_interleaved,
 };
 
 use crate::application::error::RepairError;
 use crate::domain::{
     gap_fill::{build_gap_fill_plan, FillRegion},
-    policies, GapReport,
+    policies::{self, FillAlignment},
+    GapReport,
 };
 
 pub struct PatchAudioRequest {
@@ -16,9 +17,13 @@ pub struct PatchAudioRequest {
     pub normalize_fill: bool,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
-    /// Minimum normalized Pearson correlation between A's pre-gap border audio and the B fill
-    /// segment at the seam. Regions below this threshold are skipped.
+    /// Minimum normalized Pearson correlation at each gap seam (pre and post). Regions below
+    /// this threshold on either seam are skipped.
     pub min_fill_correlation: f32,
+    /// Extra B audio extracted on each side of the mapped gap window for boundary alignment.
+    pub fill_align_margin_secs: f64,
+    /// Maximum slide (seconds) applied when searching for the best B fill position.
+    pub max_fill_align_adjustment_secs: f64,
 }
 
 // Collected B segment ready to splice into A.
@@ -89,80 +94,43 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         let channels = a_pcm.channels as usize;
         let sample_rate = a_pcm.sample_rate;
-        let border_frames = (request.normalize_window_secs * sample_rate as f64) as usize;
+        let max_adjustment_frames =
+            (request.max_fill_align_adjustment_secs * sample_rate as f64).round() as usize;
+        // Keep the alignment correlate window small so it fits inside the extended B extract.
+        let align_correlate_secs = request.normalize_window_secs.min(1.0);
+        let correlate_frames =
+            ((align_correlate_secs * sample_rate as f64) as usize).max(1);
 
         // Step 7: Collect B segments (immutable borrow on a_pcm.samples),
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
 
         for region in &plan.regions {
-            // Step 7a: Extract B segment.
-            debug_assert!(
-                region.b_start_secs >= 0.0,
-                "fill plan must not include gaps with negative B start"
-            );
-            let b_start = Duration::from_secs_f64(region.b_start_secs);
-            let b_end = Duration::from_secs_f64(region.b_end_secs);
-            let window_b = ClipWindow::new(b_start, b_end, ClipLabel::Interior);
-
-            let b_pcm = match session_b.extract_interleaved(&track_b, &window_b, self.progress, "patch-b") {
-                Ok(pcm) => pcm,
-                Err(e) => {
-                    tracing::warn!(error = %e, "skipping gap fill region: B extraction failed");
-                    continue;
-                }
+            let patch = match prepare_region_patch(
+                &session_b,
+                &track_b,
+                &a_pcm,
+                region,
+                channels,
+                sample_rate,
+                max_adjustment_frames,
+                correlate_frames,
+                request.fill_align_margin_secs,
+                request.min_fill_correlation,
+                request.normalize_fill,
+                request.normalize_window_secs,
+                request.max_fill_gain_db,
+                global_a_rms,
+                self.progress,
+            ) {
+                Some(patch) => patch,
+                None => continue,
             };
-
-            // Step 7b: Resample B to A's sample rate if needed.
-            let b_samples = if b_pcm.sample_rate != sample_rate {
-                resample_interleaved(&b_pcm.samples, b_pcm.channels, b_pcm.sample_rate, sample_rate)
-            } else {
-                b_pcm.samples  // move — b_pcm is not used again
-            };
-
-            // Step 7c: Boundary correlation gate — skip fill if A and B don't agree at the seam.
-            let gap_start_sample = (region.a_start_secs * sample_rate as f64) as usize * channels;
-            let a_border_start = gap_start_sample.saturating_sub(border_frames * channels);
-            let a_border = &a_pcm.samples[a_border_start..gap_start_sample];
-            let b_border_end = (border_frames * channels).min(b_samples.len());
-            let b_border = &b_samples[..b_border_end];
-            let corr = boundary_correlation(a_border, b_border, channels);
-            if (corr as f32) < request.min_fill_correlation {
-                tracing::warn!(
-                    corr,
-                    min_fill_correlation = request.min_fill_correlation,
-                    a_start_secs = region.a_start_secs,
-                    "skipping gap fill: boundary correlation below threshold"
-                );
-                continue;
-            }
-
-            // Step 7d: Compute gain.
-            let gain = if request.normalize_fill {
-                let border_rms = compute_a_border_rms(
-                    &a_pcm,
-                    region,
-                    request.normalize_window_secs,
-                    global_a_rms,
-                );
-                let b_rms = policies::rms_interleaved(&b_samples);
-                policies::compute_fill_gain(border_rms, b_rms, request.max_fill_gain_db)
-            } else {
-                1.0f32
-            };
-
-            patches.push(RegionPatch {
-                b_samples,
-                gain,
-                a_start_secs: region.a_start_secs,
-                a_end_secs: region.a_end_secs,
-                crossfade_secs: region.crossfade_secs,
-            });
+            patches.push(patch);
         }
 
         // Step 8: Apply patches to A samples.
         for patch in patches {
-            // Apply gain to B.
             let b_gained: Vec<i16> = patch
                 .b_samples
                 .iter()
@@ -173,7 +141,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 })
                 .collect();
 
-            // Splice into A.
             splice_into_a(
                 &mut a_pcm.samples,
                 &b_gained,
@@ -189,24 +156,151 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
     }
 }
 
-/// Normalized Pearson correlation between A's pre-gap border audio and the start of B's fill.
-///
-/// Both interleaved i16 slices are averaged to mono before comparison. Returns a value in [-1, 1].
-fn boundary_correlation(a_border: &[i16], b_border: &[i16], channels: usize) -> f64 {
-    let channels = channels.max(1);
-    let to_mono = |s: &[i16]| -> Vec<f64> {
-        s.chunks(channels)
-            .map(|frame| frame.iter().map(|&x| f64::from(x)).sum::<f64>() / channels as f64)
-            .collect()
+fn prepare_region_patch(
+    session_b: &impl MediaSession,
+    track_b: &AudioTrack,
+    a_pcm: &MultiChannelPcm,
+    region: &FillRegion,
+    channels: usize,
+    sample_rate: u32,
+    max_adjustment_frames: usize,
+    correlate_frames: usize,
+    margin_secs: f64,
+    min_fill_correlation: f32,
+    normalize_fill: bool,
+    normalize_window_secs: f64,
+    max_fill_gain_db: f64,
+    global_a_rms: f32,
+    progress: &dyn ProgressReporter,
+) -> Option<RegionPatch> {
+    debug_assert!(
+        region.b_start_secs >= 0.0,
+        "fill plan must not include gaps with negative B start"
+    );
+
+    let b_extract_start_secs = (region.b_start_secs - margin_secs).max(0.0);
+    let b_extract_end_secs = region.b_end_secs + margin_secs;
+    let window_b = ClipWindow::new(
+        Duration::from_secs_f64(b_extract_start_secs),
+        Duration::from_secs_f64(b_extract_end_secs),
+        ClipLabel::Interior,
+    );
+
+    let b_pcm = match session_b.extract_interleaved(track_b, &window_b, progress, "patch-b") {
+        Ok(pcm) => pcm,
+        Err(e) => {
+            tracing::warn!(error = %e, "skipping gap fill region: B extraction failed");
+            return None;
+        }
     };
-    let a_mono = to_mono(a_border);
-    let b_mono = to_mono(b_border);
-    let len = a_mono.len().min(b_mono.len());
-    if len == 0 {
-        // No border samples available — treat as uncorrelated rather than blocking the fill.
-        return 1.0;
+
+    let b_samples = if b_pcm.sample_rate != sample_rate {
+        resample_interleaved(
+            &b_pcm.samples,
+            b_pcm.channels,
+            b_pcm.sample_rate,
+            sample_rate,
+        )
+    } else {
+        b_pcm.samples
+    };
+
+    let gap_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
+    let gap_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
+    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    if gap_frames == 0 {
+        return None;
     }
-    normalized_correlation(&a_mono[..len], &b_mono[..len])
+
+    let pre_start_frame = gap_start_frame.saturating_sub(border_frames_from_secs(
+        normalize_window_secs,
+        sample_rate,
+    ));
+    let post_end_frame = (gap_end_frame
+        + border_frames_from_secs(normalize_window_secs, sample_rate))
+    .min(a_pcm.samples.len() / channels);
+
+    let a_pre_border = policies::interleaved_to_mono(
+        &a_pcm.samples[pre_start_frame * channels..gap_start_frame * channels],
+        channels,
+    );
+    let a_post_border = policies::interleaved_to_mono(
+        &a_pcm.samples[gap_end_frame * channels..post_end_frame * channels],
+        channels,
+    );
+    let b_mono = policies::interleaved_to_mono(&b_samples, channels);
+
+    let nominal_start_frame =
+        ((region.b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+
+    let alignment = policies::align_fill_segment(
+        &a_pre_border,
+        &a_post_border,
+        &b_mono,
+        gap_frames,
+        nominal_start_frame,
+        correlate_frames,
+        max_adjustment_frames,
+    );
+
+    let alignment = match alignment {
+        Some(alignment) => alignment,
+        None => {
+            tracing::warn!(
+                a_start_secs = region.a_start_secs,
+                "skipping gap fill: boundary alignment failed"
+            );
+            return None;
+        }
+    };
+
+    if !seams_pass_correlation_gate(&alignment, min_fill_correlation) {
+        tracing::warn!(
+            pre_correlation = alignment.pre_correlation,
+            post_correlation = alignment.post_correlation,
+            min_fill_correlation,
+            a_start_secs = region.a_start_secs,
+            "skipping gap fill: boundary correlation below threshold"
+        );
+        return None;
+    }
+
+    let fill_start_sample = alignment.start_frame * channels;
+    let fill_end_sample = fill_start_sample + gap_frames * channels;
+    if fill_end_sample > b_samples.len() {
+        tracing::warn!(
+            a_start_secs = region.a_start_secs,
+            "skipping gap fill: aligned B segment out of range"
+        );
+        return None;
+    }
+
+    let b_fill = b_samples[fill_start_sample..fill_end_sample].to_vec();
+
+    let gain = if normalize_fill {
+        let border_rms = compute_a_border_rms(a_pcm, region, normalize_window_secs, global_a_rms);
+        let b_rms = policies::rms_interleaved(&b_fill);
+        policies::compute_fill_gain(border_rms, b_rms, max_fill_gain_db)
+    } else {
+        1.0f32
+    };
+
+    Some(RegionPatch {
+        b_samples: b_fill,
+        gain,
+        a_start_secs: region.a_start_secs,
+        a_end_secs: region.a_end_secs,
+        crossfade_secs: region.crossfade_secs,
+    })
+}
+
+fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
+    (window_secs * sample_rate as f64) as usize
+}
+
+fn seams_pass_correlation_gate(alignment: &FillAlignment, min_fill_correlation: f32) -> bool {
+    (alignment.pre_correlation as f32) >= min_fill_correlation
+        && (alignment.post_correlation as f32) >= min_fill_correlation
 }
 
 /// Compute RMS of the A samples bordering the gap region.
@@ -224,7 +318,7 @@ fn compute_a_border_rms(
 
     let gap_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let gap_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    let window_frames = (window_secs * sample_rate as f64) as usize;
+    let window_frames = border_frames_from_secs(window_secs, sample_rate);
 
     let pre_start = gap_start_frame.saturating_sub(window_frames);
     let pre_end = gap_start_frame;
@@ -263,39 +357,33 @@ fn splice_into_a(
     sample_rate: u32,
 ) {
     let channels = channels.max(1);
-    let a_start_sample = (a_start_secs * sample_rate as f64) as usize * channels;
-    let a_end_sample = (a_end_secs * sample_rate as f64) as usize * channels;
+    let gap_start_frame = (a_start_secs * sample_rate as f64) as usize;
+    let gap_end_frame = (a_end_secs * sample_rate as f64) as usize;
 
-    if a_start_sample >= a_samples.len() || a_end_sample > a_samples.len() {
+    if gap_start_frame * channels >= a_samples.len()
+        || gap_end_frame * channels > a_samples.len()
+    {
         tracing::warn!(
-            a_start_sample,
-            a_end_sample,
-            a_len = a_samples.len(),
+            gap_start_frame,
+            gap_end_frame,
+            a_len = a_samples.len() / channels,
             "splice_into_a: region out of range, skipping"
         );
         return;
     }
 
-    let gap_len = a_end_sample - a_start_sample;
-    if gap_len == 0 {
+    if gap_start_frame >= gap_end_frame {
         return;
     }
 
-    // Pad or truncate b_samples to match gap length.
-    let b_padded: Vec<i16> = if b_samples.len() >= gap_len {
-        b_samples[..gap_len].to_vec()
-    } else {
-        let mut padded = b_samples.to_vec();
-        padded.resize(gap_len, 0);
-        padded
-    };
-
     let crossfade_frames = (crossfade_secs * sample_rate as f64) as usize;
 
-    policies::apply_crossfade(
-        &mut a_samples[a_start_sample..a_end_sample],
-        &b_padded,
+    policies::apply_seam_crossfade(
+        a_samples,
+        b_samples,
         channels,
+        gap_start_frame,
+        gap_end_frame,
         crossfade_frames,
     );
 }
