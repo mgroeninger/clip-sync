@@ -232,15 +232,19 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
     out
 }
 
-fn format_patch_skip_reason(reason: &GapPatchSkipReason) -> &'static str {
+fn format_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
     match reason {
-        GapPatchSkipReason::BExtractFailed => "B audio extraction failed",
-        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary alignment failed",
-        GapPatchSkipReason::CorrelationBelowThreshold { .. } => {
-            "boundary correlation below threshold"
-        }
-        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range",
-        GapPatchSkipReason::ZeroLengthGap => "zero-length gap",
+        GapPatchSkipReason::BExtractFailed => "B audio extraction failed".into(),
+        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary alignment failed".into(),
+        GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation,
+            post_correlation,
+            min_correlation,
+        } => format!(
+            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+        ),
+        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
+        GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
     }
 }
 

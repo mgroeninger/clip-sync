@@ -165,7 +165,9 @@ fn patch_request(
         max_fill_gain_db: 12.0,
         min_fill_correlation,
         fill_align_margin_secs: 1.0,
-        max_fill_align_adjustment_secs: 0.5,
+        max_fill_align_adjustment_secs: 1.0,
+        fill_border_search_secs: 30.0,
+        min_border_discovery_secs: 2.0,
         absolute_silence_rms: 0.0,
     }
 }

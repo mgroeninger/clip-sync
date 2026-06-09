@@ -33,6 +33,10 @@ pub struct PatchAudioRequest {
     pub fill_align_margin_secs: f64,
     /// Maximum slide (seconds) applied when searching for the best B fill position.
     pub max_fill_align_adjustment_secs: f64,
+    /// How far (seconds) to search in B for A's pre-gap border before local alignment.
+    pub fill_border_search_secs: f64,
+    /// Minimum border template length (seconds) for discovery/correlation on short gaps.
+    pub min_border_discovery_secs: f64,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
     pub absolute_silence_rms: f32,
 }
@@ -134,10 +138,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let sample_rate = a_pcm.sample_rate;
         let max_adjustment_frames =
             (request.max_fill_align_adjustment_secs * sample_rate as f64).round() as usize;
-        // Keep the alignment correlate window small so it fits inside the extended B extract.
-        let align_correlate_secs = request.normalize_window_secs.min(1.0);
-        let correlate_frames =
-            ((align_correlate_secs * sample_rate as f64) as usize).max(1);
         let max_refine_frames =
             (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
         let silence_peak_fraction = request.report.silence_peak_fraction;
@@ -155,9 +155,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 channels,
                 sample_rate,
                 max_adjustment_frames,
-                correlate_frames,
                 max_refine_frames,
+                request.normalize_window_secs,
                 request.fill_align_margin_secs,
+                request.fill_border_search_secs,
+                request.min_border_discovery_secs,
                 request.min_fill_correlation,
                 request.normalize_fill,
                 request.normalize_window_secs,
@@ -276,9 +278,11 @@ fn prepare_region_patch(
     channels: usize,
     sample_rate: u32,
     max_adjustment_frames: usize,
-    correlate_frames: usize,
     max_refine_frames: usize,
+    normalize_window_secs_for_correlate: f64,
     margin_secs: f64,
+    border_search_secs: f64,
+    min_border_discovery_secs: f64,
     min_fill_correlation: f32,
     normalize_fill: bool,
     normalize_window_secs: f64,
@@ -321,8 +325,18 @@ fn prepare_region_patch(
         );
     }
 
-    let b_extract_start_secs = (refined_b_start_secs - margin_secs).max(0.0);
-    let b_extract_end_secs = refined_b_end_secs + margin_secs;
+    let correlate_frames = correlate_frames_for_gap(
+        normalize_window_secs_for_correlate,
+        min_border_discovery_secs,
+        gap_frames,
+        sample_rate,
+    );
+    let align_margin_secs = margin_secs.max(
+        (max_adjustment_frames + correlate_frames) as f64 / sample_rate as f64 + 0.25,
+    );
+    let search_radius_secs = border_search_secs.max(align_margin_secs);
+    let b_extract_start_secs = (refined_b_start_secs - search_radius_secs - align_margin_secs).max(0.0);
+    let b_extract_end_secs = refined_b_end_secs + search_radius_secs + align_margin_secs;
     let b_samples = match slice_b_segment(
         b_samples_full,
         channels,
@@ -355,15 +369,48 @@ fn prepare_region_patch(
         silence_peak_fraction,
         absolute_silence_rms,
     );
+    let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
+        &a_pcm.samples,
+        channels,
+        refined.start_frame,
+        refined.end_frame,
+        border_frames,
+        silence_peak_fraction,
+        absolute_silence_rms,
+    );
     let b_mono = policies::interleaved_to_mono(b_samples, channels);
+    let b_ch = policies::interleaved_to_channels(b_samples, channels);
 
-    let nominal_start_frame =
+    let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+    let gap_end_in_haystack =
+        ((refined_b_end_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+    let search_radius_frames =
+        (border_search_secs * sample_rate as f64).round() as usize;
+    let nominal_start_frame = policies::discover_fill_start_in_b(
+        &a_pre_border,
+        &a_post_border,
+        &b_mono,
+        &a_pre_ch,
+        &a_post_ch,
+        &b_ch,
+        offset_nominal_start,
+        offset_nominal_start,
+        gap_end_in_haystack,
+        gap_frames,
+        correlate_frames,
+        search_radius_frames,
+    );
+    let discovery_adjustment_secs =
+        (nominal_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
 
     let alignment = policies::align_fill_segment(
         &a_pre_border,
         &a_post_border,
         &b_mono,
+        &a_pre_ch,
+        &a_post_ch,
+        &b_ch,
         gap_frames,
         nominal_start_frame,
         correlate_frames,
@@ -389,6 +436,10 @@ fn prepare_region_patch(
             pre_correlation = alignment.pre_correlation,
             post_correlation = alignment.post_correlation,
             min_fill_correlation,
+            discovery_adjustment_secs,
+            align_adjustment_secs = (alignment.start_frame as f64 - nominal_start_frame as f64)
+                / sample_rate as f64,
+            correlate_window_secs = correlate_frames as f64 / sample_rate as f64,
             a_start_secs,
             "skipping gap fill: boundary correlation below threshold"
         );
@@ -432,7 +483,7 @@ fn prepare_region_patch(
     };
 
     let align_adjustment_secs =
-        (alignment.start_frame as f64 - nominal_start_frame as f64) / sample_rate as f64;
+        (alignment.start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
 
     (
         Some(RegionPatch {
@@ -454,6 +505,22 @@ fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
     (window_secs * sample_rate as f64) as usize
 }
 
+/// Seam correlation window sized to the gap (short gaps use shorter templates).
+fn correlate_frames_for_gap(
+    normalize_window_secs: f64,
+    min_border_discovery_secs: f64,
+    gap_frames: usize,
+    sample_rate: u32,
+) -> usize {
+    let gap_secs = gap_frames as f64 / sample_rate as f64;
+    let window_secs = normalize_window_secs
+        .min(gap_secs * 0.45)
+        .min(2.0)
+        .max(min_border_discovery_secs)
+        .max(0.25);
+    ((window_secs * sample_rate as f64) as usize).max(1)
+}
+
 fn slice_b_segment<'a>(
     b_samples: &'a [i16],
     channels: usize,
@@ -463,9 +530,9 @@ fn slice_b_segment<'a>(
 ) -> Option<&'a [i16]> {
     let channels = channels.max(1);
     let start_frame = (start_secs * sample_rate as f64).round() as usize;
-    let end_frame = (end_secs * sample_rate as f64).round() as usize;
-    let total_frames = b_samples.len() / channels;
-    if start_frame >= end_frame || end_frame > total_frames {
+    let end_frame = ((end_secs * sample_rate as f64).round() as usize)
+        .min(b_samples.len() / channels);
+    if start_frame >= end_frame {
         return None;
     }
     Some(&b_samples[start_frame * channels..end_frame * channels])
