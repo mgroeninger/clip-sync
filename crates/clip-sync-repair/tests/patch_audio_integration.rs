@@ -170,6 +170,11 @@ fn patch_request(
         min_border_discovery_secs: 2.0,
         border_standoff_secs: 0.0,
         short_gap_mean_correlation_secs: 2.0,
+        fill_length_slack_secs: 5.0,
+        fill_seam_search_secs: 0.25,
+        gap_signature_context_secs: 3.0,
+        gap_signature_bin_ms: 50,
+        min_structure_match_score: 0.55,
         absolute_silence_rms: 0.0,
     }
 }

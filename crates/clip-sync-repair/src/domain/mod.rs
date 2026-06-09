@@ -1,5 +1,6 @@
 pub mod gap;
 pub mod gap_fill;
+pub mod gap_structure;
 pub mod patch_result;
 pub mod policies;
 pub mod track_match;

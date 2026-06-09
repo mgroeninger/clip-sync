@@ -9,6 +9,7 @@ use clip_sync::{
 use crate::application::error::RepairError;
 use crate::domain::{
     gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan},
+    gap_structure::{self, StructureMatchParams},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
@@ -43,6 +44,16 @@ pub struct PatchAudioRequest {
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,
+    /// How far B fill length may differ from A's scanned gap when locating the post-border.
+    pub fill_length_slack_secs: f64,
+    /// Seam correlation window (seconds) for fine align slide search and the fill gate.
+    pub fill_seam_search_secs: f64,
+    /// Seconds of A audio on each side of the gap used to build the structure signature.
+    pub gap_signature_context_secs: f64,
+    /// Bin width (milliseconds) for active/silent structure signatures.
+    pub gap_signature_bin_ms: u64,
+    /// Minimum active/silent pattern match score (0–1) at each seam before waveform gate.
+    pub min_structure_match_score: f32,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
     pub absolute_silence_rms: f32,
 }
@@ -152,8 +163,20 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
+        let region_count = plan.regions.len() as u64;
 
-        for region in &plan.regions {
+        self.progress.phase(&format!(
+            "Aligning {region_count} fill region(s) (structure match + splice)..."
+        ));
+
+        for (index, region) in plan.regions.iter().enumerate() {
+            let gap_num = index as u64 + 1;
+            self.progress.progress("patch-gap", gap_num, region_count);
+            self.progress.phase(&format!(
+                "  gap {gap_num}/{region_count}: A [{:.1}s – {:.1}s]",
+                region.a_start_secs, region.a_end_secs
+            ));
+
             let (patch, outcome) = prepare_region_patch(
                 &b_samples_full,
                 &a_pcm,
@@ -168,6 +191,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 request.min_border_discovery_secs,
                 request.border_standoff_secs,
                 request.short_gap_mean_correlation_secs,
+                request.fill_length_slack_secs,
+                request.fill_seam_search_secs,
+                request.gap_signature_context_secs,
+                request.gap_signature_bin_ms,
+                request.min_structure_match_score,
                 request.min_fill_correlation,
                 request.normalize_fill,
                 request.normalize_window_secs,
@@ -182,8 +210,15 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
+        self.progress.progress("patch-gap", region_count, region_count);
+
         // Step 9: Apply patches to A samples.
-        for patch in patches {
+        let patch_count = patches.len() as u64;
+        if patch_count > 0 {
+            self.progress.phase(&format!("Splicing {patch_count} fill(s) into timeline..."));
+        }
+        for (index, patch) in patches.iter().enumerate() {
+            self.progress.progress("patch-splice", index as u64 + 1, patch_count);
             let b_gained: Vec<i16> = patch
                 .b_samples
                 .iter()
@@ -203,6 +238,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 patch.crossfade_secs,
                 sample_rate,
             );
+        }
+        if patch_count > 0 {
+            self.progress.progress("patch-splice", patch_count, patch_count);
         }
 
         let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
@@ -293,6 +331,11 @@ fn prepare_region_patch(
     min_border_discovery_secs: f64,
     border_standoff_secs: f64,
     short_gap_mean_correlation_secs: f64,
+    fill_length_slack_secs: f64,
+    fill_seam_search_secs: f64,
+    gap_signature_context_secs: f64,
+    gap_signature_bin_ms: u64,
+    min_structure_match_score: f32,
     min_fill_correlation: f32,
     normalize_fill: bool,
     normalize_window_secs: f64,
@@ -335,20 +378,30 @@ fn prepare_region_patch(
         );
     }
 
+    let context_frames =
+        (gap_signature_context_secs * sample_rate as f64).round() as usize;
+    let bin_frames =
+        ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
     let correlate_frames = correlate_frames_for_gap(
         normalize_window_secs_for_correlate,
         min_border_discovery_secs,
         gap_frames,
         sample_rate,
     );
-    let align_margin_secs = margin_secs.max(
-        (max_adjustment_frames + correlate_frames) as f64 / sample_rate as f64 + 0.25,
-    );
-    let search_radius_secs = border_search_secs.max(align_margin_secs);
-    let b_extract_start_secs = (refined_b_start_secs - search_radius_secs - align_margin_secs).max(0.0);
-    // Extra slack so B-derived fills may run longer than A's scanned gap.
-    let b_extract_end_secs =
-        refined_b_end_secs + search_radius_secs * 2.0 + align_margin_secs;
+    let seam_gate_frames =
+        seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
+    let search_radius_secs = border_search_secs.max(margin_secs);
+    let b_extract_start_secs = (refined_b_start_secs
+        - gap_signature_context_secs
+        - search_radius_secs
+        - margin_secs)
+        .max(0.0);
+    let length_slack_secs = fill_length_slack_secs.max(margin_secs);
+    let b_extract_end_secs = refined_b_end_secs
+        + gap_signature_context_secs
+        + search_radius_secs
+        + length_slack_secs
+        + margin_secs;
     let b_samples = match slice_b_segment(
         b_samples_full,
         channels,
@@ -371,7 +424,8 @@ fn prepare_region_patch(
         }
     };
 
-    let border_frames = border_frames_from_secs(normalize_window_secs, sample_rate);
+    let border_frames = border_frames_from_secs(normalize_window_secs, sample_rate)
+        .min(correlate_frames);
     let border_standoff_frames =
         (border_standoff_secs * sample_rate as f64).round() as usize;
     let (a_pre_border, a_post_border) = policies::border_templates_for_gap(
@@ -397,50 +451,49 @@ fn prepare_region_patch(
     let b_mono = policies::interleaved_to_mono(b_samples, channels);
     let b_ch = policies::interleaved_to_channels(b_samples, channels);
 
+    let signature = gap_structure::build_gap_context_signature(
+        &a_pcm.samples,
+        channels,
+        refined.start_frame,
+        refined.end_frame,
+        context_frames,
+        bin_frames.max(1),
+        silence_peak_fraction,
+        absolute_silence_rms,
+    );
+
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
     let gap_end_in_haystack =
         ((refined_b_end_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
     let search_radius_frames =
         (border_search_secs * sample_rate as f64).round() as usize;
-    let nominal_start_frame = policies::discover_fill_start_in_b(
-        &a_pre_border,
-        &a_post_border,
-        &b_mono,
-        &a_pre_ch,
-        &a_post_ch,
-        &b_ch,
-        offset_nominal_start,
+    let fill_length_slack_frames =
+        (fill_length_slack_secs * sample_rate as f64).round() as usize;
+
+    let structure_params = StructureMatchParams {
+        gap_frames,
+        bin_frames: bin_frames.max(1),
+        search_radius_frames,
+        fill_length_slack_frames,
+        max_fine_adjustment_frames: max_adjustment_frames,
+        silence_peak_fraction,
+        absolute_silence_rms,
+    };
+
+    let mut alignment = match gap_structure::match_gap_structure_in_b(
+        &signature,
+        b_samples,
+        channels,
         offset_nominal_start,
         gap_end_in_haystack,
-        gap_frames,
-        correlate_frames,
-        search_radius_frames,
-    );
-    let discovery_adjustment_secs =
-        (nominal_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
-
-    let alignment = policies::align_fill_bracket(
-        &a_pre_border,
-        &a_post_border,
-        &b_mono,
-        &a_pre_ch,
-        &a_post_ch,
-        &b_ch,
-        gap_frames,
-        nominal_start_frame,
-        gap_end_in_haystack,
-        correlate_frames,
-        max_adjustment_frames,
-        search_radius_frames,
-    );
-
-    let alignment = match alignment {
+        &structure_params,
+    ) {
         Some(alignment) => alignment,
         None => {
             tracing::warn!(
                 a_start_secs,
-                "skipping gap fill: boundary alignment failed"
+                "skipping gap fill: structure alignment failed"
             );
             return (
                 None,
@@ -449,7 +502,48 @@ fn prepare_region_patch(
         }
     };
 
+    let structure_pre = alignment.pre_correlation;
+    let structure_post = alignment.post_correlation;
     let gap_secs = gap_frames as f64 / sample_rate as f64;
+    if !structure_passes_gate(
+        structure_pre,
+        structure_post,
+        min_structure_match_score,
+        gap_secs,
+        short_gap_mean_correlation_secs,
+    ) {
+        tracing::warn!(
+            structure_pre,
+            structure_post,
+            min_structure_match_score,
+            a_start_secs,
+            "skipping gap fill: structure match below threshold"
+        );
+        return (
+            None,
+            RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: structure_pre,
+                post_correlation: structure_post,
+                min_correlation: min_structure_match_score,
+            }),
+        );
+    }
+
+    let (pre_corr, post_corr) = policies::fill_seam_correlations(
+        &a_pre_border,
+        &a_post_border,
+        &a_pre_ch,
+        &a_post_ch,
+        &b_mono,
+        &b_ch,
+        alignment.start_frame,
+        gap_frames,
+        seam_gate_frames,
+        seam_gate_frames,
+    );
+    alignment.pre_correlation = pre_corr;
+    alignment.post_correlation = post_corr;
+
     if !seams_pass_correlation_gate(
         &alignment,
         min_fill_correlation,
@@ -460,14 +554,14 @@ fn prepare_region_patch(
             pre_correlation = alignment.pre_correlation,
             post_correlation = alignment.post_correlation,
             min_fill_correlation,
-            discovery_adjustment_secs,
-            align_adjustment_secs = (alignment.start_frame as f64 - nominal_start_frame as f64)
+            structure_pre,
+            structure_post,
+            align_adjustment_secs = (alignment.start_frame as f64 - offset_nominal_start as f64)
                 / sample_rate as f64,
-            correlate_window_secs = correlate_frames as f64 / sample_rate as f64,
             b_fill_frames = alignment.fill_frames,
             a_gap_frames = gap_frames,
             a_start_secs,
-            "skipping gap fill: boundary correlation below threshold"
+            "skipping gap fill: waveform seam correlation below threshold"
         );
         return (
             None,
@@ -493,8 +587,29 @@ fn prepare_region_patch(
         );
     }
 
-    let b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
-    let b_fill = stretch_interleaved_fill(&b_fill_raw, channels, gap_frames);
+    let mut b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
+    let source_frames = b_fill_raw.len() / channels;
+    if source_frames < gap_frames {
+        let extend_from = b_fill_end_sample;
+        let need_samples = (gap_frames - source_frames) * channels;
+        let extend_to = (extend_from + need_samples).min(b_samples.len());
+        if extend_from < extend_to {
+            b_fill_raw.extend_from_slice(&b_samples[extend_from..extend_to]);
+            tracing::info!(
+                a_start_secs,
+                extended_frames = (extend_to - extend_from) / channels,
+                "B bracket shorter than A gap; extended from contiguous B audio"
+            );
+        }
+    } else if source_frames > gap_frames {
+        tracing::info!(
+            a_start_secs,
+            b_fill_frames = source_frames,
+            a_gap_frames = gap_frames,
+            "B fill longer than A gap; trimming tail (pre-border anchor)"
+        );
+    }
+    let b_fill = fit_fill_to_gap_frames(&b_fill_raw, channels, gap_frames);
 
     let gain = if normalize_fill {
         let border_rms = compute_a_border_rms(
@@ -529,8 +644,11 @@ fn prepare_region_patch(
     )
 }
 
-/// Time-stretch (or compress) an interleaved B fill to exactly `target_frames`.
-fn stretch_interleaved_fill(samples: &[i16], channels: usize, target_frames: usize) -> Vec<i16> {
+/// Fit a B fill bracket to A's gap length without resampling (preserves pitch).
+///
+/// Longer fills are trimmed from the tail (start is pre-border anchored).
+/// Shorter fills are zero-padded at the tail only when B has no more contiguous audio.
+fn fit_fill_to_gap_frames(samples: &[i16], channels: usize, target_frames: usize) -> Vec<i16> {
     let channels = channels.max(1);
     let source_frames = samples.len() / channels;
     if source_frames == target_frames {
@@ -540,23 +658,27 @@ fn stretch_interleaved_fill(samples: &[i16], channels: usize, target_frames: usi
         return vec![0i16; target_frames * channels];
     }
 
-    let mut out = Vec::with_capacity(target_frames * channels);
-    for out_frame in 0..target_frames {
-        let src_pos = out_frame as f64 * source_frames as f64 / target_frames as f64;
-        let idx = src_pos.floor() as usize;
-        let frac = (src_pos - idx as f64) as f32;
-        let idx2 = (idx + 1).min(source_frames - 1);
-        for ch in 0..channels {
-            let s0 = f32::from(samples[idx * channels + ch]);
-            let s1 = f32::from(samples[idx2 * channels + ch]);
-            out.push((s0 * (1.0 - frac) + s1 * frac).round() as i16);
-        }
+    if source_frames > target_frames {
+        return samples[..target_frames * channels].to_vec();
     }
+
+    let mut out = vec![0i16; target_frames * channels];
+    out[..samples.len()].copy_from_slice(samples);
     out
 }
 
 fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
     (window_secs * sample_rate as f64) as usize
+}
+
+/// Cap for fine-align slide search and seam correlation gate (frames).
+fn seam_gate_frames_for(
+    correlate_frames: usize,
+    fill_seam_search_secs: f64,
+    sample_rate: u32,
+) -> usize {
+    let cap = (fill_seam_search_secs * sample_rate as f64).round() as usize;
+    correlate_frames.min(cap).max(1)
 }
 
 /// Seam correlation window sized to the gap (short gaps use shorter templates).
@@ -590,6 +712,22 @@ fn slice_b_segment<'a>(
         return None;
     }
     Some(&b_samples[start_frame * channels..end_frame * channels])
+}
+
+fn structure_passes_gate(
+    pre_score: f64,
+    post_score: f64,
+    min_structure_match_score: f32,
+    gap_secs: f64,
+    short_gap_mean_correlation_secs: f64,
+) -> bool {
+    let pre = pre_score as f32;
+    let post = post_score as f32;
+    if gap_secs <= short_gap_mean_correlation_secs {
+        (pre + post) / 2.0 >= min_structure_match_score
+    } else {
+        pre >= min_structure_match_score && post >= min_structure_match_score
+    }
 }
 
 fn seams_pass_correlation_gate(
@@ -699,4 +837,32 @@ fn splice_into_a(
         gap_end_frame,
         crossfade_frames,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_fill_to_gap_frames;
+
+    #[test]
+    fn fit_fill_trims_tail_without_resampling() {
+        let channels = 2usize;
+        let mut samples = Vec::new();
+        for frame in 0..10i16 {
+            samples.push(frame * 100);
+            samples.push(frame * 100);
+        }
+        let fitted = fit_fill_to_gap_frames(&samples, channels, 6);
+        assert_eq!(fitted.len(), 12);
+        assert_eq!(fitted[0], 0);
+        assert_eq!(fitted[1], 0);
+        assert_eq!(fitted[10], 500);
+        assert_eq!(fitted[11], 500);
+    }
+
+    #[test]
+    fn fit_fill_zero_pads_short_source() {
+        let samples = vec![1000i16, 1000, 2000, 2000];
+        let fitted = fit_fill_to_gap_frames(&samples, 2, 4);
+        assert_eq!(fitted, vec![1000, 1000, 2000, 2000, 0, 0, 0, 0]);
+    }
 }

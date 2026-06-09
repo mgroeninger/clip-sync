@@ -75,6 +75,21 @@ pub struct RepairConfig {
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
     pub short_gap_mean_correlation_secs: f64,
+    /// How far B fill length may differ from A's scanned gap when locating the post-border.
+    #[serde(default = "default_fill_length_slack_secs")]
+    pub fill_length_slack_secs: f64,
+    /// Seam correlation window (seconds) for fine align slide search and the fill gate.
+    #[serde(default = "default_fill_seam_search_secs")]
+    pub fill_seam_search_secs: f64,
+    /// Seconds of A audio on each side of the gap used to build the structure signature.
+    #[serde(default = "default_gap_signature_context_secs")]
+    pub gap_signature_context_secs: f64,
+    /// Bin width (milliseconds) for active/silent structure signatures.
+    #[serde(default = "default_gap_signature_bin_ms")]
+    pub gap_signature_bin_ms: u64,
+    /// Minimum active/silent pattern match score (0–1) at each seam before waveform gate.
+    #[serde(default = "default_min_structure_match_score")]
+    pub min_structure_match_score: f32,
     /// Crossfade duration at gap boundaries (ms).
     #[serde(default = "default_crossfade_ms")]
     pub crossfade_ms: u64,
@@ -126,7 +141,7 @@ fn default_fill_align_margin_secs() -> f64 {
     1.0
 }
 fn default_max_fill_align_adjustment_secs() -> f64 {
-    1.0
+    0.5
 }
 fn default_fill_border_search_secs() -> f64 {
     30.0
@@ -139,6 +154,21 @@ fn default_border_standoff_secs() -> f64 {
 }
 fn default_short_gap_mean_correlation_secs() -> f64 {
     2.0
+}
+fn default_fill_length_slack_secs() -> f64 {
+    5.0
+}
+fn default_fill_seam_search_secs() -> f64 {
+    0.25
+}
+fn default_gap_signature_context_secs() -> f64 {
+    3.0
+}
+fn default_gap_signature_bin_ms() -> u64 {
+    50
+}
+fn default_min_structure_match_score() -> f32 {
+    0.55
 }
 fn default_crossfade_ms() -> u64 {
     10
@@ -168,6 +198,11 @@ impl Default for RepairConfig {
             min_border_discovery_secs: default_min_border_discovery_secs(),
             border_standoff_secs: default_border_standoff_secs(),
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
+            fill_length_slack_secs: default_fill_length_slack_secs(),
+            fill_seam_search_secs: default_fill_seam_search_secs(),
+            gap_signature_context_secs: default_gap_signature_context_secs(),
+            gap_signature_bin_ms: default_gap_signature_bin_ms(),
+            min_structure_match_score: default_min_structure_match_score(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
             normalize_window_secs: default_normalize_window_secs(),
@@ -311,6 +346,36 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "short_gap_mean_correlation_secs".into(),
                 reason: "must be non-negative".into(),
+            });
+        }
+        if self.fill_length_slack_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_length_slack_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.fill_seam_search_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_seam_search_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.gap_signature_context_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "gap_signature_context_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.gap_signature_bin_ms == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "gap_signature_bin_ms".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.min_structure_match_score < 0.0 || self.min_structure_match_score > 1.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "min_structure_match_score".into(),
+                reason: "must be between 0.0 and 1.0 inclusive".into(),
             });
         }
         if self.absolute_silence_rms < 0.0 {

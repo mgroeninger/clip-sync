@@ -102,6 +102,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     min_border_discovery_secs: config.repair.min_border_discovery_secs,
                     border_standoff_secs: config.repair.border_standoff_secs,
                     short_gap_mean_correlation_secs: config.repair.short_gap_mean_correlation_secs,
+                    fill_length_slack_secs: config.repair.fill_length_slack_secs,
+                    fill_seam_search_secs: config.repair.fill_seam_search_secs,
+                    gap_signature_context_secs: config.repair.gap_signature_context_secs,
+                    gap_signature_bin_ms: config.repair.gap_signature_bin_ms,
+                    min_structure_match_score: config.repair.min_structure_match_score,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
                 };
 
