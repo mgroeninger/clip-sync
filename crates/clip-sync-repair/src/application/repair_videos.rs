@@ -68,6 +68,7 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
                     wav_path,
                     video_path,
                     &request.mux_options,
+                    self.progress,
                 )?;
             }
             return Ok(patch_result);
@@ -82,6 +83,7 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
                 temp_path,
                 video_path,
                 &request.mux_options,
+                self.progress,
             )?;
         }
 

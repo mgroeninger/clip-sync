@@ -32,5 +32,6 @@ pub trait MediaMuxer {
         replacement_audio_wav: &std::path::Path,
         output: &std::path::Path,
         options: &MuxOptions,
+        progress: &dyn clip_sync::ProgressReporter,
     ) -> Result<(), RepairError>;
 }
