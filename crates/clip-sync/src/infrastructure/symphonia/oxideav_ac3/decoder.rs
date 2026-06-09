@@ -158,7 +158,7 @@ impl AudioDecoder for Ac3Decoder {
 
         let buf = self.buf.as_mut().unwrap();
         buf.clear();
-        buf.render_uninit(None);
+        buf.render_uninit(Some(audio_frame.samples as usize));
         buf.copy_from_slice_interleaved(&pcm);
         buf.trim(
             packet.trim_start.get() as usize,
