@@ -797,3 +797,89 @@ fn open_rejects_directory() {
         Err(other) => panic!("expected OpenFailed, got {other}"),
     }
 }
+
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+#[test]
+fn probe_and_extract_ac3_surround_mp4() {
+    use crate::application::testing::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("tone-ac3-51.mp4");
+    if !ffmpeg_util::write_ac3_surround_mp4_fixture(&path) {
+        eprintln!("skipping AC-3 5.1 MP4 test: ffmpeg unavailable or AC-3 encode failed");
+        return;
+    }
+
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].codec, "ac3");
+    assert_eq!(
+        tracks[0].channels, 6,
+        "expected 5.1 channel layout, got {} channels",
+        tracks[0].channels
+    );
+    assert!(
+        tracks[0].decodable,
+        "AC-3 5.1 track should be decodable when the ac3 feature is enabled"
+    );
+    assert!(tracks[0].duration.unwrap().as_secs() >= 2);
+    assert!(duration.as_secs() >= 2);
+
+    let window = ClipWindow::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        ClipLabel::Interior,
+    );
+    let pcm = session_extract_interleaved(&path, &tracks[0], &window, "ac3 5.1 mp4");
+    let expected = tracks[0].sample_rate as usize;
+    assert!(
+        (pcm.frames() as i64 - expected as i64).abs()
+            <= sample_count_tolerance(tracks[0].sample_rate) as i64
+    );
+    assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
+    let peak = pcm.samples.iter().map(|s| s.abs()).max().unwrap_or(0);
+    assert!(peak > 100, "expected non-silent PCM from AC-3 5.1 decode, peak={peak}");
+}
+
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+#[test]
+fn probe_and_extract_eac3_surround_mp4() {
+    use crate::application::testing::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("tone-eac3-51.mp4");
+    if !ffmpeg_util::write_eac3_surround_mp4_fixture(&path) {
+        eprintln!("skipping E-AC-3 5.1 MP4 test: ffmpeg unavailable or E-AC-3 encode failed");
+        return;
+    }
+
+    let (tracks, duration, _) = probe_media_reusable(&path).unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].codec, "eac3");
+    assert_eq!(
+        tracks[0].channels, 6,
+        "expected 5.1 channel layout, got {} channels",
+        tracks[0].channels
+    );
+    assert!(
+        tracks[0].decodable,
+        "E-AC-3 5.1 track should be decodable when the ac3 feature is enabled"
+    );
+    assert!(tracks[0].duration.unwrap().as_secs() >= 2);
+    assert!(duration.as_secs() >= 2);
+
+    let window = ClipWindow::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        ClipLabel::Interior,
+    );
+    let pcm = session_extract_interleaved(&path, &tracks[0], &window, "eac3 5.1 mp4");
+    let expected = tracks[0].sample_rate as usize;
+    assert!(
+        (pcm.frames() as i64 - expected as i64).abs()
+            <= sample_count_tolerance(tracks[0].sample_rate) as i64
+    );
+    assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
+    let peak = pcm.samples.iter().map(|s| s.abs()).max().unwrap_or(0);
+    assert!(peak > 100, "expected non-silent PCM from E-AC-3 5.1 decode, peak={peak}");
+}

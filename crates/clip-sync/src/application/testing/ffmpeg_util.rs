@@ -276,6 +276,26 @@ pub fn write_he_aac_mp4_fixture(path: &Path) -> bool {
     false
 }
 
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+pub fn write_ac3_surround_mp4_fixture(path: &Path) -> bool {
+    write_lavfi_sine_container(
+        path,
+        &["-f", "mp4"],
+        &["-c:a", "ac3", "-b:a", "384k", "-ac", "6"],
+        3,
+    )
+}
+
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+pub fn write_eac3_surround_mp4_fixture(path: &Path) -> bool {
+    write_lavfi_sine_container(
+        path,
+        &["-f", "mp4"],
+        &["-c:a", "eac3", "-b:a", "384k", "-ac", "6"],
+        3,
+    )
+}
+
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
 pub fn write_he_aac_surround_mp4_fixture(path: &Path) -> bool {
     if !ffmpeg_available() {

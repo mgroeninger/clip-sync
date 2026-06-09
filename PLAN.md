@@ -11,9 +11,9 @@ The workspace is intended for workflows where two recordings of the same event (
 | Application | Binary | Scope |
 |-------------|--------|-------|
 | **Analyzer** | `clip-sync` | Read-only: report offset and per-clip alignment |
-| **Repair** | `clip-sync-repair` | Gap scan (shipped); patched output via WAV + optional ffmpeg mux ([write-path plan](docs/TEMP-repair-write-path-plan.md)) |
+| **Repair** | `clip-sync-repair` | Gap scan + patched output via WAV + optional ffmpeg mux ([write-path plan](docs/archive/repair-write-path-plan.md), shipped R0–R5) |
 
-Implementation status: workspace migration Phases 1–4 are complete — the analyzer ships as `crates/clip-sync-cli`, report-only repair as `crates/clip-sync-repair`. The repair **write path** is tracked in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (feature phases R0–R5), which supersedes the thin migration Phase 5 stub in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md). This document describes the **target** architecture; keep it aligned with those plans when decisions change.
+Implementation status: workspace migration Phases 1–4 are complete — the analyzer ships as `crates/clip-sync-cli`, repair as `crates/clip-sync-repair`. The repair **write path** (R0–R5) shipped 2026-06-09 — see [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md), which supersedes the thin migration Phase 5 stub in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md). This document describes the **target** architecture; keep it aligned with those plans when decisions change.
 
 ---
 
@@ -135,7 +135,7 @@ flowchart TB
 
 ## Repair workflow (`clip-sync-repair`)
 
-> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md) (not the thin Phase 5 checklist in the archived refactor plan).
+> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) (shipped; not the thin Phase 5 checklist in the archived refactor plan).
 
 **Report-only (migration Phase 4 — shipped):**
 
@@ -146,7 +146,7 @@ flowchart TB
 5. For each candidate gap: report whether B has energy.
 6. Output gap table (human + JSON). Exit **0** when analysis completes. **No file writes.**
 
-**Write path (R0–R5 in [docs/TEMP-repair-write-path-plan.md](docs/TEMP-repair-write-path-plan.md)):**
+**Write path (R0–R5 in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md), shipped):**
 
 - **R0–R1 (lib):** native multi-channel `extract_interleaved` for fill-quality PCM.
 - **R2–R3 (repair):** track compatibility, overlap on report, bidirectional silence scan, mutual-silence cross-check.
@@ -452,7 +452,7 @@ Own driving hexagon. Uses the library as a **downstream dependency** for alignme
 |------|-------------|
 | `Gap` | Start/end time of a silent run in video A |
 | `GapReport` | List of gaps with fillability, correlation, reason |
-| `GapFillPlan` | PCM splice regions for write path ([R4](docs/TEMP-repair-write-path-plan.md)) |
+| `GapFillPlan` | PCM splice regions for write path ([R4](docs/archive/repair-write-path-plan.md)) |
 
 Pure policies: minimum gap duration, silence peak fraction (aligned with fingerprint prep), crossfade length.
 

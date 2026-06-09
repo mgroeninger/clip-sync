@@ -1,6 +1,6 @@
 # Workspace refactor — implementation gaps (archived)
 
-> **Status:** Archived. Phases 1–4 complete (2026-06-07 / 2026-06-08). Write path deferred to [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5).  
+> **Status:** Archived. Phases 1–4 complete (2026-06-07 / 2026-06-08). Write path (R0–R5) shipped 2026-06-09 — [repair-write-path-plan.md](repair-write-path-plan.md).  
 > **Purpose:** Pre-implementation gaps, ambiguities, and deferred scope identified during readiness review (2026-06-07).
 
 **Parent plan:** [workspace-refactor-plan.md](workspace-refactor-plan.md)  
@@ -15,9 +15,9 @@
 | **PR A — Phases 1 + 2** (workspace, lib hexagon, CLI hexagon) | **Done (2026-06-07)** | All pre-implementation gaps resolved; 98 tests green |
 | **PR B — Phase 3** (`test-utils`, CLI adapter tests, docs) | **Done (2026-06-07)** | 120 tests green |
 | **PR C — Phase 4** (repair report-only) | **Done (2026-06-08)** | `clip-sync-repair` crate shipped; 120 tests green |
-| **PR D — Repair write path** | **No** | Optional; follow [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5); depends on Phase 4 |
+| **PR D — Repair write path** | **Yes** | Shipped (R0–R5); see [repair-write-path-plan.md](repair-write-path-plan.md) |
 
-**Overall:** Phases **1–4** are complete. Write path is tracked in [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md), not the thin Phase 5 stub in the parent plan.
+**Overall:** Phases **1–4** and the repair write path (R0–R5) are complete. See [repair-write-path-plan.md](repair-write-path-plan.md).
 
 ---
 
@@ -156,7 +156,7 @@ No code change needed; this is a documentation-only gap. Address when editing co
 
 ## Intentionally deferred scope (Phases 4–5)
 
-Items 10–14 below were deferred at gaps-review time. All are now resolved by Phase 4. Write-path items (`RepairVideos`, `gap_fill`, `MediaMuxer`, ffmpeg mux) are tracked in [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) (R0–R5).
+Items 10–14 below were deferred at gaps-review time. All are now resolved by Phase 4. Write-path items (`RepairVideos`, `gap_fill`, `MediaMuxer`, ffmpeg mux) are tracked in [repair-write-path-plan.md](repair-write-path-plan.md) (R0–R5).
 
 ### Facade repair allow-list — Resolved (Phase 4)
 
@@ -176,7 +176,7 @@ Implemented:
 - `application/ports.rs` — `GapReporter` port; `MediaMuxer` stub (write path R5)
 - `infrastructure/cli/` — `run()`, `Args`, `StdoutGapReporter`, `exit_code_for`
 
-Write path (`RepairVideos`, `gap_fill`, `PatchAudio`, WAV writer, ffmpeg mux) → [TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md) R0–R5.
+Write path (`RepairVideos`, `gap_fill`, `PatchAudio`, WAV writer, ffmpeg mux) → [repair-write-path-plan.md](repair-write-path-plan.md) R0–R5.
 
 ### Repair config loader — Resolved (Phase 4)
 

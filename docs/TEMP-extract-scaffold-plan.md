@@ -10,7 +10,7 @@
 
 **Out of scope (defer):** plane-direct Symphonia reads (skip `copy_to_vec_interleaved`); chunked/streaming full-timeline extract for repair memory; changes to public `MediaSession` port signatures.
 
-**References:** [TEMP-repair-write-path-plan.md](TEMP-repair-write-path-plan.md) § Lib extract hardening, [BACKLOG.md](../BACKLOG.md) § Symphonia extract loop hardening, `extract.rs`, `media_reader_tests.rs`.
+**References:** [docs/archive/repair-write-path-plan.md](archive/repair-write-path-plan.md) § Lib extract hardening, [BACKLOG.md](../BACKLOG.md) § Symphonia extract loop hardening, `extract.rs`, `media_reader_tests.rs`.
 
 ---
 
@@ -228,7 +228,7 @@ Land helpers only if they do not change control flow ordering.
 ### Phase 3 — Optional helpers + docs (½ day)
 
 1. Extract `decode_packet_or_skip` / window bound helpers if they improve readability without semantic drift.
-2. Update [BACKLOG.md](../BACKLOG.md) and [TEMP-repair-write-path-plan.md](TEMP-repair-write-path-plan.md) status to ✅ scaffold shipped.
+2. Update [BACKLOG.md](../BACKLOG.md) and [docs/archive/repair-write-path-plan.md](archive/repair-write-path-plan.md) status to ✅ scaffold shipped.
 3. Archive this plan.
 
 ---
@@ -268,6 +268,6 @@ Land helpers only if they do not change control flow ordering.
 
 ## Cross-links
 
-- Parent slice: [TEMP-repair-write-path-plan.md](TEMP-repair-write-path-plan.md) § Lib extract hardening
+- Parent slice: [docs/archive/repair-write-path-plan.md](archive/repair-write-path-plan.md) § Lib extract hardening
 - Backlog: [BACKLOG.md](../BACKLOG.md) § Symphonia extract loop hardening
 - Consumer of full-timeline extract: `clip-sync-repair` `PatchAudio::execute`

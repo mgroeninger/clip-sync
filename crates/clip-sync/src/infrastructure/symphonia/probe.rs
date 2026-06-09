@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use symphonia::core::audio::Channels;
 use symphonia::core::codecs::audio::well_known::{
-    CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_VORBIS,
+    CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_ALAC, CODEC_ID_EAC3, CODEC_ID_FLAC, CODEC_ID_MP3,
+    CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
@@ -158,6 +159,8 @@ fn channel_count(channels: Option<&Channels>) -> u16 {
 fn codec_name(codec: AudioCodecId) -> String {
     match codec {
         CODEC_ID_AAC => "aac".into(),
+        CODEC_ID_AC3 => "ac3".into(),
+        CODEC_ID_EAC3 => "eac3".into(),
         CODEC_ID_MP3 => "mp3".into(),
         CODEC_ID_FLAC => "flac".into(),
         CODEC_ID_VORBIS => "vorbis".into(),

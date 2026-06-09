@@ -9,6 +9,7 @@ license = "Non-commercial"
 default = ["default-tracing"]
 default-tracing = ["dep:tracing-subscriber"]
 he-aac = ["dep:fdk-aac", "dep:symphonia-core"]
+ac3 = ["dep:oxideav-ac3", "dep:oxideav-core", "dep:symphonia-core"]
 ffmpeg-tests = []
 test-utils = ["dep:hound", "dep:tempfile"]
 
@@ -19,6 +20,8 @@ cross_correlate = "0.3"
 serde = { version = "1", features = ["derive"] }
 symphonia = { version = "0.6", features = ["default", "isomp4", "aac", "mp3", "mkv", "flac"] }
 fdk-aac = { version = "0.8", optional = true }
+oxideav-ac3 = { version = "0.0.8", optional = true }
+oxideav-core = { version = "0.1", optional = true }
 symphonia-core = { version = "0.6", optional = true }
 thiserror = "1"
 toml = "0.8"

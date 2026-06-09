@@ -1,10 +1,10 @@
-# Temporary plan: repair write path (track match, multi-channel patch, WAV + optional ffmpeg)
+# Repair write path plan (archived)
 
-> **Status:** In progress (2026-06-08). **R0–R4** shipped. **Next:** R5. Archive to `docs/archive/repair-write-path-plan.md` when R5 ships.
+> **Status:** Completed and archived (2026-06-09). R0–R5 shipped. Live copy: [docs/TEMP-repair-write-path-plan.md](../TEMP-repair-write-path-plan.md).
 
 **Problem (original):** `clip-sync-repair` shipped as report-only (migration Phase 4). It aligned A and B and scanned A for silent runs but could not compare track layouts, surface overlap, patch audio, or emit multi-channel output.
 
-**Remaining gaps:** optional ffmpeg mux (R5, behind feature flag).
+**Remaining gaps (post-ship follow-ups):** shared mono/interleaved decode scaffold (lib); `--dry-run` / `--write` CLI flags; dedicated scratch-buffer regression test; streaming/chunked WAV encode; channel up/downmix (out of v1 scope).
 
 **Goal:** Extend the repair hexagon to the full workflow:
 
@@ -58,15 +58,11 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Lib extract hardening** | lib | ✅ Done | Scratch buffer reuse shipped (2026-06-08); shared decode scaffold deferred to R4 kickoff |
 | **R3** | repair | ✅ Done | Bidirectional scan + `gap_offset_agreement` (2026-06-08) |
 | **R4** | repair | ✅ Done | `PatchAudio`, gap fill, multi-channel WAV, `--wav` flag (2026-06-08) |
-| **R5** | repair | ☐ Open | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) |
+| **R5** | repair | ✅ Done | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) (2026-06-09) |
 
 ### Recommended order of work
 
-```text
-1. R3                     (repair — bidirectional scan + cross-check)
-2. Lib extract hardening  (lib — scratch buffer; optional scaffold)
-3. R4 → R5                (repair write path)
-```
+All R0–R5 phases shipped. Open follow-ups: lib shared decode scaffold ([TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md)), CLI `--dry-run`/`--write`, scratch-buffer unit test.
 
 ---
 
@@ -312,31 +308,31 @@ pub struct GapOffsetAgreement {
 
 **Lib:** none
 
-### R3 — Bidirectional scan + mutual-silence cross-check (repair)
+### R3 — Bidirectional scan + mutual-silence cross-check (repair) ✅
 
 **Repair (`clip-sync-repair`)**
 
-- [ ] `application/scan_gaps.rs` — when `scan_both`, also scan B timeline → `Vec<Gap>` on B's clock
-- [ ] `application/cross_check.rs` — `silence_based_offset(a_gaps, b_gaps) -> Option<f64>` (shift maximizing silence-interval overlap); `GapOffsetAgreement` vs `recommended_offset_secs`
-- [ ] `domain/gap.rs` — `gap_offset_agreement`
-- [ ] `infrastructure/cli/output.rs` — agreement line (warn when `!agrees`)
-- [ ] Tests: synthetic A/B with co-located silence → offset recovered; disagreement flagged; no shared silence → `None`
+- [x] `application/scan_gaps.rs` — when `scan_both`, also scan B timeline → silence intervals on B's clock
+- [x] `domain/cross_check.rs` — `silence_based_offset(a_gaps, b_gaps) -> Option<f64>` (shift maximizing silence-interval overlap); `GapOffsetAgreement` vs `recommended_offset_secs`
+- [x] `domain/gap.rs` — `gap_offset_agreement`
+- [x] `infrastructure/cli/output.rs` — agreement line (warn when `!agrees`)
+- [x] Tests: synthetic A/B with co-located silence → offset recovered; disagreement flagged; no shared silence → `None` (`domain/cross_check.rs` unit tests)
 
 **Lib:** none
 
-### R4 — Gap fill → multi-channel WAV (Rust-native write path)
+### R4 — Gap fill → multi-channel WAV (Rust-native write path) ✅
 
 **Repair (`clip-sync-repair`)**
 
-- [ ] `Cargo.toml` — promote `hound` to dependency; add `[features] default = []; ffmpeg-mux = []`
+- [x] `Cargo.toml` — promote `hound` to dependency; add `[features] default = []; ffmpeg-mux = []`
 - [x] `domain/gap_fill.rs` — `FillRegion`, `GapFillPlan`; build plan from fillable gaps (channel match + overlap)
 - [x] `application/patch_audio.rs` — `min_fill_correlation` boundary gate via `normalized_correlation` (pre-gap A border vs B fill start)
-- [ ] `domain/policies.rs` — `compute_fill_gain`, `apply_crossfade`, `rms_interleaved` + unit tests
-- [ ] `application/ports.rs` — `PatchedAudioWriter { fn write(&self, audio: &MultiChannelPcm, path: &Path) -> Result<(), RepairError>; }`
-- [ ] `application/patch_audio.rs` — `PatchAudio`: extract A native full timeline (chunked), for each `FillRegion` extract B via `extract_interleaved`, resample if needed, normalize, crossfade-splice → patched `MultiChannelPcm`
-- [ ] `infrastructure/wav_writer.rs` — `WavPatchedAudioWriter` (hound, multi-channel)
-- [ ] `application/error.rs` — `RepairError::Write(io)`; map to exit code 4
-- [ ] `infrastructure/cli/{args,mod}.rs` — `--wav`, `--no-normalize`, `--crossfade-ms`, write-mode wiring
+- [x] `domain/policies.rs` — `compute_fill_gain`, `apply_crossfade`, `rms_interleaved` + unit tests
+- [x] `application/ports.rs` — `PatchedAudioWriter { fn write(&self, audio: &MultiChannelPcm, path: &Path) -> Result<(), RepairError>; }`
+- [x] `application/patch_audio.rs` — `PatchAudio`: extract A native full timeline (chunked), for each `FillRegion` extract B via `extract_interleaved`, resample if needed, normalize, crossfade-splice → patched `MultiChannelPcm`
+- [x] `infrastructure/wav_writer.rs` — `WavPatchedAudioWriter` (hound, multi-channel)
+- [x] `application/error.rs` — `RepairError::Write(io)`; map to exit code 4
+- [x] `infrastructure/cli/{args,mod}.rs` — `--wav`, `--no-normalize`, `--crossfade-ms`, write-mode wiring (`--wav` implies `dry_run = false`; explicit `--dry-run`/`--write` flags deferred)
 - [x] Tests: gap-fill splice, correlation reject, normalization, resample, CLI `--wav` — see `tests/patch_audio_integration.rs`, `tests/cli_wav_integration.rs`; crossfade continuity in `policies` unit tests
 
 **Lib:** consumes R1 `extract_interleaved`; **requires lib extract hardening** (scratch buffer) for acceptable full-timeline performance
@@ -351,23 +347,23 @@ Not a repair phase number. Address after R3 (or in parallel if R4 is blocked onl
 
 **Lib (`clip-sync`)**
 
-- [ ] **Scratch buffer (before R4):** one `Vec<f32>` per extract attempt, passed into `append_*`; `scratch.clear()` per packet. Touches both mono and interleaved paths.
-- [ ] **Shared decode scaffold (at R4 kickoff, recommended):** extract packet loop (seek/retry, decode-skip, tail-padding, progress) into a shared inner function; mono vs interleaved differ only at the append/sink step.
-- [ ] Tests: existing `media_reader_tests` + append unit tests stay green; no behavior change expected for scratch-only PR.
+- [x] **Scratch buffer (before R4):** one `Vec<f32>` per extract attempt, passed into `append_*`; `scratch.clear()` per packet. Touches both mono and interleaved paths.
+- [ ] **Shared decode scaffold (deferred):** extract packet loop (seek/retry, decode-skip, tail-padding, progress) into a shared inner function; mono vs interleaved differ only at the append/sink step. See [TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md).
+- [ ] **Scratch-buffer regression test (deferred):** `append_*_reuses_scratch_buffer` — behavior verified by existing extract tests; dedicated alloc test not yet added.
 
 **Defer:** plane-direct Symphonia read (skip `copy_to_vec_interleaved`) — optional polish if profiling shows scratch reuse is insufficient.
 
-### R5 — ffmpeg video mux (behind `ffmpeg-mux` feature)
+### R5 — ffmpeg video mux (behind `ffmpeg-mux` feature) ✅
 
 **Repair (`clip-sync-repair`)**
 
-- [ ] `application/repair_videos.rs` — `RepairVideos`: `PatchAudio` → `PatchedAudioWriter` (temp WAV) → `MediaMuxer`
-- [ ] `infrastructure/ffmpeg_mux.rs` (`#[cfg(feature = "ffmpeg-mux")]`) — implement existing `MediaMuxer` port via ffmpeg subprocess (`-i source -i wav -map ... -c:v copy -c:a aac`)
-- [ ] Flesh out `MediaMuxer` trait signature (currently an empty stub) per PLAN §Repair application
-- [ ] `application/error.rs` — `RepairError::Mux(String)` → exit code 6; `exit_code.rs` table update
-- [ ] `infrastructure/cli/{args,mod}.rs` — `--mux <PATH>`; arg error when feature off
-- [ ] `docs/error-mapping.md` — repair exit codes 4 (write) / 6 (mux)
-- [ ] Tests: `#[ignore]` integration mux (needs ffmpeg on PATH); arg-rejected-without-feature test; unit test of ffmpeg arg construction
+- [x] `application/repair_videos.rs` — `RepairVideos`: `PatchAudio` → `PatchedAudioWriter` (temp WAV in muxer) → `MediaMuxer`
+- [x] `infrastructure/ffmpeg_mux.rs` (`#[cfg(feature = "ffmpeg-mux")]`) — `MediaMuxer` via ffmpeg subprocess (`-i source -i wav -map ... -c:v copy -c:a aac`)
+- [x] `MediaMuxer` trait — `mux_video_with_replaced_audio` on `application/ports.rs`
+- [x] `application/error.rs` — `RepairError::Mux(String)` → exit code 6; `exit_code.rs` table update
+- [x] `infrastructure/cli/{args,mod}.rs` — `--mux <PATH>`; arg error when feature off
+- [x] `docs/error-mapping.md` — repair exit codes 4 (write) / 6 (mux)
+- [x] Tests: `#[ignore]` integration mux (`mux_writes_video`, needs ffmpeg on PATH); `mux_arg_rejected_without_feature`; `ffmpeg_arg_construction` unit tests
 
 **Lib:** none
 
@@ -465,22 +461,22 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 |------|-------|-------|---------|
 | `extract_interleaved_stereo_frame_count` | R1 ✅ | lib | frames == rate × secs; channels == 2 |
 | `extract_interleaved_midfile_window` | R1 ✅ | lib | mid-file seek returns expected window |
-| `append_*_reuses_scratch_buffer` | lib hardening | lib | no per-packet alloc; same PCM output as before |
+| `append_*_reuses_scratch_buffer` | lib hardening | lib | **deferred** — scratch reuse shipped; dedicated test not added |
 | `assess_compat_identical / rate_only / channel_mismatch` | R2 ✅ | repair | verdict mapping |
 | `report_includes_compatibility_and_overlap` | R2 ✅ | repair | fields populated; JSON shape |
 | `failed_alignment` null B fields (scan + JSON + human) | R2 ✅ | repair | offset `null` → A gaps listed, `video_b_*` null, human B-mapping-skipped note |
-| `silence_offset_recovered_from_mutual_gaps` | R3 | repair | co-located silence → Δ ≈ true offset |
-| `gap_offset_disagreement_flagged` | R3 | repair | wrong silence layout → `agrees = false` |
-| `compute_fill_gain_clamps_to_max_db` | R4 | repair | gain bounded |
-| `apply_crossfade_is_continuous` | R4 | repair | no discontinuity at seam |
+| `silence_offset_recovered_from_colocated_gaps` | R3 ✅ | repair | co-located silence → Δ ≈ true offset (`domain/cross_check.rs`) |
+| `gap_offset_disagreement_flagged` | R3 ✅ | repair | wrong silence layout → `agrees = false` |
+| `compute_fill_gain_clamps_to_max_db` | R4 ✅ | repair | gain bounded |
+| `apply_crossfade_is_continuous` | R4 ✅ | repair | no discontinuity at seam |
 | `patch_audio_fills_gap_in_stereo_wav` | R4 ✅ | repair | gap region energy from B; pre/post-gap from A |
 | `patch_audio_skips_fill_when_boundary_correlation_below_threshold` | R4 ✅ | repair | mismatched B frequency → gap stays silent |
 | `patch_audio_normalizes_fill_loudness_to_a_border` | R4 ✅ | repair | normalized gap RMS ≈ A border |
 | `patch_audio_resamples_b_when_sample_rates_differ` | R4 ✅ | repair | B 48 kHz → A 44.1 kHz fill works |
 | `cli_scan_and_wav_writes_patched_output` | R4 ✅ | repair | CLI `--wav` end-to-end on chirp fixtures |
-| `mux_arg_rejected_without_feature` | R5 | repair | `--mux` errors when feature off |
-| `ffmpeg_arg_construction` | R5 | repair | correct ffmpeg argv |
-| `mux_writes_video` (`#[ignore]`) | R5 | repair | needs ffmpeg on PATH |
+| `mux_arg_rejected_without_feature` | R5 ✅ | repair | `--mux` errors when feature off |
+| `ffmpeg_arg_construction` | R5 ✅ | repair | correct ffmpeg argv |
+| `mux_writes_video` (`#[ignore]`) | R5 ✅ | repair | needs ffmpeg on PATH |
 
 ---
 
@@ -489,7 +485,8 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 - ~~**Resampler reuse** — resolved: `resample_interleaved` on facade (R1).~~
 - ~~**TimelineOverlap facade** — resolved: re-exported (R1).~~
 - **Channel up/downmix:** v1 skips fill on channel-count mismatch. A future phase could map stereo→5.1 fronts or downmix. Out of scope until a corpus case needs it.
-- **Streaming write:** full-timeline A in memory is the simple v1 choice. Chunked encode is deferred until users hit memory pain (mirrors lib BACKLOG "Memory use and PCM cloning"). Distinct from **per-packet scratch alloc** (lib extract hardening — address before R4).
+- **Streaming write:** full-timeline A in memory is the simple v1 choice. Chunked encode is deferred until users hit memory pain (mirrors lib BACKLOG "Memory use and PCM cloning"). Per-packet scratch alloc resolved (scratch buffer shipped).
+- **CLI dry-run flags:** `--dry-run` / `--write` not added; write mode is implied by `--wav` / `--mux` or TOML `dry_run = false`.
 
 ---
 
@@ -503,8 +500,8 @@ Equal-power linear crossfade over `crossfade_frames` at both seams to avoid clic
 - `src/application/error.rs` — `MediaError::Unsupported`
 
 ### Repair (`crates/clip-sync-repair`)
-- `src/domain/{gap.rs, track_match.rs, gap_fill.rs, policies.rs}`
-- `src/application/{scan_gaps.rs, cross_check.rs, patch_audio.rs, repair_videos.rs, ports.rs, error.rs}`
+- `src/domain/{gap.rs, track_match.rs, gap_fill.rs, cross_check.rs, policies.rs}`
+- `src/application/{scan_gaps.rs, patch_audio.rs, repair_videos.rs, ports.rs, error.rs}`
 - `src/infrastructure/{wav_writer.rs, ffmpeg_mux.rs, config.rs, cli/}`
 - `Cargo.toml` — `hound` dep, `[features] ffmpeg-mux`
 
