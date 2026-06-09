@@ -23,7 +23,7 @@ symphonia-core = { version = "0.6", optional = true }
 thiserror = "1"
 toml = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"], optional = true }
 hound = { version = "3", optional = true }
 tempfile = { version = "3", optional = true }
 

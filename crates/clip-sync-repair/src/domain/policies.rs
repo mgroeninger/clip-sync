@@ -246,6 +246,181 @@ pub fn interleaved_to_mono(samples: &[i16], channels: usize) -> Vec<f64> {
         .collect()
 }
 
+/// Refined gap boundaries on A's PCM timeline (frame indices, `[start, end)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefinedGapFrames {
+    pub start_frame: usize,
+    pub end_frame: usize,
+}
+
+fn silent_run(
+    samples: &[i16],
+    channels: usize,
+    start_frame: usize,
+    run_frames: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+) -> bool {
+    (start_frame..start_frame + run_frames).all(|frame| {
+        is_silent_frame(
+            samples,
+            channels,
+            frame,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    })
+}
+
+/// Returns `true` when a single interleaved frame passes [`is_silent_interleaved`].
+pub fn is_silent_frame(
+    samples: &[i16],
+    channels: usize,
+    frame: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+) -> bool {
+    let channels = channels.max(1);
+    let start = frame * channels;
+    let end = start + channels;
+    if end > samples.len() {
+        return true;
+    }
+    is_silent_interleaved(
+        &samples[start..end],
+        channels,
+        silence_peak_fraction,
+        absolute_rms_floor,
+    )
+}
+
+/// Tighten a reported gap against A's decoded PCM.
+///
+/// - Advances `start` past leading non-silent frames (scanner started the run too early).
+/// - Extends `end` through trailing silence (scanner closed the run too early).
+pub fn refine_gap_frames(
+    samples: &[i16],
+    channels: usize,
+    start_frame: usize,
+    end_frame: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+    max_refine_frames: usize,
+) -> RefinedGapFrames {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    let mut start = start_frame.min(total_frames);
+    let mut end = end_frame.min(total_frames);
+    if start >= end {
+        return RefinedGapFrames {
+            start_frame: start,
+            end_frame: end,
+        };
+    }
+
+    // Peel at most `max_refine_frames` of leading non-silent audio before the reported gap.
+    // Cap at `start_frame + max_refine` so a noisy dropout interior cannot push `start` all the
+    // way to `end_frame` (block-quantized gaps are typically misaligned by <250 ms).
+    let max_start = (start_frame + max_refine_frames).min(end_frame);
+    let confirm_frames = (max_refine_frames / 15).max(4).min(4096);
+    let mut budget = max_refine_frames;
+    while start + confirm_frames <= max_start && budget > 0 {
+        if silent_run(
+            samples,
+            channels,
+            start,
+            confirm_frames,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        ) {
+            break;
+        }
+        start += 1;
+        budget -= 1;
+    }
+
+    budget = max_refine_frames;
+    while end < total_frames
+        && budget > 0
+        && is_silent_frame(
+            samples,
+            channels,
+            end,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    {
+        end += 1;
+        budget -= 1;
+    }
+
+    RefinedGapFrames {
+        start_frame: start,
+        end_frame: end.max(start),
+    }
+}
+
+/// Build mono border templates for seam correlation, skipping silence adjacent to the gap.
+pub fn border_templates_for_gap(
+    samples: &[i16],
+    channels: usize,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    border_frames: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+) -> (Vec<f64>, Vec<f64>) {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+
+    let pre_start = gap_start_frame.saturating_sub(border_frames);
+    let mut pre_end = gap_start_frame.min(total_frames);
+    while pre_end > pre_start
+        && is_silent_frame(
+            samples,
+            channels,
+            pre_end - 1,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    {
+        pre_end -= 1;
+    }
+
+    let post_end = (gap_end_frame + border_frames).min(total_frames);
+    let mut post_start = gap_end_frame.min(total_frames);
+    while post_start < post_end
+        && is_silent_frame(
+            samples,
+            channels,
+            post_start,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    {
+        post_start += 1;
+    }
+
+    let pre_mono = if pre_end > pre_start {
+        interleaved_to_mono(
+            &samples[pre_start * channels..pre_end * channels],
+            channels,
+        )
+    } else {
+        Vec::new()
+    };
+    let post_mono = if post_end > post_start {
+        interleaved_to_mono(
+            &samples[post_start * channels..post_end * channels],
+            channels,
+        )
+    } else {
+        Vec::new()
+    };
+
+    (pre_mono, post_mono)
+}
+
 /// Slide a candidate B window to maximize agreement with A's borders at both gap seams.
 ///
 /// `nominal_start_frame` is where the coarse offset maps the fill inside `b_extended`.
@@ -757,5 +932,64 @@ mod tests {
             a[gap_start]
         );
         assert_eq!(a[gap_start + cf], 4_000, "middle should be pure fill");
+    }
+
+    #[test]
+    fn refine_gap_frames_advances_past_leading_audio_and_extends_trailing_silence() {
+        let channels = 2usize;
+        // [loud 5][silent 10][loud 5] — reported gap starts one frame too early and ends one frame too early.
+        let mut samples = Vec::new();
+        for _ in 0..5 {
+            samples.extend([8_000i16, 8_000i16]);
+        }
+        for _ in 0..10 {
+            samples.extend([0i16, 0i16]);
+        }
+        for _ in 0..5 {
+            samples.extend([8_000i16, 8_000i16]);
+        }
+
+        let refined = refine_gap_frames(&samples, channels, 4, 14, 0.01, 0.0, 10);
+        assert_eq!(refined.start_frame, 5);
+        assert_eq!(refined.end_frame, 15);
+    }
+
+    #[test]
+    fn refine_gap_frames_caps_start_advance_before_reported_end() {
+        let channels = 1usize;
+        let mut samples = Vec::new();
+        // Leading audio (2 frames), low-level dropout (8 frames), trailing audio.
+        samples.extend([8_000i16; 2]);
+        samples.extend([3i16; 8]);
+        samples.extend([8_000i16; 2]);
+
+        let refined = refine_gap_frames(
+            &samples,
+            channels,
+            2,
+            10,
+            0.01,
+            0.0,
+            20,
+        );
+        assert!(
+            refined.start_frame < 10,
+            "start should not advance all the way to reported end"
+        );
+        assert_eq!(refined.end_frame, 10);
+    }
+
+    #[test]
+    fn border_templates_for_gap_skip_adjacent_silence() {
+        let channels = 1usize;
+        let mut samples = vec![8_000i16; 5];
+        samples.extend(vec![0i16; 5]);
+        samples.extend(vec![8_000i16; 5]);
+
+        let (pre, post) = border_templates_for_gap(&samples, channels, 5, 10, 5, 0.01, 0.0);
+        assert_eq!(pre.len(), 5);
+        assert!(pre.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
+        assert_eq!(post.len(), 5);
+        assert!(post.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
     }
 }

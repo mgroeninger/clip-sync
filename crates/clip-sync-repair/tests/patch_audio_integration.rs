@@ -2,8 +2,11 @@ use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 
 use clip_sync::testing::fakes::FakeProgressReporter;
-use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
+use clip_sync::{
+    AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
+};
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
+use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
@@ -163,6 +166,7 @@ fn patch_request(
         min_fill_correlation,
         fill_align_margin_secs: 1.0,
         max_fill_align_adjustment_secs: 0.5,
+        absolute_silence_rms: 0.0,
     }
 }
 
@@ -441,4 +445,169 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
         "gap closing should not dip to silence (pre={pre_last}, close={gap_close})"
     );
     assert!(post_first > 100.0, "post-gap should stay loud, got rms={post_first}");
+}
+
+#[test]
+fn decoded_gap_frames_are_silent_in_sine_fixture() {
+    use std::time::Duration;
+
+    use clip_sync::{ClipLabel, ClipWindow, SymphoniaMediaReader};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+
+    let media_reader = SymphoniaMediaReader;
+    let session = media_reader
+        .open(&clip_sync::MediaSource::new(fixture.path_a.clone()))
+        .expect("open A");
+    let tracks = session.list_tracks().expect("tracks");
+    let track = &tracks[0];
+    let duration = track.duration.expect("duration");
+    let window = ClipWindow::new(Duration::ZERO, duration, ClipLabel::Interior);
+    let pcm = session
+        .extract_interleaved(track, &window, &FakeProgressReporter, "probe-a")
+        .expect("extract A");
+
+    let gap_frame = (GAP_START * SAMPLE_RATE as f64) as usize;
+    let pre_frame = gap_frame.saturating_sub(1);
+    assert!(
+        !policies::is_silent_frame(&pcm.samples, CHANNELS as usize, pre_frame, 0.01, 0.0),
+        "frame before gap should not be silent"
+    );
+    assert!(
+        policies::is_silent_frame(&pcm.samples, CHANNELS as usize, gap_frame, 0.01, 0.0),
+        "first gap frame should decode as silent"
+    );
+}
+
+/// Scanner block quantization can report a gap that starts slightly early and ends slightly
+/// early. Patch should refine edges and still splice B with passing seam correlation.
+#[test]
+fn patch_audio_fills_gap_with_imprecise_scan_boundaries() {
+    const BOUNDARY_SLACK_SECS: f64 = 0.25;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+
+    let imprecise_gap = Gap {
+        video_a_start_secs: GAP_START - BOUNDARY_SLACK_SECS,
+        video_a_end_secs: GAP_END - BOUNDARY_SLACK_SECS,
+        video_b_start_secs: Some(GAP_START - BOUNDARY_SLACK_SECS),
+        video_b_end_secs: Some(GAP_END - BOUNDARY_SLACK_SECS),
+        b_has_energy: true,
+    };
+
+    let mut report = make_report(
+        fixture.path_a,
+        fixture.path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    report.gaps = vec![imprecise_gap];
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let request = patch_request(report, false, 5.0, 0.35);
+    let result = PatchAudio::new(&media_reader, &progress)
+        .execute(request, 10)
+        .expect("patch should succeed");
+
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "expected patch to succeed, got {:?}",
+        result.summary.gaps
+    );
+
+    let gap_rms = rms_region(
+        &result.pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_START,
+        GAP_END,
+    );
+    assert!(
+        gap_rms > 100.0,
+        "imprecise scan boundaries should still be filled, got rms={gap_rms}, status={:?}",
+        result.summary.gaps[0].status
+    );
+}
+
+#[test]
+fn scan_then_patch_fills_detected_gap() {
+    use std::time::Duration;
+
+    use clip_sync::ClipConfig;
+    use clip_sync::{AlignConfig, SymphoniaMediaReader};
+    use clip_sync_repair::application::{ScanGaps, ScanGapsRequest};
+
+    const SCAN_TOTAL_SECS: u32 = 120;
+    const SCAN_GAP_START: u32 = 40;
+    const SCAN_GAP_END: u32 = 43;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        SCAN_TOTAL_SECS,
+        SCAN_GAP_START,
+        SCAN_GAP_END,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_wav(&path_b, SAMPLE_RATE, SCAN_TOTAL_SECS, 440.0, 16_000.0);
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let report = ScanGaps::new(&media_reader, &progress)
+        .execute(ScanGapsRequest {
+            video_a: path_a.clone(),
+            video_b: path_b.clone(),
+            align: AlignConfig {
+                clip: ClipConfig {
+                    clip_length: Duration::from_secs(60),
+                    num_clips: 1,
+                    target_sample_rate: Some(SAMPLE_RATE),
+                    ..ClipConfig::default()
+                },
+                ..Default::default()
+            },
+            decode_chunk_secs: 2,
+            scan_block_secs: 0.25,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            silence_hold_blocks: 0,
+            min_gap_secs: 1.0,
+            scan_both: false,
+            gap_offset_tolerance_secs: 0.5,
+        })
+        .expect("scan should succeed");
+
+    assert!(
+        report.fillable_count() >= 1,
+        "scan should detect a fillable gap"
+    );
+
+    let patch_request = patch_request(report, false, 5.0, 0.35);
+    let result = PatchAudio::new(&media_reader, &progress)
+        .execute(patch_request, 10)
+        .expect("patch should succeed");
+
+    assert!(
+        result.summary.patched_count >= 1,
+        "expected at least one patched gap, got {:?}",
+        result.summary.gaps
+    );
+
+    let gap_rms = rms_region(
+        &result.pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        f64::from(SCAN_GAP_START),
+        f64::from(SCAN_GAP_END),
+    );
+    assert!(
+        gap_rms > 100.0,
+        "scan-detected gap should be filled, got rms={gap_rms}"
+    );
 }

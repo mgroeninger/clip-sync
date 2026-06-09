@@ -64,9 +64,11 @@ clip-sync [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `-v, --verbose` | — | Show diagnostics on stderr |
 | `-q, --quiet` | — | Errors only; suppress progress |
 | `--log-level <LEVEL>` | — | Tracing log level |
-| `--log-file <FILE>` | — | Write structured logs to file |
+| `--log-file <FILE>` | — | Write structured logs to file (also logs to stderr) |
 | `--try-all-tracks` | — | Try all decodable audio track pairs |
+| `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
 | `--refine-offset-high-rate` | — | Apply native-rate FFT refinement after fingerprint match |
+| `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
 | `-h, --help` | | |
 | `-V, --version` | | |
 
@@ -109,9 +111,29 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <FILE>` | — | Config file path |
+| `--format <human\|json>` | `human` | Output format |
+| `--clip-length <DUR>` | `15m` | Length of each alignment clip window (min: `1m`) |
+| `--num-clips <N>` | `2` | Number of alignment clip windows per video |
+| `--min-gap-ms <MS>` | `1000` | Minimum silent gap duration to report |
+| `--silence-fraction <F>` | `0.01` | Silence threshold as a fraction of peak amplitude |
+| `--decode-chunk-secs <SECS>` | `10` | Decode chunk size for sequential scan (alias: `--scan-window-secs`) |
+| `--scan-block-ms <MS>` | `250` | Analysis block size for silence detection |
+| `--scan-both` | on | Scan B's timeline for silence (bidirectional agreement) |
+| `--no-scan-both` | — | Disable bidirectional silence scan |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`) |
-| `--format <human\|json>` | `human` | Output format |
+| `--no-normalize` | — | Disable loudness normalization of fill segments |
+| `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
+| `-v, --verbose` | — | Verbose progress on stderr |
+| `-q, --quiet` | — | Suppress progress output |
+| `--log-level <LEVEL>` | — | Tracing log level |
+| `--log-file <FILE>` | — | Write structured logs to file (also logs to stderr) |
+| `--try-all-tracks` | — | Try all decodable audio track pairs |
+| `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
+| `--refine-offset-high-rate` | — | Apply native-rate FFT refinement (on by default in repair config) |
+| `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
+| `-h, --help` | | |
+| `-V, --version` | | |
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
@@ -121,13 +143,23 @@ Report-only mode exits `0` when analysis completes (default `dry_run = true` in 
 
 Settings are merged in this order (later wins): built-in defaults → config file → CLI flags.
 
-The config file is TOML. Pass it with `--config`; if omitted, built-in defaults are used.
+The config file is TOML. Pass it with `--config` (or `-c`); if omitted, built-in defaults are used.
+
+In TOML, `clip_length` is an integer number of **seconds** (CLI accepts human-friendly values like `15m` or `90s`).
+
+### Logging
+
+| Source | Precedence |
+|--------|------------|
+| `RUST_LOG` environment variable | Highest — overrides `[logging].level` and `--log-level` when set |
+| `--log-level` / `[logging].level` | Used when `RUST_LOG` is unset |
+| `--log-file` / `[logging].log_file` | Appends structured logs to a file; stderr logging continues |
 
 ### Analyzer config (`clip-sync`)
 
 ```toml
 [clip]
-clip_length = "15m"
+clip_length = 900          # seconds (900 = 15 minutes)
 num_clips = 1
 normalize_loudness = true
 trim_silence = true
@@ -135,7 +167,7 @@ trim_silence = true
 [alignment]
 min_match_score = 0.3
 refine_offset_with_pcm = true
-refine_offset_high_rate = false   # enable with --refine-offset-high-rate
+refine_offset_high_rate = false
 high_rate_refine_secs = 3
 try_all_tracks = false
 
@@ -145,23 +177,41 @@ show_diagnostics = false
 
 [logging]
 level = "warn"
+# log_file = "clip-sync.log"
 ```
 
 ### Repair config (`clip-sync-repair`)
 
 ```toml
-[clip]          # repair defaults num_clips = 2 (analyzer default is 1)
-num_clips = 2
-[alignment]     # same keys as analyzer
-[logging]       # same keys as analyzer
+[clip]
+clip_length = 900          # seconds
+num_clips = 2              # repair default is 2 (analyzer default is 1)
+
+[alignment]
+refine_offset_with_pcm = true
+refine_offset_high_rate = true    # repair default; set false to disable
+require_consistent_offsets = false
+try_all_tracks = false
+
+[logging]
+level = "warn"
 
 [repair]
 min_gap_ms = 1000
 silence_peak_fraction = 0.01
 scan_block_ms = 250
 decode_chunk_secs = 10
+silence_hold_ms = 500
+absolute_silence_rms = 33.0
+scan_both = true
+gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
+fill_align_margin_secs = 1.0
+max_fill_align_adjustment_secs = 0.5
 crossfade_ms = 10
+normalize_fill = true
+normalize_window_secs = 5.0
+max_fill_gain_db = 12.0
 dry_run = true
 
 [repair.output]
@@ -170,6 +220,8 @@ wav_path = "patched.wav"
 video_codec = "copy"
 audio_codec = "aac"
 ```
+
+Example fixtures: `crates/clip-sync-cli/tests/fixtures/analyzer.toml`, `crates/clip-sync-repair/tests/fixtures/repair.toml`.
 
 ---
 

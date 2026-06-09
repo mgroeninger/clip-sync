@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clip_sync::{
-    select_best_track, AudioTrack, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession,
-    MediaSource, MultiChannelPcm, ProgressReporter, resample_interleaved,
+    select_best_track, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource,
+    MultiChannelPcm, ProgressReporter, resample_interleaved,
 };
 
 use crate::application::error::RepairError;
@@ -33,14 +33,19 @@ pub struct PatchAudioRequest {
     pub fill_align_margin_secs: f64,
     /// Maximum slide (seconds) applied when searching for the best B fill position.
     pub max_fill_align_adjustment_secs: f64,
+    /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
+    pub absolute_silence_rms: f32,
 }
+
+/// How far gap edges may be adjusted against A's decoded PCM (seconds).
+const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 // Collected B segment ready to splice into A.
 struct RegionPatch {
     b_samples: Vec<i16>,
     gain: f32,
-    a_start_secs: f64,
-    a_end_secs: f64,
+    a_start_frame: usize,
+    a_end_frame: usize,
     crossfade_secs: f64,
 }
 
@@ -103,7 +108,26 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let tracks_b = session_b.list_tracks().map_err(RepairError::Media)?;
         let track_b = select_best_track(&tracks_b)?.clone();
 
-        // Step 6: Compute global A RMS as normalization fallback.
+        // Step 6: Decode full B timeline once (sequential from t=0) to avoid per-gap MKV seeks.
+        let duration_b = track_b
+            .duration
+            .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
+        let full_window_b = ClipWindow::new(Duration::ZERO, duration_b, ClipLabel::Interior);
+        let b_pcm_full = session_b
+            .extract_interleaved(&track_b, &full_window_b, self.progress, "patch-b")
+            .map_err(RepairError::Media)?;
+        let b_samples_full = if b_pcm_full.sample_rate != a_pcm.sample_rate {
+            resample_interleaved(
+                &b_pcm_full.samples,
+                b_pcm_full.channels,
+                b_pcm_full.sample_rate,
+                a_pcm.sample_rate,
+            )
+        } else {
+            b_pcm_full.samples
+        };
+
+        // Step 7: Compute global A RMS as normalization fallback.
         let global_a_rms = policies::rms_interleaved(&a_pcm.samples);
 
         let channels = a_pcm.channels as usize;
@@ -114,29 +138,33 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let align_correlate_secs = request.normalize_window_secs.min(1.0);
         let correlate_frames =
             ((align_correlate_secs * sample_rate as f64) as usize).max(1);
+        let max_refine_frames =
+            (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+        let silence_peak_fraction = request.report.silence_peak_fraction;
 
-        // Step 7: Collect B segments (immutable borrow on a_pcm.samples),
+        // Step 8: Collect B segments (immutable borrow on a_pcm.samples),
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
 
         for region in &plan.regions {
             let (patch, outcome) = prepare_region_patch(
-                &session_b,
-                &track_b,
+                &b_samples_full,
                 &a_pcm,
                 region,
                 channels,
                 sample_rate,
                 max_adjustment_frames,
                 correlate_frames,
+                max_refine_frames,
                 request.fill_align_margin_secs,
                 request.min_fill_correlation,
                 request.normalize_fill,
                 request.normalize_window_secs,
                 request.max_fill_gain_db,
                 global_a_rms,
-                self.progress,
+                silence_peak_fraction,
+                request.absolute_silence_rms,
             );
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
@@ -144,7 +172,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
-        // Step 8: Apply patches to A samples.
+        // Step 9: Apply patches to A samples.
         for patch in patches {
             let b_gained: Vec<i16> = patch
                 .b_samples
@@ -160,8 +188,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &mut a_pcm.samples,
                 &b_gained,
                 channels,
-                patch.a_start_secs,
-                patch.a_end_secs,
+                patch.a_start_frame,
+                patch.a_end_frame,
                 patch.crossfade_secs,
                 sample_rate,
             );
@@ -242,60 +270,50 @@ fn outcomes_in_report_order(
 }
 
 fn prepare_region_patch(
-    session_b: &impl MediaSession,
-    track_b: &AudioTrack,
+    b_samples_full: &[i16],
     a_pcm: &MultiChannelPcm,
     region: &FillRegion,
     channels: usize,
     sample_rate: u32,
     max_adjustment_frames: usize,
     correlate_frames: usize,
+    max_refine_frames: usize,
     margin_secs: f64,
     min_fill_correlation: f32,
     normalize_fill: bool,
     normalize_window_secs: f64,
     max_fill_gain_db: f64,
     global_a_rms: f32,
-    progress: &dyn ProgressReporter,
+    silence_peak_fraction: f32,
+    absolute_silence_rms: f32,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
     debug_assert!(
         region.b_start_secs >= 0.0,
         "fill plan must not include gaps with negative B start"
     );
 
-    let b_extract_start_secs = (region.b_start_secs - margin_secs).max(0.0);
-    let b_extract_end_secs = region.b_end_secs + margin_secs;
-    let window_b = ClipWindow::new(
-        Duration::from_secs_f64(b_extract_start_secs),
-        Duration::from_secs_f64(b_extract_end_secs),
-        ClipLabel::Interior,
+    let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
+    let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
+    let refined = policies::refine_gap_frames(
+        &a_pcm.samples,
+        channels,
+        reported_start_frame,
+        reported_end_frame,
+        silence_peak_fraction,
+        absolute_silence_rms,
+        max_refine_frames,
     );
 
-    let b_pcm = match session_b.extract_interleaved(track_b, &window_b, progress, "patch-b") {
-        Ok(pcm) => pcm,
-        Err(e) => {
-            tracing::warn!(error = %e, "skipping gap fill region: B extraction failed");
-            return (
-                None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::BExtractFailed),
-            );
-        }
-    };
+    let start_delta_frames =
+        refined.start_frame as i64 - reported_start_frame as i64;
+    let end_delta_frames = refined.end_frame as i64 - reported_end_frame as i64;
+    let refined_b_start_secs =
+        region.b_start_secs + start_delta_frames as f64 / sample_rate as f64;
+    let refined_b_end_secs =
+        region.b_end_secs + end_delta_frames as f64 / sample_rate as f64;
+    let a_start_secs = refined.start_frame as f64 / sample_rate as f64;
 
-    let b_samples = if b_pcm.sample_rate != sample_rate {
-        resample_interleaved(
-            &b_pcm.samples,
-            b_pcm.channels,
-            b_pcm.sample_rate,
-            sample_rate,
-        )
-    } else {
-        b_pcm.samples
-    };
-
-    let gap_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
-    let gap_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
         return (
             None,
@@ -303,26 +321,44 @@ fn prepare_region_patch(
         );
     }
 
-    let pre_start_frame = gap_start_frame.saturating_sub(border_frames_from_secs(
-        normalize_window_secs,
+    let b_extract_start_secs = (refined_b_start_secs - margin_secs).max(0.0);
+    let b_extract_end_secs = refined_b_end_secs + margin_secs;
+    let b_samples = match slice_b_segment(
+        b_samples_full,
+        channels,
         sample_rate,
-    ));
-    let post_end_frame = (gap_end_frame
-        + border_frames_from_secs(normalize_window_secs, sample_rate))
-    .min(a_pcm.samples.len() / channels);
+        b_extract_start_secs,
+        b_extract_end_secs,
+    ) {
+        Some(samples) => samples,
+        None => {
+            tracing::warn!(
+                a_start_secs,
+                b_extract_start_secs,
+                b_extract_end_secs,
+                "skipping gap fill region: B slice out of range"
+            );
+            return (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::BExtractFailed),
+            );
+        }
+    };
 
-    let a_pre_border = policies::interleaved_to_mono(
-        &a_pcm.samples[pre_start_frame * channels..gap_start_frame * channels],
+    let border_frames = border_frames_from_secs(normalize_window_secs, sample_rate);
+    let (a_pre_border, a_post_border) = policies::border_templates_for_gap(
+        &a_pcm.samples,
         channels,
+        refined.start_frame,
+        refined.end_frame,
+        border_frames,
+        silence_peak_fraction,
+        absolute_silence_rms,
     );
-    let a_post_border = policies::interleaved_to_mono(
-        &a_pcm.samples[gap_end_frame * channels..post_end_frame * channels],
-        channels,
-    );
-    let b_mono = policies::interleaved_to_mono(&b_samples, channels);
+    let b_mono = policies::interleaved_to_mono(b_samples, channels);
 
     let nominal_start_frame =
-        ((region.b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+        ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
 
     let alignment = policies::align_fill_segment(
         &a_pre_border,
@@ -338,7 +374,7 @@ fn prepare_region_patch(
         Some(alignment) => alignment,
         None => {
             tracing::warn!(
-                a_start_secs = region.a_start_secs,
+                a_start_secs,
                 "skipping gap fill: boundary alignment failed"
             );
             return (
@@ -353,7 +389,7 @@ fn prepare_region_patch(
             pre_correlation = alignment.pre_correlation,
             post_correlation = alignment.post_correlation,
             min_fill_correlation,
-            a_start_secs = region.a_start_secs,
+            a_start_secs,
             "skipping gap fill: boundary correlation below threshold"
         );
         return (
@@ -370,7 +406,7 @@ fn prepare_region_patch(
     let fill_end_sample = fill_start_sample + gap_frames * channels;
     if fill_end_sample > b_samples.len() {
         tracing::warn!(
-            a_start_secs = region.a_start_secs,
+            a_start_secs,
             "skipping gap fill: aligned B segment out of range"
         );
         return (
@@ -382,7 +418,13 @@ fn prepare_region_patch(
     let b_fill = b_samples[fill_start_sample..fill_end_sample].to_vec();
 
     let gain = if normalize_fill {
-        let border_rms = compute_a_border_rms(a_pcm, region, normalize_window_secs, global_a_rms);
+        let border_rms = compute_a_border_rms(
+            a_pcm,
+            refined.start_frame,
+            refined.end_frame,
+            normalize_window_secs,
+            global_a_rms,
+        );
         let b_rms = policies::rms_interleaved(&b_fill);
         policies::compute_fill_gain(border_rms, b_rms, max_fill_gain_db)
     } else {
@@ -396,8 +438,8 @@ fn prepare_region_patch(
         Some(RegionPatch {
             b_samples: b_fill,
             gain,
-            a_start_secs: region.a_start_secs,
-            a_end_secs: region.a_end_secs,
+            a_start_frame: refined.start_frame,
+            a_end_frame: refined.end_frame,
             crossfade_secs: region.crossfade_secs,
         }),
         RegionPatchOutcome::Patched {
@@ -412,6 +454,23 @@ fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
     (window_secs * sample_rate as f64) as usize
 }
 
+fn slice_b_segment<'a>(
+    b_samples: &'a [i16],
+    channels: usize,
+    sample_rate: u32,
+    start_secs: f64,
+    end_secs: f64,
+) -> Option<&'a [i16]> {
+    let channels = channels.max(1);
+    let start_frame = (start_secs * sample_rate as f64).round() as usize;
+    let end_frame = (end_secs * sample_rate as f64).round() as usize;
+    let total_frames = b_samples.len() / channels;
+    if start_frame >= end_frame || end_frame > total_frames {
+        return None;
+    }
+    Some(&b_samples[start_frame * channels..end_frame * channels])
+}
+
 fn seams_pass_correlation_gate(alignment: &FillAlignment, min_fill_correlation: f32) -> bool {
     (alignment.pre_correlation as f32) >= min_fill_correlation
         && (alignment.post_correlation as f32) >= min_fill_correlation
@@ -423,15 +482,13 @@ fn seams_pass_correlation_gate(alignment: &FillAlignment, min_fill_correlation: 
 /// Returns `fallback` when the computed RMS is zero.
 fn compute_a_border_rms(
     a_pcm: &MultiChannelPcm,
-    region: &FillRegion,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
     window_secs: f64,
     fallback: f32,
 ) -> f32 {
     let channels = a_pcm.channels as usize;
     let sample_rate = a_pcm.sample_rate;
-
-    let gap_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
-    let gap_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
     let window_frames = border_frames_from_secs(window_secs, sample_rate);
 
     let pre_start = gap_start_frame.saturating_sub(window_frames);
@@ -465,14 +522,12 @@ fn splice_into_a(
     a_samples: &mut [i16],
     b_samples: &[i16],
     channels: usize,
-    a_start_secs: f64,
-    a_end_secs: f64,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
     crossfade_secs: f64,
     sample_rate: u32,
 ) {
     let channels = channels.max(1);
-    let gap_start_frame = (a_start_secs * sample_rate as f64) as usize;
-    let gap_end_frame = (a_end_secs * sample_rate as f64) as usize;
 
     if gap_start_frame * channels >= a_samples.len()
         || gap_end_frame * channels > a_samples.len()
@@ -487,6 +542,19 @@ fn splice_into_a(
     }
 
     if gap_start_frame >= gap_end_frame {
+        return;
+    }
+
+    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    let needed_samples = gap_frames * channels;
+    if b_samples.len() < needed_samples {
+        tracing::warn!(
+            gap_start_frame,
+            gap_end_frame,
+            b_len = b_samples.len(),
+            needed_samples,
+            "splice_into_a: B fill shorter than gap, skipping"
+        );
         return;
     }
 

@@ -98,6 +98,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     min_fill_correlation: config.repair.min_fill_correlation,
                     fill_align_margin_secs: config.repair.fill_align_margin_secs,
                     max_fill_align_adjustment_secs: config.repair.max_fill_align_adjustment_secs,
+                    absolute_silence_rms: config.repair.absolute_silence_rms,
                 };
 
                 let write_request = RepairWriteRequest {
