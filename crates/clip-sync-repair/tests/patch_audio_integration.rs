@@ -7,7 +7,7 @@ use clip_sync::{
 };
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
 use clip_sync_repair::domain::policies;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
+use clip_sync_repair::domain::GapPatchStatus;
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
@@ -175,6 +175,8 @@ fn patch_request(
         gap_signature_context_secs: 3.0,
         gap_signature_bin_ms: 50,
         min_structure_match_score: 0.55,
+        strong_structure_trust: 0.90,
+        partial_structure_waveform_soften: 0.85,
         absolute_silence_rms: 0.0,
     }
 }
@@ -287,9 +289,10 @@ fn patch_audio_fills_gap_in_stereo_wav() {
 }
 
 #[test]
-fn patch_audio_skips_fill_when_boundary_correlation_below_threshold() {
+fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
     let temp = tempfile::tempdir().expect("tempdir");
-    // A borders are 440 Hz; B fill is 2200 Hz — uncorrelated at the seam.
+    // A borders are 440 Hz; B fill is 2200 Hz — waveform Pearson fails, but the
+    // active/silent edit pattern still matches (structure-first placement).
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 2200.0, 16_000.0);
 
     let request = patch_request(
@@ -311,21 +314,21 @@ fn patch_audio_skips_fill_when_boundary_correlation_below_threshold() {
 
     let gap_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms < 50.0,
-        "gap should stay silent when boundary correlation fails, got rms={gap_rms}"
+        gap_rms > 100.0,
+        "gap should be filled when structure match is strong, got rms={gap_rms}"
     );
 
-    // Borders outside the gap should still have A's original sine.
     let pre_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
     assert!(pre_rms > 100.0, "pre-gap audio should be preserved, got rms={pre_rms}");
 
-    assert_eq!(result.summary.patched_count, 0);
-    assert_eq!(result.summary.skipped_count, 1);
+    assert_eq!(result.summary.patched_count, 1);
+    assert_eq!(result.summary.skipped_count, 0);
     match &result.summary.gaps[0].status {
-        GapPatchStatus::Skipped {
-            reason: GapPatchSkipReason::CorrelationBelowThreshold { .. },
+        GapPatchStatus::Patched {
+            structure_trusted: true,
+            ..
         } => {}
-        other => panic!("expected correlation skip, got {other:?}"),
+        other => panic!("expected structure-trusted patch, got {other:?}"),
     }
 }
 

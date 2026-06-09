@@ -90,6 +90,12 @@ pub struct RepairConfig {
     /// Minimum active/silent pattern match score (0–1) at each seam before waveform gate.
     #[serde(default = "default_min_structure_match_score")]
     pub min_structure_match_score: f32,
+    /// Both structure seam scores must meet this to skip the waveform Pearson gate.
+    #[serde(default = "default_strong_structure_trust")]
+    pub strong_structure_trust: f64,
+    /// In the waveform gate path, soften Pearson threshold when structure scores meet this.
+    #[serde(default = "default_partial_structure_waveform_soften")]
+    pub partial_structure_waveform_soften: f64,
     /// Crossfade duration at gap boundaries (ms).
     #[serde(default = "default_crossfade_ms")]
     pub crossfade_ms: u64,
@@ -170,6 +176,12 @@ fn default_gap_signature_bin_ms() -> u64 {
 fn default_min_structure_match_score() -> f32 {
     0.55
 }
+fn default_strong_structure_trust() -> f64 {
+    0.90
+}
+fn default_partial_structure_waveform_soften() -> f64 {
+    0.85
+}
 fn default_crossfade_ms() -> u64 {
     10
 }
@@ -203,6 +215,8 @@ impl Default for RepairConfig {
             gap_signature_context_secs: default_gap_signature_context_secs(),
             gap_signature_bin_ms: default_gap_signature_bin_ms(),
             min_structure_match_score: default_min_structure_match_score(),
+            strong_structure_trust: default_strong_structure_trust(),
+            partial_structure_waveform_soften: default_partial_structure_waveform_soften(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
             normalize_window_secs: default_normalize_window_secs(),
@@ -376,6 +390,26 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "min_structure_match_score".into(),
                 reason: "must be between 0.0 and 1.0 inclusive".into(),
+            });
+        }
+        if self.strong_structure_trust < 0.0 || self.strong_structure_trust > 1.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "strong_structure_trust".into(),
+                reason: "must be between 0.0 and 1.0 inclusive".into(),
+            });
+        }
+        if self.partial_structure_waveform_soften < 0.0
+            || self.partial_structure_waveform_soften > 1.0
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "partial_structure_waveform_soften".into(),
+                reason: "must be between 0.0 and 1.0 inclusive".into(),
+            });
+        }
+        if self.partial_structure_waveform_soften > self.strong_structure_trust {
+            return Err(ConfigError::InvalidValue {
+                field: "partial_structure_waveform_soften".into(),
+                reason: "must be less than or equal to strong_structure_trust".into(),
             });
         }
         if self.absolute_silence_rms < 0.0 {

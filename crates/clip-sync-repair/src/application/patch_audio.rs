@@ -54,12 +54,18 @@ pub struct PatchAudioRequest {
     pub gap_signature_bin_ms: u64,
     /// Minimum active/silent pattern match score (0–1) at each seam before waveform gate.
     pub min_structure_match_score: f32,
+    /// Both structure seam scores must meet this to skip the waveform Pearson gate.
+    pub strong_structure_trust: f64,
+    /// In the waveform gate path, soften Pearson threshold when structure scores meet this.
+    pub partial_structure_waveform_soften: f64,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
     pub absolute_silence_rms: f32,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
+/// Pearson floor used when partial structure trust softens the waveform gate.
+const PARTIAL_WAVEFORM_MIN_CORRELATION: f32 = 0.12;
 
 // Collected B segment ready to splice into A.
 struct RegionPatch {
@@ -196,6 +202,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 request.gap_signature_context_secs,
                 request.gap_signature_bin_ms,
                 request.min_structure_match_score,
+                request.strong_structure_trust,
+                request.partial_structure_waveform_soften,
                 request.min_fill_correlation,
                 request.normalize_fill,
                 request.normalize_window_secs,
@@ -258,6 +266,7 @@ enum RegionPatchOutcome {
         pre_correlation: f64,
         post_correlation: f64,
         align_adjustment_secs: f64,
+        structure_trusted: bool,
     },
     Skipped(GapPatchSkipReason),
 }
@@ -288,10 +297,12 @@ fn outcomes_in_report_order(
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
+                structure_trusted,
             } => GapPatchStatus::Patched {
                 pre_correlation: *pre_correlation,
                 post_correlation: *post_correlation,
                 align_adjustment_secs: *align_adjustment_secs,
+                structure_trusted: *structure_trusted,
             },
             RegionPatchOutcome::Skipped(reason) => GapPatchStatus::Skipped {
                 reason: reason.clone(),
@@ -336,6 +347,8 @@ fn prepare_region_patch(
     gap_signature_context_secs: f64,
     gap_signature_bin_ms: u64,
     min_structure_match_score: f32,
+    strong_structure_trust: f64,
+    partial_structure_waveform_soften: f64,
     min_fill_correlation: f32,
     normalize_fill: bool,
     normalize_window_secs: f64,
@@ -529,49 +542,77 @@ fn prepare_region_patch(
         );
     }
 
-    let (pre_corr, post_corr) = policies::fill_seam_correlations(
-        &a_pre_border,
-        &a_post_border,
-        &a_pre_ch,
-        &a_post_ch,
-        &b_mono,
-        &b_ch,
-        alignment.start_frame,
-        gap_frames,
-        seam_gate_frames,
-        seam_gate_frames,
-    );
-    alignment.pre_correlation = pre_corr;
-    alignment.post_correlation = post_corr;
+    let structure_trusted = structure_pre >= strong_structure_trust
+        && structure_post >= strong_structure_trust;
 
-    if !seams_pass_correlation_gate(
-        &alignment,
-        min_fill_correlation,
-        gap_secs,
-        short_gap_mean_correlation_secs,
-    ) {
-        tracing::warn!(
-            pre_correlation = alignment.pre_correlation,
-            post_correlation = alignment.post_correlation,
-            min_fill_correlation,
+    let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
+        tracing::info!(
             structure_pre,
             structure_post,
-            align_adjustment_secs = (alignment.start_frame as f64 - offset_nominal_start as f64)
-                / sample_rate as f64,
-            b_fill_frames = alignment.fill_frames,
-            a_gap_frames = gap_frames,
             a_start_secs,
-            "skipping gap fill: waveform seam correlation below threshold"
+            "trusting structure match (skipping waveform seam gate)"
         );
-        return (
-            None,
-            RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
-                pre_correlation: alignment.pre_correlation,
-                post_correlation: alignment.post_correlation,
-                min_correlation: min_fill_correlation,
-            }),
+        (structure_pre, structure_post, true)
+    } else {
+        let waveform_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
+        let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
+        let (pre_corr, post_corr) = policies::fill_seam_correlations(
+            &a_pre_border,
+            &a_post_border,
+            &a_pre_ch,
+            &a_post_ch,
+            &b_mono,
+            &b_ch,
+            alignment.start_frame,
+            gap_frames,
+            waveform_gate_frames,
+            post_gate_frames,
         );
-    }
+
+        let soften_waveform_gate = structure_pre >= partial_structure_waveform_soften
+            && structure_post >= partial_structure_waveform_soften;
+        let effective_min_corr = if soften_waveform_gate {
+            min_fill_correlation.min(PARTIAL_WAVEFORM_MIN_CORRELATION)
+        } else {
+            min_fill_correlation
+        };
+
+        alignment.pre_correlation = pre_corr;
+        alignment.post_correlation = post_corr;
+
+        if !seams_pass_correlation_gate(
+            &alignment,
+            effective_min_corr,
+            gap_secs,
+            short_gap_mean_correlation_secs,
+        ) {
+            tracing::warn!(
+                pre_correlation = pre_corr,
+                post_correlation = post_corr,
+                effective_min_corr,
+                min_fill_correlation,
+                structure_pre,
+                structure_post,
+                waveform_gate_frames,
+                align_adjustment_secs = (alignment.start_frame as f64
+                    - offset_nominal_start as f64)
+                    / sample_rate as f64,
+                b_fill_frames = alignment.fill_frames,
+                a_gap_frames = gap_frames,
+                a_start_secs,
+                "skipping gap fill: waveform seam correlation below threshold"
+            );
+            return (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: pre_corr,
+                    post_correlation: post_corr,
+                    min_correlation: effective_min_corr,
+                }),
+            );
+        }
+        (pre_corr, post_corr, false)
+    };
 
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
@@ -637,9 +678,10 @@ fn prepare_region_patch(
             crossfade_secs: region.crossfade_secs,
         }),
         RegionPatchOutcome::Patched {
-            pre_correlation: alignment.pre_correlation,
-            post_correlation: alignment.post_correlation,
+            pre_correlation: report_pre,
+            post_correlation: report_post,
             align_adjustment_secs,
+            structure_trusted: patched_structure_trusted,
         },
     )
 }

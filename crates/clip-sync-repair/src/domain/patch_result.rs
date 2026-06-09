@@ -36,9 +36,12 @@ pub struct GapPatchOutcome {
 #[serde(rename_all = "snake_case")]
 pub enum GapPatchStatus {
     Patched {
+        /// Seam score used for the patch decision (structure or waveform Pearson).
         pre_correlation: f64,
         post_correlation: f64,
         align_adjustment_secs: f64,
+        /// `true` when placement was accepted from structure match without a waveform gate.
+        structure_trusted: bool,
     },
     Skipped {
         reason: GapPatchSkipReason,

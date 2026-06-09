@@ -144,7 +144,7 @@ pub fn match_gap_structure_in_b(
         params.absolute_silence_rms,
     );
 
-    let (mut best_start, mut best_pre) = search_best_fill_start(
+    let (mut best_start, _) = search_best_fill_start(
         signature,
         &timeline,
         nominal_fill_start,
@@ -153,7 +153,7 @@ pub fn match_gap_structure_in_b(
         params,
     )?;
 
-    let (mut best_end, mut best_post) = search_best_fill_end(
+    let (mut best_end, _) = search_best_fill_end(
         signature,
         &timeline,
         best_start,
@@ -175,8 +175,8 @@ pub fn match_gap_structure_in_b(
     );
     best_start = polished_start;
     best_end = best_start + matched_fill_len;
-    best_pre = score_pre_match(signature, &timeline, best_start, params);
-    best_post = score_post_match(signature, &timeline, best_end, params);
+    let best_pre = score_pre_match(signature, &timeline, best_start, params);
+    let best_post = score_post_match(signature, &timeline, best_end, params);
 
     let fill_frames = best_end.saturating_sub(best_start);
     if fill_frames == 0 {

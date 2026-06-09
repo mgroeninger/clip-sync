@@ -107,6 +107,10 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     gap_signature_context_secs: config.repair.gap_signature_context_secs,
                     gap_signature_bin_ms: config.repair.gap_signature_bin_ms,
                     min_structure_match_score: config.repair.min_structure_match_score,
+                    strong_structure_trust: config.repair.strong_structure_trust,
+                    partial_structure_waveform_soften: config
+                        .repair
+                        .partial_structure_waveform_soften,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
                 };
 

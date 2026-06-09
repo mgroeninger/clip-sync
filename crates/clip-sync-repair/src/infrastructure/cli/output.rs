@@ -209,9 +209,18 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
-            } => format!(
-                "patched  (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
-            ),
+                structure_trusted,
+            } => {
+                if *structure_trusted {
+                    format!(
+                        "patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                    )
+                } else {
+                    format!(
+                        "patched  (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                    )
+                }
+            }
             GapPatchStatus::Skipped { reason } => {
                 format!("skipped: {}", format_patch_skip_reason(reason))
             }
@@ -343,6 +352,7 @@ mod tests {
                 pre_correlation: 0.91,
                 post_correlation: 0.88,
                 align_adjustment_secs: 0.02,
+                structure_trusted: false,
             },
         }]);
         let payload = RepairJsonOutput {
@@ -373,6 +383,7 @@ mod tests {
                     pre_correlation: 0.92,
                     post_correlation: 0.90,
                     align_adjustment_secs: 0.01,
+                    structure_trusted: true,
                 },
             },
             GapPatchOutcome {
@@ -397,7 +408,7 @@ mod tests {
 
         let text = format_patch_summary(&summary);
         assert!(text.contains("1 patched, 1 skipped, 1 not planned"));
-        assert!(text.contains("patched"));
+        assert!(text.contains("struct pre=0.92"));
         assert!(text.contains("skipped: boundary correlation below threshold"));
         assert!(text.contains("not planned: no B energy or alignment offset missing"));
     }
