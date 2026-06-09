@@ -6,6 +6,15 @@ pub trait GapReporter {
     fn report(&self, report: &GapReport) -> Result<(), RepairError>;
 }
 
+/// Input port: aligns two video files to find their temporal offset.
+pub trait Aligner {
+    fn align(
+        &self,
+        request: clip_sync::AlignVideosRequest,
+        progress: &dyn clip_sync::ProgressReporter,
+    ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError>;
+}
+
 /// Output port: writes patched audio to a file (e.g. WAV).
 pub trait PatchedAudioWriter {
     fn write(
@@ -24,12 +33,12 @@ pub struct MuxOptions {
 }
 
 #[cfg(feature = "ffmpeg-mux")]
-/// Output port: muxes replacement audio into a video container (R5, `ffmpeg-mux` feature).
+/// Output port: muxes replacement audio into a video container (`ffmpeg-mux` feature).
 pub trait MediaMuxer {
     fn mux_video_with_replaced_audio(
         &self,
         source_video: &std::path::Path,
-        replacement_audio_wav: &std::path::Path,
+        replacement_audio: &clip_sync::MultiChannelPcm,
         output: &std::path::Path,
         options: &MuxOptions,
         progress: &dyn clip_sync::ProgressReporter,

@@ -1,6 +1,10 @@
 use serde::Serialize;
 
-use clip_sync::AudioTrack;
+/// Minimal audio track description needed for compatibility assessment.
+pub struct TrackDescriptor {
+    pub channels: u16,
+    pub sample_rate: u32,
+}
 
 /// How compatible video B's audio track is with video A's, for patching purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -28,7 +32,7 @@ pub struct TrackCompatibility {
 
 /// Compare A's and B's tracks. Channel-count mismatch is the only hard blocker for fill in v1;
 /// a sample-rate difference is `Compatible` (B is resampled to A on fill).
-pub fn assess_track_compatibility(a: &AudioTrack, b: &AudioTrack) -> TrackCompatibility {
+pub fn assess_track_compatibility(a: TrackDescriptor, b: TrackDescriptor) -> TrackCompatibility {
     let channels_match = a.channels == b.channels;
     let rate_match = a.sample_rate == b.sample_rate;
 
@@ -54,23 +58,14 @@ pub fn assess_track_compatibility(a: &AudioTrack, b: &AudioTrack) -> TrackCompat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
-    fn track(channels: u16, sample_rate: u32) -> AudioTrack {
-        AudioTrack {
-            index: 0,
-            codec: "pcm".into(),
-            channels,
-            sample_rate,
-            bitrate: None,
-            duration: Some(Duration::from_secs(60)),
-            decodable: true,
-        }
+    fn descriptor(channels: u16, sample_rate: u32) -> TrackDescriptor {
+        TrackDescriptor { channels, sample_rate }
     }
 
     #[test]
     fn identical_tracks_are_identical() {
-        let compat = assess_track_compatibility(&track(2, 48_000), &track(2, 48_000));
+        let compat = assess_track_compatibility(descriptor(2, 48_000), descriptor(2, 48_000));
         assert_eq!(compat.verdict, CompatibilityVerdict::Identical);
         assert!(compat.channels_match);
         assert!(compat.rate_match);
@@ -78,7 +73,7 @@ mod tests {
 
     #[test]
     fn same_layout_different_rate_is_compatible() {
-        let compat = assess_track_compatibility(&track(6, 48_000), &track(6, 44_100));
+        let compat = assess_track_compatibility(descriptor(6, 48_000), descriptor(6, 44_100));
         assert_eq!(compat.verdict, CompatibilityVerdict::Compatible);
         assert!(compat.channels_match);
         assert!(!compat.rate_match);
@@ -87,7 +82,7 @@ mod tests {
     #[test]
     fn channel_count_difference_is_mismatch() {
         // Surround A vs stereo B: cannot fill without a channel map.
-        let compat = assess_track_compatibility(&track(6, 48_000), &track(2, 48_000));
+        let compat = assess_track_compatibility(descriptor(6, 48_000), descriptor(2, 48_000));
         assert_eq!(compat.verdict, CompatibilityVerdict::Mismatch);
         assert!(!compat.channels_match);
         assert_eq!(compat.a_channels, 6);
@@ -96,7 +91,7 @@ mod tests {
 
     #[test]
     fn channel_mismatch_dominates_even_when_rate_matches() {
-        let compat = assess_track_compatibility(&track(1, 48_000), &track(2, 48_000));
+        let compat = assess_track_compatibility(descriptor(1, 48_000), descriptor(2, 48_000));
         assert_eq!(compat.verdict, CompatibilityVerdict::Mismatch);
         assert!(compat.rate_match);
     }

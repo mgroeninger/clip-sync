@@ -1,3 +1,4 @@
+pub mod aligner;
 pub mod cli;
 pub mod config;
 #[cfg(feature = "ffmpeg-mux")]

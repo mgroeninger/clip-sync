@@ -1,18 +1,18 @@
 use std::path::{Path, PathBuf};
 
 use clip_sync::{
-    align_with_defaults, select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult,
-    AudioTrack, DomainError, InterleavedScanBucket, MediaError, MediaReader, MediaSession,
-    MediaSource, ProgressReporter,
+    select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult, AudioTrack, DomainError,
+    InterleavedScanBucket, MediaError, MediaReader, MediaSession, MediaSource, ProgressReporter,
 };
 
-use crate::application::cross_check::{
+use crate::application::error::RepairError;
+use crate::application::ports::Aligner;
+use crate::domain::cross_check::{
     b_has_energy_in_range, check_gap_offset_agreement_in_overlap, SilenceInterval,
 };
-use crate::application::error::RepairError;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
-use crate::domain::track_match::assess_track_compatibility;
+use crate::domain::track_match::{assess_track_compatibility, TrackDescriptor};
 
 pub struct ScanGapsRequest {
     pub video_a: PathBuf,
@@ -39,18 +39,24 @@ pub struct ScanGapsRequest {
 pub struct ScanGaps<'r, MR: MediaReader> {
     media_reader: &'r MR,
     progress: &'r dyn ProgressReporter,
+    aligner: &'r dyn Aligner,
 }
 
 impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
-    pub fn new(media_reader: &'r MR, progress: &'r dyn ProgressReporter) -> Self {
+    pub fn new(
+        media_reader: &'r MR,
+        progress: &'r dyn ProgressReporter,
+        aligner: &'r dyn Aligner,
+    ) -> Self {
         Self {
             media_reader,
             progress,
+            aligner,
         }
     }
 
     pub fn execute(&self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
-        let alignment = align_with_defaults(
+        let alignment = self.aligner.align(
             AlignVideosRequest {
                 video_a: request.video_a.clone(),
                 video_b: request.video_b.clone(),
@@ -85,7 +91,10 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let b_session = self.open_best_track(&request.video_b);
         let track_compatibility = b_session
             .as_ref()
-            .map(|(_, track_b)| assess_track_compatibility(&track_a, track_b));
+            .map(|(_, track_b)| assess_track_compatibility(
+                TrackDescriptor { channels: track_a.channels, sample_rate: track_a.sample_rate },
+                TrackDescriptor { channels: track_b.channels, sample_rate: track_b.sample_rate },
+            ));
 
         // Step 4: sequential decode + block-level silence-run detection on A.
         let decode_chunk_secs = request.decode_chunk_secs as f64;
@@ -624,6 +633,18 @@ mod tests {
         }
     }
 
+    struct NeverCalledAligner;
+
+    impl crate::application::ports::Aligner for NeverCalledAligner {
+        fn align(
+            &self,
+            _: clip_sync::AlignVideosRequest,
+            _: &dyn clip_sync::ProgressReporter,
+        ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
+            unreachable!("tests use scan_after_alignment directly")
+        }
+    }
+
     struct NoDurationSession;
 
     impl MediaSession for NoDurationSession {
@@ -693,7 +714,7 @@ mod tests {
             .with("a.wav", SessionKind::Silent, dur)
             .with("b.wav", SessionKind::Loud, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
@@ -720,7 +741,7 @@ mod tests {
             .with("a.wav", SessionKind::Loud, dur)
             .with("b.wav", SessionKind::Loud, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
@@ -734,7 +755,7 @@ mod tests {
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new().with("a.wav", SessionKind::Silent, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(None))
@@ -756,7 +777,7 @@ mod tests {
             .with("a.wav", SessionKind::Silent, dur)
             .with("b.wav", SessionKind::Loud, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(3.0)))
@@ -774,7 +795,7 @@ mod tests {
 
         let reader = NoDurationReader;
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let err = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
@@ -830,7 +851,7 @@ mod tests {
             .with("a.wav", SessionKind::Silent, dur)
             .with("b.wav", SessionKind::Silent, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
         request.scan_both = true;
@@ -854,7 +875,7 @@ mod tests {
             .with("a.wav", SessionKind::Silent, dur)
             .with("b.wav", SessionKind::Silent, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
@@ -870,7 +891,7 @@ mod tests {
             .with("a.wav", SessionKind::Silent, dur)
             .with("b.wav", SessionKind::Silent, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
         request.scan_both = true;
@@ -893,7 +914,7 @@ mod tests {
                 dur,
             );
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
         request.scan_both = true;
@@ -919,7 +940,7 @@ mod tests {
             )
             .with("b.wav", SessionKind::Loud, dur);
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&reader, &progress);
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
             .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))

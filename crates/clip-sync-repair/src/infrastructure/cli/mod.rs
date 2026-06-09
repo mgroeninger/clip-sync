@@ -15,6 +15,7 @@ use crate::application::patch_audio::PatchAudioRequest;
 use crate::application::ports::MuxOptions;
 use crate::application::repair_videos::{RepairVideos, RepairWriteRequest};
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
+use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::config::{load_repair_app_config, RepairAppConfig};
 use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 
@@ -76,7 +77,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
     };
 
-    let report = ScanGaps::new(&media_reader, &progress).execute(request)?;
+    let aligner = SymphoniaAligner;
+    let report = ScanGaps::new(&media_reader, &progress, &aligner).execute(request)?;
 
     // Patch/write when not dry-run and an output path is set.
     // Capture the result rather than short-circuiting with `?` so the gap report is

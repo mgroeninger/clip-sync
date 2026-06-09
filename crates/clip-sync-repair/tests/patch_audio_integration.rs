@@ -12,6 +12,7 @@ use clip_sync_repair::domain::GapPatchStatus;
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
+use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
@@ -576,7 +577,8 @@ fn scan_then_patch_fills_detected_gap() {
 
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
-    let report = ScanGaps::new(&media_reader, &progress)
+    let aligner = SymphoniaAligner;
+    let report = ScanGaps::new(&media_reader, &progress, &aligner)
         .execute(ScanGapsRequest {
             video_a: path_a.clone(),
             video_b: path_b.clone(),

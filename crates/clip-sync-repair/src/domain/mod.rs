@@ -1,3 +1,4 @@
+pub mod cross_check;
 pub mod gap;
 pub mod gap_fill;
 pub mod gap_structure;
@@ -10,4 +11,6 @@ pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped}
 pub use patch_result::{
     GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
 };
-pub use track_match::{assess_track_compatibility, CompatibilityVerdict, TrackCompatibility};
+pub use track_match::{
+    assess_track_compatibility, CompatibilityVerdict, TrackCompatibility, TrackDescriptor,
+};

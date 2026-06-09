@@ -6,6 +6,7 @@ use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::{AlignConfig, SymphoniaMediaReader};
 use clip_sync_repair::application::{ScanGaps, ScanGapsRequest};
+use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -71,7 +72,8 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
 
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
-    let scan = ScanGaps::new(&media_reader, &progress);
+    let aligner = SymphoniaAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
 
     let report = scan
         .execute(ScanGapsRequest {
@@ -134,7 +136,8 @@ fn execute_detects_short_two_second_gap() {
 
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
-    let scan = ScanGaps::new(&media_reader, &progress);
+    let aligner = SymphoniaAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
 
     let report = scan
         .execute(ScanGapsRequest {

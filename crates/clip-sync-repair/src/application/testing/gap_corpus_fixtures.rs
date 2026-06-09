@@ -6,6 +6,7 @@ use tempfile::TempDir;
 use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
 use clip_sync::testing::fakes::FakeProgressReporter;
 
+use crate::application::ports::Aligner;
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use crate::domain::gap::Gap;
 
@@ -653,11 +654,24 @@ mod tests {
         assert!(!committed.is_empty(), "manifest should have at least one committed case");
     }
 
+    struct NeverCalledAligner;
+
+    impl Aligner for NeverCalledAligner {
+        fn align(
+            &self,
+            _: clip_sync::AlignVideosRequest,
+            _: &dyn clip_sync::ProgressReporter,
+        ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
+            unreachable!("corpus tests use scan_after_alignment directly")
+        }
+    }
+
     fn run_manifest_cases(tier: GapCorpusTier) {
         let manifest = load_manifest();
         let media_reader = SymphoniaMediaReader;
         let progress = FakeProgressReporter;
-        let scan = ScanGaps::new(&media_reader, &progress);
+        let aligner = NeverCalledAligner;
+        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
 
         for case in manifest.case.iter().filter(|c| c.tier == tier && !c.ignore) {
             let started = std::time::Instant::now();

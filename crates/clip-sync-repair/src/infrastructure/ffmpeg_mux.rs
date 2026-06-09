@@ -3,10 +3,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 
-use clip_sync::ProgressReporter;
+use clip_sync::{MultiChannelPcm, ProgressReporter};
 
 use crate::application::error::RepairError;
-use crate::application::ports::{MediaMuxer, MuxOptions};
+use crate::application::ports::{MediaMuxer, MuxOptions, PatchedAudioWriter};
+use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 
 /// Build ffmpeg argv for remuxing `source_video` with audio from `replacement_audio_wav`.
 pub fn build_ffmpeg_mux_args(
@@ -194,23 +195,25 @@ impl MediaMuxer for FfmpegMediaMuxer {
     fn mux_video_with_replaced_audio(
         &self,
         source_video: &Path,
-        replacement_audio_wav: &Path,
+        replacement_audio: &MultiChannelPcm,
         output: &Path,
         options: &MuxOptions,
         progress: &dyn ProgressReporter,
     ) -> Result<(), RepairError> {
-        let mut args = build_ffmpeg_mux_args(source_video, replacement_audio_wav, output, options);
+        let temp = tempfile::NamedTempFile::new().map_err(RepairError::Io)?;
+        WavPatchedAudioWriter.write(replacement_audio, temp.path())?;
+
+        let mut args = build_ffmpeg_mux_args(source_video, temp.path(), output, options);
         append_mux_progress_args(&mut args);
 
         tracing::info!(
             source = %source_video.display(),
-            audio = %replacement_audio_wav.display(),
             output = %output.display(),
             "muxing video with patched audio via ffmpeg"
         );
 
         progress.phase("Muxing video with patched audio...");
-        let duration_ms = mux_duration_ms(source_video, replacement_audio_wav);
+        let duration_ms = mux_duration_ms(source_video, temp.path());
         run_ffmpeg_mux_with_progress(&args, progress, duration_ms)
     }
 }
@@ -346,7 +349,6 @@ Error: no video stream\n";
 
         let temp = tempfile::tempdir().expect("tempdir");
         let source = temp.path().join("source.mp4");
-        let wav = temp.path().join("audio.wav");
         let output = temp.path().join("out.mp4");
 
         let wrote = Command::new("ffmpeg")
@@ -380,27 +382,23 @@ Error: no video stream\n";
             .unwrap_or(false);
         assert!(wrote, "failed to build source fixture");
 
-        let wrote_wav = Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=880:duration=2",
-                wav.to_str().expect("wav"),
-            ])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        assert!(wrote_wav, "failed to build wav fixture");
+        let sample_rate = 44_100u32;
+        let samples: Vec<i16> = (0..(sample_rate * 2) as usize)
+            .map(|i| (f32::sin(i as f32 * 2.0 * std::f32::consts::PI * 880.0 / sample_rate as f32) * 16_000.0) as i16)
+            .collect();
+        let pcm = clip_sync::MultiChannelPcm {
+            sample_rate,
+            channels: 1,
+            samples,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+        };
 
         let progress = RecordingProgress::new();
         FfmpegMediaMuxer
             .mux_video_with_replaced_audio(
                 &source,
-                &wav,
+                &pcm,
                 &output,
                 &MuxOptions {
                     video_codec: "copy".into(),
