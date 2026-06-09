@@ -18,7 +18,8 @@ use crate::domain::{
 };
 
 pub struct PatchAudioResult {
-    pub pcm: MultiChannelPcm,
+    /// Present when A was decoded for patching; `None` when the fill plan was empty.
+    pub pcm: Option<MultiChannelPcm>,
     pub summary: PatchSummary,
 }
 
@@ -94,7 +95,21 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         request: PatchAudioRequest,
         crossfade_ms: u64,
     ) -> Result<PatchAudioResult, RepairError> {
-        // Step 1: Open A, select best track, get duration.
+        // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy).
+        let plan = build_gap_fill_plan(&request.report, crossfade_ms);
+
+        if plan.regions.is_empty() {
+            self.progress
+                .phase("No gaps planned for patch; skipping audio decode.");
+            let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+                &request.report.gaps,
+                &plan,
+                &[],
+            ));
+            return Ok(PatchAudioResult { pcm: None, summary });
+        }
+
+        // Step 2: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
         let session_a = self
             .media_reader
@@ -107,24 +122,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .duration
             .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
 
-        // Step 2: Extract full A timeline.
+        // Step 3: Extract full A timeline.
         let full_window_a = ClipWindow::new(Duration::ZERO, duration_a, ClipLabel::Interior);
         let mut a_pcm = session_a
             .extract_interleaved(&track_a, &full_window_a, self.progress, "patch-a")
             .map_err(RepairError::Media)?;
-
-        // Step 3: Build fill plan.
-        let plan = build_gap_fill_plan(&request.report, crossfade_ms);
-
-        // Step 4: If no regions, return A as-is with per-gap outcomes.
-        if plan.regions.is_empty() {
-            let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
-                &request.report.gaps,
-                &plan,
-                &[],
-            ));
-            return Ok(PatchAudioResult { pcm: a_pcm, summary });
-        }
 
         // Step 5: Open B, select best track.
         let source_b = MediaSource::new(request.report.video_b.clone());
@@ -257,7 +259,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             &region_results,
         ));
 
-        Ok(PatchAudioResult { pcm: a_pcm, summary })
+        Ok(PatchAudioResult {
+            pcm: Some(a_pcm),
+            summary,
+        })
     }
 }
 

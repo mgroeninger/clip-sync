@@ -107,33 +107,54 @@ fn format_human(report: &GapReport) -> String {
         return out;
     }
 
-    out.push_str(&format!(
-        "Gaps detected in video A ({} total, {} fillable):\n",
-        report.gaps.len(),
-        report.fillable_count()
-    ));
+    let repairable = report.repairable_count();
+    let b_energy = report.fillable_count();
+    if report.patch_allowed() {
+        out.push_str(&format!(
+            "Gaps detected in video A ({} total, {} repairable):\n",
+            report.gaps.len(),
+            repairable
+        ));
+    } else if b_energy > 0 {
+        out.push_str(&format!(
+            "Gaps detected in video A ({} total, 0 repairable — {} with B energy but fill blocked by track layout):\n",
+            report.gaps.len(),
+            b_energy
+        ));
+    } else {
+        out.push_str(&format!(
+            "Gaps detected in video A ({} total, 0 repairable):\n",
+            report.gaps.len()
+        ));
+    }
     if report.alignment.recommended_offset_secs.is_none() {
         out.push_str("  B timeline mapping skipped (no alignment offset).\n");
     }
     out.push('\n');
 
     for (i, gap) in report.gaps.iter().enumerate() {
-        let fillable = if gap.is_fillable() {
-            "fillable"
-        } else {
-            "unfillable"
-        };
+        let status = gap_scan_status_label(gap, report);
         out.push_str(&format!(
             "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}\n",
             i + 1,
             gap.video_a_start_secs,
             gap.video_a_end_secs,
             gap.duration_secs(),
-            fillable,
+            status,
         ));
     }
 
     out
+}
+
+fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'static str {
+    if !gap.is_fillable() {
+        return "unfillable";
+    }
+    if !report.patch_allowed() {
+        return "blocked (track layout)";
+    }
+    "repairable"
 }
 
 fn clip_label_name(label: ClipLabel) -> &'static str {
@@ -544,6 +565,44 @@ mod tests {
         assert_eq!(value["gaps"][0]["video_b_start_secs"], serde_json::Value::Null);
         assert_eq!(value["gaps"][0]["video_b_end_secs"], serde_json::Value::Null);
         assert_eq!(value["gaps"][0]["b_has_energy"], false);
+    }
+
+    #[test]
+    fn human_report_marks_b_energy_gaps_blocked_when_tracks_mismatch() {
+        use crate::domain::track_match::{CompatibilityVerdict, TrackCompatibility};
+
+        let mut report = minimal_report();
+        report.track_compatibility = Some(TrackCompatibility {
+            a_channels: 6,
+            b_channels: 2,
+            a_sample_rate: 48_000,
+            b_sample_rate: 48_000,
+            channels_match: false,
+            rate_match: true,
+            verdict: CompatibilityVerdict::Mismatch,
+        });
+        report.gaps = vec![
+            Gap {
+                video_a_start_secs: 197.75,
+                video_a_end_secs: 200.5,
+                video_b_start_secs: Some(190.86),
+                video_b_end_secs: Some(193.61),
+                b_has_energy: true,
+            },
+            Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 7.25,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
+                b_has_energy: false,
+            },
+        ];
+
+        let text = super::format_human(&report);
+        assert!(text.contains("0 repairable"));
+        assert!(text.contains("fill blocked by track layout"));
+        assert!(text.contains("blocked (track layout)"));
+        assert!(text.contains("unfillable"));
     }
 
     #[test]

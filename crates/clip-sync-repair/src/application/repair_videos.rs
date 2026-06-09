@@ -45,7 +45,7 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
             .execute(request.patch_request, request.crossfade_ms)?;
 
         if let Some(wav_path) = request.wav_path.as_ref() {
-            self.wav_writer.write(&patch_result.pcm, wav_path)?;
+            self.write_wav_if_patched(&patch_result, wav_path)?;
         }
 
         Ok(patch_result)
@@ -60,8 +60,16 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         let patch_result = PatchAudio::new(self.media_reader, self.progress)
             .execute(request.patch_request, request.crossfade_ms)?;
 
+        if patch_result.summary.patched_count == 0 {
+            if request.wav_path.is_some() || request.video_path.is_some() {
+                self.progress
+                    .phase("No gaps were patched; skipping WAV/mux output.");
+            }
+            return Ok(patch_result);
+        }
+
         if let Some(ref wav_path) = request.wav_path {
-            self.wav_writer.write(&patch_result.pcm, wav_path)?;
+            self.write_wav_if_patched(&patch_result, wav_path)?;
             if let Some(ref video_path) = request.video_path {
                 muxer.mux_video_with_replaced_audio(
                     &request.source_video,
@@ -77,7 +85,7 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         if let Some(ref video_path) = request.video_path {
             let temp = tempfile::NamedTempFile::new().map_err(RepairError::Io)?;
             let temp_path = temp.path();
-            self.wav_writer.write(&patch_result.pcm, temp_path)?;
+            self.write_wav_if_patched(&patch_result, temp_path)?;
             muxer.mux_video_with_replaced_audio(
                 &request.source_video,
                 temp_path,
@@ -88,5 +96,17 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         }
 
         Ok(patch_result)
+    }
+
+    fn write_wav_if_patched(
+        &self,
+        patch_result: &PatchAudioResult,
+        wav_path: &PathBuf,
+    ) -> Result<(), RepairError> {
+        let pcm = patch_result
+            .pcm
+            .as_ref()
+            .expect("patched run should include decoded A PCM");
+        self.wav_writer.write(pcm, wav_path)
     }
 }

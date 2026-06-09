@@ -180,6 +180,9 @@ mod tests {
     #[test]
     fn build_gap_fill_plan_empty_when_mismatch() {
         let report = base_report(Some(stereo_mismatch()), vec![fillable_gap(0.0, 3.0)]);
+        assert_eq!(report.fillable_count(), 1);
+        assert_eq!(report.repairable_count(), 0);
+        assert!(!report.patch_allowed());
         let plan = build_gap_fill_plan(&report, 10);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);

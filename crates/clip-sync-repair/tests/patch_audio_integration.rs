@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::MultiChannelPcm;
 use clip_sync::{
     AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
 };
@@ -196,6 +197,13 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
     }
 }
 
+fn expect_pcm(result: &clip_sync_repair::application::PatchAudioResult) -> &MultiChannelPcm {
+    result
+        .pcm
+        .as_ref()
+        .expect("expected patch to decode A when fill regions exist")
+}
+
 fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<i16>, u32, u16) {
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
@@ -207,7 +215,7 @@ fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<i16>,
     let temp = tempfile::tempdir().expect("tempdir");
     let path_out = temp.path().join("out.wav");
     WavPatchedAudioWriter
-        .write(&result.pcm, &path_out)
+        .write(expect_pcm(&result), &path_out)
         .expect("write should succeed");
 
     let mut reader = WavReader::open(&path_out).expect("open out.wav");
@@ -268,20 +276,21 @@ fn patch_audio_fills_gap_in_stereo_wav() {
     let result = PatchAudio::new(&media_reader, &progress)
         .execute(request, 10)
         .expect("patch should succeed");
-    assert_eq!(result.pcm.sample_rate, SAMPLE_RATE);
-    assert_eq!(result.pcm.channels, CHANNELS);
+    let pcm = expect_pcm(&result);
+    assert_eq!(pcm.sample_rate, SAMPLE_RATE);
+    assert_eq!(pcm.channels, CHANNELS);
     assert_eq!(result.summary.patched_count, 1);
 
-    let gap_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
         gap_rms > 100.0,
         "gap region should have audio after fill, got rms={gap_rms}"
     );
 
-    let pre_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
+    let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
     assert!(pre_rms > 100.0, "pre-gap region should have audio, got rms={pre_rms}");
 
-    let post_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
+    let post_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
     assert!(
         post_rms > 100.0,
         "post-gap region should retain A audio after splice, got rms={post_rms}"
@@ -312,13 +321,14 @@ fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
         .execute(request, 10)
         .expect("patch should succeed");
 
-    let gap_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    let pcm = expect_pcm(&result);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
         gap_rms > 100.0,
         "gap should be filled when structure match is strong, got rms={gap_rms}"
     );
 
-    let pre_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
+    let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
     assert!(pre_rms > 100.0, "pre-gap audio should be preserved, got rms={pre_rms}");
 
     assert_eq!(result.summary.patched_count, 1);
@@ -529,13 +539,8 @@ fn patch_audio_fills_gap_with_imprecise_scan_boundaries() {
         result.summary.gaps
     );
 
-    let gap_rms = rms_region(
-        &result.pcm.samples,
-        SAMPLE_RATE,
-        CHANNELS,
-        GAP_START,
-        GAP_END,
-    );
+    let pcm = expect_pcm(&result);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
         gap_rms > 100.0,
         "imprecise scan boundaries should still be filled, got rms={gap_rms}, status={:?}",
@@ -611,8 +616,9 @@ fn scan_then_patch_fills_detected_gap() {
         result.summary.gaps
     );
 
+    let pcm = expect_pcm(&result);
     let gap_rms = rms_region(
-        &result.pcm.samples,
+        &pcm.samples,
         SAMPLE_RATE,
         CHANNELS,
         f64::from(SCAN_GAP_START),

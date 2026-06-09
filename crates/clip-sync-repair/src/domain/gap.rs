@@ -76,7 +76,25 @@ pub struct GapReport {
 }
 
 impl GapReport {
+    /// Gaps where B has mapped audio energy (ignores track layout).
     pub fn fillable_count(&self) -> usize {
         self.gaps.iter().filter(|g| g.is_fillable()).count()
+    }
+
+    /// Whether the selected A/B track layout allows any splice fill.
+    pub fn patch_allowed(&self) -> bool {
+        matches!(
+            self.track_compatibility.as_ref().map(|tc| tc.verdict),
+            Some(super::track_match::CompatibilityVerdict::Identical)
+                | Some(super::track_match::CompatibilityVerdict::Compatible)
+        )
+    }
+
+    /// Gaps that would be included in a fill plan (B energy + patch-allowed tracks).
+    pub fn repairable_count(&self) -> usize {
+        if !self.patch_allowed() {
+            return 0;
+        }
+        self.fillable_count()
     }
 }
