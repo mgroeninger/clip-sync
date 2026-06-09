@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clip_sync::{
-    select_best_track, ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource,
-    MultiChannelPcm, ProgressReporter, resample_interleaved,
+    select_best_track, select_track_for_reference, ClipLabel, ClipWindow, DomainError,
+    MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter, resample_interleaved,
 };
 
 use crate::application::error::RepairError;
@@ -135,7 +135,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .open(&source_b)
             .map_err(RepairError::Media)?;
         let tracks_b = session_b.list_tracks().map_err(RepairError::Media)?;
-        let track_b = select_best_track(&tracks_b)?.clone();
+        let track_b = select_track_for_reference(&track_a, &tracks_b)?.clone();
 
         // Step 6: Decode full B timeline once (sequential from t=0) to avoid per-gap MKV seeks.
         let duration_b = track_b

@@ -13,6 +13,11 @@ path = "src/lib.rs"
 name = "clip-sync"
 path = "src/main.rs"
 
+[features]
+default = []
+he-aac = ["clip-sync/he-aac"]
+ac3 = ["clip-sync/ac3"]
+
 [dependencies]
 clip-sync = { path = "../clip-sync" }
 clap = { version = "4", features = ["derive"] }

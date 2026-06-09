@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use clip_sync::{
-    select_best_track, AlignConfig, AlignVideosRequest, AlignmentResult, AudioTrack, DomainError,
-    InterleavedScanBucket, MediaError, MediaReader, MediaSession, MediaSource, ProgressReporter,
+    select_best_track, select_track_for_reference, AlignConfig, AlignVideosRequest,
+    AlignmentResult, AudioTrack, DomainError, InterleavedScanBucket, MediaError, MediaReader,
+    MediaSession, MediaSource, ProgressReporter,
 };
 
 use crate::application::error::RepairError;
@@ -88,7 +89,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // A missing or undecodable B never fails the scan — A's gaps are still reported, just
         // marked unfillable with no compatibility. Energy probing additionally requires an offset.
         let offset_secs = alignment.recommended_offset_secs;
-        let b_session = self.open_best_track(&request.video_b);
+        let b_session = self.open_best_track(&request.video_b, &track_a);
         let track_compatibility = b_session
             .as_ref()
             .map(|(_, track_b)| assess_track_compatibility(
@@ -264,11 +265,11 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
     /// file is missing, unreadable, or has no decodable audio — keeps the scan report-only safe.
-    fn open_best_track(&self, path: &Path) -> Option<(MR::Session, AudioTrack)> {
+    fn open_best_track(&self, path: &Path, track_a: &AudioTrack) -> Option<(MR::Session, AudioTrack)> {
         let source = MediaSource::new(path.to_path_buf());
         let session = self.media_reader.open(&source).ok()?;
         let tracks = session.list_tracks().ok()?;
-        let track = select_best_track(&tracks).ok()?.clone();
+        let track = select_track_for_reference(track_a, &tracks).ok()?.clone();
         Some((session, track))
     }
 }

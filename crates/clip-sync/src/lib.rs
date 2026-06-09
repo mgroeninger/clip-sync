@@ -17,7 +17,7 @@ pub use domain::{
     MonoScanBucket, MultiChannelPcm,
     TimelineOverlap,
 };
-pub use domain::policies::select_best_track;
+pub use domain::policies::{select_best_track, select_track_for_reference};
 pub use domain::{resample_interleaved, resample_mono_pcm};
 pub use application::offset_refinement::normalized_correlation;
 

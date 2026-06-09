@@ -1,6 +1,6 @@
 # Temporary plan: AC-3 / E-AC-3 decode via oxideav-ac3
 
-> **Status:** Not started (2026-06-09). Archive to `docs/archive/ac3-decode-plan.md` when shipped and validated on real media (e.g. dual-track MP4 with 2ch AAC + 6ch surround).
+> **Status:** A0 + A1 + A2 complete (2026-06-09). A3 remaining. Archive to `docs/archive/ac3-decode-plan.md` when shipped and validated on real media (e.g. dual-track MP4 with 2ch AAC + 6ch surround).
 
 **Problem:** Symphonia demuxes AC-3 and E-AC-3 from MP4/MKV (`dac3` / `dec3` atoms → `CODEC_ID_AC3` / `CODEC_ID_EAC3`) but ships **no decoder**. Probe marks those tracks `decodable: false`. `select_best_track` picks the first decodable stream — often 2ch AAC — while video A is 6ch. Repair reports `mismatch (fill blocked)` even when B contains a matching surround program on an undecodable AC-3 track.
 
@@ -84,24 +84,24 @@ align + scan + patch (repair)
 
 ### A0 — Spike (half day)
 
-- [ ] Add `ac3` feature + deps; stub registry registration.
-- [ ] Probe `media.m4v` (or ffmpeg-generated 6ch AC-3 MP4 fixture): confirm track list shows AC-3 6ch `decodable: true` after registration.
-- [ ] Decode 5–10 s window to `MultiChannelPcm`; compare peak/RMS vs `ffmpeg -c:a pcm_s16le` on same segment (manual or ignored test).
-- [ ] Note oxideav version pin (`0.0.7` initially); record any `extra_data` requirements.
+- [x] Add `ac3` feature + deps; stub registry registration.
+- [x] Probe `media.m4v` (or ffmpeg-generated 6ch AC-3 MP4 fixture): confirm track list shows AC-3 6ch `decodable: true` after registration.
+- [x] Decode 5–10 s window to `MultiChannelPcm`; compare peak/RMS vs `ffmpeg -c:a pcm_s16le` on same segment (manual or ignored test).
+- [x] Note oxideav version pin (`0.0.8`); `extra_data` pass-through implemented in adapter.
 
-**Exit:** One integration test decodes ffmpeg-generated `ac3` + `eac3` 5.1 MP4 snippets when `ac3` feature enabled.
+**Exit:** One integration test decodes ffmpeg-generated `ac3` + `eac3` 5.1 MP4 snippets when `ac3` feature enabled. ✓
 
 ### A1 — Symphonia adapter (lib)
 
-- [ ] Implement `Ac3Decoder` (`AudioDecoder` + `RegisterableAudioDecoder`).
-- [ ] Register for `CODEC_ID_AC3` and `CODEC_ID_EAC3`.
-- [ ] Extend `probe.rs` `codec_name` mapping: `"ac3"` / `"eac3"` (human-readable).
+- [x] Implement `Ac3Decoder` (`AudioDecoder` + `RegisterableAudioDecoder`).
+- [x] Register for `CODEC_ID_AC3` and `CODEC_ID_EAC3`.
+- [x] Extend `probe.rs` `codec_name` mapping: `"ac3"` / `"eac3"` (human-readable).
 - [ ] Unit test: decodability probe returns true for AC-3 params when feature on.
 
 ### A2 — Channel-matching track selection (lib + repair)
 
-- [ ] `select_track_for_reference` with tests (6ch A + [2ch, 6ch] B → pick 6ch; mono A unchanged).
-- [ ] Wire into `scan_gaps`, `patch_audio`.
+- [x] `select_track_for_reference` with tests (6ch A + [2ch, 6ch] B → pick 6ch; mono A unchanged).
+- [x] Wire into `scan_gaps`, `patch_audio`.
 - [ ] Consider storing selected B `track.index` on `GapReport` for diagnostics (optional; defer if scope creep).
 
 ### A3 — Validation & docs

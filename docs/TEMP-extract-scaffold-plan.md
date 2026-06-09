@@ -21,12 +21,12 @@ Locked before implementation. Change only with an explicit plan revision.
 | Topic | Decision |
 |-------|----------|
 | **Behaviour** | Refactor only. PCM output, error paths, decode-skip counts, tail-padding limits, and progress cadence must match current code. |
-| **Location** | All new types/functions stay in `extract.rs` as `pub(crate)` unless a second file is needed for size (>1200 lines) — then `extract_loop.rs` sibling module. |
+| **Location** | New driver + sinks live in **`extract_loop.rs`** (`pub(crate)`), wired from `extract.rs` via `mod extract_loop;`. `extract.rs` is already ~1850 lines — do not grow it further with the scaffold. Append helpers and thin wrappers stay in `extract.rs`. |
 | **Abstraction** | Generic **sink trait** (`ExtractSink`) invoked by one `run_extract_decode_loop` driver. Avoid duplicating the packet `loop` again. |
-| **Sink responsibilities** | Buffer allocation/reserve, first-decode metadata discovery (rate/channels), per-packet append, progress unit counting, finalize into `MonoPcmClip` or `MultiChannelPcm`. |
-| **Shared driver responsibilities** | Empty-window guard, decoder ensure, sample-rate hint from format, seek+retry attempts, packet read/decode/error handling, window skip/break, `finished` flag, `allow_tail_padding`, `decode_error_skips`, call sink append, invoke progress when sink reports delta. |
+| **Sink responsibilities** | Buffer allocation/reserve, first-decode metadata discovery (rate/channels), per-packet append, progress unit counting, finalize into `MonoPcmClip` or `MultiChannelPcm` (**each sink owns its truncate/count/progress order — see duplication map**). |
+| **Shared driver responsibilities** | Empty-window guard, decoder ensure, populate `ExtractLoopParams` (`track_id`, `time_base`, sample-rate hint, `max_attempts`), seek+retry attempts, packet read/decode/error handling, window skip/break, `finished` flag, `allow_tail_padding`, `decode_error_skips`, call sink append, invoke progress when sink reports delta. |
 | **Append functions** | Keep `append_frames_in_window` and `append_interleaved_frames_in_window` as separate functions; sinks delegate to them. Do not merge append paths in v1. |
-| **Tests** | No new corpus cases. Rely on existing `media_reader_tests` + `append_*` unit tests. Optional: one test that mono and interleaved hit the same packet-skip path (same corrupt fixture). |
+| **Tests** | No new corpus cases. Rely on existing `media_reader_tests` + `append_*` unit tests. **Phase 1:** add mono decode-skip coverage (interleaved already has `extract_interleaved_decode_errors_are_counted`; mono has none). **Phase 2:** add `mono_and_interleaved_same_skip_count_on_corrupt_fixture` so both sinks prove identical skip counts on the same damaged file. |
 | **Rollout** | Land behind incremental PRs: introduce driver + mono sink first (delete mono duplicate), then interleaved sink (delete interleaved duplicate). One PR acceptable if diff is reviewable. |
 
 ---
@@ -70,6 +70,9 @@ Both entry points follow the same skeleton:
 | Progress denominator | `target_samples` | `target_frames` |
 | DTO | `MonoPcmClip` | `MultiChannelPcm` |
 | `decoded_*_count` field | `decoded_sample_count` | `decoded_frame_count` |
+| **Finalize count timing** | Capture `decoded_sample_count` **after** `truncate(target)` | Capture `decoded_frame_count` **before** `truncate`; final progress uses `min(target, pre-truncate count)` |
+
+**Do not unify finalize order** — sinks must copy each path's truncate/count/progress sequence verbatim.
 
 **Already shared (keep):** `seek_to_window_start`, `window_sample_bounds`, `decode_shortfall_limit`, `sample_count_tolerance`, `float_to_i16`, `append_*` helpers, scratch buffer plumbing.
 
@@ -85,6 +88,8 @@ struct ExtractLoopParams<'a> {
     path: &'a Path,
     state: &'a mut MediaIoState,
     track: &'a AudioTrack,
+    track_id: u32,              // track.index — fixed for the whole extract
+    time_base: Option<TimeBase>, // from cached decoder after ensure_track_decoder
     window: &'a ClipWindow,
     progress: &'a dyn ProgressReporter,
     label: &'a str,
@@ -113,7 +118,7 @@ trait ExtractSink {
     /// After first non-empty decode: set rate (and channels if needed). Returns target unit count.
     fn on_first_decode(
         &mut self,
-        decoded: symphonia::core::audio::AudioBufferRef<'_>,
+        decoded: symphonia::core::audio::GenericAudioBufferRef<'_>,
         window: &ClipWindow,
     ) -> Result<usize, MediaError>;
 
@@ -123,7 +128,7 @@ trait ExtractSink {
     /// Append in-window frames from `decoded`. Returns `true` when window end reached.
     fn append_packet(
         &mut self,
-        decoded: symphonia::core::audio::AudioBufferRef<'_>,
+        decoded: symphonia::core::audio::GenericAudioBufferRef<'_>,
         packet_start_unit: u64,
         trim_start_frames: u32,
         window: &ClipWindow,
@@ -152,11 +157,6 @@ trait ExtractSink {
 **Implementation note:** Rust will not allow `finalize(self) -> MonoPcmClip` and `-> MultiChannelPcm` on the same trait without an enum wrapper or generic associated type. Preferred v1 approach:
 
 ```rust
-enum ExtractOutput {
-    Mono(MonoPcmClip),
-    Interleaved(MultiChannelPcm),
-}
-
 trait ExtractSink {
     type Output;
     fn finalize(...) -> Result<Self::Output, MediaError>;
@@ -169,17 +169,21 @@ fn run_extract_decode_loop<S: ExtractSink>(
 ) -> Result<S::Output, MediaError>;
 ```
 
-Thin public wrappers remain:
+`run_extract_decode_loop` owns the full shared skeleton (duplication map steps 1–10): empty-window guard through DTO build is either in the driver or delegated to `sink.finalize` — not split across the public wrapper.
+
+Thin public wrappers in `extract.rs` remain:
 
 ```rust
 pub(crate) fn extract_mono_with_state(...) -> Result<MonoPcmClip, MediaError> {
     let mut sink = MonoExtractSink::new(...);
-    run_extract_decode_loop(params, &mut sink, &mut scratch)
+    let mut scratch = Vec::new();
+    extract_loop::run_extract_decode_loop(params, &mut sink, &mut scratch)
 }
 
 pub(crate) fn extract_interleaved_with_state(...) -> Result<MultiChannelPcm, MediaError> {
     let mut sink = InterleavedExtractSink::new(...);
-    run_extract_decode_loop(params, &mut sink, &mut scratch)
+    let mut scratch = Vec::new();
+    extract_loop::run_extract_decode_loop(params, &mut sink, &mut scratch)
 }
 ```
 
@@ -207,29 +211,35 @@ Land helpers only if they do not change control flow ordering.
 
 ### Phase 1 — Introduce driver + mono sink (1 day)
 
-**Goal:** `extract_mono_with_state` delegates to `run_extract_decode_loop`; interleaved unchanged.
+**Goal:** `extract_mono_with_state` becomes a thin wrapper; interleaved unchanged.
 
-1. Add `ExtractLoopParams`, `MonoExtractSink`, `run_extract_decode_loop`.
-2. Move mono packet loop body into driver; mono sink implements append/finalize.
-3. Delete duplicated lines from `extract_mono_with_state` (wrapper only).
-4. `cargo test -p clip-sync` — all green.
+1. Add `extract_loop.rs`; `mod extract_loop;` in `symphonia/mod.rs`.
+2. Add `ExtractLoopParams`, `ExtractAttemptState`, `MonoExtractSink`, `run_extract_decode_loop`.
+3. Move **all** mono shared logic into the driver + sink — not only the inner `loop packets` block:
+   - steps 1–3 (empty window, `ensure_track_decoder`, rate hint → populate `ExtractLoopParams` including `track_id` / `time_base`)
+   - step 5 (seek/retry attempts, per-attempt reset, packet loop, in-loop progress)
+   - steps 6–10 via `MonoExtractSink::finalize` (truncate order, shortfall, tail-padding, logging, `MonoPcmClip`)
+4. Delete duplicated mono body from `extract.rs` (wrapper + scratch allocation only).
+5. Add mono decode-skip test mirroring `extract_interleaved_decode_errors_are_counted`.
+6. `cargo test -p clip-sync` — all green.
 
-**Exit:** Mono path uses scaffold; interleaved still duplicated but obviously parallel.
+**Exit:** Mono path uses scaffold in `extract_loop.rs`; interleaved still duplicated in `extract.rs` but obviously parallel.
 
 ### Phase 2 — Interleaved sink + delete duplicate (½ day)
 
-1. Add `InterleavedExtractSink` (channels hint from `track.channels`).
-2. Wire `extract_interleaved_with_state` through driver.
-3. Remove duplicated interleaved loop.
-4. `cargo test -p clip-sync` + `cargo test -p clip-sync-repair` (patch integration uses full-timeline interleaved extract).
+1. Add `InterleavedExtractSink` in `extract_loop.rs` (channels hint from `track.channels`).
+2. Wire `extract_interleaved_with_state` through driver; preserve interleaved finalize order (pre-truncate count).
+3. Remove duplicated interleaved body from `extract.rs`.
+4. Add `mono_and_interleaved_same_skip_count_on_corrupt_fixture`.
+5. `cargo test -p clip-sync` + `cargo test -p clip-sync-repair` (patch integration uses full-timeline interleaved extract).
 
-**Exit:** Single packet loop in `run_extract_decode_loop`; `extract.rs` net smaller.
+**Exit:** Single packet loop in `run_extract_decode_loop`; duplicated lines removed from `extract.rs`.
 
 ### Phase 3 — Optional helpers + docs (½ day)
 
-1. Extract `decode_packet_or_skip` / window bound helpers if they improve readability without semantic drift.
+1. Extract `decode_packet_or_skip` / window bound helpers in `extract_loop.rs` if they improve readability without semantic drift.
 2. Update [BACKLOG.md](../BACKLOG.md) and [docs/archive/repair-write-path-plan.md](archive/repair-write-path-plan.md) status to ✅ scaffold shipped.
-3. Archive this plan.
+3. Archive this plan to `docs/archive/extract-scaffold-plan.md`.
 
 ---
 
@@ -237,10 +247,11 @@ Land helpers only if they do not change control flow ordering.
 
 | Test | Crate | Asserts |
 |------|-------|---------|
-| Existing `media_reader_tests` (mono + interleaved) | lib | No regressions on frame counts, seek windows, decode-error skip counts, HE-AAC tolerance |
+| Existing `media_reader_tests` (mono + interleaved) | lib | No regressions on frame counts, seek windows, HE-AAC tolerance |
 | Existing `append_*` unit tests | lib | Append boundary behaviour unchanged |
+| `extract_mono_decode_errors_are_counted` *(new, Phase 1)* | lib | Mono sink counts skips like interleaved test today |
+| `mono_and_interleaved_same_skip_count_on_corrupt_fixture` *(new, Phase 2)* | lib | Both sinks report identical `decode_error_skips` on same damaged file |
 | `patch_audio_fills_gap_in_stereo_wav` | repair | Full-timeline interleaved extract still patches gap |
-| *(optional)* `mono_and_interleaved_same_skip_count_on_corrupt_fixture` | lib | Both sinks report identical `decode_error_skips` on same damaged file |
 
 **Not required:** allocation-count test for scaffold (scratch-buffer test was optional and never added; defer unless profiling demands it).
 
@@ -251,9 +262,11 @@ Land helpers only if they do not change control flow ordering.
 | Risk | Mitigation |
 |------|------------|
 | Subtle behaviour drift (padding, shortfall, progress) | Side-by-side diff before/after on fixed WAV fixtures; keep finalize logic copied verbatim into sinks first, then simplify |
+| **Mono vs interleaved finalize order** | Mono captures decoded count **after** `truncate`; interleaved **before**. Do not refactor these into a shared helper in v1 — duplicate intentionally in each sink's `finalize`. |
 | Trait abstraction obscures flow | Keep `run_extract_decode_loop` linear; sinks are thin; comment shared vs sink sections |
 | Large single PR | Phase 1 mono-only merge first |
 | `channels` resolved late on interleaved | Preserve current order: first decode sets rate, then channels, then reserve |
+| Mono decode-skip regressions undetected | Only interleaved has a skip-count test today; Phase 1 adds mono parity before deleting duplicated loop |
 
 ---
 

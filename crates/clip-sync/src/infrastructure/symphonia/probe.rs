@@ -2,12 +2,11 @@ use std::fs::File;
 use std::path::Path;
 use std::time::Duration;
 
-use symphonia::core::audio::Channels;
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_ALAC, CODEC_ID_EAC3, CODEC_ID_FLAC, CODEC_ID_MP3,
     CODEC_ID_VORBIS,
 };
-use symphonia::core::codecs::audio::{AudioCodecId, AudioDecoderOptions};
+use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo, Track, TrackType};
@@ -92,7 +91,7 @@ fn probe_from_format(
         tracks.push(AudioTrack {
             index: track.id,
             codec: codec_name(params.codec),
-            channels: channel_count(params.channels.as_ref()),
+            channels: channel_count(params),
             sample_rate: params.sample_rate.unwrap_or(0),
             bitrate: None,
             duration: track_duration,
@@ -152,8 +151,61 @@ pub(crate) fn is_audio_track(track: &Track) -> bool {
     track.track_type() == Some(TrackType::Audio)
 }
 
-fn channel_count(channels: Option<&Channels>) -> u16 {
-    channels.map(|value| value.count() as u16).unwrap_or(0)
+fn channel_count(params: &AudioCodecParameters) -> u16 {
+    if let Some(ch) = params.channels.as_ref() {
+        return ch.count() as u16;
+    }
+    // Symphonia's isomp4 dac3/dec3 atom handler sets codec_id and extra_data but
+    // does NOT populate channels. Derive from the codec-specific box payload.
+    if params.codec == CODEC_ID_AC3 {
+        if let Some(extra) = params.extra_data.as_deref() {
+            return ac3_channels_from_dac3(extra);
+        }
+    }
+    if params.codec == CODEC_ID_EAC3 {
+        if let Some(extra) = params.extra_data.as_deref() {
+            return ac3_channels_from_dec3(extra);
+        }
+    }
+    0
+}
+
+/// Decode channel count from the `dac3` box payload (AC-3 in MP4).
+///
+/// Bit layout (24 bits, MSB first):
+///   [23:22] fscod  [21:17] bsid  [16:14] bsmod
+///   [13:11] acmod (byte[1] bits 5-3)
+///   [10]    lfeon (byte[1] bit 2)
+fn ac3_channels_from_dac3(extra: &[u8]) -> u16 {
+    if extra.len() < 3 {
+        return 0;
+    }
+    let acmod = (extra[1] >> 3) & 0x7;
+    let lfeon = (extra[1] >> 2) & 0x1;
+    let base: u16 = match acmod {
+        0 => 2, 1 => 1, 2 => 2, 3 => 3,
+        4 => 3, 5 => 4, 6 => 4, 7 => 5,
+        _ => 0,
+    };
+    base + u16::from(lfeon)
+}
+
+/// Decode channel count from the `dec3` box payload (E-AC-3 in MP4).
+///
+/// Bit layout for the first independent substream (byte[3]):
+///   asvc(1) | bsmod(3) | acmod(3) | lfeon(1)
+fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
+    if extra.len() < 4 {
+        return 0;
+    }
+    let acmod = (extra[3] >> 1) & 0x7;
+    let lfeon = extra[3] & 0x1;
+    let base: u16 = match acmod {
+        0 => 2, 1 => 1, 2 => 2, 3 => 3,
+        4 => 3, 5 => 4, 6 => 4, 7 => 5,
+        _ => 0,
+    };
+    base + u16::from(lfeon)
 }
 
 fn codec_name(codec: AudioCodecId) -> String {

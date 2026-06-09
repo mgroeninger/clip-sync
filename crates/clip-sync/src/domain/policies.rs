@@ -21,6 +21,27 @@ pub fn select_best_track(tracks: &[AudioTrack]) -> Result<&AudioTrack, DomainErr
         .ok_or(DomainError::NoDecodableAudioTracks)
 }
 
+/// Pick the best decodable B track to use as a reference for A.
+///
+/// Prefers a track whose channel count matches A's exactly; falls back to
+/// `select_best_track` (first decodable in container order) when no channel
+/// match exists. This matters for dual-track containers (e.g. 2ch AAC + 6ch
+/// AC-3) where the surround track is the correct repair source.
+pub fn select_track_for_reference<'a>(
+    a: &AudioTrack,
+    tracks: &'a [AudioTrack],
+) -> Result<&'a AudioTrack, DomainError> {
+    if tracks.is_empty() {
+        return Err(DomainError::NoAudioTracks);
+    }
+
+    tracks
+        .iter()
+        .find(|t| t.decodable && t.channels == a.channels)
+        .or_else(|| tracks.iter().find(|t| t.decodable))
+        .ok_or(DomainError::NoDecodableAudioTracks)
+}
+
 /// Optional bounds when placing multi-clip windows near the file tail.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClipPlanningOptions {
@@ -335,6 +356,65 @@ mod tests {
 
     fn mins(m: u64) -> Duration {
         Duration::from_secs(m * 60)
+    }
+
+    fn track(index: u32, channels: u16, decodable: bool) -> AudioTrack {
+        AudioTrack {
+            index,
+            codec: "aac".into(),
+            channels,
+            sample_rate: 48_000,
+            bitrate: None,
+            duration: Some(mins(60)),
+            decodable,
+        }
+    }
+
+    #[test]
+    fn select_track_for_reference_picks_channel_match_over_first_decodable() {
+        let a = track(0, 6, true);
+        let tracks = vec![track(0, 2, true), track(1, 6, true)];
+        assert_eq!(select_track_for_reference(&a, &tracks).unwrap().index, 1);
+    }
+
+    #[test]
+    fn select_track_for_reference_falls_back_to_first_decodable_when_no_match() {
+        let a = track(0, 6, true);
+        let tracks = vec![track(0, 2, true), track(1, 2, true)];
+        assert_eq!(select_track_for_reference(&a, &tracks).unwrap().index, 0);
+    }
+
+    #[test]
+    fn select_track_for_reference_ignores_undecodable_channel_match() {
+        let a = track(0, 6, true);
+        let tracks = vec![track(0, 6, false), track(1, 2, true)];
+        assert_eq!(select_track_for_reference(&a, &tracks).unwrap().index, 1);
+    }
+
+    #[test]
+    fn select_track_for_reference_mono_a_unchanged() {
+        let a = track(0, 1, true);
+        let tracks = vec![track(0, 1, true), track(1, 6, true)];
+        assert_eq!(select_track_for_reference(&a, &tracks).unwrap().index, 0);
+    }
+
+    #[test]
+    fn select_track_for_reference_errors_when_empty() {
+        let a = track(0, 2, true);
+        assert_eq!(
+            select_track_for_reference(&a, &[]),
+            Err(DomainError::NoAudioTracks)
+        );
+    }
+
+    #[test]
+    fn select_track_for_reference_errors_when_none_decodable() {
+        let a = track(0, 6, true);
+        let tracks = vec![track(0, 6, false), track(1, 2, false)];
+        assert_eq!(
+            select_track_for_reference(&a, &tracks),
+            Err(DomainError::NoDecodableAudioTracks)
+        );
     }
 
     #[test]
