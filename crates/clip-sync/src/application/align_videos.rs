@@ -8,12 +8,12 @@ use crate::application::offset_refinement::{refine_offset_around_prior, refine_o
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
 use crate::domain::{
-    build_alignment_result, clip_windows_with_options, decoded_timeline_extent,
-    end_clip_extract_unreliable, expand_window_for_slide, prepare_clip_for_fingerprint,
-    resample_mono_pcm, select_aligned_subclip_pair, select_best_track, truncate_padded_tail,
-    AlignmentMergePolicy, AlignmentResult, AudioTrack, ClipLabel, ClipMatchEstimate,
-    ClipPairReportInput, ClipPlanningOptions,
-    ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions,
+    build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
+    decoded_timeline_extent, end_clip_extract_unreliable, expand_window_for_slide,
+    prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair,
+    select_best_track, truncate_padded_tail, AlignmentMergePolicy, AlignmentResult, AudioTrack,
+    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipWindow,
+    DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions, TimelineOverlap,
 };
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
@@ -94,7 +94,12 @@ where
             self.progress,
         );
 
-        log_alignment_summary(&result, self.progress);
+        log_alignment_summary(
+            &result,
+            Some(outcome.duration_a),
+            Some(outcome.duration_b),
+            self.progress,
+        );
 
         Ok(AlignVideosResponse { result })
     }
@@ -549,7 +554,12 @@ struct ExtractedClips {
     end_clip_unreliable: bool,
 }
 
-fn log_alignment_summary(result: &AlignmentResult, progress: &dyn ProgressReporter) {
+fn log_alignment_summary(
+    result: &AlignmentResult,
+    duration_a: Option<Duration>,
+    duration_b: Option<Duration>,
+    progress: &dyn ProgressReporter,
+) {
     progress.phase(&format!(
         "Start clip aligned: {}",
         yes_no(result.start_aligned)
@@ -591,18 +601,40 @@ fn log_alignment_summary(result: &AlignmentResult, progress: &dyn ProgressReport
         }
     }
 
-    if let Some(overlap) = result.start_overlap {
+    let clip_overlaps: Vec<TimelineOverlap> = result
+        .clips
+        .iter()
+        .filter_map(|clip| compute_clip_timeline_overlap(clip, duration_a, duration_b))
+        .collect();
+
+    if !clip_overlaps.is_empty() {
         progress.phase(&format!(
             "Overlap on video A: {}",
-            format_overlap_window(overlap.video_a_start_secs, overlap.video_a_end_secs)
+            clip_overlaps
+                .iter()
+                .map(|overlap| {
+                    format_overlap_window(overlap.video_a_start_secs, overlap.video_a_end_secs)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         progress.phase(&format!(
             "Overlap on video B: {}",
-            format_overlap_window(overlap.video_b_start_secs, overlap.video_b_end_secs)
+            clip_overlaps
+                .iter()
+                .map(|overlap| {
+                    format_overlap_window(overlap.video_b_start_secs, overlap.video_b_end_secs)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         progress.phase(&format!(
             "Shared length: {}",
-            format_timestamp(overlap.shared_length_secs)
+            clip_overlaps
+                .iter()
+                .map(|overlap| format_timestamp(overlap.shared_length_secs))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 }

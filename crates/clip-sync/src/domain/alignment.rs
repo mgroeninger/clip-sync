@@ -199,6 +199,25 @@ pub fn refresh_start_overlap(
     );
 }
 
+/// Timeline overlap implied by one aligned clip and its offset estimate.
+pub fn compute_clip_timeline_overlap(
+    clip: &ClipMatch,
+    duration_a: Option<Duration>,
+    duration_b: Option<Duration>,
+) -> Option<TimelineOverlap> {
+    if !clip.aligned {
+        return None;
+    }
+    let offset = clip.offset_secs?;
+    Some(compute_timeline_overlap(
+        clip.window_start_secs,
+        clip.window_end_secs,
+        offset,
+        duration_a,
+        duration_b,
+    ))
+}
+
 fn compute_start_overlap(
     clips: &[ClipMatch],
     start_aligned: bool,
@@ -211,36 +230,45 @@ fn compute_start_overlap(
     }
     let offset = recommended_offset_secs?;
     let start = clips.iter().find(|clip| clip.label == ClipLabel::Start)?;
+    Some(compute_timeline_overlap(
+        start.window_start_secs,
+        start.window_end_secs,
+        offset,
+        duration_a,
+        duration_b,
+    ))
+}
 
+fn compute_timeline_overlap(
+    window_start_secs: f64,
+    window_end_secs: f64,
+    offset: f64,
+    duration_a: Option<Duration>,
+    duration_b: Option<Duration>,
+) -> TimelineOverlap {
     let a_dur = duration_a.map(|d| d.as_secs_f64()).unwrap_or(f64::INFINITY);
     let b_dur = duration_b.map(|d| d.as_secs_f64()).unwrap_or(f64::INFINITY);
 
-    let t_lo = start
-        .window_start_secs
-        .max(-offset)
-        .max(0.0);
-    let t_hi = start
-        .window_end_secs
-        .min(a_dur)
-        .min(b_dur - offset);
+    let t_lo = window_start_secs.max(-offset).max(0.0);
+    let t_hi = window_end_secs.min(a_dur).min(b_dur - offset);
 
     if t_hi <= t_lo {
-        return Some(TimelineOverlap {
+        return TimelineOverlap {
             video_a_start_secs: t_lo,
             video_a_end_secs: t_lo,
             video_b_start_secs: t_lo + offset,
             video_b_end_secs: t_lo + offset,
             shared_length_secs: 0.0,
-        });
+        };
     }
 
-    Some(TimelineOverlap {
+    TimelineOverlap {
         video_a_start_secs: t_lo,
         video_a_end_secs: t_hi,
         video_b_start_secs: t_lo + offset,
         video_b_end_secs: t_hi + offset,
         shared_length_secs: t_hi - t_lo,
-    })
+    }
 }
 
 fn compute_offset_drift(clips: &[ClipMatch]) -> Option<f64> {
@@ -495,6 +523,56 @@ mod tests {
         assert!(!result.offsets_consistent);
         assert_eq!(result.recommended_offset_secs, Some(10.0));
         assert!((result.offset_drift_secs.unwrap() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn computes_overlap_for_each_aligned_clip() {
+        let windows = vec![
+            window(11, 900, ClipLabel::Start),
+            window(1800, 2689, ClipLabel::End),
+        ];
+        let estimates = vec![
+            ClipMatchEstimate {
+                offset_secs: 11.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 11.0,
+                confidence: 0.85,
+            },
+        ];
+
+        let result = build_alignment_result(
+            report_input(
+                &windows,
+                &estimates,
+                Some(Duration::from_secs(2700)),
+                Some(Duration::from_secs(2689)),
+            ),
+            default_policy(),
+        );
+
+        let start_overlap = compute_clip_timeline_overlap(
+            &result.clips[0],
+            Some(Duration::from_secs(2700)),
+            Some(Duration::from_secs(2689)),
+        )
+        .expect("start clip overlap");
+        assert_eq!(start_overlap.video_a_start_secs, 11.0);
+        assert_eq!(start_overlap.video_a_end_secs, 900.0);
+        assert_eq!(start_overlap.video_b_start_secs, 22.0);
+        assert_eq!(start_overlap.video_b_end_secs, 911.0);
+
+        let end_overlap = compute_clip_timeline_overlap(
+            &result.clips[1],
+            Some(Duration::from_secs(2700)),
+            Some(Duration::from_secs(2689)),
+        )
+        .expect("end clip overlap");
+        assert_eq!(end_overlap.video_a_start_secs, 1800.0);
+        assert_eq!(end_overlap.video_a_end_secs, 2678.0);
+        assert_eq!(end_overlap.video_b_start_secs, 1811.0);
+        assert_eq!(end_overlap.video_b_end_secs, 2689.0);
     }
 
     #[test]

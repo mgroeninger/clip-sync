@@ -100,6 +100,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     max_fill_align_adjustment_secs: config.repair.max_fill_align_adjustment_secs,
                     fill_border_search_secs: config.repair.fill_border_search_secs,
                     min_border_discovery_secs: config.repair.min_border_discovery_secs,
+                    border_standoff_secs: config.repair.border_standoff_secs,
+                    short_gap_mean_correlation_secs: config.repair.short_gap_mean_correlation_secs,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
                 };
 

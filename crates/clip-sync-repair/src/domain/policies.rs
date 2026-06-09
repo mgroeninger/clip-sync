@@ -234,11 +234,13 @@ const DISCOVERY_COARSE_MIN_CORRELATION: f64 = 0.25;
 const DISCOVERY_SCORE_TIE_EPSILON: f64 = 1e-6;
 const DISCOVERY_REFINE_RADIUS_FACTOR: usize = 2;
 
-/// Result of sliding a candidate B segment to match A's pre- and post-gap borders.
+/// Result of bracketing a B fill between matched pre/post borders.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FillAlignment {
     /// Frame index into the extended B buffer where the fill should start.
     pub start_frame: usize,
+    /// B-derived fill length in frames (`post` border starts at `start_frame + fill_frames`).
+    pub fill_frames: usize,
     pub pre_correlation: f64,
     pub post_correlation: f64,
 }
@@ -379,6 +381,7 @@ fn gap_border_frame_range(
     gap_start_frame: usize,
     gap_end_frame: usize,
     border_frames: usize,
+    border_standoff_frames: usize,
     silence_peak_fraction: f32,
     absolute_rms_floor: f32,
 ) -> GapBorderFrameRange {
@@ -413,6 +416,12 @@ fn gap_border_frame_range(
         post_start += 1;
     }
 
+    // Skip audio immediately adjacent to the dropout (A-side templates only).
+    if border_standoff_frames > 0 {
+        pre_end = pre_end.saturating_sub(border_standoff_frames).max(pre_start);
+        post_start = (post_start + border_standoff_frames).min(post_end);
+    }
+
     GapBorderFrameRange {
         pre_start,
         pre_end,
@@ -441,6 +450,7 @@ pub fn border_templates_for_gap(
     gap_start_frame: usize,
     gap_end_frame: usize,
     border_frames: usize,
+    border_standoff_frames: usize,
     silence_peak_fraction: f32,
     absolute_rms_floor: f32,
 ) -> (Vec<f64>, Vec<f64>) {
@@ -451,6 +461,7 @@ pub fn border_templates_for_gap(
         gap_start_frame,
         gap_end_frame,
         border_frames,
+        border_standoff_frames,
         silence_peak_fraction,
         absolute_rms_floor,
     );
@@ -485,6 +496,7 @@ pub fn border_templates_per_channel_for_gap(
     gap_start_frame: usize,
     gap_end_frame: usize,
     border_frames: usize,
+    border_standoff_frames: usize,
     silence_peak_fraction: f32,
     absolute_rms_floor: f32,
 ) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
@@ -495,6 +507,7 @@ pub fn border_templates_per_channel_for_gap(
         gap_start_frame,
         gap_end_frame,
         border_frames,
+        border_standoff_frames,
         silence_peak_fraction,
         absolute_rms_floor,
     );
@@ -526,21 +539,39 @@ pub fn border_templates_per_channel_for_gap(
     (pre_ch, post_ch)
 }
 
-fn median_f64(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
-        (sorted[mid - 1] + sorted[mid]) / 2.0
+/// Channel indices used for seam scoring on multichannel audio (front L/R).
+fn seam_score_channel_indices(channel_count: usize) -> Vec<usize> {
+    if channel_count >= 2 {
+        vec![0, 1]
     } else {
-        sorted[mid]
+        vec![0]
     }
 }
 
-/// Pearson correlation at gap seams; uses per-channel median when `channels > 1`.
+fn peak_normalize_f64(samples: &[f64]) -> Vec<f64> {
+    let peak = samples.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
+    if peak <= f64::EPSILON {
+        return samples.to_vec();
+    }
+    samples.iter().map(|s| s / peak).collect()
+}
+
+/// Peak-normalized Pearson correlation (reduces level mismatch between encodes).
+fn seam_pearson(left: &[f64], right: &[f64]) -> f64 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    normalized_correlation(&peak_normalize_f64(left), &peak_normalize_f64(right))
+}
+
+fn best_channel_correlation(scores: &[f64]) -> f64 {
+    scores
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// Pearson correlation at gap seams; uses best front L/R channel when `channels > 1`.
 fn seam_correlations_at(
     a_pre: &[f64],
     a_post: &[f64],
@@ -558,50 +589,81 @@ fn seam_correlations_at(
         && a_post_ch.len() == b_ch.len()
         && a_pre_ch.iter().any(|ch| !ch.is_empty());
 
+    let score_pre = pre_window > 0
+        && !a_pre.is_empty()
+        && start >= pre_window
+        && start <= b_mono.len();
+    let score_post = post_window > 0
+        && !a_post.is_empty()
+        && start + gap_frames + post_window <= b_mono.len();
+
     if !use_channels {
-        let pre = normalized_correlation(
-            &a_pre[a_pre.len().saturating_sub(pre_window)..],
-            &b_mono[start.saturating_sub(pre_window)..start],
-        );
-        let post = normalized_correlation(
-            &a_post[..post_window.min(a_post.len())],
-            &b_mono[start + gap_frames..start + gap_frames + post_window],
-        );
+        let pre = if score_pre {
+            seam_pearson(
+                &a_pre[a_pre.len().saturating_sub(pre_window)..],
+                &b_mono[start - pre_window..start],
+            )
+        } else {
+            0.0
+        };
+        let post = if score_post {
+            seam_pearson(
+                &a_post[..post_window.min(a_post.len())],
+                &b_mono[start + gap_frames..start + gap_frames + post_window],
+            )
+        } else {
+            0.0
+        };
         return (pre, post);
     }
 
-    let mut pre_scores = Vec::with_capacity(b_ch.len());
-    let mut post_scores = Vec::with_capacity(b_ch.len());
-    for ch in 0..b_ch.len() {
-        if a_pre_ch[ch].len() < pre_window || a_post_ch[ch].len() < post_window {
-            continue;
+    let score_channels = seam_score_channel_indices(b_ch.len());
+    let mut pre_scores = Vec::with_capacity(score_channels.len());
+    let mut post_scores = Vec::with_capacity(score_channels.len());
+    for &ch in &score_channels {
+        if score_pre && a_pre_ch[ch].len() >= pre_window && start <= b_ch[ch].len() {
+            pre_scores.push(seam_pearson(
+                &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],
+                &b_ch[ch][start - pre_window..start],
+            ));
         }
-        if start < pre_window || start + gap_frames + post_window > b_ch[ch].len() {
-            continue;
+        if score_post
+            && a_post_ch[ch].len() >= post_window
+            && start + gap_frames + post_window <= b_ch[ch].len()
+        {
+            post_scores.push(seam_pearson(
+                &a_post_ch[ch][..post_window],
+                &b_ch[ch][start + gap_frames..start + gap_frames + post_window],
+            ));
         }
-        pre_scores.push(normalized_correlation(
-            &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],
-            &b_ch[ch][start - pre_window..start],
-        ));
-        post_scores.push(normalized_correlation(
-            &a_post_ch[ch][..post_window],
-            &b_ch[ch][start + gap_frames..start + gap_frames + post_window],
-        ));
     }
 
-    if pre_scores.is_empty() || post_scores.is_empty() {
-        let pre = normalized_correlation(
-            &a_pre[a_pre.len().saturating_sub(pre_window)..],
-            &b_mono[start.saturating_sub(pre_window)..start],
-        );
-        let post = normalized_correlation(
-            &a_post[..post_window.min(a_post.len())],
-            &b_mono[start + gap_frames..start + gap_frames + post_window],
-        );
-        return (pre, post);
-    }
+    let pre = if pre_scores.is_empty() {
+        if score_pre {
+            seam_pearson(
+                &a_pre[a_pre.len().saturating_sub(pre_window)..],
+                &b_mono[start - pre_window..start],
+            )
+        } else {
+            0.0
+        }
+    } else {
+        best_channel_correlation(&pre_scores)
+    };
+    let post = if post_scores.is_empty() {
+        if score_post {
+            seam_pearson(
+                &a_post[..post_window.min(a_post.len())],
+                &b_mono[start + gap_frames..start + gap_frames + post_window],
+            )
+        } else {
+            0.0
+        }
+    } else {
+        best_channel_correlation(&post_scores)
+    };
 
-    (median_f64(&pre_scores), median_f64(&post_scores))
+    (pre, post)
 }
 
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
@@ -669,19 +731,25 @@ fn template_correlation_at_lag(
     if let (Some(t_ch), Some(h_ch)) = (template_ch, haystack_ch) {
         if t_ch.len() > 1 && h_ch.len() == t_ch.len() {
             let template_len = template_mono.len();
-            let mut scores = Vec::with_capacity(t_ch.len());
-            for (t, h) in t_ch.iter().zip(h_ch.iter()) {
+            let score_channels = seam_score_channel_indices(t_ch.len());
+            let mut scores = Vec::with_capacity(score_channels.len());
+            for &ch in &score_channels {
+                let t = &t_ch[ch];
+                let h = &h_ch[ch];
                 if t.len() != template_len || lag + template_len > h.len() {
                     continue;
                 }
-                scores.push(normalized_correlation(t, &h[lag..lag + template_len]));
+                scores.push(seam_pearson(t, &h[lag..lag + template_len]));
             }
             if !scores.is_empty() {
-                return median_f64(&scores);
+                return best_channel_correlation(&scores);
             }
         }
     }
-    normalized_correlation(template_mono, &haystack_mono[lag..lag + template_mono.len()])
+    seam_pearson(
+        template_mono,
+        &haystack_mono[lag..lag + template_mono.len()],
+    )
 }
 
 /// Slide `template` across `haystack` near `nominal_frame`, searching ±`search_radius_frames`.
@@ -869,38 +937,76 @@ pub fn discover_fill_start_in_b(
         .unwrap_or(offset_nominal_start)
 }
 
-/// Slide a candidate B window to maximize agreement with A's borders at both gap seams.
-///
-/// `nominal_start_frame` is where the coarse offset maps the fill inside `b_extended`.
-/// Search is limited to ±`max_adjustment_frames` around that position.
-pub fn align_fill_segment(
-    a_pre_border: &[f64],
+fn score_post_seam_at(
     a_post_border: &[f64],
+    a_post_ch: &[Vec<f64>],
+    b_mono: &[f64],
+    b_ch: &[Vec<f64>],
+    fill_end_frame: usize,
+    post_window: usize,
+) -> f64 {
+    if post_window == 0
+        || a_post_border.is_empty()
+        || fill_end_frame + post_window > b_mono.len()
+    {
+        return f64::NEG_INFINITY;
+    }
+
+    let use_channels = b_ch.len() > 1
+        && a_post_ch.len() == b_ch.len()
+        && a_post_ch.iter().any(|ch| !ch.is_empty());
+
+    if !use_channels {
+        return seam_pearson(
+            &a_post_border[..post_window.min(a_post_border.len())],
+            &b_mono[fill_end_frame..fill_end_frame + post_window],
+        );
+    }
+
+    let score_channels = seam_score_channel_indices(b_ch.len());
+    let mut scores = Vec::with_capacity(score_channels.len());
+    for &ch in &score_channels {
+        if a_post_ch[ch].len() < post_window || fill_end_frame + post_window > b_ch[ch].len() {
+            continue;
+        }
+        scores.push(seam_pearson(
+            &a_post_ch[ch][..post_window],
+            &b_ch[ch][fill_end_frame..fill_end_frame + post_window],
+        ));
+    }
+
+    if scores.is_empty() {
+        seam_pearson(
+            &a_post_border[..post_window.min(a_post_border.len())],
+            &b_mono[fill_end_frame..fill_end_frame + post_window],
+        )
+    } else {
+        best_channel_correlation(&scores)
+    }
+}
+
+/// Slide B to maximize pre-gap border agreement (fill start only).
+pub fn align_fill_start(
+    a_pre_border: &[f64],
     b_extended: &[f64],
     a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
     b_ch: &[Vec<f64>],
-    gap_frames: usize,
     nominal_start_frame: usize,
     correlate_frames: usize,
     max_adjustment_frames: usize,
-) -> Option<FillAlignment> {
-    if gap_frames == 0 || correlate_frames == 0 || a_pre_border.is_empty() || a_post_border.is_empty()
-    {
+) -> Option<(usize, f64)> {
+    if correlate_frames == 0 || a_pre_border.is_empty() {
         return None;
     }
 
     let pre_window = correlate_frames.min(a_pre_border.len());
-    let post_window = correlate_frames.min(a_post_border.len());
-    if pre_window == 0 || post_window == 0 {
+    if pre_window == 0 {
         return None;
     }
 
-    // Fast slide search with a shorter template; re-score the winner at full width for the gate.
     let search_frames = correlate_frames.min(12_000).max(1);
     let search_pre = search_frames.min(a_pre_border.len());
-    let search_post = search_frames.min(a_post_border.len());
-    if search_pre == 0 || search_post == 0 {
+    if search_pre == 0 {
         return None;
     }
 
@@ -913,72 +1019,245 @@ pub fn align_fill_segment(
             continue;
         }
         let start = start as usize;
-        if start + gap_frames > b_extended.len()
-            || start + gap_frames + search_post > b_extended.len()
-            || start < search_pre
-        {
+        if start < search_pre || start + search_pre > b_extended.len() {
             continue;
         }
 
-        let (pre_corr, post_corr) = seam_correlations_at(
+        let (pre_corr, _) = seam_correlations_at(
             a_pre_border,
-            a_post_border,
+            &[],
             a_pre_ch,
-            a_post_ch,
+            &[],
             b_extended,
             b_ch,
             start,
-            gap_frames,
+            0,
             search_pre,
-            search_post,
+            0,
         );
-        let score = pre_corr.min(post_corr);
-
-        let is_better = |candidate_score: f64, candidate_start: usize| -> bool {
-            if score > candidate_score + f64::EPSILON {
-                return true;
-            }
-            if (score - candidate_score).abs() > f64::EPSILON {
-                return false;
-            }
-            start.abs_diff(nominal_start_frame) < candidate_start.abs_diff(nominal_start_frame)
-        };
-
-        if is_better(best_search_score, best_start) {
-            best_search_score = score;
+        let better = pre_corr > best_search_score + f64::EPSILON
+            || (pre_corr >= best_search_score - f64::EPSILON
+                && start.abs_diff(nominal_start_frame) < best_start.abs_diff(nominal_start_frame));
+        if better {
+            best_search_score = pre_corr;
             best_start = start;
         }
     }
 
-    if !best_search_score.is_finite() {
+    if !best_search_score.is_finite() || best_start < pre_window {
         return None;
     }
 
-    if best_start + gap_frames > b_extended.len()
-        || best_start + gap_frames + post_window > b_extended.len()
-        || best_start < pre_window
+    let (pre_correlation, _) = seam_correlations_at(
+        a_pre_border,
+        &[],
+        a_pre_ch,
+        &[],
+        b_extended,
+        b_ch,
+        best_start,
+        0,
+        pre_window,
+        0,
+    );
+
+    Some((best_start, pre_correlation))
+}
+
+/// Locate where the fill ends in B by matching A's post-gap border.
+///
+/// Returns the frame index where B's post-border audio begins (end of the fill region).
+pub fn discover_fill_end_in_b(
+    a_post_border: &[f64],
+    b_mono: &[f64],
+    a_post_ch: &[Vec<f64>],
+    b_ch: &[Vec<f64>],
+    fill_start_frame: usize,
+    nominal_end_frame: usize,
+    a_gap_frames: usize,
+    discovery_frames: usize,
+    search_radius_frames: usize,
+    correlate_frames: usize,
+) -> Option<(usize, f64)> {
+    if discovery_frames == 0
+        || correlate_frames == 0
+        || a_post_border.is_empty()
+        || fill_start_frame >= b_mono.len()
     {
         return None;
     }
 
-    let (pre_correlation, post_correlation) = seam_correlations_at(
+    let post_window = correlate_frames.min(a_post_border.len()).max(1);
+    let min_fill = (a_gap_frames / 4)
+        .max(discovery_frames / 2)
+        .max(post_window / 2)
+        .max(1);
+    let max_fill = a_gap_frames.saturating_add(search_radius_frames);
+    let min_end = fill_start_frame.saturating_add(min_fill);
+    let max_end = fill_start_frame.saturating_add(max_fill).min(b_mono.len());
+
+    if min_end > max_end || min_end + post_window > b_mono.len() {
+        return None;
+    }
+
+    let use_channels = b_ch.len() > 1 && a_post_ch.len() == b_ch.len();
+    let post_ch = if use_channels { Some(a_post_ch) } else { None };
+    let b_ch_opt = if use_channels { Some(b_ch) } else { None };
+
+    let post_len = discovery_frames.min(a_post_border.len());
+    let post_template = &a_post_border[..post_len];
+    let post_template_ch: Option<Vec<Vec<f64>>> = post_ch.map(|ch| {
+        ch.iter()
+            .map(|c| c[..post_len.min(c.len())].to_vec())
+            .collect()
+    });
+
+    let mut best_end = min_end;
+    let mut best_score = f64::NEG_INFINITY;
+
+    if let Some((match_start, _score)) = discover_template_near(
+        post_template,
+        post_template_ch.as_deref(),
+        b_mono,
+        b_ch_opt,
+        nominal_end_frame,
+        search_radius_frames,
+    ) {
+        let fill_end = match_start;
+        let fill_len = fill_end.saturating_sub(fill_start_frame);
+        if fill_end > fill_start_frame
+            && fill_len >= min_fill
+            && fill_len <= max_fill
+            && fill_end + post_window <= b_mono.len()
+        {
+            let post_corr = score_post_seam_at(
+                a_post_border,
+                a_post_ch,
+                b_mono,
+                b_ch,
+                fill_end,
+                post_window,
+            );
+            if post_corr.is_finite() {
+                best_end = fill_end;
+                best_score = post_corr;
+            }
+        }
+    }
+
+    for end in min_end..=max_end {
+        if end + post_window > b_mono.len() {
+            break;
+        }
+        let post_corr = score_post_seam_at(
+            a_post_border,
+            a_post_ch,
+            b_mono,
+            b_ch,
+            end,
+            post_window,
+        );
+        let better = post_corr > best_score + DISCOVERY_SCORE_TIE_EPSILON
+            || (post_corr >= best_score - DISCOVERY_SCORE_TIE_EPSILON
+                && end.abs_diff(nominal_end_frame) < best_end.abs_diff(nominal_end_frame));
+        if better {
+            best_score = post_corr;
+            best_end = end;
+        }
+    }
+
+    if !best_score.is_finite() {
+        return None;
+    }
+
+    Some((best_end, best_score))
+}
+
+/// Bracket a B fill: align start on A's pre-border, derive length from A's post-border match in B.
+pub fn align_fill_bracket(
+    a_pre_border: &[f64],
+    a_post_border: &[f64],
+    b_extended: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    b_ch: &[Vec<f64>],
+    a_gap_frames: usize,
+    nominal_start_frame: usize,
+    nominal_end_frame: usize,
+    correlate_frames: usize,
+    max_adjustment_frames: usize,
+    search_radius_frames: usize,
+) -> Option<FillAlignment> {
+    if a_gap_frames == 0 || a_post_border.is_empty() {
+        return None;
+    }
+
+    let (start_frame, pre_correlation) = align_fill_start(
         a_pre_border,
-        a_post_border,
-        a_pre_ch,
-        a_post_ch,
         b_extended,
+        a_pre_ch,
         b_ch,
-        best_start,
-        gap_frames,
-        pre_window,
-        post_window,
-    );
+        nominal_start_frame,
+        correlate_frames,
+        max_adjustment_frames,
+    )?;
+
+    let discovery_frames = correlate_frames;
+    let (end_frame, post_correlation) = discover_fill_end_in_b(
+        a_post_border,
+        b_extended,
+        a_post_ch,
+        b_ch,
+        start_frame,
+        nominal_end_frame,
+        a_gap_frames,
+        discovery_frames,
+        search_radius_frames,
+        correlate_frames,
+    )?;
+
+    let fill_frames = end_frame.saturating_sub(start_frame);
+    if fill_frames == 0 {
+        return None;
+    }
 
     Some(FillAlignment {
-        start_frame: best_start,
+        start_frame,
+        fill_frames,
         pre_correlation,
         post_correlation,
     })
+}
+
+/// Slide a candidate B window to maximize agreement with A's borders at both gap seams.
+///
+/// Uses [`align_fill_bracket`] with the post-border nominal at `start + gap_frames`.
+pub fn align_fill_segment(
+    a_pre_border: &[f64],
+    a_post_border: &[f64],
+    b_extended: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    b_ch: &[Vec<f64>],
+    gap_frames: usize,
+    nominal_start_frame: usize,
+    correlate_frames: usize,
+    max_adjustment_frames: usize,
+) -> Option<FillAlignment> {
+    align_fill_bracket(
+        a_pre_border,
+        a_post_border,
+        b_extended,
+        a_pre_ch,
+        a_post_ch,
+        b_ch,
+        gap_frames,
+        nominal_start_frame,
+        nominal_start_frame.saturating_add(gap_frames),
+        correlate_frames,
+        max_adjustment_frames,
+        max_adjustment_frames,
+    )
 }
 
 fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
@@ -1411,6 +1690,52 @@ mod tests {
     }
 
     #[test]
+    fn discover_fill_end_uses_b_gap_length_not_a_nominal() {
+        let rate = 1000.0;
+        let chirp = |offset: usize, len: usize| {
+            (0..len)
+                .map(|i| {
+                    let t = (offset + i) as f64 / rate;
+                    (std::f32::consts::TAU as f64 * 60.0 * t * t).sin()
+                })
+                .collect::<Vec<_>>()
+        };
+        let pre = chirp(0, 100);
+        let post = chirp(150, 100);
+        let b_gap_frames = 50usize;
+        let a_gap_frames = 80usize;
+
+        let mut haystack = Vec::new();
+        haystack.extend(&pre);
+        haystack.extend(vec![0.0; b_gap_frames]);
+        haystack.extend(&post);
+
+        let fill_start = pre.len();
+        let true_end = fill_start + b_gap_frames;
+        let nominal_end = fill_start + a_gap_frames;
+
+        let (end, post_corr) = discover_fill_end_in_b(
+            &post,
+            &haystack,
+            &[],
+            &[],
+            fill_start,
+            nominal_end,
+            a_gap_frames,
+            40,
+            60,
+            40,
+        )
+        .expect("end discovery");
+
+        assert!(
+            end.abs_diff(true_end) <= 3,
+            "expected end near {true_end}, got {end}"
+        );
+        assert!(post_corr > 0.85, "post_corr={post_corr}");
+    }
+
+    #[test]
     fn align_fill_segment_finds_shifted_match() {
         let rate = 441.0;
         let chirp = |i: usize| {
@@ -1453,6 +1778,7 @@ mod tests {
         );
         assert!(alignment.pre_correlation > 0.9);
         assert!(alignment.post_correlation > 0.9);
+        assert_eq!(alignment.fill_frames, gap_frames);
         assert!(
             alignment.start_frame.abs_diff(true_start) < nominal.abs_diff(true_start),
             "alignment should be closer to true start than nominal was"
@@ -1542,11 +1868,26 @@ mod tests {
         samples.extend(vec![200i16; 4]);
         samples.extend(vec![8_000i16; 8]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, 16, 20, 12, 0.01, 0.0);
+        let (pre, post) = border_templates_for_gap(&samples, channels, 16, 20, 12, 0, 0.01, 0.0);
         assert!(!pre.is_empty());
         assert!(pre.iter().all(|&v| v.abs() > 1_000.0));
         assert!(!post.is_empty());
         assert!(post.iter().all(|&v| v.abs() > 1_000.0));
+    }
+
+    #[test]
+    fn border_standoff_excludes_audio_adjacent_to_dropout() {
+        let channels = 1usize;
+        let mut samples = vec![8_000i16; 20];
+        samples.extend(vec![0i16; 5]);
+        samples.extend(vec![8_000i16; 20]);
+
+        let (pre_no, _) =
+            border_templates_for_gap(&samples, channels, 20, 25, 15, 0, 0.01, 0.0);
+        let (pre_standoff, _) =
+            border_templates_for_gap(&samples, channels, 20, 25, 15, 5, 0.01, 0.0);
+        assert_eq!(pre_no.len(), 15);
+        assert_eq!(pre_standoff.len(), 10);
     }
 
     #[test]
@@ -1556,7 +1897,7 @@ mod tests {
         samples.extend(vec![0i16; 5]);
         samples.extend(vec![8_000i16; 5]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, 5, 10, 5, 0.01, 0.0);
+        let (pre, post) = border_templates_for_gap(&samples, channels, 5, 10, 5, 0, 0.01, 0.0);
         assert_eq!(pre.len(), 5);
         assert!(pre.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
         assert_eq!(post.len(), 5);

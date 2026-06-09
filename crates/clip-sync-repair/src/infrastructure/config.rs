@@ -69,6 +69,12 @@ pub struct RepairConfig {
     /// Minimum border template length (seconds) for discovery/correlation on short gaps.
     #[serde(default = "default_min_border_discovery_secs")]
     pub min_border_discovery_secs: f64,
+    /// A-side only: exclude audio this close (seconds) to the dropout when building border templates.
+    #[serde(default = "default_border_standoff_secs")]
+    pub border_standoff_secs: f64,
+    /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
+    #[serde(default = "default_short_gap_mean_correlation_secs")]
+    pub short_gap_mean_correlation_secs: f64,
     /// Crossfade duration at gap boundaries (ms).
     #[serde(default = "default_crossfade_ms")]
     pub crossfade_ms: u64,
@@ -128,6 +134,12 @@ fn default_fill_border_search_secs() -> f64 {
 fn default_min_border_discovery_secs() -> f64 {
     2.0
 }
+fn default_border_standoff_secs() -> f64 {
+    0.35
+}
+fn default_short_gap_mean_correlation_secs() -> f64 {
+    2.0
+}
 fn default_crossfade_ms() -> u64 {
     10
 }
@@ -154,6 +166,8 @@ impl Default for RepairConfig {
             max_fill_align_adjustment_secs: default_max_fill_align_adjustment_secs(),
             fill_border_search_secs: default_fill_border_search_secs(),
             min_border_discovery_secs: default_min_border_discovery_secs(),
+            border_standoff_secs: default_border_standoff_secs(),
+            short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
             normalize_window_secs: default_normalize_window_secs(),
@@ -284,6 +298,18 @@ impl RepairConfig {
         if self.min_border_discovery_secs < 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "min_border_discovery_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.border_standoff_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "border_standoff_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.short_gap_mean_correlation_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "short_gap_mean_correlation_secs".into(),
                 reason: "must be non-negative".into(),
             });
         }
