@@ -1,0 +1,38 @@
+# Example repair config (see README.md § Repair config).
+# clip_length is seconds in TOML (900 = 15 minutes).
+
+[clip]
+clip_length = 900
+num_clips = 2
+
+[alignment]
+min_match_score = 0.5
+refine_offset_with_pcm = true
+refine_offset_high_rate = true
+require_consistent_offsets = false
+try_all_tracks = false
+
+[logging]
+level = "warn"
+
+[repair]
+min_gap_ms = 1000
+silence_peak_fraction = 0.01
+scan_block_ms = 250
+decode_chunk_secs = 10
+silence_hold_ms = 500
+absolute_silence_rms = 33.0
+scan_both = true
+gap_offset_tolerance_secs = 0.5
+min_fill_correlation = 0.35
+fill_align_margin_secs = 1.0
+max_fill_align_adjustment_secs = 0.5
+crossfade_ms = 10
+normalize_fill = true
+normalize_window_secs = 5.0
+max_fill_gain_db = 12.0
+dry_run = true
+
+[repair.output]
+video_codec = "copy"
+audio_codec = "aac"

@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn clip_windows_short_media_single_start_clip() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows = clip_windows(mins(12), &plan).unwrap();
+        let windows = clip_windows_with_options(mins(12), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn clip_windows_two_clips_start_and_end() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows = clip_windows(mins(45), &plan).unwrap();
+        let windows = clip_windows_with_options(mins(45), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn clip_windows_num_clips_one_on_long_media() {
         let plan = ClipPlan::new(mins(15), 1);
-        let windows = clip_windows(mins(60), &plan).unwrap();
+        let windows = clip_windows_with_options(mins(60), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].end, mins(15));
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn clip_windows_three_clips_with_interior() {
         let plan = ClipPlan::new(mins(10), 3);
-        let windows = clip_windows(mins(60), &plan).unwrap();
+        let windows = clip_windows_with_options(mins(60), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].label, ClipLabel::Start);
@@ -587,7 +587,7 @@ mod tests {
     fn clip_windows_rejects_zero_duration() {
         let plan = ClipPlan::new(mins(15), 2);
         assert_eq!(
-            clip_windows(Duration::ZERO, &plan),
+            clip_windows_with_options(Duration::ZERO, &plan, ClipPlanningOptions::default()),
             Err(DomainError::InvalidDuration)
         );
     }

@@ -8,6 +8,6 @@ pub mod scan_gaps;
 pub mod testing;
 
 pub use error::RepairError;
-pub use patch_audio::{PatchAudio, PatchAudioRequest};
+pub use patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 pub use repair_videos::{RepairVideos, RepairWriteRequest};
 pub use scan_gaps::{ScanGaps, ScanGapsRequest};

@@ -50,12 +50,20 @@ pub struct Cli {
     /// Try every decodable audio track on both files and keep the best alignment.
     /// Use for multi-track MP4/MKV when the default track pick may be wrong (e.g. commentary
     /// at 48 kHz chosen over main program at 44.1 kHz). Slower: decodes each track pair.
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_try_all_tracks")]
     pub try_all_tracks: bool,
 
+    /// Disable try-all-tracks (overrides config).
+    #[arg(long, overrides_with = "try_all_tracks")]
+    pub no_try_all_tracks: bool,
+
     /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment.
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_refine_offset_high_rate")]
     pub refine_offset_high_rate: bool,
+
+    /// Disable high-rate offset refinement (overrides config).
+    #[arg(long, overrides_with = "refine_offset_high_rate")]
+    pub no_refine_offset_high_rate: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

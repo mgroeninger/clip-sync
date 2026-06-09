@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-ffmpeg-mux = []
+ffmpeg-mux = ["dep:tempfile"]
 
 [dependencies]
 clip-sync = { path = "../clip-sync" }
@@ -26,7 +26,8 @@ toml = "0.8"
 thiserror = "1"
 tracing = "0.1"
 hound = "3"
-tempfile = "3"
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }
+tempfile = "3"

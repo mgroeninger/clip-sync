@@ -1,5 +1,5 @@
 use crate::domain::gap::GapReport;
-use crate::domain::gap::interval_fully_within_window;
+use crate::domain::patch_result::GapFillSkipReason;
 use crate::domain::track_match::CompatibilityVerdict;
 
 /// Describes one region where B audio will be spliced into A.
@@ -13,9 +13,18 @@ pub struct FillRegion {
     pub crossfade_secs: f64,
 }
 
-/// Ordered list of regions to splice.
+/// A gap detected in A that will not be attempted during patching.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GapFillSkipped {
+    pub a_start_secs: f64,
+    pub a_end_secs: f64,
+    pub reason: GapFillSkipReason,
+}
+
+/// Ordered list of regions to splice plus gaps excluded at plan time.
 pub struct GapFillPlan {
     pub regions: Vec<FillRegion>,
+    pub skipped: Vec<GapFillSkipped>,
 }
 
 /// Build a fill plan from a gap report.
@@ -24,59 +33,74 @@ pub struct GapFillPlan {
 /// - `track_compatibility` is `None`
 /// - the compatibility verdict is `Mismatch`
 ///
-/// Only gaps for which [`Gap::is_fillable`] returns `true` are included.
-/// When a known overlap is present, only gaps fully contained within
-/// `overlap.video_a_start_secs..overlap.video_a_end_secs` are included.
-///
+/// Only gaps for which [`Gap::is_fillable`] returns `true` are included in `regions`.
+/// Other gaps are listed in `skipped` with a reason.
 pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan {
-    // Require compatible tracks.
-    match &report.track_compatibility {
-        None => return GapFillPlan { regions: vec![] },
-        Some(tc) if tc.verdict == CompatibilityVerdict::Mismatch => {
-            return GapFillPlan { regions: vec![] }
-        }
-        Some(_) => {}
-    }
-
     let crossfade_secs = crossfade_ms as f64 / 1000.0;
 
-    let regions = report
-        .gaps
-        .iter()
-        .filter(|g| g.is_fillable())
-        .filter(|g| {
-            if let Some(ref ov) = report.overlap {
-                interval_fully_within_window(
-                    g.video_a_start_secs,
-                    g.video_a_end_secs,
-                    ov.video_a_start_secs,
-                    ov.video_a_end_secs,
-                )
-            } else {
-                true
-            }
-        })
-        .map(|g| FillRegion {
+    let plan_block_reason = match &report.track_compatibility {
+        None => Some(GapFillSkipReason::TrackCompatibilityUnavailable),
+        Some(tc) if tc.verdict == CompatibilityVerdict::Mismatch => {
+            Some(GapFillSkipReason::TrackLayoutMismatch)
+        }
+        Some(_) => None,
+    };
+
+    if let Some(reason) = plan_block_reason {
+        let skipped = report
+            .gaps
+            .iter()
+            .map(|g| GapFillSkipped {
+                a_start_secs: g.video_a_start_secs,
+                a_end_secs: g.video_a_end_secs,
+                reason: if g.is_fillable() {
+                    reason.clone()
+                } else {
+                    GapFillSkipReason::NotFillable
+                },
+            })
+            .collect();
+        return GapFillPlan {
+            regions: vec![],
+            skipped,
+        };
+    }
+
+    let mut regions = Vec::new();
+    let mut skipped = Vec::new();
+
+    for g in &report.gaps {
+        if !g.is_fillable() {
+            skipped.push(GapFillSkipped {
+                a_start_secs: g.video_a_start_secs,
+                a_end_secs: g.video_a_end_secs,
+                reason: GapFillSkipReason::NotFillable,
+            });
+            continue;
+        }
+
+        regions.push(FillRegion {
             a_start_secs: g.video_a_start_secs,
             a_end_secs: g.video_a_end_secs,
             b_start_secs: g.video_b_start_secs.unwrap(),
             b_end_secs: g.video_b_end_secs.unwrap(),
             gain: 1.0,
             crossfade_secs,
-        })
-        .collect();
+        });
+    }
 
-    GapFillPlan { regions }
+    GapFillPlan { regions, skipped }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
+    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap};
 
     use crate::domain::{
         gap::{Gap, GapReport},
+        patch_result::GapFillSkipReason,
         track_match::{CompatibilityVerdict, TrackCompatibility},
     };
 
@@ -158,6 +182,11 @@ mod tests {
         let report = base_report(Some(stereo_mismatch()), vec![fillable_gap(0.0, 3.0)]);
         let plan = build_gap_fill_plan(&report, 10);
         assert!(plan.regions.is_empty());
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(
+            plan.skipped[0].reason,
+            GapFillSkipReason::TrackLayoutMismatch
+        );
     }
 
     #[test]
@@ -165,6 +194,11 @@ mod tests {
         let report = base_report(None, vec![fillable_gap(0.0, 3.0)]);
         let plan = build_gap_fill_plan(&report, 10);
         assert!(plan.regions.is_empty());
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(
+            plan.skipped[0].reason,
+            GapFillSkipReason::TrackCompatibilityUnavailable
+        );
     }
 
     #[test]
@@ -185,17 +219,17 @@ mod tests {
         assert!((plan.regions[0].a_start_secs - 3.0).abs() < 0.001);
         assert!((plan.regions[0].a_end_secs - 6.0).abs() < 0.001);
         assert!((plan.regions[0].crossfade_secs - 0.01).abs() < 0.0001);
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].reason, GapFillSkipReason::NotFillable);
     }
 
     #[test]
-    fn build_gap_fill_plan_excludes_outside_overlap() {
-        use clip_sync::TimelineOverlap;
-
+    fn build_gap_fill_plan_includes_gaps_outside_start_overlap() {
         let mut report = base_report(
             Some(stereo_identical()),
             vec![
-                fillable_gap(1.0, 4.0),  // inside overlap [0..10)
-                fillable_gap(8.0, 12.0), // straddles overlap edge → excluded
+                fillable_gap(1.0, 4.0),
+                fillable_gap(5979.0, 6180.0),
             ],
         );
         report.overlap = Some(TimelineOverlap {
@@ -206,7 +240,7 @@ mod tests {
             shared_length_secs: 10.0,
         });
         let plan = build_gap_fill_plan(&report, 0);
-        assert_eq!(plan.regions.len(), 1);
-        assert!((plan.regions[0].a_start_secs - 1.0).abs() < 0.001);
+        assert_eq!(plan.regions.len(), 2);
+        assert!(plan.skipped.is_empty());
     }
 }

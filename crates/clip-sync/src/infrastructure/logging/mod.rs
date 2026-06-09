@@ -39,7 +39,11 @@ pub struct LoggingConfig {
 
 #[cfg(feature = "default-tracing")]
 pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
+
+    use crate::application::error::ConfigError;
 
     let level = match config.level {
         LogLevel::Error => "error",
@@ -51,14 +55,34 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .try_init()
-        .ok();
+    if let Some(path) = &config.log_file {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| {
+                AppError::Config(ConfigError::InvalidValue {
+                    field: "log_file".into(),
+                    reason: format!("failed to open: {error}"),
+                })
+            })?;
 
-    if config.log_file.is_some() {
-        tracing::warn!("log file output is not yet implemented");
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(file)
+                    .with_ansi(false),
+            )
+            .try_init()
+            .ok();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .try_init()
+            .ok();
     }
 
     Ok(())

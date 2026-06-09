@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use clip_sync::{
@@ -7,10 +8,18 @@ use clip_sync::{
 
 use crate::application::error::RepairError;
 use crate::domain::{
-    gap_fill::{build_gap_fill_plan, FillRegion},
+    gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan},
+    patch_result::{
+        GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+    },
     policies::{self, FillAlignment},
-    GapReport,
+    Gap, GapReport,
 };
+
+pub struct PatchAudioResult {
+    pub pcm: MultiChannelPcm,
+    pub summary: PatchSummary,
+}
 
 pub struct PatchAudioRequest {
     pub report: GapReport,
@@ -52,7 +61,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         &self,
         request: PatchAudioRequest,
         crossfade_ms: u64,
-    ) -> Result<MultiChannelPcm, RepairError> {
+    ) -> Result<PatchAudioResult, RepairError> {
         // Step 1: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
         let session_a = self
@@ -75,9 +84,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Step 3: Build fill plan.
         let plan = build_gap_fill_plan(&request.report, crossfade_ms);
 
-        // Step 4: If no regions, return A as-is.
+        // Step 4: If no regions, return A as-is with per-gap outcomes.
         if plan.regions.is_empty() {
-            return Ok(a_pcm);
+            let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+                &request.report.gaps,
+                &plan,
+                &[],
+            ));
+            return Ok(PatchAudioResult { pcm: a_pcm, summary });
         }
 
         // Step 5: Open B, select best track.
@@ -104,9 +118,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Step 7: Collect B segments (immutable borrow on a_pcm.samples),
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
+        let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
 
         for region in &plan.regions {
-            let patch = match prepare_region_patch(
+            let (patch, outcome) = prepare_region_patch(
                 &session_b,
                 &track_b,
                 &a_pcm,
@@ -122,11 +137,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 request.max_fill_gain_db,
                 global_a_rms,
                 self.progress,
-            ) {
-                Some(patch) => patch,
-                None => continue,
-            };
-            patches.push(patch);
+            );
+            region_results.push((region.a_start_secs, region.a_end_secs, outcome));
+            if let Some(patch) = patch {
+                patches.push(patch);
+            }
         }
 
         // Step 8: Apply patches to A samples.
@@ -152,8 +167,78 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             );
         }
 
-        Ok(a_pcm)
+        let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+            &request.report.gaps,
+            &plan,
+            &region_results,
+        ));
+
+        Ok(PatchAudioResult { pcm: a_pcm, summary })
     }
+}
+
+enum RegionPatchOutcome {
+    Patched {
+        pre_correlation: f64,
+        post_correlation: f64,
+        align_adjustment_secs: f64,
+    },
+    Skipped(GapPatchSkipReason),
+}
+
+fn gap_key(start_secs: f64, end_secs: f64) -> (u64, u64) {
+    (start_secs.to_bits(), end_secs.to_bits())
+}
+
+fn outcomes_in_report_order(
+    gaps: &[Gap],
+    plan: &GapFillPlan,
+    region_results: &[(f64, f64, RegionPatchOutcome)],
+) -> Vec<GapPatchOutcome> {
+    let mut status_by_gap: HashMap<(u64, u64), GapPatchStatus> = HashMap::new();
+
+    for skip in &plan.skipped {
+        status_by_gap.insert(
+            gap_key(skip.a_start_secs, skip.a_end_secs),
+            GapPatchStatus::NotPlanned {
+                reason: skip.reason.clone(),
+            },
+        );
+    }
+
+    for (a_start, a_end, outcome) in region_results {
+        let status = match outcome {
+            RegionPatchOutcome::Patched {
+                pre_correlation,
+                post_correlation,
+                align_adjustment_secs,
+            } => GapPatchStatus::Patched {
+                pre_correlation: *pre_correlation,
+                post_correlation: *post_correlation,
+                align_adjustment_secs: *align_adjustment_secs,
+            },
+            RegionPatchOutcome::Skipped(reason) => GapPatchStatus::Skipped {
+                reason: reason.clone(),
+            },
+        };
+        status_by_gap.insert(gap_key(*a_start, *a_end), status);
+    }
+
+    gaps
+        .iter()
+        .map(|gap| {
+            let status = status_by_gap
+                .remove(&gap_key(gap.video_a_start_secs, gap.video_a_end_secs))
+                .unwrap_or(GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable,
+                });
+            GapPatchOutcome {
+                a_start_secs: gap.video_a_start_secs,
+                a_end_secs: gap.video_a_end_secs,
+                status,
+            }
+        })
+        .collect()
 }
 
 fn prepare_region_patch(
@@ -172,7 +257,7 @@ fn prepare_region_patch(
     max_fill_gain_db: f64,
     global_a_rms: f32,
     progress: &dyn ProgressReporter,
-) -> Option<RegionPatch> {
+) -> (Option<RegionPatch>, RegionPatchOutcome) {
     debug_assert!(
         region.b_start_secs >= 0.0,
         "fill plan must not include gaps with negative B start"
@@ -190,7 +275,10 @@ fn prepare_region_patch(
         Ok(pcm) => pcm,
         Err(e) => {
             tracing::warn!(error = %e, "skipping gap fill region: B extraction failed");
-            return None;
+            return (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::BExtractFailed),
+            );
         }
     };
 
@@ -209,7 +297,10 @@ fn prepare_region_patch(
     let gap_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
     let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
     if gap_frames == 0 {
-        return None;
+        return (
+            None,
+            RegionPatchOutcome::Skipped(GapPatchSkipReason::ZeroLengthGap),
+        );
     }
 
     let pre_start_frame = gap_start_frame.saturating_sub(border_frames_from_secs(
@@ -250,7 +341,10 @@ fn prepare_region_patch(
                 a_start_secs = region.a_start_secs,
                 "skipping gap fill: boundary alignment failed"
             );
-            return None;
+            return (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed),
+            );
         }
     };
 
@@ -262,7 +356,14 @@ fn prepare_region_patch(
             a_start_secs = region.a_start_secs,
             "skipping gap fill: boundary correlation below threshold"
         );
-        return None;
+        return (
+            None,
+            RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: alignment.pre_correlation,
+                post_correlation: alignment.post_correlation,
+                min_correlation: min_fill_correlation,
+            }),
+        );
     }
 
     let fill_start_sample = alignment.start_frame * channels;
@@ -272,7 +373,10 @@ fn prepare_region_patch(
             a_start_secs = region.a_start_secs,
             "skipping gap fill: aligned B segment out of range"
         );
-        return None;
+        return (
+            None,
+            RegionPatchOutcome::Skipped(GapPatchSkipReason::AlignedSegmentOutOfRange),
+        );
     }
 
     let b_fill = b_samples[fill_start_sample..fill_end_sample].to_vec();
@@ -285,13 +389,23 @@ fn prepare_region_patch(
         1.0f32
     };
 
-    Some(RegionPatch {
-        b_samples: b_fill,
-        gain,
-        a_start_secs: region.a_start_secs,
-        a_end_secs: region.a_end_secs,
-        crossfade_secs: region.crossfade_secs,
-    })
+    let align_adjustment_secs =
+        (alignment.start_frame as f64 - nominal_start_frame as f64) / sample_rate as f64;
+
+    (
+        Some(RegionPatch {
+            b_samples: b_fill,
+            gain,
+            a_start_secs: region.a_start_secs,
+            a_end_secs: region.a_end_secs,
+            crossfade_secs: region.crossfade_secs,
+        }),
+        RegionPatchOutcome::Patched {
+            pre_correlation: alignment.pre_correlation,
+            post_correlation: alignment.post_correlation,
+            align_adjustment_secs,
+        },
+    )
 }
 
 fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {

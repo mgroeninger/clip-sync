@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clip_sync::{MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
-use crate::application::patch_audio::{PatchAudio, PatchAudioRequest};
+use crate::application::patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 use crate::application::ports::PatchedAudioWriter;
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::ports::{MediaMuxer, MuxOptions};
@@ -40,14 +40,15 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
     }
 
     #[cfg(not(feature = "ffmpeg-mux"))]
-    pub fn execute(&self, request: RepairWriteRequest) -> Result<(), RepairError> {
-        let Some(wav_path) = request.wav_path.as_ref() else {
-            return Ok(());
-        };
-
-        let patched = PatchAudio::new(self.media_reader, self.progress)
+    pub fn execute(&self, request: RepairWriteRequest) -> Result<PatchAudioResult, RepairError> {
+        let patch_result = PatchAudio::new(self.media_reader, self.progress)
             .execute(request.patch_request, request.crossfade_ms)?;
-        self.wav_writer.write(&patched, wav_path)
+
+        if let Some(wav_path) = request.wav_path.as_ref() {
+            self.wav_writer.write(&patch_result.pcm, wav_path)?;
+        }
+
+        Ok(patch_result)
     }
 
     #[cfg(feature = "ffmpeg-mux")]
@@ -55,18 +56,12 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         &self,
         request: RepairWriteRequest,
         muxer: &MM,
-    ) -> Result<(), RepairError> {
-        let wants_wav = request.wav_path.is_some();
-        let wants_mux = request.video_path.is_some();
-        if !wants_wav && !wants_mux {
-            return Ok(());
-        }
-
-        let patched = PatchAudio::new(self.media_reader, self.progress)
+    ) -> Result<PatchAudioResult, RepairError> {
+        let patch_result = PatchAudio::new(self.media_reader, self.progress)
             .execute(request.patch_request, request.crossfade_ms)?;
 
         if let Some(ref wav_path) = request.wav_path {
-            self.wav_writer.write(&patched, wav_path)?;
+            self.wav_writer.write(&patch_result.pcm, wav_path)?;
             if let Some(ref video_path) = request.video_path {
                 muxer.mux_video_with_replaced_audio(
                     &request.source_video,
@@ -75,13 +70,13 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
                     &request.mux_options,
                 )?;
             }
-            return Ok(());
+            return Ok(patch_result);
         }
 
         if let Some(ref video_path) = request.video_path {
             let temp = tempfile::NamedTempFile::new().map_err(RepairError::Io)?;
             let temp_path = temp.path();
-            self.wav_writer.write(&patched, temp_path)?;
+            self.wav_writer.write(&patch_result.pcm, temp_path)?;
             muxer.mux_video_with_replaced_audio(
                 &request.source_video,
                 temp_path,
@@ -90,6 +85,6 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
             )?;
         }
 
-        Ok(())
+        Ok(patch_result)
     }
 }

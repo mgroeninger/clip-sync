@@ -25,7 +25,7 @@ pub enum OutputFormat {
     Json,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepairConfig {
     /// Minimum silent window duration (ms) to include in the gap report.
     #[serde(default = "default_min_gap_ms")]
@@ -159,7 +159,7 @@ fn default_audio_codec() -> String {
 }
 
 /// Output configuration for the repair tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepairOutputConfig {
     /// Write patched audio to this WAV file.
     pub wav_path: Option<PathBuf>,
@@ -201,6 +201,12 @@ impl RepairConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.min_gap_ms == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "min_gap_ms".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
         if self.silence_peak_fraction <= 0.0 || self.silence_peak_fraction >= 1.0 {
             return Err(ConfigError::InvalidValue {
                 field: "silence_peak_fraction".into(),
@@ -219,6 +225,48 @@ impl RepairConfig {
                 reason: "must be greater than zero".into(),
             });
         }
+        if self.min_fill_correlation < -1.0 || self.min_fill_correlation > 1.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "min_fill_correlation".into(),
+                reason: "must be between -1.0 and 1.0 inclusive".into(),
+            });
+        }
+        if self.max_fill_gain_db <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "max_fill_gain_db".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.normalize_window_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "normalize_window_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.gap_offset_tolerance_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "gap_offset_tolerance_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.fill_align_margin_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_align_margin_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.max_fill_align_adjustment_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "max_fill_align_adjustment_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.absolute_silence_rms < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "absolute_silence_rms".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
         #[cfg(not(feature = "ffmpeg-mux"))]
         if self.output.video_path.is_some() {
             return Err(ConfigError::InvalidValue {
@@ -230,7 +278,7 @@ impl RepairConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepairAppConfig {
     #[serde(flatten)]
     pub align: AlignConfig,
@@ -381,6 +429,33 @@ dry_run = true
             .expect("write config");
         let config = load_repair_app_config(Some(&path)).expect("load config");
         assert!(!config.align.alignment.refine_offset_high_rate);
+    }
+
+    #[test]
+    fn rejects_min_gap_ms_zero() {
+        let config = RepairConfig {
+            min_gap_ms: 0,
+            ..RepairConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_min_fill_correlation_out_of_range() {
+        let config = RepairConfig {
+            min_fill_correlation: 1.5,
+            ..RepairConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn allows_min_fill_correlation_disable_gate() {
+        let config = RepairConfig {
+            min_fill_correlation: -1.0,
+            ..RepairConfig::default()
+        };
+        config.validate().expect("disable gate should be valid");
     }
 
     #[test]

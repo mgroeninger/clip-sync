@@ -15,6 +15,7 @@ pub trait PatchedAudioWriter {
     ) -> Result<(), RepairError>;
 }
 
+#[cfg(feature = "ffmpeg-mux")]
 /// Options passed to [`MediaMuxer::mux_video_with_replaced_audio`].
 #[derive(Debug, Clone)]
 pub struct MuxOptions {
@@ -22,6 +23,7 @@ pub struct MuxOptions {
     pub audio_codec: String,
 }
 
+#[cfg(feature = "ffmpeg-mux")]
 /// Output port: muxes replacement audio into a video container (R5, `ffmpeg-mux` feature).
 pub trait MediaMuxer {
     fn mux_video_with_replaced_audio(

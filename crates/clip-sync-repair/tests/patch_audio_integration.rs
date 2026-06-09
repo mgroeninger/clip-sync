@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
+use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
@@ -184,14 +185,14 @@ fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<i16>,
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
 
-    let patched = PatchAudio::new(&media_reader, &progress)
+    let result = PatchAudio::new(&media_reader, &progress)
         .execute(request, crossfade_ms)
         .expect("patch should succeed");
 
     let temp = tempfile::tempdir().expect("tempdir");
     let path_out = temp.path().join("out.wav");
     WavPatchedAudioWriter
-        .write(&patched, &path_out)
+        .write(&result.pcm, &path_out)
         .expect("write should succeed");
 
     let mut reader = WavReader::open(&path_out).expect("open out.wav");
@@ -247,20 +248,25 @@ fn patch_audio_fills_gap_in_stereo_wav() {
         0.35,
     );
 
-    let (samples, sample_rate, channels) = patch_to_samples(request, 10);
-    assert_eq!(sample_rate, SAMPLE_RATE);
-    assert_eq!(channels, CHANNELS);
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let result = PatchAudio::new(&media_reader, &progress)
+        .execute(request, 10)
+        .expect("patch should succeed");
+    assert_eq!(result.pcm.sample_rate, SAMPLE_RATE);
+    assert_eq!(result.pcm.channels, CHANNELS);
+    assert_eq!(result.summary.patched_count, 1);
 
-    let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    let gap_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
         gap_rms > 100.0,
         "gap region should have audio after fill, got rms={gap_rms}"
     );
 
-    let pre_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
+    let pre_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
     assert!(pre_rms > 100.0, "pre-gap region should have audio, got rms={pre_rms}");
 
-    let post_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
+    let post_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
     assert!(
         post_rms > 100.0,
         "post-gap region should retain A audio after splice, got rms={post_rms}"
@@ -284,17 +290,30 @@ fn patch_audio_skips_fill_when_boundary_correlation_below_threshold() {
         0.35,
     );
 
-    let (samples, _, _) = patch_to_samples(request, 10);
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let result = PatchAudio::new(&media_reader, &progress)
+        .execute(request, 10)
+        .expect("patch should succeed");
 
-    let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    let gap_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
         gap_rms < 50.0,
         "gap should stay silent when boundary correlation fails, got rms={gap_rms}"
     );
 
     // Borders outside the gap should still have A's original sine.
-    let pre_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
+    let pre_rms = rms_region(&result.pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
     assert!(pre_rms > 100.0, "pre-gap audio should be preserved, got rms={pre_rms}");
+
+    assert_eq!(result.summary.patched_count, 0);
+    assert_eq!(result.summary.skipped_count, 1);
+    match &result.summary.gaps[0].status {
+        GapPatchStatus::Skipped {
+            reason: GapPatchSkipReason::CorrelationBelowThreshold { .. },
+        } => {}
+        other => panic!("expected correlation skip, got {other:?}"),
+    }
 }
 
 #[test]

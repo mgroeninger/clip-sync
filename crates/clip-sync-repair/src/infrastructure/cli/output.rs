@@ -1,8 +1,12 @@
 use clip_sync::ClipLabel;
+use serde::Serialize;
 
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
-use crate::domain::{CompatibilityVerdict, GapReport};
+use crate::domain::{
+    CompatibilityVerdict, GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, GapReport,
+    PatchSummary,
+};
 use crate::infrastructure::config::OutputFormat;
 
 pub struct StdoutGapReporter {
@@ -146,16 +150,113 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
 }
 
 fn print_json(report: &GapReport) -> Result<(), RepairError> {
-    let json = serde_json::to_string_pretty(report)
+    print_json_with_patch(report, None)
+}
+
+#[derive(Serialize)]
+struct RepairJsonOutput<'a> {
+    scan: &'a GapReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    patch: Option<&'a PatchSummary>,
+}
+
+pub fn print_repair_output(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+    format: OutputFormat,
+) -> Result<(), RepairError> {
+    match format {
+        OutputFormat::Human => {
+            print!("{}", format_human(report));
+            if let Some(summary) = patch {
+                print!("{}", format_patch_summary(summary));
+            }
+            Ok(())
+        }
+        OutputFormat::Json => print_json_with_patch(report, patch),
+    }
+}
+
+fn print_json_with_patch(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+) -> Result<(), RepairError> {
+    let payload = RepairJsonOutput { scan: report, patch };
+    let json = serde_json::to_string_pretty(&payload)
         .map_err(|e| RepairError::Config(format!("JSON serialization failed: {e}")))?;
     println!("{json}");
     Ok(())
+}
+
+pub fn format_patch_summary(summary: &PatchSummary) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!(
+        "\nPatch results ({} patched, {} skipped, {} not planned):\n",
+        summary.patched_count, summary.skipped_count, summary.not_planned_count
+    ));
+
+    if summary.gaps.is_empty() {
+        out.push_str("  (no gaps in scan report)\n");
+        return out;
+    }
+
+    out.push('\n');
+
+    for (i, gap) in summary.gaps.iter().enumerate() {
+        let detail = match &gap.status {
+            GapPatchStatus::Patched {
+                pre_correlation,
+                post_correlation,
+                align_adjustment_secs,
+            } => format!(
+                "patched  (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+            ),
+            GapPatchStatus::Skipped { reason } => {
+                format!("skipped: {}", format_patch_skip_reason(reason))
+            }
+            GapPatchStatus::NotPlanned { reason } => {
+                format!("not planned: {}", format_fill_skip_reason(reason))
+            }
+        };
+        out.push_str(&format!(
+            "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}\n",
+            i + 1,
+            gap.a_start_secs,
+            gap.a_end_secs,
+            gap.a_end_secs - gap.a_start_secs,
+            detail,
+        ));
+    }
+
+    out
+}
+
+fn format_patch_skip_reason(reason: &GapPatchSkipReason) -> &'static str {
+    match reason {
+        GapPatchSkipReason::BExtractFailed => "B audio extraction failed",
+        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary alignment failed",
+        GapPatchSkipReason::CorrelationBelowThreshold { .. } => {
+            "boundary correlation below threshold"
+        }
+        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range",
+        GapPatchSkipReason::ZeroLengthGap => "zero-length gap",
+    }
+}
+
+fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
+    match reason {
+        GapFillSkipReason::NotFillable => "no B energy or alignment offset missing",
+        GapFillSkipReason::TrackLayoutMismatch => "track layout mismatch",
+        GapFillSkipReason::TrackCompatibilityUnavailable => "track compatibility unavailable",
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use super::{format_patch_summary, RepairJsonOutput};
     use crate::domain::gap::{Gap, GapReport};
     use crate::domain::{CompatibilityVerdict, TrackCompatibility};
     use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap};
@@ -224,6 +325,77 @@ mod tests {
         assert_eq!(value["track_compatibility"]["verdict"], "compatible");
         assert_eq!(value["track_compatibility"]["channels_match"], true);
         assert_eq!(value["overlap"]["shared_length_secs"], 900.0);
+    }
+
+    #[test]
+    fn json_repair_output_includes_patch_summary_when_present() {
+        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+
+        let report = minimal_report();
+        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
+            a_start_secs: 0.0,
+            a_end_secs: 60.0,
+            status: GapPatchStatus::Patched {
+                pre_correlation: 0.91,
+                post_correlation: 0.88,
+                align_adjustment_secs: 0.02,
+            },
+        }]);
+        let payload = RepairJsonOutput {
+            scan: &report,
+            patch: Some(&summary),
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(value["scan"]["gaps"].is_array());
+        assert_eq!(value["patch"]["patched_count"], 1);
+        assert_eq!(
+            value["patch"]["gaps"][0]["status"]["patched"]["pre_correlation"],
+            0.91
+        );
+    }
+
+    #[test]
+    fn human_patch_summary_lists_patched_and_skipped_gaps() {
+        use crate::domain::{
+            GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+        };
+
+        let summary = PatchSummary::from_outcomes(vec![
+            GapPatchOutcome {
+                a_start_secs: 1.0,
+                a_end_secs: 4.0,
+                status: GapPatchStatus::Patched {
+                    pre_correlation: 0.92,
+                    post_correlation: 0.90,
+                    align_adjustment_secs: 0.01,
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 5979.0,
+                a_end_secs: 6180.0,
+                status: GapPatchStatus::Skipped {
+                    reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                        pre_correlation: 0.1,
+                        post_correlation: 0.08,
+                        min_correlation: 0.35,
+                    },
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 7000.0,
+                a_end_secs: 7010.0,
+                status: GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable,
+                },
+            },
+        ]);
+
+        let text = format_patch_summary(&summary);
+        assert!(text.contains("1 patched, 1 skipped, 1 not planned"));
+        assert!(text.contains("patched"));
+        assert!(text.contains("skipped: boundary correlation below threshold"));
+        assert!(text.contains("not planned: no B energy or alignment offset missing"));
     }
 
     fn failed_alignment_report() -> GapReport {
