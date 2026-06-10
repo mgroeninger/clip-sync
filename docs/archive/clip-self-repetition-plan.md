@@ -1,6 +1,6 @@
 # Temporary plan: clip self-repetition check
 
-> **Status:** Phase 0 complete (2026-06-06). Phase 1 not started. Workspace refactor (Phases 1–4) complete — paths below are **`crates/clip-sync`** + **`crates/clip-sync-cli`**. Archive to `docs/archive/clip-self-repetition-plan.md` when shipped.
+> **Status:** All phases complete (2026-06-10). Archived to `docs/archive/clip-self-repetition-plan.md`.
 
 **Problem:** A clip whose audio repeats internally (loop, rebroadcast, duplicated segment) can produce ambiguous Chromaprint matches — both cross-file alignment and offset verification may latch onto the wrong lag with high confidence.
 

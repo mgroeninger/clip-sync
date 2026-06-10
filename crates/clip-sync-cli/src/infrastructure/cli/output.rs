@@ -72,10 +72,17 @@ pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> 
 
     if let Some(refine) = &result.high_rate_refinement {
         if refine.applied {
-            out.push_str(&format!(
-                "  High-rate refinement: {:+.3}s adjustment (peak {:.2})\n",
-                refine.adjustment_secs, refine.correlation_peak
-            ));
+            if show_diagnostics {
+                out.push_str(&format!(
+                    "  High-rate refinement: {:+.3}s adjustment (peak {:.2})\n",
+                    refine.adjustment_secs, refine.correlation_peak
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  High-rate refinement: {:+.3}s adjustment\n",
+                    refine.adjustment_secs
+                ));
+            }
         } else if show_diagnostics {
             let reason = refine.skip_reason.as_deref().unwrap_or("not applied");
             out.push_str(&format!("  High-rate refinement: skipped ({reason})\n"));

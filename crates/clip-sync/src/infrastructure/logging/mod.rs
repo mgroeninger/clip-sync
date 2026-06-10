@@ -37,6 +37,22 @@ pub struct LoggingConfig {
     pub progress: ProgressMode,
 }
 
+/// Default `EnvFilter` when `RUST_LOG` is unset: clip-sync crates at `level`, all other targets at `warn`.
+pub fn default_env_filter(level: LogLevel) -> String {
+    let app = log_level_name(level);
+    format!("clip_sync={app},clip_sync_repair={app},warn")
+}
+
+fn log_level_name(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Info => "info",
+        LogLevel::Debug => "debug",
+        LogLevel::Trace => "trace",
+    }
+}
+
 #[cfg(feature = "default-tracing")]
 pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
     use tracing_subscriber::layer::SubscriberExt;
@@ -45,15 +61,8 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
 
     use crate::application::error::ConfigError;
 
-    let level = match config.level {
-        LogLevel::Error => "error",
-        LogLevel::Warn => "warn",
-        LogLevel::Info => "info",
-        LogLevel::Debug => "debug",
-        LogLevel::Trace => "trace",
-    };
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_env_filter(config.level)));
 
     if let Some(path) = &config.log_file {
         let file = std::fs::OpenOptions::new()
@@ -86,4 +95,21 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_env_filter_sets_app_crates_and_warn_root() {
+        assert_eq!(
+            default_env_filter(LogLevel::Info),
+            "clip_sync=info,clip_sync_repair=info,warn"
+        );
+        assert_eq!(
+            default_env_filter(LogLevel::Debug),
+            "clip_sync=debug,clip_sync_repair=debug,warn"
+        );
+    }
 }

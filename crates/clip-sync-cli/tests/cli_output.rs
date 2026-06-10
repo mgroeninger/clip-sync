@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clip_sync::{
     AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport, ConfigError,
-    DomainError, FingerprintError, MediaError, RepetitionFinding,
+    DomainError, FingerprintError, HighRateRefinement, MediaError, RepetitionFinding,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::format_human_output;
@@ -173,6 +173,50 @@ fn clip_match_json_has_required_fields() {
     assert!(clip["confidence"].is_number());
     assert!(clip["video_a_decode_skips"].is_number());
     assert!(clip["video_b_decode_skips"].is_number());
+}
+
+#[test]
+fn high_rate_refinement_omits_peak_by_default() {
+    let mut result = aligned_result(3.0);
+    result.high_rate_refinement = Some(HighRateRefinement {
+        segment_start_secs: 0.0,
+        segment_length_secs: 3.0,
+        adjustment_secs: 0.01,
+        correlation_peak: 2_813_101_397.0,
+        applied: true,
+        skipped: false,
+        skip_reason: None,
+    });
+
+    let output = format_human_output(false, &result);
+    assert!(
+        output.contains("High-rate refinement: +0.010s adjustment\n"),
+        "expected adjustment without peak: {output}"
+    );
+    assert!(
+        !output.contains("peak"),
+        "correlation peak must not appear in default human output: {output}"
+    );
+}
+
+#[test]
+fn high_rate_refinement_shows_peak_with_diagnostics() {
+    let mut result = aligned_result(3.0);
+    result.high_rate_refinement = Some(HighRateRefinement {
+        segment_start_secs: 0.0,
+        segment_length_secs: 3.0,
+        adjustment_secs: 0.01,
+        correlation_peak: 2_813_101_397.0,
+        applied: true,
+        skipped: false,
+        skip_reason: None,
+    });
+
+    let output = format_human_output(true, &result);
+    assert!(
+        output.contains("High-rate refinement: +0.010s adjustment (peak 2813101397.00)"),
+        "expected peak in verbose output: {output}"
+    );
 }
 
 #[test]

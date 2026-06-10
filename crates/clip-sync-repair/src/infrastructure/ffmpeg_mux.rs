@@ -208,7 +208,7 @@ impl MediaMuxer for FfmpegMediaMuxer {
         let mut args = build_ffmpeg_mux_args(source_video, temp.path(), output, options);
         append_mux_progress_args(&mut args);
 
-        tracing::info!(
+        tracing::debug!(
             source = %source_video.display(),
             output = %output.display(),
             "muxing video with patched audio via ffmpeg"

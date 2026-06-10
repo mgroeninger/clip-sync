@@ -551,7 +551,7 @@ fn prepare_region_patch(
         && structure_post >= strong_structure_trust;
 
     let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
-        tracing::info!(
+        tracing::debug!(
             structure_pre,
             structure_post,
             a_start_secs,
@@ -641,14 +641,14 @@ fn prepare_region_patch(
         let extend_to = (extend_from + need_samples).min(b_samples.len());
         if extend_from < extend_to {
             b_fill_raw.extend_from_slice(&b_samples[extend_from..extend_to]);
-            tracing::info!(
+            tracing::debug!(
                 a_start_secs,
                 extended_frames = (extend_to - extend_from) / channels,
                 "B bracket shorter than A gap; extended from contiguous B audio"
             );
         }
     } else if source_frames > gap_frames {
-        tracing::info!(
+        tracing::debug!(
             a_start_secs,
             b_fill_frames = source_frames,
             a_gap_frames = gap_frames,

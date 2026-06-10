@@ -10,8 +10,9 @@ use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
 use crate::application::testing::audio_fixtures::{
     write_near_silence_wav_pair, write_offset_chirp_wav_pair,
-    write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair, write_tone_wav,
-    write_tone_wav_at_frequency, write_two_clip_inconsistent_pair, ChirpDelayOn,
+    write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
+    write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
+    write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
 use crate::application::testing::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentResult;
@@ -147,6 +148,10 @@ pub struct CorpusCase {
     #[serde(default)]
     pub max_wall_secs: Option<f64>,
     #[serde(default)]
+    pub check_clip_repetition: bool,
+    #[serde(default)]
+    pub expect_clip_repetition: Option<bool>,
+    #[serde(default)]
     pub ignore: bool,
 }
 
@@ -258,6 +263,10 @@ fn write_chirp_pair_wavs(
             )
         }
         Some("near_silence_pair") => write_near_silence_wav_pair(dir, sample_rate, total_secs),
+        Some("repeated_segment_pair") => {
+            let offset_secs = case.offset_secs.unwrap_or(0);
+            write_repeated_segment_wav_pair(dir, sample_rate, total_secs, offset_secs)
+        }
         generator => panic!("case {}: unsupported generator {generator:?}", case.id),
     }
 }
@@ -440,6 +449,9 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig
     if let Some(refine_offset_high_rate) = case.refine_offset_high_rate {
         config.alignment.refine_offset_high_rate = refine_offset_high_rate;
     }
+    if case.check_clip_repetition {
+        config.validation.check_clip_repetition = true;
+    }
 
     config
 }
@@ -546,6 +558,40 @@ pub fn assert_corpus_expectations(
             case.id,
             defaults.min_confidence
         );
+    }
+
+    if let Some(expect) = case.expect_clip_repetition {
+        let rep = result.clips.first().and_then(|c| c.repetition.as_ref());
+        if expect {
+            let report = rep.unwrap_or_else(|| {
+                panic!("case {}: expected repetition report on clips[0]", case.id)
+            });
+            let finding = report.a.as_ref().or(report.b.as_ref()).unwrap_or_else(|| {
+                panic!(
+                    "case {}: expected at least one repetition finding in clips[0]",
+                    case.id
+                )
+            });
+            assert!(
+                (28.0_f64..=32.0).contains(&finding.lag_secs),
+                "case {}: lag_secs={} expected in [28, 32]",
+                case.id,
+                finding.lag_secs,
+            );
+            assert!(
+                finding.confidence >= 0.5,
+                "case {}: repetition confidence={} below 0.5",
+                case.id,
+                finding.confidence,
+            );
+        } else {
+            let has_finding = rep.is_some_and(|r| r.a.is_some() || r.b.is_some());
+            assert!(
+                !has_finding,
+                "case {}: expected no repetition finding",
+                case.id
+            );
+        }
     }
 }
 

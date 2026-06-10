@@ -190,3 +190,59 @@ pub fn write_near_silence_wav_pair(
 pub fn write_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
     write_tone_wav_at_frequency(path, sample_rate, seconds, 440.0);
 }
+
+/// Writes two mono WAV files that each contain an internal repeated segment.
+///
+/// Both files share a 1 kHz-sweeping chirp background (for cross-file alignment) mixed with a
+/// 440 Hz tone at content positions [0..10 s] and [30..40 s] (for self-repetition detection).
+/// File B is delayed by `offset_secs` of leading silence.
+///
+/// The chirp starts at 1 kHz to avoid overlapping the 440 Hz repeat signal in Chromaprint's
+/// low-frequency bands.
+pub fn write_repeated_segment_wav_pair(
+    dir: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    offset_secs: u32,
+) -> (PathBuf, PathBuf) {
+    const TONE_HZ: f32 = 440.0;
+    const TONE_BLOCK_SECS: usize = 10;
+    const REPEAT_AT_SECS: usize = 30;
+
+    let total_n = sample_rate as usize * total_secs as usize;
+    let block_n = sample_rate as usize * TONE_BLOCK_SECS;
+    let repeat_at_n = sample_rate as usize * REPEAT_AT_SECS;
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+
+    let make_samples = |delay: usize| -> Vec<i16> {
+        (0..total_n)
+            .map(|i| {
+                if i < delay {
+                    return 0;
+                }
+                let ci = i - delay;
+                let ci_t = ci as f64 / f64::from(sample_rate);
+                // Chirp starts at 1 kHz so it does not overlap with the 440 Hz repeat signal.
+                let chirp_freq = 1000.0 + 400.0 * ci_t;
+                let chirp = ((std::f64::consts::TAU * chirp_freq * ci_t).sin()
+                    * (i16::MAX as f64 * 0.5)) as i32;
+                let in_tone_block =
+                    ci < block_n || (ci >= repeat_at_n && ci < repeat_at_n + block_n);
+                let tone = if in_tone_block {
+                    let t = ci as f32 / sample_rate as f32;
+                    ((std::f32::consts::TAU * TONE_HZ * t).sin() * (i16::MAX as f32 * 0.4))
+                        as i32
+                } else {
+                    0
+                };
+                (chirp + tone).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+            })
+            .collect()
+    };
+
+    let delay = sample_rate as usize * offset_secs as usize;
+    write_mono_wav(&path_a, sample_rate, make_samples(0));
+    write_mono_wav(&path_b, sample_rate, make_samples(delay));
+    (path_a, path_b)
+}

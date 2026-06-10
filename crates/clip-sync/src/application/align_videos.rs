@@ -417,9 +417,16 @@ where
         );
 
         if config.validation.check_clip_repetition {
-            for (clip, (rep_a, rep_b)) in
-                result.clips.iter_mut().zip(repetition_diagnostics)
-            {
+            debug_assert_eq!(
+                result.clips.len(),
+                repetition_diagnostics.len(),
+                "repetition_diagnostics must be parallel to result.clips"
+            );
+            for (i, clip) in result.clips.iter_mut().enumerate() {
+                let (rep_a, rep_b) = repetition_diagnostics[i]; // Copy
+                if should_downgrade(&rep_a, &rep_b, estimates[i].offset_secs) {
+                    clip.confidence *= 0.5;
+                }
                 clip.repetition = Some(ClipRepetitionReport { a: rep_a, b: rep_b });
             }
         }
@@ -590,6 +597,17 @@ fn map_prepare_error(error: DomainError) -> AppError {
     }
 }
 
+/// Returns true when a repetition lag is close enough to the alignment offset that the
+/// confidence estimate may be inflated by the repeated content.
+fn should_downgrade(
+    rep_a: &Option<RepetitionFinding>,
+    rep_b: &Option<RepetitionFinding>,
+    offset_secs: f64,
+) -> bool {
+    let close = |rep: &RepetitionFinding| (rep.lag_secs - offset_secs.abs()).abs() <= 1.0;
+    rep_a.as_ref().is_some_and(close) || rep_b.as_ref().is_some_and(close)
+}
+
 fn mean_aligned_confidence(result: &AlignmentResult, min_match_score: f32) -> f32 {
     let aligned: Vec<f32> = result
         .clips
@@ -654,8 +672,8 @@ fn log_alignment_summary(
     if let Some(refine) = &result.high_rate_refinement {
         if refine.applied {
             progress.phase(&format!(
-                "High-rate refinement: {:+.3}s adjustment (peak {:.2})",
-                refine.adjustment_secs, refine.correlation_peak
+                "High-rate refinement: {:+.3}s adjustment",
+                refine.adjustment_secs
             ));
         } else if refine.skipped {
             progress.phase("High-rate refinement skipped");
@@ -1374,10 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn align_repetition_debug_only_phase1_clip_match_repetition_is_none() {
-        // Phase 1: check_clip_repetition is wired into the loop and debug-logged,
-        // but ClipMatch.repetition is not set yet (Phase 2). Assert that the field
-        // is absent from the result regardless of the flag being on.
+    fn align_repetition_clip_match_repetition_present_when_flag_on() {
         let reader = matched_reader();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1513,5 +1528,89 @@ mod tests {
                 "winner clips must have repetition set"
             );
         }
+    }
+
+    #[test]
+    fn downgrade_lowers_confidence_not_aligned() {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_repeated_segment_wav_pair;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        // Clip has a repeat at ~30 s; inter-file offset is also 30 s.
+        // should_downgrade fires because |lag - |offset|| ≤ 1.0.
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 130;
+        const OFFSET_SECS: u32 = 30;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) =
+            write_repeated_segment_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+
+        let base_config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        // Baseline confidence without the repetition flag.
+        let response_base = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a.clone(),
+                video_b: path_b.clone(),
+                config: base_config.clone(),
+            })
+            .expect("baseline execute");
+
+        assert!(response_base.result.start_aligned, "expected aligned at +{OFFSET_SECS}s");
+        let base_confidence = response_base.result.clips[0].confidence;
+
+        // With repetition check: confidence must be halved but aligned must not flip.
+        let mut config_rep = base_config;
+        config_rep.validation.check_clip_repetition = true;
+
+        let response_rep = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config: config_rep,
+            })
+            .expect("repetition execute");
+
+        let clip = &response_rep.result.clips[0];
+        assert!(
+            response_rep.result.start_aligned,
+            "start_aligned must not flip after confidence downgrade"
+        );
+        assert!(clip.aligned, "clip.aligned must not flip after confidence downgrade");
+        assert!(
+            clip.confidence < base_confidence,
+            "confidence must be downgraded: base={base_confidence}, after={}",
+            clip.confidence
+        );
+        assert!(
+            (clip.confidence - base_confidence * 0.5).abs() < 0.01,
+            "confidence must be approximately halved: base={base_confidence}, after={}",
+            clip.confidence
+        );
     }
 }

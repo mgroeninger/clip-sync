@@ -19,7 +19,7 @@ pub struct ClipMatchEstimate {
 }
 
 /// Internal repeat detected within a single prepared clip.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct RepetitionFinding {
     /// Positive seconds between repeated content.
     pub lag_secs: f64,

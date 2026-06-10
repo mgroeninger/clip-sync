@@ -29,12 +29,16 @@ impl StderrProgressReporter {
         matches!(self.mode, ProgressMode::Verbose) || self.is_tty
     }
 
+    /// End an in-progress TTY `\r` line so the next stderr write starts on a fresh line.
     fn finish_progress_line(&self, stderr: &mut impl Write) {
-        if self.is_tty && self.progress_active.get() {
-            let _ = writeln!(stderr);
-            self.progress_active.set(false);
-            self.last_percent.set(None);
+        if !self.progress_active.get() {
+            return;
         }
+        if self.is_tty {
+            let _ = writeln!(stderr);
+        }
+        self.progress_active.set(false);
+        self.last_percent.set(None);
     }
 }
 

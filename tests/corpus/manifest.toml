@@ -290,6 +290,20 @@ requires_ffmpeg = true
 requires_he_aac = true
 
 [[case]]
+id = "repeated_segment_in_clip"
+tier = "generated"
+generator = "repeated_segment_pair"
+format = "wav"
+total_secs = 65
+offset_secs = 3
+expected_offset_secs = 3.0
+tolerance_secs = 1.0
+expect_aligned = true
+expect_recommended = true
+check_clip_repetition = true
+expect_clip_repetition = true
+
+[[case]]
 id = "long_smoke_60m"
 tier = "external"
 generator = "offset_chirp_pair"
