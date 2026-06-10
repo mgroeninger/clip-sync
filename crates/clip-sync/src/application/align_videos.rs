@@ -17,6 +17,7 @@ use crate::domain::{
     TimelineOverlap,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
+use crate::infrastructure::logging::ExtractionProgressScope;
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
@@ -107,6 +108,7 @@ where
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
+        let extraction = ExtractionProgressScope::new(self.progress);
         let extracted_a = self.extract_clips(
             session_a,
             &plan,
@@ -114,6 +116,7 @@ where
             &request.config.alignment,
             "video A",
             None,
+            &extraction,
         )?;
         let extracted_b = self.extract_clips(
             session_b,
@@ -122,6 +125,7 @@ where
             &request.config.alignment,
             "video B",
             None,
+            &extraction,
         )?;
         let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
         Ok(AlignmentOutcome {
@@ -164,6 +168,7 @@ where
         };
 
         let mut best: Option<(AlignmentOutcome, ExtractedClips, ExtractedClips, f32)> = None;
+        let extraction = ExtractionProgressScope::new(self.progress);
 
         for track_a in &decodable_a {
             for track_b in &decodable_b {
@@ -178,6 +183,7 @@ where
                     &request.config.alignment,
                     "video A",
                     Some(track_a),
+                    &extraction,
                 )?;
                 let extracted_b = self.extract_clips(
                     session_b,
@@ -186,6 +192,7 @@ where
                     &request.config.alignment,
                     "video B",
                     Some(track_b),
+                    &extraction,
                 )?;
                 let result =
                     self.align_extracted_pair(&extracted_a, &extracted_b, &search_config)?;
@@ -436,6 +443,7 @@ where
         alignment_config: &crate::application::config::AlignmentConfig,
         label: &str,
         track: Option<&AudioTrack>,
+        extraction: &ExtractionProgressScope<'_>,
     ) -> Result<ExtractedClips, AppError> {
         let tracks = session.list_tracks()?;
         let track = match track {
@@ -496,6 +504,8 @@ where
 
         self.progress.phase_verbose(&format_clip_plan(label, &windows));
 
+        extraction.register_batch(windows.len() as u64);
+
         let mut extract_order: Vec<usize> = (0..windows.len()).collect();
         if windows.len() > 1 {
             extract_order.sort_by_key(|&index| windows[index].start);
@@ -522,13 +532,20 @@ where
                 windows.len(),
                 format_duration(window.duration())
             );
-            let mut clip =
-                session.extract_mono(track, &extract_window, self.progress, &progress_label)?;
+            let clip_progress = extraction.for_clip(step as u64);
+            let mut clip = session.extract_mono(
+                track,
+                &extract_window,
+                &clip_progress,
+                &progress_label,
+            )?;
             if let Some(target_rate) = clip_config.target_sample_rate {
                 clip = resample_mono_pcm(&clip, target_rate);
             }
             raw_clips[index] = Some(clip);
         }
+
+        extraction.finish_batch(windows.len() as u64);
 
         let raw_clips: Vec<MonoPcmClip> = raw_clips
             .into_iter()
@@ -777,7 +794,21 @@ mod tests {
     use crate::application::testing::fakes::{
         FakeAligner, FakeFingerprinter, FakeMediaReader, FakeMediaSession, FakeProgressReporter,
     };
-    use crate::domain::{ClipLabel, ClipMatchEstimate, DomainError};
+    use crate::domain::{ClipLabel, ClipMatch, ClipMatchEstimate, DomainError};
+    use crate::infrastructure::chromaprint::repetition::{
+        test_reset_repetition_detect_calls, test_repetition_detect_calls,
+    };
+
+    fn assert_repetition_wrapper_without_findings(clip: &ClipMatch) {
+        let report = clip
+            .repetition
+            .as_ref()
+            .expect("repetition wrapper must be present when flag is on");
+        assert!(
+            report.a.is_none() && report.b.is_none(),
+            "fake single-item fingerprints must not produce repetition findings"
+        );
+    }
 
     fn mins(m: u64) -> Duration {
         Duration::from_secs(m * 60)
@@ -1392,12 +1423,8 @@ mod tests {
             .expect("should succeed with repetition flag on");
 
         assert!(response.result.start_aligned);
-        // Phase 2: repetition is Some on every clip when flag is on.
         for clip in &response.result.clips {
-            assert!(
-                clip.repetition.is_some(),
-                "clip.repetition must be Some when check_clip_repetition is on"
-            );
+            assert_repetition_wrapper_without_findings(clip);
         }
     }
 
@@ -1449,9 +1476,14 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
 
         for clip in value["clips"].as_array().unwrap() {
+            let repetition = &clip["repetition"];
             assert!(
-                clip["repetition"].is_object(),
+                repetition.is_object(),
                 "repetition must be an object when flag on"
+            );
+            assert!(
+                repetition["a"].is_null() && repetition["b"].is_null(),
+                "fake fingerprints must serialize null findings"
             );
         }
     }
@@ -1497,42 +1529,171 @@ mod tests {
         config.alignment.try_all_tracks = true;
         config.validation.check_clip_repetition = true;
 
+        test_reset_repetition_detect_calls();
         let response = use_case
             .execute(request(config))
             .expect("try_all_tracks with repetition should succeed");
 
-        // Every clip in the result should have repetition populated.
         for clip in &response.result.clips {
-            assert!(
-                clip.repetition.is_some(),
-                "winner clips must have repetition set"
-            );
+            assert_repetition_wrapper_without_findings(clip);
         }
+        assert_eq!(
+            test_repetition_detect_calls(),
+            4,
+            "repetition detect must run once on the winning pair only (2 clips × a/b)"
+        );
     }
 
     #[test]
-    fn downgrade_lowers_confidence_not_aligned() {
+    fn should_downgrade_when_lag_matches_offset() {
+        let finding = RepetitionFinding {
+            lag_secs: 30.0,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        assert!(super::should_downgrade(&Some(finding), &None, 30.0));
+        assert!(super::should_downgrade(&None, &Some(finding), -30.0));
+    }
+
+    #[test]
+    fn should_downgrade_false_when_lag_differs_from_offset() {
+        let finding = RepetitionFinding {
+            lag_secs: 45.0,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        assert!(!super::should_downgrade(&Some(finding), &None, 30.0));
+        assert!(!super::should_downgrade(&None, &None, 30.0));
+    }
+
+    #[test]
+    fn should_downgrade_at_one_second_boundary() {
+        let finding = RepetitionFinding {
+            lag_secs: 29.0,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        assert!(
+            super::should_downgrade(&Some(finding), &None, 30.0),
+            "lag within 1 s of |offset| must downgrade"
+        );
+    }
+
+    #[test]
+    fn should_not_downgrade_beyond_one_second_boundary() {
+        let finding = RepetitionFinding {
+            lag_secs: 28.9,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        assert!(
+            !super::should_downgrade(&Some(finding), &None, 30.0),
+            "lag more than 1 s from |offset| must not downgrade"
+        );
+    }
+
+    #[test]
+    fn repetition_reported_on_pure_tone_fixture() {
         use crate::application::config::ChromaprintPreset;
-        use crate::application::testing::audio_fixtures::write_repeated_segment_wav_pair;
+        use crate::application::testing::audio_fixtures::write_pure_tone_repeat_wav_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
-        // Clip has a repeat at ~30 s; inter-file offset is also 30 s.
-        // should_downgrade fires because |lag - |offset|| ≤ 1.0.
         const SAMPLE_RATE: u32 = 44_100;
-        const TOTAL_SECS: u32 = 130;
-        const OFFSET_SECS: u32 = 30;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) =
-            write_repeated_segment_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+        let (path_a, path_b) = write_pure_tone_repeat_wav_pair(temp.path(), SAMPLE_RATE, 65, 0);
 
-        let base_config = AlignConfig {
+        let mut config = AlignConfig {
             clip: ClipConfig {
                 clip_length: Duration::from_secs(60),
                 num_clips: 1,
                 target_sample_rate: Some(SAMPLE_RATE),
-                normalize_loudness: false,
+                normalize_loudness: true,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.validation.check_clip_repetition = true;
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute");
+
+        assert!(response.result.start_aligned);
+        let offset = response
+            .result
+            .recommended_offset_secs
+            .unwrap_or(0.0);
+        assert!(offset.abs() < 0.5, "offset={offset}");
+
+        let clip = &response.result.clips[0];
+        let report = clip
+            .repetition
+            .as_ref()
+            .expect("repetition report");
+        let finding = report
+            .a
+            .as_ref()
+            .or(report.b.as_ref())
+            .expect("repetition finding on a or b");
+        assert!(
+            (28.0..=32.0).contains(&finding.lag_secs),
+            "lag_secs={}",
+            finding.lag_secs
+        );
+        assert!(finding.confidence >= 0.5);
+        // Repeat lag (~30 s) differs from offset (~0 s) — downgrade must not apply.
+        assert!(
+            !super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            "offset-aligned pair should not trigger confidence downgrade"
+        );
+    }
+
+    #[test]
+    fn downgrade_halves_confidence_when_lag_matches_offset() {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_pure_tone_repeat_wav_pair;
+        use crate::infrastructure::chromaprint::ChromaprintFingerprinter;
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        // Pure tone repeat at ~30 s with inter-file offset +30 s. Cross-file offset is injected
+        // via FakeAligner (pure-tone pairs do not yield a reliable +30 s Chromaprint match);
+        // repetition detection and downgrade merge use the real fingerprinter and pipeline.
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 130;
+        const OFFSET_SECS: u32 = 30;
+        const CLIP_SECS: u64 = 75;
+        const ALIGN_OFFSET: f64 = 30.0;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) =
+            write_pure_tone_repeat_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+
+        let base_config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(CLIP_SECS),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: true,
                 trim_silence: false,
                 window_slide_secs: 0,
                 ..ClipConfig::default()
@@ -1548,11 +1709,13 @@ mod tests {
         let media_reader = SymphoniaMediaReader;
         let preset = ChromaprintPreset::default();
         let fingerprinter = ChromaprintFingerprinter::new(preset);
-        let aligner = ChromaprintAligner::new(preset);
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: ALIGN_OFFSET,
+            confidence: 0.95,
+        });
         let progress = FakeProgressReporter;
         let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
 
-        // Baseline confidence without the repetition flag.
         let response_base = use_case
             .execute(AlignVideosRequest {
                 video_a: path_a.clone(),
@@ -1561,10 +1724,19 @@ mod tests {
             })
             .expect("baseline execute");
 
-        assert!(response_base.result.start_aligned, "expected aligned at +{OFFSET_SECS}s");
+        assert!(
+            response_base.result.start_aligned,
+            "expected aligned at +{OFFSET_SECS}s"
+        );
+        let base_offset = response_base.result.clips[0]
+            .offset_secs
+            .expect("offset");
+        assert!(
+            (base_offset - ALIGN_OFFSET).abs() < 0.01,
+            "offset={base_offset}"
+        );
         let base_confidence = response_base.result.clips[0].confidence;
 
-        // With repetition check: confidence must be halved but aligned must not flip.
         let mut config_rep = base_config;
         config_rep.validation.check_clip_repetition = true;
 
@@ -1577,6 +1749,13 @@ mod tests {
             .expect("repetition execute");
 
         let clip = &response_rep.result.clips[0];
+        let report = clip.repetition.as_ref().expect("repetition report");
+        assert!(
+            super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            "repeat lag must be within ±1 s of offset for downgrade: {:?} offset={:?}",
+            report,
+            clip.offset_secs
+        );
         assert!(
             response_rep.result.start_aligned,
             "start_aligned must not flip after confidence downgrade"
@@ -1591,6 +1770,81 @@ mod tests {
             (clip.confidence - base_confidence * 0.5).abs() < 0.01,
             "confidence must be approximately halved: base={base_confidence}, after={}",
             clip.confidence
+        );
+    }
+
+    #[test]
+    fn downgrade_preserves_aligned_when_halved_below_min_match_score() {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_pure_tone_repeat_wav_pair;
+        use crate::infrastructure::chromaprint::ChromaprintFingerprinter;
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 130;
+        const OFFSET_SECS: u32 = 30;
+        const CLIP_SECS: u64 = 75;
+        const ALIGN_OFFSET: f64 = 30.0;
+        const BASE_CONFIDENCE: f32 = 0.55;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) =
+            write_pure_tone_repeat_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+
+        let mut config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(CLIP_SECS),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: true,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.validation.check_clip_repetition = true;
+        let min_match_score = config.alignment.min_match_score;
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: ALIGN_OFFSET,
+            confidence: BASE_CONFIDENCE,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute");
+
+        let clip = &response.result.clips[0];
+        let report = clip.repetition.as_ref().expect("repetition report");
+        assert!(
+            super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            "repeat lag must trigger downgrade"
+        );
+        assert!(response.result.start_aligned);
+        assert!(clip.aligned, "aligned is computed before downgrade and must stay true");
+        assert!(
+            (clip.confidence - BASE_CONFIDENCE * 0.5).abs() < 0.01,
+            "confidence after downgrade: {}",
+            clip.confidence
+        );
+        assert!(
+            clip.confidence < min_match_score,
+            "halved confidence must fall below min_match_score without clearing aligned"
         );
     }
 }

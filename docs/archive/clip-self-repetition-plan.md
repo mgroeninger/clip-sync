@@ -44,7 +44,7 @@ Audit against the tree **after** workspace migration (2026-06-08). Use this tabl
 | Monotonic chirp control | **No finding** (midpoint guard rejects ~41 s false peak). |
 | Chirp-filled repeat (Phase 3 corpus shape) | **Not detected** in spike — tone block drowned by chirp; corpus fixture may need stronger tone or PCM assist in Phase 3. |
 
-Phase 1 detection should implement half-vs-half (not full self-match). Promote spike helpers from `repetition_spike.rs` into `matching.rs` / `repetition.rs`; keep spike tests as regression guard.
+Phase 1 initially implemented half-vs-half. **Post-phase-1 pivot:** half-vs-half was replaced with **sliding fingerprint autocorrelation** (see [Detection algorithm](#detection-algorithm-sliding-autocorrelation)) to handle repeats at any lag — specifically the "recording restarts" scenario where the content repeat occurs well away from the clip midpoint. See Phase 1 implementation notes below.
 
 ---
 
@@ -54,7 +54,10 @@ Locked before implementation. Change only with an explicit plan revision.
 
 | Topic | Decision |
 |-------|----------|
-| **Phase 0 gate** | **Done (2026-06-06).** Full self-match rejected; half-vs-half + midpoint guard chosen. See spike module. |
+| **Phase 0 gate** | **Done (2026-06-06).** Full self-match rejected; half-vs-half + midpoint guard initially chosen. **Replaced post-phase-1** by sliding autocorrelation (see Design). |
+| **Detection algorithm** | **Sliding fingerprint autocorrelation.** For each lag L ∈ [MIN_LAG_ITEMS, N−MIN_OVERLAP_ITEMS], compute mean Hamming distance over the overlap window. Report the global minimum if below AUTOCORR_SCORE_THRESHOLD. Replaced the half-vs-half approach because half-vs-half cannot detect repeats with lags far from the clip midpoint. |
+| **AUTOCORR_SCORE_THRESHOLD** | **2.0 bits** (strict). Genuine content restarts produce bit_error ≈ 0. A monotonic chirp that exits Chromaprint's ~5.5 kHz analysis range produces silence-like items; at lag ≈ 41 s the accidental self-similarity gives bit_error ≈ 2.5 — above the 2.0 threshold. Raising the threshold to cover typical content (mean ≈ 0–4 bits for real repeats) risks accepting this chirp artifact. |
+| **trim_silence in tests** | Detection tests use `fingerprint_untrimmed` (trim_silence=false) by default so trailing-silence clips don't lose the repeat lag. A separate test (`detect_clip_repetition_trim_shortens_searchable_lag_range`) documents the production-prep limitation: a clip whose only repeat lag exceeds the post-trim fingerprint length will not be detected. |
 | **Input audio** | Same prepared PCM / fingerprints used for cross-file match: after `prepare_clip_for_fingerprint`, and after `select_aligned_subclip_pair` when `window_slide_secs > 0`. Not raw extracts. |
 | **Which files** | Check **both** video A and video B for each clip index in the align loop. |
 | **Report model** | `repetition: Option<ClipRepetitionReport>` on `ClipMatch` when check ran; `None` on `ClipMatch` when check was off (field omitted from JSON). |
@@ -312,34 +315,44 @@ pub fn detect_clip_repetition(
 | Best non-zero cluster confidence `< min_confidence` | `None` |
 | Phase 0 fallback path | Half-vs-half match only if full self-match unusable |
 
-### Detection algorithm (Phase 1 — revise from Phase 0 spike)
+### Detection algorithm (sliding autocorrelation)
 
-Phase 0 rejected full self-match. Phase 1 should use **half-vs-half** on the prepared clip fingerprint:
+Phase 0 rejected full self-match (`match_fingerprints(&fp, &fp)` returns lag-0 only). Phase 1 initially shipped half-vs-half + midpoint guard, then was **replaced with sliding fingerprint autocorrelation** to cover repeats at any lag (the primary "recording restarts" use case has the repeat far from the midpoint).
 
 ```text
 fp = fingerprint(prepared_clip)
-mid_item = round((clip_duration_secs / 2) / item_secs)
-(left, right) = split fp.data at mid_item
-segments = match_fingerprints(left, right, config)
+n = fp.data.len()
+max_lag = n − MIN_OVERLAP_ITEMS
 
-segments' = segments where |offset2 - offset1| > 1 item
-(segment, ambiguous) = select_best_nonzero_lag_segment(segments')
-lag_secs = (clip_duration_secs / 2) + |offset2 - offset1| * item_secs
-if |lag_secs - clip_duration_secs/2| > 3.0 → None   # reject monotonic-chirp false peak
-confidence = segment_confidence(...)
-if confidence >= min_repetition_confidence:
-  → Some(RepetitionFinding { lag_secs, confidence, items_count })
-else:
-  → None
+for lag in MIN_LAG_ITEMS..=max_lag:
+    overlap = n − lag
+    mean_errors = mean(popcount(fp[i] XOR fp[i+lag]) for i in 0..overlap)
+    track best_lag / best_score (minimum mean_errors)
+
+if best_score >= AUTOCORR_SCORE_THRESHOLD → None
+confidence = autocorr_confidence(best_score, overlap)
+if confidence < min_confidence → None
+→ Some(RepetitionFinding { lag_secs: best_lag * item_secs, confidence, items_count: overlap })
 ```
 
-**Limitations (document in Phase 1):** detects repeats aligned near the clip midpoint (corpus fixture shape). General repeats at other lags need a future approach (e.g. PCM template scan). Chirp-heavy clips may miss repeats when the duplicated block is fingerprint-quiet.
+**Confidence formula:**
+
+```text
+score_conf  = clamp((AUTOCORR_BASELINE − mean_bit_error) / AUTOCORR_BASELINE, 0, 1)
+length_conf = clamp(overlap_items / MIN_OVERLAP_ITEMS, 0, 1)
+confidence  = sqrt(score_conf × length_conf)
+```
+
+**Why threshold = 2.0 (strict):** Genuine content restarts (identical audio at two positions) produce mean bit_error ≈ 0. A monotonic chirp (300 + 400t Hz) exits Chromaprint's ~5.5 kHz analysis range at ~13 s; the above-range portion produces near-identical fingerprint items. At lag ≈ 41 s the comparison window spans both active and above-range chirp, yielding bit_error ≈ 2.5. Threshold = 2.0 rejects this. Raising the threshold would admit the chirp artifact.
+
+**Silence trimming and searchable lag range:** Production prep uses `trim_silence: true`. A clip whose trailing silence extends past the second repeat block is cropped before fingerprinting, reducing `max_lag`. If the true repeat lag exceeds the trimmed fingerprint length minus `MIN_OVERLAP_ITEMS`, the repeat is not detected — this is a known, documented limitation. Tests use `trim_silence: false` (`fingerprint_untrimmed`) to isolate detection correctness from the trim limitation.
 
 | Constant | Value | Rationale |
 |----------|-------|-----------|
-| `min_lag_items` | 40 | ~5 s at default preset; exclude shorter segments before clustering |
-| `min_lag_secs` | `min_lag_items * item_duration` | Short-clip guard |
-| `max_lags_reported` | 1 | Primary repeat only in v1 |
+| `MIN_LAG_ITEMS` | 40 | ~5 s at default preset; skips trivial near-zero-lag matches |
+| `AUTOCORR_SCORE_THRESHOLD` | 2.0 | Strict: genuine repeats ≈ 0 bits; rejects chirp artifact ≈ 2.5 bits |
+| `AUTOCORR_BASELINE` | 16.0 | Expected mean Hamming distance for random 32-bit items (16 / 32 bits) |
+| `MIN_OVERLAP_ITEMS` | 50 | Minimum window for a statistically reliable mean |
 
 ### Integration (`align_extracted_pair`)
 
@@ -495,11 +508,14 @@ Choruses, applause, and steady test tones may trigger repetition. Output is a **
 | Test | Phase | Crate | Asserts |
 |------|-------|-------|---------|
 | Phase 0 spike | 0 | lib | Half-vs-half on silent-gap repeat → lag ≈ 30–32.5 s; full self-match lag-0 only; chirp control none |
-| `detect_clip_repetition_none_on_chirp` | 1 | lib | Monotonic chirp → `None` |
-| `detect_clip_repetition_none_on_empty` | 1 | lib | Empty fingerprint → `None` |
-| `detect_clip_repetition_none_when_too_short` | 1 | lib | 8s clip → `None` |
-| `detect_clip_repetition_finds_copied_block` | 1 | lib | 10s @ 0s + 10s @ 30s → `lag_secs` ∈ [28, 32], `confidence >= 0.5` |
-| `select_best_nonzero_lag_ignores_zero_cluster` | 1 | lib | Strong lag-0 + weaker lag-N → picks N |
+| `detect_clip_repetition_finds_copied_block` | 1 | lib | 10s@0s + 10s@30s, untrimmed → `lag_secs` ∈ [27, 33], confidence ≥ 0.5 |
+| `detect_clip_repetition_finds_repeat_at_non_midpoint_lag` | 1 | lib | 10s@0s + 10s@15s, untrimmed → `lag_secs` ∈ [13, 17]; autocorrelation finds lags far from midpoint |
+| `detect_clip_repetition_finds_non_midpoint_with_production_prep` | 1 | lib | Same 15s case with default prep (trim_silence=true); 25s of trailing silence still leaves lag searchable |
+| `detect_clip_repetition_trim_shortens_searchable_lag_range` | 1 | lib | 5s@0s + 5s@25s: true lag (202 items) fits untrimmed but exceeds max_lag after default trim → not detected |
+| `detect_clip_repetition_none_on_varied_content` | 1 | lib | Pseudorandom fingerprint (no repeat structure) → `None`; mean Hamming ≈ 16 bits at all lags |
+| `detect_clip_repetition_none_on_monotonic_chirp` | 1 | lib | 300+400t Hz chirp: above-range artifact gives bit_error ≈ 2.5 at lag ≈ 41s; threshold 2.0 rejects it |
+| `detect_clip_repetition_none_on_empty_fingerprint` | 1 | lib | Empty fingerprint → `None` |
+| `detect_clip_repetition_none_when_too_short` | 1 | lib | `clip_duration_secs=8.0 < min_clip_secs` → `None` |
 | `mono_pcm_clip_duration_secs` | 1 | lib | Helper matches sample len / rate |
 | `align_repetition_debug_only_phase1` | 1 | lib | Flag on; `ClipMatch.repetition` still `None` |
 | `align_json_repetition_object_when_flag_on` | 2 | lib | Flag on → every clip has `repetition` object; null sides when no finding |

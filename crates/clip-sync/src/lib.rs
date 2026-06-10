@@ -25,7 +25,9 @@ pub use application::offset_refinement::normalized_correlation;
 pub use infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
 pub use infrastructure::symphonia::SymphoniaMediaReader;
 pub use infrastructure::config::file::load_align_config;
-pub use infrastructure::logging::{LoggingConfig, LogLevel, ProgressMode, StderrProgressReporter};
+pub use infrastructure::logging::{
+    FINGERPRINT_ALIGN_STAGE, LoggingConfig, LogLevel, ProgressMode, StderrProgressReporter,
+};
 #[cfg(feature = "default-tracing")]
 pub use infrastructure::logging::init_tracing;
 

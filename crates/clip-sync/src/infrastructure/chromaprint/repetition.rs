@@ -2,6 +2,22 @@ use crate::application::config::ChromaprintPreset;
 use crate::domain::{Fingerprint, RepetitionFinding};
 use crate::infrastructure::chromaprint::config::configuration_for_preset;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+static DETECT_CLIP_REPETITION_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn test_reset_repetition_detect_calls() {
+    DETECT_CLIP_REPETITION_CALLS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn test_repetition_detect_calls() -> usize {
+    DETECT_CLIP_REPETITION_CALLS.load(Ordering::SeqCst)
+}
+
 /// Minimum candidate lag (fingerprint items) to skip trivial near-zero-lag matches.
 const MIN_LAG_ITEMS: usize = 40;
 
@@ -33,6 +49,9 @@ pub(crate) fn detect_clip_repetition(
     preset: ChromaprintPreset,
     min_confidence: f32,
 ) -> Option<RepetitionFinding> {
+    #[cfg(test)]
+    DETECT_CLIP_REPETITION_CALLS.fetch_add(1, Ordering::SeqCst);
+
     if fingerprint.data.is_empty() {
         return None;
     }
@@ -75,7 +94,7 @@ pub(crate) fn detect_clip_repetition(
     }
 
     let overlap = n - best_lag;
-    let confidence = autocorr_confidence(best_score, overlap);
+    let confidence = autocorr_confidence(best_score);
     if confidence < min_confidence {
         return None;
     }
@@ -87,11 +106,10 @@ pub(crate) fn detect_clip_repetition(
     })
 }
 
-fn autocorr_confidence(mean_bit_error: f64, overlap_items: usize) -> f32 {
+fn autocorr_confidence(mean_bit_error: f64) -> f32 {
     let score_conf =
         ((AUTOCORR_BASELINE - mean_bit_error) / AUTOCORR_BASELINE).clamp(0.0, 1.0) as f32;
-    let length_conf = (overlap_items as f32 / MIN_OVERLAP_ITEMS as f32).clamp(0.0, 1.0);
-    (score_conf * length_conf).sqrt()
+    score_conf.sqrt()
 }
 
 #[cfg(test)]
@@ -127,12 +145,27 @@ mod tests {
             .collect()
     }
 
-    fn fingerprint_prepared(clip: &MonoPcmClip) -> Fingerprint {
-        let prepared =
-            prepare_clip_for_fingerprint(clip, PcmPreparationOptions::default()).unwrap();
+    fn fingerprint_with_prep(clip: &MonoPcmClip, prep: PcmPreparationOptions) -> Fingerprint {
+        let prepared = prepare_clip_for_fingerprint(clip, prep).unwrap();
         ChromaprintFingerprinter::default()
             .fingerprint(&prepared)
             .unwrap()
+    }
+
+    /// Full clip fingerprinted without trailing-silence trim (isolates detection from prep).
+    fn fingerprint_untrimmed(clip: &MonoPcmClip) -> Fingerprint {
+        fingerprint_with_prep(
+            clip,
+            PcmPreparationOptions {
+                trim_silence: false,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Matches default align prep: trim trailing silence + peak normalize.
+    fn fingerprint_production_like(clip: &MonoPcmClip) -> Fingerprint {
+        fingerprint_with_prep(clip, PcmPreparationOptions::default())
     }
 
     /// 60s clip: 10s 440 Hz tone at 0s and 30s, silence elsewhere. Lag = 30s = T/2.
@@ -153,13 +186,29 @@ mod tests {
     }
 
     /// 60s clip: 10s 440 Hz tone at 0s and 15s, silence elsewhere.
-    /// Lag = 15s (within max searchable lag for a trimmed 60s fingerprint); midpoint = 30s;
-    /// |15 − 30| = 15s exceeds the old 3s guard. Uses 10s blocks (like midpoint) so silence
-    /// trimming leaves enough fingerprint items to search a 15s lag.
+    /// Lag = 15s; midpoint = 30s; |15 − 30| = 15s exceeds the old 3s guard.
+    /// Sized for default trim: repeat lag stays within searchable range after trailing trim.
     fn non_midpoint_repeat_clip() -> MonoPcmClip {
         let total = SAMPLE_RATE as usize * 60;
         let block = SAMPLE_RATE as usize * 10;
         let repeat_at = SAMPLE_RATE as usize * 15;
+        let mut samples = vec![0_i16; total];
+        let tone = tone_samples(SAMPLE_RATE, 0, block);
+        samples[..block].copy_from_slice(&tone);
+        samples[repeat_at..repeat_at + block].copy_from_slice(&tone);
+        MonoPcmClip {
+            sample_rate: SAMPLE_RATE,
+            samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        }
+    }
+
+    /// 60s clip: 5s tone at 0s and 25s — true lag exceeds max_lag after default trim.
+    fn distant_repeat_clip() -> MonoPcmClip {
+        let total = SAMPLE_RATE as usize * 60;
+        let block = SAMPLE_RATE as usize * 5;
+        let repeat_at = SAMPLE_RATE as usize * 25;
         let mut samples = vec![0_i16; total];
         let tone = tone_samples(SAMPLE_RATE, 0, block);
         samples[..block].copy_from_slice(&tone);
@@ -185,14 +234,14 @@ mod tests {
     fn detect_clip_repetition_finds_copied_block() {
         let clip = midpoint_repeat_clip();
         let duration = clip.samples.len() as f64 / f64::from(SAMPLE_RATE);
-        let fp = fingerprint_prepared(&clip);
+        let fp = fingerprint_untrimmed(&clip);
 
         let finding =
             detect_clip_repetition(&fp, duration, ChromaprintPreset::default(), MIN_CONFIDENCE)
                 .expect("expected repetition finding");
 
         assert!(
-            (finding.lag_secs - 30.0).abs() <= 3.0,
+            (finding.lag_secs - 30.0).abs() <= 1.0,
             "lag_secs={} (expected ~30s)",
             finding.lag_secs
         );
@@ -201,11 +250,9 @@ mod tests {
 
     #[test]
     fn detect_clip_repetition_finds_repeat_at_non_midpoint_lag() {
-        // Tone at 0s and 25s → lag = 25s, clip midpoint = 30s, |25 − 30| = 5s.
-        // The old half-vs-half algorithm's ±3s midpoint guard would reject this; autocorrelation
-        // finds it regardless of where the lag falls within the clip.
+        // Tone at 0s and 15s → lag = 15s. Autocorrelation finds repeats away from the midpoint.
         let clip = non_midpoint_repeat_clip();
-        let fp = fingerprint_prepared(&clip);
+        let fp = fingerprint_untrimmed(&clip);
 
         let finding =
             detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
@@ -220,9 +267,120 @@ mod tests {
     }
 
     #[test]
-    fn detect_clip_repetition_none_on_chirp() {
+    fn detect_clip_repetition_finds_non_midpoint_with_production_prep() {
+        let clip = non_midpoint_repeat_clip();
+        let fp = fingerprint_production_like(&clip);
+
+        let finding =
+            detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
+                .expect("expected repetition finding with default prep");
+
+        assert!(
+            (finding.lag_secs - 15.0).abs() <= 2.0,
+            "lag_secs={} expected ~15s",
+            finding.lag_secs
+        );
+    }
+
+    #[test]
+    fn detect_clip_repetition_trim_shortens_max_searchable_lag() {
+        let clip = distant_repeat_clip();
+        let config = configuration_for_preset(ChromaprintPreset::default());
+        let item_secs = f64::from(config.item_duration_in_seconds());
+        let true_lag_items = (25.0_f64 / item_secs).round() as usize;
+
+        let fp_untrimmed = fingerprint_untrimmed(&clip);
+        let max_lag_untrimmed = fp_untrimmed.data.len().saturating_sub(MIN_OVERLAP_ITEMS);
+        assert!(
+            true_lag_items <= max_lag_untrimmed,
+            "fixture: true lag {true_lag_items} must be searchable without trim (max_lag={max_lag_untrimmed})"
+        );
+
+        let fp_trimmed = fingerprint_production_like(&clip);
+        let max_lag_trimmed = fp_trimmed.data.len().saturating_sub(MIN_OVERLAP_ITEMS);
+        assert!(
+            true_lag_items > max_lag_trimmed,
+            "trim must push true lag {true_lag_items} beyond max_lag {max_lag_trimmed}"
+        );
+    }
+
+    #[test]
+    fn detect_clip_repetition_trim_may_cause_short_lag_false_positive() {
+        // After trim the true 25s lag is unsearchable, but tone-vs-silence boundaries can still
+        // produce a spurious detection near MIN_LAG_ITEMS (~5s).
+        let clip = distant_repeat_clip();
+        let fp_trimmed = fingerprint_production_like(&clip);
+        let finding = detect_clip_repetition(
+            &fp_trimmed,
+            60.0,
+            ChromaprintPreset::default(),
+            MIN_CONFIDENCE,
+        )
+        .expect("trimmed fixture currently false-positives at short lag");
+
+        let config = configuration_for_preset(ChromaprintPreset::default());
+        let item_secs = f64::from(config.item_duration_in_seconds());
+        let min_lag_secs = MIN_LAG_ITEMS as f64 * item_secs;
+        assert!(
+            (finding.lag_secs - min_lag_secs).abs() <= 1.0,
+            "expected short-lag false positive near {min_lag_secs}s, got lag_secs={}",
+            finding.lag_secs
+        );
+        assert!(
+            (finding.lag_secs - 25.0).abs() > 2.0,
+            "must not report the true 25s repeat after trim, got lag_secs={}",
+            finding.lag_secs
+        );
+    }
+
+    #[test]
+    fn detect_clip_repetition_rejects_when_min_confidence_too_high() {
+        let clip = midpoint_repeat_clip();
+        let fp = fingerprint_untrimmed(&clip);
+        let preset = ChromaprintPreset::default();
+
+        assert!(
+            detect_clip_repetition(&fp, 60.0, preset, MIN_CONFIDENCE).is_some(),
+            "default min_confidence should accept a strong repeat"
+        );
+        assert!(
+            detect_clip_repetition(&fp, 60.0, preset, 0.999).is_none(),
+            "very high min_confidence should reject the same fingerprint"
+        );
+    }
+
+    #[test]
+    fn detect_clip_repetition_none_on_varied_content() {
+        // Algorithm sanity: pseudorandom fingerprints have no repeat structure.
+        let n_items = 463; // ~57s at item_secs ≈ 0.124s
+        let mut x = 0xDEAD_BEEF_u32;
+        let data: Vec<u32> = (0..n_items)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                x
+            })
+            .collect();
+        let fp = Fingerprint { data };
+
+        let config = configuration_for_preset(ChromaprintPreset::default());
+        let item_secs = f64::from(config.item_duration_in_seconds());
+        let duration = n_items as f64 * item_secs;
+
+        assert!(
+            detect_clip_repetition(&fp, duration, ChromaprintPreset::default(), MIN_CONFIDENCE)
+                .is_none(),
+            "pseudorandom fingerprint should not trigger detection"
+        );
+    }
+
+    #[test]
+    fn detect_clip_repetition_none_on_monotonic_chirp() {
+        // End-to-end negative control: Chromaprint can collapse above-range chirp energy into
+        // near-identical items (~41s false peak). Measured on Test2/default: global min bit_error
+        // ≈ 2.51 vs AUTOCORR_SCORE_THRESHOLD 2.0 (~0.5 bit margin). Re-measure if upgrading
+        // rusty-chromaprint or changing presets.
         let clip = monotonic_chirp_clip(60);
-        let fp = fingerprint_prepared(&clip);
+        let fp = fingerprint_untrimmed(&clip);
 
         assert!(
             detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
@@ -243,218 +401,11 @@ mod tests {
     #[test]
     fn detect_clip_repetition_none_when_too_short() {
         let clip = midpoint_repeat_clip();
-        let fp = fingerprint_prepared(&clip);
-        // Duration below (MIN_LAG_ITEMS + MIN_OVERLAP_ITEMS) * item_secs triggers the early exit.
+        let fp = fingerprint_untrimmed(&clip);
         assert!(
             detect_clip_repetition(&fp, 8.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
                 .is_none(),
             "clip duration too short for reliable autocorrelation"
         );
-    }
-}
-
-// TEMP DIAGNOSTIC - remove after calibration
-#[cfg(test)]
-mod diag {
-    use std::f32::consts::TAU;
-    use crate::application::config::ChromaprintPreset;
-    use crate::application::ports::Fingerprinter;
-    use crate::domain::{prepare_clip_for_fingerprint, MonoPcmClip, PcmPreparationOptions};
-    use crate::infrastructure::chromaprint::{ChromaprintFingerprinter, config::configuration_for_preset};
-    const SR: u32 = 44_100;
-    fn mk_tone(secs: u32) -> MonoPcmClip {
-        let n = SR as usize * secs as usize;
-        let samples: Vec<i16> = (0..n).map(|i| {
-            let t = i as f32 / SR as f32;
-            ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
-        }).collect();
-        MonoPcmClip { sample_rate: SR, samples, decode_error_skips: 0, decoded_sample_count: None }
-    }
-    fn mk_chirp(secs: u32) -> MonoPcmClip {
-        let n = SR as usize * secs as usize;
-        let samples: Vec<i16> = (0..n).map(|i| {
-            let t = i as f64 / SR as f64;
-            let freq = 300.0 + 400.0 * t;
-            ((std::f64::consts::TAU * freq * t).sin() * (i16::MAX as f64 * 0.5)).round() as i16
-        }).collect();
-        MonoPcmClip { sample_rate: SR, samples, decode_error_skips: 0, decoded_sample_count: None }
-    }
-    fn fp(clip: &MonoPcmClip) -> crate::domain::Fingerprint {
-        let p = prepare_clip_for_fingerprint(clip, PcmPreparationOptions::default()).unwrap();
-        ChromaprintFingerprinter::default().fingerprint(&p).unwrap()
-    }
-    #[test]
-    fn print_diagnostics() {
-        let config = configuration_for_preset(ChromaprintPreset::default());
-        let item_secs = f64::from(config.item_duration_in_seconds());
-        eprintln!("item_secs = {item_secs}");
-        let tone = mk_tone(60);
-        let tfp = fp(&tone);
-        eprintln!("60s tone fingerprint length = {}", tfp.data.len());
-        let chirp = mk_chirp(60);
-        let cfp = fp(&chirp);
-        eprintln!("60s chirp fingerprint length = {}", cfp.data.len());
-        // Check bit errors at a few lags for the chirp
-        let n = cfp.data.len();
-        for lag in [40, 80, 120, 160, 200] {
-            if lag < n.saturating_sub(super::MIN_OVERLAP_ITEMS) {
-                let ov = n - lag;
-                let mean: f64 = cfp.data[..ov].iter().zip(&cfp.data[lag..]).map(|(a,b)| f64::from((a^b).count_ones())).sum::<f64>() / ov as f64;
-                eprintln!("chirp lag={lag} ({:.2}s): mean_bit_error={mean:.3}", lag as f64 * item_secs);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod diag2 {
-    use std::f32::consts::TAU;
-    use crate::application::config::ChromaprintPreset;
-    use crate::application::ports::Fingerprinter;
-    use crate::domain::{prepare_clip_for_fingerprint, MonoPcmClip, PcmPreparationOptions};
-    use crate::infrastructure::chromaprint::{ChromaprintFingerprinter, config::configuration_for_preset};
-    const SR: u32 = 44_100;
-    fn mk_chirp(secs: u32) -> MonoPcmClip {
-        let n = SR as usize * secs as usize;
-        let samples: Vec<i16> = (0..n).map(|i| {
-            let t = i as f64 / SR as f64;
-            let freq = 300.0 + 400.0 * t;
-            ((std::f64::consts::TAU * freq * t).sin() * (i16::MAX as f64 * 0.5)).round() as i16
-        }).collect();
-        MonoPcmClip { sample_rate: SR, samples, decode_error_skips: 0, decoded_sample_count: None }
-    }
-    fn fp(clip: &MonoPcmClip) -> crate::domain::Fingerprint {
-        let p = prepare_clip_for_fingerprint(clip, PcmPreparationOptions::default()).unwrap();
-        ChromaprintFingerprinter::default().fingerprint(&p).unwrap()
-    }
-    #[test]
-    fn scan_chirp_lags() {
-        let chirp = mk_chirp(60);
-        let cfp = fp(&chirp);
-        let config = configuration_for_preset(ChromaprintPreset::default());
-        let item_secs = f64::from(config.item_duration_in_seconds());
-        let n = cfp.data.len();
-        eprintln!("n={n}, item_secs={item_secs:.6}");
-        let min_lap = 200_usize;
-        let max_lag = n.saturating_sub(50);
-        let mut min_error = f64::MAX;
-        let mut min_lag = 0;
-        for lag in min_lap..=max_lag {
-            let ov = n - lag;
-            let mean: f64 = cfp.data[..ov].iter().zip(&cfp.data[lag..]).map(|(a,b)| f64::from((a^b).count_ones())).sum::<f64>() / ov as f64;
-            if mean < min_error { min_error = mean; min_lag = lag; }
-        }
-        eprintln!("chirp MIN from lag={min_lap}..{max_lag}: best_lag={min_lag} ({:.2}s), bit_error={min_error:.3}", min_lag as f64 * item_secs);
-        // Also show every 40th lag
-        for lag in (200..max_lag).step_by(40) {
-            let ov = n - lag;
-            let mean: f64 = cfp.data[..ov].iter().zip(&cfp.data[lag..]).map(|(a,b)| f64::from((a^b).count_ones())).sum::<f64>() / ov as f64;
-            eprintln!("chirp lag={lag} ({:.2}s): {mean:.3}", lag as f64 * item_secs);
-        }
-    }
-}
-
-#[cfg(test)]
-mod diag3 {
-    use crate::application::config::ChromaprintPreset;
-    use crate::application::ports::Fingerprinter;
-    use crate::domain::{prepare_clip_for_fingerprint, MonoPcmClip, PcmPreparationOptions};
-    use crate::infrastructure::chromaprint::{ChromaprintFingerprinter, config::configuration_for_preset};
-    const SR: u32 = 44_100;
-    fn mk_chirp(secs: u32) -> MonoPcmClip {
-        let n = SR as usize * secs as usize;
-        let samples: Vec<i16> = (0..n).map(|i| {
-            let t = i as f64 / SR as f64;
-            let freq = 300.0 + 400.0 * t;
-            ((std::f64::consts::TAU * freq * t).sin() * (i16::MAX as f64 * 0.5)).round() as i16
-        }).collect();
-        MonoPcmClip { sample_rate: SR, samples, decode_error_skips: 0, decoded_sample_count: None }
-    }
-    fn fp(clip: &MonoPcmClip) -> crate::domain::Fingerprint {
-        let p = prepare_clip_for_fingerprint(clip, PcmPreparationOptions::default()).unwrap();
-        ChromaprintFingerprinter::default().fingerprint(&p).unwrap()
-    }
-    #[test]
-    fn inspect_chirp_items() {
-        let chirp = mk_chirp(60);
-        let cfp = fp(&chirp);
-        let config = configuration_for_preset(ChromaprintPreset::default());
-        let item_secs = f64::from(config.item_duration_in_seconds());
-        // Show items at key time points to understand what "silence-like" means
-        for t in [0.0, 5.0, 10.0, 12.0, 13.0, 14.0, 15.0, 20.0, 30.0, 40.0, 50.0, 55.0] {
-            let idx = (t / item_secs).round() as usize;
-            if idx < cfp.data.len() {
-                eprintln!("t={t:.1}s (item {idx}): 0x{:08X}", cfp.data[idx]);
-            }
-        }
-        // Look at the specific lag=334 comparison: items 0..129 vs 334..463
-        let overlap = 129usize;
-        let lag = 334usize;
-        eprintln!("\nlag=334: comparing items 0..{overlap} with {lag}..{}", lag+overlap);
-        let first_10_errors: Vec<u32> = cfp.data[..10.min(overlap)].iter().zip(&cfp.data[lag..lag+10.min(overlap)])
-            .map(|(a,b)| (a^b).count_ones()).collect();
-        eprintln!("first 10 bit-errors: {first_10_errors:?}");
-        let last_10_errors: Vec<u32> = cfp.data[overlap-10.min(overlap)..overlap].iter().zip(&cfp.data[lag+overlap-10.min(overlap)..lag+overlap])
-            .map(|(a,b)| (a^b).count_ones()).collect();
-        eprintln!("last 10 bit-errors: {last_10_errors:?}");
-    }
-}
-
-#[cfg(test)]
-mod diag4 {
-    use std::f32::consts::TAU;
-    use crate::application::config::ChromaprintPreset;
-    use crate::application::ports::Fingerprinter;
-    use crate::domain::{prepare_clip_for_fingerprint, MonoPcmClip, PcmPreparationOptions};
-    use crate::infrastructure::chromaprint::{ChromaprintFingerprinter, config::configuration_for_preset};
-    const SR: u32 = 44_100;
-    fn mk_nonmid() -> MonoPcmClip {
-        // 60s, tone at [0..5s] and [25..30s]
-        let total = SR as usize * 60;
-        let block = SR as usize * 5;
-        let mut samples = vec![0_i16; total];
-        for i in 0..block {
-            let t = i as f32 / SR as f32;
-            samples[i] = ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16;
-        }
-        let r = SR as usize * 25;
-        for i in 0..block {
-            let t = i as f32 / SR as f32;
-            samples[r+i] = ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16;
-        }
-        MonoPcmClip { sample_rate: SR, samples, decode_error_skips: 0, decoded_sample_count: None }
-    }
-    fn fp(clip: &MonoPcmClip) -> crate::domain::Fingerprint {
-        let p = prepare_clip_for_fingerprint(clip, PcmPreparationOptions::default()).unwrap();
-        ChromaprintFingerprinter::default().fingerprint(&p).unwrap()
-    }
-    #[test]
-    fn scan_nonmid_lags() {
-        let clip = mk_nonmid();
-        let cfp = fp(&clip);
-        let config = configuration_for_preset(ChromaprintPreset::default());
-        let item_secs = f64::from(config.item_duration_in_seconds());
-        let n = cfp.data.len();
-        eprintln!("n={n}");
-        // Show key item values to understand structure
-        for item_idx in [0, 20, 39, 40, 80, 160, 200, 202, 240, 242, 300, 400] {
-            if item_idx < n {
-                eprintln!("item[{item_idx}] t={:.2}s: 0x{:08X}", item_idx as f64 * item_secs, cfp.data[item_idx]);
-            }
-        }
-        // Scan lags 40..250
-        eprintln!("\nLag scan:");
-        let mut min_err = f64::MAX;
-        let mut min_lag = 0;
-        for lag in 40..=250_usize {
-            if lag > n.saturating_sub(50) { break; }
-            let ov = n - lag;
-            let mean: f64 = cfp.data[..ov].iter().zip(&cfp.data[lag..]).map(|(a,b)| f64::from((a^b).count_ones())).sum::<f64>() / ov as f64;
-            if mean < min_err { min_err = mean; min_lag = lag; }
-            if lag % 20 == 0 || (lag as f64 * item_secs - 25.0).abs() < 1.0 {
-                eprintln!("lag={lag} ({:.2}s): {mean:.3}", lag as f64 * item_secs);
-            }
-        }
-        eprintln!("MIN: lag={min_lag} ({:.2}s), err={min_err:.3}", min_lag as f64 * item_secs);
     }
 }

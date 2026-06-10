@@ -69,6 +69,10 @@ impl ProgressReporter for StderrProgressReporter {
         self.emit_phase(message);
     }
 
+    fn detailed_extraction_progress(&self) -> bool {
+        self.shows_verbose_phases()
+    }
+
     fn progress(&self, label: &str, current: u64, total: u64) {
         if !self.enabled() || !self.show_progress_bar() || total == 0 {
             return;
@@ -78,7 +82,12 @@ impl ProgressReporter for StderrProgressReporter {
         let mut stderr = std::io::stderr().lock();
 
         if self.is_tty {
-            let _ = write!(stderr, "\r{label}: {percent}%");
+            // Stage labels already end with "..."; append percent without an extra colon.
+            if label.ends_with("...") {
+                let _ = write!(stderr, "\r{label} {percent}%");
+            } else {
+                let _ = write!(stderr, "\r{label}: {percent}%");
+            }
             let _ = stderr.flush();
             self.progress_active.set(true);
             self.last_percent.set(Some(percent));
@@ -95,7 +104,11 @@ impl ProgressReporter for StderrProgressReporter {
             return;
         }
         self.last_percent.set(Some(percent));
-        let _ = writeln!(stderr, "{label}: {percent}%");
+        if label.ends_with("...") {
+            let _ = writeln!(stderr, "{label} {percent}%");
+        } else {
+            let _ = writeln!(stderr, "{label}: {percent}%");
+        }
     }
 }
 
@@ -114,6 +127,18 @@ mod tests {
     fn auto_mode_suppresses_verbose_phases() {
         let reporter = StderrProgressReporter::new(ProgressMode::Auto);
         assert!(!reporter.shows_verbose_phases());
+    }
+
+    #[test]
+    fn auto_mode_uses_aggregated_extraction_progress() {
+        let reporter = StderrProgressReporter::new(ProgressMode::Auto);
+        assert!(!reporter.detailed_extraction_progress());
+    }
+
+    #[test]
+    fn verbose_mode_uses_detailed_extraction_progress() {
+        let reporter = StderrProgressReporter::new(ProgressMode::Verbose);
+        assert!(reporter.detailed_extraction_progress());
     }
 
     #[test]

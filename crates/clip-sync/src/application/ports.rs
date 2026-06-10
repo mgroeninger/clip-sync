@@ -15,6 +15,12 @@ pub trait ProgressReporter {
         let _ = message;
     }
 
+    /// When true, clip extraction reports per-clip labels; when false, callers may aggregate
+    /// decode progress under a single stage bar.
+    fn detailed_extraction_progress(&self) -> bool {
+        true
+    }
+
     fn progress(&self, label: &str, current: u64, total: u64);
 }
 

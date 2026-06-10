@@ -191,6 +191,51 @@ pub fn write_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
     write_tone_wav_at_frequency(path, sample_rate, seconds, 440.0);
 }
 
+/// Writes two mono WAV files with pure 440 Hz tone repeats (no chirp background).
+///
+/// Each file has identical 10 s tone blocks at content positions [0..10 s] and [30..40 s].
+/// File B is delayed by `offset_secs` of leading silence. Use a long enough `total_secs`
+/// and clip window so both start clips include the repeated block when `offset_secs` > 0.
+pub fn write_pure_tone_repeat_wav_pair(
+    dir: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    offset_secs: u32,
+) -> (PathBuf, PathBuf) {
+    const TONE_HZ: f32 = 440.0;
+    const TONE_BLOCK_SECS: usize = 10;
+    const REPEAT_AT_SECS: usize = 30;
+
+    let total_n = sample_rate as usize * total_secs as usize;
+    let block_n = sample_rate as usize * TONE_BLOCK_SECS;
+    let repeat_at_n = sample_rate as usize * REPEAT_AT_SECS;
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+
+    let make_samples = |delay: usize| -> Vec<i16> {
+        (0..total_n)
+            .map(|i| {
+                if i < delay {
+                    return 0;
+                }
+                let ci = i - delay;
+                let in_tone_block =
+                    ci < block_n || (ci >= repeat_at_n && ci < repeat_at_n + block_n);
+                if !in_tone_block {
+                    return 0;
+                }
+                let t = ci as f32 / sample_rate as f32;
+                ((TAU * TONE_HZ * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
+            })
+            .collect()
+    };
+
+    let delay = sample_rate as usize * offset_secs as usize;
+    write_mono_wav(&path_a, sample_rate, make_samples(0));
+    write_mono_wav(&path_b, sample_rate, make_samples(delay));
+    (path_a, path_b)
+}
+
 /// Writes two mono WAV files that each contain an internal repeated segment.
 ///
 /// Both files share a 1 kHz-sweeping chirp background (for cross-file alignment) mixed with a

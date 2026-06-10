@@ -21,54 +21,62 @@ fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
 
 pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> String {
     let mut out = String::new();
-    out.push_str("Alignment report\n");
-    out.push_str(&format!("  Start clip aligned: {}\n", yes_no(result.start_aligned)));
 
-    if let Some(end_aligned) = result.end_aligned {
-        out.push_str(&format!("  End clip aligned: {}\n", yes_no(end_aligned)));
-    }
+    let offset = result
+        .recommended_offset_secs
+        .map(|o| format!("{o:+.3}s"))
+        .unwrap_or_else(|| "n/a".into());
+    let confidence = result
+        .clips
+        .first()
+        .map(|c| format!("{:.2}", c.confidence))
+        .unwrap_or_else(|| "n/a".into());
+    out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
 
-    for clip in &result.clips {
-        out.push_str(&format!("  {}\n", format_clip_line(clip, show_diagnostics)));
-        for line in format_repetition_lines(clip, show_diagnostics) {
-            out.push_str(&format!("    {line}\n"));
-        }
-    }
+    let show_per_clip_offsets = result.clips.len() > 1;
+    let show_clip_window_lines = show_diagnostics
+        || result.clips.iter().any(|clip| !clip.aligned);
 
-    match result.recommended_offset_secs {
-        Some(offset) => out.push_str(&format!(
-            "  Recommended offset: {:+.3}s ({})\n",
-            offset,
-            if result.offsets_consistent {
-                "clip offsets agree"
-            } else if result.start_aligned {
-                "clip offsets disagree; using start clip"
-            } else {
-                "clip offsets disagree"
+    if show_per_clip_offsets {
+        for clip in &result.clips {
+            out.push_str(&format_per_clip_offset_line(clip));
+            for line in format_repetition_lines(clip, show_diagnostics) {
+                out.push_str(&format!("    {line}\n"));
             }
-        )),
-        None => out.push_str("  Recommended offset: none\n"),
+        }
+    } else if show_clip_window_lines {
+        for clip in &result.clips {
+            out.push_str(&format!(
+                "  {}\n",
+                format_clip_window_line(clip, show_diagnostics)
+            ));
+            for line in format_repetition_lines(clip, show_diagnostics) {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+    } else {
+        for clip in &result.clips {
+            for line in format_repetition_lines(clip, show_diagnostics) {
+                out.push_str(&format!("  {line}\n"));
+            }
+        }
     }
 
     if let Some(drift) = result.offset_drift_secs {
         if !result.offsets_consistent {
-            out.push_str(&format!("  Offset drift (end − start): {:+.3}s\n", drift));
+            out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
+            if result.recommended_offset_secs.is_some() {
+                out.push_str("           using start-clip offset (clip offsets disagree)\n");
+            }
         }
     }
 
     if let Some(overlap) = result.start_overlap {
-        out.push_str("  Overlap (from start clip):\n");
         out.push_str(&format!(
-            "    On video A:  {}\n",
-            format_window(overlap.video_a_start_secs, overlap.video_a_end_secs)
-        ));
-        out.push_str(&format!(
-            "    On video B:  {}\n",
-            format_window(overlap.video_b_start_secs, overlap.video_b_end_secs)
-        ));
-        out.push_str(&format!(
-            "    Length:      {}\n",
-            format_timestamp(overlap.shared_length_secs)
+            "Overlap:   A {}   B {}   ({} shared)\n",
+            format_window(overlap.video_a_start_secs, overlap.video_a_end_secs),
+            format_window(overlap.video_b_start_secs, overlap.video_b_end_secs),
+            format_timestamp(overlap.shared_length_secs),
         ));
     }
 
@@ -76,25 +84,41 @@ pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> 
         if refine.applied {
             if show_diagnostics {
                 out.push_str(&format!(
-                    "  High-rate refinement: {:+.3}s adjustment (peak {:.2})\n",
+                    "High-rate: +{:.3}s refinement applied (peak {:.2})\n",
                     refine.adjustment_secs, refine.correlation_peak
                 ));
             } else {
                 out.push_str(&format!(
-                    "  High-rate refinement: {:+.3}s adjustment\n",
+                    "High-rate: +{:.3}s refinement applied\n",
                     refine.adjustment_secs
                 ));
             }
         } else if show_diagnostics {
             let reason = refine.skip_reason.as_deref().unwrap_or("not applied");
-            out.push_str(&format!("  High-rate refinement: skipped ({reason})\n"));
+            out.push_str(&format!("High-rate: skipped ({reason})\n"));
         }
     }
 
     out
 }
 
-fn format_clip_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
+fn format_per_clip_offset_line(clip: &ClipMatch) -> String {
+    let label = clip_label_name(clip.label);
+    if clip.aligned {
+        if let Some(offset) = clip.offset_secs {
+            return format!(
+                "  {label} clip: {offset:+.3}s  (confidence {:.2})\n",
+                clip.confidence
+            );
+        }
+    }
+    format!(
+        "  {label} clip: not aligned (confidence {:.2})\n",
+        clip.confidence
+    )
+}
+
+fn format_clip_window_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
     let label = clip_label_name(clip.label);
     let window = format_window(clip.window_start_secs, clip.window_end_secs);
 
@@ -159,8 +183,4 @@ fn clip_label_name(label: ClipLabel) -> &'static str {
         ClipLabel::Interior => "Interior",
         ClipLabel::End => "End",
     }
-}
-
-fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
 }

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clip_sync::{
     select_best_track, select_track_for_reference, AlignConfig, AlignVideosRequest,
-    AlignmentResult, AudioTrack, DomainError, InterleavedScanBucket, MediaError, MediaReader,
-    MediaSession, MediaSource, ProgressReporter,
+    AlignmentResult, AudioTrack, DomainError, InterleavedScanBucket,
+    MediaError, MediaReader, MediaSession, MediaSource, ProgressReporter,
 };
 
 use crate::application::error::RepairError;
@@ -57,7 +57,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     }
 
     pub fn execute(&self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
-        self.progress.phase("Aligning audio fingerprints...");
         let alignment = self.aligner.align(
             AlignVideosRequest {
                 video_a: request.video_a.clone(),

@@ -950,14 +950,14 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/corpus-matrix.md](docs/corpus-matrix.md) | Case matrix (↔ `tests/corpus/manifest.toml`) |
 | [tests/corpus/README.md](tests/corpus/README.md) | Fixture size budget, regenerate commands |
 | [docs/archive/](docs/archive/) | Completed plans — historical paths, do not edit |
-| [docs/TEMP-clip-self-repetition-plan.md](docs/TEMP-clip-self-repetition-plan.md) | Active: clip repetition diagnostic → archive when shipped |
+| [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
 | [docs/TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md) | Active: hold-out offset verification → archive when shipped |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 
 ### Feature plans vs crate docs
 
-[Clip self-repetition](docs/TEMP-clip-self-repetition-plan.md) and [hold-out offset verification](docs/TEMP-offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
+[Clip self-repetition](docs/archive/clip-self-repetition-plan.md) and [hold-out offset verification](docs/TEMP-offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
 
 | Concern | Crate after refactor |
 |---------|----------------------|

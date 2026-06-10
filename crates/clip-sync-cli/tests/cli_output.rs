@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use clip_sync::{
     AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport, ConfigError,
     DomainError, FingerprintError, HighRateRefinement, MediaError, RepetitionFinding,
+    TimelineOverlap,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::format_human_output;
@@ -176,6 +177,83 @@ fn clip_match_json_has_required_fields() {
 }
 
 #[test]
+fn compact_human_output_omits_redundant_single_clip_lines() {
+    let mut result = aligned_result(-10.956);
+    result.start_overlap = Some(TimelineOverlap {
+        video_a_start_secs: 10.956,
+        video_a_end_secs: 600.0,
+        video_b_start_secs: 0.0,
+        video_b_end_secs: 589.044,
+        shared_length_secs: 589.044,
+    });
+
+    let output = format_human_output(false, &result);
+
+    assert!(
+        output.starts_with("Alignment: offset -10.956s  confidence 0.90\n"),
+        "expected compact header: {output}"
+    );
+    assert!(
+        output.contains("Overlap:   A [0:11–10:00]   B [0:00–9:49]   (9:49 shared)\n"),
+        "expected compact overlap line: {output}"
+    );
+    assert!(
+        !output.contains("Alignment report"),
+        "legacy report header must not appear: {output}"
+    );
+    assert!(
+        !output.contains("Start clip aligned"),
+        "redundant start-aligned line must not appear: {output}"
+    );
+    assert!(
+        !output.contains("Recommended offset"),
+        "redundant recommended-offset line must not appear: {output}"
+    );
+}
+
+#[test]
+fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
+    let result = AlignmentResult {
+        clips: vec![
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: true,
+                offset_secs: Some(12.34),
+                confidence: 0.94,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: 1800.0,
+                window_end_secs: 2700.0,
+                aligned: true,
+                offset_secs: Some(12.355),
+                confidence: 0.91,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+        ],
+        start_aligned: true,
+        end_aligned: Some(true),
+        recommended_offset_secs: Some(12.34),
+        offsets_consistent: true,
+        offset_drift_secs: Some(0.015),
+        start_overlap: None,
+        high_rate_refinement: None,
+    };
+
+    let output = format_human_output(false, &result);
+
+    assert!(output.contains("  Start clip: +12.340s  (confidence 0.94)\n"));
+    assert!(output.contains("  End clip: +12.355s  (confidence 0.91)\n"));
+}
+
+#[test]
 fn high_rate_refinement_omits_peak_by_default() {
     let mut result = aligned_result(3.0);
     result.high_rate_refinement = Some(HighRateRefinement {
@@ -190,7 +268,7 @@ fn high_rate_refinement_omits_peak_by_default() {
 
     let output = format_human_output(false, &result);
     assert!(
-        output.contains("High-rate refinement: +0.010s adjustment\n"),
+        output.contains("High-rate: +0.010s refinement applied\n"),
         "expected adjustment without peak: {output}"
     );
     assert!(
@@ -214,7 +292,7 @@ fn high_rate_refinement_shows_peak_with_diagnostics() {
 
     let output = format_human_output(true, &result);
     assert!(
-        output.contains("High-rate refinement: +0.010s adjustment (peak 2813101397.00)"),
+        output.contains("High-rate: +0.010s refinement applied (peak 2813101397.00)"),
         "expected peak in verbose output: {output}"
     );
 }
