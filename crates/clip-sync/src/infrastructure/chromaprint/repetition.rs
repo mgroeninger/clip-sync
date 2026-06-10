@@ -449,6 +449,60 @@ mod tests {
     }
 
     #[test]
+    fn detect_clip_repetition_corpus_repeated_segment_fixture() {
+        use crate::application::testing::audio_fixtures::write_repeated_segment_wav_pair;
+        use hound::WavReader;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) =
+            write_repeated_segment_wav_pair(temp.path(), 11_025, 65, 3);
+
+        let read_clip = |path: &std::path::Path| -> MonoPcmClip {
+            let mut reader = WavReader::open(path).expect("wav");
+            let samples: Vec<i16> = reader
+                .samples()
+                .take(11_025 * 60)
+                .map(|sample| sample.expect("sample"))
+                .collect();
+            MonoPcmClip {
+                sample_rate: 11_025,
+                samples,
+                decode_error_skips: 0,
+                decoded_sample_count: None,
+            }
+        };
+
+        let corpus_prep = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+
+        for (label, clip) in [("A", read_clip(&path_a)), ("B", read_clip(&path_b))] {
+            let source_secs = clip.duration_secs();
+            let prepared = prepare_clip_for_fingerprint(&clip, corpus_prep).unwrap();
+            let fp = ChromaprintFingerprinter::default()
+                .fingerprint(&prepared)
+                .unwrap();
+            let finding = detect(
+                &fp,
+                prepared.duration_secs(),
+                MIN_CONFIDENCE,
+                source_secs,
+            );
+            eprintln!("{label}: finding={finding:?}");
+            let finding = finding.unwrap_or_else(|| {
+                panic!("{label}: expected repetition finding on corpus repeated_segment fixture")
+            });
+            assert!(
+                (28.0..=32.0).contains(&finding.lag_secs),
+                "{label}: lag_secs={} expected [28, 32]",
+                finding.lag_secs
+            );
+        }
+    }
+
+    #[test]
     fn detect_clip_repetition_none_when_too_short_or_empty() {
         let empty = Fingerprint { data: vec![] };
         assert!(

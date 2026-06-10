@@ -14,8 +14,11 @@ const DISCOVER_RIGHT_POINTS: usize = 48_000;
 const DISCOVER_MIN_COARSE_OFFSET_SECS: f64 = 15.0;
 const DISCOVER_COARSE_NEIGHBORHOOD_SECS: f64 = 1.0;
 const DISCOVER_SEARCH_FRACTION: f64 = 0.35;
-const DISCOVER_SEARCH_CAP_SECS: f64 = 21.0;
+const DISCOVER_SEARCH_WIDE_FRACTION: f64 = 0.5;
+const DISCOVER_SEARCH_CAP_SECS: f64 = 42.0;
+const DISCOVER_SEARCH_WIDE_CAP_SECS: f64 = 60.0;
 const DISCOVER_SEARCH_FLOOR_SECS: f64 = 10.0;
+const DISCOVER_WIDEN_IF_COARSE_CORR_BELOW: f64 = 0.25;
 const DISCOVER_SKIP_IF_COARSE_SCORE: f64 = 0.9;
 const DISCOVER_COARSE_MIN_CORRELATION: f64 = 0.25;
 const DISCOVER_SCORE_TIE_EPSILON: f64 = 0.05;
@@ -313,6 +316,38 @@ fn pcm_search_near_offset(
 }
 
 /// Slide a template from `left` across `right`, searching near `coarse_offset_secs`.
+/// Symmetric PCM discover search radius: clip-scaled policy, optionally widened when
+/// coarse PCM correlation is poor, then clamped to where the template still fits.
+fn discover_search_radius_secs(
+    left: &MonoPcmClip,
+    center_offset_secs: f64,
+    widen: bool,
+) -> f64 {
+    let rate = f64::from(left.sample_rate);
+    let clip_secs = left.samples.len() as f64 / rate;
+    let left_start_secs = first_audio_index(&left.samples) as f64 / rate;
+    let template_secs = f64::from(DISCOVER_TEMPLATE_SECS);
+    let max_offset = (clip_secs - template_secs - left_start_secs).max(0.0);
+    let min_offset = -left_start_secs;
+
+    let fraction = if widen {
+        DISCOVER_SEARCH_WIDE_FRACTION
+    } else {
+        DISCOVER_SEARCH_FRACTION
+    };
+    let cap = if widen {
+        DISCOVER_SEARCH_WIDE_CAP_SECS
+    } else {
+        DISCOVER_SEARCH_CAP_SECS
+    };
+    let policy = (clip_secs * fraction).clamp(DISCOVER_SEARCH_FLOOR_SECS, cap);
+
+    let upward = (max_offset - center_offset_secs).max(0.0);
+    let downward = (center_offset_secs - min_offset).max(0.0);
+
+    policy.min(upward).min(downward)
+}
+
 fn pcm_discover_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
@@ -328,9 +363,14 @@ fn pcm_discover_offset(
         return None;
     }
 
-    let clip_secs = left.samples.len() as f64 / f64::from(rate);
-    let search_secs = (clip_secs * DISCOVER_SEARCH_FRACTION)
-        .clamp(DISCOVER_SEARCH_FLOOR_SECS, DISCOVER_SEARCH_CAP_SECS);
+    let coarse_corr = best_correlation_near_offset(
+        left,
+        right,
+        coarse_offset_secs,
+        DISCOVER_COARSE_NEIGHBORHOOD_SECS,
+    );
+    let widen = coarse_corr.is_none_or(|score| score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW);
+    let search_secs = discover_search_radius_secs(left, coarse_offset_secs, widen);
     pcm_search_near_offset(left, right, coarse_offset_secs, search_secs)
 }
 
@@ -877,6 +917,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn discover_search_radius_covers_wav_leader_60s() {
+        let sample_rate = 11_025;
+        let (left, right) = delayed_pair(sample_rate, 120, 60);
+        let corpus_prep = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left_p = prepare_clip_for_fingerprint(&left, corpus_prep).unwrap();
+        let _right_p = prepare_clip_for_fingerprint(&right, corpus_prep).unwrap();
+
+        const COARSE: f64 = 32.438_095;
+        const TRUE_OFFSET: f64 = 60.0;
+
+        let radius_normal = discover_search_radius_secs(&left_p, COARSE, false);
+        let radius_wide = discover_search_radius_secs(&left_p, COARSE, true);
+        assert!(
+            COARSE + radius_normal >= TRUE_OFFSET,
+            "normal radius {radius_normal} too small from coarse {COARSE}"
+        );
+        assert!(
+            COARSE + radius_wide >= TRUE_OFFSET,
+            "wide radius {radius_wide} too small from coarse {COARSE}"
+        );
+        assert!(radius_normal >= 32.0, "expected physical clamp ~32s, got {radius_normal}");
+    }
+
+    #[test]
+    fn discover_search_radius_keeps_tight_window_when_coarse_is_plausible() {
+        let sample_rate = 11_025;
+        let (left, _) = delayed_pair(sample_rate, 60, 30);
+        let left_p = prepare_clip_for_fingerprint(
+            &left,
+            PcmPreparationOptions {
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+            },
+        )
+        .unwrap();
+
+        let radius = discover_search_radius_secs(&left_p, 16.0, false);
+        assert!(
+            radius <= DISCOVER_SEARCH_CAP_SECS,
+            "radius {radius} should stay within normal cap"
+        );
+        assert!(16.0 + radius >= 30.0, "radius {radius} should still reach true 30s offset");
+    }
+
     fn wav_leader_60s_prep_pair() -> (MonoPcmClip, MonoPcmClip, ClipMatchEstimate) {
         use crate::application::config::ChromaprintPreset;
         use crate::application::ports::{Aligner, Fingerprinter};
@@ -932,6 +1022,12 @@ mod tests {
         eprintln!(
             "should_discover_offset: {should_discover} (skip discover when coarse corr >= {DISCOVER_SKIP_IF_COARSE_SCORE})"
         );
+        let widen = coarse_corr.is_none_or(|score| score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW);
+        let radius_normal = discover_search_radius_secs(&left_p, coarse.offset_secs, false);
+        let radius_wide = discover_search_radius_secs(&left_p, coarse.offset_secs, true);
+        eprintln!(
+            "discover widen={widen} (coarse corr < {DISCOVER_WIDEN_IF_COARSE_CORR_BELOW}); radius normal={radius_normal:.2}s wide={radius_wide:.2}s"
+        );
     }
 
     /// Slow (minutes): full refine + pcm_discover. Run only when coarse diagnostic warrants it.
@@ -954,6 +1050,18 @@ mod tests {
             refined.offset_secs, refined.confidence
         );
         eprintln!("pcm_lag_adjustment at final: {lag_adj:?}");
+    }
+
+    #[test]
+    #[ignore = "slow: pcm_discover on 120s clips; cargo test refine_recovers_sixty_second_leader -- --ignored"]
+    fn refine_recovers_sixty_second_leader_on_120_second_clips() {
+        let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
+        let refined = refine_offset_estimate(&left_p, &right_p, coarse);
+        assert!(
+            (refined.offset_secs - 60.0).abs() < 1.5,
+            "refined={}",
+            refined.offset_secs
+        );
     }
 
     #[test]

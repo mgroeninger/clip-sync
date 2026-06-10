@@ -238,12 +238,9 @@ pub fn write_pure_tone_repeat_wav_pair(
 
 /// Writes two mono WAV files that each contain an internal repeated segment.
 ///
-/// Both files share a 1 kHz-sweeping chirp background (for cross-file alignment) mixed with a
-/// 440 Hz tone at content positions [0..10 s] and [30..40 s] (for self-repetition detection).
-/// File B is delayed by `offset_secs` of leading silence.
-///
-/// The chirp starts at 1 kHz to avoid overlapping the 440 Hz repeat signal in Chromaprint's
-/// low-frequency bands.
+/// Both files share identical 440 Hz tone blocks at [0..10 s] and [30..40 s] with silence
+/// between (self-repetition at ~30 s lag). File B is delayed by `offset_secs` of leading
+/// silence for cross-file alignment on the tone blocks.
 pub fn write_repeated_segment_wav_pair(
     dir: &Path,
     sample_rate: u32,
@@ -260,30 +257,24 @@ pub fn write_repeated_segment_wav_pair(
     let path_a = dir.join("a.wav");
     let path_b = dir.join("b.wav");
 
+    let tone_block: Vec<i16> = (0..block_n)
+        .map(|i| {
+            let t = i as f32 / sample_rate as f32;
+            ((TAU * TONE_HZ * t).sin() * (i16::MAX as f32 * 0.4)).round() as i16
+        })
+        .collect();
+
     let make_samples = |delay: usize| -> Vec<i16> {
-        (0..total_n)
-            .map(|i| {
-                if i < delay {
-                    return 0;
-                }
-                let ci = i - delay;
-                let ci_t = ci as f64 / f64::from(sample_rate);
-                // Chirp starts at 1 kHz so it does not overlap with the 440 Hz repeat signal.
-                let chirp_freq = 1000.0 + 400.0 * ci_t;
-                let chirp = ((std::f64::consts::TAU * chirp_freq * ci_t).sin()
-                    * (i16::MAX as f64 * 0.5)) as i32;
-                let in_tone_block =
-                    ci < block_n || (ci >= repeat_at_n && ci < repeat_at_n + block_n);
-                let tone = if in_tone_block {
-                    let t = ci as f32 / sample_rate as f32;
-                    ((std::f32::consts::TAU * TONE_HZ * t).sin() * (i16::MAX as f32 * 0.4))
-                        as i32
-                } else {
-                    0
-                };
-                (chirp + tone).clamp(i16::MIN as i32, i16::MAX as i32) as i16
-            })
-            .collect()
+        let mut samples = vec![0_i16; total_n];
+        for i in delay..total_n {
+            let ci = i - delay;
+            if ci < block_n {
+                samples[i] = tone_block[ci];
+            } else if ci >= repeat_at_n && ci < repeat_at_n + block_n {
+                samples[i] = tone_block[ci - repeat_at_n];
+            }
+        }
+        samples
     };
 
     let delay = sample_rate as usize * offset_secs as usize;
