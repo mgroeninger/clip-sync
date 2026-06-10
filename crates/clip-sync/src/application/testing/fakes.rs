@@ -71,6 +71,8 @@ pub struct FakeMediaSession {
     extract_error: Option<MediaError>,
     /// When set, extracted PCM is all zeros (fails fingerprint prep / sufficient-audio gate).
     extract_silence: bool,
+    /// When set, always returns this clip regardless of the requested window.
+    fixed_extract: Option<MonoPcmClip>,
 }
 
 impl FakeMediaSession {
@@ -79,6 +81,7 @@ impl FakeMediaSession {
             tracks: vec![test_track(duration)],
             extract_error: None,
             extract_silence: false,
+            fixed_extract: None,
         }
     }
 
@@ -87,6 +90,7 @@ impl FakeMediaSession {
             tracks,
             extract_error: None,
             extract_silence: false,
+            fixed_extract: None,
         }
     }
 
@@ -97,6 +101,11 @@ impl FakeMediaSession {
 
     pub fn with_silent_extract(mut self) -> Self {
         self.extract_silence = true;
+        self
+    }
+
+    pub fn with_fixed_extract(mut self, clip: MonoPcmClip) -> Self {
+        self.fixed_extract = Some(clip);
         self
     }
 }
@@ -115,6 +124,11 @@ impl MediaSession for FakeMediaSession {
     ) -> Result<MonoPcmClip, MediaError> {
         if let Some(error) = &self.extract_error {
             return Err(error.clone());
+        }
+
+        if let Some(clip) = &self.fixed_extract {
+            progress.progress(label, 1, 1);
+            return Ok(clip.clone());
         }
 
         progress.progress(label, 1, 1);

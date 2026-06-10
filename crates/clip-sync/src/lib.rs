@@ -12,7 +12,8 @@ pub use application::error::{AlignmentError, FingerprintError, MediaError};
 pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
 // --- domain (selected types) ---
 pub use domain::{
-    format_time_range, format_timestamp, AlignmentResult, AudioTrack, ClipMatch,
+    format_high_rate_refinement_lines, format_offset_verification_lines, format_time_range,
+    format_timestamp, AlignmentResult, AudioTrack, ClipMatch,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, RepetitionFinding, TimelineOverlap,

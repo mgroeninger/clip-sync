@@ -1,3 +1,4 @@
+pub mod alignment_fixtures;
 pub mod audio_fixtures;
 pub mod fakes;
 #[cfg(any(test, feature = "test-utils"))]

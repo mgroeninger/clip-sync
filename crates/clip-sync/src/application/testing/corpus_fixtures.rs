@@ -152,6 +152,10 @@ pub struct CorpusCase {
     #[serde(default)]
     pub expect_clip_repetition: Option<bool>,
     #[serde(default)]
+    pub verify_offset: bool,
+    #[serde(default)]
+    pub expect_offset_verified: Option<bool>,
+    #[serde(default)]
     pub ignore: bool,
 }
 
@@ -452,6 +456,9 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig
     if case.check_clip_repetition {
         config.validation.check_clip_repetition = true;
     }
+    if case.verify_offset {
+        config.validation.verify_offset = true;
+    }
 
     config
 }
@@ -558,6 +565,34 @@ pub fn assert_corpus_expectations(
             case.id,
             defaults.min_confidence
         );
+    }
+
+    if let Some(expect_verified) = case.expect_offset_verified {
+        let verify = result
+            .offset_verification
+            .as_ref()
+            .unwrap_or_else(|| panic!("case {}: expected offset_verification", case.id));
+        assert_eq!(
+            verify.verified, expect_verified,
+            "case {}: offset_verification={verify:?} recommended_offset={:?}",
+            case.id,
+            result.recommended_offset_secs
+        );
+        if expect_verified {
+            assert!(
+                !verify.skipped,
+                "case {}: verified hold-out must not be skipped: {:?}",
+                case.id,
+                verify.skip_reason
+            );
+            assert!(
+                verify.confidence >= defaults.min_confidence,
+                "case {}: verification confidence {} below {}",
+                case.id,
+                verify.confidence,
+                defaults.min_confidence
+            );
+        }
     }
 
     if let Some(expect) = case.expect_clip_repetition {
@@ -744,6 +779,37 @@ mod tests {
     #[test]
     fn corpus_committed_cases() {
         run_manifest_cases(CorpusTier::Committed);
+    }
+
+    #[test]
+    fn corpus_verify_offset_pass() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|entry| entry.id == "verify_offset_pass")
+            .expect("verify_offset_pass case in manifest");
+        assert!(
+            case.verify_offset && case.expect_offset_verified == Some(true),
+            "manifest must request verification"
+        );
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let result = run_corpus_case(
+            &use_case,
+            case,
+            &manifest.defaults,
+            paths.video_a,
+            paths.video_b,
+        )
+        .unwrap_or_else(|error| panic!("verify_offset_pass failed: {error}"));
+        assert_corpus_expectations(case, &manifest.defaults, &result);
     }
 
     #[test]

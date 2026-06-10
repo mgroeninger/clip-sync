@@ -26,6 +26,21 @@ expect_aligned = true
 expect_recommended = true
 
 [[case]]
+id = "verify_offset_pass"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "wav"
+offset_secs = 3
+total_secs = 120
+clip_length_secs = 60
+num_clips = 1
+verify_offset = true
+expected_offset_secs = 3.0
+expect_aligned = true
+expect_recommended = true
+expect_offset_verified = true
+
+[[case]]
 id = "no_overlap_tone_vs_chirp"
 tier = "committed"
 video_a = "wav/chirp_a.wav"

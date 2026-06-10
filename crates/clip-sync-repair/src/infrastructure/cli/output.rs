@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use clip_sync::{format_time_range, ClipLabel};
+use clip_sync::{
+    format_high_rate_refinement_lines, format_offset_verification_lines, format_time_range,
+    ClipLabel,
+};
 use serde::Serialize;
 
 use crate::application::error::RepairError;
@@ -90,6 +93,20 @@ fn format_human(
             overlap.video_b_end_secs,
             overlap.shared_length_secs,
         ));
+    }
+
+    if let Some(refine) = &report.alignment.high_rate_refinement {
+        for line in format_high_rate_refinement_lines(refine, show_diagnostics) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
+    if let Some(verify) = &report.alignment.offset_verification {
+        for line in format_offset_verification_lines(verify, show_diagnostics) {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 
     if let Some(agreement) = &report.gap_offset_agreement {

@@ -43,8 +43,7 @@ pub struct ValidationConfig {
     pub check_clip_repetition: bool,
     #[serde(default = "default_min_repetition_confidence")]
     pub min_repetition_confidence: f32,
-    // Placeholder fields for the offset-verification plan (TEMP-offset-verification-plan.md).
-    // Inert until that plan's Phase 1 lands.
+    /// After alignment, extract hold-out clips shifted by recommended offset and score lag-0 match.
     #[serde(default)]
     pub verify_offset: bool,
     #[serde(default = "default_min_verification_confidence")]

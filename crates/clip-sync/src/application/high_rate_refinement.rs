@@ -18,7 +18,9 @@ pub struct HighRateRefinementInput<'a, MS: MediaSession> {
     pub discovery_windows: &'a [ClipWindow],
     pub duration_a: Duration,
     pub duration_b: Duration,
+    #[allow(dead_code)]
     pub decoded_extent_a: Duration,
+    #[allow(dead_code)]
     pub decoded_extent_b: Duration,
 }
 
@@ -36,8 +38,8 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         discovery_windows,
         duration_a,
         duration_b,
-        decoded_extent_a,
-        decoded_extent_b,
+        decoded_extent_a: _,
+        decoded_extent_b: _,
     } = input;
     if !alignment.refine_offset_high_rate {
         return;
@@ -63,12 +65,9 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     let _ = session_a.reset_io();
     let _ = session_b.reset_io();
 
-    let pick_duration = duration_a
-        .min(duration_b)
-        .min(decoded_extent_a)
-        .min(decoded_extent_b);
-    let dur_a = duration_a.min(decoded_extent_a).as_secs_f64();
-    let dur_b = duration_b.min(decoded_extent_b).as_secs_f64();
+    let pick_duration = duration_a.min(duration_b);
+    let dur_a = duration_a.as_secs_f64();
+    let dur_b = duration_b.as_secs_f64();
 
     let candidates =
         holdout_window_candidates(pick_duration, discovery_windows, segment_length, offset_secs);

@@ -12,7 +12,8 @@ use crate::domain::{
     build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
     decoded_timeline_extent, end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair,
-    select_best_track, truncate_padded_tail, AlignmentMergePolicy, AlignmentResult, AudioTrack,
+    select_best_track, should_downgrade_repetition_confidence, truncate_padded_tail,
+    AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
     ClipWindow, DomainError, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, RepetitionFinding, TimelineOverlap,
@@ -103,6 +104,8 @@ where
                 duration_b: outcome.duration_b,
                 decoded_extent_a: outcome.decoded_extent_a,
                 decoded_extent_b: outcome.decoded_extent_b,
+                min_holdout_decode_fraction: request.config.alignment.min_end_clip_decode_fraction,
+                max_holdout_decode_skips: request.config.alignment.max_end_clip_decode_skips,
             },
             &request.config.clip,
             &request.config.validation,
@@ -469,7 +472,7 @@ where
             );
             for (i, clip) in result.clips.iter_mut().enumerate() {
                 let (rep_a, rep_b) = repetition_diagnostics[i]; // Copy
-                if should_downgrade(&rep_a, &rep_b, estimates[i].offset_secs) {
+                if should_downgrade_repetition_confidence(&rep_a, &rep_b, estimates[i].offset_secs) {
                     clip.confidence *= 0.5;
                 }
                 clip.repetition = Some(ClipRepetitionReport { a: rep_a, b: rep_b });
@@ -652,17 +655,6 @@ fn map_prepare_error(error: DomainError) -> AppError {
     }
 }
 
-/// Returns true when a repetition lag is close enough to the alignment offset that the
-/// confidence estimate may be inflated by the repeated content.
-fn should_downgrade(
-    rep_a: &Option<RepetitionFinding>,
-    rep_b: &Option<RepetitionFinding>,
-    offset_secs: f64,
-) -> bool {
-    let close = |rep: &RepetitionFinding| (rep.lag_secs - offset_secs.abs()).abs() <= 1.0;
-    rep_a.as_ref().is_some_and(close) || rep_b.as_ref().is_some_and(close)
-}
-
 fn mean_aligned_confidence(result: &AlignmentResult, min_match_score: f32) -> f32 {
     let aligned: Vec<f32> = result
         .clips
@@ -732,6 +724,26 @@ fn log_alignment_summary(
             ));
         } else if refine.skipped {
             progress.phase_verbose("High-rate refinement skipped");
+        }
+    }
+
+    if let Some(verify) = &result.offset_verification {
+        if verify.skipped {
+            if let Some(reason) = &verify.skip_reason {
+                progress.phase_verbose(&format!("Offset verification skipped: {reason}"));
+            } else {
+                progress.phase_verbose("Offset verification skipped");
+            }
+        } else if verify.verified {
+            progress.phase_verbose(&format!(
+                "Offset verification: confirmed (confidence {:.2})",
+                verify.confidence
+            ));
+        } else {
+            progress.phase_verbose(&format!(
+                "Offset verification: not confirmed (confidence {:.2})",
+                verify.confidence
+            ));
         }
     }
 
@@ -1306,6 +1318,68 @@ mod tests {
     }
 
     #[test]
+    fn execute_runs_offset_verification_when_flag_on() {
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
+        use crate::application::config::ChromaprintPreset;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+        const TOTAL_SECS: u32 = 120;
+        const OFFSET_SECS: u32 = 3;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_offset_chirp_wav_pair(
+            temp.path(),
+            SAMPLE_RATE,
+            TOTAL_SECS,
+            OFFSET_SECS,
+        );
+
+        let mut config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: false,
+                trim_silence: false,
+                ..ClipConfig::default()
+            },
+            ..Default::default()
+        };
+        config.validation.verify_offset = true;
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("execute should succeed");
+
+        let offset = response
+            .result
+            .recommended_offset_secs
+            .expect("expected aligned offset");
+        assert!((offset - f64::from(OFFSET_SECS)).abs() < 1.0, "offset={offset}");
+
+        let verify = response
+            .result
+            .offset_verification
+            .expect("verification must run when flag on");
+        assert!(!verify.skipped, "skip_reason={:?}", verify.skip_reason);
+        assert!(verify.verified, "confidence={}", verify.confidence);
+        assert!(verify.confidence >= 0.5);
+    }
+
+    #[test]
     fn execute_detects_known_offset_through_real_wav_pipeline() {
         use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::application::config::ChromaprintPreset;
@@ -1717,6 +1791,8 @@ mod tests {
 
     #[test]
     fn should_downgrade_cases() {
+        use crate::domain::should_downgrade_repetition_confidence;
+
         let finding = |lag_secs: f64| RepetitionFinding {
             lag_secs,
             confidence: 0.9,
@@ -1746,7 +1822,7 @@ mod tests {
 
         for (rep_a, rep_b, offset, expect, label) in cases {
             assert_eq!(
-                super::should_downgrade(&rep_a, &rep_b, offset),
+                should_downgrade_repetition_confidence(&rep_a, &rep_b, offset),
                 expect,
                 "{label}"
             );
@@ -1863,7 +1939,7 @@ mod tests {
         assert!(finding.confidence >= 0.5);
         // Repeat lag (~30 s) differs from offset (~0 s) — downgrade must not apply in the pipeline.
         assert!(
-            !super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            !should_downgrade_repetition_confidence(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
             "offset-aligned pair should not trigger confidence downgrade"
         );
         assert!(
@@ -2028,7 +2104,7 @@ mod tests {
         let report = clip.repetition.as_ref().expect("repetition report");
         let offset = clip.offset_secs.expect("offset");
         assert!(
-            super::should_downgrade(&report.a, &report.b, offset),
+            should_downgrade_repetition_confidence(&report.a, &report.b, offset),
             "repeat lag must be within ±1 s of offset for downgrade: {:?} offset={offset}",
             report
         );
@@ -2089,7 +2165,7 @@ mod tests {
         let report = clip.repetition.as_ref().expect("repetition report");
         let offset = clip.offset_secs.expect("offset");
         assert!(
-            super::should_downgrade(&report.a, &report.b, offset),
+            should_downgrade_repetition_confidence(&report.a, &report.b, offset),
             "repeat lag must trigger downgrade"
         );
         assert_downgrade_trigger_lag_near_secs(report, offset, PURE_TONE_REPEAT_LAG_SECS);

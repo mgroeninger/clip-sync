@@ -1,6 +1,6 @@
 use clip_sync::{
-    format_timestamp, AppError, AlignmentResult, ClipLabel, ClipMatch, OffsetVerification,
-    RepetitionFinding,
+    format_high_rate_refinement_lines, format_offset_verification_lines, format_timestamp,
+    AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
@@ -82,55 +82,20 @@ pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> 
     }
 
     if let Some(refine) = &result.high_rate_refinement {
-        if refine.applied {
-            if show_diagnostics {
-                out.push_str(&format!(
-                    "High-rate: +{:.3}s refinement applied (peak {:.2})\n",
-                    refine.adjustment_secs, refine.correlation_peak
-                ));
-            } else {
-                out.push_str(&format!(
-                    "High-rate: +{:.3}s refinement applied\n",
-                    refine.adjustment_secs
-                ));
-            }
-        } else if show_diagnostics {
-            let reason = refine.skip_reason.as_deref().unwrap_or("not applied");
-            out.push_str(&format!("High-rate: skipped ({reason})\n"));
+        for line in format_high_rate_refinement_lines(refine, show_diagnostics) {
+            out.push_str(&line);
+            out.push('\n');
         }
     }
 
     if let Some(verify) = &result.offset_verification {
-        for line in format_verification_lines(verify, show_diagnostics) {
+        for line in format_offset_verification_lines(verify, show_diagnostics) {
             out.push_str(&line);
             out.push('\n');
         }
     }
 
     out
-}
-
-fn format_verification_lines(verify: &OffsetVerification, show_diagnostics: bool) -> Vec<String> {
-    if verify.skipped {
-        if show_diagnostics {
-            let reason = verify.skip_reason.as_deref().unwrap_or("unknown");
-            return vec![format!("Verify:    skipped ({reason})")];
-        }
-        return vec![];
-    }
-    if !verify.verified {
-        return vec![format!(
-            "Verify:    offset not independently verified (hold-out confidence {:.2})",
-            verify.confidence
-        )];
-    }
-    if show_diagnostics {
-        return vec![format!(
-            "Verify:    offset confirmed at hold-out window (confidence {:.2})",
-            verify.confidence
-        )];
-    }
-    vec![]
 }
 
 fn format_per_clip_offset_line(clip: &ClipMatch) -> String {
