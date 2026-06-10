@@ -3,6 +3,7 @@
 Manifest-driven integration tests exercise real-world alignment scenarios: multiple containers/codecs, timing leaders, multi-track MP4, and multi-clip consistency.
 
 **Case matrix:** [corpus-matrix.md](corpus-matrix.md)  
+**Full dev guide (features, all test tiers):** [development.md](development.md)  
 **Fixtures & commands:** [tests/corpus/README.md](../tests/corpus/README.md)  
 **Archived plans:** [corpus implementation](archive/corpus-implementation-plan.md), [session reuse](archive/session-reuse-plan.md), [high-rate refinement](archive/high-rate-offset-refinement-plan.md)
 

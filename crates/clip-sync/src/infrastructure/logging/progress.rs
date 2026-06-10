@@ -26,7 +26,7 @@ impl StderrProgressReporter {
     }
 
     fn show_progress_bar(&self) -> bool {
-        matches!(self.mode, ProgressMode::Verbose) || self.is_tty
+        self.enabled() && (matches!(self.mode, ProgressMode::Verbose) || self.is_tty)
     }
 
     fn shows_verbose_phases(&self) -> bool {

@@ -944,6 +944,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [PLAN.md](PLAN.md) | Target architecture (this file) |
 | [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) | Workspace migration phases 0–5; phases 1–3 complete (2026-06-07) |
 | [BACKLOG.md](BACKLOG.md) | Deferred work |
+| [docs/development.md](docs/development.md) | Features per crate, build, full test matrix |
 | [docs/error-mapping.md](docs/error-mapping.md) | Exit codes, user messages, Symphonia mapping |
 | [docs/corpus-validation.md](docs/corpus-validation.md) | Corpus tiers, CI commands, findings |
 | [docs/corpus-matrix.md](docs/corpus-matrix.md) | Case matrix (↔ `tests/corpus/manifest.toml`) |

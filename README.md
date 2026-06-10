@@ -314,47 +314,13 @@ Repair exit codes are documented in [docs/error-mapping.md](docs/error-mapping.m
 
 ## Development
 
-### Build and test
+See **[docs/development.md](docs/development.md)** for Cargo features per crate, CI vs full test matrix, ignored/slow tiers, and fixture regeneration.
+
+Quick start:
 
 ```powershell
-# Full workspace
 cargo build
 cargo test --workspace
-
-# Library only (includes corpus integration tests)
-cargo test -p clip-sync
-
-# Corpus tests with HE-AAC support
-cargo test -p clip-sync --features he-aac,test-utils corpus_
-
-# Analyzer CLI tests
-cargo test -p clip-sync-cli
-```
-
-### Corpus fixtures
-
-Audio fixtures used in integration tests live in `tests/corpus/` at the workspace root. They are committed WAV files (~3.4 MB). See [tests/corpus/README.md](tests/corpus/README.md) for regeneration instructions and [docs/corpus-validation.md](docs/corpus-validation.md) for test tiers and expected results.
-
-### Features
-
-| Feature | Crate | Purpose |
-|---------|-------|---------|
-| `he-aac` | `clip-sync` | Optional HE-AAC decode via `fdk-aac` |
-| `ac3` | `clip-sync` | Optional AC-3 / E-AC-3 decode via `oxideav-ac3` (pure Rust). When enabled, surround-sound AC-3 tracks in MP4/MKV are decodable and are preferred over stereo fallback tracks when channel counts match. Off by default. |
-| `test-utils` | `clip-sync` | Exposes fakes, audio fixtures, and corpus helpers for downstream dev-dependencies |
-
-**Building with AC-3 support:**
-
-```powershell
-cargo build --release -p clip-sync-repair --features ac3,ffmpeg-mux
-```
-
-When `ac3` is off, AC-3 tracks are still listed in probe output but marked `decodable: false`; the tool falls back to the first decodable track (usually AAC). Enable `ac3` when your B recording uses Dolby Digital surround audio (common in retail M4V/MKV files).
-
-**Identifying audio tracks with ffprobe:**
-
-```powershell
-ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels,channel_layout -of default=noprint_wrappers=1 your_file.m4v
 ```
 
 ---
@@ -385,6 +351,7 @@ The library's public surface is a facade of explicit re-exports in `lib.rs`. App
 
 ## Documentation
 
+- [docs/development.md](docs/development.md) — features, build, full test suite
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy
 - [docs/corpus-validation.md](docs/corpus-validation.md) — test tiers, CI commands, known offsets
 - [docs/corpus-matrix.md](docs/corpus-matrix.md) — case design matrix
