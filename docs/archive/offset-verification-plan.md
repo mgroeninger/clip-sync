@@ -1,6 +1,6 @@
 # Temporary plan: hold-out offset verification
 
-> **Status:** Not started (verification module). **Partial infrastructure shipped:** hold-out window placement + feasibility helpers in lib `domain/policies.rs` (added for high-rate refinement). Workspace refactor (Phases 1–4) complete — paths below are **`crates/clip-sync`** + **`crates/clip-sync-cli`**. Archive to `docs/archive/offset-verification-plan.md` when shipped.
+> **Status:** ✅ Shipped (Phases 1–3 complete). Archived to `docs/archive/offset-verification-plan.md`.
 
 **Problem:** With `num_clips == 1`, a single Chromaprint window is the only evidence for the recommended offset. A confident but wrong Δ has no independent check. Multi-clip runs compare offsets across windows but never test “at lag 0, do these shifted regions actually match?”
 
@@ -227,14 +227,14 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 - [x] `tests/config_roundtrip.rs` — TOML `[validation] verify_offset = true`
 - [x] `tests/cli_output.rs` — human lines for verified / unverified / skipped
 
-### Phase 3 — Corpus + repetition cross-check (lib only)
+### Phase 3 — Corpus + repetition cross-check (lib only) ✅
 
 **Lib (`clip-sync`)**
 
-- [ ] `detect_clip_repetition` on hold-out prepared clips when both flags on; apply `should_downgrade` to verification confidence (from repetition plan)
-- [ ] Test `verification_downgrade_when_holdout_repeats`
-- [ ] `application/testing/corpus_fixtures.rs` — case `verify_offset_pass`; extend `CorpusCase` with `verify_offset` / `expect_offset_verified`
-- [ ] Archive this doc → `docs/archive/offset-verification-plan.md`
+- [x] `detect_clip_repetition` on hold-out prepared clips when both flags on; apply `should_downgrade` to verification confidence (from repetition plan)
+- [x] Test `verification_downgrade_when_holdout_repeats`
+- [x] `application/testing/corpus_fixtures.rs` — case `verify_offset_pass`; extend `CorpusCase` with `verify_offset` / `expect_offset_verified`
+- [x] Archive this doc → `docs/archive/offset-verification-plan.md`
 
 **CLI:** none (prints lib-populated `offset_verification` field)
 
