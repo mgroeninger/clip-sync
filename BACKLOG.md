@@ -61,12 +61,12 @@ Implement repetition before or alongside verification (shared config section, sa
 |---------------|--------|-------|--------|
 | **R0–R1** | `MultiChannelPcm`, `extract_interleaved`, `resample_interleaved`, `TimelineOverlap` re-export | lib | ✅ Done |
 | **R2** | Track compatibility, overlap, alignment gate (`Option<f64>` B fields), CLI polish | repair | ✅ Done |
-| **Lib extract hardening** | Scratch buffer reuse; optional shared mono/interleaved decode scaffold | lib | ✅ Scratch done; scaffold deferred |
+| **Lib extract hardening** | Scratch buffer reuse; shared mono/interleaved decode scaffold | lib | ✅ Done |
 | **R3** | Bidirectional silence scan + `gap_offset_agreement` | repair | ✅ Done |
 | **R4** | `PatchAudio`, gap fill, multi-channel WAV | repair | ✅ Done |
 | **R5** | `RepairVideos` + ffmpeg mux (`ffmpeg-mux` feature) | repair | ✅ Done |
 
-**Open follow-ups:** shared decode scaffold ([TEMP-extract-scaffold-plan.md](docs/TEMP-extract-scaffold-plan.md)), `--dry-run`/`--write` CLI flags, scratch-buffer regression test, streaming WAV encode.
+**Open follow-ups:** `--dry-run`/`--write` CLI flags, scratch-buffer regression test, streaming WAV encode.
 
 **Prerequisite:** [Workspace repair Phase 4](#workspace-repair-phase-4-report-only) (shipped).
 
@@ -118,19 +118,11 @@ Implement repetition before or alongside verification (shared config section, sa
 
 ### Symphonia extract loop hardening
 
-**Status:** Scratch buffer done (2026-06-08); shared decode scaffold not started. Plan: [TEMP-extract-scaffold-plan.md](docs/TEMP-extract-scaffold-plan.md) (authoritative); summary in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) § Lib extract hardening.
+**Status:** Done (2026-06-09). Plan: [docs/archive/extract-scaffold-plan.md](docs/archive/extract-scaffold-plan.md).
 
-**Problem:** `extract_mono_with_state` and `extract_interleaved_with_state` still duplicate ~300 lines of seek/retry/decode-skip logic (R1 intentionally mirrored mono). Per-packet scratch reuse is shipped; duplicated loop bodies remain.
+**Resolution:** `extract_loop.rs` — `ExtractSink` trait + `run_extract_decode_loop` driver; `MonoExtractSink` and `InterleavedExtractSink` sinks; `read_next_packet`, `packet_window_pos`, `decode_packet_or_skip` loop helpers. Both entry points in `extract.rs` are now thin wrappers.
 
-**Impact:** Future mono-path fixes may not propagate to interleaved without manual mirroring.
-
-**Direction:**
-
-1. ~~**Scratch buffer:**~~ done — one `Vec<f32>` per extract loop in `extract.rs`.
-2. **Shared decode-loop scaffold (next):** mono vs interleaved differ only at append/sink.
-3. **Defer:** plane-direct Symphonia reads instead of `copy_to_vec_interleaved`; dedicated `append_*_reuses_scratch_buffer` test.
-
-**References:** `crates/clip-sync/src/infrastructure/symphonia/extract.rs`, `media_reader_tests.rs`
+**References:** `crates/clip-sync/src/infrastructure/symphonia/extract_loop.rs`, `extract.rs`, `media_reader_tests.rs`
 
 ---
 

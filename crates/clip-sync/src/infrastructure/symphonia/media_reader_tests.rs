@@ -11,8 +11,8 @@ use symphonia::core::packet::PacketRef;
 
 use super::extract::{
     append_frames_in_window, append_interleaved_frames_in_window, decode_shortfall_limit,
-    extract_interleaved_with_state, float_to_i16, sample_count_tolerance, window_sample_bounds,
-    InterleavedCollectContext, WindowCollectContext,
+    extract_interleaved_with_state, extract_mono_with_state, float_to_i16, sample_count_tolerance,
+    window_sample_bounds, InterleavedCollectContext, WindowCollectContext,
 };
 use super::probe::probe_media_reusable;
 use super::session::{CachedTrackDecoder, MediaIoState, SymphoniaMediaReader};
@@ -750,6 +750,89 @@ impl AudioDecoder for InjectingDecoder {
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.inner.last_decoded()
     }
+}
+
+#[test]
+fn mono_and_interleaved_same_skip_count_on_corrupt_fixture() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("both_skip.wav");
+    write_test_wav(&path, 44_100, 2);
+
+    let make_state_with_injector = |fail_on: Vec<usize>| {
+        let (tracks, _, io) = probe_media_reusable(&path).unwrap();
+        let mut state = io.unwrap_or_else(|| MediaIoState::open(&path).unwrap());
+        let track = tracks.into_iter().next().unwrap();
+        ensure_track_decoder(&path, &mut state, &track).unwrap();
+        let real = state.decoders.remove(&track.index).unwrap();
+        state.decoders.insert(
+            track.index,
+            CachedTrackDecoder {
+                decoder: Box::new(InjectingDecoder::new(real.decoder, fail_on)),
+                time_base: real.time_base,
+            },
+        );
+        (track, state)
+    };
+
+    let (mono_track, mut mono_state) = make_state_with_injector(vec![3, 5]);
+    let (interleaved_track, mut interleaved_state) = make_state_with_injector(vec![3, 5]);
+
+    let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
+    let mono_result =
+        extract_mono_with_state(&path, &mut mono_state, &mono_track, &window, &NoopProgress, "m")
+            .unwrap();
+    let interleaved_result = extract_interleaved_with_state(
+        &path,
+        &mut interleaved_state,
+        &interleaved_track,
+        &window,
+        &NoopProgress,
+        "i",
+    )
+    .unwrap();
+
+    assert_eq!(
+        mono_result.decode_error_skips,
+        interleaved_result.decode_error_skips,
+        "mono ({}) and interleaved ({}) reported different skip counts on the same corrupt fixture",
+        mono_result.decode_error_skips,
+        interleaved_result.decode_error_skips,
+    );
+    assert_eq!(mono_result.decode_error_skips, 2);
+}
+
+#[test]
+fn extract_mono_decode_errors_are_counted() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("decode_skip_mono.wav");
+    write_test_wav(&path, 44_100, 2);
+
+    let (tracks, _, io) = probe_media_reusable(&path).unwrap();
+    let mut state = io.unwrap_or_else(|| MediaIoState::open(&path).unwrap());
+    let track = &tracks[0];
+
+    ensure_track_decoder(&path, &mut state, track).unwrap();
+
+    let real = state.decoders.remove(&track.index).unwrap();
+    state.decoders.insert(
+        track.index,
+        CachedTrackDecoder {
+            decoder: Box::new(InjectingDecoder::new(real.decoder, vec![3, 5])),
+            time_base: real.time_base,
+        },
+    );
+
+    let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
+    let result =
+        extract_mono_with_state(&path, &mut state, track, &window, &NoopProgress, "test")
+            .unwrap();
+
+    assert_eq!(
+        result.decode_error_skips, 2,
+        "expected exactly 2 injected skips, got {}",
+        result.decode_error_skips
+    );
+    assert!(!result.samples.is_empty(), "should still produce audio after decode errors");
 }
 
 #[test]

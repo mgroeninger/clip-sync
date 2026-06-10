@@ -62,7 +62,7 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ### Recommended order of work
 
-All R0–R5 phases shipped. Open follow-ups: lib shared decode scaffold ([TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md)), CLI `--dry-run`/`--write`, scratch-buffer unit test.
+All R0–R5 phases shipped. Open follow-ups: CLI `--dry-run`/`--write`, scratch-buffer unit test. Lib shared decode scaffold also shipped — see [extract-scaffold-plan.md](extract-scaffold-plan.md).
 
 ---
 
@@ -341,14 +341,14 @@ pub struct GapOffsetAgreement {
 
 Not a repair phase number. Address after R3 (or in parallel if R4 is blocked only on repair work). Do **not** fold into R2 — wrong crate/layer.
 
-**Authoritative scaffold plan:** [TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md) (sink trait + `run_extract_decode_loop` phases).
+**Archived scaffold plan:** [extract-scaffold-plan.md](extract-scaffold-plan.md) (shipped 2026-06-09).
 
-**Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a fresh `Vec` per decoded packet (`copy_to_vec_interleaved`). On a 30-minute stereo 48 kHz full-timeline extract (R4 `PatchAudio`), that is tens of thousands of heap allocations on the hot path. `extract_mono_with_state` and `extract_interleaved_with_state` are ~300 lines duplicated; seek/retry/decode-skip fixes must be mirrored manually.
+**Problem:** `append_frames_in_window` and `append_interleaved_frames_in_window` allocate a fresh `Vec` per decoded packet (`copy_to_vec_interleaved`). On a 30-minute stereo 48 kHz full-timeline extract (R4 `PatchAudio`), that is tens of thousands of heap allocations on the hot path. `extract_mono_with_state` and `extract_interleaved_with_state` were ~300 lines duplicated; seek/retry/decode-skip fixes had to be mirrored manually.
 
 **Lib (`clip-sync`)**
 
 - [x] **Scratch buffer (before R4):** one `Vec<f32>` per extract attempt, passed into `append_*`; `scratch.clear()` per packet. Touches both mono and interleaved paths.
-- [ ] **Shared decode scaffold (deferred):** extract packet loop (seek/retry, decode-skip, tail-padding, progress) into a shared inner function; mono vs interleaved differ only at the append/sink step. See [TEMP-extract-scaffold-plan.md](TEMP-extract-scaffold-plan.md).
+- [x] **Shared decode scaffold:** `ExtractSink` trait + `run_extract_decode_loop` driver + `read_next_packet` / `packet_window_pos` / `decode_packet_or_skip` helpers in `extract_loop.rs`; both entry points are thin wrappers.
 - [ ] **Scratch-buffer regression test (deferred):** `append_*_reuses_scratch_buffer` — behavior verified by existing extract tests; dedicated alloc test not yet added.
 
 **Defer:** plane-direct Symphonia read (skip `copy_to_vec_interleaved`) — optional polish if profiling shows scratch reuse is insufficient.

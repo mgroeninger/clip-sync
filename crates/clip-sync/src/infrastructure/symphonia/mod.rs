@@ -1,6 +1,7 @@
 mod codec_registry;
 mod duration;
 mod extract;
+mod extract_loop;
 pub mod error_mapping;
 mod probe;
 mod session;
