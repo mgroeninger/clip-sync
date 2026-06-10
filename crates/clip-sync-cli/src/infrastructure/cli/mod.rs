@@ -79,4 +79,7 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     if cli.check_clip_repetition {
         config.align.validation.check_clip_repetition = true;
     }
+    if cli.verify_offset {
+        config.align.validation.verify_offset = true;
+    }
 }

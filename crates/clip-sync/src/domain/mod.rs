@@ -1,4 +1,5 @@
 pub mod alignment;
+pub mod alignment_report;
 pub mod audio_track;
 pub mod human_format;
 pub mod clip_plan;
@@ -13,13 +14,18 @@ pub mod resample;
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
-    ClipRepetitionReport, Fingerprint, HighRateRefinement, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    ClipRepetitionReport, Fingerprint, HighRateRefinement, OffsetVerification,
+    OFFSET_AGREEMENT_TOLERANCE_SECS,
     RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap, refresh_start_overlap,
+    should_downgrade_repetition_confidence,
 };
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
+pub use alignment_report::{
+    format_high_rate_refinement_lines, format_offset_verification_lines,
+};
 pub use human_format::{format_time_range, format_timestamp};
 pub use alignment::TimelineOverlap;
 pub use media_source::MediaSource;
@@ -32,6 +38,7 @@ pub use pcm_preparation::{
 pub use policies::{
     clip_windows_with_options, decoded_timeline_extent,
     end_clip_extract_unreliable, holdout_window_candidates,
-    holdout_window_feasible, truncate_padded_tail, ClipPlanningOptions, select_best_track,
+    holdout_extract_sufficient, holdout_window_feasible, truncate_padded_tail,
+    ClipPlanningOptions, select_best_track,
 };
 pub use resample::{resample_interleaved, resample_mono_pcm};

@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::application::config::AlignConfig;
 use crate::application::error::{AppError, FingerprintError};
 use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
+use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
@@ -88,6 +89,26 @@ where
             },
             &request.config.alignment,
             &mut result,
+            self.progress,
+        );
+
+        apply_offset_verification(
+            &OffsetVerificationInput {
+                session_a: &session_a,
+                session_b: &session_b,
+                track_a: &outcome.track_a,
+                track_b: &outcome.track_b,
+                discovery_windows: &outcome.discovery_windows,
+                duration_a: outcome.duration_a,
+                duration_b: outcome.duration_b,
+                decoded_extent_a: outcome.decoded_extent_a,
+                decoded_extent_b: outcome.decoded_extent_b,
+            },
+            &request.config.clip,
+            &request.config.validation,
+            &mut result,
+            self.fingerprinter,
+            self.aligner,
             self.progress,
         );
 
@@ -1165,7 +1186,11 @@ mod tests {
             .expect("execute should succeed");
 
         let seen = fingerprinter.seen_sample_rates();
-        assert_eq!(seen.len(), 2, "end clip skips Chromaprint when refining around start");
+        assert_eq!(
+            seen.len(),
+            4,
+            "start and end clips each fingerprint A and B at the target rate"
+        );
         assert!(seen.iter().all(|rate| *rate == 11_025));
     }
 

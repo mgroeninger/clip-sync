@@ -23,6 +23,8 @@ fn analyzer_fixture_deserializes_and_validates() {
     assert!(!config.align.alignment.try_all_tracks);
     assert!(!config.align.validation.check_clip_repetition);
     assert_eq!(config.align.validation.min_repetition_confidence, 0.5);
+    assert!(!config.align.validation.verify_offset);
+    assert_eq!(config.align.validation.min_verification_confidence, 0.5);
     assert_eq!(config.output.format, OutputFormat::Human);
     assert!(!config.output.show_diagnostics);
     assert_eq!(config.logging.level, LogLevel::Warn);

@@ -2,8 +2,8 @@ use std::process::ExitCode;
 
 use clip_sync::{
     AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport, ConfigError,
-    DomainError, FingerprintError, HighRateRefinement, MediaError, RepetitionFinding,
-    TimelineOverlap,
+    DomainError, FingerprintError, HighRateRefinement, MediaError, OffsetVerification,
+    RepetitionFinding, TimelineOverlap,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::format_human_output;
@@ -31,6 +31,7 @@ fn aligned_result(offset: f64) -> AlignmentResult {
         offset_drift_secs: None,
         start_overlap: None,
         high_rate_refinement: None,
+        offset_verification: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn unaligned_result() -> AlignmentResult {
         offset_drift_secs: None,
         start_overlap: None,
         high_rate_refinement: None,
+        offset_verification: None,
     }
 }
 
@@ -87,6 +89,7 @@ fn result_with_repetition(a_lag: Option<f64>, b_lag: Option<f64>) -> AlignmentRe
         offset_drift_secs: None,
         start_overlap: None,
         high_rate_refinement: None,
+        offset_verification: None,
     }
 }
 
@@ -110,6 +113,7 @@ fn result_with_no_repetition_finding() -> AlignmentResult {
         offset_drift_secs: None,
         start_overlap: None,
         high_rate_refinement: None,
+        offset_verification: None,
     }
 }
 
@@ -245,6 +249,7 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
         offset_drift_secs: Some(0.015),
         start_overlap: None,
         high_rate_refinement: None,
+        offset_verification: None,
     };
 
     let output = format_human_output(false, &result);
@@ -437,5 +442,112 @@ fn align_human_no_repetition_lines_when_repetition_field_absent() {
     assert!(
         !output.contains("internal repeat") && !output.contains("no internal repeat"),
         "no repetition lines expected when field absent: {output}"
+    );
+}
+
+// --- offset verification human output ---
+
+fn make_verification(verified: bool, confidence: f32, skipped: bool, skip_reason: Option<&str>) -> OffsetVerification {
+    OffsetVerification {
+        window_a_start_secs: 60.0,
+        window_a_end_secs: 90.0,
+        window_b_start_secs: 63.0,
+        window_b_end_secs: 93.0,
+        confidence,
+        verified,
+        skipped,
+        skip_reason: skip_reason.map(String::from),
+    }
+}
+
+#[test]
+fn verify_human_shows_warning_when_not_verified() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(false, 0.32, false, None));
+
+    let output = format_human_output(false, &result);
+    assert!(
+        output.contains("Verify:    offset not independently verified (hold-out confidence 0.32)"),
+        "expected unverified warning: {output}"
+    );
+}
+
+#[test]
+fn verify_human_shows_nothing_when_verified_non_verbose() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(true, 0.85, false, None));
+
+    let output = format_human_output(false, &result);
+    assert!(
+        !output.contains("Verify:"),
+        "no Verify line expected for confirmed result in non-verbose: {output}"
+    );
+}
+
+#[test]
+fn verify_human_verbose_shows_confirmation_when_verified() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(true, 0.85, false, None));
+
+    let output = format_human_output(true, &result);
+    assert!(
+        output.contains("Verify:    offset confirmed at hold-out window (confidence 0.85)"),
+        "expected confirmation line in verbose mode: {output}"
+    );
+}
+
+#[test]
+fn verify_human_skip_silent_when_non_verbose() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(false, 0.0, true, Some("hold-out window unavailable")));
+
+    let output = format_human_output(false, &result);
+    assert!(
+        !output.contains("Verify:"),
+        "skip must be silent in non-verbose mode: {output}"
+    );
+}
+
+#[test]
+fn verify_human_verbose_shows_skip_reason() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(false, 0.0, true, Some("hold-out window unavailable")));
+
+    let output = format_human_output(true, &result);
+    assert!(
+        output.contains("Verify:    skipped (hold-out window unavailable)"),
+        "expected skip reason in verbose mode: {output}"
+    );
+}
+
+// --- offset verification JSON ---
+
+#[test]
+fn verify_json_absent_when_none() {
+    let result = aligned_result(3.0);
+    let json = serde_json::to_string(&result).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+    assert!(
+        value.get("offset_verification").is_none(),
+        "offset_verification key must be absent when None"
+    );
+}
+
+#[test]
+fn verify_json_present_when_some() {
+    let mut result = aligned_result(3.0);
+    result.offset_verification = Some(make_verification(true, 0.85, false, None));
+
+    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+    let verify = &value["offset_verification"];
+    assert!(verify.is_object(), "offset_verification must be an object when Some");
+    assert_eq!(verify["verified"], true);
+    assert!((verify["confidence"].as_f64().unwrap() - 0.85).abs() < 0.01);
+    assert!(
+        verify.get("skip_reason").is_none(),
+        "skip_reason must be absent when None"
     );
 }

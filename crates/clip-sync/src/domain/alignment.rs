@@ -65,6 +65,23 @@ pub struct TimelineOverlap {
     pub shared_length_secs: f64,
 }
 
+/// Hold-out lag-0 check: verifies the recommended offset by comparing a shifted window at zero lag.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OffsetVerification {
+    pub window_a_start_secs: f64,
+    pub window_a_end_secs: f64,
+    pub window_b_start_secs: f64,
+    pub window_b_end_secs: f64,
+    /// Lag-0 fingerprint match confidence.
+    pub confidence: f32,
+    pub verified: bool,
+    /// True when verification did not run (no feasible window, extract failure, etc.).
+    #[serde(default)]
+    pub skipped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+}
+
 /// Native-rate hold-out FFT correction applied after discovery alignment.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HighRateRefinement {
@@ -97,10 +114,23 @@ pub struct AlignmentResult {
     pub start_overlap: Option<TimelineOverlap>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub high_rate_refinement: Option<HighRateRefinement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_verification: Option<OffsetVerification>,
 }
 
 /// Maximum start/end clip offset delta treated as agreement when merging estimates.
 pub const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
+
+/// Returns true when a repetition lag is close enough to the alignment offset that the
+/// confidence estimate may be inflated by the repeated content.
+pub fn should_downgrade_repetition_confidence(
+    rep_a: &Option<RepetitionFinding>,
+    rep_b: &Option<RepetitionFinding>,
+    offset_secs: f64,
+) -> bool {
+    let close = |rep: &RepetitionFinding| (rep.lag_secs - offset_secs.abs()).abs() <= 1.0;
+    rep_a.as_ref().is_some_and(close) || rep_b.as_ref().is_some_and(close)
+}
 
 /// Per-clip alignment inputs for building an [`AlignmentResult`].
 pub struct ClipPairReportInput<'a> {
@@ -205,6 +235,7 @@ pub fn build_alignment_result(
         offset_drift_secs,
         start_overlap,
         high_rate_refinement: None,
+        offset_verification: None,
     }
 }
 

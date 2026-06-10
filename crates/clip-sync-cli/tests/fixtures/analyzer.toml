@@ -17,6 +17,8 @@ try_all_tracks = false
 [validation]
 check_clip_repetition = false
 min_repetition_confidence = 0.5
+verify_offset = false
+min_verification_confidence = 0.5
 
 [output]
 format = "human"

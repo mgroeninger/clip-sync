@@ -617,6 +617,7 @@ mod tests {
             offset_drift_secs: None,
             start_overlap: None,
             high_rate_refinement: None,
+            offset_verification: None,
         }
     }
 

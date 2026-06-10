@@ -166,6 +166,28 @@ pub fn truncate_padded_tail(mut clip: MonoPcmClip) -> MonoPcmClip {
     clip
 }
 
+/// Whether a hold-out extract decoded enough samples for the requested segment length.
+pub fn holdout_extract_sufficient(
+    clip: &MonoPcmClip,
+    segment_length: Duration,
+    min_decode_fraction: f64,
+    max_decode_skips: u32,
+) -> bool {
+    if clip.decode_error_skips > max_decode_skips {
+        return false;
+    }
+    let rate = clip.sample_rate.max(1);
+    let expected = ((segment_length.as_secs_f64() * f64::from(rate))
+        .floor()
+        .max(1.0)) as usize;
+    if expected == 0 {
+        return false;
+    }
+    let decoded = clip.effective_decoded_sample_count();
+    let threshold = min_decode_fraction.clamp(0.0, 1.0);
+    (decoded as f64) >= (expected as f64) * threshold
+}
+
 /// Whether an end-clip extract is too incomplete or corrupt for alignment.
 pub fn end_clip_extract_unreliable(
     clip: &MonoPcmClip,
@@ -705,6 +727,26 @@ mod tests {
     fn holdout_window_feasible_respects_offset() {
         assert!(holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 120.0));
         assert!(!holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 12.0));
+    }
+
+    #[test]
+    fn holdout_extract_sufficient_requires_full_segment_decode() {
+        let segment = Duration::from_secs(60);
+        let full = MonoPcmClip {
+            sample_rate: 11_025,
+            samples: vec![0_i16; 11_025 * 60],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(11_025 * 60),
+        };
+        assert!(holdout_extract_sufficient(&full, segment, 0.95, 8));
+
+        let short = MonoPcmClip {
+            sample_rate: 11_025,
+            samples: vec![0_i16; 11_025 * 30],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(11_025 * 30),
+        };
+        assert!(!holdout_extract_sufficient(&short, segment, 0.95, 8));
     }
 
     #[test]

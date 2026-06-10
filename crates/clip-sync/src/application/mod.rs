@@ -4,6 +4,7 @@ pub mod default_pipeline;
 pub mod error;
 pub mod high_rate_refinement;
 pub mod offset_refinement;
+pub mod offset_verification;
 pub mod ports;
 
 #[cfg(any(test, feature = "test-utils"))]

@@ -1,5 +1,6 @@
 use clip_sync::{
-    format_timestamp, AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding,
+    format_timestamp, AppError, AlignmentResult, ClipLabel, ClipMatch, OffsetVerification,
+    RepetitionFinding,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
@@ -99,7 +100,37 @@ pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> 
         }
     }
 
+    if let Some(verify) = &result.offset_verification {
+        for line in format_verification_lines(verify, show_diagnostics) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
     out
+}
+
+fn format_verification_lines(verify: &OffsetVerification, show_diagnostics: bool) -> Vec<String> {
+    if verify.skipped {
+        if show_diagnostics {
+            let reason = verify.skip_reason.as_deref().unwrap_or("unknown");
+            return vec![format!("Verify:    skipped ({reason})")];
+        }
+        return vec![];
+    }
+    if !verify.verified {
+        return vec![format!(
+            "Verify:    offset not independently verified (hold-out confidence {:.2})",
+            verify.confidence
+        )];
+    }
+    if show_diagnostics {
+        return vec![format!(
+            "Verify:    offset confirmed at hold-out window (confidence {:.2})",
+            verify.confidence
+        )];
+    }
+    vec![]
 }
 
 fn format_per_clip_offset_line(clip: &ClipMatch) -> String {

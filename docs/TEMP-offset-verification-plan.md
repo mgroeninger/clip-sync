@@ -194,39 +194,38 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 
 **CLI:** none
 
-### Phase 1 — Hold-out extract + lag-0 score (lib only)
+### Phase 1 — Hold-out extract + lag-0 score (lib only) ✅
 
 **Lib (`crates/clip-sync`)**
 
-- [ ] `ValidationConfig` on `AlignConfig` (full struct with repetition fields — shared with repetition plan)
+- [x] `ValidationConfig` on `AlignConfig` (full struct with repetition fields — shared with repetition plan)
 - [x] `domain/policies.rs` — **`pick_holdout_window`**, **`holdout_window_candidates`**, **`holdout_window_feasible`** (reuse; extend tests only if verify needs new edge cases)
-- [ ] `application/offset_verification.rs` — **new** `apply_offset_verification(...)` (mirror `apply_high_rate_refinement` structure; segment length = `clip.clip_length`)
-- [ ] Hold-out extract via existing **`MediaSession::extract_mono`** @ `target_sample_rate` → `prepare_clip_for_fingerprint` (no `expand_window_for_slide`, no subclip slide)
-- [ ] Lag-0 score via `Aligner::find_offset` + tolerance check (Option A); compare lag to **`OFFSET_AGREEMENT_TOLERANCE_SECS` (0.5)** in `domain/alignment.rs`
-- [ ] `application/align_videos.rs` — call from `execute()` after `apply_high_rate_refinement`, before `log_alignment_summary`; pass `AlignmentOutcome` / shared input struct
-- [ ] `ProgressReporter::phase("Verifying offset at hold-out window...")` when running
-- [ ] Unit tests: verify pass/fail/wrong-Δ/skip (see [Tests](#tests)); window picker tests largely **exist** in `policies.rs`
-- [ ] **`AlignmentResult.offset_verification` not set yet** — internal `VerificationResult` + `tracing::debug` only
+- [x] `application/offset_verification.rs` — **new** `apply_offset_verification(...)` (mirror `apply_high_rate_refinement` structure; segment length = `clip.clip_length`)
+- [x] Hold-out extract via existing **`MediaSession::extract_mono`** @ `target_sample_rate` → `prepare_clip_for_fingerprint` (no `expand_window_for_slide`, no subclip slide)
+- [x] Lag-0 score via `Aligner::find_offset` + tolerance check (Option A); compare lag to **`OFFSET_AGREEMENT_TOLERANCE_SECS` (0.5)** in `domain/alignment.rs`
+- [x] `application/align_videos.rs` — call from `execute()` after `apply_high_rate_refinement`, before `log_alignment_summary`; pass `AlignmentOutcome` / shared input struct
+- [x] `ProgressReporter::phase_verbose("Verifying offset at hold-out window...")` when running
+- [x] Unit tests: verify pass/fail/wrong-Δ/skip/flag-off (see [Tests](#tests))
+- [x] **`AlignmentResult.offset_verification` not set yet** — internal `VerificationOutcome` + `tracing::debug` only
 
 **CLI (`clip-sync-cli`):** none
 
-### Phase 2 — Reporting (lib domain + CLI stdout)
+### Phase 2 — Reporting (lib domain + CLI stdout) ✅
 
 **Lib (`crates/clip-sync`)**
 
-- [ ] Add `offset_verification: Option<OffsetVerification>` to `AlignmentResult` in `domain/alignment.rs`
-- [ ] `apply_offset_verification` writes `result.offset_verification` when flag on (including skip cases)
-- [ ] Lib tests: `AlignmentResult` JSON shape when flag on/off/skipped (`serde_json` in `align_videos` or domain tests)
-- [ ] Document in [PLAN.md](../PLAN.md); note redundancy when `num_clips >= 2` and offsets already agree
+- [x] Add `offset_verification: Option<OffsetVerification>` to `AlignmentResult` in `domain/alignment.rs`
+- [x] `apply_offset_verification` writes `result.offset_verification` when flag on (including skip cases)
+- [x] Lib tests: `AlignmentResult` JSON shape when flag on/off/skipped (`serde_json` in `align_videos` or domain tests)
 
 **CLI (`crates/clip-sync-cli`)**
 
-- [ ] `infrastructure/cli/args.rs` — `--verify-offset` on `Cli`
-- [ ] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: `config.align.validation.verify_offset = true`
-- [ ] `infrastructure/cli/output.rs` — after recommended-offset block: warn when `verified == false` and not skipped; verbose skip reason via `show_diagnostics`
-- [ ] `tests/fixtures/analyzer.toml` — optional `[validation]` example
-- [ ] `tests/config_roundtrip.rs` — TOML `[validation] verify_offset = true`
-- [ ] `tests/cli_output.rs` — human lines for verified / unverified / skipped
+- [x] `infrastructure/cli/args.rs` — `--verify-offset` on `Cli`
+- [x] `infrastructure/cli/mod.rs` — `apply_cli_overrides`: `config.align.validation.verify_offset = true`
+- [x] `infrastructure/cli/output.rs` — after recommended-offset block: warn when `verified == false` and not skipped; verbose skip reason via `show_diagnostics`
+- [x] `tests/fixtures/analyzer.toml` — optional `[validation]` example
+- [x] `tests/config_roundtrip.rs` — TOML `[validation] verify_offset = true`
+- [x] `tests/cli_output.rs` — human lines for verified / unverified / skipped
 
 ### Phase 3 — Corpus + repetition cross-check (lib only)
 
@@ -298,7 +297,32 @@ verified = !skipped
   && estimate.offset_secs.abs() <= 0.5   // OFFSET_AGREEMENT_TOLERANCE_SECS in domain/alignment.rs (private; use same constant)
 ```
 
-Optional PCM sanity check (reuse `offset_refinement` cross-correlate on hold-out slice) — defer unless Option A produces false passes in corpus.
+### Option A vs Option B (lag-0 scoring)
+
+Both options answer the same question after hold-out extraction: given recommended Δ, do the shifted hold-out regions actually match?
+
+**Shared setup (both options):**
+
+1. Pick a hold-out window (not used in discovery).
+2. Extract A at `[T, T + L)` and B at `[T + Δ, T + L + Δ)`.
+3. Resample to `target_sample_rate`, then `prepare_clip_for_fingerprint` (same pipeline as discovery).
+
+After that they diverge.
+
+**Option A — Chromaprint `find_offset` (Phase 1 default):** Fingerprint both hold-out clips, then run the same alignment search used in discovery (`Aligner::find_offset` → `match_fingerprints` → best segment). Pass when the best-match lag is near zero (`|offset_secs| ≤ 0.5`) and confidence ≥ `min_verification_confidence`. Reuses existing ports and the discovery confidence model; still a lag search (not a literal “score at lag 0 only” check), so repetitive or ambiguous hold-out audio can false-pass — Phase 3 repetition downgrade targets that.
+
+**Option B — Explicit lag-0 PCM correlation (fallback):** Skip fingerprint lag search; compare prepared PCM waveforms directly at lag 0 via `normalized_correlation` (same family as `refine_offset_with_pcm` / `refine_holdout_segment_lag` in `offset_refinement.rs`). Pass when correlation at lag 0 meets a threshold — no “best lag” step. Truly answers “how similar are these waveforms right now?”; less likely to be fooled by fingerprint ambiguity when waveforms are clearly misaligned. Different code path and threshold semantics; more sensitive to prep differences. **Defer unless Option A false-passes in Phase 0 spike or corpus.**
+
+| | **Option A** (`find_offset`) | **Option B** (`normalized_correlation`) |
+|---|---|---|
+| **Signal** | Chromaprint fingerprints | Prepared PCM samples |
+| **Operation** | Search all lags, pick best | Score only at lag 0 |
+| **Pass means** | Best lag ≈ 0 + high confidence | High direct waveform similarity |
+| **Reuses** | Discovery aligner | PCM refinement machinery |
+| **Main risk** | Spurious ~0-lag fingerprint match | Prep / resampling sensitivity |
+| **Plan status** | Phase 1 default | Fallback if A false-passes |
+
+**Relation to high-rate refinement:** High-rate refinement (`apply_high_rate_refinement`) is a separate post-align pass that extracts **native-rate** PCM from a short hold-out, cross-correlates to find a small lag adjustment, and **may change** `recommended_offset_secs`. Verification uses the **final** Δ (post high-rate) and **does not change** it — it only judges whether that Δ is credible. Same hold-out window helpers (`holdout_window_candidates`, `holdout_window_feasible`), but different segment length (`high_rate_refine_secs` vs `clip_length`), extract rate (native vs `target_sample_rate`), and purpose: high-rate = “tweak Δ”; verification = “trust Δ?”
 
 ### Interaction with existing checks
 

@@ -400,6 +400,7 @@ mod tests {
                 offset_drift_secs: None,
                 start_overlap: Some(overlap),
                 high_rate_refinement: None,
+                offset_verification: None,
             },
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
@@ -525,6 +526,7 @@ mod tests {
                 offset_drift_secs: None,
                 start_overlap: None,
                 high_rate_refinement: None,
+                offset_verification: None,
             },
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,

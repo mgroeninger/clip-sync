@@ -69,6 +69,12 @@ pub struct Cli {
     /// Diagnostic only: never changes the exit code or recommended offset.
     #[arg(long)]
     pub check_clip_repetition: bool,
+
+    /// After alignment, extract a hold-out window shifted by the recommended offset and score
+    /// lag-0 similarity. Warns in human output when the hold-out confidence is below threshold.
+    /// Diagnostic only: never changes the exit code or recommended offset.
+    #[arg(long)]
+    pub verify_offset: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
