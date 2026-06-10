@@ -41,6 +41,12 @@ const AUTOCORR_BASELINE: f64 = 16.0;
 /// Minimum comparison-window size (items) for a statistically reliable estimate.
 const MIN_OVERLAP_ITEMS: usize = 50;
 
+/// Trailing trim must remove at least this much audio before short-lag artifact rejection applies.
+const TAIL_TRIM_DETECT_MIN_SECS: f64 = 2.0;
+
+/// Lags within `MIN_LAG_ITEMS + margin` after significant tail trim are often tone/silence edge artifacts.
+const SHORT_LAG_AFTER_TRIM_ITEM_MARGIN: usize = 15;
+
 /// Detects internal repetition within a single prepared clip using sliding fingerprint
 /// autocorrelation.
 ///
@@ -53,9 +59,10 @@ const MIN_OVERLAP_ITEMS: usize = 50;
 /// covering the scenario where a recording restarts part-way through (a short loop).
 pub(crate) fn detect_clip_repetition(
     fingerprint: &Fingerprint,
-    clip_duration_secs: f64,
+    prepared_duration_secs: f64,
     preset: ChromaprintPreset,
     min_confidence: f32,
+    source_duration_secs: f64,
 ) -> Option<RepetitionFinding> {
     #[cfg(test)]
     DETECT_COUNTING_ENABLED.with(|enabled| {
@@ -73,7 +80,7 @@ pub(crate) fn detect_clip_repetition(
 
     // Clip must be long enough to test at least MIN_LAG_ITEMS with MIN_OVERLAP_ITEMS remaining.
     let min_clip_secs = (MIN_LAG_ITEMS + MIN_OVERLAP_ITEMS) as f64 * item_secs;
-    if clip_duration_secs < min_clip_secs {
+    if prepared_duration_secs < min_clip_secs {
         return None;
     }
 
@@ -105,6 +112,14 @@ pub(crate) fn detect_clip_repetition(
         return None;
     }
 
+    if is_short_lag_after_tail_trim(
+        best_lag,
+        source_duration_secs,
+        prepared_duration_secs,
+    ) {
+        return None;
+    }
+
     let overlap = n - best_lag;
     let confidence = autocorr_confidence(best_score);
     if confidence < min_confidence {
@@ -124,6 +139,18 @@ fn autocorr_confidence(mean_bit_error: f64) -> f32 {
     score_conf.sqrt()
 }
 
+fn is_short_lag_after_tail_trim(
+    best_lag: usize,
+    source_duration_secs: f64,
+    prepared_duration_secs: f64,
+) -> bool {
+    let tail_trimmed =
+        source_duration_secs - prepared_duration_secs >= TAIL_TRIM_DETECT_MIN_SECS;
+    let short_lag =
+        best_lag <= MIN_LAG_ITEMS.saturating_add(SHORT_LAG_AFTER_TRIM_ITEM_MARGIN);
+    tail_trimmed && short_lag
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
@@ -135,6 +162,21 @@ mod tests {
 
     const SAMPLE_RATE: u32 = 44_100;
     const MIN_CONFIDENCE: f32 = 0.5;
+
+    fn detect(
+        fp: &Fingerprint,
+        prepared_secs: f64,
+        min_confidence: f32,
+        source_secs: f64,
+    ) -> Option<RepetitionFinding> {
+        detect_clip_repetition(
+            fp,
+            prepared_secs,
+            ChromaprintPreset::default(),
+            min_confidence,
+            source_secs,
+        )
+    }
 
     fn tone_samples(sample_rate: u32, start_index: u64, count: usize) -> Vec<i16> {
         (0..count)
@@ -248,9 +290,7 @@ mod tests {
         let duration = clip.samples.len() as f64 / f64::from(SAMPLE_RATE);
         let fp = fingerprint_untrimmed(&clip);
 
-        let finding =
-            detect_clip_repetition(&fp, duration, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .expect("expected repetition finding");
+        let finding = detect(&fp, duration, MIN_CONFIDENCE, duration).expect("expected repetition finding");
 
         assert!(
             (finding.lag_secs - 30.0).abs() <= 1.0,
@@ -266,9 +306,7 @@ mod tests {
         let clip = non_midpoint_repeat_clip();
         let fp = fingerprint_untrimmed(&clip);
 
-        let finding =
-            detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .expect("expected repetition finding at ~15s");
+        let finding = detect(&fp, 60.0, MIN_CONFIDENCE, 60.0).expect("expected repetition finding at ~15s");
 
         assert!(
             (finding.lag_secs - 15.0).abs() <= 2.0,
@@ -281,11 +319,20 @@ mod tests {
     #[test]
     fn detect_clip_repetition_finds_non_midpoint_with_production_prep() {
         let clip = non_midpoint_repeat_clip();
-        let fp = fingerprint_production_like(&clip);
+        let source_secs = clip.duration_secs();
+        let prepared =
+            prepare_clip_for_fingerprint(&clip, PcmPreparationOptions::default()).unwrap();
+        let fp = ChromaprintFingerprinter::default()
+            .fingerprint(&prepared)
+            .unwrap();
 
-        let finding =
-            detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .expect("expected repetition finding with default prep");
+        let finding = detect(
+            &fp,
+            prepared.duration_secs(),
+            MIN_CONFIDENCE,
+            source_secs,
+        )
+        .expect("expected repetition finding with default prep");
 
         assert!(
             (finding.lag_secs - 15.0).abs() <= 2.0,
@@ -317,34 +364,25 @@ mod tests {
     }
 
     #[test]
-    fn detect_clip_repetition_trim_may_cause_short_lag_false_positive() {
-        // After trim the true 25s lag is unsearchable, but tone-vs-silence boundaries can still
-        // produce a spurious detection near MIN_LAG_ITEMS (~5s). If detection returns None, the
-        // known limitation has been fixed — remove or update this characterization block.
+    fn detect_clip_repetition_rejects_short_lag_after_tail_trim() {
+        // True 25s repeat is unsearchable after trim; short-lag tone/silence edges must not report.
         let clip = distant_repeat_clip();
-        let fp_trimmed = fingerprint_production_like(&clip);
-        let finding = detect_clip_repetition(
-            &fp_trimmed,
-            60.0,
-            ChromaprintPreset::default(),
-            MIN_CONFIDENCE,
+        let source_secs = clip.duration_secs();
+        let prepared =
+            prepare_clip_for_fingerprint(&clip, PcmPreparationOptions::default()).unwrap();
+        let fp = ChromaprintFingerprinter::default()
+            .fingerprint(&prepared)
+            .unwrap();
+        assert!(
+            detect(
+                &fp,
+                prepared.duration_secs(),
+                MIN_CONFIDENCE,
+                source_secs,
+            )
+            .is_none(),
+            "short-lag detections after significant tail trim are edge artifacts"
         );
-
-        if let Some(finding) = finding {
-            let config = configuration_for_preset(ChromaprintPreset::default());
-            let item_secs = f64::from(config.item_duration_in_seconds());
-            let min_lag_secs = MIN_LAG_ITEMS as f64 * item_secs;
-            assert!(
-                (finding.lag_secs - min_lag_secs).abs() <= 1.0,
-                "expected short-lag false positive near {min_lag_secs}s, got lag_secs={}",
-                finding.lag_secs
-            );
-            assert!(
-                (finding.lag_secs - 25.0).abs() > 2.0,
-                "must not report the true 25s repeat after trim, got lag_secs={}",
-                finding.lag_secs
-            );
-        }
     }
 
     #[test]
@@ -354,12 +392,11 @@ mod tests {
         let preset = ChromaprintPreset::default();
 
         assert!(
-            detect_clip_repetition(&fp, 60.0, preset, MIN_CONFIDENCE).is_some(),
+            detect(&fp, 60.0, MIN_CONFIDENCE, 60.0).is_some(),
             "default min_confidence should accept a strong repeat"
         );
 
-        let finding = detect_clip_repetition(&fp, 60.0, preset, 0.0)
-            .expect("fixture must produce a repetition finding");
+        let finding = detect(&fp, 60.0, 0.0, 60.0).expect("fixture must produce a repetition finding");
         let threshold = finding.confidence.next_up();
         assert!(
             threshold > finding.confidence,
@@ -367,7 +404,7 @@ mod tests {
             finding.confidence
         );
         assert!(
-            detect_clip_repetition(&fp, 60.0, preset, threshold).is_none(),
+            detect_clip_repetition(&fp, 60.0, preset, threshold, 60.0).is_none(),
             "threshold just above fixture confidence ({}) should reject",
             finding.confidence
         );
@@ -391,8 +428,7 @@ mod tests {
         let duration = n_items as f64 * item_secs;
 
         assert!(
-            detect_clip_repetition(&fp, duration, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .is_none(),
+            detect(&fp, duration, MIN_CONFIDENCE, duration).is_none(),
             "pseudorandom fingerprint should not trigger detection"
         );
     }
@@ -407,28 +443,23 @@ mod tests {
         let fp = fingerprint_untrimmed(&clip);
 
         assert!(
-            detect_clip_repetition(&fp, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .is_none(),
+            detect(&fp, 60.0, MIN_CONFIDENCE, 60.0).is_none(),
             "monotonic chirp should not trigger repetition detection"
         );
     }
 
     #[test]
-    fn detect_clip_repetition_none_on_empty_fingerprint() {
+    fn detect_clip_repetition_none_when_too_short_or_empty() {
         let empty = Fingerprint { data: vec![] };
         assert!(
-            detect_clip_repetition(&empty, 60.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .is_none()
+            detect(&empty, 60.0, MIN_CONFIDENCE, 60.0).is_none(),
+            "empty fingerprint must not trigger detection"
         );
-    }
 
-    #[test]
-    fn detect_clip_repetition_none_when_too_short() {
         let clip = midpoint_repeat_clip();
         let fp = fingerprint_untrimmed(&clip);
         assert!(
-            detect_clip_repetition(&fp, 8.0, ChromaprintPreset::default(), MIN_CONFIDENCE)
-                .is_none(),
+            detect(&fp, 8.0, MIN_CONFIDENCE, 8.0).is_none(),
             "clip duration too short for reliable autocorrelation"
         );
     }
