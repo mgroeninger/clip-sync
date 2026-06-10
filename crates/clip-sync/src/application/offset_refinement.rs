@@ -30,6 +30,25 @@ pub fn aligned_slice_starts(offset_samples: i64) -> (usize, usize) {
     )
 }
 
+/// Test-only snapshot of [`should_discover_offset`] and its coarse-correlation input.
+#[cfg(test)]
+pub(crate) fn discover_gate_status(
+    left: &MonoPcmClip,
+    right: &MonoPcmClip,
+    coarse_offset_secs: f64,
+) -> (bool, Option<f64>) {
+    let coarse_correlation = best_correlation_near_offset(
+        left,
+        right,
+        coarse_offset_secs,
+        DISCOVER_COARSE_NEIGHBORHOOD_SECS,
+    );
+    (
+        should_discover_offset(left, right, coarse_offset_secs),
+        coarse_correlation,
+    )
+}
+
 fn should_discover_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
@@ -856,6 +875,85 @@ mod tests {
             "refined={}",
             refined.offset_secs
         );
+    }
+
+    fn wav_leader_60s_prep_pair() -> (MonoPcmClip, MonoPcmClip, ClipMatchEstimate) {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::ports::{Aligner, Fingerprinter};
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+
+        const SAMPLE_RATE: u32 = 11_025;
+        const CLIP_SECS: u32 = 120;
+        const OFFSET_SECS: u32 = 60;
+
+        let (left, right) = delayed_pair(SAMPLE_RATE, CLIP_SECS, OFFSET_SECS);
+        let corpus_prep = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left_p = prepare_clip_for_fingerprint(&left, corpus_prep).unwrap();
+        let right_p = prepare_clip_for_fingerprint(&right, corpus_prep).unwrap();
+
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let fp_a = fingerprinter.fingerprint(&left_p).expect("fp a");
+        let fp_b = fingerprinter.fingerprint(&right_p).expect("fp b");
+        let coarse = aligner.find_offset(&fp_a, &fp_b).expect("chromaprint");
+        (left_p, right_p, coarse)
+    }
+
+    /// Fast (~seconds): Chromaprint coarse offset + discover gate only.
+    #[test]
+    #[ignore = "diagnostic; cargo test diagnose_wav_leader_60s_coarse -- --ignored --nocapture"]
+    fn diagnose_wav_leader_60s_coarse() {
+        let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
+        let (should_discover, coarse_corr) =
+            discover_gate_status(&left_p, &right_p, coarse.offset_secs);
+        let true_corr = best_correlation_near_offset(
+            &left_p,
+            &right_p,
+            60.0,
+            DISCOVER_COARSE_NEIGHBORHOOD_SECS,
+        );
+
+        eprintln!("=== wav_leader_60s coarse diagnostic (120s clip, 60s offset) ===");
+        eprintln!(
+            "chromaprint: offset={:.6}s confidence={:.4}",
+            coarse.offset_secs, coarse.confidence
+        );
+        eprintln!(
+            "pcm correlation @ coarse (±{DISCOVER_COARSE_NEIGHBORHOOD_SECS}s): {coarse_corr:?}"
+        );
+        eprintln!(
+            "pcm correlation @ true 60s (±{DISCOVER_COARSE_NEIGHBORHOOD_SECS}s): {true_corr:?}"
+        );
+        eprintln!(
+            "should_discover_offset: {should_discover} (skip discover when coarse corr >= {DISCOVER_SKIP_IF_COARSE_SCORE})"
+        );
+    }
+
+    /// Slow (minutes): full refine + pcm_discover. Run only when coarse diagnostic warrants it.
+    #[test]
+    #[ignore = "slow diagnostic; cargo test diagnose_wav_leader_60s_full -- --ignored --nocapture"]
+    fn diagnose_wav_leader_60s_full() {
+        let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
+        let refined = refine_offset_estimate(&left_p, &right_p, coarse);
+        let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs);
+        let lag_adj = pcm_lag_adjustment_secs(&left_p, &right_p, refined.offset_secs);
+
+        eprintln!("=== wav_leader_60s full diagnostic ===");
+        eprintln!(
+            "chromaprint coarse: offset={:.6}s confidence={:.4}",
+            coarse.offset_secs, coarse.confidence
+        );
+        eprintln!("pcm_discover_offset from coarse: {discover:?}");
+        eprintln!(
+            "refine_offset_estimate final: offset={:.6}s confidence={:.4}",
+            refined.offset_secs, refined.confidence
+        );
+        eprintln!("pcm_lag_adjustment at final: {lag_adj:?}");
     }
 
     #[test]

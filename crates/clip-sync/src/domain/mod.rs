@@ -13,8 +13,8 @@ pub mod resample;
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
-    ClipRepetitionReport, Fingerprint, HighRateRefinement, RepetitionFinding, build_alignment_result,
-    compute_clip_timeline_overlap, refresh_start_overlap,
+    ClipRepetitionReport, Fingerprint, HighRateRefinement, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap, refresh_start_overlap,
 };
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;

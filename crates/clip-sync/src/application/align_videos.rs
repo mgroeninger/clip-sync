@@ -13,8 +13,8 @@ use crate::domain::{
     prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair,
     select_best_track, truncate_padded_tail, AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
-    ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions, RepetitionFinding,
-    TimelineOverlap,
+    ClipWindow, DomainError, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    PcmPreparationOptions, RepetitionFinding, TimelineOverlap,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 use crate::infrastructure::logging::ExtractionProgressScope;
@@ -321,26 +321,20 @@ where
             let clip_a = prepared_a.map_err(map_prepare_error)?;
             let clip_b = prepared_b.map_err(map_prepare_error)?;
 
-            let use_end_prior = window.label == ClipLabel::End
+            let end_refine_candidate = window.label == ClipLabel::End
                 && config.alignment.refine_end_clip_around_start_offset
                 && start_prior.is_some_and(|prior| {
                     prior.confidence >= config.alignment.min_match_score * 0.5
                 });
 
-            // Fingerprint when needed for cross-file alignment or self-match check.
-            // When use_end_prior is true and check_clip_repetition is off, skip fingerprinting
-            // to preserve the existing end-prior performance characteristic.
-            let need_fingerprints = !use_end_prior || config.validation.check_clip_repetition;
-            let fingerprints = if need_fingerprints {
-                let fp_a = self.fingerprinter.fingerprint(&clip_a)?;
-                let fp_b = self.fingerprinter.fingerprint(&clip_b)?;
-                Some((fp_a, fp_b))
-            } else {
-                None
-            };
+            // End-prior refinement must compare against an independent end estimate so
+            // disagreeing windows (e.g. trailing silence on one file) stay visible.
+            let fp_a = self.fingerprinter.fingerprint(&clip_a)?;
+            let fp_b = self.fingerprinter.fingerprint(&clip_b)?;
+            let fingerprints = (fp_a, fp_b);
 
             if config.validation.check_clip_repetition {
-                let (fp_a, fp_b) = fingerprints.as_ref().expect("fingerprints computed above");
+                let (fp_a, fp_b) = &fingerprints;
                 let preset = config.clip.chromaprint_preset;
                 let min_conf = config.validation.min_repetition_confidence;
                 let rep_a = detect_clip_repetition(
@@ -363,28 +357,43 @@ where
                 repetition_diagnostics.push((None, None));
             }
 
-            let estimate = if use_end_prior {
+            let (refined_around_start, estimate) = if end_refine_candidate {
                 let prior = start_prior.expect("checked above");
-                if config.alignment.refine_offset_with_pcm {
-                    refine_offset_around_prior(
-                        &clip_a,
-                        &clip_b,
-                        prior,
-                        config.alignment.end_clip_refine_radius_secs,
-                    )
+                let (fp_a, fp_b) = &fingerprints;
+                let mut independent = self.aligner.find_offset(fp_a, fp_b)?;
+                if config.alignment.refine_offset_with_pcm
+                    && independent.confidence >= config.alignment.min_match_score * 0.5
+                {
+                    independent = refine_offset_estimate(&clip_a, &clip_b, independent);
+                }
+
+                let agree = (prior.offset_secs - independent.offset_secs).abs()
+                    <= OFFSET_AGREEMENT_TOLERANCE_SECS;
+                if agree {
+                    let refined = if config.alignment.refine_offset_with_pcm {
+                        refine_offset_around_prior(
+                            &clip_a,
+                            &clip_b,
+                            prior,
+                            config.alignment.end_clip_refine_radius_secs,
+                        )
+                    } else {
+                        prior
+                    };
+                    (true, refined)
                 } else {
-                    prior
+                    (false, independent)
                 }
             } else {
-                let (fp_a, fp_b) = fingerprints.expect("computed above when !use_end_prior");
-                let mut chromaprint_estimate = self.aligner.find_offset(&fp_a, &fp_b)?;
+                let (fp_a, fp_b) = &fingerprints;
+                let mut chromaprint_estimate = self.aligner.find_offset(fp_a, fp_b)?;
                 if config.alignment.refine_offset_with_pcm
                     && chromaprint_estimate.confidence >= config.alignment.min_match_score * 0.5
                 {
                     chromaprint_estimate =
                         refine_offset_estimate(&clip_a, &clip_b, chromaprint_estimate);
                 }
-                chromaprint_estimate
+                (false, chromaprint_estimate)
             };
 
             if window.label == ClipLabel::Start && estimate.confidence > 0.0 {
@@ -396,7 +405,7 @@ where
                 clip_label_name(window.label),
                 format_duration(window.start),
                 format_duration(window.end),
-                if use_end_prior {
+                if refined_around_start {
                     format!(
                         " (refined ±{:.0}s around start)",
                         config.alignment.end_clip_refine_radius_secs
@@ -1219,7 +1228,33 @@ mod tests {
     }
 
     #[test]
-    fn execute_end_clip_uses_start_offset_when_constrained_refine_enabled() {
+    fn execute_end_clip_uses_start_offset_when_independent_end_agrees() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimates(vec![
+            ClipMatchEstimate {
+                offset_secs: 10.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 10.1,
+                confidence: 0.9,
+            },
+        ]);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(request(two_clip_config()))
+            .expect("execute should succeed");
+
+        assert!(response.result.offsets_consistent);
+        assert_eq!(response.result.clips[0].offset_secs, Some(10.0));
+        assert_eq!(response.result.clips[1].offset_secs, Some(10.0));
+    }
+
+    #[test]
+    fn execute_end_clip_keeps_independent_offset_when_it_disagrees_with_start() {
         let reader = matched_reader();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimates(vec![
@@ -1239,9 +1274,10 @@ mod tests {
             .execute(request(two_clip_config()))
             .expect("execute should succeed");
 
-        assert!(response.result.offsets_consistent);
+        assert!(!response.result.offsets_consistent);
         assert_eq!(response.result.clips[0].offset_secs, Some(10.0));
-        assert_eq!(response.result.clips[1].offset_secs, Some(10.0));
+        assert_eq!(response.result.clips[1].offset_secs, Some(20.0));
+        assert_eq!(response.result.recommended_offset_secs, None);
     }
 
     #[test]

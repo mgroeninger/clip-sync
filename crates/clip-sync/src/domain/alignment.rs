@@ -99,7 +99,8 @@ pub struct AlignmentResult {
     pub high_rate_refinement: Option<HighRateRefinement>,
 }
 
-const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
+/// Maximum start/end clip offset delta treated as agreement when merging estimates.
+pub const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
 
 /// Per-clip alignment inputs for building an [`AlignmentResult`].
 pub struct ClipPairReportInput<'a> {
