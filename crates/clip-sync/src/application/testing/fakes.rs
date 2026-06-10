@@ -69,6 +69,8 @@ impl MediaReader for FakeMediaReader {
 pub struct FakeMediaSession {
     tracks: Vec<AudioTrack>,
     extract_error: Option<MediaError>,
+    /// When set, extracted PCM is all zeros (fails fingerprint prep / sufficient-audio gate).
+    extract_silence: bool,
 }
 
 impl FakeMediaSession {
@@ -76,6 +78,7 @@ impl FakeMediaSession {
         Self {
             tracks: vec![test_track(duration)],
             extract_error: None,
+            extract_silence: false,
         }
     }
 
@@ -83,11 +86,17 @@ impl FakeMediaSession {
         Self {
             tracks,
             extract_error: None,
+            extract_silence: false,
         }
     }
 
     pub fn with_extract_error(mut self, error: MediaError) -> Self {
         self.extract_error = Some(error);
+        self
+    }
+
+    pub fn with_silent_extract(mut self) -> Self {
+        self.extract_silence = true;
         self
     }
 }
@@ -111,13 +120,17 @@ impl MediaSession for FakeMediaSession {
         progress.progress(label, 1, 1);
         let sample_rate = 44_100;
         let count = window.sample_count_at(sample_rate);
-        let samples: Vec<i16> = (0..count)
-            .map(|index| {
-                let t = index as f32 / sample_rate as f32;
-                (f32::sin(440.0 * t * std::f32::consts::TAU) * (i16::MAX as f32 * 0.25))
-                    .round() as i16
-            })
-            .collect();
+        let samples: Vec<i16> = if self.extract_silence {
+            vec![0_i16; count]
+        } else {
+            (0..count)
+                .map(|index| {
+                    let t = index as f32 / sample_rate as f32;
+                    (f32::sin(440.0 * t * std::f32::consts::TAU) * (i16::MAX as f32 * 0.25))
+                        .round() as i16
+                })
+                .collect()
+        };
         Ok(MonoPcmClip {
             sample_rate,
             samples,

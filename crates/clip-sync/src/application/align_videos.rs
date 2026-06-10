@@ -794,10 +794,18 @@ mod tests {
     use crate::application::testing::fakes::{
         FakeAligner, FakeFingerprinter, FakeMediaReader, FakeMediaSession, FakeProgressReporter,
     };
-    use crate::domain::{ClipLabel, ClipMatch, ClipMatchEstimate, DomainError};
+    use crate::domain::{
+        ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, DomainError,
+    };
     use crate::infrastructure::chromaprint::repetition::{
         test_reset_repetition_detect_calls, test_repetition_detect_calls,
     };
+
+    /// Pure-tone repeat fixtures target ~30s; integration/corpus use this band for Chromaprint lag
+    /// quantization (unit tests use tighter ±1–2s where prep is controlled).
+    const PURE_TONE_REPEAT_LAG_SECS: f64 = 30.0;
+    const PURE_TONE_REPEAT_LAG_TOLERANCE_SECS: f64 = 2.0;
+    const FAKE_REPETITION_MATCH_CONFIDENCE: f32 = 0.9;
 
     fn assert_repetition_wrapper_without_findings(clip: &ClipMatch) {
         let report = clip
@@ -808,6 +816,52 @@ mod tests {
             report.a.is_none() && report.b.is_none(),
             "fake single-item fingerprints must not produce repetition findings"
         );
+    }
+
+    fn assert_repetition_lag_near_secs(report: &ClipRepetitionReport, expected_secs: f64) {
+        let finding = report
+            .a
+            .as_ref()
+            .or(report.b.as_ref())
+            .expect("at least one repetition finding");
+        assert!(
+            (finding.lag_secs - expected_secs).abs() <= PURE_TONE_REPEAT_LAG_TOLERANCE_SECS,
+            "lag_secs={} expected within ±{PURE_TONE_REPEAT_LAG_TOLERANCE_SECS}s of {expected_secs}",
+            finding.lag_secs
+        );
+    }
+
+    /// Downgrade tests: assert the side whose lag is within ±1 s of |offset|, not whichever
+    /// finding `a.or(b)` returns first (offset-shifted clips can spuriously match on one side).
+    fn assert_downgrade_trigger_lag_near_secs(
+        report: &ClipRepetitionReport,
+        offset_secs: f64,
+        expected_secs: f64,
+    ) {
+        let close = |rep: &RepetitionFinding| {
+            (rep.lag_secs - offset_secs.abs()).abs() <= 1.0
+        };
+        let matching = report
+            .a
+            .as_ref()
+            .filter(|f| close(f))
+            .or_else(|| report.b.as_ref().filter(|f| close(f)))
+            .expect("a finding within ±1 s of |offset| must exist");
+        assert!(
+            (matching.lag_secs - expected_secs).abs() <= PURE_TONE_REPEAT_LAG_TOLERANCE_SECS,
+            "downgrade-trigger lag_secs={} expected within ±{PURE_TONE_REPEAT_LAG_TOLERANCE_SECS}s of {expected_secs}",
+            matching.lag_secs
+        );
+    }
+
+    fn assert_clips_keep_aligner_confidence(clips: &[ClipMatch], expected: f32) {
+        for clip in clips {
+            assert!(
+                (clip.confidence - expected).abs() < 0.001,
+                "repetition pass must not change aligner confidence: got {} expected {expected}",
+                clip.confidence
+            );
+        }
     }
 
     fn mins(m: u64) -> Duration {
@@ -1405,12 +1459,34 @@ mod tests {
     }
 
     #[test]
+    fn repetition_detect_skipped_when_flag_off() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 3.0,
+            confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        test_reset_repetition_detect_calls();
+        use_case
+            .execute(request(two_clip_config()))
+            .expect("execute should succeed");
+        assert_eq!(
+            test_repetition_detect_calls(),
+            0,
+            "detect_clip_repetition must not run when check_clip_repetition is off"
+        );
+    }
+
+    #[test]
     fn align_repetition_clip_match_repetition_present_when_flag_on() {
         let reader = matched_reader();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 3.0,
-            confidence: 0.9,
+            confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
         let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
@@ -1423,6 +1499,10 @@ mod tests {
             .expect("should succeed with repetition flag on");
 
         assert!(response.result.start_aligned);
+        assert_clips_keep_aligner_confidence(
+            &response.result.clips,
+            FAKE_REPETITION_MATCH_CONFIDENCE,
+        );
         for clip in &response.result.clips {
             assert_repetition_wrapper_without_findings(clip);
         }
@@ -1460,7 +1540,7 @@ mod tests {
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 3.0,
-            confidence: 0.9,
+            confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
         let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
@@ -1471,6 +1551,11 @@ mod tests {
         let response = use_case
             .execute(request(config))
             .expect("execute should succeed");
+
+        assert_clips_keep_aligner_confidence(
+            &response.result.clips,
+            FAKE_REPETITION_MATCH_CONFIDENCE,
+        );
 
         let json = serde_json::to_string(&response.result).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
@@ -1520,7 +1605,7 @@ mod tests {
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 5.0,
-            confidence: 0.9,
+            confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
         let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
@@ -1534,6 +1619,10 @@ mod tests {
             .execute(request(config))
             .expect("try_all_tracks with repetition should succeed");
 
+        assert_clips_keep_aligner_confidence(
+            &response.result.clips,
+            FAKE_REPETITION_MATCH_CONFIDENCE,
+        );
         for clip in &response.result.clips {
             assert_repetition_wrapper_without_findings(clip);
         }
@@ -1593,6 +1682,72 @@ mod tests {
     }
 
     #[test]
+    fn should_downgrade_at_upper_one_second_boundary() {
+        let finding = RepetitionFinding {
+            lag_secs: 31.0,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        assert!(
+            super::should_downgrade(&Some(finding), &None, 30.0),
+            "lag within 1 s above |offset| must downgrade"
+        );
+    }
+
+    #[test]
+    fn should_downgrade_when_both_sides_match_offset() {
+        let finding_a = RepetitionFinding {
+            lag_secs: 30.5,
+            confidence: 0.9,
+            items_count: 100,
+        };
+        let finding_b = RepetitionFinding {
+            lag_secs: 29.5,
+            confidence: 0.85,
+            items_count: 90,
+        };
+        assert!(
+            super::should_downgrade(&Some(finding_a), &Some(finding_b), 30.0),
+            "either side within ±1 s of |offset| must downgrade"
+        );
+    }
+
+    #[test]
+    fn repetition_on_skipped_clip_has_null_findings() {
+        let reader = FakeMediaReader::new()
+            .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
+            .with_session(
+                "b.wav",
+                FakeMediaSession::with_duration(mins(3)).with_silent_extract(),
+            );
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 3.0,
+            confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let mut config = two_clip_config();
+        config.validation.check_clip_repetition = true;
+
+        test_reset_repetition_detect_calls();
+        let response = use_case
+            .execute(request(config))
+            .expect("execute should succeed with skipped clips");
+
+        for clip in &response.result.clips {
+            assert!(!clip.aligned, "insufficient-audio skip must not align");
+            assert_repetition_wrapper_without_findings(clip);
+        }
+        assert_eq!(
+            test_repetition_detect_calls(),
+            0,
+            "detect_clip_repetition must not run when fingerprint prep is skipped"
+        );
+    }
+
+    #[test]
     fn repetition_reported_on_pure_tone_fixture() {
         use crate::application::config::ChromaprintPreset;
         use crate::application::testing::audio_fixtures::write_pure_tone_repeat_wav_pair;
@@ -1604,7 +1759,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let (path_a, path_b) = write_pure_tone_repeat_wav_pair(temp.path(), SAMPLE_RATE, 65, 0);
 
-        let mut config = AlignConfig {
+        let base_config = AlignConfig {
             clip: ClipConfig {
                 clip_length: Duration::from_secs(60),
                 num_clips: 1,
@@ -1621,7 +1776,6 @@ mod tests {
             },
             ..Default::default()
         };
-        config.validation.check_clip_repetition = true;
 
         let media_reader = SymphoniaMediaReader;
         let preset = ChromaprintPreset::default();
@@ -1630,42 +1784,148 @@ mod tests {
         let progress = FakeProgressReporter;
         let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
 
-        let response = use_case
-            .execute(AlignVideosRequest {
-                video_a: path_a,
-                video_b: path_b,
-                config,
-            })
-            .expect("execute");
+        let request = |config: AlignConfig| AlignVideosRequest {
+            video_a: path_a.clone(),
+            video_b: path_b.clone(),
+            config,
+        };
 
-        assert!(response.result.start_aligned);
-        let offset = response
+        let response_base = use_case
+            .execute(request(base_config.clone()))
+            .expect("baseline execute");
+
+        let mut config_rep = base_config;
+        config_rep.validation.check_clip_repetition = true;
+
+        let response_rep = use_case
+            .execute(request(config_rep))
+            .expect("repetition execute");
+
+        assert!(response_rep.result.start_aligned);
+        let offset = response_rep
             .result
             .recommended_offset_secs
             .unwrap_or(0.0);
         assert!(offset.abs() < 0.5, "offset={offset}");
 
-        let clip = &response.result.clips[0];
+        let clip = &response_rep.result.clips[0];
         let report = clip
             .repetition
             .as_ref()
             .expect("repetition report");
+        assert_repetition_lag_near_secs(report, PURE_TONE_REPEAT_LAG_SECS);
         let finding = report
             .a
             .as_ref()
             .or(report.b.as_ref())
             .expect("repetition finding on a or b");
-        assert!(
-            (28.0..=32.0).contains(&finding.lag_secs),
-            "lag_secs={}",
-            finding.lag_secs
-        );
         assert!(finding.confidence >= 0.5);
-        // Repeat lag (~30 s) differs from offset (~0 s) — downgrade must not apply.
+        // Repeat lag (~30 s) differs from offset (~0 s) — downgrade must not apply in the pipeline.
         assert!(
             !super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
             "offset-aligned pair should not trigger confidence downgrade"
         );
+        assert!(
+            (clip.confidence - response_base.result.clips[0].confidence).abs() < 0.01,
+            "confidence must be unchanged when downgrade does not apply: base={}, with_rep={}",
+            response_base.result.clips[0].confidence,
+            clip.confidence
+        );
+    }
+
+    #[test]
+    fn min_repetition_confidence_rejects_findings_in_pipeline() {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_pure_tone_repeat_wav_pair;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const SAMPLE_RATE: u32 = 44_100;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_pure_tone_repeat_wav_pair(temp.path(), SAMPLE_RATE, 65, 0);
+
+        let mut base_config = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: true,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        base_config.validation.check_clip_repetition = true;
+        base_config.validation.min_repetition_confidence = 0.0;
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+
+        let request = |config: AlignConfig| AlignVideosRequest {
+            video_a: path_a.clone(),
+            video_b: path_b.clone(),
+            config,
+        };
+
+        let response_low = use_case
+            .execute(request(base_config))
+            .expect("low-threshold execute");
+
+        let report_low = response_low.result.clips[0]
+            .repetition
+            .as_ref()
+            .expect("repetition wrapper");
+        let finding = report_low
+            .a
+            .as_ref()
+            .or(report_low.b.as_ref())
+            .expect("fixture must produce a repetition finding at min_confidence=0");
+        let reject_threshold = finding.confidence.next_up();
+
+        let config_high = AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips: 1,
+                target_sample_rate: Some(SAMPLE_RATE),
+                normalize_loudness: true,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                refine_offset_with_pcm: false,
+                refine_offset_high_rate: false,
+                ..Default::default()
+            },
+            validation: crate::application::config::ValidationConfig {
+                check_clip_repetition: true,
+                min_repetition_confidence: reject_threshold,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let response_high = use_case
+            .execute(request(config_high))
+            .expect("high-threshold execute");
+
+        let clip = &response_high.result.clips[0];
+        assert!(
+            clip.repetition.is_some(),
+            "repetition wrapper must be present even when findings are gated out"
+        );
+        assert_repetition_wrapper_without_findings(clip);
     }
 
     #[test]
@@ -1750,12 +2010,13 @@ mod tests {
 
         let clip = &response_rep.result.clips[0];
         let report = clip.repetition.as_ref().expect("repetition report");
+        let offset = clip.offset_secs.expect("offset");
         assert!(
-            super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
-            "repeat lag must be within ±1 s of offset for downgrade: {:?} offset={:?}",
-            report,
-            clip.offset_secs
+            super::should_downgrade(&report.a, &report.b, offset),
+            "repeat lag must be within ±1 s of offset for downgrade: {:?} offset={offset}",
+            report
         );
+        assert_downgrade_trigger_lag_near_secs(report, offset, PURE_TONE_REPEAT_LAG_SECS);
         assert!(
             response_rep.result.start_aligned,
             "start_aligned must not flip after confidence downgrade"
@@ -1831,10 +2092,12 @@ mod tests {
 
         let clip = &response.result.clips[0];
         let report = clip.repetition.as_ref().expect("repetition report");
+        let offset = clip.offset_secs.expect("offset");
         assert!(
-            super::should_downgrade(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            super::should_downgrade(&report.a, &report.b, offset),
             "repeat lag must trigger downgrade"
         );
+        assert_downgrade_trigger_lag_near_secs(report, offset, PURE_TONE_REPEAT_LAG_SECS);
         assert!(response.result.start_aligned);
         assert!(clip.aligned, "aligned is computed before downgrade and must stay true");
         assert!(
