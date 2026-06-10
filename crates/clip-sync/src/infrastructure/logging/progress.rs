@@ -29,6 +29,10 @@ impl StderrProgressReporter {
         matches!(self.mode, ProgressMode::Verbose) || self.is_tty
     }
 
+    fn shows_verbose_phases(&self) -> bool {
+        matches!(self.mode, ProgressMode::Verbose)
+    }
+
     /// End an in-progress TTY `\r` line so the next stderr write starts on a fresh line.
     fn finish_progress_line(&self, stderr: &mut impl Write) {
         if !self.progress_active.get() {
@@ -40,10 +44,8 @@ impl StderrProgressReporter {
         self.progress_active.set(false);
         self.last_percent.set(None);
     }
-}
 
-impl ProgressReporter for StderrProgressReporter {
-    fn phase(&self, message: &str) {
+    fn emit_phase(&self, message: &str) {
         if !self.enabled() {
             return;
         }
@@ -52,6 +54,19 @@ impl ProgressReporter for StderrProgressReporter {
         self.finish_progress_line(&mut stderr);
         self.last_percent.set(None);
         let _ = writeln!(stderr, "{message}");
+    }
+}
+
+impl ProgressReporter for StderrProgressReporter {
+    fn phase(&self, message: &str) {
+        self.emit_phase(message);
+    }
+
+    fn phase_verbose(&self, message: &str) {
+        if !self.shows_verbose_phases() {
+            return;
+        }
+        self.emit_phase(message);
     }
 
     fn progress(&self, label: &str, current: u64, total: u64) {
@@ -93,5 +108,17 @@ mod tests {
         let reporter = StderrProgressReporter::new(ProgressMode::Quiet);
         assert!(!reporter.enabled());
         assert!(!reporter.show_progress_bar());
+    }
+
+    #[test]
+    fn auto_mode_suppresses_verbose_phases() {
+        let reporter = StderrProgressReporter::new(ProgressMode::Auto);
+        assert!(!reporter.shows_verbose_phases());
+    }
+
+    #[test]
+    fn verbose_mode_enables_verbose_phases() {
+        let reporter = StderrProgressReporter::new(ProgressMode::Verbose);
+        assert!(reporter.shows_verbose_phases());
     }
 }

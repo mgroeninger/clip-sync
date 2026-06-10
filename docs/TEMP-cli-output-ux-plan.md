@@ -1,6 +1,6 @@
 # Temporary plan: CLI output UX polish
 
-> **Status:** Not started. Archive to `docs/archive/cli-output-ux-plan.md` when shipped.
+> **Status:** Phase 2 complete. Archive to `docs/archive/cli-output-ux-plan.md` when shipped.
 
 **Problem:** A full `clip-sync-repair --mux` run emits ~60 lines mixing progress phases, progress percentages, third-party `tracing` INFO logs, and a final structured report. Information is duplicated (alignment mid-run vs final report; gap scan vs patch results), library noise dominates stderr, and non-TTY runs glue progress lines to timestamped log lines (`patch-a: 99%2026-06-09…`).
 

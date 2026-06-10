@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use clip_sync::{AppError, ProgressMode, init_tracing, StderrProgressReporter};
+use clip_sync::{AppError, ProgressMode, ProgressReporter, init_tracing, StderrProgressReporter};
 
 use crate::application::run_align::run_align;
 use crate::infrastructure::config::{AppConfig, load_app_config};
@@ -33,6 +33,11 @@ fn run_inner() -> Result<(), AppError> {
     init_tracing(&config.logging)?;
 
     let progress = StderrProgressReporter::new(config.logging.progress);
+    progress.phase(&format!(
+        "clip-sync: aligning {} with {}",
+        cli.video_a.display(),
+        cli.video_b.display()
+    ));
     let result = run_align(&config, cli.video_a, cli.video_b, &progress)?;
 
     output::print_success(&config.output, &result)

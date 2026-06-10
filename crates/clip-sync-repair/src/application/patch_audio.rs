@@ -180,7 +180,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         for (index, region) in plan.regions.iter().enumerate() {
             let gap_num = index as u64 + 1;
             self.progress.progress("patch-gap", gap_num, region_count);
-            self.progress.phase(&format!(
+            self.progress.phase_verbose(&format!(
                 "  gap {gap_num}/{region_count}: A [{:.1}s – {:.1}s]",
                 region.a_start_secs, region.a_end_secs
             ));

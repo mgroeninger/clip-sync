@@ -7,7 +7,14 @@ use crate::domain::{
 };
 
 pub trait ProgressReporter {
+    /// Major stage line — shown in default (`Auto`) and `--verbose` modes.
     fn phase(&self, message: &str);
+
+    /// Detail line — shown only with `--verbose` (`ProgressMode::Verbose`).
+    fn phase_verbose(&self, message: &str) {
+        let _ = message;
+    }
+
     fn progress(&self, label: &str, current: u64, total: u64);
 }
 

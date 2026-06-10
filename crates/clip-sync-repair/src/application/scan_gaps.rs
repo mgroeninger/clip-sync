@@ -57,6 +57,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     }
 
     pub fn execute(&self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
+        self.progress.phase("Aligning audio fingerprints...");
         let alignment = self.aligner.align(
             AlignVideosRequest {
                 video_a: request.video_a.clone(),
@@ -126,6 +127,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             Ok(())
         };
 
+        progress.phase("Scanning video A for gaps...");
         session_a
             .scan_interleaved_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
             .map_err(RepairError::Media)?;

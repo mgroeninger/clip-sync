@@ -56,7 +56,7 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         return;
     };
 
-    progress.phase("High-rate offset refinement...");
+    progress.phase_verbose("High-rate offset refinement...");
     let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
     let segment_length_secs = segment_length.as_secs_f64();
 

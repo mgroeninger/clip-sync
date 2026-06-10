@@ -152,7 +152,7 @@ In TOML, `clip_length` is an integer number of **seconds** (CLI accepts human-fr
 | Source | Precedence |
 |--------|------------|
 | `RUST_LOG` environment variable | Highest — overrides `[logging].level` and `--log-level` when set |
-| `--log-level` / `[logging].level` | Used when `RUST_LOG` is unset |
+| `--log-level` / `[logging].level` | Used when `RUST_LOG` is unset; default filter is `clip_sync=<level>,clip_sync_repair=<level>,warn` so third-party crates (e.g. symphonia) log at `warn` unless you raise them in `RUST_LOG` |
 | `--log-file` / `[logging].log_file` | Appends structured logs to a file; stderr logging continues |
 
 ### Analyzer config (`clip-sync`)

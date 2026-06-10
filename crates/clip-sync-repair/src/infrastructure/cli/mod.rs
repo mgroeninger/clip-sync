@@ -5,7 +5,9 @@ pub mod output;
 use std::process::ExitCode;
 
 use clap::Parser;
-use clip_sync::{init_tracing, ProgressMode, StderrProgressReporter, SymphoniaMediaReader};
+use clip_sync::{
+    init_tracing, ProgressMode, ProgressReporter, StderrProgressReporter, SymphoniaMediaReader,
+};
 
 use clip_sync::AppError;
 
@@ -61,6 +63,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     init_tracing(&config.logging).map_err(RepairError::Align)?;
 
     let progress = StderrProgressReporter::new(config.logging.progress);
+    progress.phase(&format!(
+        "clip-sync-repair: aligning {} with {}",
+        args.video_a.display(),
+        args.video_b.display()
+    ));
     let media_reader = SymphoniaMediaReader;
 
     let request = ScanGapsRequest {

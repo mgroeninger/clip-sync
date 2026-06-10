@@ -58,13 +58,7 @@ where
     pub fn execute(&self, request: AlignVideosRequest) -> Result<AlignVideosResponse, AppError> {
         request.config.validate()?;
 
-        self.progress.phase(&format!(
-            "clip-sync: aligning {} with {}",
-            request.video_a.display(),
-            request.video_b.display()
-        ));
-
-        self.progress.phase("Opening media");
+        self.progress.phase_verbose("Opening media");
         let session_a = self
             .media_reader
             .open(&MediaSource::new(request.video_a.clone()))?;
@@ -173,7 +167,7 @@ where
 
         for track_a in &decodable_a {
             for track_b in &decodable_b {
-                self.progress.phase(&format!(
+                self.progress.phase_verbose(&format!(
                     "Trying track pair A:{} / B:{}",
                     track_a.index, track_b.index
                 ));
@@ -287,7 +281,7 @@ where
 
             if is_skippable_prepare_error(&prepared_a) || is_skippable_prepare_error(&prepared_b)
             {
-                self.progress.phase(&format!(
+                self.progress.phase_verbose(&format!(
                     "{} clip [{}–{}]: skipped (insufficient audio)",
                     clip_label_name(window.label),
                     format_duration(window.start),
@@ -302,7 +296,7 @@ where
             }
 
             if end_clip_unreliable && config.alignment.skip_unreliable_end_clip {
-                self.progress.phase(&format!(
+                self.progress.phase_verbose(&format!(
                     "end clip [{}–{}]: skipped (unreliable tail extract)",
                     format_duration(window.start),
                     format_duration(window.end),
@@ -376,7 +370,7 @@ where
                 start_prior = Some(estimate);
             }
 
-            self.progress.phase(&format!(
+            self.progress.phase_verbose(&format!(
                 "{} clip [{}–{}]{}: {} (confidence: {:.2})",
                 clip_label_name(window.label),
                 format_duration(window.start),
@@ -448,7 +442,7 @@ where
             Some(track) => track,
             None => select_best_track(&tracks)?,
         };
-        self.progress.phase(&format!(
+        self.progress.phase_verbose(&format!(
             "Selected track {} ({} Hz, {} channel{}, {}decodable)",
             track.index,
             track.sample_rate,
@@ -467,7 +461,7 @@ where
             match session.track_decodable_extent(track) {
                 Ok(extent) => extent,
                 Err(_) => {
-                    self.progress.phase(&format!(
+                    self.progress.phase_verbose(&format!(
                         "{label}: tail extent scan failed; using container duration for end clip"
                     ));
                     None
@@ -479,7 +473,7 @@ where
 
         if let Some(extent) = decodable_extent {
             if extent + Duration::from_secs(1) < duration {
-                self.progress.phase(&format!(
+                self.progress.phase_verbose(&format!(
                     "{label}: decodable extent {:.0}s (container {:.0}s)",
                     extent.as_secs_f64(),
                     duration.as_secs_f64()
@@ -500,14 +494,14 @@ where
             .map(|window| window.end)
             .unwrap_or(duration);
 
-        self.progress.phase(&format_clip_plan(label, &windows));
+        self.progress.phase_verbose(&format_clip_plan(label, &windows));
 
         let mut extract_order: Vec<usize> = (0..windows.len()).collect();
         if windows.len() > 1 {
             extract_order.sort_by_key(|&index| windows[index].start);
             let chronological: Vec<usize> = (0..windows.len()).collect();
             if extract_order != chronological {
-                self.progress.phase(&format!(
+                self.progress.phase_verbose(&format!(
                     "Extracting {} clip(s) in chronological order ({label})",
                     windows.len()
                 ));
@@ -639,23 +633,23 @@ fn log_alignment_summary(
     duration_b: Option<Duration>,
     progress: &dyn ProgressReporter,
 ) {
-    progress.phase(&format!(
+    progress.phase_verbose(&format!(
         "Start clip aligned: {}",
         yes_no(result.start_aligned)
     ));
 
     if let Some(end_aligned) = result.end_aligned {
-        progress.phase(&format!("End clip aligned: {}", yes_no(end_aligned)));
+        progress.phase_verbose(&format!("End clip aligned: {}", yes_no(end_aligned)));
     }
 
     if let Some(drift) = result.offset_drift_secs {
         if !result.offsets_consistent {
-            progress.phase(&format!("Offset drift (end − start): {:+.3}s", drift));
+            progress.phase_verbose(&format!("Offset drift (end − start): {:+.3}s", drift));
         }
     }
 
     match result.recommended_offset_secs {
-        Some(offset) => progress.phase(&format!(
+        Some(offset) => progress.phase_verbose(&format!(
             "Recommended offset: {:+.3}s ({})",
             offset,
             if result.offsets_consistent {
@@ -666,17 +660,17 @@ fn log_alignment_summary(
                 "clip offsets disagree; using configured preference"
             }
         )),
-        None => progress.phase("Recommended offset: none (no confident clip matches)"),
+        None => progress.phase_verbose("Recommended offset: none (no confident clip matches)"),
     }
 
     if let Some(refine) = &result.high_rate_refinement {
         if refine.applied {
-            progress.phase(&format!(
+            progress.phase_verbose(&format!(
                 "High-rate refinement: {:+.3}s adjustment",
                 refine.adjustment_secs
             ));
         } else if refine.skipped {
-            progress.phase("High-rate refinement skipped");
+            progress.phase_verbose("High-rate refinement skipped");
         }
     }
 
@@ -687,7 +681,7 @@ fn log_alignment_summary(
         .collect();
 
     if !clip_overlaps.is_empty() {
-        progress.phase(&format!(
+        progress.phase_verbose(&format!(
             "Overlap on video A: {}",
             clip_overlaps
                 .iter()
@@ -697,7 +691,7 @@ fn log_alignment_summary(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
-        progress.phase(&format!(
+        progress.phase_verbose(&format!(
             "Overlap on video B: {}",
             clip_overlaps
                 .iter()
@@ -707,7 +701,7 @@ fn log_alignment_summary(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
-        progress.phase(&format!(
+        progress.phase_verbose(&format!(
             "Shared length: {}",
             clip_overlaps
                 .iter()
@@ -1479,8 +1473,7 @@ mod tests {
         // Two decodable tracks on each video → 4 pairs in the search loop.
         // Repetition should run only for the winning pair.
         let two_tracks = |duration: std::time::Duration| {
-            let mut session = FakeMediaSession::with_duration(duration);
-            session = FakeMediaSession::with_tracks(vec![
+            FakeMediaSession::with_tracks(vec![
                 crate::domain::AudioTrack {
                     index: 0,
                     codec: "pcm".into(),
@@ -1499,8 +1492,7 @@ mod tests {
                     duration: Some(duration),
                     decodable: true,
                 },
-            ]);
-            session
+            ])
         };
         let reader = FakeMediaReader::new()
             .with_session("a.wav", two_tracks(mins(3)))

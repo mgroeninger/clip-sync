@@ -211,7 +211,9 @@ fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use symphonia::core::codecs::audio::well_known::{CODEC_ID_AC3, CODEC_ID_EAC3};
+    use symphonia::core::codecs::audio::well_known::CODEC_ID_AC3;
+    #[cfg(feature = "ac3")]
+    use symphonia::core::codecs::audio::well_known::CODEC_ID_EAC3;
 
     fn ac3_params(codec: AudioCodecId) -> AudioCodecParameters {
         AudioCodecParameters {
