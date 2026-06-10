@@ -18,6 +18,24 @@ pub struct ClipMatchEstimate {
     pub confidence: f32,
 }
 
+/// Internal repeat detected within a single prepared clip.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RepetitionFinding {
+    /// Positive seconds between repeated content.
+    pub lag_secs: f64,
+    pub confidence: f32,
+    pub items_count: usize,
+}
+
+/// Per-clip repetition diagnostics. Present on `ClipMatch` when `check_clip_repetition` was on.
+/// `a`/`b` are `null` in JSON when no finding; the outer `repetition` key is absent when the
+/// check was off (`#[serde(skip_serializing_if = "Option::is_none")]` on `ClipMatch.repetition`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ClipRepetitionReport {
+    pub a: Option<RepetitionFinding>,
+    pub b: Option<RepetitionFinding>,
+}
+
 /// Alignment outcome for a single clip pair at a known window position.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ClipMatch {
@@ -32,6 +50,9 @@ pub struct ClipMatch {
     pub video_a_decode_skips: u32,
     /// Corrupt decode packets skipped when extracting this clip from video B.
     pub video_b_decode_skips: u32,
+    /// Present when `validation.check_clip_repetition` was on for this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repetition: Option<ClipRepetitionReport>,
 }
 
 /// Shared timeline region implied by the start clip and recommended offset.
@@ -131,6 +152,7 @@ pub fn build_alignment_result(
                 confidence: estimate.confidence,
                 video_a_decode_skips: decode_skips_a.get(index).copied().unwrap_or(0),
                 video_b_decode_skips: decode_skips_b.get(index).copied().unwrap_or(0),
+                repetition: None,
             }
         })
         .collect();

@@ -527,6 +527,7 @@ fn no_op_alignment() -> AlignmentResult {
             confidence: 0.0,
             video_a_decode_skips: 0,
             video_b_decode_skips: 0,
+            repetition: None,
         }],
         start_aligned: false,
         end_aligned: None,

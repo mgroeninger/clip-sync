@@ -109,6 +109,7 @@ fn make_alignment(offset: f64) -> AlignmentResult {
             confidence: 0.9,
             video_a_decode_skips: 0,
             video_b_decode_skips: 0,
+            repetition: None,
         }],
         start_aligned: true,
         end_aligned: None,

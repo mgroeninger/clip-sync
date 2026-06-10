@@ -64,6 +64,11 @@ pub struct Cli {
     /// Disable high-rate offset refinement (overrides config).
     #[arg(long, overrides_with = "refine_offset_high_rate")]
     pub no_refine_offset_high_rate: bool,
+
+    /// Check each clip for internal audio repetition (e.g. loops, rebroadcasts).
+    /// Diagnostic only: never changes the exit code or recommended offset.
+    #[arg(long)]
+    pub check_clip_repetition: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

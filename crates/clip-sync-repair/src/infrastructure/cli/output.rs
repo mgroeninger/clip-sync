@@ -326,6 +326,7 @@ mod tests {
                     confidence: 0.88,
                     video_a_decode_skips: 0,
                     video_b_decode_skips: 0,
+                    repetition: None,
                 }],
                 start_aligned: true,
                 end_aligned: None,
@@ -450,6 +451,7 @@ mod tests {
                     confidence: 0.2,
                     video_a_decode_skips: 0,
                     video_b_decode_skips: 0,
+                    repetition: None,
                 }],
                 start_aligned: false,
                 end_aligned: None,
@@ -486,6 +488,7 @@ mod tests {
                 confidence: 0.94,
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
+                repetition: None,
             },
             ClipMatch {
                 label: ClipLabel::End,
@@ -496,6 +499,7 @@ mod tests {
                 confidence: 0.94,
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
+                repetition: None,
             },
         ];
         report.alignment.end_aligned = Some(true);

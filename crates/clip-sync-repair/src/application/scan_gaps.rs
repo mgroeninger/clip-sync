@@ -607,6 +607,7 @@ mod tests {
                 confidence: if offset.is_some() { 0.9 } else { 0.0 },
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
+                repetition: None,
             }],
             start_aligned: offset.is_some(),
             end_aligned: None,

@@ -32,4 +32,5 @@ tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 hound = "3"
+serde_json = "1"
 tempfile = "3"

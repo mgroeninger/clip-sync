@@ -12,10 +12,9 @@ pub use application::error::{AlignmentError, FingerprintError, MediaError};
 pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
 // --- domain (selected types) ---
 pub use domain::{
-    AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipWindow, ClipLabel,
-    DomainError, Fingerprint, HighRateRefinement, InterleavedScanBucket, MediaSource, MonoPcmClip,
-    MonoScanBucket, MultiChannelPcm,
-    TimelineOverlap,
+    AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, ClipWindow,
+    ClipLabel, DomainError, Fingerprint, HighRateRefinement, InterleavedScanBucket, MediaSource,
+    MonoPcmClip, MonoScanBucket, MultiChannelPcm, RepetitionFinding, TimelineOverlap,
 };
 pub use domain::policies::{select_best_track, select_track_for_reference};
 pub use domain::{resample_interleaved, resample_mono_pcm};

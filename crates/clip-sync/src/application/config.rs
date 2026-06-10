@@ -27,11 +27,46 @@ pub struct AlignConfig {
     pub clip: ClipConfig,
     #[serde(default)]
     pub alignment: AlignmentConfig,
+    #[serde(default)]
+    pub validation: ValidationConfig,
 }
 
 impl AlignConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.clip.validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ValidationConfig {
+    #[serde(default)]
+    pub check_clip_repetition: bool,
+    #[serde(default = "default_min_repetition_confidence")]
+    pub min_repetition_confidence: f32,
+    // Placeholder fields for the offset-verification plan (TEMP-offset-verification-plan.md).
+    // Inert until that plan's Phase 1 lands.
+    #[serde(default)]
+    pub verify_offset: bool,
+    #[serde(default = "default_min_verification_confidence")]
+    pub min_verification_confidence: f32,
+}
+
+fn default_min_repetition_confidence() -> f32 {
+    0.5
+}
+
+fn default_min_verification_confidence() -> f32 {
+    0.5
+}
+
+impl Default for ValidationConfig {
+    fn default() -> Self {
+        Self {
+            check_clip_repetition: false,
+            min_repetition_confidence: default_min_repetition_confidence(),
+            verify_offset: false,
+            min_verification_confidence: default_min_verification_confidence(),
+        }
     }
 }
 

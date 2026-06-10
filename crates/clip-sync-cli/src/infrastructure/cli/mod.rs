@@ -71,4 +71,7 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     } else if cli.no_refine_offset_high_rate {
         config.align.alignment.refine_offset_high_rate = false;
     }
+    if cli.check_clip_repetition {
+        config.align.validation.check_clip_repetition = true;
+    }
 }

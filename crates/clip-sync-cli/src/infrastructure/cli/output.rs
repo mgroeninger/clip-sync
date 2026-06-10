@@ -1,4 +1,4 @@
-use clip_sync::{AppError, AlignmentResult, ClipLabel, ClipMatch};
+use clip_sync::{AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding};
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
@@ -14,20 +14,28 @@ pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<
 }
 
 fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
-    println!("Alignment report");
-    println!("  Start clip aligned: {}", yes_no(result.start_aligned));
+    print!("{}", format_human_output(show_diagnostics, result));
+}
+
+pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> String {
+    let mut out = String::new();
+    out.push_str("Alignment report\n");
+    out.push_str(&format!("  Start clip aligned: {}\n", yes_no(result.start_aligned)));
 
     if let Some(end_aligned) = result.end_aligned {
-        println!("  End clip aligned: {}", yes_no(end_aligned));
+        out.push_str(&format!("  End clip aligned: {}\n", yes_no(end_aligned)));
     }
 
     for clip in &result.clips {
-        println!("  {}", format_clip_line(clip, show_diagnostics));
+        out.push_str(&format!("  {}\n", format_clip_line(clip, show_diagnostics)));
+        for line in format_repetition_lines(clip, show_diagnostics) {
+            out.push_str(&format!("    {line}\n"));
+        }
     }
 
     match result.recommended_offset_secs {
-        Some(offset) => println!(
-            "  Recommended offset: {:+.3}s ({})",
+        Some(offset) => out.push_str(&format!(
+            "  Recommended offset: {:+.3}s ({})\n",
             offset,
             if result.offsets_consistent {
                 "clip offsets agree"
@@ -36,46 +44,45 @@ fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
             } else {
                 "clip offsets disagree"
             }
-        ),
-        None => println!("  Recommended offset: none"),
+        )),
+        None => out.push_str("  Recommended offset: none\n"),
     }
 
     if let Some(drift) = result.offset_drift_secs {
         if !result.offsets_consistent {
-            println!("  Offset drift (end − start): {:+.3}s", drift);
+            out.push_str(&format!("  Offset drift (end − start): {:+.3}s\n", drift));
         }
     }
 
     if let Some(overlap) = result.start_overlap {
-        println!("  Overlap (from start clip):");
-        println!(
-            "    On video A:  {}",
+        out.push_str("  Overlap (from start clip):\n");
+        out.push_str(&format!(
+            "    On video A:  {}\n",
             format_window(overlap.video_a_start_secs, overlap.video_a_end_secs)
-        );
-        println!(
-            "    On video B:  {}",
+        ));
+        out.push_str(&format!(
+            "    On video B:  {}\n",
             format_window(overlap.video_b_start_secs, overlap.video_b_end_secs)
-        );
-        println!(
-            "    Length:      {}",
+        ));
+        out.push_str(&format!(
+            "    Length:      {}\n",
             format_timestamp(overlap.shared_length_secs)
-        );
+        ));
     }
 
     if let Some(refine) = &result.high_rate_refinement {
         if refine.applied {
-            println!(
-                "  High-rate refinement: {:+.3}s adjustment (peak {:.2})",
+            out.push_str(&format!(
+                "  High-rate refinement: {:+.3}s adjustment (peak {:.2})\n",
                 refine.adjustment_secs, refine.correlation_peak
-            );
+            ));
         } else if show_diagnostics {
-            let reason = refine
-                .skip_reason
-                .as_deref()
-                .unwrap_or("not applied");
-            println!("  High-rate refinement: skipped ({reason})");
+            let reason = refine.skip_reason.as_deref().unwrap_or("not applied");
+            out.push_str(&format!("  High-rate refinement: skipped ({reason})\n"));
         }
     }
+
+    out
 }
 
 fn format_clip_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
@@ -103,6 +110,30 @@ fn format_clip_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
     }
 
     line
+}
+
+fn format_repetition_lines(clip: &ClipMatch, show_diagnostics: bool) -> Vec<String> {
+    let Some(rep) = &clip.repetition else {
+        return vec![];
+    };
+    let mut lines = Vec::new();
+    for (label, finding) in [("video A", &rep.a), ("video B", &rep.b)] {
+        match finding {
+            Some(f) => lines.push(format_repetition_finding(label, f)),
+            None if show_diagnostics => {
+                lines.push(format!("{label}: no internal repeat detected"));
+            }
+            None => {}
+        }
+    }
+    lines
+}
+
+fn format_repetition_finding(label: &str, finding: &RepetitionFinding) -> String {
+    format!(
+        "{label}: internal repeat ~{:.1}s (confidence {:.2})",
+        finding.lag_secs, finding.confidence
+    )
 }
 
 fn format_window(start_secs: f64, end_secs: f64) -> String {

@@ -1,10 +1,12 @@
 use std::process::ExitCode;
 
 use clip_sync::{
-    AlignmentResult, AppError, ClipLabel, ClipMatch, ConfigError, DomainError,
-    FingerprintError, MediaError,
+    AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport, ConfigError,
+    DomainError, FingerprintError, MediaError, RepetitionFinding,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
+use clip_sync_cli::infrastructure::cli::output::format_human_output;
+use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
 
 // --- helpers ---
 
@@ -19,6 +21,7 @@ fn aligned_result(offset: f64) -> AlignmentResult {
             confidence: 0.9,
             video_a_decode_skips: 0,
             video_b_decode_skips: 0,
+            repetition: None,
         }],
         start_aligned: true,
         end_aligned: None,
@@ -41,11 +44,68 @@ fn unaligned_result() -> AlignmentResult {
             confidence: 0.1,
             video_a_decode_skips: 0,
             video_b_decode_skips: 0,
+            repetition: None,
         }],
         start_aligned: false,
         end_aligned: None,
         recommended_offset_secs: None,
         offsets_consistent: false,
+        offset_drift_secs: None,
+        start_overlap: None,
+        high_rate_refinement: None,
+    }
+}
+
+fn result_with_repetition(a_lag: Option<f64>, b_lag: Option<f64>) -> AlignmentResult {
+    let rep_a = a_lag.map(|lag_secs| RepetitionFinding {
+        lag_secs,
+        confidence: 0.72,
+        items_count: 48,
+    });
+    let rep_b = b_lag.map(|lag_secs| RepetitionFinding {
+        lag_secs,
+        confidence: 0.65,
+        items_count: 40,
+    });
+    AlignmentResult {
+        clips: vec![ClipMatch {
+            label: ClipLabel::Start,
+            window_start_secs: 0.0,
+            window_end_secs: 900.0,
+            aligned: true,
+            offset_secs: Some(3.0),
+            confidence: 0.85,
+            video_a_decode_skips: 0,
+            video_b_decode_skips: 0,
+            repetition: Some(ClipRepetitionReport { a: rep_a, b: rep_b }),
+        }],
+        start_aligned: true,
+        end_aligned: None,
+        recommended_offset_secs: Some(3.0),
+        offsets_consistent: true,
+        offset_drift_secs: None,
+        start_overlap: None,
+        high_rate_refinement: None,
+    }
+}
+
+fn result_with_no_repetition_finding() -> AlignmentResult {
+    AlignmentResult {
+        clips: vec![ClipMatch {
+            label: ClipLabel::Start,
+            window_start_secs: 0.0,
+            window_end_secs: 900.0,
+            aligned: true,
+            offset_secs: Some(3.0),
+            confidence: 0.85,
+            video_a_decode_skips: 0,
+            video_b_decode_skips: 0,
+            repetition: Some(ClipRepetitionReport { a: None, b: None }),
+        }],
+        start_aligned: true,
+        end_aligned: None,
+        recommended_offset_secs: Some(3.0),
+        offsets_consistent: true,
         offset_drift_secs: None,
         start_overlap: None,
         high_rate_refinement: None,
@@ -182,4 +242,78 @@ fn alignment_error_maps_to_exit_6() {
         "no match".into(),
     ));
     assert_eq!(exit_code_u8(&err), 6);
+}
+
+// --- repetition JSON ---
+
+#[test]
+fn align_json_repetition_object_when_flag_on() {
+    let result = result_with_repetition(Some(30.0), None);
+    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+    let clip = &value["clips"][0];
+    assert!(clip["repetition"].is_object(), "repetition must be an object when flag on");
+
+    let rep = &clip["repetition"];
+    assert!(rep["a"].is_object(), "a must be an object when finding present");
+    assert!((rep["a"]["lag_secs"].as_f64().unwrap() - 30.0).abs() < 0.01);
+    assert!(rep["b"].is_null(), "b must be null when no finding");
+}
+
+#[test]
+fn align_json_no_repetition_key_when_flag_off() {
+    let result = aligned_result(3.0);
+    let json = serde_json::to_string(&result).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+    let clip = &value["clips"][0];
+    assert!(
+        clip.get("repetition").is_none(),
+        "repetition key must be absent when flag off"
+    );
+}
+
+// --- repetition human output ---
+
+#[test]
+fn align_human_shows_repeat_line() {
+    let result = result_with_repetition(Some(30.0), None);
+    let config = OutputConfig { format: OutputFormat::Human, show_diagnostics: false };
+    let output = format_human_output(config.show_diagnostics, &result);
+
+    assert!(
+        output.contains("video A: internal repeat ~30.0s"),
+        "expected repeat line in output: {output}"
+    );
+    assert!(
+        !output.contains("video B"),
+        "video B should be absent when no B finding and not verbose: {output}"
+    );
+}
+
+#[test]
+fn align_human_verbose_shows_none() {
+    let result = result_with_no_repetition_finding();
+    let output = format_human_output(true, &result);
+
+    assert!(
+        output.contains("video A: no internal repeat detected"),
+        "expected no-repeat line for A: {output}"
+    );
+    assert!(
+        output.contains("video B: no internal repeat detected"),
+        "expected no-repeat line for B: {output}"
+    );
+}
+
+#[test]
+fn align_human_no_repetition_lines_when_repetition_field_absent() {
+    let result = aligned_result(3.0);
+    let output = format_human_output(true, &result);
+
+    assert!(
+        !output.contains("internal repeat") && !output.contains("no internal repeat"),
+        "no repetition lines expected when field absent: {output}"
+    );
 }

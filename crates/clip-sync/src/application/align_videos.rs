@@ -12,9 +12,11 @@ use crate::domain::{
     decoded_timeline_extent, end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair,
     select_best_track, truncate_padded_tail, AlignmentMergePolicy, AlignmentResult, AudioTrack,
-    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipWindow,
-    DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions, TimelineOverlap,
+    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
+    ClipWindow, DomainError, MediaSource, MonoPcmClip, PcmPreparationOptions, RepetitionFinding,
+    TimelineOverlap,
 };
+use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
@@ -156,7 +158,18 @@ where
         }
 
         let plan = request.config.clip.as_plan();
-        let mut best: Option<(AlignmentOutcome, f32)> = None;
+
+        // Disable repetition during the track search to avoid running it for every track pair.
+        // The winning pair gets a dedicated repetition pass below.
+        let search_config = if request.config.validation.check_clip_repetition {
+            let mut c = request.config.clone();
+            c.validation.check_clip_repetition = false;
+            c
+        } else {
+            request.config.clone()
+        };
+
+        let mut best: Option<(AlignmentOutcome, ExtractedClips, ExtractedClips, f32)> = None;
 
         for track_a in &decodable_a {
             for track_b in &decodable_b {
@@ -180,29 +193,42 @@ where
                     "video B",
                     Some(track_b),
                 )?;
-                let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
-                let score = mean_aligned_confidence(&result, request.config.alignment.min_match_score);
+                let result =
+                    self.align_extracted_pair(&extracted_a, &extracted_b, &search_config)?;
+                let score =
+                    mean_aligned_confidence(&result, request.config.alignment.min_match_score);
                 let outcome = AlignmentOutcome {
                     result,
-                    track_a: extracted_a.track,
-                    track_b: extracted_b.track,
-                    discovery_windows: extracted_a.windows,
+                    track_a: extracted_a.track.clone(),
+                    track_b: extracted_b.track.clone(),
+                    discovery_windows: extracted_a.windows.clone(),
                     duration_a: extracted_a.duration,
                     duration_b: extracted_b.duration,
                     decoded_extent_a: extracted_a.decoded_extent,
                     decoded_extent_b: extracted_b.decoded_extent,
                 };
-                if best.as_ref().is_none_or(|(_, best_score)| score > *best_score) {
-                    best = Some((outcome, score));
+                if best.as_ref().is_none_or(|(_, _, _, best_score)| score > *best_score) {
+                    best = Some((outcome, extracted_a, extracted_b, score));
                 }
             }
         }
 
-        best.map(|(outcome, _)| outcome).ok_or_else(|| {
+        let (mut outcome, winning_a, winning_b, _) = best.ok_or_else(|| {
             AppError::Alignment(crate::application::error::AlignmentError::EngineFailed(
                 "no track pair produced an alignment".into(),
             ))
-        })
+        })?;
+
+        // Run repetition check on the winning pair only.
+        if request.config.validation.check_clip_repetition {
+            let rep_result =
+                self.align_extracted_pair(&winning_a, &winning_b, &request.config)?;
+            for (clip, new_clip) in outcome.result.clips.iter_mut().zip(rep_result.clips) {
+                clip.repetition = new_clip.repetition;
+            }
+        }
+
+        Ok(outcome)
     }
 
     fn align_extracted_pair(
@@ -227,6 +253,8 @@ where
 
         self.progress.phase("Searching for match...");
         let mut estimates = Vec::with_capacity(extracted_a.raw_clips.len());
+        let mut repetition_diagnostics: Vec<(Option<RepetitionFinding>, Option<RepetitionFinding>)> =
+            Vec::with_capacity(extracted_a.raw_clips.len());
         let mut start_prior: Option<ClipMatchEstimate> = None;
 
         for (index, (raw_a, raw_b)) in extracted_a
@@ -269,6 +297,7 @@ where
                     offset_secs: 0.0,
                     confidence: 0.0,
                 });
+                repetition_diagnostics.push((None, None));
                 continue;
             }
 
@@ -282,6 +311,7 @@ where
                     offset_secs: 0.0,
                     confidence: 0.0,
                 });
+                repetition_diagnostics.push((None, None));
                 continue;
             }
 
@@ -293,6 +323,30 @@ where
                 && start_prior.is_some_and(|prior| {
                     prior.confidence >= config.alignment.min_match_score * 0.5
                 });
+
+            // Fingerprint when needed for cross-file alignment or self-match check.
+            // When use_end_prior is true and check_clip_repetition is off, skip fingerprinting
+            // to preserve the existing end-prior performance characteristic.
+            let need_fingerprints = !use_end_prior || config.validation.check_clip_repetition;
+            let fingerprints = if need_fingerprints {
+                let fp_a = self.fingerprinter.fingerprint(&clip_a)?;
+                let fp_b = self.fingerprinter.fingerprint(&clip_b)?;
+                Some((fp_a, fp_b))
+            } else {
+                None
+            };
+
+            if config.validation.check_clip_repetition {
+                let (fp_a, fp_b) = fingerprints.as_ref().expect("fingerprints computed above");
+                let preset = config.clip.chromaprint_preset;
+                let min_conf = config.validation.min_repetition_confidence;
+                let rep_a = detect_clip_repetition(fp_a, clip_a.duration_secs(), preset, min_conf);
+                let rep_b = detect_clip_repetition(fp_b, clip_b.duration_secs(), preset, min_conf);
+                tracing::debug!(?rep_a, ?rep_b, "clip self-repetition check");
+                repetition_diagnostics.push((rep_a, rep_b));
+            } else {
+                repetition_diagnostics.push((None, None));
+            }
 
             let estimate = if use_end_prior {
                 let prior = start_prior.expect("checked above");
@@ -307,12 +361,8 @@ where
                     prior
                 }
             } else {
-                let fingerprint_a = self.fingerprinter.fingerprint(&clip_a)?;
-                let fingerprint_b = self.fingerprinter.fingerprint(&clip_b)?;
-
-                let mut chromaprint_estimate = self
-                    .aligner
-                    .find_offset(&fingerprint_a, &fingerprint_b)?;
+                let (fp_a, fp_b) = fingerprints.expect("computed above when !use_end_prior");
+                let mut chromaprint_estimate = self.aligner.find_offset(&fp_a, &fp_b)?;
                 if config.alignment.refine_offset_with_pcm
                     && chromaprint_estimate.confidence >= config.alignment.min_match_score * 0.5
                 {
@@ -350,7 +400,7 @@ where
             estimates.push(estimate);
         }
 
-        Ok(build_alignment_result(
+        let mut result = build_alignment_result(
             ClipPairReportInput {
                 windows: &extracted_a.windows,
                 estimates: &estimates,
@@ -364,7 +414,17 @@ where
                 prefer_start_clip: config.alignment.prefer_start_clip,
                 require_consistent_offsets: config.alignment.require_consistent_offsets,
             },
-        ))
+        );
+
+        if config.validation.check_clip_repetition {
+            for (clip, (rep_a, rep_b)) in
+                result.clips.iter_mut().zip(repetition_diagnostics)
+            {
+                clip.repetition = Some(ClipRepetitionReport { a: rep_a, b: rep_b });
+            }
+        }
+
+        Ok(result)
     }
 
     fn extract_clips(
@@ -544,6 +604,7 @@ fn mean_aligned_confidence(result: &AlignmentResult, min_match_score: f32) -> f3
     }
 }
 
+#[derive(Clone)]
 struct ExtractedClips {
     raw_clips: Vec<crate::domain::MonoPcmClip>,
     decode_skips: Vec<u32>,
@@ -738,6 +799,7 @@ mod tests {
                 refine_offset_high_rate: false,
                 ..Default::default()
             },
+            ..Default::default()
         }
     }
 
@@ -1113,6 +1175,7 @@ mod tests {
                 refine_offset_high_rate: high_rate,
                 ..Default::default()
             },
+            ..Default::default()
         }
     }
 
@@ -1308,5 +1371,147 @@ mod tests {
             (end_offset - start_offset).abs() < 0.5,
             "start={start_offset}, end={end_offset}"
         );
+    }
+
+    #[test]
+    fn align_repetition_debug_only_phase1_clip_match_repetition_is_none() {
+        // Phase 1: check_clip_repetition is wired into the loop and debug-logged,
+        // but ClipMatch.repetition is not set yet (Phase 2). Assert that the field
+        // is absent from the result regardless of the flag being on.
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 3.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let mut config = two_clip_config();
+        config.validation.check_clip_repetition = true;
+
+        let response = use_case
+            .execute(request(config))
+            .expect("should succeed with repetition flag on");
+
+        assert!(response.result.start_aligned);
+        // Phase 2: repetition is Some on every clip when flag is on.
+        for clip in &response.result.clips {
+            assert!(
+                clip.repetition.is_some(),
+                "clip.repetition must be Some when check_clip_repetition is on"
+            );
+        }
+    }
+
+    #[test]
+    fn align_json_no_repetition_key_when_flag_off() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 3.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let response = use_case
+            .execute(request(two_clip_config()))
+            .expect("execute should succeed");
+
+        let json = serde_json::to_string(&response.result).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        for clip in value["clips"].as_array().unwrap() {
+            assert!(
+                clip.get("repetition").is_none(),
+                "repetition key must be absent when flag off"
+            );
+        }
+    }
+
+    #[test]
+    fn align_json_repetition_object_present_when_flag_on() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 3.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let mut config = two_clip_config();
+        config.validation.check_clip_repetition = true;
+
+        let response = use_case
+            .execute(request(config))
+            .expect("execute should succeed");
+
+        let json = serde_json::to_string(&response.result).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        for clip in value["clips"].as_array().unwrap() {
+            assert!(
+                clip["repetition"].is_object(),
+                "repetition must be an object when flag on"
+            );
+        }
+    }
+
+    #[test]
+    fn try_all_tracks_repetition_on_winner_only() {
+        // Two decodable tracks on each video → 4 pairs in the search loop.
+        // Repetition should run only for the winning pair.
+        let two_tracks = |duration: std::time::Duration| {
+            let mut session = FakeMediaSession::with_duration(duration);
+            session = FakeMediaSession::with_tracks(vec![
+                crate::domain::AudioTrack {
+                    index: 0,
+                    codec: "pcm".into(),
+                    channels: 1,
+                    sample_rate: 44_100,
+                    bitrate: None,
+                    duration: Some(duration),
+                    decodable: true,
+                },
+                crate::domain::AudioTrack {
+                    index: 1,
+                    codec: "pcm".into(),
+                    channels: 1,
+                    sample_rate: 44_100,
+                    bitrate: None,
+                    duration: Some(duration),
+                    decodable: true,
+                },
+            ]);
+            session
+        };
+        let reader = FakeMediaReader::new()
+            .with_session("a.wav", two_tracks(mins(3)))
+            .with_session("b.wav", two_tracks(mins(3)));
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 5.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+
+        let mut config = two_clip_config();
+        config.alignment.try_all_tracks = true;
+        config.validation.check_clip_repetition = true;
+
+        let response = use_case
+            .execute(request(config))
+            .expect("try_all_tracks with repetition should succeed");
+
+        // Every clip in the result should have repetition populated.
+        for clip in &response.result.clips {
+            assert!(
+                clip.repetition.is_some(),
+                "winner clips must have repetition set"
+            );
+        }
     }
 }

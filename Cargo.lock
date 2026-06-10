@@ -155,6 +155,7 @@ dependencies = [
  "rubato",
  "rusty-chromaprint",
  "serde",
+ "serde_json",
  "symphonia",
  "symphonia-core",
  "tempfile",

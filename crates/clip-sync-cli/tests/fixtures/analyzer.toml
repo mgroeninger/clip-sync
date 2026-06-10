@@ -14,6 +14,10 @@ refine_offset_high_rate = false
 high_rate_refine_secs = 3
 try_all_tracks = false
 
+[validation]
+check_clip_repetition = false
+min_repetition_confidence = 0.5
+
 [output]
 format = "human"
 show_diagnostics = false
