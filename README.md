@@ -61,8 +61,8 @@ clip-sync [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--clip-length <DUR>` | `15m` | Length of each extracted clip window (min: `1m`) |
 | `--num-clips <N>` | `1` | Number of clip windows per video |
 | `--format <human\|json>` | `human` | Output format |
-| `-v, --verbose` | — | Show diagnostics on stderr |
-| `-q, --quiet` | — | Errors only; suppress progress |
+| `-v, --verbose` | — | Verbose progress on stderr plus extra fields in the human report |
+| `-q, --quiet` | — | Suppress progress on stderr (errors still print) |
 | `--log-level <LEVEL>` | — | Tracing log level |
 | `--log-file <FILE>` | — | Write structured logs to file (also logs to stderr) |
 | `--try-all-tracks` | — | Try all decodable audio track pairs |
@@ -124,8 +124,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--mux <PATH>` | — | Mux patched audio into video A (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
-| `-v, --verbose` | — | Verbose progress on stderr |
-| `-q, --quiet` | — | Suppress progress output |
+| `-v, --verbose` | — | Verbose progress on stderr plus detailed gap-patch lines in the human report |
+| `-q, --quiet` | — | Suppress progress on stderr (errors still print) |
 | `--log-level <LEVEL>` | — | Tracing log level |
 | `--log-file <FILE>` | — | Write structured logs to file (also logs to stderr) |
 | `--try-all-tracks` | — | Try all decodable audio track pairs |
@@ -137,6 +137,25 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
+**Sample output (repair, after patch):**
+
+```text
+Alignment: offset +3.000s  confidence 0.98
+  Start clip: +3.000s  (confidence 0.98)
+  End clip: +3.000s  (confidence 1.00)
+Tracks:    A 1ch @ 44100Hz   B 1ch @ 44100Hz   (identical)
+Overlap:   A [0.00s – 60.00s]   B [3.00s – 63.00s]   (60.0s shared)
+
+Gaps in video A (1 found, 1 repaired, 0 skipped, 0 unfillable):
+
+  #   Range                Dur      Status
+  1   0:30 – 1:00          30.0s    patched (struct 1.00→1.00)
+
+Output: patched.wav
+```
+
+Progress stages (`Aligning audio fingerprints…`, `Scanning video A for gaps…`, etc.) print on **stderr**; the report above is on **stdout** and is safe to pipe or redirect.
+
 ---
 
 ## Configuration
@@ -147,13 +166,39 @@ The config file is TOML. Pass it with `--config` (or `-c`); if omitted, built-in
 
 In TOML, `clip_length` is an integer number of **seconds** (CLI accepts human-friendly values like `15m` or `90s`).
 
-### Logging
+### Output streams
+
+| Stream | Content |
+|--------|---------|
+| **stdout** | Human alignment/gap report or JSON — safe to pipe (`--format json`) |
+| **stderr** | Progress stages, percentage bars, `tracing` logs, errors |
+| **exit code** | `0` on successful analysis; non-zero on config/media/alignment failures |
+
+### Progress and verbosity
+
+Three tiers control how much appears on stderr during a run:
+
+| Tier | Flags / config | stderr | stdout (human) |
+|------|----------------|--------|----------------|
+| **Default** | (none) | Major stages only (`clip-sync: aligning…`, `Searching for match…`, `Scanning video A for gaps…`, …); `%` bars on a TTY | Full report once at end |
+| **`--verbose`** | `-v` / `[logging].progress = "verbose"` | Default stages **plus** track selection, clip plans, per-clip offsets, mid-run alignment summary, per-gap patch lines | Extra diagnostics (e.g. decode skips, detailed patch metrics) |
+| **`--quiet`** | `-q` / `[logging].progress = "quiet"` | Errors only | Unchanged |
+
+CLI flags override TOML: `-v` sets `progress = verbose`; `-q` sets `progress = quiet` (and wins if both are passed — last flag in the merge order).
+
+`clip-sync` also sets `[output].show_diagnostics = true` when `-v` is passed. `clip-sync-repair` uses `-v` for progress and for detailed gap status lines in the human report.
+
+For scripting, prefer `--format json --quiet` and parse stdout.
+
+### Logging (`tracing`)
 
 | Source | Precedence |
 |--------|------------|
 | `RUST_LOG` environment variable | Highest — overrides `[logging].level` and `--log-level` when set |
 | `--log-level` / `[logging].level` | Used when `RUST_LOG` is unset; default filter is `clip_sync=<level>,clip_sync_repair=<level>,warn` so third-party crates (e.g. symphonia) log at `warn` unless you raise them in `RUST_LOG` |
 | `--log-file` / `[logging].log_file` | Appends structured logs to a file; stderr logging continues |
+
+Operational detail (structure-match trust, ffmpeg mux args, symphonia demuxer) is at **debug** level. Skipped gap fills and similar problems use **warn**.
 
 ### Analyzer config (`clip-sync`)
 
@@ -177,6 +222,7 @@ show_diagnostics = false
 
 [logging]
 level = "warn"
+progress = "auto"   # auto | verbose | quiet — overridden by -v / -q
 # log_file = "clip-sync.log"
 ```
 
@@ -195,6 +241,7 @@ try_all_tracks = false
 
 [logging]
 level = "warn"
+progress = "auto"   # auto | verbose | quiet — overridden by -v / -q
 
 [repair]
 min_gap_ms = 1000

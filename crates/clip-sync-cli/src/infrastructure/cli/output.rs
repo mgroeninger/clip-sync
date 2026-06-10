@@ -1,4 +1,6 @@
-use clip_sync::{AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding};
+use clip_sync::{
+    format_timestamp, AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding,
+};
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
@@ -149,18 +151,6 @@ fn format_window(start_secs: f64, end_secs: f64) -> String {
         format_timestamp(start_secs),
         format_timestamp(end_secs)
     )
-}
-
-fn format_timestamp(secs: f64) -> String {
-    let total = secs.round().max(0.0) as u64;
-    let hours = total / 3600;
-    let minutes = (total % 3600) / 60;
-    let seconds = total % 60;
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
 }
 
 fn clip_label_name(label: ClipLabel) -> &'static str {

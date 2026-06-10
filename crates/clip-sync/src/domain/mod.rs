@@ -1,5 +1,6 @@
 pub mod alignment;
 pub mod audio_track;
+pub mod human_format;
 pub mod clip_plan;
 pub mod clip_window;
 pub mod error;
@@ -19,6 +20,7 @@ pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
+pub use human_format::{format_time_range, format_timestamp};
 pub use alignment::TimelineOverlap;
 pub use media_source::MediaSource;
 pub use mono_pcm_clip::{MonoPcmClip, MonoScanBucket};

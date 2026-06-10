@@ -161,7 +161,34 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         .ok()
         .and_then(|r| r.as_ref().map(|result| &result.summary));
 
-    print_repair_output(&report, patch_summary, args.format)?;
+    let output_written = write_result
+        .as_ref()
+        .ok()
+        .and_then(|r| r.as_ref())
+        .filter(|result| result.summary.patched_count > 0)
+        .and_then(|_| {
+            #[cfg(feature = "ffmpeg-mux")]
+            {
+                config
+                    .repair
+                    .output
+                    .video_path
+                    .as_deref()
+                    .or(config.repair.output.wav_path.as_deref())
+            }
+            #[cfg(not(feature = "ffmpeg-mux"))]
+            {
+                config.repair.output.wav_path.as_deref()
+            }
+        });
+
+    print_repair_output(
+        &report,
+        patch_summary,
+        args.format,
+        args.verbose,
+        output_written,
+    )?;
 
     write_result.map(|_| ())
 }

@@ -1,6 +1,6 @@
-# Temporary plan: CLI output UX polish
+# CLI output UX polish (archived)
 
-> **Status:** Phase 2 complete. Archive to `docs/archive/cli-output-ux-plan.md` when shipped.
+> **Status:** All phases complete (2026-06-10). User docs: [README.md](../../README.md) § Progress and verbosity; [PLAN.md](../../PLAN.md) § Logging and progress.
 
 **Problem:** A full `clip-sync-repair --mux` run emits ~60 lines mixing progress phases, progress percentages, third-party `tracing` INFO logs, and a final structured report. Information is duplicated (alignment mid-run vs final report; gap scan vs patch results), library noise dominates stderr, and non-TTY runs glue progress lines to timestamped log lines (`patch-a: 99%2026-06-09…`).
 
@@ -10,16 +10,27 @@
 
 ---
 
-## Current output architecture
+## Shipped summary (2026-06-10)
+
+| Phase | Delivered |
+|-------|-----------|
+| 1 | Default tracing filter (`clip_sync`/`clip_sync_repair` at config level, root `warn`); patch/mux `info!` → `debug!`; progress line finish before phases; omit correlation peak from default human high-rate line |
+| 2 | `ProgressReporter::phase_verbose()`; major vs verbose phase gating; CLI startup banners; mid-run alignment summary verbose-only |
+| 3 | Unified gap table on stdout; `format_timestamp` in `clip_sync`; `Output: <path>` line; repair `-v` → detailed patch status |
+| 4 | README + PLAN updated; this doc archived |
+
+---
+
+## Pre-ship output architecture (historical)
 
 ### Four channels (plus stdout report)
 
-| Channel | Mechanism | Destination | Default today |
+| Channel | Mechanism | Destination | Before polish |
 |---------|-----------|-------------|---------------|
-| Phase lines | `ProgressReporter::phase()` | stderr | Always on (unless `--quiet`) |
-| Progress % | `ProgressReporter::progress()` | stderr | TTY or `--verbose` (`ProgressMode::Auto`) |
-| `tracing` (deps) | symphonia demuxer, etc. | stderr | **INFO** — very noisy |
-| `tracing` (app) | patch_audio, ffmpeg_mux | stderr | INFO for operational detail |
+| Phase lines | `ProgressReporter::phase()` | stderr | All phases always on |
+| Progress % | `ProgressReporter::progress()` | stderr | TTY or `--verbose` |
+| `tracing` (deps) | symphonia demuxer, etc. | stderr | INFO — noisy |
+| `tracing` (app) | patch_audio, ffmpeg_mux | stderr | INFO |
 | Final report | `print!` / `println!` | stdout | End of run |
 
 ### Key files
@@ -43,12 +54,12 @@
 
 | Flag | clip-sync-cli | clip-sync-repair |
 |------|---------------|------------------|
-| `-v` / `--verbose` | `show_diagnostics=true` + `ProgressMode::Verbose` | `ProgressMode::Verbose` only (no diagnostics parity) |
+| `-v` / `--verbose` | `show_diagnostics=true` + `ProgressMode::Verbose` | `ProgressMode::Verbose` + detailed gap status in human report |
 | `-q` / `--quiet` | `ProgressMode::Quiet` | `ProgressMode::Quiet` |
 | `--log-level` | overrides `LoggingConfig.level` | same |
 | `--format json` | full `AlignmentResult` on stdout | `RepairJsonOutput { scan, patch }` on stdout |
 
-**Gap:** Most chatter is `phase()`, which ignores `Auto` vs `Verbose`. `-v` mainly affects progress bars and clip-sync-cli diagnostics, not repair phase volume.
+*(Pre-ship gap — resolved in Phase 2.)*
 
 ---
 
@@ -375,13 +386,13 @@ Output: Shaun of the Dead.mp4
 
 ## Acceptance criteria
 
-1. Default mux run: ≤10 stderr lines (excluding warn/error), full semantics on stdout.
-2. `--verbose` reproduces pre-change phase detail (regression checklist against sample log in this doc's problem statement).
-3. No symphonia demuxer lines at default log level.
-4. No duplicated alignment block (mid-run + final) in default mode.
-5. Single gap table on stdout with correct merged statuses.
-6. Non-TTY run: no glued `99%2026-06-09` lines.
-7. `cargo test` green; repair + cli output unit tests updated.
+- [x] Default mux run: ≤10 stderr lines (excluding warn/error), full semantics on stdout.
+- [x] `--verbose` reproduces pre-change phase detail (regression checklist against sample log below).
+- [x] No symphonia demuxer lines at default log level.
+- [x] No duplicated alignment block (mid-run + final) in default mode.
+- [x] Single gap table on stdout with correct merged statuses.
+- [x] Non-TTY run: no glued `99%2026-06-09` lines.
+- [x] `cargo test` green; repair + cli output unit tests updated.
 
 ---
 

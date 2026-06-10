@@ -604,36 +604,61 @@ Invalid config → startup error before media work begins.
 
 ## Logging and progress
 
-### Phases (progress messages)
+### Output tiers
+
+| Tier | Mechanism | stderr | stdout |
+|------|-----------|--------|--------|
+| Default | `ProgressMode::Auto` | Major `phase()` lines + TTY progress bars | Human report or JSON at end |
+| Verbose | `-v` / `progress = "verbose"` | `phase()` + `phase_verbose()` + labeled `%` off-TTY | Extra diagnostics when applicable |
+| Quiet | `-q` / `progress = "quiet"` | Errors only | Unchanged |
+
+**stdout** carries the final report (alignment, gaps, patch outcomes). **stderr** carries stages, progress, and `tracing`. See [README.md](README.md) § Progress and verbosity.
+
+### Major phases (default stderr)
 
 | Phase | Message example |
 |-------|-----------------|
-| Startup | `clip-sync: aligning <A> with <B>` |
-| Open | `Opening video A...` / `Opening video B...` |
-| Track select | `Selected track 1 (48000 Hz, stereo)` |
-| Clip plan | `Clip plan: 2 clips (15m each) — [0:00–15:00] start, [30:00–45:00] end` |
-| Extract | `Extracting clip 1/2 (video A): 42%` |
-| Fingerprint | `Fingerprinting 4 clips...` |
-| Align | `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)` |
-| High-rate refine | `High-rate offset refinement...` |
-| Done | `Recommended offset: +12.340s (clip offsets agree)` |
+| Startup | `clip-sync: aligning <A> with <B>` or `clip-sync-repair: aligning <A> with <B>` |
+| Align | `Aligning audio fingerprints...` (repair) |
+| Match | `Searching for match...` |
+| Scan | `Scanning video A for gaps...` (repair) |
+| Patch | `Aligning N fill region(s)...`, `Splicing N fill(s)...` (repair) |
+| Mux | `Muxing video with patched audio...` (repair, when `--mux`) |
 
-Repair adds gap-scan phases (chunk progress, gap count, fillability summary).
+### Verbose-only phases (`phase_verbose`)
+
+| Phase | Message example |
+|-------|-----------------|
+| Open | `Opening media` |
+| Track select | `Selected track 1 (48000 Hz, stereo)` |
+| Clip plan | `Clip plan for video A: 2 clip(s) — [0:00–15:00] start, ...` |
+| Extract | `Extracting clip 1/2 (video A, 15:00):` (with `%` progress) |
+| Per-clip align | `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)` |
+| Mid-run summary | `Recommended offset: +12.340s (clip offsets agree)`, overlap windows |
+| High-rate refine | `High-rate offset refinement...` |
+| Per-gap patch | `gap 1/3: A [1183.5s – 1184.5s]` |
 
 ### `ProgressReporter` port
 
 ```rust
 trait ProgressReporter {
-    fn phase(&self, message: &str);
+    fn phase(&self, message: &str);           // major stages — Auto + Verbose
+    fn phase_verbose(&self, message: &str);    // detail — Verbose only
     fn progress(&self, label: &str, current: u64, total: u64);
 }
 ```
 
+`StderrProgressReporter` implements the above. `ProgressMode`: `Auto` (default), `Verbose`, `Quiet`.
+
 ### `tracing` integration
 
+- Default filter (when `RUST_LOG` unset): `clip_sync=<level>,clip_sync_repair=<level>,warn` — third-party crates at `warn`.
+- Operational messages (structure-match trust, ffmpeg mux) at **debug**; skipped fills at **warn**.
 - Spans: `align_videos`, `open_media`, `extract_clip`, `fingerprint`, `align`, `scan_gaps`.
 - Fields: `path`, `track_index`, `window_start`, `window_end`, `offset`, `score`.
 - Errors logged after mapping; see [docs/error-mapping.md](docs/error-mapping.md).
+
+Shipped design notes: [docs/archive/cli-output-ux-plan.md](docs/archive/cli-output-ux-plan.md).
 
 ---
 

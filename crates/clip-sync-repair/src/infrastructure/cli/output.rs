@@ -1,4 +1,6 @@
-use clip_sync::ClipLabel;
+use std::path::Path;
+
+use clip_sync::{format_time_range, ClipLabel};
 use serde::Serialize;
 
 use crate::application::error::RepairError;
@@ -22,7 +24,12 @@ impl GapReporter for StdoutGapReporter {
     }
 }
 
-fn format_human(report: &GapReport) -> String {
+fn format_human(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+    show_diagnostics: bool,
+    output_written: Option<&Path>,
+) -> String {
     let mut out = String::new();
 
     let offset = report
@@ -101,50 +108,109 @@ fn format_human(report: &GapReport) -> String {
     }
 
     out.push('\n');
+    out.push_str(&format_unified_gap_report(report, patch, show_diagnostics));
 
+    if let Some(path) = output_written {
+        out.push_str(&format!("\nOutput: {}\n", path.display()));
+    }
+
+    out
+}
+
+pub fn format_unified_gap_report(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+    show_diagnostics: bool,
+) -> String {
     if report.gaps.is_empty() {
-        out.push_str("No gaps detected in video A.\n");
-        return out;
+        return "No gaps detected in video A.\n".into();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format_unified_gap_header(report, patch));
+    if report.alignment.recommended_offset_secs.is_none() {
+        out.push_str("  B timeline mapping skipped (no alignment offset).\n");
+    }
+    out.push('\n');
+    out.push_str("  #   Range                Dur      Status\n");
+
+    for (i, gap) in report.gaps.iter().enumerate() {
+        let patch_outcome = patch.and_then(|summary| summary.gaps.get(i));
+        let status = format_unified_gap_status(gap, report, patch_outcome, show_diagnostics);
+        out.push_str(&format!(
+            "  {:<3} {:<20} {:<8} {status}\n",
+            i + 1,
+            format_time_range(gap.video_a_start_secs, gap.video_a_end_secs),
+            format!("{:.1}s", gap.duration_secs()),
+        ));
+    }
+
+    out
+}
+
+fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -> String {
+    let found = report.gaps.len();
+    if let Some(summary) = patch {
+        return format!(
+            "Gaps in video A ({found} found, {} repaired, {} skipped, {} unfillable):\n",
+            summary.patched_count, summary.skipped_count, summary.not_planned_count,
+        );
     }
 
     let repairable = report.repairable_count();
     let b_energy = report.fillable_count();
     if report.patch_allowed() {
-        out.push_str(&format!(
-            "Gaps detected in video A ({} total, {} repairable):\n",
-            report.gaps.len(),
-            repairable
-        ));
+        format!("Gaps in video A ({found} found, {repairable} repairable):\n")
     } else if b_energy > 0 {
-        out.push_str(&format!(
-            "Gaps detected in video A ({} total, 0 repairable — {} with B energy but fill blocked by track layout):\n",
-            report.gaps.len(),
-            b_energy
-        ));
+        format!(
+            "Gaps in video A ({found} found, 0 repairable — {b_energy} with B energy but fill blocked by track layout):\n"
+        )
     } else {
-        out.push_str(&format!(
-            "Gaps detected in video A ({} total, 0 repairable):\n",
-            report.gaps.len()
-        ));
+        format!("Gaps in video A ({found} found, 0 repairable):\n")
     }
-    if report.alignment.recommended_offset_secs.is_none() {
-        out.push_str("  B timeline mapping skipped (no alignment offset).\n");
-    }
-    out.push('\n');
+}
 
-    for (i, gap) in report.gaps.iter().enumerate() {
-        let status = gap_scan_status_label(gap, report);
-        out.push_str(&format!(
-            "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}\n",
-            i + 1,
-            gap.video_a_start_secs,
-            gap.video_a_end_secs,
-            gap.duration_secs(),
-            status,
-        ));
-    }
+fn format_unified_gap_status(
+    gap: &crate::domain::Gap,
+    report: &GapReport,
+    patch_outcome: Option<&crate::domain::GapPatchOutcome>,
+    show_diagnostics: bool,
+) -> String {
+    let Some(outcome) = patch_outcome else {
+        return gap_scan_status_label(gap, report).to_string();
+    };
 
-    out
+    match &outcome.status {
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            align_adjustment_secs,
+            structure_trusted,
+        } => {
+            if show_diagnostics {
+                if *structure_trusted {
+                    format!(
+                        "patched (struct pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                    )
+                } else {
+                    format!(
+                        "patched (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                    )
+                }
+            } else if *structure_trusted {
+                format!("patched (struct {pre_correlation:.2}→{post_correlation:.2})")
+            } else {
+                format!("patched ({pre_correlation:.2}→{post_correlation:.2})")
+            }
+        }
+        GapPatchStatus::Skipped { reason } => {
+            format!("skipped: {}", format_patch_skip_reason(reason))
+        }
+        GapPatchStatus::NotPlanned { reason } => match reason {
+            GapFillSkipReason::NotFillable => "unfillable".into(),
+            other => format!("not planned: {}", format_fill_skip_reason(other)),
+        },
+    }
 }
 
 fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'static str {
@@ -166,7 +232,7 @@ fn clip_label_name(label: ClipLabel) -> &'static str {
 }
 
 fn print_human(report: &GapReport) -> Result<(), RepairError> {
-    print!("{}", format_human(report));
+    print!("{}", format_human(report, None, false, None));
     Ok(())
 }
 
@@ -185,13 +251,12 @@ pub fn print_repair_output(
     report: &GapReport,
     patch: Option<&PatchSummary>,
     format: OutputFormat,
+    show_diagnostics: bool,
+    output_written: Option<&Path>,
 ) -> Result<(), RepairError> {
     match format {
         OutputFormat::Human => {
-            print!("{}", format_human(report));
-            if let Some(summary) = patch {
-                print!("{}", format_patch_summary(summary));
-            }
+            print!("{}", format_human(report, patch, show_diagnostics, output_written));
             Ok(())
         }
         OutputFormat::Json => print_json_with_patch(report, patch),
@@ -507,7 +572,7 @@ mod tests {
         report.alignment.offset_drift_secs = Some(-0.244);
         report.alignment.recommended_offset_secs = Some(-10.956);
 
-        let text = super::format_human(&report);
+        let text = super::format_human(&report, None, false, None);
         assert!(text.contains("Start clip: -10.956s"));
         assert!(text.contains("End clip: -11.200s"));
         assert!(text.contains("Drift:"));
@@ -529,7 +594,7 @@ mod tests {
             delta_secs: 0.02,
             agrees: true,
         });
-        let text = super::format_human(&report);
+        let text = super::format_human(&report, None, false, None);
         assert!(text.contains("Cross-chk"), "expected cross-check line");
         assert!(text.contains("AGREE"));
         assert!(!text.contains("WARNING"));
@@ -545,14 +610,14 @@ mod tests {
             delta_secs: 5.5,
             agrees: false,
         });
-        let text = super::format_human(&report);
+        let text = super::format_human(&report, None, false, None);
         assert!(text.contains("MISMATCH"));
         assert!(text.contains("WARNING"));
     }
 
     #[test]
     fn human_failed_alignment_notes_b_mapping_skipped() {
-        let text = super::format_human(&failed_alignment_report());
+        let text = super::format_human(&failed_alignment_report(), None, false, None);
         assert!(
             text.contains("B timeline mapping skipped"),
             "expected B mapping skipped note in human output"
@@ -602,11 +667,66 @@ mod tests {
             },
         ];
 
-        let text = super::format_human(&report);
+        let text = super::format_human(&report, None, false, None);
         assert!(text.contains("0 repairable"));
         assert!(text.contains("fill blocked by track layout"));
         assert!(text.contains("blocked (track layout)"));
         assert!(text.contains("unfillable"));
+    }
+
+    #[test]
+    fn unified_gap_report_merges_scan_and_patch() {
+        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+
+        let report = minimal_report();
+        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
+            a_start_secs: 0.0,
+            a_end_secs: 60.0,
+            status: GapPatchStatus::Patched {
+                pre_correlation: 0.98,
+                post_correlation: 1.0,
+                align_adjustment_secs: 0.0,
+                structure_trusted: true,
+            },
+        }]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        assert!(text.contains("1 found, 1 repaired, 0 skipped, 0 unfillable"));
+        assert!(text.contains("patched (struct 0.98→1.00)"));
+        assert!(!text.contains("Patch results"));
+        assert!(!text.contains("Gaps detected"));
+    }
+
+    #[test]
+    fn unified_gap_report_verbose_shows_patch_detail() {
+        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+
+        let report = minimal_report();
+        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
+            a_start_secs: 0.0,
+            a_end_secs: 60.0,
+            status: GapPatchStatus::Patched {
+                pre_correlation: 0.92,
+                post_correlation: 0.90,
+                align_adjustment_secs: 0.01,
+                structure_trusted: true,
+            },
+        }]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), true);
+        assert!(text.contains("struct pre=0.92 post=0.90 slide=+0.010s"));
+    }
+
+    #[test]
+    fn human_output_includes_written_path() {
+        let report = minimal_report();
+        let text = super::format_human(
+            &report,
+            None,
+            false,
+            Some(std::path::Path::new("out/repaired.mp4")),
+        );
+        assert!(text.contains("Output: out/repaired.mp4"));
     }
 
     #[test]

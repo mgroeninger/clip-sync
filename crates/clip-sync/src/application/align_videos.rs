@@ -705,7 +705,7 @@ fn log_alignment_summary(
             "Shared length: {}",
             clip_overlaps
                 .iter()
-                .map(|overlap| format_timestamp(overlap.shared_length_secs))
+                .map(|overlap| crate::domain::format_timestamp(overlap.shared_length_secs))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -715,21 +715,9 @@ fn log_alignment_summary(
 fn format_overlap_window(start_secs: f64, end_secs: f64) -> String {
     format!(
         "[{}–{}]",
-        format_timestamp(start_secs),
-        format_timestamp(end_secs)
+        crate::domain::format_timestamp(start_secs),
+        crate::domain::format_timestamp(end_secs)
     )
-}
-
-fn format_timestamp(secs: f64) -> String {
-    let total = secs.round().max(0.0) as u64;
-    let hours = total / 3600;
-    let minutes = (total % 3600) / 60;
-    let seconds = total % 60;
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
 }
 
 fn yes_no(value: bool) -> &'static str {
