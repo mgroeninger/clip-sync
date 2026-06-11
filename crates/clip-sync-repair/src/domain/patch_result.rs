@@ -61,6 +61,11 @@ pub struct PatchSummary {
 }
 
 impl PatchSummary {
+    /// True when at least one gap was spliced into A's PCM.
+    pub fn has_patches(&self) -> bool {
+        self.patched_count > 0
+    }
+
     pub fn from_outcomes(gaps: Vec<GapPatchOutcome>) -> Self {
         let mut patched_count = 0usize;
         let mut skipped_count = 0usize;

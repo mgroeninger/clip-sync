@@ -165,7 +165,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         .as_ref()
         .ok()
         .and_then(|r| r.as_ref())
-        .filter(|result| result.summary.patched_count > 0)
+        .filter(|result| result.summary.has_patches())
         .and({
             #[cfg(feature = "ffmpeg-mux")]
             {

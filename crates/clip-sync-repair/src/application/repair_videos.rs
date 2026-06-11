@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clip_sync::{MediaReader, ProgressReporter};
+use clip_sync::{MediaReader, MultiChannelPcm, ProgressReporter};
 
 use crate::application::error::RepairError;
 use crate::application::patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
@@ -18,6 +18,30 @@ pub struct RepairWriteRequest {
     pub video_path: Option<PathBuf>,
     #[cfg(feature = "ffmpeg-mux")]
     pub mux_options: MuxOptions,
+}
+
+/// Output paths for a repair write pass (patch request is handled separately).
+pub(crate) struct RepairFileOutput {
+    #[cfg_attr(not(feature = "ffmpeg-mux"), allow(dead_code))]
+    source_video: PathBuf,
+    wav_path: Option<PathBuf>,
+    #[cfg(feature = "ffmpeg-mux")]
+    video_path: Option<PathBuf>,
+    #[cfg(feature = "ffmpeg-mux")]
+    mux_options: MuxOptions,
+}
+
+impl RepairFileOutput {
+    fn wants_file_output(&self) -> bool {
+        if self.wav_path.is_some() {
+            return true;
+        }
+        #[cfg(feature = "ffmpeg-mux")]
+        if self.video_path.is_some() {
+            return true;
+        }
+        false
+    }
 }
 
 pub struct RepairVideos<'r, MR: MediaReader, PW: PatchedAudioWriter> {
@@ -41,17 +65,21 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
 
     #[cfg(not(feature = "ffmpeg-mux"))]
     pub fn execute(&self, request: RepairWriteRequest) -> Result<PatchAudioResult, RepairError> {
+        let RepairWriteRequest {
+            source_video,
+            patch_request,
+            crossfade_ms,
+            wav_path,
+        } = request;
+        let file_output = RepairFileOutput {
+            source_video,
+            wav_path,
+        };
+
         let patch_result = PatchAudio::new(self.media_reader, self.progress)
-            .execute(request.patch_request, request.crossfade_ms)?;
+            .execute(patch_request, crossfade_ms)?;
 
-        if let Some(wav_path) = request.wav_path.as_ref() {
-            let pcm = patch_result
-                .pcm
-                .as_ref()
-                .expect("patched run should include decoded A PCM");
-            self.wav_writer.write(pcm, wav_path)?;
-        }
-
+        self.write_outputs(&patch_result, &file_output)?;
         Ok(patch_result)
     }
 
@@ -61,47 +89,384 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         request: RepairWriteRequest,
         muxer: &MM,
     ) -> Result<PatchAudioResult, RepairError> {
-        let patch_result = PatchAudio::new(self.media_reader, self.progress)
-            .execute(request.patch_request, request.crossfade_ms)?;
+        let RepairWriteRequest {
+            source_video,
+            patch_request,
+            crossfade_ms,
+            wav_path,
+            video_path,
+            mux_options,
+        } = request;
+        let file_output = RepairFileOutput {
+            source_video,
+            wav_path,
+            video_path,
+            mux_options,
+        };
 
-        if patch_result.summary.patched_count == 0 {
-            if request.wav_path.is_some() || request.video_path.is_some() {
+        let patch_result = PatchAudio::new(self.media_reader, self.progress)
+            .execute(patch_request, crossfade_ms)?;
+
+        self.write_outputs(&patch_result, &file_output, muxer)?;
+        Ok(patch_result)
+    }
+
+    /// Returns decoded A PCM when at least one gap was patched; otherwise `None`.
+    fn gated_pcm<'a>(
+        &self,
+        result: &'a PatchAudioResult,
+        output: &RepairFileOutput,
+    ) -> Result<Option<&'a MultiChannelPcm>, RepairError> {
+        if !result.summary.has_patches() {
+            if output.wants_file_output() {
                 self.progress
                     .phase("No gaps were patched; skipping WAV/mux output.");
             }
-            return Ok(patch_result);
+            return Ok(None);
         }
 
-        let pcm = patch_result
-            .pcm
-            .as_ref()
-            .expect("patched run should include decoded A PCM");
+        let pcm = result.pcm.as_ref().ok_or_else(|| {
+            RepairError::Config("internal: patched run missing decoded PCM".into())
+        })?;
+        Ok(Some(pcm))
+    }
 
-        if let Some(ref wav_path) = request.wav_path {
+    fn write_wav_if_requested(
+        &self,
+        pcm: &MultiChannelPcm,
+        output: &RepairFileOutput,
+    ) -> Result<(), RepairError> {
+        if let Some(wav_path) = &output.wav_path {
             self.wav_writer.write(pcm, wav_path)?;
-            if let Some(ref video_path) = request.video_path {
-                muxer.mux_video_with_replaced_audio(
-                    &request.source_video,
-                    pcm,
-                    video_path,
-                    &request.mux_options,
-                    self.progress,
-                )?;
-            }
-            return Ok(patch_result);
         }
+        Ok(())
+    }
 
-        if let Some(ref video_path) = request.video_path {
+    #[cfg(not(feature = "ffmpeg-mux"))]
+    pub(crate) fn write_outputs(
+        &self,
+        result: &PatchAudioResult,
+        output: &RepairFileOutput,
+    ) -> Result<(), RepairError> {
+        let Some(pcm) = self.gated_pcm(result, output)? else {
+            return Ok(());
+        };
+        self.write_wav_if_requested(pcm, output)
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    pub(crate) fn write_outputs<MM: MediaMuxer>(
+        &self,
+        result: &PatchAudioResult,
+        output: &RepairFileOutput,
+        muxer: &MM,
+    ) -> Result<(), RepairError> {
+        let Some(pcm) = self.gated_pcm(result, output)? else {
+            return Ok(());
+        };
+
+        self.write_wav_if_requested(pcm, output)?;
+
+        if let Some(video_path) = &output.video_path {
             muxer.mux_video_with_replaced_audio(
-                &request.source_video,
+                &output.source_video,
                 pcm,
                 video_path,
-                &request.mux_options,
+                &output.mux_options,
                 self.progress,
             )?;
         }
 
-        Ok(patch_result)
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use clip_sync::testing::fakes::FakeProgressReporter;
+    use clip_sync::{MediaError, MediaReader, MediaSession, MediaSource, MultiChannelPcm};
+
+    use crate::application::patch_audio::PatchAudioResult;
+    use crate::domain::patch_result::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+
+    use super::*;
+
+    struct UnusedMediaReader;
+
+    impl MediaReader for UnusedMediaReader {
+        type Session = UnusedSession;
+
+        fn open(&self, _source: &MediaSource) -> Result<Self::Session, MediaError> {
+            unreachable!("write_outputs tests do not open media")
+        }
     }
 
+    struct UnusedSession;
+
+    impl MediaSession for UnusedSession {
+        fn list_tracks(&self) -> Result<Vec<clip_sync::AudioTrack>, MediaError> {
+            unreachable!()
+        }
+
+        fn extract_mono(
+            &self,
+            _track: &clip_sync::AudioTrack,
+            _window: &clip_sync::ClipWindow,
+            _progress: &dyn ProgressReporter,
+            _label: &str,
+        ) -> Result<clip_sync::MonoPcmClip, MediaError> {
+            unreachable!()
+        }
+    }
+
+    struct RecordingWavWriter {
+        write_count: AtomicUsize,
+    }
+
+    impl RecordingWavWriter {
+        fn new() -> Self {
+            Self {
+                write_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn writes(&self) -> usize {
+            self.write_count.load(Ordering::SeqCst)
+        }
+    }
+
+    impl PatchedAudioWriter for RecordingWavWriter {
+        fn write(&self, _audio: &MultiChannelPcm, _path: &Path) -> Result<(), RepairError> {
+            self.write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    struct RecordingMuxer {
+        mux_count: AtomicUsize,
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    impl RecordingMuxer {
+        fn new() -> Self {
+            Self {
+                mux_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn muxes(&self) -> usize {
+            self.mux_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    impl MediaMuxer for RecordingMuxer {
+        fn mux_video_with_replaced_audio(
+            &self,
+            _source_video: &Path,
+            _replacement_audio: &MultiChannelPcm,
+            _output: &Path,
+            _options: &MuxOptions,
+            _progress: &dyn ProgressReporter,
+        ) -> Result<(), RepairError> {
+            self.mux_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct RecordingProgress {
+        skip_message: Cell<bool>,
+    }
+
+    impl RecordingProgress {
+        fn new() -> Self {
+            Self {
+                skip_message: Cell::new(false),
+            }
+        }
+
+        fn saw_skip_message(&self) -> bool {
+            self.skip_message.get()
+        }
+    }
+
+    impl ProgressReporter for RecordingProgress {
+        fn phase(&self, message: &str) {
+            if message.contains("skipping WAV/mux output") {
+                self.skip_message.set(true);
+            }
+        }
+
+        fn progress(&self, _label: &str, _current: u64, _total: u64) {}
+    }
+
+    fn sample_pcm() -> MultiChannelPcm {
+        MultiChannelPcm {
+            sample_rate: 44_100,
+            channels: 1,
+            samples: vec![1_000; 100],
+            decode_error_skips: 0,
+            decoded_frame_count: Some(100),
+        }
+    }
+
+    fn file_output(wav_path: Option<PathBuf>) -> RepairFileOutput {
+        RepairFileOutput {
+            source_video: PathBuf::from("a.mp4"),
+            wav_path,
+            #[cfg(feature = "ffmpeg-mux")]
+            video_path: None,
+            #[cfg(feature = "ffmpeg-mux")]
+            mux_options: MuxOptions {
+                video_codec: "copy".into(),
+                audio_codec: "aac".into(),
+            },
+        }
+    }
+
+    fn patch_result(patched_count: usize, pcm: Option<MultiChannelPcm>) -> PatchAudioResult {
+        let gaps = if patched_count > 0 {
+            vec![GapPatchOutcome {
+                a_start_secs: 1.0,
+                a_end_secs: 2.0,
+                status: GapPatchStatus::Patched {
+                    pre_correlation: 0.9,
+                    post_correlation: 0.9,
+                    align_adjustment_secs: 0.0,
+                    structure_trusted: false,
+                },
+            }]
+        } else {
+            vec![]
+        };
+
+        PatchAudioResult {
+            pcm,
+            summary: PatchSummary::from_outcomes(gaps),
+        }
+    }
+
+    #[test]
+    fn write_outputs_skips_wav_when_no_gaps_patched() {
+        let progress = RecordingProgress::new();
+        let writer = RecordingWavWriter::new();
+        let repair = RepairVideos::new(&UnusedMediaReader, &progress, &writer);
+
+        let result = patch_result(0, Some(sample_pcm()));
+        let output = file_output(Some(PathBuf::from("out.wav")));
+
+        #[cfg(not(feature = "ffmpeg-mux"))]
+        repair
+            .write_outputs(&result, &output)
+            .expect("write_outputs should succeed");
+
+        #[cfg(feature = "ffmpeg-mux")]
+        {
+            let muxer = RecordingMuxer::new();
+            repair
+                .write_outputs(&result, &output, &muxer)
+                .expect("write_outputs should succeed");
+            assert_eq!(muxer.muxes(), 0);
+        }
+
+        assert_eq!(writer.writes(), 0);
+        assert!(progress.saw_skip_message());
+    }
+
+    #[test]
+    fn write_outputs_writes_wav_when_gaps_patched() {
+        let progress = FakeProgressReporter;
+        let writer = RecordingWavWriter::new();
+        let repair = RepairVideos::new(&UnusedMediaReader, &progress, &writer);
+
+        let result = patch_result(1, Some(sample_pcm()));
+        let output = file_output(Some(PathBuf::from("out.wav")));
+
+        #[cfg(not(feature = "ffmpeg-mux"))]
+        repair
+            .write_outputs(&result, &output)
+            .expect("write_outputs should succeed");
+
+        #[cfg(feature = "ffmpeg-mux")]
+        {
+            let muxer = RecordingMuxer::new();
+            repair
+                .write_outputs(&result, &output, &muxer)
+                .expect("write_outputs should succeed");
+            assert_eq!(muxer.muxes(), 0);
+        }
+
+        assert_eq!(writer.writes(), 1);
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    #[test]
+    fn write_outputs_skips_mux_when_no_gaps_patched() {
+        let progress = RecordingProgress::new();
+        let writer = RecordingWavWriter::new();
+        let muxer = RecordingMuxer::new();
+        let repair = RepairVideos::new(&UnusedMediaReader, &progress, &writer);
+
+        let result = patch_result(0, None);
+        let output = RepairFileOutput {
+            source_video: PathBuf::from("a.mp4"),
+            wav_path: None,
+            video_path: Some(PathBuf::from("out.mp4")),
+            mux_options: MuxOptions {
+                video_codec: "copy".into(),
+                audio_codec: "aac".into(),
+            },
+        };
+
+        repair
+            .write_outputs(&result, &output, &muxer)
+            .expect("write_outputs should succeed");
+
+        assert_eq!(writer.writes(), 0);
+        assert_eq!(muxer.muxes(), 0);
+        assert!(progress.saw_skip_message());
+    }
+
+    #[test]
+    fn patch_summary_has_patches() {
+        let empty = PatchSummary::from_outcomes(vec![]);
+        assert!(!empty.has_patches());
+
+        let patched = PatchSummary::from_outcomes(vec![GapPatchOutcome {
+            a_start_secs: 0.0,
+            a_end_secs: 1.0,
+            status: GapPatchStatus::Patched {
+                pre_correlation: 1.0,
+                post_correlation: 1.0,
+                align_adjustment_secs: 0.0,
+                structure_trusted: false,
+            },
+        }]);
+        assert!(patched.has_patches());
+    }
+
+    #[test]
+    fn repair_file_output_wants_file_output() {
+        assert!(!file_output(None).wants_file_output());
+        assert!(file_output(Some(PathBuf::from("out.wav"))).wants_file_output());
+
+        #[cfg(feature = "ffmpeg-mux")]
+        {
+            let mux_only = RepairFileOutput {
+                source_video: PathBuf::from("a.mp4"),
+                wav_path: None,
+                video_path: Some(PathBuf::from("out.mp4")),
+                mux_options: MuxOptions {
+                    video_codec: "copy".into(),
+                    audio_codec: "aac".into(),
+                },
+            };
+            assert!(mux_only.wants_file_output());
+        }
+    }
 }
