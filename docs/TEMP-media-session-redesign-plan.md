@@ -115,5 +115,5 @@
 ## Cross-plan sequencing
 
 - ~~After the output/error contract plan~~ — **satisfied**: shipped 2026-06-10 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)); `MediaError` surface settled.
-- Independent of [TEMP-layer-purity-plan.md](TEMP-layer-purity-plan.md) (ports.rs merge conflicts only).
+- Layer-purity shipped 2026-06-11 ([archive/layer-purity-plan.md](archive/layer-purity-plan.md)).
 - [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) rebases its hold-out work on `MediaExtent` if this lands first; both plans touch `offset_verification.rs` — coordinate.

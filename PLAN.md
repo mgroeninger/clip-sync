@@ -89,7 +89,7 @@ flowchart TB
 | **Infrastructure** | Adapters (Symphonia, Chromaprint, CLI, ffmpeg, logging) | Application ports |
 | **Composition root** (`main`) | Wire adapters to ports, parse config | All layers in that crate |
 
-**Dependency rule:** domain ← application ← infrastructure. Domain and application never depend on Symphonia, Chromaprint, `clap`, or ffmpeg.
+**Dependency rule:** domain ← application ← infrastructure. Domain and application never depend on Symphonia, Chromaprint, `clap`, ffmpeg, or DSP engine crates (`rubato`, `cross_correlate` — those live in infrastructure adapters behind `Resampler` / `PcmCorrelator` ports).
 
 ### Cross-crate dependency rules
 
@@ -884,7 +884,7 @@ Default PR gate: `cargo test -p clip-sync corpus_` (committed tier; no ffmpeg).
 |-------|-----|
 | `symphonia` | Demux/decode audio |
 | `rusty-chromaprint` | Fingerprint and match |
-| `rubato`, `cross_correlate` | Resample and PCM correlation |
+| `rubato`, `cross_correlate` | Resample and PCM correlation (**infrastructure adapters only** — `Resampler` / `PcmCorrelator` ports) |
 | `tracing`, `tracing-subscriber` | Structured logging |
 | `serde`, `serde_json` | Config (de)serialization |
 | `toml` | Align config file |
