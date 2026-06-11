@@ -658,7 +658,7 @@ trait ProgressReporter {
 - Fields: `path`, `track_index`, `window_start`, `window_end`, `offset`, `score`.
 - Errors logged after mapping; see [docs/error-mapping.md](docs/error-mapping.md).
 
-Shipped design notes: [docs/archive/cli-output-ux-plan.md](docs/archive/cli-output-ux-plan.md).
+CLI output contract: [docs/cli-output.md](docs/cli-output.md). Historical plan: [docs/archive/cli-output-ux-plan.md](docs/archive/cli-output-ux-plan.md).
 
 ---
 
