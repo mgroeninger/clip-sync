@@ -43,7 +43,7 @@ Harness code: `crates/clip-sync/src/application/testing/corpus_fixtures.rs`, gen
 
 ## Option A false-pass evidence (2026-06-11)
 
-Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0 left the “does Option A false-pass on self-similar hold-out?” spike unchecked. Phase 3 of [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) closes it.
+Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0 left the “does Option A false-pass on self-similar hold-out?” spike unchecked. Phase 3 of [verification-hardening plan](archive/verification-hardening-plan.md) closes it.
 
 **Probe:** manifest case `verify_option_a_false_pass_probe` — 120 s mono WAV pair with a **10 s chirp loop** tiled across the file (true inter-file offset +3 s). The dedicated test runs hold-out verification with **deliberately wrong** injected recommended offsets (+8 s and +18 s = +8 s plus one loop period), independent of discovery output.
 
@@ -57,6 +57,46 @@ Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0
 |---------|------------|-------|
 | +8 s (manifest `probe_wrong_verification_offset_secs`) | `false` | Same wrong-Δ class as unit test `verify_offset_fails_wrong_delta` |
 | +18 s (+8 s + 10 s loop period) | `false` | Loop-period alias does not fool lag-0 fingerprint check |
+
+---
+
+## Validation diagnostics (v1 contract, 2026-06-11)
+
+Shipped in [verification-hardening plan](archive/verification-hardening-plan.md) (phases 1–5, 2026-06-11). Behaviour summary for operators and test authors.
+
+### Repetition downgrade vs `aligned`
+
+When `check_clip_repetition` is on and internal repeat lag is within 1 s of the clip offset, hold-out / discovery confidence may be inflated. v1 handles this as follows:
+
+1. `build_alignment_result` sets `aligned`, `offset_secs`, `start_aligned`, and `recommended_offset_secs` from **pre-downgrade** fingerprint confidence.
+2. `AlignVideos` then may halve `ClipMatch.confidence` and attach `repetition` diagnostics.
+3. JSON and human output show **post-downgrade** confidence; `aligned` does **not** flip when downgrade runs.
+
+So a clip can show `aligned: true` with lowered confidence — by design in v1. See `align_videos.rs` (downgrade after `build_alignment_result`) and corpus case `repeated_segment_in_clip`.
+
+### Hold-out verification cost
+
+`--verify-offset` / `validation.verify_offset` extracts hold-out windows of length `clip.clip_length` on **both** files per scored candidate. With the Phase 2 retry cap, up to **three** candidates may be scored before reporting the best attempt.
+
+**Rough decode budget per run:** up to `3 × 2 × clip_length` of mono PCM (e.g. default 15 min clips → up to ~90 minutes of audio decoded for verification alone, in addition to discovery clips). Shorter `clip_length` or early `verified == true` reduces cost. Optional `validation.max_verification_secs` remains a future knob (deferred Phase 6 in [verification-hardening plan](archive/verification-hardening-plan.md)) if this becomes painful in practice.
+
+Committed-tier WAVs (30 s) cannot satisfy default 60 s minimum hold-out — see [tests/corpus/README.md](../tests/corpus/README.md) § Hold-out verification on committed tier. Generated cases `verify_offset_pass` and `mkv_tail_decodable_extent_gap` cover CI.
+
+### Test roles (+3 s chirp)
+
+Avoid duplicating the same E2E assertion in multiple suites. Intended split:
+
+| Layer | Responsibility | Examples |
+|-------|----------------|----------|
+| **Corpus (manifest)** | End-to-end alignment + optional verify through `AlignVideos` | `wav_leader_3s`, `verify_offset_pass`, `corpus_verify_option_a_false_pass_probe` |
+| **`align_videos` integration** | One real Symphonia + Chromaprint pipeline smoke | `execute_detects_known_offset_through_real_wav_pipeline` |
+| **`align_videos` integration** | PCM refine / high-rate paths (not verify dedupe) | `cross_layer_high_rate_refine_*`, `high_rate_refine_*` |
+| **`offset_verification` unit** | Hold-out pass/fail/skip/retry branches with fakes or temp WAVs | `verify_offset_*`, `verify_offset_retries_until_verified` |
+| **`clip-sync-repair` integration** | Repair-specific concerns | `scan_gaps_integration`, `patch_audio_integration` (own chirp copies) |
+
+**Removed (2026-06-11):** `execute_runs_offset_verification_when_flag_on` — overlapped `corpus_verify_offset_pass`.
+
+Test fixtures: prefer `application/testing/alignment_fixtures.rs` (`minimal_alignment_result`, `start_clip_match`) over hand-built `AlignmentResult` in lib and CLI tests.
 
 ---
 
@@ -88,3 +128,4 @@ Tracked in [BACKLOG.md](../BACKLOG.md):
 
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
+- Optional shorter verification segment (`validation.max_verification_secs`) — deferred Phase 6 in [verification-hardening plan](archive/verification-hardening-plan.md); implement only on demonstrated friction

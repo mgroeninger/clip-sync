@@ -1,6 +1,6 @@
 # Temporary plan: verification & validation hardening
 
-> **Status:** In progress (2026-06-11). Plan 4 of 4 — see [BACKLOG.md](../BACKLOG.md). Follow-ups to the shipped hold-out offset verification ([archive/offset-verification-plan.md](archive/offset-verification-plan.md)) — the "Validation diagnostics — open concerns" table in BACKLOG.
+> **Status:** Shipped (phases 1–5, 2026-06-11). Archived to `docs/archive/verification-hardening-plan.md`. Follow-up to [offset-verification-plan.md](offset-verification-plan.md). **Deferred (not in scope):** Phase 6 `max_verification_secs`; Option B PCM lag-0 (probe did not false-pass — see Phase 3). Operator summary: [corpus-validation.md](../corpus-validation.md) § Validation diagnostics.
 
 **Problem:** The shipped verification path has order-dependence (first scored hold-out candidate wins even when `verified == false`; headline confidence uses `clips.first()` instead of label selection), an unrecorded false-pass risk (the archived plan's Option A spike checkboxes were never completed), a committed-corpus gap (30 s WAVs vs 60 s min `clip_length` means `verify_offset` never runs on the committed tier), and test-suite duplication around the +3 s chirp scenario.
 
@@ -10,9 +10,24 @@
 
 ---
 
-## Current codebase baseline
+## Shipped outcomes (2026-06-11)
 
-| Area | Path | Current state | Target phase |
+| Area | Result |
+|------|--------|
+| Label selection | `clip_with_label` / `start_clip()`; CLI + corpus use start clip (degenerate `clips.first()` fallback only) |
+| Verify retry | Up to 3 scored candidates; best by confidence; `candidates_tried` in JSON + `phase_verbose` |
+| Option A false-pass probe | `verify_option_a_false_pass_probe`: wrong Δ +8 s / +18 s → **`verified == false`**; Option B not implemented |
+| Committed verify | Generated-only (`verify_offset_pass`, `mkv_tail_decodable_extent_gap`); documented in `tests/corpus/README.md` |
+| Test hygiene | Removed `execute_runs_offset_verification_when_flag_on`; `alignment_fixtures` builder adopted in lib + CLI tests |
+| Docs | Repetition downgrade v1, verification cost, test roles — `corpus-validation.md`, `PLAN.md`, corpus README |
+
+---
+
+## Pre-shipment baseline (historical)
+
+Audit at plan draft (2026-06-10). All rows below were addressed in phases 1–5 unless noted.
+
+| Area | Path | State before hardening | Phase |
 |------|------|---------------|--------------|
 | Candidate loop | `crates/clip-sync/src/application/offset_verification.rs` ~92–261 | Per candidate: feasibility → extract A/B → prep → fingerprint → score; extract/prep failures `continue`; **first successful score returns** (~251–261) even when `verified == false` | 2 |
 | Candidate generation | `domain/policies.rs` ~234–334 (`holdout_window_candidates`, `pick_holdout_window`), ~336–347 (feasibility) | Ordered: overlap-safe near-start → +30 s interior → middle-third → dur/6 → post-discovery → `[0, len)`; all labeled `Interior` | 2 |
@@ -76,12 +91,12 @@
 ### Phase 3 — Option A false-pass evidence
 
 - [x] Generated corpus case: looped/self-similar content + wrong-offset probe; record pass/fail.
-- [x] Findings → `docs/corpus-validation.md`. **No false-pass observed** — Option B (PCM lag-0 via `refine_holdout_segment_lag`) remains deferred; BACKLOG concern closes with evidence link.
+- [x] Findings → `docs/corpus-validation.md`. **Probe did not false-pass** (wrong injected Δ +8 s and +18 s both `verified == false`); Option B (PCM lag-0 via `refine_holdout_segment_lag`) **closed without implementation**.
 
-**Option B follow-up (deferred — only if future probe false-passes):**
+**Option B follow-up (closed — probe did not false-pass):**
 
-- [ ] Add PCM lag-0 confirmation step after Option A in `apply_offset_verification`
-- [ ] Corpus case proving Option B catches the false-pass scenario
+- [x] ~~Add PCM lag-0 confirmation step~~ — not needed
+- [x] ~~Corpus case for Option B~~ — not needed; regression is `corpus_verify_option_a_false_pass_probe`
 
 ### Phase 4 — corpus + test hygiene
 
@@ -91,13 +106,13 @@
 
 ### Phase 5 — documentation debts
 
-- [ ] Repetition-downgrade v1 note; verification cost note; test-role split — all in `docs/corpus-validation.md` / PLAN / README as decided.
-- [ ] Fix stale `TEMP-offset-verification-plan.md` links in BACKLOG (~65, ~171) and PLAN doc table → `docs/archive/offset-verification-plan.md`.
-- [ ] Close the BACKLOG "Validation diagnostics" rows this plan covers.
+- [x] Repetition-downgrade v1 note; verification cost note; test-role split — all in `docs/corpus-validation.md` / PLAN / README as decided.
+- [x] Fix stale `TEMP-offset-verification-plan.md` links in BACKLOG (~65, ~171) and PLAN doc table → `docs/archive/offset-verification-plan.md` (BACKLOG/PLAN already pointed at archive; PLAN doc table updated).
+- [x] Close the BACKLOG "Validation diagnostics" rows this plan covers.
 
-### Phase 6 (optional, gated) — shorter verification segment
+### Phase 6 (deferred) — shorter verification segment
 
-- [ ] Only on demonstrated friction: `validation.max_verification_secs` knob capping hold-out segment length; corpus case proving pass behavior at the shorter length.
+- [ ] Not shipped. Implement only on demonstrated friction: `validation.max_verification_secs` knob; track in [BACKLOG.md](../BACKLOG.md) / [corpus-validation.md](../corpus-validation.md) follow-ups.
 
 ---
 

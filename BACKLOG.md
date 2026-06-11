@@ -10,40 +10,18 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 - **Done** — one-line index in [Completed](#completed); design detail lives in `docs/archive/*` and git history.
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
+**Next:** [query-reference alignment](#active-plans) (unblocked); [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-11)** — land order: verification-hardening → query-reference; AC-3 backend plan is independent and can land in parallel.
+**Active plans (2026-06-11)** — AC-3 backend plan is independent and can land in parallel.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill — **blocked** on verification-hardening |
+| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill |
 
 ---
 
 ## Open work
-
-### Validation diagnostics — open concerns
-
-Core flags ship (2026-06-10). Follow-ups from hardening pass and code review.
-
-| Concern | Direction |
-|---------|-----------|
-| Short media vs min `clip_length` (30 s committed WAV, 60 s min) | Regenerate fixtures ≥ 60 s or accept generated-only `corpus_verify_offset_pass` |
-| First hold-out candidate wins when `verified == false` | Try next candidate or log chosen window in verbose |
-| Default 15 min `clip_length` + `verify_offset` | Document cost; optional shorter verification segment (future) |
-| Option A (`find_offset`) false passes | Option B PCM lag-0 only if corpus proves need |
-| Committed corpus + `verify_offset` | `wav_leader_3s` = alignment only |
-| Test overlap (+3 s chirp) | Dedupe corpus vs integration vs unit roles |
-| Headline confidence uses `clips.first()` | Select start clip by label |
-| `AlignmentResult` test builder drift | Use `application/testing/alignment_fixtures.rs` |
-| Repetition downgrade vs `aligned` | Document intentional v1 in corpus-validation |
-| Plan doc drift | Sync PLAN after policy decisions |
-
-**Refs:** `offset_verification.rs`, `high_rate_refinement.rs`, `domain/policies.rs`, CLI/repair `output.rs`, `tests/corpus/manifest.toml`
-
----
 
 ### Phase 6 — Architecture cleanup
 
@@ -65,7 +43,7 @@ Defaults, domain errors, purity claims out of sync with code.
 |------|-----------|
 | [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
-| [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; WAV ≥ 60 s if verify on fixtures needed |
+| [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
 | [Resampler port shrink](#resampler-port-drop-unused-resample_interleaved) | Drop trait method if still unused; repair keeps facade fn |
 
 #### Memory use and PCM cloning on long clips
@@ -82,7 +60,7 @@ Defaults, domain errors, purity claims out of sync with code.
 
 #### Committed test fixtures
 
-Tier B = 3× 30 s WAV pairs; ffmpeg for encoded formats. See validation open concerns for verify gap.
+Tier B = 3× 30 s WAV pairs; ffmpeg for encoded formats. Hold-out verify on committed tier deferred — generated-only coverage documented in [tests/corpus/README.md](tests/corpus/README.md).
 
 **Refs:** `tests/corpus/`, `Cargo.toml` features
 
@@ -117,6 +95,7 @@ Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port com
 | Resample rubato fallback warn | 2026-06-10 | [archive/output-error-contract-plan.md](docs/archive/output-error-contract-plan.md) Phase 1 — `domain/resample.rs` |
 | `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
 | `MediaSession` redesign + `MediaExtent` | 2026-06-11 | [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md): `&mut self` port, internal seek recovery, `media_scan.rs`, hold-out extent placement, duration-less open audit |
+| Verification & validation hardening (phases 1–5) | 2026-06-11 | [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus README / test dedupe / `alignment_fixtures`; v1 docs in [corpus-validation.md](docs/corpus-validation.md) |
 
 ---
 

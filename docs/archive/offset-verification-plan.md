@@ -187,9 +187,9 @@ Sign convention for B extract: match `ClipMatchEstimate.offset_secs` (“seconds
 
 **Lib (`crates/clip-sync`)**
 
-- [ ] Option A on synthetic hold-out: matching +3s chirp pair → `\|offset_secs\| ≤ 0.5`, confidence ≥ 0.5 (`Aligner::find_offset` on prepared hold-out clips @ `target_sample_rate`)
-- [ ] Same pair with intentional wrong Δ (+5s) → fails threshold or `\|offset_secs\| > 0.5`
-- [ ] Record whether false passes warrant Option B (`normalized_correlation` on prepared PCM) before Phase 1 ships
+- [x] Option A on synthetic hold-out: matching +3s chirp pair → `\|offset_secs\| ≤ 0.5`, confidence ≥ 0.5 — covered by `offset_verification.rs` unit tests + `corpus_verify_offset_pass` (see [verification-hardening-plan.md](verification-hardening-plan.md))
+- [x] Same pair with intentional wrong Δ → fails threshold — `corpus_verify_option_a_false_pass_probe` (+8 s / +18 s injected Δ → `verified == false`; [corpus-validation.md](../corpus-validation.md) § Option A false-pass evidence)
+- [x] False-pass question recorded: **no false-pass**; Option B not warranted ([verification-hardening-plan.md](verification-hardening-plan.md) Phase 3)
 - [x] Hold-out **window** placement de-risked — `pick_holdout_window` + tests already in `domain/policies.rs`
 
 **CLI:** none

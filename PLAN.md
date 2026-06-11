@@ -280,6 +280,8 @@ Domain errors carry no I/O or library context; they describe business rule viola
 14. Log alignment summary (start/end aligned, per-clip status, recommended offset).
 15. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
+**Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/corpus-validation.md](docs/corpus-validation.md) § Repetition downgrade). Hold-out verification tries up to three scored window candidates and reports the best; see § Hold-out verification cost in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
+
 #### Default pipeline: `align_with_defaults`
 
 Optional composition helper — same adapter wiring as the analyzer composition root:
@@ -563,6 +565,7 @@ Configuration merges defaults, optional config file, and CLI overrides (CLI wins
 struct AlignConfig {
     clip: ClipConfig,
     alignment: AlignmentConfig,
+    validation: ValidationConfig,   // check_clip_repetition, verify_offset, thresholds
 }
 
 struct ClipConfig {
@@ -975,6 +978,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/](docs/archive/) | Completed plans — historical paths, do not edit |
 | [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
 | [docs/archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
+| [docs/archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
 | [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.

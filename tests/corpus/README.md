@@ -10,6 +10,8 @@ Keep total committed fixtures under **5 MB**. Current clips are 20–30 s mono 1
 
 Committed WAVs are **30 s**; default `clip_length` is **60 s**, so `verify_offset` cannot run on Tier-B files (hold-out is skipped). **Accepted coverage:** generated manifest cases `verify_offset_pass` (120 s WAV) and `mkv_tail_decodable_extent_gap` (ffmpeg). A committed ~75 s verify pair would add **~3.2 MB** and exceed the 5 MB cap without removing or extending an existing pair — not added unless the budget is raised.
 
+With default **15 min** `clip_length`, `--verify-offset` can decode up to **~90 minutes** of audio per run (3 retry candidates × 2 files × `clip_length`). See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Hold-out verification cost.
+
 ## Regenerate WAV fixtures
 
 From the repo root (requires Rust toolchain):

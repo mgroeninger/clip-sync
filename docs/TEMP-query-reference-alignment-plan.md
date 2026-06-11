@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment (short clip vs long video)
 
-> **Status:** Not started — **blocked** on prerequisite plans (see [Cross-plan sequencing](#cross-plan-sequencing)). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
+> **Status:** Not started — prerequisites shipped (2026-06-11); ready to implement. Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -23,7 +23,7 @@
 | Plan | Why it blocks this plan |
 |------|-------------------------|
 | [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) | Shipped 2026-06-11: `MediaSession` `&mut self`; `reset_io` removed; `MediaExtent`; scan policy in `application/media_scan.rs` |
-| [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) | Verification retries up to 3 candidates; `candidates_tried` on `OffsetVerification`; `clip_with_label` / `start_clip()` helpers; `alignment_fixtures` adoption; chirp test-role split |
+| [archive/verification-hardening-plan.md](archive/verification-hardening-plan.md) | **Shipped (2026-06-11):** verify retry + `candidates_tried`, `clip_with_label`, `alignment_fixtures`, test-role split — see [corpus-validation.md](corpus-validation.md) § Validation diagnostics |
 
 **Already shipped (rebase on these, do not re-litigate):**
 
@@ -352,7 +352,7 @@ Per [json-output.md](json-output.md) revision procedure:
 - [ ] `refresh_start_overlap` → in query mode use `mapped_region` helper instead of start clip window
 - [ ] `application/report.rs` — `QueryLocalizationReport`, `AlignmentModeUsedReport`, `From` impls, `format_query_localization_lines`
 - [ ] `default_pipeline.rs` / public facade: export new config enums + formatters; no breaking pipeline API change
-- [ ] Integration tests in `align_videos.rs`: one real-WAV E2E query-mode oracle; unit tests for Auto detection and symmetric override — follow [verification hardening test roles](TEMP-verification-hardening-plan.md) (no redundant chirp duplication)
+- [ ] Integration tests in `align_videos.rs`: one real-WAV E2E query-mode oracle; unit tests for Auto detection and symmetric override — follow [verification hardening test roles](archive/verification-hardening-plan.md) (no redundant chirp duplication)
 - [ ] Use `application/testing/alignment_fixtures.rs` for hand-built `AlignmentResult` in new tests
 - [ ] JSON contract revision + golden fixture update
 
@@ -669,7 +669,7 @@ Machine-oriented fields preserved for scripts; friendly aliases on `QueryLocaliz
 ## References
 
 - Prior discussion: arbitrary clip vs long video repair workflow (2026-06-10)
-- Prerequisites: [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) (shipped), [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md)
+- Prerequisites: [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) (shipped), [archive/verification-hardening-plan.md](archive/verification-hardening-plan.md) (shipped)
 - Layer purity (shipped): [archive/layer-purity-plan.md](archive/layer-purity-plan.md)
 - JSON contract: [json-output.md](json-output.md)
 - Symmetric alignment: `crates/clip-sync/src/application/align_videos.rs`

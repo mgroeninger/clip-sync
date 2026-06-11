@@ -115,4 +115,4 @@ Locked before implementation. Change only with an explicit plan revision.
 
 - **Blocks** the JSON freeze and should land **before** the media-session redesign (both touch `MediaError`) — satisfied; media-session shipped 2026-06-11 ([media-session-redesign-plan.md](media-session-redesign-plan.md)).
 - Layer-purity shipped 2026-06-11 ([layer-purity-plan.md](layer-purity-plan.md)); resample warn lives in `rubato.rs`.
-- [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) Phase 2 adds an additive JSON field — land it before Phase 4 freeze here, or version it explicitly.
+- [verification-hardening-plan.md](verification-hardening-plan.md) Phase 2 shipped `candidates_tried` as an additive JSON field under v1 (2026-06-11).
