@@ -78,6 +78,9 @@ pub(super) trait ExtractSink {
     fn target_units(&self) -> Option<usize>;
     fn has_output(&self) -> bool;
 
+    // Grouping these into a context struct is deferred to the media-session redesign plan
+    // (Phase 2), which restructures this loop's signatures anyway.
+    #[allow(clippy::too_many_arguments)]
     fn finalize(
         &mut self,
         path: &Path,
@@ -119,15 +122,15 @@ fn read_next_packet(
 }
 
 pub(super) enum PacketWindowPos {
-    BeforeWindow,
-    PastWindow,
-    InWindow,
+    Before,
+    Past,
+    Within,
 }
 
 /// Classify a packet's position relative to the extract window.
 ///
 /// Uses sample-based bounds when `resolved_rate` is known; falls back to duration-based bounds
-/// when rate is not yet resolved (before the first successful decode). Returns `InWindow` when
+/// when rate is not yet resolved (before the first successful decode). Returns `Within` when
 /// `time_base` is `None` or when neither boundary is crossed.
 fn packet_window_pos(
     pts: Timestamp,
@@ -136,29 +139,29 @@ fn packet_window_pos(
     resolved_rate: Option<u32>,
     window: &ClipWindow,
 ) -> PacketWindowPos {
-    let Some(tb) = time_base else { return PacketWindowPos::InWindow };
+    let Some(tb) = time_base else { return PacketWindowPos::Within };
     if let Some(rate) = resolved_rate {
         let (start_sample, end_sample) = window_sample_bounds(window, rate);
         let pkt_start = timestamp_to_sample(pts, tb, rate);
         let pkt_end = timestamp_to_sample(pts.saturating_add(dur), tb, rate);
         if pkt_end <= start_sample {
-            return PacketWindowPos::BeforeWindow;
+            return PacketWindowPos::Before;
         }
         if pkt_start >= end_sample {
-            return PacketWindowPos::PastWindow;
+            return PacketWindowPos::Past;
         }
     } else if let (Some(pkt_start), Some(pkt_end)) = (
         timestamp_to_std_duration(pts, tb),
         timestamp_to_std_duration(pts.saturating_add(dur), tb),
     ) {
         if pkt_end <= window.start {
-            return PacketWindowPos::BeforeWindow;
+            return PacketWindowPos::Before;
         }
         if pkt_start >= window.end {
-            return PacketWindowPos::PastWindow;
+            return PacketWindowPos::Past;
         }
     }
-    PacketWindowPos::InWindow
+    PacketWindowPos::Within
 }
 
 pub(super) enum DecodeOutcome<'a> {
@@ -326,12 +329,12 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 sink.resolved_rate(),
                 window,
             ) {
-                PacketWindowPos::BeforeWindow => continue,
-                PacketWindowPos::PastWindow => {
+                PacketWindowPos::Before => continue,
+                PacketWindowPos::Past => {
                     allow_tail_padding = true;
                     break;
                 }
-                PacketWindowPos::InWindow => {}
+                PacketWindowPos::Within => {}
             }
 
             let decoded = match decode_packet_or_skip(

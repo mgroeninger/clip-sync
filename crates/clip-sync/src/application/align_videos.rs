@@ -136,8 +136,7 @@ where
         let extracted_a = self.extract_clips(
             session_a,
             &plan,
-            &request.config.clip,
-            &request.config.alignment,
+            &request.config,
             "video A",
             None,
             &extraction,
@@ -145,8 +144,7 @@ where
         let extracted_b = self.extract_clips(
             session_b,
             &plan,
-            &request.config.clip,
-            &request.config.alignment,
+            &request.config,
             "video B",
             None,
             &extraction,
@@ -203,8 +201,7 @@ where
                 let extracted_a = self.extract_clips(
                     session_a,
                     &plan,
-                    &request.config.clip,
-                    &request.config.alignment,
+                    &request.config,
                     "video A",
                     Some(track_a),
                     &extraction,
@@ -212,8 +209,7 @@ where
                 let extracted_b = self.extract_clips(
                     session_b,
                     &plan,
-                    &request.config.clip,
-                    &request.config.alignment,
+                    &request.config,
                     "video B",
                     Some(track_b),
                     &extraction,
@@ -486,8 +482,7 @@ where
         &self,
         session: &MR::Session,
         plan: &crate::domain::ClipPlan,
-        clip_config: &crate::application::config::ClipConfig,
-        alignment_config: &crate::application::config::AlignmentConfig,
+        config: &AlignConfig,
         label: &str,
         track: Option<&AudioTrack>,
         extraction: &ExtractionProgressScope<'_>,
@@ -511,7 +506,7 @@ where
         )?;
 
         let decodable_extent = if plan.num_clips >= 2
-            && alignment_config.clamp_end_clip_to_decodable_extent
+            && config.alignment.clamp_end_clip_to_decodable_extent
         {
             match session.track_decodable_extent(track) {
                 Ok(extent) => extent,
@@ -539,7 +534,7 @@ where
         let planning = ClipPlanningOptions {
             decodable_extent,
             end_tail_inset: Duration::from_secs_f64(
-                alignment_config.end_clip_tail_inset_secs.max(0.0),
+                config.alignment.end_clip_tail_inset_secs.max(0.0),
             ),
         };
         let windows = clip_windows_with_options(duration, plan, planning)?;
@@ -570,7 +565,7 @@ where
             let window = &windows[index];
             let extract_window = expand_window_for_slide(
                 window,
-                clip_config.window_slide_secs,
+                config.clip.window_slide_secs,
                 timeline_end,
             );
             let progress_label = format!(
@@ -586,7 +581,7 @@ where
                 &clip_progress,
                 &progress_label,
             )?;
-            if let Some(target_rate) = clip_config.target_sample_rate {
+            if let Some(target_rate) = config.clip.target_sample_rate {
                 clip = resample_mono_pcm(&clip, target_rate);
             }
             raw_clips[index] = Some(clip);
@@ -609,8 +604,8 @@ where
                 && end_clip_extract_unreliable(
                     clip,
                     window,
-                    alignment_config.min_end_clip_decode_fraction,
-                    alignment_config.max_end_clip_decode_skips,
+                    config.alignment.min_end_clip_decode_fraction,
+                    config.alignment.max_end_clip_decode_skips,
                 )
         });
 
@@ -2027,7 +2022,6 @@ mod tests {
                 min_repetition_confidence: reject_threshold,
                 ..Default::default()
             },
-            ..Default::default()
         };
 
         let response_high = use_case

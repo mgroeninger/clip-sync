@@ -208,6 +208,19 @@ fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
     base + u16::from(lfeon)
 }
 
+fn codec_name(codec: AudioCodecId) -> String {
+    match codec {
+        CODEC_ID_AAC => "aac".into(),
+        CODEC_ID_AC3 => "ac3".into(),
+        CODEC_ID_EAC3 => "eac3".into(),
+        CODEC_ID_MP3 => "mp3".into(),
+        CODEC_ID_FLAC => "flac".into(),
+        CODEC_ID_VORBIS => "vorbis".into(),
+        CODEC_ID_ALAC => "alac".into(),
+        _ => format!("{codec}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,18 +282,5 @@ mod tests {
     #[test]
     fn dac3_channel_count_too_short_returns_zero() {
         assert_eq!(ac3_channels_from_dac3(&[0x00, 0x3C]), 0);
-    }
-}
-
-fn codec_name(codec: AudioCodecId) -> String {
-    match codec {
-        CODEC_ID_AAC => "aac".into(),
-        CODEC_ID_AC3 => "ac3".into(),
-        CODEC_ID_EAC3 => "eac3".into(),
-        CODEC_ID_MP3 => "mp3".into(),
-        CODEC_ID_FLAC => "flac".into(),
-        CODEC_ID_VORBIS => "vorbis".into(),
-        CODEC_ID_ALAC => "alac".into(),
-        _ => format!("{codec}"),
     }
 }

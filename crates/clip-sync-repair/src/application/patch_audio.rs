@@ -165,7 +165,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             (request.max_fill_align_adjustment_secs * sample_rate as f64).round() as usize;
         let max_refine_frames =
             (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
-        let silence_peak_fraction = request.report.silence_peak_fraction;
+        let region_ctx = RegionPatchContext {
+            channels,
+            sample_rate,
+            max_adjustment_frames,
+            max_refine_frames,
+            global_a_rms,
+            silence_peak_fraction: request.report.silence_peak_fraction,
+        };
 
         // Step 8: Collect B segments (immutable borrow on a_pcm.samples),
         // then apply them in a separate pass (mutable borrow).
@@ -185,35 +192,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 region.a_start_secs, region.a_end_secs
             ));
 
-            let (patch, outcome) = prepare_region_patch(
-                &b_samples_full,
-                &a_pcm,
-                region,
-                channels,
-                sample_rate,
-                max_adjustment_frames,
-                max_refine_frames,
-                request.normalize_window_secs,
-                request.fill_align_margin_secs,
-                request.fill_border_search_secs,
-                request.min_border_discovery_secs,
-                request.border_standoff_secs,
-                request.short_gap_mean_correlation_secs,
-                request.fill_length_slack_secs,
-                request.fill_seam_search_secs,
-                request.gap_signature_context_secs,
-                request.gap_signature_bin_ms,
-                request.min_structure_match_score,
-                request.strong_structure_trust,
-                request.partial_structure_waveform_soften,
-                request.min_fill_correlation,
-                request.normalize_fill,
-                request.normalize_window_secs,
-                request.max_fill_gain_db,
-                global_a_rms,
-                silence_peak_fraction,
-                request.absolute_silence_rms,
-            );
+            let (patch, outcome) =
+                prepare_region_patch(&b_samples_full, &a_pcm, region, &request, &region_ctx);
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
                 patches.push(patch);
@@ -333,35 +313,50 @@ fn outcomes_in_report_order(
         .collect()
 }
 
-fn prepare_region_patch(
-    b_samples_full: &[i16],
-    a_pcm: &MultiChannelPcm,
-    region: &FillRegion,
+/// Per-run values derived once in `execute` and shared by every fill region.
+struct RegionPatchContext {
     channels: usize,
     sample_rate: u32,
     max_adjustment_frames: usize,
     max_refine_frames: usize,
-    normalize_window_secs_for_correlate: f64,
-    margin_secs: f64,
-    border_search_secs: f64,
-    min_border_discovery_secs: f64,
-    border_standoff_secs: f64,
-    short_gap_mean_correlation_secs: f64,
-    fill_length_slack_secs: f64,
-    fill_seam_search_secs: f64,
-    gap_signature_context_secs: f64,
-    gap_signature_bin_ms: u64,
-    min_structure_match_score: f32,
-    strong_structure_trust: f64,
-    partial_structure_waveform_soften: f64,
-    min_fill_correlation: f32,
-    normalize_fill: bool,
-    normalize_window_secs: f64,
-    max_fill_gain_db: f64,
     global_a_rms: f32,
+    /// From the scan report (matches the thresholds the gaps were detected with).
     silence_peak_fraction: f32,
-    absolute_silence_rms: f32,
+}
+
+fn prepare_region_patch(
+    b_samples_full: &[i16],
+    a_pcm: &MultiChannelPcm,
+    region: &FillRegion,
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    let &RegionPatchContext {
+        channels,
+        sample_rate,
+        max_adjustment_frames,
+        max_refine_frames,
+        global_a_rms,
+        silence_peak_fraction,
+    } = ctx;
+    let normalize_window_secs = request.normalize_window_secs;
+    let margin_secs = request.fill_align_margin_secs;
+    let border_search_secs = request.fill_border_search_secs;
+    let min_border_discovery_secs = request.min_border_discovery_secs;
+    let border_standoff_secs = request.border_standoff_secs;
+    let short_gap_mean_correlation_secs = request.short_gap_mean_correlation_secs;
+    let fill_length_slack_secs = request.fill_length_slack_secs;
+    let fill_seam_search_secs = request.fill_seam_search_secs;
+    let gap_signature_context_secs = request.gap_signature_context_secs;
+    let gap_signature_bin_ms = request.gap_signature_bin_ms;
+    let min_structure_match_score = request.min_structure_match_score;
+    let strong_structure_trust = request.strong_structure_trust;
+    let partial_structure_waveform_soften = request.partial_structure_waveform_soften;
+    let min_fill_correlation = request.min_fill_correlation;
+    let normalize_fill = request.normalize_fill;
+    let max_fill_gain_db = request.max_fill_gain_db;
+    let absolute_silence_rms = request.absolute_silence_rms;
+
     debug_assert!(
         region.b_start_secs >= 0.0,
         "fill plan must not include gaps with negative B start"
@@ -401,7 +396,7 @@ fn prepare_region_patch(
     let bin_frames =
         ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
     let correlate_frames = correlate_frames_for_gap(
-        normalize_window_secs_for_correlate,
+        normalize_window_secs,
         min_border_discovery_secs,
         gap_frames,
         sample_rate,
@@ -446,39 +441,20 @@ fn prepare_region_patch(
         .min(correlate_frames);
     let border_standoff_frames =
         (border_standoff_secs * sample_rate as f64).round() as usize;
-    let (a_pre_border, a_post_border) = policies::border_templates_for_gap(
-        &a_pcm.samples,
-        channels,
-        refined.start_frame,
-        refined.end_frame,
+    let border_spec = policies::GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
         border_frames,
         border_standoff_frames,
         silence_peak_fraction,
-        absolute_silence_rms,
-    );
-    let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
-        &a_pcm.samples,
-        channels,
-        refined.start_frame,
-        refined.end_frame,
-        border_frames,
-        border_standoff_frames,
-        silence_peak_fraction,
-        absolute_silence_rms,
-    );
+        absolute_rms_floor: absolute_silence_rms,
+    };
+    let (a_pre_border, a_post_border) =
+        policies::border_templates_for_gap(&a_pcm.samples, channels, &border_spec);
+    let (a_pre_ch, a_post_ch) =
+        policies::border_templates_per_channel_for_gap(&a_pcm.samples, channels, &border_spec);
     let b_mono = policies::interleaved_to_mono(b_samples, channels);
     let b_ch = policies::interleaved_to_channels(b_samples, channels);
-
-    let signature = gap_structure::build_gap_context_signature(
-        &a_pcm.samples,
-        channels,
-        refined.start_frame,
-        refined.end_frame,
-        context_frames,
-        bin_frames.max(1),
-        silence_peak_fraction,
-        absolute_silence_rms,
-    );
 
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
@@ -498,6 +474,15 @@ fn prepare_region_patch(
         silence_peak_fraction,
         absolute_silence_rms,
     };
+
+    let signature = gap_structure::build_gap_context_signature(
+        &a_pcm.samples,
+        channels,
+        refined.start_frame,
+        refined.end_frame,
+        context_frames,
+        &structure_params,
+    );
 
     let mut alignment = match gap_structure::match_gap_structure_in_b(
         &signature,
@@ -562,16 +547,20 @@ fn prepare_region_patch(
         let waveform_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
         let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
         let (pre_corr, post_corr) = policies::fill_seam_correlations(
-            &a_pre_border,
-            &a_post_border,
-            &a_pre_ch,
-            &a_post_ch,
-            &b_mono,
-            &b_ch,
-            alignment.start_frame,
-            gap_frames,
-            waveform_gate_frames,
-            post_gate_frames,
+            &policies::SeamTemplates {
+                a_pre: &a_pre_border,
+                a_post: &a_post_border,
+                a_pre_ch: &a_pre_ch,
+                a_post_ch: &a_post_ch,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+            },
+            policies::SeamPlacement {
+                start: alignment.start_frame,
+                gap_frames,
+                pre_window: waveform_gate_frames,
+                post_window: post_gate_frames,
+            },
         );
 
         let soften_waveform_gate = structure_pre >= partial_structure_waveform_soften
@@ -744,13 +733,13 @@ fn correlate_frames_for_gap(
     ((window_secs * sample_rate as f64) as usize).max(1)
 }
 
-fn slice_b_segment<'a>(
-    b_samples: &'a [i16],
+fn slice_b_segment(
+    b_samples: &[i16],
     channels: usize,
     sample_rate: u32,
     start_secs: f64,
     end_secs: f64,
-) -> Option<&'a [i16]> {
+) -> Option<&[i16]> {
     let channels = channels.max(1);
     let start_frame = (start_secs * sample_rate as f64).round() as usize;
     let end_frame = ((end_secs * sample_rate as f64).round() as usize)

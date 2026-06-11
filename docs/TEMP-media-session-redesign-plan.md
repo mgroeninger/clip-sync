@@ -17,8 +17,9 @@
 | Port surface | `crates/clip-sync/src/application/ports.rs` ~27–173 | All methods `&self`; defaults: `extract_interleaved` → `Unsupported`, `reset_io` → `Ok(())`, `track_decodable_extent` → `None`, `scan_mono_buckets` / `scan_interleaved_buckets` = seek-loop fallbacks with `NEAR_TRACK_END_TOLERANCE_SECS = 2.0` + `DecodeFailed`/`SeekFailed` swallowing (~84–116, ~135–166) | 1, 3 |
 | Symphonia session | `infrastructure/symphonia/session.rs` ~101–258 | `io: RefCell<Option<MediaIoState>>`; `expect()` at 132, 160, 189, 219, 251; lazy reopen when probe rewind failed; decoder cache `HashMap<u32, CachedTrackDecoder>` | 1–2 |
 | `reset_io` callers | `high_rate_refinement.rs` 65–66 (`let _ =` — **discarded**); `offset_verification.rs` 106–110 (debug-logged only); `session.rs` 256 (propagated) | Caller-driven, forgettable | 2 |
+| Hold-out extract errors | `high_rate_refinement.rs` 185–195 (`extract_native_holdout` → `Result<_, String>` via `.map_err(to_string)` — drops `MediaError`/`source()` before skip logging); `offset_verification.rs` 134–156 (matches `MediaError`, `debug!`s full error, then formats for `skip_reason`) | Match on `MediaError`; structured debug log; `Display` only at `skip_reason` boundary | 2 |
 | Implementors | lib: `SymphoniaMediaSession`, `FakeMediaSession` (`testing/fakes.rs` 113–155), `BareSession` (test); repair tests: `LoudSession`, `SilentSession`, `SkipWindowSession`, `TailSeekFailSession`, `DispatchSession`, `NoDurationSession` (`scan_gaps.rs` 323–689) | 9 impls to migrate | 1 |
-| Call sites | `align_videos.rs` 65–70, 583–588; `high_rate_refinement.rs` 109–127, 192–194; `offset_verification.rs` 134–152; repair `scan_gaps.rs` 79–80, 130–132, 243–245, 269–274; `patch_audio.rs` 114–147 | Sessions A/B held simultaneously, **used strictly sequentially** (no threads anywhere) | 1 |
+| Call sites | `align_videos.rs` 65–70, 583–588; `high_rate_refinement.rs` 109–127; `offset_verification.rs` 134–152; repair `scan_gaps.rs` 79–80, 130–132, 243–245, 269–274; `patch_audio.rs` 114–147 | Sessions A/B held simultaneously, **used strictly sequentially** (no threads anywhere) | 1 |
 | `scan_mono_buckets` | — | **No production caller** (symphonia override exercised by tests only) | 3 (consider demotion) |
 | Hold-out placement | `offset_verification.rs` 67–93 | `pick_duration = duration_a.min(duration_b)` — container duration; `decoded_extent_a/b` destructured to `_`, `#[allow(dead_code)]` at 23–26 | 4 |
 | Extent today | `align_videos.rs` 513–524 (`track_decodable_extent` when `num_clips >= 2` && clamp flag), ~606 (`decoded_timeline_extent` of discovery clips) | Three uncoordinated duration notions: container, tail-scan extent, discovery-decode extent | 4 |
@@ -44,6 +45,7 @@
 | **Bitrate (BACKLOG #8)** | **Already resolved (2026-06-10, outside this plan):** `AudioTrack.bitrate` deleted after confirming Symphonia doesn't expose encoding bitrate. No work remains here. |
 | **Streaming / memory ceiling** | **Decide, don't implement:** future streaming fingerprinting will use the bucket-callback shape (`scan_*_buckets`), not a new pull API — so this redesign must keep callbacks compatible with `&mut self` (callback cannot re-enter the session; document this re-entrancy rule on the trait). The PCM-clone reduction in `align_extracted_pair` stays in BACKLOG defer/opportunistic. |
 | **Error semantics** | No new `MediaError` variants. Retry-once recovery maps the *second* failure to the original error. Recovery triggers on the typed `SymphoniaError` inside the adapter (see `reset_io` row), so the settled `MediaError` surface is untouched. |
+| **Hold-out extract errors** | Match on `MediaError` in hold-out loops (high-rate + offset verification); `debug!` the full error (preserves `source()` in logs); store `{e}` in `skip_reason` for the report. Delete `extract_native_holdout`'s `Result<_, String>` wrapper — mirror `offset_verification.rs`. JSON contract unchanged (`skip_reason` stays `Option<String>` per [json-output.md](json-output.md)); no new `MediaError` variants. |
 | **Fallback scan-loop duration trust** | **Document, don't change.** The trait-default `scan_*_buckets` fallbacks terminate on declared duration (`while pos < total_secs` + 2 s swallow rule) — but their only callers are test fakes. Production scans (Symphonia overrides used by repair) are **EOF-driven**: duration feeds progress estimation only, and bucket timestamps come from decoded sample counts. Threading `MediaExtent` into `scan_*_buckets` would be a port-signature change serving no production caller. Phase 3 records the trust in `media_scan.rs` rustdoc instead: over-reporting beyond the tolerance fails loudly, and that is acceptable for fallback paths. |
 | **Extent clamp / under-reported duration** | **Keep the clamp, add observability.** `scan_track_decodable_extent` already returns `max_end.min(container_duration)`; `MediaExtent::effective()` keeps declared as the ceiling. Planning windows beyond declared duration is exactly the region where seeks go `OutOfRange` — high risk, no demonstrated need. Phase 4 adds a `warn!` when the tail scan observes packets past declared duration *before* clamping ("container under-reports duration"), and the `MediaExtent` rustdoc records the decision. If the warning ever fires on real media, that is the evidence to revisit. |
 
@@ -69,6 +71,8 @@
 - [ ] `seek_with_recovery` in the extract layer (typed `SymphoniaError`, pre-mapping): on seek error, reopen `MediaIoState`, re-run `ensure_track_decoder`, retry the seek once; second failure returns the original error. Unit test with an io-layer fault injector that fails the first seek.
 - [ ] Reopen `MediaIoState` before the attempt-2 sequential-from-zero fallback in `run_extract_decode_loop` (fresh reader for the retry instead of the one that just produced no audio).
 - [ ] Remove `reset_io` from the port; delete caller lines in `high_rate_refinement.rs` 65–66 and `offset_verification.rs` 106–110; delete the trailing `reset_io` in `track_decodable_extent` (`session.rs` 256) — subsumed by recovery.
+- [ ] Align hold-out extract error handling in `high_rate_refinement.rs` and `offset_verification.rs`: match on `MediaError`, structured `debug!` before flattening, `Display` only at the `skip_reason` boundary; delete `extract_native_holdout`'s `Result<_, String>` wrapper.
+- [ ] While restructuring the loop, fix the deferred `clippy::too_many_arguments` on `ExtractSink::finalize` (`extract_loop.rs`, currently `#[allow]`ed): group the per-extract identity/reporting values (`path`, `track`, `window`, `progress`, `label`) into a borrowed context struct — `ExtractLoopParams` already bundles the same five for the driver, so reuse or mirror it rather than adding a third shape.
 - [ ] Phase 0 backward-seek characterization test still green (bit-exact, both containers).
 
 ### Phase 3 — scan policy extraction
@@ -95,6 +99,7 @@
 | Concern | Coverage |
 |---------|----------|
 | Seek recovery | Phase 0 bit-exact characterization (MP4 + MKV) + Phase 2 io-layer fault injection; corpus committed tier on every phase |
+| Hold-out extract errors | Existing skip-reason / JSON tests unchanged; extract-failure paths log structured `MediaError` before `skip_reason` flattening |
 | Extent | MKV-tail regression; `MediaExtent::effective()` unit tests; `mp3_no_duration_tag` corpus anchor |
 | Scan policy | Direct unit tests on `media_scan.rs` (previously reachable only through fakes) |
 | Migration | Full workspace suite green at each phase boundary; repair fakes compile-checked under `cargo test -p clip-sync-repair` |
@@ -105,6 +110,7 @@
 - `reset_io` gone from the port; no caller-managed IO state anywhere.
 - One named home for scan policy with direct tests.
 - Hold-out placement and clip planning consume `MediaExtent`; no dead extent fields.
+- Hold-out extract loops match on `MediaError`; no `Result<_, String>` extract wrappers.
 
 ## Cross-plan sequencing
 

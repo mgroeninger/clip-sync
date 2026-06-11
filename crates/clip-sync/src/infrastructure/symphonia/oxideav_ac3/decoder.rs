@@ -145,7 +145,7 @@ impl AudioDecoder for Ac3Decoder {
         // did not supply a channel layout (common for AC-3 in MP4).
         if self.buf.is_none() {
             let samples_per_ch = audio_frame.samples as usize;
-            let n_ch = if samples_per_ch > 0 { pcm.len() / samples_per_ch } else { 0 };
+            let n_ch = pcm.len().checked_div(samples_per_ch).unwrap_or(0);
             let layout = ac3_channel_layout(n_ch)
                 .ok_or(Error::DecodeError("ac3: unsupported channel count from bitstream"))?;
             self.buf = Some(AudioBuffer::new(

@@ -266,12 +266,11 @@ pub fn write_repeated_segment_wav_pair(
 
     let make_samples = |delay: usize| -> Vec<i16> {
         let mut samples = vec![0_i16; total_n];
-        for i in delay..total_n {
-            let ci = i - delay;
+        for (ci, sample) in samples[delay..].iter_mut().enumerate() {
             if ci < block_n {
-                samples[i] = tone_block[ci];
+                *sample = tone_block[ci];
             } else if ci >= repeat_at_n && ci < repeat_at_n + block_n {
-                samples[i] = tone_block[ci - repeat_at_n];
+                *sample = tone_block[ci - repeat_at_n];
             }
         }
         samples

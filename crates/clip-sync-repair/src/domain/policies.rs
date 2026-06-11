@@ -324,7 +324,7 @@ pub fn refine_gap_frames(
     // Cap at `start_frame + max_refine` so a noisy dropout interior cannot push `start` all the
     // way to `end_frame` (block-quantized gaps are typically misaligned by <250 ms).
     let max_start = (start_frame + max_refine_frames).min(end_frame);
-    let confirm_frames = (max_refine_frames / 15).max(4).min(4096);
+    let confirm_frames = (max_refine_frames / 15).clamp(4, 4096);
     let mut budget = max_refine_frames;
     while start + confirm_frames <= max_start && budget > 0 {
         if silent_run(
@@ -369,16 +369,30 @@ struct GapBorderFrameRange {
     post_end: usize,
 }
 
+/// Gap bounds, template sizing, and silence thresholds shared by the border-template builders.
+#[derive(Clone, Copy)]
+pub struct GapBorderSpec {
+    pub gap_start_frame: usize,
+    pub gap_end_frame: usize,
+    pub border_frames: usize,
+    pub border_standoff_frames: usize,
+    pub silence_peak_fraction: f32,
+    pub absolute_rms_floor: f32,
+}
+
 fn gap_border_frame_range(
     samples: &[i16],
     channels: usize,
-    gap_start_frame: usize,
-    gap_end_frame: usize,
-    border_frames: usize,
-    border_standoff_frames: usize,
-    silence_peak_fraction: f32,
-    absolute_rms_floor: f32,
+    spec: &GapBorderSpec,
 ) -> GapBorderFrameRange {
+    let GapBorderSpec {
+        gap_start_frame,
+        gap_end_frame,
+        border_frames,
+        border_standoff_frames,
+        silence_peak_fraction,
+        absolute_rms_floor,
+    } = *spec;
     let channels = channels.max(1);
     let total_frames = samples.len() / channels;
 
@@ -441,24 +455,10 @@ pub fn interleaved_to_channels(samples: &[i16], channels: usize) -> Vec<Vec<f64>
 pub fn border_templates_for_gap(
     samples: &[i16],
     channels: usize,
-    gap_start_frame: usize,
-    gap_end_frame: usize,
-    border_frames: usize,
-    border_standoff_frames: usize,
-    silence_peak_fraction: f32,
-    absolute_rms_floor: f32,
+    spec: &GapBorderSpec,
 ) -> (Vec<f64>, Vec<f64>) {
     let channels = channels.max(1);
-    let range = gap_border_frame_range(
-        samples,
-        channels,
-        gap_start_frame,
-        gap_end_frame,
-        border_frames,
-        border_standoff_frames,
-        silence_peak_fraction,
-        absolute_rms_floor,
-    );
+    let range = gap_border_frame_range(samples, channels, spec);
 
     let mut pre_mono = if range.pre_end > range.pre_start {
         interleaved_to_mono(
@@ -487,24 +487,10 @@ pub fn border_templates_for_gap(
 pub fn border_templates_per_channel_for_gap(
     samples: &[i16],
     channels: usize,
-    gap_start_frame: usize,
-    gap_end_frame: usize,
-    border_frames: usize,
-    border_standoff_frames: usize,
-    silence_peak_fraction: f32,
-    absolute_rms_floor: f32,
+    spec: &GapBorderSpec,
 ) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let channels = channels.max(1);
-    let range = gap_border_frame_range(
-        samples,
-        channels,
-        gap_start_frame,
-        gap_end_frame,
-        border_frames,
-        border_standoff_frames,
-        silence_peak_fraction,
-        absolute_rms_floor,
-    );
+    let range = gap_border_frame_range(samples, channels, spec);
 
     let mut pre_ch = if range.pre_end > range.pre_start {
         interleaved_to_channels(
@@ -565,45 +551,32 @@ fn best_channel_correlation(scores: &[f64]) -> f64 {
         .fold(f64::NEG_INFINITY, f64::max)
 }
 
-/// Pearson correlation at gap seams; uses best front L/R channel when `channels > 1`.
-pub fn fill_seam_correlations(
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    b_mono: &[f64],
-    b_ch: &[Vec<f64>],
-    start: usize,
-    gap_frames: usize,
-    pre_window: usize,
-    post_window: usize,
-) -> (f64, f64) {
-    seam_correlations_at(
-        a_pre,
-        a_post,
-        a_pre_ch,
-        a_post_ch,
-        b_mono,
-        b_ch,
-        start,
-        gap_frames,
-        pre_window,
-        post_window,
-    )
+/// Borrowed A-side border templates and B-side haystack audio for seam correlation.
+pub struct SeamTemplates<'a> {
+    pub a_pre: &'a [f64],
+    pub a_post: &'a [f64],
+    pub a_pre_ch: &'a [Vec<f64>],
+    pub a_post_ch: &'a [Vec<f64>],
+    pub b_mono: &'a [f64],
+    pub b_ch: &'a [Vec<f64>],
 }
 
-fn seam_correlations_at(
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    b_mono: &[f64],
-    b_ch: &[Vec<f64>],
-    start: usize,
-    gap_frames: usize,
-    pre_window: usize,
-    post_window: usize,
+/// Candidate fill placement evaluated by the seam gate.
+#[derive(Clone, Copy)]
+pub struct SeamPlacement {
+    pub start: usize,
+    pub gap_frames: usize,
+    pub pre_window: usize,
+    pub post_window: usize,
+}
+
+/// Pearson correlation at gap seams; uses best front L/R channel when `channels > 1`.
+pub fn fill_seam_correlations(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
 ) -> (f64, f64) {
+    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
     let use_channels = b_ch.len() > 1
         && a_pre_ch.len() == b_ch.len()
         && a_post_ch.len() == b_ch.len()
@@ -1066,8 +1039,8 @@ mod tests {
         let mut into = vec![0i16; 10];
         apply_crossfade(&mut into, &fill, 1, 2);
         // Middle frames [2..8) should be pure fill = 1000
-        for i in 2..8 {
-            assert_eq!(into[i], 1000, "frame {i} should be 1000 (pure fill)");
+        for (i, &frame) in into.iter().enumerate().take(8).skip(2) {
+            assert_eq!(frame, 1000, "frame {i} should be 1000 (pure fill)");
         }
     }
 
@@ -1156,6 +1129,22 @@ mod tests {
         assert_eq!(refined.end_frame, 10);
     }
 
+    fn test_border_spec(
+        gap_start_frame: usize,
+        gap_end_frame: usize,
+        border_frames: usize,
+        border_standoff_frames: usize,
+    ) -> GapBorderSpec {
+        GapBorderSpec {
+            gap_start_frame,
+            gap_end_frame,
+            border_frames,
+            border_standoff_frames,
+            silence_peak_fraction: 0.01,
+            absolute_rms_floor: 0.0,
+        }
+    }
+
     #[test]
     fn border_templates_trim_quiet_fade_before_dropout() {
         let channels = 1usize;
@@ -1166,7 +1155,7 @@ mod tests {
         samples.extend(vec![200i16; 4]);
         samples.extend(vec![8_000i16; 8]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, 16, 20, 12, 0, 0.01, 0.0);
+        let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(16, 20, 12, 0));
         assert!(!pre.is_empty());
         assert!(pre.iter().all(|&v| v.abs() > 1_000.0));
         assert!(!post.is_empty());
@@ -1181,9 +1170,9 @@ mod tests {
         samples.extend(vec![8_000i16; 20]);
 
         let (pre_no, _) =
-            border_templates_for_gap(&samples, channels, 20, 25, 15, 0, 0.01, 0.0);
+            border_templates_for_gap(&samples, channels, &test_border_spec(20, 25, 15, 0));
         let (pre_standoff, _) =
-            border_templates_for_gap(&samples, channels, 20, 25, 15, 5, 0.01, 0.0);
+            border_templates_for_gap(&samples, channels, &test_border_spec(20, 25, 15, 5));
         assert_eq!(pre_no.len(), 15);
         assert_eq!(pre_standoff.len(), 10);
     }
@@ -1195,7 +1184,7 @@ mod tests {
         samples.extend(vec![0i16; 5]);
         samples.extend(vec![8_000i16; 5]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, 5, 10, 5, 0, 0.01, 0.0);
+        let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(5, 10, 5, 0));
         assert_eq!(pre.len(), 5);
         assert!(pre.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
         assert_eq!(post.len(), 5);

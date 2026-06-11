@@ -25,6 +25,12 @@ pub struct FakeMediaReader {
     open_error: Option<MediaError>,
 }
 
+impl Default for FakeMediaReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FakeMediaReader {
     pub fn new() -> Self {
         Self {
@@ -157,6 +163,12 @@ impl MediaSession for FakeMediaSession {
 pub struct FakeFingerprinter {
     error: Option<FingerprintError>,
     seen_sample_rates: RefCell<Vec<u32>>,
+}
+
+impl Default for FakeFingerprinter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FakeFingerprinter {

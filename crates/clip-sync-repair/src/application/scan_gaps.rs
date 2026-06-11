@@ -140,11 +140,13 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                     session_b,
                     track_b,
                     decode_chunk_secs,
-                    request.scan_block_secs,
-                    request.silence_peak_fraction,
-                    absolute_silence_rms,
-                    silence_hold_blocks,
-                    request.min_gap_secs,
+                    policies::SilenceRunScanner::new(
+                        request.scan_block_secs,
+                        request.silence_peak_fraction,
+                        request.min_gap_secs,
+                        silence_hold_blocks,
+                        absolute_silence_rms,
+                    ),
                 ),
                 _ => vec![],
             };
@@ -209,24 +211,16 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     }
 
     /// Sequential sample-bucket silence scan on a session's native timeline.
+    ///
+    /// The caller supplies a configured [`policies::SilenceRunScanner`]; this method only
+    /// drives it over the session's decoded buckets.
     fn scan_silence_intervals(
         &self,
         session: &MR::Session,
         track: &AudioTrack,
         decode_chunk_secs: f64,
-        scan_block_secs: f64,
-        silence_peak_fraction: f32,
-        absolute_rms_floor: f32,
-        hold_blocks: u32,
-        min_gap_secs: f64,
+        mut scanner: policies::SilenceRunScanner,
     ) -> Vec<SilenceInterval> {
-        let mut scanner = policies::SilenceRunScanner::new(
-            scan_block_secs,
-            silence_peak_fraction,
-            min_gap_secs,
-            hold_blocks,
-            absolute_rms_floor,
-        );
         let progress = self.progress;
         let mut last_fed_end_secs: Option<f64> = None;
 

@@ -68,18 +68,21 @@ impl ActivityTimeline {
 }
 
 /// Build a coarse active/silent signature around a gap on A's timeline.
+///
+/// Uses `bin_frames` and the silence thresholds from `params`; the other match-search fields
+/// are not read here.
 pub fn build_gap_context_signature(
     samples: &[i16],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
     context_frames: usize,
-    bin_frames: usize,
-    silence_peak_fraction: f32,
-    absolute_silence_rms: f32,
+    params: &StructureMatchParams,
 ) -> GapContextSignature {
+    let silence_peak_fraction = params.silence_peak_fraction;
+    let absolute_silence_rms = params.absolute_silence_rms;
     let channels = channels.max(1);
-    let bin_frames = bin_frames.max(1);
+    let bin_frames = params.bin_frames.max(1);
     let total_frames = samples.len() / channels;
 
     let pre_start = gap_start_frame.saturating_sub(context_frames);
@@ -250,7 +253,6 @@ fn fine_polish_structure_start(
         let mut score = combined_structure_score(
             pre_score,
             post_score,
-            fill_len,
             candidate,
             candidate_end,
             nominal_start,
@@ -430,13 +432,13 @@ fn search_best_fill_end(
 fn combined_structure_score(
     pre_score: f64,
     post_score: f64,
-    fill_len: usize,
     start: usize,
     end: usize,
     nominal_start: usize,
     nominal_end: usize,
     params: &StructureMatchParams,
 ) -> f64 {
+    let fill_len = end.saturating_sub(start);
     let len_penalty = LENGTH_MISMATCH_PENALTY
         * fill_len.abs_diff(params.gap_frames) as f64 / params.gap_frames.max(1) as f64;
     let nominal_bias = NOMINAL_BIAS_PER_BIN
@@ -589,17 +591,6 @@ mod tests {
             write_frame(&mut b, channels, f, true);
         }
 
-        let sig = build_gap_context_signature(
-            &a,
-            channels,
-            gap_start,
-            gap_end,
-            50,
-            bin_frames,
-            0.01,
-            0.0,
-        );
-
         let params = StructureMatchParams {
             gap_frames,
             bin_frames,
@@ -609,6 +600,8 @@ mod tests {
             silence_peak_fraction: 0.01,
             absolute_silence_rms: 0.0,
         };
+
+        let sig = build_gap_context_signature(&a, channels, gap_start, gap_end, 50, &params);
 
         let alignment = match_gap_structure_in_b(
             &sig,
@@ -635,11 +628,8 @@ mod tests {
         let gap_frames = 40usize;
         let mut a = vec![0i16; 180];
         for f in 0..180 {
-            write_frame(&mut a, channels, f, f < 60 || f >= 100);
+            write_frame(&mut a, channels, f, !(60..100).contains(&f));
         }
-        let sig = build_gap_context_signature(
-            &a, channels, 60, 100, 50, bin_frames, 0.01, 0.0,
-        );
 
         let mut b = vec![0i16; 180];
         for f in 0..180 {
@@ -655,6 +645,8 @@ mod tests {
             silence_peak_fraction: 0.01,
             absolute_silence_rms: 0.0,
         };
+
+        let sig = build_gap_context_signature(&a, channels, 60, 100, 50, &params);
 
         let alignment =
             match_gap_structure_in_b(&sig, &b, channels, 62, 102, &params).expect("match");
