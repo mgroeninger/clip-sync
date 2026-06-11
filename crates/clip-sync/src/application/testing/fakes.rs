@@ -159,7 +159,7 @@ impl MediaSession for FakeMediaSession {
     }
 
     fn extract_mono(
-        &self,
+        &mut self,
         _track: &AudioTrack,
         window: &ClipWindow,
         progress: &dyn ProgressReporter,

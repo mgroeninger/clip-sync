@@ -482,7 +482,7 @@ fn decoded_gap_frames_are_silent_in_sine_fixture() {
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
 
     let media_reader = SymphoniaMediaReader;
-    let session = media_reader
+    let mut session = media_reader
         .open(&clip_sync::MediaSource::new(fixture.path_a.clone()))
         .expect("open A");
     let tracks = session.list_tracks().expect("tracks");

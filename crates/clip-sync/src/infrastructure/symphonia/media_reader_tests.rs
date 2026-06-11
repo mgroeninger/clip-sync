@@ -38,7 +38,7 @@ fn session_extract_mono(
     label: &str,
 ) -> MonoPcmClip {
     let reader = SymphoniaMediaReader;
-    let session = reader
+    let mut session = reader
         .open(&MediaSource::new(path))
         .unwrap_or_else(|error| panic!("open session for {}: {error}", path.display()));
     session
@@ -192,7 +192,7 @@ fn session_open_reuses_probe_format_reader() {
     write_test_wav(&path, 44_100, 2);
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     assert!(
         session.has_io_state(),
         "open should retain format reader from probe (no second probe on first extract)"
@@ -217,7 +217,7 @@ fn session_reuses_format_reader_across_extracts() {
     write_test_wav(&path, 44_100, 4);
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
 
     assert!(session.has_io_state());
@@ -254,7 +254,7 @@ fn scan_mono_buckets_emits_full_sample_windows() {
     write_test_wav(&path, 44_100, 4);
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
 
     let mut buckets = Vec::new();
@@ -282,7 +282,7 @@ fn scan_interleaved_buckets_emits_full_frame_windows() {
     write_test_wav(&path, 44_100, 4);
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
 
     let mut buckets = Vec::new();
@@ -312,7 +312,7 @@ fn media_reader_open_lists_tracks() {
     write_test_wav(&path, 44_100, 2);
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
     assert_eq!(tracks.len(), 1);
     assert!(tracks[0].duration.unwrap().as_secs() >= 1);
@@ -528,7 +528,7 @@ fn session_extract_interleaved(
     label: &str,
 ) -> MultiChannelPcm {
     let reader = SymphoniaMediaReader;
-    let session = reader
+    let mut session = reader
         .open(&MediaSource::new(path))
         .unwrap_or_else(|error| panic!("open session for {}: {error}", path.display()));
     session
@@ -675,7 +675,7 @@ fn extract_interleaved_default_port_method_is_unsupported() {
             Ok(Vec::new())
         }
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             _window: &ClipWindow,
             _progress: &dyn ProgressReporter,
@@ -685,7 +685,7 @@ fn extract_interleaved_default_port_method_is_unsupported() {
         }
     }
 
-    let session = BareSession;
+    let mut session = BareSession;
     let track = AudioTrack {
         index: 0,
         codec: "pcm".into(),
@@ -928,7 +928,7 @@ fn probe_and_extract_ac3_surround_mp4() {
 /// This pins correct seek recovery before Phase 2 restructures the session IO layer.
 fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
     let reader = SymphoniaMediaReader;
-    let session = reader
+    let mut session = reader
         .open(&MediaSource::new(path))
         .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
     let tracks = session.list_tracks().unwrap();
@@ -974,7 +974,7 @@ fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
     );
 
     if check_cross_session {
-        let fresh = reader
+        let mut fresh = reader
             .open(&MediaSource::new(path))
             .unwrap_or_else(|e| panic!("fresh open {}: {e}", path.display()));
         let fresh_tracks = fresh.list_tracks().unwrap();
@@ -1060,7 +1060,7 @@ fn track_decodable_extent_shorter_than_patched_container_duration() {
     }
 
     let reader = SymphoniaMediaReader;
-    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
     let track = &tracks[0];
 

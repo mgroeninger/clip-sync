@@ -33,7 +33,7 @@ pub trait MediaReader {
 pub trait MediaSession {
     fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError>;
     fn extract_mono(
-        &self,
+        &mut self,
         track: &AudioTrack,
         window: &ClipWindow,
         progress: &dyn ProgressReporter,
@@ -46,7 +46,7 @@ pub trait MediaSession {
     /// rate), this preserves the source channel layout and sample rate. The default returns
     /// [`MediaError::Unsupported`] so fakes opt in only when a test exercises the fill path.
     fn extract_interleaved(
-        &self,
+        &mut self,
         track: &AudioTrack,
         window: &ClipWindow,
         progress: &dyn ProgressReporter,
@@ -59,12 +59,15 @@ pub trait MediaSession {
     }
 
     /// Rewind the underlying format reader and drop cached decoders before a distant seek.
-    fn reset_io(&self) -> Result<(), MediaError> {
+    fn reset_io(&mut self) -> Result<(), MediaError> {
         Ok(())
     }
 
     /// Last decodable packet end for a track (tail scan). Default: unknown.
-    fn track_decodable_extent(&self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
+    fn track_decodable_extent(
+        &mut self,
+        track: &AudioTrack,
+    ) -> Result<Option<Duration>, MediaError> {
         let _ = track;
         Ok(None)
     }
@@ -74,7 +77,7 @@ pub trait MediaSession {
     ///
     /// Default implementation falls back to seek-based [`extract_mono`](Self::extract_mono) windows.
     fn scan_mono_buckets(
-        &self,
+        &mut self,
         track: &AudioTrack,
         bucket_secs: f64,
         progress: &dyn ProgressReporter,
@@ -125,7 +128,7 @@ pub trait MediaSession {
     /// Default implementation falls back to seek-based [`extract_interleaved`](Self::extract_interleaved)
     /// windows (slower on long files; symphonia sessions override with a sequential decoder).
     fn scan_interleaved_buckets(
-        &self,
+        &mut self,
         track: &AudioTrack,
         bucket_secs: f64,
         progress: &dyn ProgressReporter,
@@ -250,7 +253,7 @@ mod scan_default_tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             window: &ClipWindow,
             _progress: &dyn ProgressReporter,
@@ -277,7 +280,7 @@ mod scan_default_tests {
         }
     }
 
-    fn scan_bucket_starts(session: &ScanTestSession) -> Result<Vec<f64>, MediaError> {
+    fn scan_bucket_starts(session: &mut ScanTestSession) -> Result<Vec<f64>, MediaError> {
         let tracks = session.list_tracks().unwrap();
         let track = &tracks[0];
         let mut starts = Vec::new();
@@ -300,9 +303,9 @@ mod scan_default_tests {
     fn scan_mono_default_swallows_decode_failed_near_end() {
         // 10 s track, fail on [8, 10) — the first failure at pos=8.0 hits the tolerance
         // boundary (8.0 >= 10.0 - 2.0) and breaks the loop immediately.
-        let session =
+        let mut session =
             ScanTestSession::new(10.0, Some((8.0, 10.0)), ScanFailKind::DecodeFailed);
-        let starts = scan_bucket_starts(&session).expect("scan should return Ok");
+        let starts = scan_bucket_starts(&mut session).expect("scan should return Ok");
         assert_eq!(starts, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
     }
 
@@ -311,9 +314,9 @@ mod scan_default_tests {
     #[test]
     fn scan_mono_default_skips_decode_failed_mid_file() {
         // 10 s track, fail only on [5.0, 6.0) — one bucket skipped, rest succeed.
-        let session =
+        let mut session =
             ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::DecodeFailed);
-        let starts = scan_bucket_starts(&session).expect("scan should return Ok");
+        let starts = scan_bucket_starts(&mut session).expect("scan should return Ok");
         assert_eq!(
             starts,
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0]
@@ -323,8 +326,8 @@ mod scan_default_tests {
     // Phase 0 snapshot: non-DecodeFailed / non-SeekFailed errors propagate immediately.
     #[test]
     fn scan_mono_default_propagates_non_decode_error() {
-        let session = ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::Unsupported);
-        match scan_bucket_starts(&session) {
+        let mut session = ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::Unsupported);
+        match scan_bucket_starts(&mut session) {
             Err(MediaError::Unsupported(_)) => {}
             Ok(starts) => panic!("expected Err, got Ok with {starts:?}"),
             Err(other) => panic!("expected Unsupported, got {other:?}"),

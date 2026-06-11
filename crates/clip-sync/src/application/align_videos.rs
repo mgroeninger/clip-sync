@@ -70,24 +70,24 @@ where
         request.config.validate()?;
 
         self.progress.phase_verbose("Opening media");
-        let session_a = self
+        let mut session_a = self
             .media_reader
             .open(&MediaSource::new(request.video_a.clone()))?;
-        let session_b = self
+        let mut session_b = self
             .media_reader
             .open(&MediaSource::new(request.video_b.clone()))?;
 
         let outcome = if request.config.alignment.try_all_tracks {
-            self.align_best_track_pair(&session_a, &session_b, &request)?
+            self.align_best_track_pair(&mut session_a, &mut session_b, &request)?
         } else {
-            self.align_single_track_pair(&session_a, &session_b, &request)?
+            self.align_single_track_pair(&mut session_a, &mut session_b, &request)?
         };
 
         let mut result = outcome.result;
         apply_high_rate_refinement(
-            &HighRateRefinementInput {
-                session_a: &session_a,
-                session_b: &session_b,
+            &mut HighRateRefinementInput {
+                session_a: &mut session_a,
+                session_b: &mut session_b,
                 track_a: &outcome.track_a,
                 track_b: &outcome.track_b,
                 discovery_windows: &outcome.discovery_windows,
@@ -104,9 +104,9 @@ where
         );
 
         apply_offset_verification(
-            &OffsetVerificationInput {
-                session_a: &session_a,
-                session_b: &session_b,
+            &mut OffsetVerificationInput {
+                session_a: &mut session_a,
+                session_b: &mut session_b,
                 track_a: &outcome.track_a,
                 track_b: &outcome.track_b,
                 discovery_windows: &outcome.discovery_windows,
@@ -138,8 +138,8 @@ where
 
     fn align_single_track_pair(
         &self,
-        session_a: &MR::Session,
-        session_b: &MR::Session,
+        session_a: &mut MR::Session,
+        session_b: &mut MR::Session,
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
@@ -175,8 +175,8 @@ where
 
     fn align_best_track_pair(
         &self,
-        session_a: &MR::Session,
-        session_b: &MR::Session,
+        session_a: &mut MR::Session,
+        session_b: &mut MR::Session,
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let tracks_a = session_a.list_tracks()?;
@@ -504,7 +504,7 @@ where
 
     fn extract_clips(
         &self,
-        session: &MR::Session,
+        session: &mut MR::Session,
         plan: &crate::domain::ClipPlan,
         config: &AlignConfig,
         label: &str,

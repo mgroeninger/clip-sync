@@ -77,7 +77,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     ) -> Result<GapReport, RepairError> {
         // Step 2: open video A media session and select its best audio track.
         let source_a = MediaSource::new(request.video_a.clone());
-        let session_a = self.media_reader.open(&source_a).map_err(RepairError::Media)?;
+        let mut session_a = self.media_reader.open(&source_a).map_err(RepairError::Media)?;
         let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
         let track_a = select_best_track(&tracks_a)?.clone();
 
@@ -89,7 +89,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // A missing or undecodable B never fails the scan — A's gaps are still reported, just
         // marked unfillable with no compatibility. Energy probing additionally requires an offset.
         let offset_secs = alignment.recommended_offset_secs;
-        let b_session = self.open_best_track(&request.video_b, &track_a);
+        let mut b_session = self.open_best_track(&request.video_b, &track_a);
         let track_compatibility = b_session
             .as_ref()
             .map(|(_, track_b)| assess_track_compatibility(
@@ -135,7 +135,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Used for both per-gap energy lookup (replaces per-gap seeks) and the cross-check.
         // Only meaningful when we have a B session and an alignment offset.
         let b_intervals: Vec<SilenceInterval> =
-            match (&b_session, offset_secs) {
+            match (&mut b_session, offset_secs) {
                 (Some((session_b, track_b)), Some(_)) => self.scan_silence_intervals(
                     session_b,
                     track_b,
@@ -216,7 +216,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     /// drives it over the session's decoded buckets.
     fn scan_silence_intervals(
         &self,
-        session: &MR::Session,
+        session: &mut MR::Session,
         track: &AudioTrack,
         decode_chunk_secs: f64,
         mut scanner: policies::SilenceRunScanner,
@@ -324,7 +324,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             window: &ClipWindow,
             _progress: &dyn clip_sync::ProgressReporter,
@@ -345,7 +345,7 @@ mod tests {
         }
 
         fn extract_interleaved(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -362,7 +362,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             window: &ClipWindow,
             _progress: &dyn clip_sync::ProgressReporter,
@@ -379,7 +379,7 @@ mod tests {
         }
 
         fn extract_interleaved(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -440,7 +440,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -454,7 +454,7 @@ mod tests {
         }
 
         fn extract_interleaved(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -471,7 +471,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             window: &ClipWindow,
             _progress: &dyn clip_sync::ProgressReporter,
@@ -495,7 +495,7 @@ mod tests {
         }
 
         fn extract_interleaved(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -556,7 +556,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -571,7 +571,7 @@ mod tests {
         }
 
         fn extract_interleaved(
-            &self,
+            &mut self,
             track: &AudioTrack,
             window: &ClipWindow,
             progress: &dyn clip_sync::ProgressReporter,
@@ -655,7 +655,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &AudioTrack,
             _window: &ClipWindow,
             _progress: &dyn clip_sync::ProgressReporter,

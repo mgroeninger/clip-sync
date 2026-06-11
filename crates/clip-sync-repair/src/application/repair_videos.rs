@@ -213,7 +213,7 @@ mod tests {
         }
 
         fn extract_mono(
-            &self,
+            &mut self,
             _track: &clip_sync::AudioTrack,
             _window: &clip_sync::ClipWindow,
             _progress: &dyn ProgressReporter,

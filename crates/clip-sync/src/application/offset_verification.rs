@@ -15,8 +15,8 @@ use crate::domain::{
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 
 pub struct OffsetVerificationInput<'a, MS: MediaSession> {
-    pub session_a: &'a MS,
-    pub session_b: &'a MS,
+    pub session_a: &'a mut MS,
+    pub session_b: &'a mut MS,
     pub track_a: &'a AudioTrack,
     pub track_b: &'a AudioTrack,
     pub discovery_windows: &'a [ClipWindow],
@@ -35,7 +35,7 @@ pub struct OffsetVerificationInput<'a, MS: MediaSession> {
 /// offset. Writes `result.offset_verification` when `validation.verify_offset` is on (including
 /// skip cases); leaves the field `None` when the flag is off.
 pub fn apply_offset_verification<MS, FP, AL>(
-    input: &OffsetVerificationInput<'_, MS>,
+    input: &mut OffsetVerificationInput<'_, MS>,
     clip_config: &ClipConfig,
     validation: &ValidationConfig,
     result: &mut AlignmentResult,
@@ -59,24 +59,9 @@ pub fn apply_offset_verification<MS, FP, AL>(
 
     progress.phase_verbose("Verifying offset at hold-out window...");
 
-    let &OffsetVerificationInput {
-        session_a,
-        session_b,
-        track_a,
-        track_b,
-        discovery_windows,
-        duration_a,
-        duration_b,
-        decoded_extent_a: _,
-        decoded_extent_b: _,
-        min_holdout_decode_fraction,
-        max_holdout_decode_skips,
-        resampler,
-    } = input;
-
     // Placement uses container duration. decoded_extent reflects discovery clip windows
     // only (and can round below clip_length); hold-out performs fresh extracts.
-    let pick_duration = duration_a.min(duration_b);
+    let pick_duration = input.duration_a.min(input.duration_b);
     let clip_length = clip_config.clip_length.min(pick_duration);
     let clip_length_secs = clip_length.as_secs_f64();
 
@@ -90,11 +75,11 @@ pub fn apply_offset_verification<MS, FP, AL>(
         return;
     }
     // Feasibility uses container duration for shifted B windows beyond discovery extent.
-    let dur_a = duration_a.as_secs_f64();
-    let dur_b = duration_b.as_secs_f64();
+    let dur_a = input.duration_a.as_secs_f64();
+    let dur_b = input.duration_b.as_secs_f64();
 
     let candidates =
-        holdout_window_candidates(pick_duration, discovery_windows, clip_length, offset_secs);
+        holdout_window_candidates(pick_duration, input.discovery_windows, clip_length, offset_secs);
     if candidates.is_empty() {
         debug!("offset verify skipped: no hold-out window candidates");
         result.offset_verification = Some(skipped("hold-out window unavailable"));
@@ -107,10 +92,10 @@ pub fn apply_offset_verification<MS, FP, AL>(
         window_slide_secs: 0,
     };
 
-    if let Err(error) = session_a.reset_io() {
+    if let Err(error) = input.session_a.reset_io() {
         debug!(error = %error, "offset verify: reset_io on session A failed");
     }
-    if let Err(error) = session_b.reset_io() {
+    if let Err(error) = input.session_b.reset_io() {
         debug!(error = %error, "offset verify: reset_io on session B failed");
     }
 
@@ -135,8 +120,8 @@ pub fn apply_offset_verification<MS, FP, AL>(
             Duration::from_secs_f64(window_start_secs + clip_length_secs + offset_secs);
         let window_b = ClipWindow::new(window_b_start, window_b_end, holdout.label);
 
-        let raw_a = match session_a.extract_mono(
-            track_a,
+        let raw_a = match input.session_a.extract_mono(
+            input.track_a,
             holdout,
             progress,
             "Verifying hold-out (video A)",
@@ -148,8 +133,8 @@ pub fn apply_offset_verification<MS, FP, AL>(
                 continue;
             }
         };
-        let raw_b = match session_b.extract_mono(
-            track_b,
+        let raw_b = match input.session_b.extract_mono(
+            input.track_b,
             &window_b,
             progress,
             "Verifying hold-out (video B)",
@@ -165,8 +150,8 @@ pub fn apply_offset_verification<MS, FP, AL>(
         if !holdout_extract_sufficient(
             &raw_a,
             clip_length,
-            min_holdout_decode_fraction,
-            max_holdout_decode_skips,
+            input.min_holdout_decode_fraction,
+            input.max_holdout_decode_skips,
         ) {
             last_failure = "hold-out extract A shorter than clip_length".into();
             debug!("offset verify: extract A truncated, trying next candidate");
@@ -175,8 +160,8 @@ pub fn apply_offset_verification<MS, FP, AL>(
         if !holdout_extract_sufficient(
             &raw_b,
             clip_length,
-            min_holdout_decode_fraction,
-            max_holdout_decode_skips,
+            input.min_holdout_decode_fraction,
+            input.max_holdout_decode_skips,
         ) {
             last_failure = "hold-out extract B shorter than clip_length".into();
             debug!("offset verify: extract B truncated, trying next candidate");
@@ -187,11 +172,11 @@ pub fn apply_offset_verification<MS, FP, AL>(
         let source_duration_b = raw_b.duration_secs();
 
         let raw_a = match clip_config.target_sample_rate {
-            Some(rate) => resampler.resample_mono(&raw_a, rate),
+            Some(rate) => input.resampler.resample_mono(&raw_a, rate),
             None => raw_a,
         };
         let raw_b = match clip_config.target_sample_rate {
-            Some(rate) => resampler.resample_mono(&raw_b, rate),
+            Some(rate) => input.resampler.resample_mono(&raw_b, rate),
             None => raw_b,
         };
 
@@ -379,8 +364,8 @@ mod tests {
     }
 
     fn verification_input<'a>(
-        session_a: &'a FakeMediaSession,
-        session_b: &'a FakeMediaSession,
+        session_a: &'a mut FakeMediaSession,
+        session_b: &'a mut FakeMediaSession,
         track_a: &'a AudioTrack,
         track_b: &'a AudioTrack,
         windows: &'a [ClipWindow],
@@ -421,10 +406,10 @@ mod tests {
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
 
-        let session_a = media_reader
+        let mut session_a = media_reader
             .open(&MediaSource::new(path_a))
             .expect("open a");
-        let session_b = media_reader
+        let mut session_b = media_reader
             .open(&MediaSource::new(path_b))
             .expect("open b");
         let tracks_a = session_a.list_tracks().expect("tracks a");
@@ -439,9 +424,9 @@ mod tests {
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
 
         apply_offset_verification(
-            &OffsetVerificationInput {
-                session_a: &session_a,
-                session_b: &session_b,
+            &mut OffsetVerificationInput {
+                session_a: &mut session_a,
+                session_b: &mut session_b,
                 track_a,
                 track_b,
                 discovery_windows: &windows,
@@ -576,7 +561,8 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration);
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
         let clip_config = ClipConfig {
@@ -593,7 +579,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -623,7 +609,8 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration);
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(large_offset);
         let clip_config = holdout_clip_config();
@@ -637,7 +624,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -668,9 +655,10 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration).with_extract_error(
+        let mut session_a = FakeMediaSession::with_duration(duration).with_extract_error(
             crate::application::error::MediaError::decode_failed(0, "boom"),
         );
+        let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
         let clip_config = holdout_clip_config();
@@ -684,7 +672,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -721,7 +709,8 @@ mod tests {
             decode_error_skips: 0,
             decoded_sample_count: Some(SAMPLE_RATE as usize * 10),
         };
-        let session = FakeMediaSession::with_duration(duration).with_fixed_extract(short_clip);
+        let mut session_a = FakeMediaSession::with_duration(duration).with_fixed_extract(short_clip);
+        let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
         let clip_config = holdout_clip_config();
@@ -735,7 +724,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -766,7 +755,8 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration);
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
         let clip_config = holdout_clip_config();
         let validation = ValidationConfig {
@@ -782,7 +772,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -808,7 +798,8 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration);
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
         let clip_config = holdout_clip_config();
         let validation = verification_validation();
@@ -821,7 +812,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,
@@ -852,7 +843,8 @@ mod tests {
             duration: Some(duration),
             decodable: true,
         };
-        let session = FakeMediaSession::with_duration(duration);
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
         let clip_config = holdout_clip_config();
         let validation = ValidationConfig { verify_offset: false, ..Default::default() };
@@ -865,7 +857,7 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &verification_input(&session, &session, &track, &track, &windows, duration),
+            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
             &clip_config,
             &validation,
             &mut result,

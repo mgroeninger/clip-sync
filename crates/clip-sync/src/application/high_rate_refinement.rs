@@ -11,8 +11,8 @@ use crate::domain::{
 };
 
 pub struct HighRateRefinementInput<'a, MS: MediaSession> {
-    pub session_a: &'a MS,
-    pub session_b: &'a MS,
+    pub session_a: &'a mut MS,
+    pub session_b: &'a mut MS,
     pub track_a: &'a AudioTrack,
     pub track_b: &'a AudioTrack,
     pub discovery_windows: &'a [ClipWindow],
@@ -27,24 +27,11 @@ pub struct HighRateRefinementInput<'a, MS: MediaSession> {
 }
 
 pub fn apply_high_rate_refinement<MS: MediaSession>(
-    input: &HighRateRefinementInput<'_, MS>,
+    input: &mut HighRateRefinementInput<'_, MS>,
     alignment: &AlignmentConfig,
     result: &mut AlignmentResult,
     progress: &dyn ProgressReporter,
 ) {
-    let &HighRateRefinementInput {
-        session_a,
-        session_b,
-        track_a,
-        track_b,
-        discovery_windows,
-        duration_a,
-        duration_b,
-        decoded_extent_a: _,
-        decoded_extent_b: _,
-        resampler,
-        correlator,
-    } = input;
     if !alignment.refine_offset_high_rate {
         return;
     }
@@ -66,15 +53,15 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
     let segment_length_secs = segment_length.as_secs_f64();
 
-    let _ = session_a.reset_io();
-    let _ = session_b.reset_io();
+    let _ = input.session_a.reset_io();
+    let _ = input.session_b.reset_io();
 
-    let pick_duration = duration_a.min(duration_b);
-    let dur_a = duration_a.as_secs_f64();
-    let dur_b = duration_b.as_secs_f64();
+    let pick_duration = input.duration_a.min(input.duration_b);
+    let dur_a = input.duration_a.as_secs_f64();
+    let dur_b = input.duration_b.as_secs_f64();
 
     let candidates =
-        holdout_window_candidates(pick_duration, discovery_windows, segment_length, offset_secs);
+        holdout_window_candidates(pick_duration, input.discovery_windows, segment_length, offset_secs);
     if candidates.is_empty() {
         debug!("high-rate refine skipped: hold-out window unavailable");
         result.high_rate_refinement = Some(HighRateRefinement {
@@ -110,28 +97,32 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         let window_b_end =
             Duration::from_secs_f64(window_start_secs + segment_length_secs + offset_secs);
 
-        match extract_native_holdout(
-            session_a,
-            track_a,
+        let ra = extract_native_holdout(
+            input.session_a,
+            input.track_a,
             holdout,
             progress,
             "Extracting high-rate hold-out (video A)",
-        ) {
-            Ok(clip) => match extract_native_holdout(
-                session_b,
-                track_b,
-                &ClipWindow::new(window_b_start, window_b_end, holdout.label),
-                progress,
-                "Extracting high-rate hold-out (video B)",
-            ) {
-                Ok(other) => {
-                    chosen_start_secs = window_start_secs;
-                    clip_a = Some(clip);
-                    clip_b = Some(other);
-                    break;
+        );
+        match ra {
+            Ok(clip) => {
+                let rb = extract_native_holdout(
+                    input.session_b,
+                    input.track_b,
+                    &ClipWindow::new(window_b_start, window_b_end, holdout.label),
+                    progress,
+                    "Extracting high-rate hold-out (video B)",
+                );
+                match rb {
+                    Ok(other) => {
+                        chosen_start_secs = window_start_secs;
+                        clip_a = Some(clip);
+                        clip_b = Some(other);
+                        break;
+                    }
+                    Err(reason) => last_failure = reason,
                 }
-                Err(reason) => last_failure = reason,
-            },
+            }
             Err(reason) => last_failure = reason,
         }
     }
@@ -152,8 +143,8 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         &clip_a,
         &clip_b,
         alignment.high_rate_refine_max_adjustment_secs,
-        resampler,
-        correlator,
+        input.resampler,
+        input.correlator,
     ) else {
         debug!("high-rate refine skipped: correlation did not produce adjustment");
         result.high_rate_refinement = Some(HighRateRefinement {
@@ -176,7 +167,7 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     );
 
     result.recommended_offset_secs = Some(offset_secs + adjustment_secs);
-    refresh_start_overlap(result, duration_a, duration_b);
+    refresh_start_overlap(result, input.duration_a, input.duration_b);
     result.high_rate_refinement = Some(HighRateRefinement {
         segment_start_secs: chosen_start_secs,
         segment_length_secs,
@@ -189,7 +180,7 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
 }
 
 fn extract_native_holdout<MS: MediaSession>(
-    session: &MS,
+    session: &mut MS,
     track: &AudioTrack,
     window: &ClipWindow,
     progress: &dyn ProgressReporter,

@@ -111,7 +111,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         // Step 2: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
-        let session_a = self
+        let mut session_a = self
             .media_reader
             .open(&source_a)
             .map_err(RepairError::Media)?;
@@ -130,7 +130,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         // Step 5: Open B, select best track.
         let source_b = MediaSource::new(request.report.video_b.clone());
-        let session_b = self
+        let mut session_b = self
             .media_reader
             .open(&source_b)
             .map_err(RepairError::Media)?;

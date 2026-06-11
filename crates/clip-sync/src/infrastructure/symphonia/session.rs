@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -70,7 +69,7 @@ impl MediaReader for SymphoniaMediaReader {
         Ok(SymphoniaMediaSession {
             path: path.to_path_buf(),
             tracks,
-            io: RefCell::new(io),
+            io,
         })
     }
 }
@@ -101,7 +100,7 @@ impl MediaIoState {
 pub struct SymphoniaMediaSession {
     path: PathBuf,
     tracks: Vec<AudioTrack>,
-    io: RefCell<Option<MediaIoState>>,
+    io: Option<MediaIoState>,
 }
 
 impl MediaSession for SymphoniaMediaSession {
@@ -110,26 +109,17 @@ impl MediaSession for SymphoniaMediaSession {
     }
 
     fn extract_mono(
-        &self,
+        &mut self,
         track: &AudioTrack,
         window: &ClipWindow,
         progress: &dyn ProgressReporter,
         label: &str,
     ) -> Result<MonoPcmClip, MediaError> {
         ensure_regular_file(&self.path)?;
-
-        let mut io = self.io.borrow_mut();
-        if io.is_none() {
-            debug!(
-                path = %self.path.display(),
-                "reopening format reader for session (probe rewind was unavailable)"
-            );
-            *io = Some(MediaIoState::open(&self.path)?);
-        }
-
+        self.ensure_io()?;
         extract_mono_with_state(
             &self.path,
-            io.as_mut().expect("session io initialized"),
+            self.io.as_mut().expect("session io initialized"),
             track,
             window,
             progress,
@@ -138,26 +128,17 @@ impl MediaSession for SymphoniaMediaSession {
     }
 
     fn extract_interleaved(
-        &self,
+        &mut self,
         track: &AudioTrack,
         window: &ClipWindow,
         progress: &dyn ProgressReporter,
         label: &str,
     ) -> Result<MultiChannelPcm, MediaError> {
         ensure_regular_file(&self.path)?;
-
-        let mut io = self.io.borrow_mut();
-        if io.is_none() {
-            debug!(
-                path = %self.path.display(),
-                "reopening format reader for session (probe rewind was unavailable)"
-            );
-            *io = Some(MediaIoState::open(&self.path)?);
-        }
-
+        self.ensure_io()?;
         extract_interleaved_with_state(
             &self.path,
-            io.as_mut().expect("session io initialized"),
+            self.io.as_mut().expect("session io initialized"),
             track,
             window,
             progress,
@@ -166,7 +147,7 @@ impl MediaSession for SymphoniaMediaSession {
     }
 
     fn scan_mono_buckets(
-        &self,
+        &mut self,
         track: &AudioTrack,
         bucket_secs: f64,
         progress: &dyn ProgressReporter,
@@ -174,19 +155,10 @@ impl MediaSession for SymphoniaMediaSession {
         on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
     ) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
-
-        let mut io = self.io.borrow_mut();
-        if io.is_none() {
-            debug!(
-                path = %self.path.display(),
-                "reopening format reader for session (probe rewind was unavailable)"
-            );
-            *io = Some(MediaIoState::open(&self.path)?);
-        }
-
+        self.ensure_io()?;
         scan_mono_buckets_with_state(
             &self.path,
-            io.as_mut().expect("session io initialized"),
+            self.io.as_mut().expect("session io initialized"),
             track,
             bucket_secs,
             progress,
@@ -196,7 +168,7 @@ impl MediaSession for SymphoniaMediaSession {
     }
 
     fn scan_interleaved_buckets(
-        &self,
+        &mut self,
         track: &AudioTrack,
         bucket_secs: f64,
         progress: &dyn ProgressReporter,
@@ -204,19 +176,10 @@ impl MediaSession for SymphoniaMediaSession {
         on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
     ) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
-
-        let mut io = self.io.borrow_mut();
-        if io.is_none() {
-            debug!(
-                path = %self.path.display(),
-                "reopening format reader for session (probe rewind was unavailable)"
-            );
-            *io = Some(MediaIoState::open(&self.path)?);
-        }
-
+        self.ensure_io()?;
         scan_interleaved_buckets_with_state(
             &self.path,
-            io.as_mut().expect("session io initialized"),
+            self.io.as_mut().expect("session io initialized"),
             track,
             bucket_secs,
             progress,
@@ -225,13 +188,13 @@ impl MediaSession for SymphoniaMediaSession {
         )
     }
 
-    fn reset_io(&self) -> Result<(), MediaError> {
+    fn reset_io(&mut self) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
-        *self.io.borrow_mut() = Some(MediaIoState::open(&self.path)?);
+        self.io = Some(MediaIoState::open(&self.path)?);
         Ok(())
     }
 
-    fn track_decodable_extent(&self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
+    fn track_decodable_extent(&mut self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
         ensure_regular_file(&self.path)?;
 
         let container_duration = track.duration.filter(|value| !value.is_zero()).ok_or(
@@ -241,18 +204,14 @@ impl MediaSession for SymphoniaMediaSession {
             ),
         )?;
 
-        let mut io = self.io.borrow_mut();
-        if io.is_none() {
-            *io = Some(MediaIoState::open(&self.path)?);
-        }
-
+        self.ensure_io()?;
+        let path = self.path.clone();
         let extent = scan_track_decodable_extent(
-            &self.path,
-            io.as_mut().expect("session io initialized"),
+            &path,
+            self.io.as_mut().expect("session io initialized"),
             track,
             container_duration,
         )?;
-        drop(io);
         self.reset_io()?;
         Ok(extent)
     }
@@ -312,17 +271,26 @@ pub(crate) fn ensure_track_decoder(
     Ok(())
 }
 
+impl SymphoniaMediaSession {
+    fn ensure_io(&mut self) -> Result<(), MediaError> {
+        if self.io.is_none() {
+            debug!(
+                path = %self.path.display(),
+                "reopening format reader for session (probe rewind was unavailable)"
+            );
+            self.io = Some(MediaIoState::open(&self.path)?);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 impl SymphoniaMediaSession {
     pub(crate) fn has_io_state(&self) -> bool {
-        self.io.borrow().is_some()
+        self.io.is_some()
     }
 
     pub(crate) fn cached_decoder_count(&self) -> usize {
-        self.io
-            .borrow()
-            .as_ref()
-            .map(|io| io.decoders.len())
-            .unwrap_or(0)
+        self.io.as_ref().map(|io| io.decoders.len()).unwrap_or(0)
     }
 }
