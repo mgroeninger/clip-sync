@@ -201,6 +201,18 @@ fn exit_code_u8(error: &AppError) -> u8 {
 
 // --- JSON output shape ---
 
+/// Regenerate `tests/fixtures/full_surface_alignment.json` after an intentional contract change:
+/// `cargo test -p clip-sync-cli write_full_surface_alignment_golden -- --ignored --nocapture`
+#[test]
+#[ignore = "fixture generator — run manually when the JSON contract is revised"]
+fn write_full_surface_alignment_golden() {
+    let json = format_json_output(&full_surface_alignment_result());
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/full_surface_alignment.json");
+    std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+    std::fs::write(&path, json).expect("write golden fixture");
+}
+
 /// Plan 1 Phase 0: byte-identical guard for the analyzer JSON contract (pre-DTO split).
 #[test]
 fn full_surface_alignment_json_golden() {
