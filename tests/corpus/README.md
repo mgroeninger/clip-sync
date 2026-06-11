@@ -4,7 +4,11 @@ Small committed audio fixtures for manifest-driven integration tests. See [docs/
 
 ## Size budget
 
-Keep total committed fixtures under **5 MB**. Current clips are 20–30 s mono 16-bit PCM at 11.025 kHz (~4 MB total).
+Keep total committed fixtures under **5 MB**. Current clips are 20–30 s mono 16-bit PCM at 11.025 kHz (**~3.4 MB** total as of 2026-06-11).
+
+### Hold-out verification on committed tier
+
+Committed WAVs are **30 s**; default `clip_length` is **60 s**, so `verify_offset` cannot run on Tier-B files (hold-out is skipped). **Accepted coverage:** generated manifest cases `verify_offset_pass` (120 s WAV) and `mkv_tail_decodable_extent_gap` (ffmpeg). A committed ~75 s verify pair would add **~3.2 MB** and exceed the 5 MB cap without removing or extending an existing pair — not added unless the budget is raised.
 
 ## Regenerate WAV fixtures
 

@@ -360,17 +360,11 @@ mod tests {
     }
 
     fn result_with_offset(offset_secs: f64) -> AlignmentResult {
-        AlignmentResult {
-            clips: vec![],
-            start_aligned: true,
-            end_aligned: None,
-            recommended_offset_secs: Some(offset_secs),
-            offsets_consistent: true,
-            offset_drift_secs: None,
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-        }
+        use crate::application::testing::alignment_fixtures::minimal_alignment_result;
+
+        minimal_alignment_result(Some(offset_secs))
+            .with_clips(vec![])
+            .build()
     }
 
     fn discovery_windows() -> Vec<ClipWindow> {

@@ -5,6 +5,7 @@ use clip_sync::{
     ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError,
     OffsetVerification, RepetitionFinding, TimelineOverlap,
 };
+use clip_sync::testing::alignment_fixtures::{minimal_alignment_result, start_clip_match};
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::{format_human_output, format_json_output};
 use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
@@ -12,51 +13,17 @@ use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
 // --- helpers ---
 
 fn aligned_result(offset: f64) -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: 900.0,
-            aligned: true,
-            offset_secs: Some(offset),
-            confidence: 0.9,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: None,
-        }],
-        start_aligned: true,
-        end_aligned: None,
-        recommended_offset_secs: Some(offset),
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-    }
+    minimal_alignment_result(Some(offset))
+        .with_clips(vec![start_clip_match(Some(offset), 900.0, 0.9)])
+        .build()
 }
 
 fn unaligned_result() -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: 900.0,
-            aligned: false,
-            offset_secs: None,
-            confidence: 0.1,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: None,
-        }],
-        start_aligned: false,
-        end_aligned: None,
-        recommended_offset_secs: None,
-        offsets_consistent: false,
-        offset_drift_secs: None,
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-    }
+    let mut result = minimal_alignment_result(None)
+        .with_clips(vec![start_clip_match(None, 900.0, 0.1)])
+        .build();
+    result.offsets_consistent = false;
+    result
 }
 
 fn result_with_repetition(a_lag: Option<f64>, b_lag: Option<f64>) -> AlignmentResult {
@@ -70,27 +37,11 @@ fn result_with_repetition(a_lag: Option<f64>, b_lag: Option<f64>) -> AlignmentRe
         confidence: 0.65,
         items_count: 40,
     });
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: 900.0,
-            aligned: true,
-            offset_secs: Some(3.0),
-            confidence: 0.85,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: Some(ClipRepetitionReport { a: rep_a, b: rep_b }),
-        }],
-        start_aligned: true,
-        end_aligned: None,
-        recommended_offset_secs: Some(3.0),
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-    }
+    let mut clip = start_clip_match(Some(3.0), 900.0, 0.85);
+    clip.repetition = Some(ClipRepetitionReport { a: rep_a, b: rep_b });
+    minimal_alignment_result(Some(3.0))
+        .with_clips(vec![clip])
+        .build()
 }
 
 /// Every optional top-level field and clip-level `repetition` populated for JSON contract goldens.
@@ -163,27 +114,11 @@ fn full_surface_alignment_result() -> AlignmentResult {
 }
 
 fn result_with_no_repetition_finding() -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: 900.0,
-            aligned: true,
-            offset_secs: Some(3.0),
-            confidence: 0.85,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: Some(ClipRepetitionReport { a: None, b: None }),
-        }],
-        start_aligned: true,
-        end_aligned: None,
-        recommended_offset_secs: Some(3.0),
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-    }
+    let mut clip = start_clip_match(Some(3.0), 900.0, 0.85);
+    clip.repetition = Some(ClipRepetitionReport { a: None, b: None });
+    minimal_alignment_result(Some(3.0))
+        .with_clips(vec![clip])
+        .build()
 }
 
 fn exit_code_u8(error: &AppError) -> u8 {
@@ -397,16 +332,18 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
 
 #[test]
 fn high_rate_refinement_omits_peak_by_default() {
-    let mut result = aligned_result(3.0);
-    result.high_rate_refinement = Some(HighRateRefinement {
-        segment_start_secs: 0.0,
-        segment_length_secs: 3.0,
-        adjustment_secs: 0.01,
-        correlation_peak: 2_813_101_397.0,
-        applied: true,
-        skipped: false,
-        skip_reason: None,
-    });
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_high_rate_refinement(Some(HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: 0.01,
+            correlation_peak: 2_813_101_397.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        }))
+        .build();
 
     let output = format_human_output(false, &result);
     assert!(
@@ -421,16 +358,18 @@ fn high_rate_refinement_omits_peak_by_default() {
 
 #[test]
 fn high_rate_refinement_shows_peak_with_diagnostics() {
-    let mut result = aligned_result(3.0);
-    result.high_rate_refinement = Some(HighRateRefinement {
-        segment_start_secs: 0.0,
-        segment_length_secs: 3.0,
-        adjustment_secs: 0.01,
-        correlation_peak: 2_813_101_397.0,
-        applied: true,
-        skipped: false,
-        skip_reason: None,
-    });
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_high_rate_refinement(Some(HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: 0.01,
+            correlation_peak: 2_813_101_397.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        }))
+        .build();
 
     let output = format_human_output(true, &result);
     assert!(
@@ -600,8 +539,10 @@ fn make_verification(verified: bool, confidence: f32, skipped: bool, skip_reason
 
 #[test]
 fn verify_human_shows_warning_when_not_verified() {
-    let mut result = aligned_result(3.0);
-    result.offset_verification = Some(make_verification(false, 0.32, false, None));
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_verification(Some(make_verification(false, 0.32, false, None)))
+        .build();
 
     let output = format_human_output(false, &result);
     assert!(
@@ -612,8 +553,10 @@ fn verify_human_shows_warning_when_not_verified() {
 
 #[test]
 fn verify_human_shows_nothing_when_verified_non_verbose() {
-    let mut result = aligned_result(3.0);
-    result.offset_verification = Some(make_verification(true, 0.85, false, None));
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_verification(Some(make_verification(true, 0.85, false, None)))
+        .build();
 
     let output = format_human_output(false, &result);
     assert!(
@@ -624,8 +567,10 @@ fn verify_human_shows_nothing_when_verified_non_verbose() {
 
 #[test]
 fn verify_human_verbose_shows_confirmation_when_verified() {
-    let mut result = aligned_result(3.0);
-    result.offset_verification = Some(make_verification(true, 0.85, false, None));
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_verification(Some(make_verification(true, 0.85, false, None)))
+        .build();
 
     let output = format_human_output(true, &result);
     assert!(
@@ -636,8 +581,15 @@ fn verify_human_verbose_shows_confirmation_when_verified() {
 
 #[test]
 fn verify_human_skip_silent_when_non_verbose() {
-    let mut result = aligned_result(3.0);
-    result.offset_verification = Some(make_verification(false, 0.0, true, Some("hold-out window unavailable")));
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_verification(Some(make_verification(
+            false,
+            0.0,
+            true,
+            Some("hold-out window unavailable"),
+        )))
+        .build();
 
     let output = format_human_output(false, &result);
     assert!(
@@ -648,8 +600,15 @@ fn verify_human_skip_silent_when_non_verbose() {
 
 #[test]
 fn verify_human_verbose_shows_skip_reason() {
-    let mut result = aligned_result(3.0);
-    result.offset_verification = Some(make_verification(false, 0.0, true, Some("hold-out window unavailable")));
+    let result = minimal_alignment_result(Some(3.0))
+        .with_clips(vec![start_clip_match(Some(3.0), 900.0, 0.9)])
+        .with_verification(Some(make_verification(
+            false,
+            0.0,
+            true,
+            Some("hold-out window unavailable"),
+        )))
+        .build();
 
     let output = format_human_output(true, &result);
     assert!(

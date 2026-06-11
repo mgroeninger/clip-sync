@@ -274,34 +274,24 @@ pub fn format_offset_verification_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::testing::alignment_fixtures::{
+        minimal_alignment_result, start_clip_match,
+    };
 
     fn domain_clip(label: ClipLabel, repetition: Option<ClipRepetitionReport>) -> ClipMatch {
-        ClipMatch {
-            label,
-            window_start_secs: 0.0,
-            window_end_secs: 900.0,
-            aligned: true,
-            offset_secs: Some(3.0),
-            confidence: 0.9,
-            video_a_decode_skips: 1,
-            video_b_decode_skips: 2,
-            repetition,
-        }
+        let mut clip = start_clip_match(Some(3.0), 900.0, 0.9);
+        clip.label = label;
+        clip.video_a_decode_skips = 1;
+        clip.video_b_decode_skips = 2;
+        clip.repetition = repetition;
+        clip
     }
 
     #[test]
     fn converts_all_none_optionals() {
-        let result = AlignmentResult {
-            clips: vec![domain_clip(ClipLabel::Start, None)],
-            start_aligned: true,
-            end_aligned: None,
-            recommended_offset_secs: Some(3.0),
-            offsets_consistent: true,
-            offset_drift_secs: None,
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-        };
+        let result = minimal_alignment_result(Some(3.0))
+            .with_clips(vec![domain_clip(ClipLabel::Start, None)])
+            .build();
 
         let report = AlignmentReport::from(&result);
         assert_eq!(report.clips.len(), 1);
@@ -315,8 +305,8 @@ mod tests {
 
     #[test]
     fn converts_populated_optionals_and_repetition() {
-        let result = AlignmentResult {
-            clips: vec![domain_clip(
+        let mut result = minimal_alignment_result(Some(12.0))
+            .with_clips(vec![domain_clip(
                 ClipLabel::End,
                 Some(ClipRepetitionReport {
                     a: Some(RepetitionFinding {
@@ -326,20 +316,8 @@ mod tests {
                     }),
                     b: None,
                 }),
-            )],
-            start_aligned: false,
-            end_aligned: Some(true),
-            recommended_offset_secs: Some(12.0),
-            offsets_consistent: false,
-            offset_drift_secs: Some(0.5),
-            start_overlap: Some(TimelineOverlap {
-                video_a_start_secs: 0.0,
-                video_a_end_secs: 10.0,
-                video_b_start_secs: 12.0,
-                video_b_end_secs: 22.0,
-                shared_length_secs: 10.0,
-            }),
-            high_rate_refinement: Some(HighRateRefinement {
+            )])
+            .with_high_rate_refinement(Some(HighRateRefinement {
                 segment_start_secs: 1.0,
                 segment_length_secs: 3.0,
                 adjustment_secs: 0.01,
@@ -347,8 +325,8 @@ mod tests {
                 applied: true,
                 skipped: false,
                 skip_reason: None,
-            }),
-            offset_verification: Some(OffsetVerification {
+            }))
+            .with_verification(Some(OffsetVerification {
                 window_a_start_secs: 60.0,
                 window_a_end_secs: 90.0,
                 window_b_start_secs: 72.0,
@@ -358,8 +336,19 @@ mod tests {
                 skipped: false,
                 skip_reason: None,
                 candidates_tried: 1,
-            }),
-        };
+            }))
+            .build();
+        result.start_aligned = false;
+        result.end_aligned = Some(true);
+        result.offsets_consistent = false;
+        result.offset_drift_secs = Some(0.5);
+        result.start_overlap = Some(TimelineOverlap {
+            video_a_start_secs: 0.0,
+            video_a_end_secs: 10.0,
+            video_b_start_secs: 12.0,
+            video_b_end_secs: 22.0,
+            shared_length_secs: 10.0,
+        });
 
         let report = AlignmentReport::from(&result);
         assert_eq!(report.clips[0].label, ClipLabelReport::End);

@@ -85,9 +85,9 @@
 
 ### Phase 4 — corpus + test hygiene
 
-- [ ] **Budget pre-flight:** document generated-only verify acceptance in `tests/corpus/README.md` (default path per decision above). Only add committed ~75 s pair if budget raised or pair extended in place.
-- [ ] Chirp dedupe: delete `execute_runs_offset_verification_when_flag_on`; sharpen or keep remaining in-crate tests per test-roles decision.
-- [ ] `alignment_fixtures` builder extension + adoption in lib and CLI test files.
+- [x] **Budget pre-flight:** document generated-only verify acceptance in `tests/corpus/README.md` (default path per decision above). Only add committed ~75 s pair if budget raised or pair extended in place.
+- [x] Chirp dedupe: delete `execute_runs_offset_verification_when_flag_on`; sharpen or keep remaining in-crate tests per test-roles decision.
+- [x] `alignment_fixtures` builder extension + adoption in lib and CLI test files.
 
 ### Phase 5 — documentation debts
 
