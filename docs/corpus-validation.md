@@ -59,7 +59,7 @@ Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0
 | +18 s (+8 s + 10 s loop period) | `false` | Same residue mod 10 as +8 s |
 | +13 s (true +3 s + one loop period) | **`true`** | Period-equivalent alias; matches typical discovery output on this fixture |
 
-**Implications:** `--verify-offset` does **not** disprove discovery when content repeats every **T** seconds and the wrong offset differs from the true offset by **N×T**. Enable `--check-clip-repetition` and treat strong internal repeat as “offset may be ambiguous mod repeat period.” **Option B** (PCM lag-0) is unlikely to help on identical periodic tiles — see [Follow-up](#follow-up).
+**Implications:** `--verify-offset` does **not** disprove discovery when content repeats every **T** seconds and the wrong offset differs from the true offset by **N×T**. Enable `--check-clip-repetition` and treat strong internal repeat as “offset may be ambiguous mod repeat period.” **Option B** (PCM lag-0) is unlikely to help on identical periodic tiles. Planned fix: [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) (ambiguity flag, verify gating, edge parallel recheck).
 
 ---
 
@@ -129,7 +129,7 @@ Default is `false` because track-pair brute force multiplies decode work. Prefer
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
-- **Periodic offset ambiguity** — when `check_clip_repetition` finds lag **T**, discovery and Option A verify can agree on wrong offsets ≡ true (mod **T**); surface diagnostic / mod-period downgrade (see § Option A false-pass evidence)
+- **Periodic offset ambiguity** — [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) (active)
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
 - Optional shorter verification segment (`validation.max_verification_secs`) — deferred Phase 6 in [verification-hardening plan](archive/verification-hardening-plan.md); implement only on demonstrated friction

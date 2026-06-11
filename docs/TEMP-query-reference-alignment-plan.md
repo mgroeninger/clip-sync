@@ -25,6 +25,12 @@
 | [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) | Shipped 2026-06-11: `MediaSession` `&mut self`; `reset_io` removed; `MediaExtent`; scan policy in `application/media_scan.rs` |
 | [archive/verification-hardening-plan.md](archive/verification-hardening-plan.md) | **Shipped (2026-06-11):** verify retry + `candidates_tried`, `clip_with_label`, `alignment_fixtures`, test-role split — see [corpus-validation.md](corpus-validation.md) § Validation diagnostics |
 
+**Parallel (not blocking query mode):**
+
+| Plan | Relationship |
+|------|----------------|
+| [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) | Symmetric pair mode: mod-**T** ambiguity on repeating **A**; query mode: `ambiguous` on repeating anchors in long **A** — align warning semantics in docs |
+
 **Already shipped (rebase on these, do not re-litigate):**
 
 - [archive/output-error-contract-plan.md](archive/output-error-contract-plan.md) — JSON contract v1 frozen; new fields require explicit revision (see [JSON contract revision](#json-contract-revision)).

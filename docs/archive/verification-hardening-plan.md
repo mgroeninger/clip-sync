@@ -93,9 +93,9 @@ Audit at plan draft (2026-06-10). All rows below were addressed in phases 1–5 
 - [x] Generated corpus case: looped/self-similar content + wrong-offset probe; record pass/fail.
 - [x] Findings → `docs/corpus-validation.md`. Non-period wrong Δ (+8/+18 s) did not false-pass; **period-equivalent +13 s does** (follow-up 2026-06-11). Option B deferred — see BACKLOG periodic ambiguity.
 
-**Option B follow-up (deferred — period alias false-pass):**
+**Option B follow-up (superseded — period alias false-pass):**
 
-- [ ] PCM lag-0 or mod-period diagnostic when repetition lag **T** explains verify/discovery alias
+- [ ] Mod-period diagnostic + verify gating — [TEMP-periodic-ambiguity-plan.md](../TEMP-periodic-ambiguity-plan.md) (not Option B PCM lag-0)
 - [x] Corpus regression: `corpus_verify_option_a_false_pass_probe` (+8/+18 reject, +13 false-pass)
 
 ### Phase 4 — corpus + test hygiene

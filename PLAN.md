@@ -979,6 +979,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
 | [docs/archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
 | [docs/archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
+| [docs/TEMP-periodic-ambiguity-plan.md](docs/TEMP-periodic-ambiguity-plan.md) | Draft: mod-**T** ambiguity diagnostic, verify gating, edge parallel recheck (looped +13 s false-pass) |
 | [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.

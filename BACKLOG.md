@@ -12,11 +12,12 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 
 **Next:** [query-reference alignment](#active-plans) (unblocked); [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-11)** — AC-3 backend plan is independent and can land in parallel.
+**Active plans (2026-06-11)** — AC-3 backend and periodic-ambiguity plans are independent and can land in parallel.
 
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
+| [TEMP-periodic-ambiguity-plan.md](docs/TEMP-periodic-ambiguity-plan.md) | Mod-**T** offset ambiguity diagnostic, verify gating, edge parallel recheck (+13 s probe) |
 | [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill |
 
 ---
@@ -41,19 +42,10 @@ Defaults, domain errors, purity claims out of sync with code.
 
 | Item | Direction |
 |------|-----------|
-| [Periodic offset ambiguity](#periodic-offset-ambiguity) | Diagnostic when repetition lag **T** makes offsets ≡ true (mod **T**); Option A verify can false-pass (+13 s probe) |
 | [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
 | [Resampler port shrink](#resampler-port-drop-unused-resample_interleaved) | Drop trait method if still unused; repair keeps facade fn |
-
-#### Periodic offset ambiguity
-
-Looped/rebroadcast audio makes Chromaprint discovery latch to offsets ≡ true (mod repeat period **T**). Hold-out Option A verify can **false-pass** the same period-equivalent wrong Δ (+13 s when true is +3 s on 10 s looped chirp — `corpus_verify_option_a_false_pass_probe`). PCM lag-0 (Option B) is unlikely to disambiguate identical periodic tiles.
-
-**Direction:** when `check_clip_repetition` finds lag **T**, surface “offset ambiguous mod **T**” (and/or mod-period confidence downgrade); do not rely on `--verify-offset` alone on periodic content.
-
-**Refs:** [docs/corpus-validation.md](docs/corpus-validation.md) § Option A false-pass evidence, `write_looped_chirp_wav_pair`
 
 #### Memory use and PCM cloning on long clips
 
