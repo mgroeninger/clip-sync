@@ -16,7 +16,7 @@
 |------|--------|
 | Label selection | `clip_with_label` / `start_clip()`; CLI + corpus use start clip (degenerate `clips.first()` fallback only) |
 | Verify retry | Up to 3 scored candidates; best by confidence; `candidates_tried` in JSON + `phase_verbose` |
-| Option A false-pass probe | `verify_option_a_false_pass_probe`: wrong Δ +8 s / +18 s → **`verified == false`**; Option B not implemented |
+| Option A false-pass probe | Non-period wrong Δ (+8/+18 s) → `verified == false`; period alias +13 s → **`verified == true`** (2026-06-11 follow-up); Option B not implemented |
 | Committed verify | Generated-only (`verify_offset_pass`, `mkv_tail_decodable_extent_gap`); documented in `tests/corpus/README.md` |
 | Test hygiene | Removed `execute_runs_offset_verification_when_flag_on`; `alignment_fixtures` builder adopted in lib + CLI tests |
 | Docs | Repetition downgrade v1, verification cost, test roles — `corpus-validation.md`, `PLAN.md`, corpus README |
@@ -91,12 +91,12 @@ Audit at plan draft (2026-06-10). All rows below were addressed in phases 1–5 
 ### Phase 3 — Option A false-pass evidence
 
 - [x] Generated corpus case: looped/self-similar content + wrong-offset probe; record pass/fail.
-- [x] Findings → `docs/corpus-validation.md`. **Probe did not false-pass** (wrong injected Δ +8 s and +18 s both `verified == false`); Option B (PCM lag-0 via `refine_holdout_segment_lag`) **closed without implementation**.
+- [x] Findings → `docs/corpus-validation.md`. Non-period wrong Δ (+8/+18 s) did not false-pass; **period-equivalent +13 s does** (follow-up 2026-06-11). Option B deferred — see BACKLOG periodic ambiguity.
 
-**Option B follow-up (closed — probe did not false-pass):**
+**Option B follow-up (deferred — period alias false-pass):**
 
-- [x] ~~Add PCM lag-0 confirmation step~~ — not needed
-- [x] ~~Corpus case for Option B~~ — not needed; regression is `corpus_verify_option_a_false_pass_probe`
+- [ ] PCM lag-0 or mod-period diagnostic when repetition lag **T** explains verify/discovery alias
+- [x] Corpus regression: `corpus_verify_option_a_false_pass_probe` (+8/+18 reject, +13 false-pass)
 
 ### Phase 4 — corpus + test hygiene
 

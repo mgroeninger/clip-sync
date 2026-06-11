@@ -41,22 +41,25 @@ Harness code: `crates/clip-sync/src/application/testing/corpus_fixtures.rs`, gen
 
 ---
 
-## Option A false-pass evidence (2026-06-11)
+## Option A false-pass evidence (2026-06-11, updated)
 
-Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0 left the “does Option A false-pass on self-similar hold-out?” spike unchecked. Phase 3 of [verification-hardening plan](archive/verification-hardening-plan.md) closes it.
+Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0 left the “does Option A false-pass on self-similar hold-out?” spike unchecked. Phase 3 of [verification-hardening plan](archive/verification-hardening-plan.md) closes the non-period case; **period-equivalent** wrong Δ was added 2026-06-11.
 
-**Probe:** manifest case `verify_option_a_false_pass_probe` — 120 s mono WAV pair with a **10 s chirp loop** tiled across the file (true inter-file offset +3 s). The dedicated test runs hold-out verification with **deliberately wrong** injected recommended offsets (+8 s and +18 s = +8 s plus one loop period), independent of discovery output.
+**Probe:** manifest case `verify_option_a_false_pass_probe` — 120 s mono WAV pair with a **10 s chirp loop** tiled across the file (true inter-file offset +3 s). The dedicated test injects recommended offsets and runs hold-out verification **without** asserting discovery output.
 
-**Discovery note:** the same looped fixture aliases in discovery to ≈ **+13 s** (+3 s true offset + 10 s loop period), not +3 s. That is a separate fingerprint-ambiguity signal; this probe does not assert on discovery offset.
+**Discovery alias:** the same fixture aliases in discovery to ≈ **+13 s** (+3 s true + 10 s loop period), not +3 s. That is cross-file fingerprint periodicity, not random noise. Do **not** use `looped_chirp_pair` for discovery offset oracles — use `offset_chirp_pair` instead.
 
-**Outcome:** Option A **does not** false-pass on wrong injected Δ (`verified == false` for both probe values). Confidence stays below the 0.5 threshold or lag exceeds 0.5 s tolerance. **Option B** (PCM lag-0 via `refine_holdout_segment_lag`) remains **deferred** — no corpus evidence that Chromaprint lag search is fooled on the verification probe.
+**How verification can false-pass:** Option A compares hold-out segments placed at `window_A` and `window_B = window_A + injected_offset`. It then fingerprints both and requires lag ≈ 0 between them. When audio is **periodic with period T**, a placement error of **N×T** still yields segments that match at lag 0, so `verified == true` even though the inter-file offset is wrong.
 
 **Regression:** `cargo test -p clip-sync corpus_verify_option_a_false_pass_probe`
 
-| Wrong Δ | `verified` | Notes |
-|---------|------------|-------|
-| +8 s (manifest `probe_wrong_verification_offset_secs`) | `false` | Same wrong-Δ class as unit test `verify_offset_fails_wrong_delta` |
-| +18 s (+8 s + 10 s loop period) | `false` | Loop-period alias does not fool lag-0 fingerprint check |
+| Injected Δ | `verified` | Notes |
+|------------|------------|-------|
+| +8 s (manifest `probe_wrong_verification_offset_secs`) | `false` | ≡ +8 mod 10; not equivalent to true +3 s |
+| +18 s (+8 s + 10 s loop period) | `false` | Same residue mod 10 as +8 s |
+| +13 s (true +3 s + one loop period) | **`true`** | Period-equivalent alias; matches typical discovery output on this fixture |
+
+**Implications:** `--verify-offset` does **not** disprove discovery when content repeats every **T** seconds and the wrong offset differs from the true offset by **N×T**. Enable `--check-clip-repetition` and treat strong internal repeat as “offset may be ambiguous mod repeat period.” **Option B** (PCM lag-0) is unlikely to help on identical periodic tiles — see [Follow-up](#follow-up).
 
 ---
 
@@ -126,6 +129,7 @@ Default is `false` because track-pair brute force multiplies decode work. Prefer
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
+- **Periodic offset ambiguity** — when `check_clip_repetition` finds lag **T**, discovery and Option A verify can agree on wrong offsets ≡ true (mod **T**); surface diagnostic / mod-period downgrade (see § Option A false-pass evidence)
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
 - Optional shorter verification segment (`validation.max_verification_secs`) — deferred Phase 6 in [verification-hardening plan](archive/verification-hardening-plan.md); implement only on demonstrated friction

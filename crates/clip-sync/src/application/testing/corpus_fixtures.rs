@@ -967,8 +967,10 @@ mod tests {
         let paths = generate_case_pair(case, &manifest.defaults);
 
         const LOOP_PERIOD_SECS: f64 = 10.0;
-        let wrong_offsets = [wrong_offset, wrong_offset + LOOP_PERIOD_SECS];
-        for probe_offset in wrong_offsets {
+        let true_offset_secs = f64::from(case.offset_secs.unwrap_or(3));
+
+        // Wrong Δ not equivalent to true offset mod loop period (e.g. +8, +18 ≡ +8 mod 10).
+        for probe_offset in [wrong_offset, wrong_offset + LOOP_PERIOD_SECS] {
             let verify = run_wrong_offset_verification_probe(
                 &paths.video_a,
                 &paths.video_b,
@@ -983,11 +985,32 @@ mod tests {
             );
             assert!(
                 !verify.verified,
-                "Option A false-pass probe Δ={probe_offset}: verified=true confidence={} \
+                "non-period wrong Δ={probe_offset}: verified=true confidence={} \
                  (see docs/corpus-validation.md § Option A false-pass evidence)",
                 verify.confidence
             );
         }
+
+        // Period-equivalent alias: true offset + N×loop period (discovery often picks +13 s here).
+        let period_alias_offset = true_offset_secs + LOOP_PERIOD_SECS;
+        let alias_verify = run_wrong_offset_verification_probe(
+            &paths.video_a,
+            &paths.video_b,
+            period_alias_offset,
+            clip_length_secs,
+            target_sample_rate,
+        );
+        assert!(
+            !alias_verify.skipped,
+            "period-alias probe Δ={period_alias_offset}: verification should run, got skip_reason={:?}",
+            alias_verify.skip_reason
+        );
+        assert!(
+            alias_verify.verified,
+            "period-equivalent wrong Δ={period_alias_offset} should false-pass Option A \
+             (confidence={}, lag within tolerance); see docs/corpus-validation.md",
+            alias_verify.confidence
+        );
     }
 
     #[test]

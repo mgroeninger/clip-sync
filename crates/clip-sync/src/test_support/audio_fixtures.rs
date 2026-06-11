@@ -85,6 +85,12 @@ pub fn write_offset_chirp_wav_pair_with_delay(
 ///
 /// Strongly self-similar content for hold-out verification probes: any window sees the same
 /// repeating chirp pattern. File B is delayed by `offset_secs` of leading silence.
+///
+/// **Not a discovery oracle:** Chromaprint discovery aliases to any offset ≡ `offset_secs`
+/// (mod 10 s loop period), e.g. true +3 s often reports ≈ +13 s. Hold-out verification
+/// with Option A can also false-pass period-equivalent wrong Δ (+13 s when true is +3 s).
+/// Use [`write_offset_chirp_wav_pair`] for alignment offset assertions; use this generator
+/// only in dedicated verify probes (`corpus_verify_option_a_false_pass_probe`).
 pub fn write_looped_chirp_wav_pair(
     dir: &Path,
     sample_rate: u32,

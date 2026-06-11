@@ -318,7 +318,8 @@ expect_recommended = true
 check_clip_repetition = true
 expect_clip_repetition = true
 
-# Option A false-pass probe: looped chirp (10 s tile), true offset +3 s; verification run with wrong Δ.
+# Option A false-pass probe: looped chirp (10 s tile), true offset +3 s.
+# Tests wrong Δ +8/+18 (reject) and period alias +13 (false-pass); not a discovery oracle.
 # Skips standard alignment assertions — see corpus_verify_option_a_false_pass_probe.
 [[case]]
 id = "verify_option_a_false_pass_probe"

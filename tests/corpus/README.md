@@ -48,6 +48,15 @@ Regenerate committed WAVs:
 
 `manifest.toml` lists each case id, media paths, and expected alignment outcomes. Tests in `corpus_fixtures.rs` load the manifest and run `AlignVideos` against each committed pair.
 
+## Generators and oracles
+
+| Generator | Use for |
+|-----------|---------|
+| `offset_chirp_pair` | Discovery / alignment offset assertions (+3 s chirp, non-periodic) |
+| `looped_chirp_pair` | Hold-out verify probes only (`verify_option_a_false_pass_probe`); discovery aliases mod 10 s period |
+
+See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Option A false-pass evidence for the looped-fixture discovery (+13 s) vs verify (+13 s false-pass) behaviour.
+
 ## Licensing
 
 All fixtures are synthetically generated (chirp / tone). No third-party audio.
