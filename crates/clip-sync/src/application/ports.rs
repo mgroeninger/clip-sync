@@ -86,10 +86,10 @@ pub trait MediaSession {
         let duration = track
             .duration
             .filter(|value| !value.is_zero())
-            .ok_or(MediaError::DecodeFailed {
-                track: track.index,
-                detail: "missing track duration for sequential scan".into(),
-            })?;
+            .ok_or(MediaError::decode_failed(
+                track.index,
+                "missing track duration for sequential scan",
+            ))?;
         let total_secs = duration.as_secs_f64();
         let mut pos = 0.0f64;
 
@@ -107,7 +107,7 @@ pub trait MediaSession {
                     end_secs: end,
                     pcm,
                 })?,
-                Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed(_)) => {
+                Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed { .. }) => {
                     if pos >= total_secs - NEAR_TRACK_END_TOLERANCE_SECS {
                         break;
                     }
@@ -137,10 +137,10 @@ pub trait MediaSession {
         let duration = track
             .duration
             .filter(|value| !value.is_zero())
-            .ok_or(MediaError::DecodeFailed {
-                track: track.index,
-                detail: "missing track duration for sequential scan".into(),
-            })?;
+            .ok_or(MediaError::decode_failed(
+                track.index,
+                "missing track duration for sequential scan",
+            ))?;
         let total_secs = duration.as_secs_f64();
         let mut pos = 0.0f64;
 
@@ -158,7 +158,7 @@ pub trait MediaSession {
                     end_secs: end,
                     pcm,
                 })?,
-                Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed(_)) => {
+                Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed { .. }) => {
                     if pos >= total_secs - NEAR_TRACK_END_TOLERANCE_SECS {
                         break;
                     }

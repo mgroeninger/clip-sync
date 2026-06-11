@@ -1210,10 +1210,8 @@ mod tests {
         let reader = FakeMediaReader::new()
             .with_session(
                 "a.wav",
-                FakeMediaSession::with_duration(mins(3)).with_extract_error(MediaError::DecodeFailed {
-                    track: 0,
-                    detail: "boom".into(),
-                }),
+                FakeMediaSession::with_duration(mins(3))
+                    .with_extract_error(MediaError::decode_failed(0, "boom")),
             )
             .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
         let fingerprinter = FakeFingerprinter::new();
@@ -1690,7 +1688,8 @@ mod tests {
             assert_repetition_wrapper_without_findings(clip);
         }
 
-        let json = serde_json::to_string(&response.result).expect("serialize");
+        let report = crate::application::report::AlignmentReport::from(&response.result);
+        let json = serde_json::to_string(&report).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         for clip in value["clips"].as_array().unwrap() {
             let repetition = &clip["repetition"];
@@ -1717,7 +1716,8 @@ mod tests {
             .execute(request(two_clip_config()))
             .expect("execute should succeed");
 
-        let json = serde_json::to_string(&response.result).expect("serialize");
+        let report = crate::application::report::AlignmentReport::from(&response.result);
+        let json = serde_json::to_string(&report).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
 
         for clip in value["clips"].as_array().unwrap() {

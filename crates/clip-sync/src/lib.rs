@@ -10,9 +10,14 @@ pub use application::default_pipeline::align_with_defaults;
 pub use application::{AlignVideos, AlignVideosRequest, AlignVideosResponse, AppError, ConfigError};
 pub use application::error::{AlignmentError, FingerprintError, MediaError};
 pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
+pub use application::report::{
+    format_high_rate_refinement_lines, format_offset_verification_lines, AlignmentReport,
+    ClipLabelReport, ClipMatchReport, HighRateRefinementReport, OffsetVerificationReport,
+    RepetitionFindingReport, RepetitionReport, TimelineOverlapReport,
+};
 // --- domain (selected types) ---
 pub use domain::{
-    format_high_rate_refinement_lines, format_offset_verification_lines, format_time_range,
+    format_time_range,
     format_timestamp, AlignmentResult, AudioTrack, ClipMatch,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaSource, MonoPcmClip, MonoScanBucket,

@@ -1,5 +1,4 @@
 pub mod alignment;
-pub mod alignment_report;
 pub mod audio_track;
 pub mod human_format;
 pub mod clip_plan;
@@ -23,9 +22,6 @@ pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
-pub use alignment_report::{
-    format_high_rate_refinement_lines, format_offset_verification_lines,
-};
 pub use human_format::{format_time_range, format_timestamp};
 pub use alignment::TimelineOverlap;
 pub use media_source::MediaSource;

@@ -57,7 +57,7 @@ pub(crate) fn scan_container_audio_duration(
             path,
             "probe",
             None,
-            MediaError::OpenFailed(format!(
+            MediaError::open_failed(format!(
                 "could not determine duration for {}",
                 path.display()
             )),
@@ -94,7 +94,7 @@ pub(crate) fn scan_container_audio_duration(
             path,
             "probe",
             None,
-            MediaError::OpenFailed(format!(
+            MediaError::open_failed(format!(
                 "could not determine duration for {}",
                 path.display()
             )),

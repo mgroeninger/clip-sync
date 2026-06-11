@@ -40,7 +40,7 @@ impl MediaReader for SymphoniaMediaReader {
                 path,
                 "open",
                 None,
-                MediaError::UnsupportedFormat(format!(
+                MediaError::unsupported_format(format!(
                     "no audio tracks in {}",
                     path.display()
                 )),
@@ -52,7 +52,7 @@ impl MediaReader for SymphoniaMediaReader {
                 path,
                 "open",
                 None,
-                MediaError::OpenFailed(format!(
+                MediaError::open_failed(format!(
                     "could not determine duration for {}",
                     path.display()
                 )),
@@ -235,10 +235,10 @@ impl MediaSession for SymphoniaMediaSession {
         ensure_regular_file(&self.path)?;
 
         let container_duration = track.duration.filter(|value| !value.is_zero()).ok_or(
-            MediaError::DecodeFailed {
-                track: track.index,
-                detail: "missing track duration for decodable extent scan".into(),
-            },
+            MediaError::decode_failed(
+                track.index,
+                "missing track duration for decodable extent scan",
+            ),
         )?;
 
         let mut io = self.io.borrow_mut();

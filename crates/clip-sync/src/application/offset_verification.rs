@@ -663,10 +663,7 @@ mod tests {
             decodable: true,
         };
         let session = FakeMediaSession::with_duration(duration).with_extract_error(
-            crate::application::error::MediaError::DecodeFailed {
-                track: 0,
-                detail: "boom".into(),
-            },
+            crate::application::error::MediaError::decode_failed(0, "boom"),
         );
 
         let mut result = result_with_offset(3.0);
@@ -827,7 +824,8 @@ mod tests {
             &progress,
         );
 
-        let json = serde_json::to_string(&result).expect("serialize");
+        let report = crate::application::report::AlignmentReport::from(&result);
+        let json = serde_json::to_string(&report).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
         let ov = &value["offset_verification"];
@@ -870,7 +868,8 @@ mod tests {
             &progress,
         );
 
-        let json = serde_json::to_string(&result).expect("serialize");
+        let report = crate::application::report::AlignmentReport::from(&result);
+        let json = serde_json::to_string(&report).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
         assert!(
             value.get("offset_verification").is_none(),

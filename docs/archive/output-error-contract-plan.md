@@ -1,6 +1,6 @@
 # Temporary plan: output & error contract
 
-> **Status:** Draft (2026-06-10). Plan 1 of 4 — see [BACKLOG.md](../BACKLOG.md). Must land **before** the JSON contract freezes and before [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) (avoids overlapping `MediaError` churn).
+> **Status:** Shipped (2026-06-10), all phases complete. Plan 1 of 4 — see [BACKLOG.md](../../BACKLOG.md). Contract frozen in [docs/json-output.md](../json-output.md); unblocks [TEMP-media-session-redesign-plan.md](../TEMP-media-session-redesign-plan.md).
 
 **Problem:** The analyzer's JSON output is the raw serde view of domain types — `AlignmentResult` and friends derive `Serialize` in `domain/`, so freezing the JSON contract (BACKLOG Phase 4 #7) would freeze the domain model's shape with it. Meanwhile the failure taxonomy is unsettled: `AlignmentError::NoMatch` / `AmbiguousMatch` are `#[allow(dead_code)]` and never constructed, port errors carry free-form `String`s with no `source()` chain, and the rubato→linear resample fallback degrades quality silently.
 
@@ -60,25 +60,32 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ### Phase 1 — tactical contract fixes
 
-- [ ] Delete `AlignmentError::NoMatch` and `AmbiguousMatch` (+ `#[allow(dead_code)]`); update `docs/error-mapping.md` (remove the "reserved for engine failures" rows; document `Ok`+zero-confidence as the no-match contract).
-- [ ] Add `tracing::warn!` to both fallback triggers in `domain/resample.rs`; unit test via a tracing subscriber capture or by asserting fallback output path is taken (existing tests cover the math).
-- [ ] Sweep `PLAN.md` § Plan-level notes (lines referencing `NoMatch`/`AmbiguousMatch`) and `BACKLOG.md` item 7.
+- [x] Delete `AlignmentError::NoMatch` and `AmbiguousMatch` (+ `#[allow(dead_code)]`); update `docs/error-mapping.md` (remove the "reserved for engine failures" rows; document `Ok`+zero-confidence as the no-match contract).
+- [x] Add `tracing::warn!` to both fallback triggers in `domain/resample.rs`; unit test via a tracing subscriber capture or by asserting fallback output path is taken (existing tests cover the math).
+- [x] Sweep `PLAN.md` § Plan-level notes (lines referencing `NoMatch`/`AmbiguousMatch`) and `BACKLOG.md` item 7.
 
 ### Phase 2 — report DTO split
 
-- [ ] Create `crates/clip-sync/src/application/report.rs`: DTO structs with all serde attrs moved from domain; `From<&AlignmentResult>` (and per-type `From`s). Facade export in `lib.rs`.
-- [ ] Remove `Serialize` derives (and the `serde` import) from `domain/alignment.rs` and `domain/clip_window.rs`.
-- [ ] `clip-sync-cli` `output.rs`: serialize `AlignmentReport::from(result)`.
-- [ ] `clip-sync-repair`: `GapReport.alignment` → `AlignmentReport`; convert at the `scan_gaps` alignment boundary.
-- [ ] Migrate test serialization sites: `align_videos.rs` tests ~1694–1728, `offset_verification.rs` tests ~836–885, `cli_output.rs`, repair output tests.
-- [ ] Phase 0 goldens pass unchanged.
+- [x] Create `crates/clip-sync/src/application/report.rs`: DTO structs with all serde attrs moved from domain; `From<&AlignmentResult>` (and per-type `From`s). Facade export in `lib.rs`.
+- [x] Remove `Serialize` derives (and the `serde` import) from `domain/alignment.rs` and `domain/clip_window.rs`.
+- [x] `clip-sync-cli` `output.rs`: serialize `AlignmentReport::from(result)`.
+- [x] `clip-sync-repair`: `GapReport.alignment` → `AlignmentReport`; convert at the `scan_gaps` alignment boundary.
+- [x] Migrate test serialization sites: `align_videos.rs` tests ~1694–1728, `offset_verification.rs` tests ~836–885, `cli_output.rs`, repair output tests.
+- [x] Phase 0 goldens pass unchanged.
+
+**Artifacts (2026-06-10):** DTO tree `AlignmentReport` / `ClipMatchReport` / `ClipLabelReport` / `RepetitionReport` / `RepetitionFindingReport` / `TimelineOverlapReport` / `HighRateRefinementReport` / `OffsetVerificationReport` in `application/report.rs` (the repetition wrapper is `RepetitionReport` to avoid colliding with domain `ClipRepetitionReport`). `format_high_rate_refinement_lines` / `format_offset_verification_lines` moved there too (domain `alignment_report.rs` deleted) and now take report types; `GapReport.overlap` is `Option<TimelineOverlapReport>`. `format_json_output` / `format_repair_json_output` kept their signatures and convert internally, so Phase 0 goldens needed no edits.
 
 ### Phase 3 — error sources
 
-- [ ] Add `#[source]`-carrying forms to `MediaError` / `FingerprintError` / `ConfigError` variants where an underlying error exists (keep `Display` text stable; prefer adding an optional boxed source field over new variants).
-- [ ] `infrastructure/symphonia/error_mapping.rs`: attach the original `SymphoniaError` / `io::Error` as source instead of dropping it after `format!`.
-- [ ] Unit tests: `source()` chain reachable from `AppError` down to the io error for at least probe-failure and decode-failure paths.
-- [ ] Confirm CLI stderr output and exit-code tests unchanged.
+- [x] Add `#[source]`-carrying forms to `MediaError` / `FingerprintError` / `ConfigError` variants where an underlying error exists (keep `Display` text stable; prefer adding an optional boxed source field over new variants).
+- [x] `infrastructure/symphonia/error_mapping.rs`: attach the original `SymphoniaError` / `io::Error` as source instead of dropping it after `format!`.
+- [x] Unit tests: `source()` chain reachable from `AppError` down to the io error for at least probe-failure and decode-failure paths.
+- [x] Confirm CLI stderr output and exit-code tests unchanged.
+
+**Artifacts (2026-06-10).** Two deliberate deviations from the decisions table, same intent:
+- `source` is `Option<Arc<dyn Error + Send + Sync>>` (alias `ErrorSource`), not `Box` — the error enums must stay `Clone` because test fakes store an error and return a clone per call. `PartialEq`/`Eq` dropped from `MediaError`/`FingerprintError`/`ConfigError` (one test compared by `==`; now `matches!`).
+- `MediaError`/`FingerprintError`/`ConfigError` implement `Display`/`Error` by hand instead of thiserror `#[source]`: `Arc<dyn Error>` itself implements `Error` (Rust ≥ 1.76), so thiserror would expose the `Arc` wrapper as the chain node and the wrapped error would not downcast. Display strings byte-identical to the old derives.
+- Variants gaining a source moved to struct form with constructors (`MediaError::open_failed` etc.) for source-less sites. Config loaders now attach the `io::Error` / `toml::de::Error`; chromaprint `ResetError::CannotResample` attached on `FingerprintError::EngineFailed`. `AlignmentError` untouched per plan scope.
 
 ### Phase 4 — freeze
 

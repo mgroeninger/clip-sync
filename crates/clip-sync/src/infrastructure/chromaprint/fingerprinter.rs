@@ -89,9 +89,10 @@ fn map_reset_error(error: ResetError) -> FingerprintError {
         ResetError::NoChannels => {
             FingerprintError::InvalidPcm("channel count must be at least 1".into())
         }
-        ResetError::CannotResample(detail) => FingerprintError::EngineFailed(format!(
-            "failed to configure resampler: {detail}"
-        )),
+        ResetError::CannotResample(detail) => FingerprintError::EngineFailed {
+            detail: format!("failed to configure resampler: {detail}"),
+            source: Some(std::sync::Arc::new(ResetError::CannotResample(detail))),
+        },
     }
 }
 

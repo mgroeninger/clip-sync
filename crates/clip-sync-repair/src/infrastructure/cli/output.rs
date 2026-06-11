@@ -2,7 +2,7 @@ use std::path::Path;
 
 use clip_sync::{
     format_high_rate_refinement_lines, format_offset_verification_lines, format_time_range,
-    ClipLabel,
+    ClipLabelReport,
 };
 use serde::Serialize;
 
@@ -240,11 +240,11 @@ fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'stat
     "repairable"
 }
 
-fn clip_label_name(label: ClipLabel) -> &'static str {
+fn clip_label_name(label: ClipLabelReport) -> &'static str {
     match label {
-        ClipLabel::Start => "Start",
-        ClipLabel::Interior => "Interior",
-        ClipLabel::End => "End",
+        ClipLabelReport::Start => "Start",
+        ClipLabelReport::Interior => "Interior",
+        ClipLabelReport::End => "End",
     }
 }
 
@@ -386,8 +386,8 @@ mod tests {
         GapPatchStatus, PatchSummary, TrackCompatibility,
     };
     use clip_sync::{
-        AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport, HighRateRefinement,
-        OffsetVerification, RepetitionFinding, TimelineOverlap,
+        AlignmentReport, AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport,
+        HighRateRefinement, OffsetVerification, RepetitionFinding, TimelineOverlap,
     };
 
     fn full_surface_gap_report() -> GapReport {
@@ -410,8 +410,8 @@ mod tests {
                 rate_match: true,
                 verdict: CompatibilityVerdict::Identical,
             }),
-            overlap: Some(overlap),
-            alignment: AlignmentResult {
+            overlap: Some(overlap.into()),
+            alignment: AlignmentReport::from(&AlignmentResult {
                 clips: vec![
                     ClipMatch {
                         label: ClipLabel::Start,
@@ -468,7 +468,7 @@ mod tests {
                     skipped: false,
                     skip_reason: None,
                 }),
-            },
+            }),
             gaps: vec![
                 Gap {
                     video_a_start_secs: 45.0,
@@ -550,8 +550,8 @@ mod tests {
                 rate_match: false,
                 verdict: CompatibilityVerdict::Compatible,
             }),
-            overlap: Some(overlap),
-            alignment: AlignmentResult {
+            overlap: Some(overlap.into()),
+            alignment: AlignmentReport::from(&AlignmentResult {
                 clips: vec![ClipMatch {
                     label: ClipLabel::Start,
                     window_start_secs: 0.0,
@@ -571,7 +571,7 @@ mod tests {
                 start_overlap: Some(overlap),
                 high_rate_refinement: None,
                 offset_verification: None,
-            },
+            }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
                 video_a_end_secs: 60.0,
@@ -704,7 +704,7 @@ mod tests {
             video_b: PathBuf::from("b.mp4"),
             track_compatibility: None,
             overlap: None,
-            alignment: AlignmentResult {
+            alignment: AlignmentReport::from(&AlignmentResult {
                 clips: vec![ClipMatch {
                     label: ClipLabel::Start,
                     window_start_secs: 0.0,
@@ -724,7 +724,7 @@ mod tests {
                 start_overlap: None,
                 high_rate_refinement: None,
                 offset_verification: None,
-            },
+            }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
                 video_a_end_secs: 60.0,
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn human_report_shows_drift_when_clips_disagree() {
         let mut report = minimal_report();
-        report.alignment.clips = vec![
+        report.alignment.clips = [
             ClipMatch {
                 label: ClipLabel::Start,
                 window_start_secs: 0.0,
@@ -765,7 +765,10 @@ mod tests {
                 video_b_decode_skips: 0,
                 repetition: None,
             },
-        ];
+        ]
+        .iter()
+        .map(Into::into)
+        .collect();
         report.alignment.end_aligned = Some(true);
         report.alignment.offsets_consistent = false;
         report.alignment.offset_drift_secs = Some(-0.244);

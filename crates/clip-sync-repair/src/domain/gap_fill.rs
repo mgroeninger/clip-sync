@@ -96,7 +96,9 @@ pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan
 mod tests {
     use std::path::PathBuf;
 
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap};
+    use clip_sync::{
+        AlignmentReport, AlignmentResult, ClipLabel, ClipMatch, TimelineOverlapReport,
+    };
 
     use crate::domain::{
         gap::{Gap, GapReport},
@@ -170,7 +172,7 @@ mod tests {
             video_b: PathBuf::from("b.wav"),
             track_compatibility: compat,
             overlap: None,
-            alignment: make_alignment(Some(0.0)),
+            alignment: AlignmentReport::from(&make_alignment(Some(0.0))),
             gaps,
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
@@ -237,7 +239,7 @@ mod tests {
                 fillable_gap(5979.0, 6180.0),
             ],
         );
-        report.overlap = Some(TimelineOverlap {
+        report.overlap = Some(TimelineOverlapReport {
             video_a_start_secs: 0.0,
             video_a_end_secs: 10.0,
             video_b_start_secs: 0.0,

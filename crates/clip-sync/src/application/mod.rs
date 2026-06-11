@@ -6,6 +6,7 @@ pub mod high_rate_refinement;
 pub mod offset_refinement;
 pub mod offset_verification;
 pub mod ports;
+pub mod report;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod testing;

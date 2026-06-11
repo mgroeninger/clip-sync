@@ -188,7 +188,7 @@ CLI flags override TOML: `-v` sets `progress = verbose`; `-q` sets `progress = q
 
 `clip-sync` also sets `[output].show_diagnostics = true` when `-v` is passed. `clip-sync-repair` uses `-v` for progress and for detailed gap status lines in the human report.
 
-For scripting, prefer `--format json --quiet` and parse stdout.
+For scripting, prefer `--format json --quiet` and parse stdout. The JSON contract is documented field-by-field in [docs/json-output.md](docs/json-output.md) (frozen, v1).
 
 ### Logging (`tracing`)
 
@@ -352,6 +352,7 @@ The library's public surface is a facade of explicit re-exports in `lib.rs`. App
 ## Documentation
 
 - [docs/development.md](docs/development.md) — features, build, full test suite
+- [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy
 - [docs/corpus-validation.md](docs/corpus-validation.md) — test tiers, CI commands, known offsets
 - [docs/corpus-matrix.md](docs/corpus-matrix.md) — case design matrix

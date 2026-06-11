@@ -664,9 +664,11 @@ Shipped design notes: [docs/archive/cli-output-ux-plan.md](docs/archive/cli-outp
 
 ## Output
 
+**JSON contract:** [docs/json-output.md](docs/json-output.md) (v1, frozen). JSON output is serialized from application-layer report DTOs (`application/report.rs`: `AlignmentReport` and friends), never from domain types — `domain/` is serde-free. Repair embeds the same `AlignmentReport` in its `GapReport`.
+
 ### Analyzer (`AlignmentResult`)
 
-The analyzer reports **whether each clip pair aligns** and **any offset identified**, not just a single number.
+The analyzer reports **whether each clip pair aligns** and **any offset identified**, not just a single number. `AlignmentResult` is the domain type; the wire format is its `AlignmentReport` DTO mirror.
 
 ```rust
 struct ClipMatch {
@@ -719,22 +721,7 @@ The Chromaprint adapter maps library segment positions into this convention at t
 
 ### Repair (`GapReport`)
 
-JSON shape (sketch):
-
-```json
-{
-  "alignment": { "recommended_offset_secs": 12.34 },
-  "gaps": [
-    {
-      "start_secs": 45.0,
-      "end_secs": 47.5,
-      "fillable": true,
-      "correlation": 0.82,
-      "reason": null
-    }
-  ]
-}
-```
+JSON shape: `{ "scan": GapReport, "patch": PatchSummary? }` — field-by-field contract in [docs/json-output.md](docs/json-output.md). `GapReport.alignment` embeds the analyzer's `AlignmentReport`.
 
 Report-only mode always exits **0** when analysis completes.
 
@@ -764,8 +751,7 @@ Documented in [docs/error-mapping.md](docs/error-mapping.md) when repair ships. 
 ### Plan-level notes
 
 - Domain and application code must not depend on Symphonia or Chromaprint types.
-- Low-confidence alignment returns exit **0** with a report; it is not `AlignmentError::NoMatch`.
-- `AlignmentError::NoMatch` / `AmbiguousMatch` are for fingerprint **engine** failures.
+- Low-confidence alignment returns exit **0** with a report (`aligned: false`, `recommended_offset_secs: none`). The aligner returns `Ok` with zero confidence; only `AlignmentError::EngineFailed` is an alignment error (library failure, exit 6).
 
 ---
 

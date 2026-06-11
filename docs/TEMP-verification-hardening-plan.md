@@ -104,6 +104,6 @@
 
 ## Cross-plan sequencing
 
-- Phase 2's JSON field must precede the [contract plan](TEMP-output-error-contract-plan.md) freeze (or bump the contract version).
+- The [contract plan](archive/output-error-contract-plan.md) froze the JSON contract on 2026-06-10 (v1, [json-output.md](json-output.md)). Phase 2's field must be **additive and optional-absent** (stays v1 per the revision procedure there) and must update `docs/json-output.md` + regenerate the golden fixtures.
 - `offset_verification.rs` is shared with [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) Phase 4 — whichever lands second rebases; extent-based placement belongs there, not here.
 - Independent of [TEMP-layer-purity-plan.md](TEMP-layer-purity-plan.md).

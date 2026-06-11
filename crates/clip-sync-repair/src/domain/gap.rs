@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use clip_sync::{AlignmentResult, TimelineOverlap};
+use clip_sync::{AlignmentReport, TimelineOverlapReport};
 
 use crate::domain::track_match::TrackCompatibility;
 
@@ -62,8 +62,8 @@ pub struct GapReport {
     /// decodable track — the scan still reports A's gaps.
     pub track_compatibility: Option<TrackCompatibility>,
     /// Shared timeline region from the alignment start clip. `None` when alignment failed.
-    pub overlap: Option<TimelineOverlap>,
-    pub alignment: AlignmentResult,
+    pub overlap: Option<TimelineOverlapReport>,
+    pub alignment: AlignmentReport,
     pub gaps: Vec<Gap>,
     /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
     pub gap_offset_agreement: Option<GapOffsetAgreement>,

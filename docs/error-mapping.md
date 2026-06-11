@@ -1,17 +1,19 @@
 # Error mapping
 
-This document describes how errors flow through `clip-sync`, how library failures are mapped to application errors, what users see on stderr, and what appears in diagnostic logs.
+This document describes how errors flow through `clip-sync`, how library failures are mapped to application errors, what users see on stderr, and what appears in diagnostic logs. For the success-path JSON contract see [json-output.md](json-output.md).
 
 ## Overview
 
 ```text
 library / OS error
-    → port error (MediaError, FingerprintError, …)
+    → port error (MediaError, FingerprintError, …)  [original error kept via source()]
         → AppError
             → user message (stderr, via Display)
             → exit code
             → tracing span (debug detail)
 ```
+
+Port errors carry the underlying library error as a type-erased `source()` (`Option<Arc<dyn Error + Send + Sync>>`): programmatic consumers can walk the standard `Error::source()` chain from `AppError` down to the original `SymphoniaError` / `io::Error` / `toml::de::Error`. The stderr `Display` line is unchanged — sources only add chain depth, never message text.
 
 Hexagonal rule: **domain and application layers never depend on Symphonia, Chromaprint, or other infrastructure crates.** Adapters map external failures at the infrastructure boundary.
 
@@ -56,30 +58,32 @@ Low-confidence alignment (no matching segment) is **not** an error — the gap r
 
 ## User messages
 
-Messages come from `thiserror` `Display` implementations. Examples:
+Messages come from the error enums' `Display` implementations (`application/error.rs`; hand-written for the source-carrying enums so that `source()` exposes the wrapped error directly). Examples:
 
 | AppError | Typical stderr output |
 |----------|----------------------|
-| `Config(FileRead(path))` | `failed to read config file: <path>` |
-| `Config(Parse(msg))` | `failed to parse config: <msg>` |
+| `Config(FileRead { path, .. })` | `failed to read config file: <path>` |
+| `Config(Parse { detail, .. })` | `failed to parse config: <detail>` |
 | `Config(InvalidValue { field, reason })` | `invalid config value for \`<field>\`: <reason>` |
 | `Domain(NoAudioTracks)` | `no audio tracks found` |
 | `Domain(InvalidDuration)` | `invalid media duration` |
 | `Domain(EmptyClip)` | `empty clip` |
 | `Media(FileNotFound(path))` | `file not found: <path>` |
-| `Media(UnsupportedFormat(detail))` | `unsupported format: <detail>` |
-| `Media(OpenFailed(detail))` | `failed to open media: <detail>` |
-| `Media(DecodeFailed { track, detail })` | `decode failed on track <track>: <detail>` |
-| `Media(SeekFailed(detail))` | `seek failed: <detail>` |
+| `Media(UnsupportedFormat { detail, .. })` | `unsupported format: <detail>` |
+| `Media(OpenFailed { detail, .. })` | `failed to open media: <detail>` |
+| `Media(DecodeFailed { track, detail, .. })` | `decode failed on track <track>: <detail>` |
+| `Media(SeekFailed { detail, .. })` | `seek failed: <detail>` |
 | `Fingerprint(InvalidPcm(detail))` | `invalid PCM: <detail>` |
-| `Fingerprint(EngineFailed(detail))` | `fingerprint engine failed: <detail>` |
+| `Fingerprint(EngineFailed { detail, .. })` | `fingerprint engine failed: <detail>` |
 | `Alignment(EngineFailed(detail))` | `alignment engine failed: <detail>` |
+
+Variants whose failures originate in a library or the OS additionally carry that error as `source()` (`UnsupportedFormat`, `OpenFailed`, `DecodeFailed`, `SeekFailed`, `Fingerprint::EngineFailed`, `Config::FileRead`, `Config::Parse`). `FileNotFound`, `Unsupported`, `InvalidPcm`, `InvalidValue`, and the domain errors have no underlying error and return `None`.
 
 ### Alignment vs “no match”
 
 A **low-confidence alignment** (clips do not line up) is **not** an error. The tool returns exit code **0** and prints an alignment report with `aligned: false` and `recommended_offset_secs: none`.
 
-`AlignmentError::NoMatch` and `AmbiguousMatch` are reserved for fingerprint **engine** failures during comparison, not for “clips did not match.”
+The Chromaprint adapter returns `Ok(ClipMatchEstimate { confidence: 0.0, .. })` when fingerprints are empty, no segment is selected, or confidence is below threshold. `AlignmentError` has a single variant, `EngineFailed`, for library failures during comparison (e.g. fingerprint too long). Ambiguous multi-cluster matches are expressed via reduced confidence, not a separate error variant.
 
 ---
 
@@ -109,7 +113,7 @@ Pure business rules; no I/O or library context.
 
 ### Symphonia → MediaError
 
-Mapping is implemented in `error_mapping.rs`.
+Mapping is implemented in `error_mapping.rs`. Every mapped error attaches the original `SymphoniaError` (or inner `io::Error`) as `source()` in addition to the formatted detail string.
 
 #### I/O (`map_io_error`)
 
@@ -217,8 +221,8 @@ Maps to `AppError::Alignment` → exit **6**.
 
 | Variant | When |
 |---------|------|
-| `FileRead(path)` | `--config` file missing or unreadable |
-| `Parse(msg)` | TOML parse failure |
+| `FileRead { path, source }` | `--config` file missing or unreadable (`source` = the `io::Error`) |
+| `Parse { detail, source }` | TOML parse failure (`source` = the `toml::de::Error`) |
 | `InvalidValue { field, reason }` | Validation failure (e.g. `clip_length` &lt; 1 min) |
 
 Maps to `AppError::Config` → exit **2**. Checked at startup before any media work.

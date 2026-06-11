@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use serde::Serialize;
-
 use crate::domain::ClipLabel;
 use crate::domain::ClipWindow;
 
@@ -19,7 +17,7 @@ pub struct ClipMatchEstimate {
 }
 
 /// Internal repeat detected within a single prepared clip.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RepetitionFinding {
     /// Positive seconds between repeated content.
     pub lag_secs: f64,
@@ -28,16 +26,15 @@ pub struct RepetitionFinding {
 }
 
 /// Per-clip repetition diagnostics. Present on `ClipMatch` when `check_clip_repetition` was on.
-/// `a`/`b` are `null` in JSON when no finding; the outer `repetition` key is absent when the
-/// check was off (`#[serde(skip_serializing_if = "Option::is_none")]` on `ClipMatch.repetition`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// JSON shape is owned by `application::report::RepetitionReport`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClipRepetitionReport {
     pub a: Option<RepetitionFinding>,
     pub b: Option<RepetitionFinding>,
 }
 
 /// Alignment outcome for a single clip pair at a known window position.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClipMatch {
     pub label: ClipLabel,
     pub window_start_secs: f64,
@@ -51,12 +48,11 @@ pub struct ClipMatch {
     /// Corrupt decode packets skipped when extracting this clip from video B.
     pub video_b_decode_skips: u32,
     /// Present when `validation.check_clip_repetition` was on for this run.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub repetition: Option<ClipRepetitionReport>,
 }
 
 /// Shared timeline region implied by the start clip and recommended offset.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelineOverlap {
     pub video_a_start_secs: f64,
     pub video_a_end_secs: f64,
@@ -66,7 +62,7 @@ pub struct TimelineOverlap {
 }
 
 /// Hold-out lag-0 check: verifies the recommended offset by comparing a shifted window at zero lag.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OffsetVerification {
     pub window_a_start_secs: f64,
     pub window_a_end_secs: f64,
@@ -76,28 +72,25 @@ pub struct OffsetVerification {
     pub confidence: f32,
     pub verified: bool,
     /// True when verification did not run (no feasible window, extract failure, etc.).
-    #[serde(default)]
     pub skipped: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
 }
 
 /// Native-rate hold-out FFT correction applied after discovery alignment.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HighRateRefinement {
     pub segment_start_secs: f64,
     pub segment_length_secs: f64,
     pub adjustment_secs: f64,
     pub correlation_peak: f64,
     pub applied: bool,
-    #[serde(default)]
     pub skipped: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
 }
 
 /// Full alignment report for all extracted clip pairs.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// JSON shape is owned by `application::report::AlignmentReport`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AlignmentResult {
     pub clips: Vec<ClipMatch>,
     pub start_aligned: bool,
@@ -108,13 +101,10 @@ pub struct AlignmentResult {
     /// All aligned clip pairs report the same offset (within tolerance).
     pub offsets_consistent: bool,
     /// End-clip offset minus start-clip offset when both clips aligned; diagnostic drift signal.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset_drift_secs: Option<f64>,
     /// Overlap on each file's timeline from the start clip match.
     pub start_overlap: Option<TimelineOverlap>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub high_rate_refinement: Option<HighRateRefinement>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset_verification: Option<OffsetVerification>,
 }
 

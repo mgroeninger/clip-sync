@@ -41,8 +41,17 @@ pub fn load_app_config(path: Option<&Path>) -> Result<AppConfig, AppError> {
         return Ok(AppConfig::default());
     };
 
-    let raw = std::fs::read_to_string(path)
-        .map_err(|_| AppError::Config(ConfigError::FileRead(path.to_path_buf())))?;
+    let raw = std::fs::read_to_string(path).map_err(|error| {
+        AppError::Config(ConfigError::FileRead {
+            path: path.to_path_buf(),
+            source: Some(std::sync::Arc::new(error)),
+        })
+    })?;
 
-    toml::from_str(&raw).map_err(|error| AppError::Config(ConfigError::Parse(error.to_string())))
+    toml::from_str(&raw).map_err(|error| {
+        AppError::Config(ConfigError::Parse {
+            detail: error.to_string(),
+            source: Some(std::sync::Arc::new(error)),
+        })
+    })
 }

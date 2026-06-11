@@ -191,7 +191,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         video_b: path_b,
         track_compatibility: Some(compat),
         overlap: None,
-        alignment: make_alignment(0.0),
+        alignment: clip_sync::AlignmentReport::from(&make_alignment(0.0)),
         gaps: vec![default_gap()],
         gap_offset_agreement: None,
         decode_chunk_secs: 60,

@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use tracing::{debug, error, warn};
@@ -11,10 +12,7 @@ use crate::application::error::MediaError;
 pub(crate) const NEAR_TRACK_END_TOLERANCE_SECS: f64 = 2.0;
 
 pub fn decode_failed(track: u32, detail: impl Into<String>) -> MediaError {
-    MediaError::DecodeFailed {
-        track,
-        detail: detail.into(),
-    }
+    MediaError::decode_failed(track, detail)
 }
 
 pub fn log_media_success(path: &Path, operation: &str) {
@@ -26,7 +24,7 @@ pub fn log_media_failure(path: &Path, operation: &str, track: Option<u32>, error
         MediaError::FileNotFound(path) => {
             warn!(path = %path.display(), operation, "media file not found");
         }
-        MediaError::UnsupportedFormat(detail) => {
+        MediaError::UnsupportedFormat { detail, .. } => {
             warn!(
                 path = %path.display(),
                 operation,
@@ -35,7 +33,7 @@ pub fn log_media_failure(path: &Path, operation: &str, track: Option<u32>, error
                 "unsupported media format or codec"
             );
         }
-        MediaError::OpenFailed(detail) => {
+        MediaError::OpenFailed { detail, .. } => {
             error!(
                 path = %path.display(),
                 operation,
@@ -43,7 +41,7 @@ pub fn log_media_failure(path: &Path, operation: &str, track: Option<u32>, error
                 "failed to open or probe media"
             );
         }
-        MediaError::DecodeFailed { track, detail } => {
+        MediaError::DecodeFailed { track, detail, .. } => {
             error!(
                 path = %path.display(),
                 operation,
@@ -52,7 +50,7 @@ pub fn log_media_failure(path: &Path, operation: &str, track: Option<u32>, error
                 "failed to decode media"
             );
         }
-        MediaError::SeekFailed(detail) => {
+        MediaError::SeekFailed { detail, .. } => {
             error!(
                 path = %path.display(),
                 operation,
@@ -93,7 +91,7 @@ pub fn warn_partial_decode(
     track_duration_secs: Option<f64>,
 ) -> MediaError {
     match &error {
-        MediaError::DecodeFailed { track: t, detail } => {
+        MediaError::DecodeFailed { track: t, detail, .. } => {
             let near_track_end = track_duration_secs
                 .map(|duration| window_end_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS)
                 .unwrap_or(false);
@@ -129,7 +127,7 @@ pub fn ensure_regular_file(path: &Path) -> Result<(), MediaError> {
             path,
             "open",
             None,
-            MediaError::OpenFailed(format!("{} is not a regular file", path.display())),
+            MediaError::open_failed(format!("{} is not a regular file", path.display())),
         ));
     }
     Ok(())
@@ -163,7 +161,7 @@ pub fn map_seek_error(
     let expected_tail_seek = is_expected_tail_seek(&error, start_secs, track_duration_secs);
     let media_error = seek_error(path, track, start_secs, error);
     if expected_tail_seek {
-        if let MediaError::SeekFailed(detail) = &media_error {
+        if let MediaError::SeekFailed { detail, .. } = &media_error {
             warn!(
                 path = %path.display(),
                 operation = "seek",
@@ -193,110 +191,143 @@ fn is_expected_tail_seek(
 fn io_error(path: &Path, operation: &str, error: io::Error) -> MediaError {
     match error.kind() {
         io::ErrorKind::NotFound => MediaError::FileNotFound(path.to_path_buf()),
-        io::ErrorKind::PermissionDenied => MediaError::OpenFailed(format!(
-            "{}: permission denied during {operation}",
-            path.display()
-        )),
-        _ => MediaError::OpenFailed(format!(
-            "{}: I/O error during {operation}: {error}",
-            path.display()
-        )),
+        io::ErrorKind::PermissionDenied => MediaError::OpenFailed {
+            detail: format!("{}: permission denied during {operation}", path.display()),
+            source: Some(Arc::new(error)),
+        },
+        _ => MediaError::OpenFailed {
+            detail: format!("{}: I/O error during {operation}: {error}", path.display()),
+            source: Some(Arc::new(error)),
+        },
     }
 }
 
 fn probe_error(path: &Path, error: SymphoniaError) -> MediaError {
     match error {
         SymphoniaError::IoError(err) => io_error(path, "probe", err),
-        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat(format!(
-            "{}: unsupported container or feature: {feature}",
-            path.display()
-        )),
-        SymphoniaError::DecodeError(msg) => MediaError::OpenFailed(format!(
-            "{}: malformed media during probe: {msg}",
-            path.display()
-        )),
-        SymphoniaError::SeekError(kind) => MediaError::SeekFailed(format!(
-            "{}: seek error during probe: {}",
-            path.display(),
-            seek_kind_message(kind)
-        )),
-        SymphoniaError::LimitError(limit) => MediaError::OpenFailed(format!(
-            "{}: limit reached during probe: {limit}",
-            path.display()
-        )),
-        SymphoniaError::ResetRequired => MediaError::OpenFailed(format!(
-            "{}: unexpected decoder reset during probe",
-            path.display()
-        )),
-        other => MediaError::OpenFailed(format!(
-            "{}: probe failed: {other}",
-            path.display()
-        )),
+        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat {
+            detail: format!(
+                "{}: unsupported container or feature: {feature}",
+                path.display()
+            ),
+            source: Some(Arc::new(SymphoniaError::Unsupported(feature))),
+        },
+        SymphoniaError::DecodeError(msg) => MediaError::OpenFailed {
+            detail: format!("{}: malformed media during probe: {msg}", path.display()),
+            source: Some(Arc::new(SymphoniaError::DecodeError(msg))),
+        },
+        SymphoniaError::SeekError(kind) => MediaError::SeekFailed {
+            detail: format!(
+                "{}: seek error during probe: {}",
+                path.display(),
+                seek_kind_message(&kind)
+            ),
+            source: Some(Arc::new(SymphoniaError::SeekError(kind))),
+        },
+        SymphoniaError::LimitError(limit) => MediaError::OpenFailed {
+            detail: format!("{}: limit reached during probe: {limit}", path.display()),
+            source: Some(Arc::new(SymphoniaError::LimitError(limit))),
+        },
+        SymphoniaError::ResetRequired => MediaError::OpenFailed {
+            detail: format!("{}: unexpected decoder reset during probe", path.display()),
+            source: Some(Arc::new(SymphoniaError::ResetRequired)),
+        },
+        other => MediaError::OpenFailed {
+            detail: format!("{}: probe failed: {other}", path.display()),
+            source: Some(Arc::new(other)),
+        },
     }
 }
 
 fn decoder_create_error(path: &Path, track: u32, error: SymphoniaError) -> MediaError {
     match error {
-        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat(format!(
-            "{}: unsupported codec on track {track}: {feature}",
-            path.display()
-        )),
-        other => decode_failed(
+        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat {
+            detail: format!(
+                "{}: unsupported codec on track {track}: {feature}",
+                path.display()
+            ),
+            source: Some(Arc::new(SymphoniaError::Unsupported(feature))),
+        },
+        other => MediaError::DecodeFailed {
             track,
-            format!("failed to create decoder for track {track}: {other}"),
-        ),
+            detail: format!("failed to create decoder for track {track}: {other}"),
+            source: Some(Arc::new(other)),
+        },
     }
 }
 
 fn decode_loop_error(path: &Path, track: u32, error: SymphoniaError) -> MediaError {
     match error {
-        SymphoniaError::IoError(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-            decode_failed(track, format!("unexpected end of stream: {err}"))
-        }
-        SymphoniaError::IoError(err) => {
-            decode_failed(track, format!("I/O error while decoding: {err}"))
-        }
-        SymphoniaError::DecodeError(msg) => {
-            decode_failed(track, format!("malformed stream while decoding: {msg}"))
-        }
-        SymphoniaError::SeekError(kind) => MediaError::SeekFailed(format!(
-            "{}: seek error on track {track} while decoding: {}",
-            path.display(),
-            seek_kind_message(kind)
-        )),
-        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat(format!(
-            "{}: unsupported feature on track {track} while decoding: {feature}",
-            path.display()
-        )),
-        SymphoniaError::LimitError(limit) => {
-            decode_failed(track, format!("decode limit reached: {limit}"))
-        }
-        SymphoniaError::ResetRequired => {
-            decode_failed(track, "unexpected decoder reset while decoding".to_string())
-        }
-        other => decode_failed(track, format!("decode failed on track {track}: {other}")),
+        SymphoniaError::IoError(err) => MediaError::DecodeFailed {
+            track,
+            detail: if err.kind() == io::ErrorKind::UnexpectedEof {
+                format!("unexpected end of stream: {err}")
+            } else {
+                format!("I/O error while decoding: {err}")
+            },
+            source: Some(Arc::new(err)),
+        },
+        SymphoniaError::DecodeError(msg) => MediaError::DecodeFailed {
+            track,
+            detail: format!("malformed stream while decoding: {msg}"),
+            source: Some(Arc::new(SymphoniaError::DecodeError(msg))),
+        },
+        SymphoniaError::SeekError(kind) => MediaError::SeekFailed {
+            detail: format!(
+                "{}: seek error on track {track} while decoding: {}",
+                path.display(),
+                seek_kind_message(&kind)
+            ),
+            source: Some(Arc::new(SymphoniaError::SeekError(kind))),
+        },
+        SymphoniaError::Unsupported(feature) => MediaError::UnsupportedFormat {
+            detail: format!(
+                "{}: unsupported feature on track {track} while decoding: {feature}",
+                path.display()
+            ),
+            source: Some(Arc::new(SymphoniaError::Unsupported(feature))),
+        },
+        SymphoniaError::LimitError(limit) => MediaError::DecodeFailed {
+            track,
+            detail: format!("decode limit reached: {limit}"),
+            source: Some(Arc::new(SymphoniaError::LimitError(limit))),
+        },
+        SymphoniaError::ResetRequired => MediaError::DecodeFailed {
+            track,
+            detail: "unexpected decoder reset while decoding".to_string(),
+            source: Some(Arc::new(SymphoniaError::ResetRequired)),
+        },
+        other => MediaError::DecodeFailed {
+            track,
+            detail: format!("decode failed on track {track}: {other}"),
+            source: Some(Arc::new(other)),
+        },
     }
 }
 
 fn seek_error(path: &Path, track: u32, start_secs: f64, error: SymphoniaError) -> MediaError {
-    match error {
-        SymphoniaError::SeekError(kind) => MediaError::SeekFailed(format!(
+    let detail = match &error {
+        SymphoniaError::SeekError(kind) => format!(
             "{}: seek to {start_secs:.3}s on track {track} failed: {}",
             path.display(),
             seek_kind_message(kind)
-        )),
-        SymphoniaError::Unsupported(feature) => MediaError::SeekFailed(format!(
+        ),
+        SymphoniaError::Unsupported(feature) => format!(
             "{}: seeking to {start_secs:.3}s on track {track} unsupported: {feature}",
             path.display()
-        )),
-        other => MediaError::SeekFailed(format!(
+        ),
+        other => format!(
             "{}: seek to {start_secs:.3}s on track {track} failed: {other}",
             path.display()
-        )),
+        ),
+    };
+    MediaError::SeekFailed {
+        detail,
+        source: Some(Arc::new(error)),
     }
 }
 
-fn seek_kind_message(kind: SeekErrorKind) -> &'static str {
+fn seek_kind_message(kind: &SeekErrorKind) -> &'static str {
     match kind {
         SeekErrorKind::Unseekable => "stream is not seekable",
         SeekErrorKind::ForwardOnly => "stream can only be seeked forward",
@@ -310,6 +341,18 @@ fn seek_kind_message(kind: SeekErrorKind) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Walk the `source()` chain and return true when some level downcasts to `io::Error`.
+    fn chain_reaches_io_error(error: &(dyn std::error::Error + 'static)) -> bool {
+        let mut current = error.source();
+        while let Some(cause) = current {
+            if cause.is::<io::Error>() {
+                return true;
+            }
+            current = cause.source();
+        }
+        false
+    }
+
     #[test]
     fn maps_not_found_io_error() {
         let path = Path::new("/no/such/file.mkv");
@@ -318,35 +361,79 @@ mod tests {
             "open",
             io::Error::new(io::ErrorKind::NotFound, "missing"),
         );
-        assert_eq!(error, MediaError::FileNotFound(path.to_path_buf()));
+        assert!(matches!(error, MediaError::FileNotFound(p) if p == path));
     }
 
     #[test]
     fn maps_unsupported_probe_error() {
         let path = Path::new("test.xyz");
         let error = map_probe_error(path, SymphoniaError::Unsupported("container"));
-        assert!(matches!(error, MediaError::UnsupportedFormat(_)));
+        assert!(matches!(error, MediaError::UnsupportedFormat { .. }));
     }
 
     #[test]
     fn maps_unsupported_decoder_error() {
         let path = Path::new("test.mkv");
         let error = map_decoder_create_error(path, 1, SymphoniaError::Unsupported("codec"));
-        assert!(matches!(error, MediaError::UnsupportedFormat(_)));
+        assert!(matches!(error, MediaError::UnsupportedFormat { .. }));
     }
 
     #[test]
     fn maps_seek_error_during_decode() {
         let path = Path::new("test.wav");
         let error = map_decode_loop_error(path, 1, SymphoniaError::SeekError(SeekErrorKind::Unseekable));
-        assert!(matches!(error, MediaError::SeekFailed(_)));
+        assert!(matches!(error, MediaError::SeekFailed { .. }));
     }
 
     #[test]
     fn rejects_directory_path() {
         let temp = tempfile::tempdir().unwrap();
         let error = ensure_regular_file(temp.path()).unwrap_err();
-        assert!(matches!(error, MediaError::OpenFailed(_)));
+        assert!(matches!(error, MediaError::OpenFailed { .. }));
+    }
+
+    #[test]
+    fn probe_io_failure_source_chain_reaches_io_error() {
+        let path = Path::new("test.mkv");
+        let media_error = map_probe_error(
+            path,
+            SymphoniaError::IoError(io::Error::new(io::ErrorKind::PermissionDenied, "denied")),
+        );
+        let display = media_error.to_string();
+        assert!(
+            display.contains("permission denied during probe"),
+            "display text must stay stable: {display}"
+        );
+        // `AppError` is `#[error(transparent)]`, so its source() defers to MediaError's.
+        let app_error = crate::application::error::AppError::Media(media_error);
+        assert!(
+            chain_reaches_io_error(&app_error),
+            "expected io::Error reachable via source() from AppError"
+        );
+    }
+
+    #[test]
+    fn decode_io_failure_source_chain_reaches_io_error() {
+        let path = Path::new("test.mkv");
+        let media_error = map_decode_loop_error(
+            path,
+            2,
+            SymphoniaError::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "eof")),
+        );
+        assert!(matches!(media_error, MediaError::DecodeFailed { track: 2, .. }));
+        let app_error = crate::application::error::AppError::Media(media_error);
+        assert!(
+            chain_reaches_io_error(&app_error),
+            "expected io::Error reachable via source() from AppError"
+        );
+    }
+
+    #[test]
+    fn probe_symphonia_failure_attaches_source() {
+        use std::error::Error as _;
+        let error = map_probe_error(Path::new("x.mkv"), SymphoniaError::Unsupported("container"));
+        let source = error.source().expect("symphonia error attached as source");
+        assert!(source.is::<SymphoniaError>());
     }
 
     #[test]
@@ -359,7 +446,7 @@ mod tests {
             SymphoniaError::SeekError(SeekErrorKind::OutOfRange),
             Some(600.064),
         );
-        assert!(matches!(error, MediaError::SeekFailed(_)));
+        assert!(matches!(error, MediaError::SeekFailed { .. }));
     }
 
     #[test]
@@ -372,6 +459,6 @@ mod tests {
             SymphoniaError::SeekError(SeekErrorKind::OutOfRange),
             Some(600.064),
         );
-        assert!(matches!(error, MediaError::SeekFailed(_)));
+        assert!(matches!(error, MediaError::SeekFailed { .. }));
     }
 }

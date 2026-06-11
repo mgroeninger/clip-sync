@@ -193,6 +193,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
+        let alignment = clip_sync::AlignmentReport::from(&alignment);
         Ok(GapReport {
             video_a: request.video_a,
             video_b: request.video_b,
@@ -453,10 +454,7 @@ mod tests {
         ) -> Result<MonoPcmClip, MediaError> {
             let start = window.start.as_secs_f64();
             if start >= self.skip_start && start < self.skip_end {
-                return Err(MediaError::DecodeFailed {
-                    track: track.index,
-                    detail: "skipped scan window".into(),
-                });
+                return Err(MediaError::decode_failed(track.index, "skipped scan window"));
             }
             SilentSession(self.duration).extract_mono(track, window, progress, label)
         }
@@ -486,7 +484,7 @@ mod tests {
             _label: &str,
         ) -> Result<MonoPcmClip, MediaError> {
             if window.start.as_secs_f64() >= self.fail_from_secs {
-                return Err(MediaError::SeekFailed("tail seek".into()));
+                return Err(MediaError::seek_failed("tail seek"));
             }
             let rate = 11_025u32;
             let secs = (window.end - window.start).as_secs_f64();
@@ -669,10 +667,7 @@ mod tests {
             _progress: &dyn clip_sync::ProgressReporter,
             _label: &str,
         ) -> Result<MonoPcmClip, MediaError> {
-            Err(MediaError::DecodeFailed {
-                track: 0,
-                detail: "not reached".into(),
-            })
+            Err(MediaError::decode_failed(0, "not reached"))
         }
     }
 
@@ -816,7 +811,7 @@ mod tests {
             video_b: PathBuf::from("b.wav"),
             track_compatibility: None,
             overlap: None,
-            alignment: aligned_result(Some(0.0)),
+            alignment: clip_sync::AlignmentReport::from(&aligned_result(Some(0.0))),
             gaps: vec![
                 Gap {
                     video_a_start_secs: 0.0,

@@ -1,6 +1,6 @@
 # Temporary plan: internal layer purity
 
-> **Status:** Draft (2026-06-10). Plan 2 of 4 — see [BACKLOG.md](../BACKLOG.md). No behavior or contract changes; parallel-safe with [TEMP-output-error-contract-plan.md](TEMP-output-error-contract-plan.md) (coordinate only on the `resample.rs` warn).
+> **Status:** Draft (2026-06-10). Plan 2 of 4 — see [BACKLOG.md](../BACKLOG.md). No behavior or contract changes. Plan 1 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)) shipped 2026-06-10 — the `resample.rs` warn exists and moves here with the code.
 
 **Problem:** PLAN.md claims "Domain depends on nothing external" and "application depends on domain only", but: `rubato` is used directly in `domain/resample.rs`; the `cross_correlate` crate is called directly from `application/offset_refinement.rs`; infrastructure tests import `application::testing::ffmpeg_util` (dependency arrow pointing the wrong way); and `Fingerprint` exposes a bare `pub data: Vec<u32>`.
 
@@ -95,5 +95,5 @@ No new behavior — the test obligation is **equivalence**:
 
 ## Cross-plan sequencing
 
-- Parallel-safe with Plan 1 ([TEMP-output-error-contract-plan.md](TEMP-output-error-contract-plan.md)); if Plan 1 Phase 1 already added the resample warn, it moves here with the code.
+- Plan 1 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)) shipped; the resample warn it added in `domain/resample.rs` moves here with the code.
 - Land **before or after** [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) — no shared surface except `ports.rs` additions (merge-conflict-only risk).

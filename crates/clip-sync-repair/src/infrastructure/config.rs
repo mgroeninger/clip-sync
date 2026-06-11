@@ -454,8 +454,12 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
         return Ok(RepairAppConfig::default());
     };
 
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| AppError::Config(ConfigError::FileRead(path.to_path_buf())))?;
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        AppError::Config(ConfigError::FileRead {
+            path: path.to_path_buf(),
+            source: Some(std::sync::Arc::new(error)),
+        })
+    })?;
 
     let num_clips_explicit = match toml::from_str::<toml::Table>(&text) {
         Ok(table) => table
@@ -473,8 +477,12 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
     let require_consistent_explicit = alignment_table.contains_key("require_consistent_offsets");
     let high_rate_explicit = alignment_table.contains_key("refine_offset_high_rate");
 
-    let mut config: RepairAppConfig = toml::from_str(&text)
-        .map_err(|e| AppError::Config(ConfigError::Parse(e.to_string())))?;
+    let mut config: RepairAppConfig = toml::from_str(&text).map_err(|error| {
+        AppError::Config(ConfigError::Parse {
+            detail: error.to_string(),
+            source: Some(std::sync::Arc::new(error)),
+        })
+    })?;
 
     if !num_clips_explicit {
         config.align.clip.num_clips = REPAIR_DEFAULT_NUM_CLIPS;

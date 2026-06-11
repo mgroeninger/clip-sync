@@ -944,7 +944,7 @@ pub(super) fn seek_to_window_start(
     track_duration: Option<Duration>,
 ) -> Result<(), MediaError> {
     let time = Time::try_new(start.as_secs() as i64, start.subsec_nanos()).ok_or_else(|| {
-        MediaError::SeekFailed(format!(
+        MediaError::seek_failed(format!(
             "{}: seek to {:.3}s on track {track_id} failed: invalid time",
             path.display(),
             start.as_secs_f64()

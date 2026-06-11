@@ -1,9 +1,9 @@
 use std::process::ExitCode;
 
 use clip_sync::{
-    AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport, ConfigError,
-    DomainError, FingerprintError, HighRateRefinement, MediaError, OffsetVerification,
-    RepetitionFinding, TimelineOverlap,
+    AlignmentReport, AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport,
+    ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError,
+    OffsetVerification, RepetitionFinding, TimelineOverlap,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::{format_human_output, format_json_output};
@@ -227,7 +227,7 @@ fn full_surface_alignment_json_golden() {
 #[test]
 fn aligned_result_serializes_to_expected_json_shape() {
     let result = aligned_result(12.5);
-    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let json = serde_json::to_string_pretty(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     assert!(value["start_aligned"].is_boolean(), "start_aligned must be boolean");
@@ -245,7 +245,7 @@ fn aligned_result_serializes_to_expected_json_shape() {
 #[test]
 fn unaligned_result_serializes_with_null_offset() {
     let result = unaligned_result();
-    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let json = serde_json::to_string_pretty(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     assert_eq!(value["start_aligned"], false);
@@ -258,7 +258,7 @@ fn unaligned_result_serializes_with_null_offset() {
 #[test]
 fn clip_match_json_has_required_fields() {
     let result = aligned_result(3.0);
-    let json = serde_json::to_string(&result).expect("serialize");
+    let json = serde_json::to_string(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let clip = &value["clips"][0];
@@ -396,7 +396,7 @@ fn high_rate_refinement_shows_peak_with_diagnostics() {
 #[test]
 fn high_rate_refinement_is_omitted_when_none() {
     let result = aligned_result(3.0);
-    let json = serde_json::to_string(&result).expect("serialize");
+    let json = serde_json::to_string(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     // `#[serde(skip_serializing_if = "Option::is_none")]` on high_rate_refinement
@@ -409,7 +409,7 @@ fn high_rate_refinement_is_omitted_when_none() {
 #[test]
 fn aligned_result_roundtrips_through_json() {
     let result = aligned_result(7.25);
-    let json = serde_json::to_string(&result).expect("serialize");
+    let json = serde_json::to_string(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
     // Re-serialize the Value and re-parse; both parsed Values must be equal.
     // (Key order differs between struct serialization and Value re-serialization
@@ -467,7 +467,7 @@ fn alignment_error_maps_to_exit_6() {
 #[test]
 fn align_json_repetition_object_when_flag_on() {
     let result = result_with_repetition(Some(30.0), None);
-    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let json = serde_json::to_string_pretty(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let clip = &value["clips"][0];
@@ -482,7 +482,7 @@ fn align_json_repetition_object_when_flag_on() {
 #[test]
 fn align_json_no_repetition_key_when_flag_off() {
     let result = aligned_result(3.0);
-    let json = serde_json::to_string(&result).expect("serialize");
+    let json = serde_json::to_string(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let clip = &value["clips"][0];
@@ -616,7 +616,7 @@ fn verify_human_verbose_shows_skip_reason() {
 #[test]
 fn verify_json_absent_when_none() {
     let result = aligned_result(3.0);
-    let json = serde_json::to_string(&result).expect("serialize");
+    let json = serde_json::to_string(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     assert!(
@@ -630,7 +630,7 @@ fn verify_json_present_when_some() {
     let mut result = aligned_result(3.0);
     result.offset_verification = Some(make_verification(true, 0.85, false, None));
 
-    let json = serde_json::to_string_pretty(&result).expect("serialize");
+    let json = serde_json::to_string_pretty(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let verify = &value["offset_verification"];

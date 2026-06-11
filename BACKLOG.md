@@ -16,7 +16,7 @@ Last updated: 2026-06-10. Items 7, 8 done.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) | Item 7, serde half of item 11, stringly port errors, silent resample fallback, JSON freeze |
+| [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) | serde half of item 11, stringly port errors, JSON freeze (Phases 1–2 done) |
 | [TEMP-layer-purity-plan.md](docs/TEMP-layer-purity-plan.md) | Ports half of item 11, test helper coupling, type / dependency polish |
 | [TEMP-media-session-redesign-plan.md](docs/TEMP-media-session-redesign-plan.md) | Items 6, 8, 12; hold-out container duration, unused `decoded_extent_*`, `reset_io` ignored |
 | [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
@@ -101,7 +101,6 @@ Defaults, domain errors, purity claims out of sync with code.
 | [Test helper coupling](#test-helper-cross-layer-coupling) | `tests/support/` when refactoring media tests |
 | [Type / dependency polish](#type-and-dependency-polish) | `Fingerprint` newtype; drop unused `anyhow` |
 | [Stringly port errors](#stringly-typed-port-errors) | Structured sub-enums |
-| [Silent resample fallback](#silent-resample-fallback) | `warn` on rubato fallback |
 
 #### Memory use and PCM cloning on long clips
 
@@ -139,12 +138,6 @@ Free-form `String`; no `source()` chain from Symphonia.
 
 **Refs:** `application/error.rs`, `infrastructure/symphonia/error_mapping.rs`
 
-#### Silent resample fallback
-
-Linear interpolation when `rubato` fails; no log.
-
-**Refs:** `domain/resample.rs`
-
 ---
 
 ## Completed
@@ -165,6 +158,7 @@ Linear interpolation when `rubato` fails; no log.
 | Clip self-repetition check | 2026-06-10 | [archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) |
 | Hold-out offset verification | 2026-06-10 | [archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) |
 | `AlignmentError::NoMatch` / `AmbiguousMatch` removed | 2026-06-10 | Contract frozen: low-confidence = `Ok(confidence: 0.0)`; `EngineFailed` is the only error variant |
+| Resample rubato fallback warn | 2026-06-10 | [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) Phase 1 — `domain/resample.rs` |
 | `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
 
 ---

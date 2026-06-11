@@ -1,8 +1,8 @@
 # Temporary plan: `MediaSession` redesign + media extent
 
-> **Status:** Draft (2026-06-10). Plan 3 of 4 — see [BACKLOG.md](../BACKLOG.md). **One** breaking port change batching every `MediaSession` surface decision, so fakes and both CLI crates churn once. Land **after** [TEMP-output-error-contract-plan.md](TEMP-output-error-contract-plan.md) (both touch `MediaError` call sites).
+> **Status:** Draft (2026-06-10). Plan 3 of 4 — see [BACKLOG.md](../BACKLOG.md). **One** breaking port change batching every `MediaSession` surface decision, so fakes and both CLI crates churn once. Plan 1 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)) shipped 2026-06-10 — the `MediaError` surface is settled (source-carrying struct variants + `MediaError::open_failed`-style constructors), so this plan is unblocked.
 
-**Problem:** The `MediaSession` port presents a stateless `&self` facade over a stateful seekable decoder (`RefCell<Option<MediaIoState>>` + five `expect("session io initialized")`). Consequences already in the backlog: `reset_io` is forgettable (high-rate refinement discards its result), the session is not `Sync` (parallel A/B decode foreclosed by accident), scan-loop policy (`NEAR_TRACK_END_TOLERANCE_SECS`, error swallowing) lives in trait default methods, and four separate items trace back to trusting container metadata — duration-less files, hold-out placement on container duration, dead `decoded_extent_*` fields, and an always-`None` bitrate.
+**Problem:** The `MediaSession` port presents a stateless `&self` facade over a stateful seekable decoder (`RefCell<Option<MediaIoState>>` + five `expect("session io initialized")`). Consequences already in the backlog: `reset_io` is forgettable (high-rate refinement discards its result), the session is not `Sync` (parallel A/B decode foreclosed by accident), scan-loop policy (`NEAR_TRACK_END_TOLERANCE_SECS`, error swallowing) lives in trait default methods, and three separate items trace back to trusting container metadata — duration-less files, hold-out placement on container duration, and dead `decoded_extent_*` fields.
 
 **Goal:** Honest port semantics (`&mut self`, no `RefCell`, no `expect`), adapter-internal seek recovery that deletes `reset_io` from the port, scan policy in one named place, and a first-class `MediaExtent` (declared vs decodable duration) consumed by clip planning, hold-out placement, and tail scans. Decide — without implementing — the parallel-decode and streaming questions so this port shape doesn't foreclose them again.
 
@@ -23,7 +23,7 @@
 | Hold-out placement | `offset_verification.rs` 67–93 | `pick_duration = duration_a.min(duration_b)` — container duration; `decoded_extent_a/b` destructured to `_`, `#[allow(dead_code)]` at 23–26 | 4 |
 | Extent today | `align_videos.rs` 513–524 (`track_decodable_extent` when `num_clips >= 2` && clamp flag), ~606 (`decoded_timeline_extent` of discovery clips) | Three uncoordinated duration notions: container, tail-scan extent, discovery-decode extent | 4 |
 | Duration at open | `infrastructure/symphonia/probe.rs` 52–127; `duration.rs` 44–110 | Per-track duration, chapter fallback, packet-scan fallback (`scan_container_audio_duration`); open fails on zero duration | 4 |
-| Bitrate | `probe.rs` 96 (`bitrate: None` always); `domain/policies.rs` 13–22 (`select_best_track` = first decodable, **no bitrate logic**) | Field dead; BACKLOG #8 "parse or remove" | 5 |
+| ~~Bitrate~~ | — | **Done 2026-06-10** (before this plan lands): `AudioTrack.bitrate` deleted — Symphonia doesn't expose encoding bitrate; `select_best_track` stays first-decodable. BACKLOG #8 closed | — |
 | Memory model | `ports.rs` 41 (owned `MonoPcmClip`); clones in `align_videos.rs` ~285–308, `pcm_preparation.rs` 60–113 | Full-clip buffers; streaming would change `Fingerprinter` too | decision only |
 
 ---
@@ -41,7 +41,7 @@
 | **`MediaExtent`** | New domain value type: `MediaExtent { declared: Duration, decodable: Option<Duration> }` with `effective() -> Duration` (= `decodable.unwrap_or(declared)`, clamped to declared). Resolved **once per video** in `AlignVideos::execute` — declared from `track.duration`, decodable from `track_decodable_extent` when end-anchored windows or `verify_offset` make the tail matter. Passed to clip planning (`clip_windows_with_options`), hold-out placement, and high-rate refinement inputs. The `#[allow(dead_code)]` `decoded_extent_*` fields are replaced by `MediaExtent`, not merely wired. |
 | **Hold-out placement** | `offset_verification.rs` uses `extent_a.effective().min(extent_b.effective())` for `pick_duration` and feasibility. This is the BACKLOG "hybrid extent policy": container duration when the tail is verified decodable, decodable extent when it isn't. MKV-tail regression test required (the motivating failure). |
 | **Duration-less files (BACKLOG #6)** | Open keeps failing only when **no** duration can be established (probe → chapters → packet scan). Audit remaining open-failure paths; anything decodable-but-duration-less should open and fail at **clip planning** with `InvalidDuration`. Covered by Phase 4 audit task; `mp3_no_duration_tag` corpus case is the regression anchor. |
-| **Bitrate (BACKLOG #8)** | **Remove-with-gate:** one timeboxed attempt to populate from Symphonia codec params/container metadata for mp4/mkv/mp3 corpus cases. If it stays `None` on the common corpus, delete `AudioTrack.bitrate` and the BACKLOG's claimed tiebreaker (none exists in code today — `select_best_track` is first-decodable only). |
+| **Bitrate (BACKLOG #8)** | **Already resolved (2026-06-10, outside this plan):** `AudioTrack.bitrate` deleted after confirming Symphonia doesn't expose encoding bitrate. No work remains here. |
 | **Streaming / memory ceiling** | **Decide, don't implement:** future streaming fingerprinting will use the bucket-callback shape (`scan_*_buckets`), not a new pull API — so this redesign must keep callbacks compatible with `&mut self` (callback cannot re-enter the session; document this re-entrancy rule on the trait). The PCM-clone reduction in `align_extracted_pair` stays in BACKLOG defer/opportunistic. |
 | **Error semantics** | No new `MediaError` variants. Retry-once recovery maps the *second* failure to the original error. Coordinate with contract plan Phase 3 (`#[source]` additions) — rebase order, not design coupling. |
 
@@ -79,10 +79,9 @@
 - [ ] Hold-out placement + feasibility switch to `effective()` durations; Phase 0 MKV-tail test goes green.
 - [ ] Duration-less audit (BACKLOG #6): enumerate remaining open-failure paths in `probe.rs`/`session.rs`; relax open where decodable; clip planning rejects unknown duration; corpus cases for each relaxed path.
 
-### Phase 5 — bitrate gate + docs
+### Phase 5 — docs
 
-- [ ] Timeboxed bitrate probe attempt; populate or delete field per decision.
-- [ ] PLAN.md: port table, session semantics, extent concept, re-entrancy rule, parallel/streaming decisions recorded. BACKLOG: close items 6, 8, 12, "hold-out container duration", "unused decoded_extent", "reset_io ignored"; memory item stays with updated note.
+- [ ] PLAN.md: port table, session semantics, extent concept, re-entrancy rule, parallel/streaming decisions recorded. BACKLOG: close items 6, 12, "hold-out container duration", "unused decoded_extent", "reset_io ignored"; memory item stays with updated note. (Item 8 / bitrate closed 2026-06-10, independent of this plan.)
 
 ---
 
@@ -101,7 +100,6 @@
 - `reset_io` gone from the port; no caller-managed IO state anywhere.
 - One named home for scan policy with direct tests.
 - Hold-out placement and clip planning consume `MediaExtent`; no dead extent fields.
-- `bitrate` either populated or deleted.
 
 ## Cross-plan sequencing
 

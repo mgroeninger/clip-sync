@@ -874,7 +874,7 @@ fn open_rejects_directory() {
     let temp = tempfile::tempdir().unwrap();
     let reader = SymphoniaMediaReader;
     match reader.open(&MediaSource::new(temp.path())) {
-        Err(MediaError::OpenFailed(_)) => {}
+        Err(MediaError::OpenFailed { .. }) => {}
         Ok(_) => panic!("expected OpenFailed"),
         Err(other) => panic!("expected OpenFailed, got {other}"),
     }

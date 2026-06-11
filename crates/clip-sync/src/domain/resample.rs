@@ -1,4 +1,5 @@
 use rubato::{FftFixedIn, Resampler};
+use tracing::warn;
 
 use crate::domain::MonoPcmClip;
 
@@ -22,7 +23,7 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
         1,
     ) {
         Ok(resampler) => resampler,
-        Err(_) => return linear_resample_fallback(clip, target_rate),
+        Err(_) => return linear_resample_fallback(clip, target_rate, "fft_init"),
     };
 
     let input: Vec<f32> = clip.samples.iter().map(|s| f32::from(*s)).collect();
@@ -42,7 +43,7 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
 
         match resampler.process_into_buffer(&waves_in, &mut waves_out, None) {
             Ok((_, produced)) => output.extend_from_slice(&waves_out[0][..produced]),
-            Err(_) => return linear_resample_fallback(clip, target_rate),
+            Err(_) => return linear_resample_fallback(clip, target_rate, "process_buffer"),
         }
 
         chunk_start += chunk_len;
@@ -65,7 +66,18 @@ pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
     }
 }
 
-fn linear_resample_fallback(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
+fn linear_resample_fallback(
+    clip: &MonoPcmClip,
+    target_rate: u32,
+    trigger: &'static str,
+) -> MonoPcmClip {
+    warn!(
+        trigger = trigger,
+        from_rate = clip.sample_rate,
+        to_rate = target_rate,
+        "rubato resample failed; using linear interpolation fallback"
+    );
+
     let output_len = ((clip.samples.len() as u64 * u64::from(target_rate))
         / u64::from(clip.sample_rate))
         .max(1) as usize;
@@ -182,6 +194,78 @@ mod tests {
         };
         let resampled = resample_mono_pcm(&clip, 44_100);
         assert_eq!(resampled, clip);
+    }
+
+    #[test]
+    fn linear_resample_fallback_emits_warn() {
+        use std::sync::{Arc, Mutex};
+
+        use tracing::subscriber::set_default;
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::prelude::*;
+        use tracing_subscriber::Registry;
+
+        #[derive(Default)]
+        struct WarnCapture {
+            messages: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl<S> Layer<S> for WarnCapture
+        where
+            S: tracing::Subscriber,
+        {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+                if *event.metadata().level() != tracing::Level::WARN {
+                    return;
+                }
+                let mut visitor = MessageVisitor::default();
+                event.record(&mut visitor);
+                if !visitor.message.is_empty() {
+                    self.messages.lock().unwrap().push(visitor.message);
+                }
+            }
+        }
+
+        #[derive(Default)]
+        struct MessageVisitor {
+            message: String,
+        }
+
+        impl tracing::field::Visit for MessageVisitor {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "message" {
+                    self.message = value.to_string();
+                }
+            }
+
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.message = format!("{value:?}");
+                }
+            }
+        }
+
+        let capture = WarnCapture::default();
+        let messages = Arc::clone(&capture.messages);
+        let subscriber = Registry::default().with(capture);
+        let _guard = set_default(subscriber);
+
+        let clip = MonoPcmClip {
+            sample_rate: 44_100,
+            samples: vec![0, 100, -100, 200],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let _ = linear_resample_fallback(&clip, 11_025, "fft_init");
+
+        assert!(
+            messages
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|msg| msg.contains("linear interpolation fallback")),
+            "expected warn log when rubato fallback runs"
+        );
     }
 
     #[test]

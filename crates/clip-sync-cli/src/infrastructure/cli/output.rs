@@ -1,13 +1,14 @@
 use clip_sync::{
     format_high_rate_refinement_lines, format_offset_verification_lines, format_timestamp,
-    AppError, AlignmentResult, ClipLabel, ClipMatch, RepetitionFinding,
+    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
+    RepetitionFindingReport,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
 /// JSON report for stdout (`--format json`). Golden-tested in `clip-sync-cli/tests/cli_output.rs`.
 pub fn format_json_output(result: &AlignmentResult) -> String {
-    serde_json::to_string_pretty(result).expect("serialize alignment result")
+    serde_json::to_string_pretty(&AlignmentReport::from(result)).expect("serialize alignment report")
 }
 
 pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<(), AppError> {
@@ -24,6 +25,7 @@ fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
 }
 
 pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> String {
+    let result = AlignmentReport::from(result);
     let mut out = String::new();
 
     let offset = result
@@ -101,7 +103,7 @@ pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> 
     out
 }
 
-fn format_per_clip_offset_line(clip: &ClipMatch) -> String {
+fn format_per_clip_offset_line(clip: &ClipMatchReport) -> String {
     let label = clip_label_name(clip.label);
     if clip.aligned {
         if let Some(offset) = clip.offset_secs {
@@ -117,7 +119,7 @@ fn format_per_clip_offset_line(clip: &ClipMatch) -> String {
     )
 }
 
-fn format_clip_window_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
+fn format_clip_window_line(clip: &ClipMatchReport, show_diagnostics: bool) -> String {
     let label = clip_label_name(clip.label);
     let window = format_window(clip.window_start_secs, clip.window_end_secs);
 
@@ -144,7 +146,7 @@ fn format_clip_window_line(clip: &ClipMatch, show_diagnostics: bool) -> String {
     line
 }
 
-fn format_repetition_lines(clip: &ClipMatch, show_diagnostics: bool) -> Vec<String> {
+fn format_repetition_lines(clip: &ClipMatchReport, show_diagnostics: bool) -> Vec<String> {
     let Some(rep) = &clip.repetition else {
         return vec![];
     };
@@ -161,7 +163,7 @@ fn format_repetition_lines(clip: &ClipMatch, show_diagnostics: bool) -> Vec<Stri
     lines
 }
 
-fn format_repetition_finding(label: &str, finding: &RepetitionFinding) -> String {
+fn format_repetition_finding(label: &str, finding: &RepetitionFindingReport) -> String {
     format!(
         "{label}: internal repeat ~{:.1}s (confidence {:.2})",
         finding.lag_secs, finding.confidence
@@ -176,10 +178,10 @@ fn format_window(start_secs: f64, end_secs: f64) -> String {
     )
 }
 
-fn clip_label_name(label: ClipLabel) -> &'static str {
+fn clip_label_name(label: ClipLabelReport) -> &'static str {
     match label {
-        ClipLabel::Start => "Start",
-        ClipLabel::Interior => "Interior",
-        ClipLabel::End => "End",
+        ClipLabelReport::Start => "Start",
+        ClipLabelReport::Interior => "Interior",
+        ClipLabelReport::End => "End",
     }
 }
