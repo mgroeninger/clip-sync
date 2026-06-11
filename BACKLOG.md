@@ -12,6 +12,15 @@ Last updated: 2026-06-10.
 
 **Next:** [Phase 4](#phase-4--edge-cases-and-semantics) edge cases → [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
+**Active plans (2026-06-10)** — most open items below are owned by one of four drafts; land order: 1 → (2 ∥ 4) → 3.
+
+| Plan | Covers |
+|------|--------|
+| [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) | Item 7, serde half of item 11, stringly port errors, silent resample fallback, JSON freeze |
+| [TEMP-layer-purity-plan.md](docs/TEMP-layer-purity-plan.md) | Ports half of item 11, test helper coupling, type / dependency polish |
+| [TEMP-media-session-redesign-plan.md](docs/TEMP-media-session-redesign-plan.md) | Items 6, 8, 12; hold-out container duration, unused `decoded_extent_*`, `reset_io` ignored |
+| [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
+
 ---
 
 ## Open work
