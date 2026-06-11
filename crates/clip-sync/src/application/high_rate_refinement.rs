@@ -8,7 +8,7 @@ use crate::application::offset_refinement::refine_holdout_segment_lag;
 use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::{
     holdout_window_candidates, holdout_window_feasible, refresh_start_overlap, AlignmentResult,
-    AudioTrack, ClipWindow, HighRateRefinement, MonoPcmClip,
+    AudioTrack, ClipWindow, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
 
 pub struct HighRateRefinementInput<'a, MS: MediaSession> {
@@ -17,12 +17,8 @@ pub struct HighRateRefinementInput<'a, MS: MediaSession> {
     pub track_a: &'a AudioTrack,
     pub track_b: &'a AudioTrack,
     pub discovery_windows: &'a [ClipWindow],
-    pub duration_a: Duration,
-    pub duration_b: Duration,
-    #[allow(dead_code)]
-    pub decoded_extent_a: Duration,
-    #[allow(dead_code)]
-    pub decoded_extent_b: Duration,
+    pub extent_a: MediaExtent,
+    pub extent_b: MediaExtent,
     pub resampler: &'a dyn Resampler,
     pub correlator: &'a dyn PcmCorrelator,
 }
@@ -54,9 +50,9 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
     let segment_length_secs = segment_length.as_secs_f64();
 
-    let pick_duration = input.duration_a.min(input.duration_b);
-    let dur_a = input.duration_a.as_secs_f64();
-    let dur_b = input.duration_b.as_secs_f64();
+    let pick_duration = input.extent_a.effective().min(input.extent_b.effective());
+    let dur_a = input.extent_a.effective().as_secs_f64();
+    let dur_b = input.extent_b.effective().as_secs_f64();
 
     let candidates =
         holdout_window_candidates(pick_duration, input.discovery_windows, segment_length, offset_secs);
@@ -171,7 +167,11 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     );
 
     result.recommended_offset_secs = Some(offset_secs + adjustment_secs);
-    refresh_start_overlap(result, input.duration_a, input.duration_b);
+    refresh_start_overlap(
+        result,
+        input.extent_a.effective(),
+        input.extent_b.effective(),
+    );
     result.high_rate_refinement = Some(HighRateRefinement {
         segment_start_secs: chosen_start_secs,
         segment_length_secs,

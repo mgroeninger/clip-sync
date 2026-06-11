@@ -842,6 +842,45 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: generated corpus + ffmpeg; cargo test corpus_mkv_tail_decodable_extent_gap -- --ignored"]
+    fn corpus_mkv_tail_decodable_extent_gap() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|entry| entry.id == "mkv_tail_decodable_extent_gap")
+            .expect("mkv_tail_decodable_extent_gap case in manifest");
+        assert!(
+            case.verify_offset && case.expect_offset_verified == Some(true),
+            "manifest must request verified hold-out on decodable extent"
+        );
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
+        let result = run_corpus_case(
+            &use_case,
+            case,
+            &manifest.defaults,
+            paths.video_a,
+            paths.video_b,
+        )
+        .unwrap_or_else(|error| panic!("mkv_tail_decodable_extent_gap failed: {error}"));
+        assert_corpus_expectations(case, &manifest.defaults, &result);
+    }
+
+    #[test]
     #[ignore = "slow: generated corpus + ffmpeg; cargo test corpus_generated -- --ignored"]
     fn corpus_generated_cases() {
         run_manifest_cases(CorpusTier::Generated);

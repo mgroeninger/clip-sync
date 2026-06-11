@@ -4,6 +4,7 @@ use crate::domain::audio_track::AudioTrack;
 use crate::domain::clip_plan::ClipPlan;
 use crate::domain::clip_window::{ClipLabel, ClipWindow};
 use crate::domain::error::DomainError;
+use crate::domain::media_extent::MediaExtent;
 use crate::domain::mono_pcm_clip::MonoPcmClip;
 
 /// Pick the first decodable audio track in container order.
@@ -45,35 +46,28 @@ pub fn select_track_for_reference<'a>(
 /// Optional bounds when placing multi-clip windows near the file tail.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClipPlanningOptions {
-    /// Last decodable packet end time; end clip is anchored here instead of container duration.
-    pub decodable_extent: Option<Duration>,
-    /// Inset before `decodable_extent` (or container end) for the end clip window.
+    /// Inset before [`MediaExtent::effective`] for the end clip window.
     pub end_tail_inset: Duration,
 }
 
-pub fn effective_timeline_end(
-    container_duration: Duration,
-    decodable_extent: Option<Duration>,
-    end_tail_inset: Duration,
-) -> Duration {
-    let mut end = container_duration;
-    if let Some(extent) = decodable_extent {
-        end = end.min(extent);
-    }
-    end.saturating_sub(end_tail_inset)
+pub fn effective_timeline_end(extent: &MediaExtent, end_tail_inset: Duration) -> Duration {
+    extent
+        .effective()
+        .saturating_sub(end_tail_inset)
         .max(Duration::from_secs(1))
-        .min(container_duration)
+        .min(extent.declared)
 }
 
 pub fn clip_windows_with_options(
-    duration: Duration,
+    extent: &MediaExtent,
     plan: &ClipPlan,
     options: ClipPlanningOptions,
 ) -> Result<Vec<ClipWindow>, DomainError> {
-    if duration.is_zero() {
+    if extent.declared.is_zero() {
         return Err(DomainError::InvalidDuration);
     }
 
+    let duration = extent.declared;
     let clip_length = plan.clip_length;
     let effective_num_clips = if duration < clip_length {
         1
@@ -93,11 +87,7 @@ pub fn clip_windows_with_options(
         )]);
     }
 
-    let timeline_end = effective_timeline_end(
-        duration,
-        options.decodable_extent,
-        options.end_tail_inset,
-    );
+    let timeline_end = effective_timeline_end(extent, options.end_tail_inset);
     if timeline_end < clip_length {
         let end = timeline_end.min(clip_length);
         if end.is_zero() {
@@ -590,7 +580,8 @@ mod tests {
     #[test]
     fn clip_windows_short_media_single_start_clip() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows = clip_windows_with_options(mins(12), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows =
+            clip_windows_with_options(&MediaExtent::from_declared(mins(12)), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -601,7 +592,8 @@ mod tests {
     #[test]
     fn clip_windows_two_clips_start_and_end() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows = clip_windows_with_options(mins(45), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows =
+            clip_windows_with_options(&MediaExtent::from_declared(mins(45)), &plan, ClipPlanningOptions::default()).unwrap();
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -613,7 +605,12 @@ mod tests {
     #[test]
     fn clip_windows_num_clips_one_on_long_media() {
         let plan = ClipPlan::new(mins(15), 1);
-        let windows = clip_windows_with_options(mins(60), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows = clip_windows_with_options(
+            &MediaExtent::from_declared(mins(60)),
+            &plan,
+            ClipPlanningOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].end, mins(15));
@@ -622,7 +619,12 @@ mod tests {
     #[test]
     fn clip_windows_three_clips_with_interior() {
         let plan = ClipPlan::new(mins(10), 3);
-        let windows = clip_windows_with_options(mins(60), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows = clip_windows_with_options(
+            &MediaExtent::from_declared(mins(60)),
+            &plan,
+            ClipPlanningOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].label, ClipLabel::Start);
@@ -642,10 +644,9 @@ mod tests {
         let container = Duration::from_secs_f64(6180.033);
         let extent = Duration::from_secs_f64(6176.0);
         let windows = clip_windows_with_options(
-            container,
+            &MediaExtent::new(container, Some(extent)),
             &plan,
             ClipPlanningOptions {
-                decodable_extent: Some(extent),
                 end_tail_inset: Duration::from_secs(1),
             },
         )
@@ -689,7 +690,11 @@ mod tests {
     fn clip_windows_rejects_zero_duration() {
         let plan = ClipPlan::new(mins(15), 2);
         assert_eq!(
-            clip_windows_with_options(Duration::ZERO, &plan, ClipPlanningOptions::default()),
+            clip_windows_with_options(
+                &MediaExtent::from_declared(Duration::ZERO),
+                &plan,
+                ClipPlanningOptions::default(),
+            ),
             Err(DomainError::InvalidDuration)
         );
     }

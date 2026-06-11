@@ -108,6 +108,9 @@ fn probe_from_format(
     }
 
     if duration.is_zero() {
+        // Probe chain: per-track metadata → container duration → chapters → packet scan
+        // (`scan_container_audio_duration`). Open succeeds when decodable tracks exist even
+        // if duration stays unknown; clip planning returns InvalidDuration.
         if let Some(estimated) = duration_from_chapters(format.chapters()) {
             duration = estimated;
         } else {

@@ -47,15 +47,22 @@ impl MediaReader for SymphoniaMediaReader {
         }
 
         if duration.is_zero() {
-            return Err(fail_media(
-                path,
-                "open",
-                None,
-                MediaError::open_failed(format!(
-                    "could not determine duration for {}",
-                    path.display()
-                )),
-            ));
+            let has_decodable = tracks.iter().any(|track| track.decodable);
+            if !has_decodable {
+                return Err(fail_media(
+                    path,
+                    "open",
+                    None,
+                    MediaError::open_failed(format!(
+                        "could not determine duration for {}",
+                        path.display()
+                    )),
+                ));
+            }
+            debug!(
+                path = %path.display(),
+                "opened with unknown container duration; clip planning will validate"
+            );
         }
 
         log_media_success(path, "open");

@@ -10,7 +10,7 @@ use crate::application::ports::{
 use crate::domain::{
     holdout_extract_sufficient, holdout_window_candidates, holdout_window_feasible,
     prepare_clip_for_fingerprint, should_downgrade_repetition_confidence,
-    AlignmentResult, AudioTrack, ClipWindow, OffsetVerification,
+    AlignmentResult, AudioTrack, ClipWindow, MediaExtent, OffsetVerification,
     PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
@@ -21,12 +21,8 @@ pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub track_a: &'a AudioTrack,
     pub track_b: &'a AudioTrack,
     pub discovery_windows: &'a [ClipWindow],
-    pub duration_a: Duration,
-    pub duration_b: Duration,
-    #[allow(dead_code)]
-    pub decoded_extent_a: Duration,
-    #[allow(dead_code)]
-    pub decoded_extent_b: Duration,
+    pub extent_a: MediaExtent,
+    pub extent_b: MediaExtent,
     pub min_holdout_decode_fraction: f64,
     pub max_holdout_decode_skips: u32,
     pub resampler: &'a dyn Resampler,
@@ -60,9 +56,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
 
     progress.phase_verbose("Verifying offset at hold-out window...");
 
-    // Placement uses container duration. decoded_extent reflects discovery clip windows
-    // only (and can round below clip_length); hold-out performs fresh extracts.
-    let pick_duration = input.duration_a.min(input.duration_b);
+    let pick_duration = input.extent_a.effective().min(input.extent_b.effective());
     let clip_length = clip_config.clip_length.min(pick_duration);
     let clip_length_secs = clip_length.as_secs_f64();
 
@@ -75,9 +69,8 @@ pub fn apply_offset_verification<MS, FP, AL>(
         result.offset_verification = Some(skipped("hold-out window unavailable"));
         return;
     }
-    // Feasibility uses container duration for shifted B windows beyond discovery extent.
-    let dur_a = input.duration_a.as_secs_f64();
-    let dur_b = input.duration_b.as_secs_f64();
+    let dur_a = input.extent_a.effective().as_secs_f64();
+    let dur_b = input.extent_b.effective().as_secs_f64();
 
     let candidates =
         holdout_window_candidates(pick_duration, input.discovery_windows, clip_length, offset_secs);
@@ -366,16 +359,15 @@ mod tests {
         duration: Duration,
     ) -> OffsetVerificationInput<'a, FakeMediaSession> {
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
+        let extent = MediaExtent::from_declared(duration);
         OffsetVerificationInput {
             session_a,
             session_b,
             track_a,
             track_b,
             discovery_windows: windows,
-            duration_a: duration,
-            duration_b: duration,
-            decoded_extent_a: duration,
-            decoded_extent_b: duration,
+            extent_a: extent,
+            extent_b: extent,
             min_holdout_decode_fraction,
             max_holdout_decode_skips,
             resampler: &crate::infrastructure::resample::RubatoResampler,
@@ -417,6 +409,8 @@ mod tests {
         let windows = discovery_windows();
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
 
+        let extent = MediaExtent::from_declared(duration);
+
         apply_offset_verification(
             &mut OffsetVerificationInput {
                 session_a: &mut session_a,
@@ -424,10 +418,8 @@ mod tests {
                 track_a,
                 track_b,
                 discovery_windows: &windows,
-                duration_a: duration,
-                duration_b: duration,
-                decoded_extent_a: duration,
-                decoded_extent_b: duration,
+                extent_a: extent,
+                extent_b: extent,
                 min_holdout_decode_fraction,
                 max_holdout_decode_skips,
                 resampler: &crate::infrastructure::resample::RubatoResampler,

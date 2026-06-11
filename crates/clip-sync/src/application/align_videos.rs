@@ -12,12 +12,12 @@ use crate::application::ports::{
 };
 use crate::domain::{
     build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
-    decoded_timeline_extent, end_clip_extract_unreliable, expand_window_for_slide,
+    end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     select_best_track, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
-    ClipWindow, DomainError, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, RepetitionFinding, TimelineOverlap,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
@@ -91,10 +91,8 @@ where
                 track_a: &outcome.track_a,
                 track_b: &outcome.track_b,
                 discovery_windows: &outcome.discovery_windows,
-                duration_a: outcome.duration_a,
-                duration_b: outcome.duration_b,
-                decoded_extent_a: outcome.decoded_extent_a,
-                decoded_extent_b: outcome.decoded_extent_b,
+                extent_a: outcome.extent_a,
+                extent_b: outcome.extent_b,
                 resampler: self.resampler,
                 correlator: self.correlator,
             },
@@ -110,10 +108,8 @@ where
                 track_a: &outcome.track_a,
                 track_b: &outcome.track_b,
                 discovery_windows: &outcome.discovery_windows,
-                duration_a: outcome.duration_a,
-                duration_b: outcome.duration_b,
-                decoded_extent_a: outcome.decoded_extent_a,
-                decoded_extent_b: outcome.decoded_extent_b,
+                extent_a: outcome.extent_a,
+                extent_b: outcome.extent_b,
                 min_holdout_decode_fraction: request.config.alignment.min_end_clip_decode_fraction,
                 max_holdout_decode_skips: request.config.alignment.max_end_clip_decode_skips,
                 resampler: self.resampler,
@@ -128,8 +124,8 @@ where
 
         log_alignment_summary(
             &result,
-            Some(outcome.duration_a),
-            Some(outcome.duration_b),
+            Some(outcome.extent_a.declared),
+            Some(outcome.extent_b.declared),
             self.progress,
         );
 
@@ -166,10 +162,8 @@ where
             track_a: extracted_a.track,
             track_b: extracted_b.track,
             discovery_windows: extracted_a.windows,
-            duration_a: extracted_a.duration,
-            duration_b: extracted_b.duration,
-            decoded_extent_a: extracted_a.decoded_extent,
-            decoded_extent_b: extracted_b.decoded_extent,
+            extent_a: extracted_a.extent,
+            extent_b: extracted_b.extent,
         })
     }
 
@@ -234,10 +228,8 @@ where
                     track_a: extracted_a.track.clone(),
                     track_b: extracted_b.track.clone(),
                     discovery_windows: extracted_a.windows.clone(),
-                    duration_a: extracted_a.duration,
-                    duration_b: extracted_b.duration,
-                    decoded_extent_a: extracted_a.decoded_extent,
-                    decoded_extent_b: extracted_b.decoded_extent,
+                    extent_a: extracted_a.extent,
+                    extent_b: extracted_b.extent,
                 };
                 if best.as_ref().is_none_or(|(_, _, _, best_score)| score > *best_score) {
                     best = Some((outcome, extracted_a, extracted_b, score));
@@ -474,8 +466,8 @@ where
                 estimates: &estimates,
                 decode_skips_a: &extracted_a.decode_skips,
                 decode_skips_b: &extracted_b.decode_skips,
-                duration_a: Some(extracted_a.duration),
-                duration_b: Some(extracted_b.duration),
+                duration_a: Some(extracted_a.extent.declared),
+                duration_b: Some(extracted_b.extent.declared),
             },
             AlignmentMergePolicy {
                 min_match_score: config.alignment.min_match_score,
@@ -529,44 +521,38 @@ where
             AppError::Domain(crate::domain::DomainError::InvalidDuration),
         )?;
 
-        let decodable_extent = if plan.num_clips >= 2
-            && config.alignment.clamp_end_clip_to_decodable_extent
-        {
+        let mut extent = MediaExtent::from_declared(duration);
+
+        if config.needs_tail_extent_scan(plan) {
             match session.track_decodable_extent(track) {
-                Ok(extent) => extent,
+                Ok(tail) => extent = extent.with_decodable(tail),
                 Err(_) => {
                     self.progress.phase_verbose(&format!(
-                        "{label}: tail extent scan failed; using container duration for end clip"
+                        "{label}: tail extent scan failed; using container duration"
                     ));
-                    None
                 }
-            }
-        } else {
-            None
-        };
-
-        if let Some(extent) = decodable_extent {
-            if extent + Duration::from_secs(1) < duration {
-                self.progress.phase_verbose(&format!(
-                    "{label}: decodable extent {:.0}s (container {:.0}s)",
-                    extent.as_secs_f64(),
-                    duration.as_secs_f64()
-                ));
             }
         }
 
+        if extent.decodable.is_some_and(|tail| tail + Duration::from_secs(1) < extent.declared) {
+            self.progress.phase_verbose(&format!(
+                "{label}: decodable extent {:.0}s (container {:.0}s)",
+                extent.decodable.unwrap().as_secs_f64(),
+                extent.declared.as_secs_f64()
+            ));
+        }
+
         let planning = ClipPlanningOptions {
-            decodable_extent,
             end_tail_inset: Duration::from_secs_f64(
                 config.alignment.end_clip_tail_inset_secs.max(0.0),
             ),
         };
-        let windows = clip_windows_with_options(duration, plan, planning)?;
+        let windows = clip_windows_with_options(&extent, plan, planning)?;
         let timeline_end = windows
             .iter()
             .find(|window| window.label == ClipLabel::End)
             .map(|window| window.end)
-            .unwrap_or(duration);
+            .unwrap_or(extent.effective());
 
         self.progress.phase_verbose(&format_clip_plan(label, &windows));
 
@@ -622,7 +608,6 @@ where
             .map(|clip| clip.decode_error_skips)
             .collect();
 
-        let decoded_extent = decoded_timeline_extent(&windows, &raw_clips);
         let end_clip_unreliable = windows.iter().zip(raw_clips.iter()).any(|(window, clip)| {
             window.label == ClipLabel::End
                 && end_clip_extract_unreliable(
@@ -637,8 +622,7 @@ where
             raw_clips,
             decode_skips,
             windows,
-            duration,
-            decoded_extent,
+            extent,
             track: track.clone(),
             end_clip_unreliable,
         })
@@ -650,10 +634,8 @@ struct AlignmentOutcome {
     track_a: AudioTrack,
     track_b: AudioTrack,
     discovery_windows: Vec<ClipWindow>,
-    duration_a: std::time::Duration,
-    duration_b: std::time::Duration,
-    decoded_extent_a: std::time::Duration,
-    decoded_extent_b: std::time::Duration,
+    extent_a: MediaExtent,
+    extent_b: MediaExtent,
 }
 
 fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool {
@@ -693,8 +675,7 @@ struct ExtractedClips {
     raw_clips: Vec<crate::domain::MonoPcmClip>,
     decode_skips: Vec<u32>,
     windows: Vec<ClipWindow>,
-    duration: std::time::Duration,
-    decoded_extent: std::time::Duration,
+    extent: MediaExtent,
     track: AudioTrack,
     end_clip_unreliable: bool,
 }

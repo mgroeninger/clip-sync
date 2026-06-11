@@ -35,6 +35,13 @@ impl AlignConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.clip.validate()
     }
+
+    /// Whether a tail packet scan is needed to populate [`MediaExtent::decodable`].
+    pub fn needs_tail_extent_scan(&self, plan: &ClipPlan) -> bool {
+        (plan.num_clips >= 2 && self.alignment.clamp_end_clip_to_decodable_extent)
+            || self.validation.verify_offset
+            || self.alignment.refine_offset_high_rate
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

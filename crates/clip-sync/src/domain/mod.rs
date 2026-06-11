@@ -7,6 +7,7 @@ pub mod error;
 pub mod media_source;
 pub mod mono_pcm_clip;
 pub mod multichannel_pcm;
+pub mod media_extent;
 pub mod pcm_preparation;
 pub mod policies;
 
@@ -30,8 +31,9 @@ pub use pcm_preparation::{
     expand_window_for_slide, prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     PcmPreparationOptions,
 };
+pub use media_extent::MediaExtent;
 pub use policies::{
-    clip_windows_with_options, decoded_timeline_extent,
+    clip_windows_with_options,
     end_clip_extract_unreliable, holdout_window_candidates,
     holdout_extract_sufficient, holdout_window_feasible, truncate_padded_tail,
     ClipPlanningOptions, select_best_track,

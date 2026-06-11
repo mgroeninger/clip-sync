@@ -927,6 +927,16 @@ pub(crate) fn scan_track_decodable_extent(
         "tail packet scan decodable extent"
     );
 
+    if max_end > container_duration {
+        warn!(
+            path = %path.display(),
+            track = track_id,
+            container_secs = container_duration.as_secs_f64(),
+            observed_secs = max_end.as_secs_f64(),
+            "container under-reports duration; clamping decodable extent to declared"
+        );
+    }
+
     Ok(Some(max_end.min(container_duration)))
 }
 

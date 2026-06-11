@@ -21,9 +21,9 @@
 | Implementors | lib: `SymphoniaMediaSession`, `FakeMediaSession` (`testing/fakes.rs` 113–155), `BareSession` (test); repair tests: `LoudSession`, `SilentSession`, `SkipWindowSession`, `TailSeekFailSession`, `DispatchSession`, `NoDurationSession` (`scan_gaps.rs` 323–689) | 9 impls to migrate | 1 |
 | Call sites | `align_videos.rs` 65–70, 583–588; `high_rate_refinement.rs` 109–127; `offset_verification.rs` 134–152; repair `scan_gaps.rs` 79–80, 130–132, 243–245, 269–274; `patch_audio.rs` 114–147 | Sessions A/B held simultaneously, **used strictly sequentially** (no threads anywhere) | 1 |
 | `scan_mono_buckets` | — | **No production caller** (symphonia override exercised by tests only) | 3 (consider demotion) |
-| Hold-out placement | `offset_verification.rs` 67–93 | `pick_duration = duration_a.min(duration_b)` — container duration; `decoded_extent_a/b` destructured to `_`, `#[allow(dead_code)]` at 23–26 | 4 |
-| Extent today | `align_videos.rs` 513–524 (`track_decodable_extent` when `num_clips >= 2` && clamp flag), ~606 (`decoded_timeline_extent` of discovery clips) | Three uncoordinated duration notions: container, tail-scan extent, discovery-decode extent | 4 |
-| Duration at open | `infrastructure/symphonia/probe.rs` 52–127; `duration.rs` 44–110 | Per-track duration, chapter fallback, packet-scan fallback (`scan_container_audio_duration`); open fails on zero duration | 4 |
+| Hold-out placement | `offset_verification.rs` 67–93 | Uses `extent_a.effective().min(extent_b.effective())` for hold-out placement and feasibility | 4 ✓ |
+| Extent today | `align_videos.rs` `extract_clips` | `MediaExtent` resolved once per video (declared + optional tail scan); threaded through planning, refinement, verification | 4 ✓ |
+| Duration at open | `infrastructure/symphonia/probe.rs` 52–127; `duration.rs` 44–110; `session.rs` 49–66 | Per-track duration, chapter fallback, packet-scan fallback; open succeeds when decodable but duration zero (fails at clip planning) | 4 ✓ |
 | ~~Bitrate~~ | — | **Done 2026-06-10** (before this plan lands): `AudioTrack.bitrate` deleted — Symphonia doesn't expose encoding bitrate; `select_best_track` stays first-decodable. BACKLOG #8 closed | — |
 | Memory model | `ports.rs` 41 (owned `MonoPcmClip`); clones in `align_videos.rs` ~285–308, `pcm_preparation.rs` 60–113 | Full-clip buffers; streaming would change `Fingerprinter` too | decision only |
 
@@ -91,12 +91,12 @@ Recorded after Phase 2 review (2026-06-11). None of these block Phase 3.
 - [x] Rustdoc records the duration-trust decision: fallback loops terminate on declared duration and fail loudly past the tolerance; production scans are EOF-driven (see Decisions).
 - [x] Trait defaults delegate; symphonia sequential overrides untouched.
 
-### Phase 4 — `MediaExtent`
+### Phase 4 — `MediaExtent` ✓ 2026-06-11
 
-- [ ] Domain type + unit tests; resolve once per video in `AlignVideos::execute`; thread through `ClipPlanningOptions`, `HighRateRefinementInput`, `OffsetVerificationInput` (replacing `decoded_extent_*`, removing `#[allow(dead_code)]`). Rustdoc records the declared-as-ceiling clamp decision.
-- [ ] `scan_track_decodable_extent`: `warn!` when packets are observed past declared duration before clamping ("container under-reports duration") — observability for the clamp decision, no behavior change.
-- [ ] Hold-out placement + feasibility switch to `effective()` durations; Phase 0 MKV-tail test goes green.
-- [ ] Duration-less audit (BACKLOG #6): enumerate remaining open-failure paths in `probe.rs`/`session.rs`; relax open where decodable; clip planning rejects unknown duration; corpus cases for each relaxed path.
+- [x] Domain type + unit tests; resolve once per video in `extract_clips`; thread through `ClipPlanningOptions`, `HighRateRefinementInput`, `OffsetVerificationInput` (replacing `decoded_extent_*`, removing `#[allow(dead_code)]`). Rustdoc records the declared-as-ceiling clamp decision.
+- [x] `scan_track_decodable_extent`: `warn!` when packets are observed past declared duration before clamping ("container under-reports duration") — observability for the clamp decision, no behavior change.
+- [x] Hold-out placement + feasibility switch to `effective()` durations; `mkv_tail_decodable_extent_gap` corpus case now expects `offset_verified = true` (dedicated ignored test + generated tier).
+- [x] Duration-less audit (BACKLOG #6): relaxed open in `session.rs` when decodable tracks exist but container duration is zero; probe chain documented; clip planning rejects unknown duration via `InvalidDuration`; `mp3_no_duration_tag` remains the regression anchor in generated corpus.
 
 ### Phase 5 — docs
 
