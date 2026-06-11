@@ -15,7 +15,7 @@
 | Area | Path | Current state | Target phase |
 |------|------|---------------|--------------|
 | Port surface | `crates/clip-sync/src/application/ports.rs` ~27–173 | All methods `&self`; defaults: `extract_interleaved` → `Unsupported`, `reset_io` → `Ok(())`, `track_decodable_extent` → `None`, `scan_mono_buckets` / `scan_interleaved_buckets` = seek-loop fallbacks with `NEAR_TRACK_END_TOLERANCE_SECS = 2.0` + `DecodeFailed`/`SeekFailed` swallowing (~84–116, ~135–166) | 1, 3 |
-| Symphonia session | `infrastructure/symphonia/session.rs` ~101–258 | `io: RefCell<Option<MediaIoState>>`; `expect()` at 132, 160, 189, 219, 251; lazy reopen when probe rewind failed; decoder cache `HashMap<u32, CachedTrackDecoder>` | 1–2 |
+| Symphonia session | `infrastructure/symphonia/session.rs` | `io: Option<MediaIoState>`; `open_io_state()` lazy reopen; `Send` + compile test; tail extent reopens IO after scan | 1–2 ✓ |
 | `reset_io` callers | `high_rate_refinement.rs` 65–66 (`let _ =` — **discarded**); `offset_verification.rs` 106–110 (debug-logged only); `session.rs` 256 (propagated) | Caller-driven, forgettable | 2 |
 | Hold-out extract errors | `high_rate_refinement.rs` 185–195 (`extract_native_holdout` → `Result<_, String>` via `.map_err(to_string)` — drops `MediaError`/`source()` before skip logging); `offset_verification.rs` 134–156 (matches `MediaError`, `debug!`s full error, then formats for `skip_reason`) | Match on `MediaError`; structured debug log; `Display` only at `skip_reason` boundary | 2 |
 | Implementors | lib: `SymphoniaMediaSession`, `FakeMediaSession` (`testing/fakes.rs` 113–155), `BareSession` (test); repair tests: `LoudSession`, `SilentSession`, `SkipWindowSession`, `TailSeekFailSession`, `DispatchSession`, `NoDurationSession` (`scan_gaps.rs` 323–689) | 9 impls to migrate | 1 |
@@ -34,8 +34,8 @@
 | Topic | Decision |
 |-------|----------|
 | **Mutability model** | **`&mut self`** on `extract_mono`, `extract_interleaved`, `scan_*`, `track_decodable_extent`. `list_tracks` stays `&self` (cached at open). A and B are separate session values used sequentially, so `&mut` borrows never conflict. *Rejected alternative:* handle/guard object — more API for no current consumer. |
-| **`RefCell` removal** | `io: Option<MediaIoState>` plain field; private `fn io_state(&mut self) -> Result<&mut MediaIoState, MediaError>` performs the lazy reopen and replaces all five `expect()` sites with a real error path. |
-| **`Sync`/parallel decode** | **Decide, don't implement.** After `RefCell` removal, verify `SymphoniaMediaSession: Send` (boxed `FormatReader`/decoder objects) and add `Session: Send` bound **if it holds**; if Symphonia objects aren't `Send`, document that parallel A/B requires open-per-thread, not a port change. Parallel extraction itself is follow-up work, deliberately out of scope. |
+| **`RefCell` removal** | `io: Option<MediaIoState>` plain field; private `open_io_state()` performs the lazy reopen and replaces all five `expect()` sites with a real error path. |
+| **`Sync`/parallel decode** | **Decided 2026-06-11:** `SymphoniaMediaSession: Send` (compile-time test in `session.rs`). `MediaReader: Session: Send` bound added. Parallel A/B extraction is still **not implemented** — blocked by sequential `&mut self` usage in `AlignVideos::execute`, not by `Send`. One session opened per thread when parallel decode lands. |
 | **`reset_io`** | **Remove from the port.** The Symphonia adapter recovers internally at two points, both **below the `MediaError` mapping** where the `SymphoniaError` is still typed (no string-matching on stringly errors): (a) a `seek_with_recovery` wrapper around `seek_to_window_start` — on seek error, reopen `MediaIoState`, re-run `ensure_track_decoder`, retry the seek **once**; (b) reopen `MediaIoState` before the existing attempt-2 sequential-from-zero fallback in `run_extract_decode_loop` (today the fallback reuses the possibly-confused reader that just produced no audio). Together these subsume the trailing `reset_io` in `track_decodable_extent` (post-tail-scan reader at EOF: the next op's seek either succeeds or recovers). Call sites in `high_rate_refinement.rs` / `offset_verification.rs` are deleted — the failure mode "caller forgot reset" becomes unrepresentable. The BACKLOG item "`reset_io` ignored in high-rate refinement" closes as a side effect. *Why this shape:* per-extract decoder reset and PTS-based window classification already exist, so mispositioned seeks fail loudly (shortfall/`SeekFailed`/EOF-flavored `DecodeFailed`), not silently — recovery only needs to catch the loud cases at the layer where state is reconstructible. |
 | **Scan policy location** | Default `scan_*_buckets` bodies move to `application/media_scan.rs` free functions (`scan_buckets_via_windows(...)`); trait defaults become one-line delegations. `NEAR_TRACK_END_TOLERANCE_SECS` and the swallow-`DecodeFailed`/`SeekFailed`-near-end rule live there, named, documented, and unit-tested directly (today they're only testable through a fake). |
 | **`scan_mono_buckets` fate** | Keep on the port (repair's interleaved twin has production callers; mono variant is its symmetric API), but note no production caller — candidate for deletion at a future port break if still unused. |
@@ -53,18 +53,18 @@
 
 ## Phases
 
-### Phase 0 — characterization guard rails
+### Phase 0 — characterization guard rails ✓ 2026-06-11
 
-- [ ] Regression test: distant backward seek after a long extract (the scenario `reset_io` existed for) — assert the re-extracted window is **bit-exact** against the same window from a fresh session, on **both an MP4 and an MKV** fixture. Bit-exactness (not just success) catches silent mispositioning regardless of whether the failure surfaces as an error; two containers because seek behavior differs. Must pass before and after Phase 2.
-- [ ] MKV tail regression: hold-out / end-clip placement on a fixture whose container duration exceeds decodable extent (extend `tests/corpus/manifest.toml` generated tier).
-- [ ] Snapshot test for scan-loop end-of-track tolerance behavior driven through a fake (pins current swallow semantics before Phase 3 moves the code).
+- [x] Regression test: distant backward seek after a long extract (the scenario `reset_io` existed for) — assert the re-extracted window is **bit-exact** against the same window from a fresh session. **WAV** covers the always-on default `cargo test` path; **MP4/MKV** require `--features ffmpeg-tests` (and ffmpeg on PATH).
+- [x] MKV tail regression **anchor**: corpus case `mkv_tail_decodable_extent_gap` pins the current broken behavior (hold-out lands in the padded silence; verification=false). Becomes a passing end-to-end test in Phase 4 when `expect_offset_verified = true` is added and `effective()` duration is used for hold-out placement.
+- [x] Snapshot test for scan-loop end-of-track tolerance behavior driven through a fake (pins current swallow semantics before Phase 3 moves the code).
 
-### Phase 1 — `&mut self` port migration (mechanical)
+### Phase 1 — `&mut self` port migration (mechanical) ✓ 2026-06-11
 
-- [ ] Change trait method receivers in `ports.rs`; drop `RefCell` from `SymphoniaMediaSession`; introduce `io_state()` and delete the five `expect()`s.
-- [ ] Migrate all 9 implementors (lib fake, repair test fakes — most are `&self` field reads and migrate trivially) and all call sites (`align_videos`, `high_rate_refinement`, `offset_verification`, repair `scan_gaps` / `patch_audio`).
-- [ ] Verify/decide `Send` bound per the decision above.
-- [ ] `cargo test --workspace` green.
+- [x] Change trait method receivers in `ports.rs`; drop `RefCell` from `SymphoniaMediaSession`; introduce `open_io_state()` and delete the five `expect()`s; `MediaReader: Session: Send`.
+- [x] Migrate all 9 implementors (lib fake, repair test fakes — most are `&self` field reads and migrate trivially) and all call sites (`align_videos`, `high_rate_refinement`, `offset_verification`, repair `scan_gaps` / `patch_audio`).
+- [x] Verify/decide `Send` bound per the decision above — **`Send` holds**; positive compile test + port bound (2026-06-11 follow-up).
+- [x] `cargo test --workspace` green.
 
 ### Phase 2 — internal seek recovery, delete `reset_io` ✓ 2026-06-11
 
@@ -73,7 +73,17 @@
 - [x] Remove `reset_io` from the port; delete caller lines in `high_rate_refinement.rs` and `offset_verification.rs`; delete the trailing `reset_io` in `track_decodable_extent` — subsumed by recovery.
 - [x] Align hold-out extract error handling in `high_rate_refinement.rs`: match on `MediaError`, structured `debug!` before flattening, `Display` only at the `skip_reason` boundary; deleted `extract_native_holdout`'s `Result<_, String>` wrapper.
 - [x] Fixed `clippy::too_many_arguments` on `ExtractSink::finalize`: introduced `ExtractFinalizeContext` struct mirroring `ExtractLoopParams` fields (minus `state`).
-- [x] Phase 0 backward-seek characterization test still green (bit-exact, both containers).
+- [x] Phase 0 backward-seek characterization test still green (bit-exact): WAV always-on; MP4/MKV verified with `--features ffmpeg-tests`.
+- [x] Post-review hardening (2026-06-11): `open_io_state()` replaces `ensure_io()` + `expect()`; `seek_with_recovery` on tail extent probe seek.
+
+### Optional polish (non-blocking)
+
+Recorded after Phase 2 review (2026-06-11). None of these block Phase 3.
+
+- [ ] **Hold-out debug logging:** `offset_verification.rs` extract-failure paths use `debug!(error = %e)`; high-rate uses `?e`. Neither walks `Error::source()` — align when next touching hold-out code (e.g. Phase 4 or [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md)).
+- [ ] **`seek_with_recovery` fault injection:** Phase 2 deferred a unit test with a fake format reader; bit-exact backward-seek tests cover the path end-to-end. Revisit only if the extract layer changes again.
+- [ ] **CI container seek coverage:** MP4/MKV backward-seek and padded-duration extent tests require `--features ffmpeg-tests`. Command documented in [development.md](development.md); optional CI job not in-repo yet — add when CI is wired.
+- [ ] **Post-extent-scan reopen:** `track_decodable_extent` explicitly reopens `MediaIoState` after the tail packet scan (reader at EOF). Coexists with `seek_with_recovery` on the next op; drop the reopen if profiling shows redundant IO churn.
 
 ### Phase 3 — scan policy extraction
 
@@ -98,7 +108,7 @@
 
 | Concern | Coverage |
 |---------|----------|
-| Seek recovery | Phase 0 bit-exact characterization (MP4 + MKV) + Phase 2 io-layer fault injection; corpus committed tier on every phase |
+| Seek recovery | Phase 0 bit-exact characterization (WAV always-on; MP4/MKV via `ffmpeg-tests`); optional io-layer fault injection (see Optional polish) |
 | Hold-out extract errors | Existing skip-reason / JSON tests unchanged; extract-failure paths log structured `MediaError` before `skip_reason` flattening |
 | Extent | MKV-tail regression; `MediaExtent::effective()` unit tests; `mp3_no_duration_tag` corpus anchor |
 | Scan policy | Direct unit tests on `media_scan.rs` (previously reachable only through fakes) |
