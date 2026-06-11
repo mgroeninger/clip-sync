@@ -1,0 +1,151 @@
+{
+  "scan": {
+    "video_a": "video_a.mkv",
+    "video_b": "video_b.mkv",
+    "track_compatibility": {
+      "a_channels": 2,
+      "b_channels": 2,
+      "a_sample_rate": 48000,
+      "b_sample_rate": 48000,
+      "channels_match": true,
+      "rate_match": true,
+      "verdict": "identical"
+    },
+    "overlap": {
+      "video_a_start_secs": 10.956,
+      "video_a_end_secs": 600.0,
+      "video_b_start_secs": 0.0,
+      "video_b_end_secs": 589.044,
+      "shared_length_secs": 589.044
+    },
+    "alignment": {
+      "clips": [
+        {
+          "label": "start",
+          "window_start_secs": 0.0,
+          "window_end_secs": 900.0,
+          "aligned": false,
+          "offset_secs": null,
+          "confidence": 0.42,
+          "video_a_decode_skips": 1,
+          "video_b_decode_skips": 2,
+          "repetition": {
+            "a": {
+              "lag_secs": 30.5,
+              "confidence": 0.72,
+              "items_count": 48
+            },
+            "b": null
+          }
+        },
+        {
+          "label": "end",
+          "window_start_secs": 1800.0,
+          "window_end_secs": 2700.0,
+          "aligned": true,
+          "offset_secs": 12.355,
+          "confidence": 0.91,
+          "video_a_decode_skips": 0,
+          "video_b_decode_skips": 3
+        }
+      ],
+      "start_aligned": false,
+      "end_aligned": true,
+      "recommended_offset_secs": 12.34,
+      "offsets_consistent": false,
+      "offset_drift_secs": 0.015,
+      "start_overlap": {
+        "video_a_start_secs": 10.956,
+        "video_a_end_secs": 600.0,
+        "video_b_start_secs": 0.0,
+        "video_b_end_secs": 589.044,
+        "shared_length_secs": 589.044
+      },
+      "high_rate_refinement": {
+        "segment_start_secs": 120.0,
+        "segment_length_secs": 3.0,
+        "adjustment_secs": 0.01,
+        "correlation_peak": 2813101397.0,
+        "applied": true,
+        "skipped": false
+      },
+      "offset_verification": {
+        "window_a_start_secs": 60.0,
+        "window_a_end_secs": 90.0,
+        "window_b_start_secs": 63.0,
+        "window_b_end_secs": 93.0,
+        "confidence": 0.85,
+        "verified": true,
+        "skipped": false
+      }
+    },
+    "gaps": [
+      {
+        "video_a_start_secs": 45.0,
+        "video_a_end_secs": 47.5,
+        "video_b_start_secs": 57.34,
+        "video_b_end_secs": 59.84,
+        "b_has_energy": true
+      },
+      {
+        "video_a_start_secs": 120.0,
+        "video_a_end_secs": 125.0,
+        "video_b_start_secs": null,
+        "video_b_end_secs": null,
+        "b_has_energy": false
+      }
+    ],
+    "gap_offset_agreement": {
+      "silence_based_offset_secs": 12.31,
+      "alignment_offset_secs": 12.34,
+      "delta_secs": 0.03,
+      "agrees": true
+    },
+    "decode_chunk_secs": 10,
+    "scan_block_ms": 250,
+    "silence_peak_fraction": 0.01
+  },
+  "patch": {
+    "patched_count": 1,
+    "skipped_count": 1,
+    "not_planned_count": 1,
+    "gaps": [
+      {
+        "a_start_secs": 45.0,
+        "a_end_secs": 47.5,
+        "status": {
+          "patched": {
+            "pre_correlation": 0.91,
+            "post_correlation": 0.88,
+            "align_adjustment_secs": 0.02,
+            "structure_trusted": true
+          }
+        }
+      },
+      {
+        "a_start_secs": 120.0,
+        "a_end_secs": 125.0,
+        "status": {
+          "skipped": {
+            "reason": {
+              "correlation_below_threshold": {
+                "pre_correlation": 0.22,
+                "post_correlation": 0.19,
+                "min_correlation": 0.35
+              }
+            }
+          }
+        }
+      },
+      {
+        "a_start_secs": 200.0,
+        "a_end_secs": 205.0,
+        "status": {
+          "not_planned": {
+            "reason": "not_fillable"
+          }
+        }
+      }
+    ]
+  }
+}

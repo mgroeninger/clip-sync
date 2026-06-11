@@ -52,9 +52,11 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ### Phase 0 — golden snapshot (guard rail)
 
-- [ ] Add a full-surface JSON golden test in `clip-sync-cli/tests/cli_output.rs`: an `AlignmentResult` exercising every optional field (`repetition`, `offset_verification`, `high_rate_refinement`, `start_overlap`, `offset_drift_secs`, null `offset_secs`) serialized and compared against a checked-in expected JSON string.
-- [ ] Same for repair: `RepairJsonOutput` with embedded alignment + patch summary in `clip-sync-repair/.../output.rs` tests.
-- [ ] These tests must survive Phases 2–3 **unmodified except for the type swap** — they define "byte-identical".
+- [x] Add a full-surface JSON golden test in `clip-sync-cli/tests/cli_output.rs`: an `AlignmentResult` exercising every optional field (`repetition`, `offset_verification`, `high_rate_refinement`, `start_overlap`, `offset_drift_secs`, null `offset_secs`) serialized and compared against a checked-in expected JSON string.
+- [x] Same for repair: `RepairJsonOutput` with embedded alignment + patch summary in `clip-sync-repair/.../output.rs` tests.
+- [x] These tests must survive Phases 2–3 **unmodified except for the type swap** — they define "byte-identical".
+
+**Artifacts (2026-06-10):** `format_json_output` / `format_repair_json_output` (production paths); fixtures at `clip-sync-cli/tests/fixtures/full_surface_alignment.json` and `clip-sync-repair/tests/fixtures/full_surface_repair.json`; ignored generator tests `write_full_surface_*_golden` to refresh goldens after intentional contract changes.
 
 ### Phase 1 — tactical contract fixes
 

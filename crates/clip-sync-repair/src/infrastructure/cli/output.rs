@@ -379,10 +379,156 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{format_patch_summary, RepairJsonOutput};
-    use crate::domain::gap::{Gap, GapReport};
-    use crate::domain::{CompatibilityVerdict, TrackCompatibility};
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap};
+    use super::{format_patch_summary, format_repair_json_output, RepairJsonOutput};
+    use crate::domain::gap::{Gap, GapOffsetAgreement, GapReport};
+    use crate::domain::{
+        CompatibilityVerdict, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
+        GapPatchStatus, PatchSummary, TrackCompatibility,
+    };
+    use clip_sync::{
+        AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport, HighRateRefinement,
+        OffsetVerification, RepetitionFinding, TimelineOverlap,
+    };
+
+    fn full_surface_gap_report() -> GapReport {
+        let overlap = TimelineOverlap {
+            video_a_start_secs: 10.956,
+            video_a_end_secs: 600.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 589.044,
+            shared_length_secs: 589.044,
+        };
+        GapReport {
+            video_a: PathBuf::from("video_a.mkv"),
+            video_b: PathBuf::from("video_b.mkv"),
+            track_compatibility: Some(TrackCompatibility {
+                a_channels: 2,
+                b_channels: 2,
+                a_sample_rate: 48_000,
+                b_sample_rate: 48_000,
+                channels_match: true,
+                rate_match: true,
+                verdict: CompatibilityVerdict::Identical,
+            }),
+            overlap: Some(overlap),
+            alignment: AlignmentResult {
+                clips: vec![
+                    ClipMatch {
+                        label: ClipLabel::Start,
+                        window_start_secs: 0.0,
+                        window_end_secs: 900.0,
+                        aligned: false,
+                        offset_secs: None,
+                        confidence: 0.42,
+                        video_a_decode_skips: 1,
+                        video_b_decode_skips: 2,
+                        repetition: Some(ClipRepetitionReport {
+                            a: Some(RepetitionFinding {
+                                lag_secs: 30.5,
+                                confidence: 0.72,
+                                items_count: 48,
+                            }),
+                            b: None,
+                        }),
+                    },
+                    ClipMatch {
+                        label: ClipLabel::End,
+                        window_start_secs: 1800.0,
+                        window_end_secs: 2700.0,
+                        aligned: true,
+                        offset_secs: Some(12.355),
+                        confidence: 0.91,
+                        video_a_decode_skips: 0,
+                        video_b_decode_skips: 3,
+                        repetition: None,
+                    },
+                ],
+                start_aligned: false,
+                end_aligned: Some(true),
+                recommended_offset_secs: Some(12.34),
+                offsets_consistent: false,
+                offset_drift_secs: Some(0.015),
+                start_overlap: Some(overlap),
+                high_rate_refinement: Some(HighRateRefinement {
+                    segment_start_secs: 120.0,
+                    segment_length_secs: 3.0,
+                    adjustment_secs: 0.01,
+                    correlation_peak: 2_813_101_397.0,
+                    applied: true,
+                    skipped: false,
+                    skip_reason: None,
+                }),
+                offset_verification: Some(OffsetVerification {
+                    window_a_start_secs: 60.0,
+                    window_a_end_secs: 90.0,
+                    window_b_start_secs: 63.0,
+                    window_b_end_secs: 93.0,
+                    confidence: 0.85,
+                    verified: true,
+                    skipped: false,
+                    skip_reason: None,
+                }),
+            },
+            gaps: vec![
+                Gap {
+                    video_a_start_secs: 45.0,
+                    video_a_end_secs: 47.5,
+                    video_b_start_secs: Some(57.34),
+                    video_b_end_secs: Some(59.84),
+                    b_has_energy: true,
+                },
+                Gap {
+                    video_a_start_secs: 120.0,
+                    video_a_end_secs: 125.0,
+                    video_b_start_secs: None,
+                    video_b_end_secs: None,
+                    b_has_energy: false,
+                },
+            ],
+            gap_offset_agreement: Some(GapOffsetAgreement {
+                silence_based_offset_secs: 12.31,
+                alignment_offset_secs: 12.34,
+                delta_secs: 0.03,
+                agrees: true,
+            }),
+            decode_chunk_secs: 10,
+            scan_block_ms: 250,
+            silence_peak_fraction: 0.01,
+        }
+    }
+
+    fn full_surface_patch_summary() -> PatchSummary {
+        PatchSummary::from_outcomes(vec![
+            GapPatchOutcome {
+                a_start_secs: 45.0,
+                a_end_secs: 47.5,
+                status: GapPatchStatus::Patched {
+                    pre_correlation: 0.91,
+                    post_correlation: 0.88,
+                    align_adjustment_secs: 0.02,
+                    structure_trusted: true,
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 120.0,
+                a_end_secs: 125.0,
+                status: GapPatchStatus::Skipped {
+                    reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                        pre_correlation: 0.22,
+                        post_correlation: 0.19,
+                        min_correlation: 0.35,
+                    },
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 200.0,
+                a_end_secs: 205.0,
+                status: GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable,
+                },
+            },
+        ])
+    }
 
     fn minimal_report() -> GapReport {
         let overlap = TimelineOverlap {
@@ -438,6 +584,33 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
         }
+    }
+
+    /// Regenerate `tests/fixtures/full_surface_repair.json` after an intentional contract change:
+    /// `cargo test -p clip-sync-repair write_full_surface_repair_golden -- --ignored --nocapture`
+    #[test]
+    #[ignore = "fixture generator — run manually when the JSON contract is revised"]
+    fn write_full_surface_repair_golden() {
+        let report = full_surface_gap_report();
+        let patch = full_surface_patch_summary();
+        let json = format_repair_json_output(&report, Some(&patch)).expect("serialize");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/full_surface_repair.json");
+        std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+        std::fs::write(&path, json).expect("write golden fixture");
+    }
+
+    /// Plan 1 Phase 0: byte-identical guard for the repair JSON contract (pre-DTO split).
+    #[test]
+    fn full_surface_repair_json_golden() {
+        let report = full_surface_gap_report();
+        let patch = full_surface_patch_summary();
+        let json = format_repair_json_output(&report, Some(&patch)).expect("serialize");
+        assert_eq!(
+            json,
+            include_str!("../../../tests/fixtures/full_surface_repair.json"),
+            "repair JSON contract changed — update the golden only with an explicit contract revision"
+        );
     }
 
     #[test]
