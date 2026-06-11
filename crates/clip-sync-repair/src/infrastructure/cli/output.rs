@@ -467,6 +467,7 @@ mod tests {
                     verified: true,
                     skipped: false,
                     skip_reason: None,
+                    candidates_tried: 1,
                 }),
             }),
             gaps: vec![

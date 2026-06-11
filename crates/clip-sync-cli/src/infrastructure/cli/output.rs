@@ -24,19 +24,21 @@ fn print_human(show_diagnostics: bool, result: &AlignmentResult) {
     print!("{}", format_human_output(show_diagnostics, result));
 }
 
-pub fn format_human_output(show_diagnostics: bool, result: &AlignmentResult) -> String {
-    let result = AlignmentReport::from(result);
+pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResult) -> String {
+    let headline_confidence = domain_result
+        .start_clip()
+        .or_else(|| domain_result.clips.first())
+        .map(|clip| format!("{:.2}", clip.confidence))
+        .unwrap_or_else(|| "n/a".into());
+
+    let result = AlignmentReport::from(domain_result);
     let mut out = String::new();
 
     let offset = result
         .recommended_offset_secs
         .map(|o| format!("{o:+.3}s"))
         .unwrap_or_else(|| "n/a".into());
-    let confidence = result
-        .clips
-        .first()
-        .map(|c| format!("{:.2}", c.confidence))
-        .unwrap_or_else(|| "n/a".into());
+    let confidence = headline_confidence;
     out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
 
     let show_per_clip_offsets = result.clips.len() > 1;

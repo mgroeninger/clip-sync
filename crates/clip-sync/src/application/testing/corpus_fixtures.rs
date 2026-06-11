@@ -570,8 +570,8 @@ pub fn assert_corpus_expectations(
 
     if case.expect_aligned == Some(true) {
         let confidence = result
-            .clips
-            .first()
+            .start_clip()
+            .or_else(|| result.clips.first())
             .map(|clip| clip.confidence)
             .unwrap_or(0.0);
         assert!(
@@ -611,14 +611,17 @@ pub fn assert_corpus_expectations(
     }
 
     if let Some(expect) = case.expect_clip_repetition {
-        let rep = result.clips.first().and_then(|c| c.repetition.as_ref());
+        let rep = result
+            .start_clip()
+            .or_else(|| result.clips.first())
+            .and_then(|clip| clip.repetition.as_ref());
         if expect {
             let report = rep.unwrap_or_else(|| {
-                panic!("case {}: expected repetition report on clips[0]", case.id)
+                panic!("case {}: expected repetition report on start clip", case.id)
             });
             let finding = report.a.as_ref().or(report.b.as_ref()).unwrap_or_else(|| {
                 panic!(
-                    "case {}: expected at least one repetition finding in clips[0]",
+                    "case {}: expected at least one repetition finding on start clip",
                     case.id
                 )
             });

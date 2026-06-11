@@ -97,6 +97,8 @@ pub struct OffsetVerification {
     /// True when verification did not run (no feasible window, extract failure, etc.).
     pub skipped: bool,
     pub skip_reason: Option<String>,
+    /// Hold-out windows scored before reporting (0 when skipped before any score).
+    pub candidates_tried: u32,
 }
 
 /// Native-rate hold-out FFT correction applied after discovery alignment.
@@ -129,6 +131,23 @@ pub struct AlignmentResult {
     pub start_overlap: Option<TimelineOverlap>,
     pub high_rate_refinement: Option<HighRateRefinement>,
     pub offset_verification: Option<OffsetVerification>,
+}
+
+impl AlignmentResult {
+    /// Returns the clip with the given label, if present.
+    pub fn clip_with_label(&self, label: ClipLabel) -> Option<&ClipMatch> {
+        clip_with_label(&self.clips, label)
+    }
+
+    /// Returns the start-window clip, if present.
+    pub fn start_clip(&self) -> Option<&ClipMatch> {
+        self.clip_with_label(ClipLabel::Start)
+    }
+}
+
+/// Returns the clip with the given label from a slice, if present.
+pub fn clip_with_label<'a>(clips: &'a [ClipMatch], label: ClipLabel) -> Option<&'a ClipMatch> {
+    clips.iter().find(|clip| clip.label == label)
 }
 
 /// Maximum start/end clip offset delta treated as agreement when merging estimates.
@@ -201,15 +220,10 @@ pub fn build_alignment_result(
         })
         .collect();
 
-    let start_aligned = clips
-        .iter()
-        .find(|clip| clip.label == ClipLabel::Start)
-        .is_some_and(|clip| clip.aligned);
+    let start_aligned =
+        clip_with_label(&clips, ClipLabel::Start).is_some_and(|clip| clip.aligned);
 
-    let end_aligned = clips
-        .iter()
-        .find(|clip| clip.label == ClipLabel::End)
-        .map(|clip| clip.aligned);
+    let end_aligned = clip_with_label(&clips, ClipLabel::End).map(|clip| clip.aligned);
 
     let aligned_offsets: Vec<f64> = clips
         .iter()
@@ -296,7 +310,7 @@ fn compute_start_overlap(
         return None;
     }
     let offset = recommended_offset_secs?;
-    let start = clips.iter().find(|clip| clip.label == ClipLabel::Start)?;
+    let start = clip_with_label(clips, ClipLabel::Start)?;
     Some(compute_timeline_overlap(
         start.window_start_secs,
         start.window_end_secs,
@@ -339,14 +353,8 @@ fn compute_timeline_overlap(
 }
 
 fn compute_offset_drift(clips: &[ClipMatch]) -> Option<f64> {
-    let start = clips
-        .iter()
-        .find(|clip| clip.label == ClipLabel::Start)?
-        .offset_secs?;
-    let end = clips
-        .iter()
-        .find(|clip| clip.label == ClipLabel::End)?
-        .offset_secs?;
+    let start = clip_with_label(clips, ClipLabel::Start)?.offset_secs?;
+    let end = clip_with_label(clips, ClipLabel::End)?.offset_secs?;
     Some(end - start)
 }
 
@@ -374,9 +382,8 @@ fn choose_recommended_offset(
     }
 
     let pick = |label: ClipLabel| {
-        clips
-            .iter()
-            .find(|clip| clip.label == label && clip.aligned)
+        clip_with_label(clips, label)
+            .filter(|clip| clip.aligned)
             .and_then(|clip| clip.offset_secs)
     };
 
@@ -444,6 +451,63 @@ mod tests {
 
     fn window(start: u64, end: u64, label: ClipLabel) -> ClipWindow {
         ClipWindow::new(Duration::from_secs(start), Duration::from_secs(end), label)
+    }
+
+    #[test]
+    fn clip_with_label_finds_by_label() {
+        let windows = vec![
+            window(1800, 2700, ClipLabel::End),
+            window(0, 900, ClipLabel::Start),
+        ];
+        let estimates = vec![
+            ClipMatchEstimate {
+                offset_secs: 12.0,
+                confidence: 0.91,
+            },
+            ClipMatchEstimate {
+                offset_secs: 12.0,
+                confidence: 0.94,
+            },
+        ];
+        let result = build_alignment_result(
+            report_input(&windows, &estimates, None, None),
+            default_policy(),
+        );
+
+        assert_eq!(result.clips[0].label, ClipLabel::End);
+        assert_eq!(result.start_clip().unwrap().confidence, 0.94);
+        assert_eq!(
+            clip_with_label(&result.clips, ClipLabel::End)
+                .unwrap()
+                .confidence,
+            0.91
+        );
+    }
+
+    #[test]
+    fn start_clip_returns_none_when_missing() {
+        let result = AlignmentResult {
+            clips: vec![ClipMatch {
+                label: ClipLabel::Interior,
+                window_start_secs: 0.0,
+                window_end_secs: 60.0,
+                aligned: true,
+                offset_secs: Some(3.0),
+                confidence: 0.8,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            }],
+            start_aligned: false,
+            end_aligned: None,
+            recommended_offset_secs: Some(3.0),
+            offsets_consistent: true,
+            offset_drift_secs: None,
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+        };
+        assert!(result.start_clip().is_none());
     }
 
     #[test]

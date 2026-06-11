@@ -135,6 +135,8 @@ pub struct OffsetVerificationReport {
     pub skipped: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates_tried: Option<u32>,
 }
 
 impl From<&OffsetVerification> for OffsetVerificationReport {
@@ -148,6 +150,8 @@ impl From<&OffsetVerification> for OffsetVerificationReport {
             verified: verify.verified,
             skipped: verify.skipped,
             skip_reason: verify.skip_reason.clone(),
+            candidates_tried: (!verify.skipped && verify.candidates_tried > 0)
+                .then_some(verify.candidates_tried),
         }
     }
 }
@@ -353,6 +357,7 @@ mod tests {
                 verified: true,
                 skipped: false,
                 skip_reason: None,
+                candidates_tried: 1,
             }),
         };
 

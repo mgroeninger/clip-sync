@@ -97,6 +97,7 @@ Top-level object: **AlignmentReport**.
 | `verified` | bool | always | Offset independently confirmed |
 | `skipped` | bool | always | Verification did not run |
 | `skip_reason` | string | **absent when not skipped** | Why verification was skipped |
+| `candidates_tried` | integer | **absent when skipped or zero** | Hold-out windows scored before reporting |
 
 ---
 

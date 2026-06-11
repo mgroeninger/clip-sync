@@ -157,6 +157,7 @@ fn full_surface_alignment_result() -> AlignmentResult {
             verified: true,
             skipped: false,
             skip_reason: None,
+            candidates_tried: 1,
         }),
     }
 }
@@ -347,6 +348,51 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
 
     assert!(output.contains("  Start clip: +12.340s  (confidence 0.94)\n"));
     assert!(output.contains("  End clip: +12.355s  (confidence 0.91)\n"));
+}
+
+#[test]
+fn compact_human_output_headline_uses_start_clip_not_first_clip() {
+    let result = AlignmentResult {
+        clips: vec![
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: 1800.0,
+                window_end_secs: 2700.0,
+                aligned: true,
+                offset_secs: Some(12.355),
+                confidence: 0.91,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: true,
+                offset_secs: Some(12.34),
+                confidence: 0.94,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+        ],
+        start_aligned: true,
+        end_aligned: Some(true),
+        recommended_offset_secs: Some(12.34),
+        offsets_consistent: true,
+        offset_drift_secs: Some(0.015),
+        start_overlap: None,
+        high_rate_refinement: None,
+        offset_verification: None,
+    };
+
+    let output = format_human_output(false, &result);
+
+    assert!(
+        output.starts_with("Alignment: offset +12.340s  confidence 0.94\n"),
+        "headline must use start-clip confidence, not clips[0]: {output}"
+    );
 }
 
 #[test]
@@ -548,6 +594,7 @@ fn make_verification(verified: bool, confidence: f32, skipped: bool, skip_reason
         verified,
         skipped,
         skip_reason: skip_reason.map(String::from),
+        candidates_tried: if skipped { 0 } else { 1 },
     }
 }
 

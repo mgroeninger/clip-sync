@@ -88,8 +88,13 @@ pub fn apply_offset_verification<MS, FP, AL>(
 
     let mut last_failure = String::from("hold-out extract failed for all candidate windows");
     let mut saw_feasible = false;
+    let mut scored_attempts: Vec<OffsetVerification> = Vec::new();
+    const MAX_SCORED_ATTEMPTS: usize = 3;
 
     for holdout in &candidates {
+        if scored_attempts.len() >= MAX_SCORED_ATTEMPTS {
+            break;
+        }
         let window_start_secs = holdout.start.as_secs_f64();
         if !holdout_window_feasible(
             window_start_secs,
@@ -248,7 +253,20 @@ pub fn apply_offset_verification<MS, FP, AL>(
             "offset verification result"
         );
 
-        result.offset_verification = Some(OffsetVerification {
+        progress.phase_verbose(&format!(
+            "Hold-out verify A [{:.1}–{:.1}]: confidence {:.2}, lag {:+.3}s, {}",
+            window_start_secs,
+            window_start_secs + clip_length_secs,
+            confidence,
+            estimate.offset_secs,
+            if verified {
+                "verified"
+            } else {
+                "not verified"
+            }
+        ));
+
+        scored_attempts.push(OffsetVerification {
             window_a_start_secs: window_start_secs,
             window_a_end_secs: window_start_secs + clip_length_secs,
             window_b_start_secs,
@@ -257,7 +275,18 @@ pub fn apply_offset_verification<MS, FP, AL>(
             verified,
             skipped: false,
             skip_reason: None,
+            candidates_tried: 0,
         });
+
+        if verified {
+            break;
+        }
+    }
+
+    if let Some(best) = pick_best_scored_attempt(&scored_attempts) {
+        let mut best = best.clone();
+        best.candidates_tried = scored_attempts.len() as u32;
+        result.offset_verification = Some(best);
         return;
     }
 
@@ -280,7 +309,18 @@ fn skipped(reason: &str) -> OffsetVerification {
         verified: false,
         skipped: true,
         skip_reason: Some(reason.into()),
+        candidates_tried: 0,
     }
+}
+
+fn pick_best_scored_attempt(attempts: &[OffsetVerification]) -> Option<&OffsetVerification> {
+    attempts.iter().enumerate().max_by(|(left_idx, left), (right_idx, right)| {
+        left.confidence
+            .partial_cmp(&right.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right_idx.cmp(left_idx))
+    })
+    .map(|(_, attempt)| attempt)
 }
 
 #[cfg(test)]
@@ -534,6 +574,124 @@ mod tests {
             "should not verify with wrong delta (confidence={}, would need lag ≤ 0.5 s and confidence ≥ 0.5)",
             v.confidence
         );
+    }
+
+    fn run_fake_holdout_verification(aligner: FakeAligner, offset_secs: f64) -> AlignmentResult {
+        let duration = Duration::from_secs(120);
+        let track = AudioTrack {
+            index: 0,
+            codec: "test".into(),
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            duration: Some(duration),
+            decodable: true,
+        };
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
+
+        let mut result = result_with_offset(offset_secs);
+        let clip_config = holdout_clip_config();
+        let validation = verification_validation();
+        let windows = discovery_windows();
+        let fingerprinter = FakeFingerprinter::new();
+        let progress = FakeProgressReporter;
+
+        apply_offset_verification(
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
+            &clip_config,
+            &validation,
+            &mut result,
+            &fingerprinter,
+            &aligner,
+            &progress,
+        );
+
+        result
+    }
+
+    #[test]
+    fn verify_offset_retries_until_verified() {
+        let aligner = FakeAligner::with_estimates(vec![
+            ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.3,
+            },
+            ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.9,
+            },
+        ]);
+
+        let result = run_fake_holdout_verification(aligner, 3.0);
+        let v = result.offset_verification.expect("verification");
+
+        assert!(!v.skipped);
+        assert!(v.verified, "confidence={}", v.confidence);
+        assert_eq!(v.candidates_tried, 2);
+    }
+
+    #[test]
+    fn verify_offset_reports_best_attempt_when_all_fail() {
+        let aligner = FakeAligner::with_estimates(vec![
+            ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.2,
+            },
+            ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.45,
+            },
+            ClipMatchEstimate {
+                offset_secs: 0.0,
+                confidence: 0.35,
+            },
+        ]);
+
+        let result = run_fake_holdout_verification(aligner, 3.0);
+        let v = result.offset_verification.expect("verification");
+
+        assert!(!v.skipped);
+        assert!(!v.verified);
+        assert!((v.confidence - 0.45).abs() < f32::EPSILON);
+        assert_eq!(v.candidates_tried, 3);
+    }
+
+    #[test]
+    fn pick_best_scored_attempt_prefers_earlier_on_confidence_tie() {
+        let attempts = vec![
+            OffsetVerification {
+                window_a_start_secs: 0.0,
+                window_a_end_secs: 60.0,
+                window_b_start_secs: 3.0,
+                window_b_end_secs: 63.0,
+                confidence: 0.4,
+                verified: false,
+                skipped: false,
+                skip_reason: None,
+                candidates_tried: 0,
+            },
+            OffsetVerification {
+                window_a_start_secs: 30.0,
+                window_a_end_secs: 90.0,
+                window_b_start_secs: 33.0,
+                window_b_end_secs: 93.0,
+                confidence: 0.4,
+                verified: false,
+                skipped: false,
+                skip_reason: None,
+                candidates_tried: 0,
+            },
+        ];
+
+        let best = pick_best_scored_attempt(&attempts).expect("best");
+        assert_eq!(best.window_a_start_secs, 0.0);
     }
 
     #[test]
