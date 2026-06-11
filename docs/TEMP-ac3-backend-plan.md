@@ -191,7 +191,7 @@ No minimum version check — any successful `-version` exit is accepted.
 
 | Plan | Interaction |
 |------|-------------|
-| [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) | Extract entry points gain `&mut self` and internal seek recovery. Land AC-3 routing **on the post-redesign extract signatures** if that plan is in flight — otherwise implement on current `*_with_state` and rebase the ffmpeg branch when session redesign merges. |
+| [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) | Shipped 2026-06-11: `&mut self` extract entry points and internal seek recovery. Implement AC-3 routing on current signatures. |
 | [TEMP-query-reference-alignment-plan.md](TEMP-query-reference-alignment-plan.md) | Blocked on media-session; AC-3 backend choice does not block query mode but repair on AC-3 sources benefits from `ac3-ffmpeg` first. |
 | Repair `ffmpeg-mux` | Independent feature; typical repair build: `--features "ac3,ac3-ffmpeg,ffmpeg-mux"`. |
 

@@ -22,7 +22,7 @@
 
 | Plan | Why it blocks this plan |
 |------|-------------------------|
-| [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) | `MediaSession` becomes `&mut self`; `reset_io` removed; `MediaExtent` replaces raw container durations and dead `decoded_extent_*` fields; scan policy moves to `application/media_scan.rs` |
+| [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) | Shipped 2026-06-11: `MediaSession` `&mut self`; `reset_io` removed; `MediaExtent`; scan policy in `application/media_scan.rs` |
 | [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) | Verification retries up to 3 candidates; `candidates_tried` on `OffsetVerification`; `clip_with_label` / `start_clip()` helpers; `alignment_fixtures` adoption; chirp test-role split |
 
 **Already shipped (rebase on these, do not re-litigate):**
@@ -669,7 +669,7 @@ Machine-oriented fields preserved for scripts; friendly aliases on `QueryLocaliz
 ## References
 
 - Prior discussion: arbitrary clip vs long video repair workflow (2026-06-10)
-- Prerequisites: [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md), [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md)
+- Prerequisites: [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) (shipped), [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md)
 - Layer purity (shipped): [archive/layer-purity-plan.md](archive/layer-purity-plan.md)
 - JSON contract: [json-output.md](json-output.md)
 - Symmetric alignment: `crates/clip-sync/src/application/align_videos.rs`

@@ -166,7 +166,8 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 | Type | Description |
 |------|-------------|
 | `MediaSource` | Path or identifier for an input file |
-| `AudioTrack` | Track index, codec, channel count, sample rate, bitrate (if known) |
+| `AudioTrack` | Track index, codec, channel count, sample rate, duration (if known), decodable flag |
+| `MediaExtent` | Declared container duration vs optional tail-scanned decodable extent; `effective()` for planning and hold-out |
 | `ClipWindow` | Start/end time range within a track |
 | `MonoPcmClip` | Sample rate, channel count (1), PCM samples for one window |
 | `Fingerprint` | Opaque fingerprint blob for a clip |
@@ -177,7 +178,7 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 #### Domain policies (pure functions)
 
 - **`select_best_track(tracks) -> AudioTrack`** — First decodable track in container order. Fail if no audio tracks. When the main program is not first, use `alignment.try_all_tracks` or `--try-all-tracks` (see [docs/corpus-validation.md](docs/corpus-validation.md)).
-- **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy).
+- **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy). Multi-clip placement with end anchoring uses `MediaExtent` and `clip_windows_with_options` when tail extent or end-clip clamping matters.
 - **`pcm_preparation`** — Peak normalization, silence trimming, energy gates (shared with repair gap detection).
 
 #### Clip window policy
@@ -211,10 +212,10 @@ When the video is shorter than `clip_length`, **`num_clips` is ignored** and a s
 
 **Two or more clips** (`effective_num_clips >= 2`):
 
-Always anchor the **first clip at the start** and the **last clip at the end**. Any remaining clips sit between them, centered in equal subdivisions of the full timeline.
+Always anchor the **first clip at the start** and the **last clip at the end**. Any remaining clips sit between them, centered in equal subdivisions of the full timeline. End-clip placement uses [`MediaExtent::effective()`](crates/clip-sync/src/domain/media_extent.rs) (declared duration clamped by tail-scanned decodable extent when known) minus optional `end_clip_tail_inset_secs`.
 
 1. **Start clip:** `[0, clip_length)`
-2. **End clip:** `[duration - clip_length, duration)`
+2. **End clip:** `[effective_end - clip_length, effective_end)` where `effective_end = effective_timeline_end(extent, end_tail_inset)`
 3. **Interior clips** (when `effective_num_clips > 2`): divide `[0, duration)` into `effective_num_clips` equal segments. For each interior segment (indices `1 .. effective_num_clips - 1`), place a window of length `clip_length` centered on that segment’s midpoint (clamp to `[0, duration)`).
 
 Return windows in chronological order (start → interior(s) → end).
@@ -267,16 +268,17 @@ Domain errors carry no I/O or library context; they describe business rule viola
 2. Open both sources via `MediaReader::open`.
 3. For each source, list tracks; apply `select_best_track` (or try all track pairs when configured).
 4. Log: track chosen (index, sample rate, channels).
-5. Query duration; compute `clip_windows(duration, &config.clip)`.
-6. Log: effective clip count and each window boundary.
-7. Extract mono PCM for each window via `MediaSession::extract_mono`.
-8. Log: extraction progress (see Progress port).
-9. Fingerprint each clip via `Fingerprinter::fingerprint`.
-10. Log: fingerprint complete.
-11. For each clip index `i`, run `Aligner::find_offset` on clip *i* from A vs clip *i* from B; build `AlignmentResult` with per-clip alignment and recommended offset.
-12. Optionally apply PCM refinement (`refine_offset_with_pcm`) and high-rate hold-out refinement (`refine_offset_high_rate`).
-13. Log alignment summary (start/end aligned, per-clip status, recommended offset).
-14. Return `AlignmentResult` (always on successful analysis, even when no clips match).
+5. Resolve [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) per video (declared from track duration; optional tail packet scan when end anchoring, hold-out verification, or high-rate refinement need decodable extent).
+6. Compute clip windows from `MediaExtent` and `ClipConfig` (see [Clip window policy](#clip-window-policy)).
+7. Log: effective clip count and each window boundary.
+8. Extract mono PCM for each window via `MediaSession::extract_mono`.
+9. Log: extraction progress (see Progress port).
+10. Fingerprint each clip via `Fingerprinter::fingerprint`.
+11. Log: fingerprint complete.
+12. For each clip index `i`, run `Aligner::find_offset` on clip *i* from A vs clip *i* from B; build `AlignmentResult` with per-clip alignment and recommended offset.
+13. Optionally apply PCM refinement (`refine_offset_with_pcm`), high-rate hold-out refinement (`refine_offset_high_rate`), and hold-out offset verification (`verify_offset`).
+14. Log alignment summary (start/end aligned, per-clip status, recommended offset).
+15. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
 #### Default pipeline: `align_with_defaults`
 
@@ -295,11 +297,43 @@ Wires `SymphoniaMediaReader`, `ChromaprintFingerprinter`, `ChromaprintAligner` f
 
 | Port | Role |
 |------|------|
-| `MediaReader` | Open file → `MediaSession` |
-| `MediaSession` | List tracks, extract mono PCM for a `ClipWindow`, optional `reset_io` |
+| `MediaReader` | Open file → `MediaSession` (`Session: MediaSession + Send`) |
+| `MediaSession` | List tracks (`&self`); decode/scan/tail-extent (`&mut self`) — see [Media session semantics](#media-session-semantics) |
 | `Fingerprinter` | `MonoPcmClip` → `Fingerprint` |
 | `Aligner` | Compare fingerprint pairs; return offset and match segments |
+| `Resampler` | Mono (and optional interleaved) PCM rate conversion |
+| `PcmCorrelator` | FFT cross-correlation for PCM offset refinement |
 | `ProgressReporter` | Phase messages and granular progress callbacks |
+
+##### Media session semantics
+
+Shipped 2026-06-11 ([archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md)).
+
+**Mutability.** Decode and scan operations take `&mut self` because each session owns seekable decoder state (`FormatReader`, cached per-track decoders). `list_tracks` stays `&self` (metadata cached at open). Analyzer and repair hold sessions A and B as separate values and use them **strictly sequentially** — borrows never overlap.
+
+**Seek recovery.** The Symphonia adapter recovers internally (`seek_with_recovery`, fresh reader before sequential-from-zero retry). There is **no** `reset_io` on the port; callers cannot forget to reset after a failed seek.
+
+**`Send` and parallel decode.** `MediaReader::Session: Send` so a session can move to a worker thread. Parallel A/B extraction is **not implemented** — `AlignVideos::execute` still decodes A then B on one thread. Future parallel decode: one opened session per thread.
+
+**`MediaExtent`.** Resolved once per video during clip extraction:
+
+```rust
+struct MediaExtent {
+    declared: Duration,           // container metadata (ceiling)
+    decodable: Option<Duration>,  // tail packet scan when needed
+}
+// effective() = decodable.unwrap_or(declared).min(declared)
+```
+
+Tail scan runs when `AlignConfig::needs_tail_extent_scan` (end-clip clamp with `num_clips >= 2`, `verify_offset`, or `refine_offset_high_rate`). Hold-out window placement and feasibility use `extent_a.effective().min(extent_b.effective())`. Declared duration remains the ceiling — planning beyond it risks `OutOfRange` seeks.
+
+**Duration-less open.** Open succeeds when tracks are decodable but container duration is zero (probe → chapters → packet scan may still leave duration unknown). Clip planning fails with `InvalidDuration` when no usable duration exists (`mp3_no_duration_tag` corpus anchor).
+
+**Scan policy.** Default `scan_*_buckets` bodies delegate to [`application/media_scan.rs`](crates/clip-sync/src/application/media_scan.rs) (near-end tolerance, declared-duration fallback loops for test fakes). Production Symphonia scans are **EOF-driven**; bucket timestamps come from decoded sample counts.
+
+**Re-entrancy.** `scan_mono_buckets` / `scan_interleaved_buckets` callbacks must **not** call back into the same `MediaSession` (no nested extract/scan on the session passed to the scan). Violating this would borrow-check fail or corrupt decoder state.
+
+**Streaming / memory (decision only).** Future streaming fingerprinting should reuse the bucket-callback shape, not a new pull API. Today the analyzer still holds full `MonoPcmClip` buffers per window; repair gap scan streams via sequential buckets. PCM clone reduction in `align_extracted_pair` stays defer/opportunistic — see [BACKLOG.md](BACKLOG.md).
 
 #### Application DTOs
 
@@ -341,6 +375,8 @@ Application errors aggregate domain and port failures; infrastructure maps libra
 - Down-mix to mono during decode (or post-decode mix).
 - Honor `ClipWindow` time bounds; stream decode for long segments.
 - **Session reuse:** one probe and `FormatReader` per file per alignment run; per-track decoders cached across clip windows (see [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)).
+- **Seek recovery:** adapter-internal reopen/retry on seek failure and before sequential-from-zero extract fallback — no caller-managed IO reset (see [Media session semantics](#media-session-semantics)).
+- **Tail extent:** optional packet scan via `track_decodable_extent` populates `MediaExtent::decodable`; warns when observed extent exceeds declared duration before clamping.
 - Map Symphonia/decode failures → `MediaError`.
 
 #### Chromaprint adapter (`Fingerprinter` + `Aligner`)
@@ -383,7 +419,7 @@ pub use application::offset_refinement::aligned_slice_starts;
 // Domain (selected)
 pub use domain::{
     AlignmentResult, AudioTrack, ClipMatch, ClipMatchEstimate, ClipWindow, ClipLabel,
-    DomainError, Fingerprint, MediaSource, MonoPcmClip,
+    DomainError, Fingerprint, MediaExtent, MediaSource, MonoPcmClip,
 };
 
 // Default adapter types + shared infra
@@ -819,10 +855,11 @@ clip-sync/
     ├── clip-sync/
     │   └── src/
     │       ├── lib.rs                  # facade
-    │       ├── domain/
+    │       ├── domain/                   # includes media_extent.rs
     │       ├── application/
     │       │   ├── align_videos.rs, config.rs, default_pipeline.rs, error.rs
-    │       │   ├── high_rate_refinement.rs, offset_refinement.rs, ports.rs
+    │       │   ├── high_rate_refinement.rs, offset_refinement.rs, offset_verification.rs
+    │       │   ├── media_scan.rs, ports.rs
     │       │   └── testing/            # test-utils: fakes, audio_fixtures, corpus_fixtures, ffmpeg_util
     │       └── infrastructure/
     │           ├── chromaprint/, symphonia/
@@ -937,13 +974,14 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [tests/corpus/README.md](tests/corpus/README.md) | Fixture size budget, regenerate commands |
 | [docs/archive/](docs/archive/) | Completed plans — historical paths, do not edit |
 | [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
-| [docs/TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md) | Active: hold-out offset verification → archive when shipped |
+| [docs/archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
+| [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 
 ### Feature plans vs crate docs
 
-[Clip self-repetition](docs/archive/clip-self-repetition-plan.md) and [hold-out offset verification](docs/TEMP-offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
+[Clip self-repetition](docs/archive/clip-self-repetition-plan.md) and [hold-out offset verification](docs/archive/offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
 
 | Concern | Crate after refactor |
 |---------|----------------------|

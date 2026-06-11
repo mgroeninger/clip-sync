@@ -1,6 +1,6 @@
 # Temporary plan: output & error contract
 
-> **Status:** Shipped (2026-06-10), all phases complete. Plan 1 of 4 — see [BACKLOG.md](../../BACKLOG.md). Contract frozen in [docs/json-output.md](../json-output.md); unblocks [TEMP-media-session-redesign-plan.md](../TEMP-media-session-redesign-plan.md).
+> **Status:** Shipped (2026-06-10), all phases complete. Plan 1 of 4 — see [BACKLOG.md](../../BACKLOG.md). Contract frozen in [docs/json-output.md](../json-output.md); unblocked [archive/media-session-redesign-plan.md](media-session-redesign-plan.md) (shipped 2026-06-11).
 
 **Problem:** The analyzer's JSON output is the raw serde view of domain types — `AlignmentResult` and friends derive `Serialize` in `domain/`, so freezing the JSON contract (BACKLOG Phase 4 #7) would freeze the domain model's shape with it. Meanwhile the failure taxonomy is unsettled: `AlignmentError::NoMatch` / `AmbiguousMatch` are `#[allow(dead_code)]` and never constructed, port errors carry free-form `String`s with no `source()` chain, and the rubato→linear resample fallback degrades quality silently.
 
@@ -113,6 +113,6 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ## Cross-plan sequencing
 
-- **Blocks** the JSON freeze and should land **before** [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) (both touch `MediaError`).
+- **Blocks** the JSON freeze and should land **before** the media-session redesign (both touch `MediaError`) — satisfied; media-session shipped 2026-06-11 ([media-session-redesign-plan.md](media-session-redesign-plan.md)).
 - Layer-purity shipped 2026-06-11 ([layer-purity-plan.md](layer-purity-plan.md)); resample warn lives in `rubato.rs`.
 - [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) Phase 2 adds an additive JSON field — land it before Phase 4 freeze here, or version it explicitly.

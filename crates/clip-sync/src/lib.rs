@@ -24,7 +24,7 @@ pub use domain::{
     format_time_range,
     format_timestamp, AlignmentResult, AudioTrack, ClipMatch,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
-    HighRateRefinement, InterleavedScanBucket, MediaSource, MonoPcmClip, MonoScanBucket,
+    HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, RepetitionFinding, TimelineOverlap,
 };
 pub use domain::policies::{select_best_track, select_track_for_reference};

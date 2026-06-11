@@ -43,7 +43,7 @@
 | **Fixture builder** | Make `alignment_fixtures` earn its keep: extend `minimal_alignment_result` with the few setters tests actually need (`with_offset`, `with_clips`, `with_verification`), adopt in `crates/clip-sync` and `clip-sync-cli` test files; repair adoption optional (own-crate fixtures acceptable). If after adoption it's still awkward, delete it instead — the failure mode to avoid is a third unused path. |
 | **Repetition downgrade docs** | Document in `docs/corpus-validation.md` (and a PLAN output-section note): v1 intentionally computes `aligned` from pre-downgrade confidence; downgrade affects displayed/JSON confidence only. No behavior change. |
 | **Verification cost** | Document (README + PLAN clip-window section): `--verify-offset` adds up to ~2 × `clip_length` of decode. A `validation.max_verification_secs` knob is sketched as optional Phase 6 — implement only if the cost note draws real friction. |
-| **Hold-out duration source** | Container-vs-extent placement is **owned by** [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) Phase 4 (`MediaExtent`), not here. This plan touches candidate *selection*, that plan touches candidate *feasibility inputs*. Rebase whichever lands second. |
+| **Hold-out duration source** | Container-vs-extent placement shipped in [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) Phase 4 (`MediaExtent`). This plan touches candidate *selection*; that plan touched candidate *feasibility inputs*. |
 
 ---
 
@@ -105,5 +105,5 @@
 ## Cross-plan sequencing
 
 - The [contract plan](archive/output-error-contract-plan.md) froze the JSON contract on 2026-06-10 (v1, [json-output.md](json-output.md)). Phase 2's field must be **additive and optional-absent** (stays v1 per the revision procedure there) and must update `docs/json-output.md` + regenerate the golden fixtures.
-- `offset_verification.rs` is shared with [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) Phase 4 — whichever lands second rebases; extent-based placement belongs there, not here.
+- `offset_verification.rs` extent-based placement is shipped ([archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) Phase 4); this plan covers remaining candidate selection and corpus gaps.
 - Layer-purity shipped 2026-06-11 ([archive/layer-purity-plan.md](archive/layer-purity-plan.md)).

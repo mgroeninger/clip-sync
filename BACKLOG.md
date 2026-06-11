@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-11. Items 7, 8 done.
+Last updated: 2026-06-11. Media-session redesign shipped.
 
 **How this doc works**
 
@@ -10,34 +10,19 @@ Last updated: 2026-06-11. Items 7, 8 done.
 - **Done** — one-line index in [Completed](#completed); design detail lives in `docs/archive/*` and git history.
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Phase 4](#phase-4--edge-cases-and-semantics) edge cases → [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
+**Next:** [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-11)** — layer-purity shipped 2026-06-11 (see [Completed](#completed)); land order: (verification-hardening ∥ media-session) → query-reference; AC-3 backend plan is independent and can land in parallel.
+**Active plans (2026-06-11)** — land order: verification-hardening → query-reference; AC-3 backend plan is independent and can land in parallel.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-media-session-redesign-plan.md](docs/TEMP-media-session-redesign-plan.md) | Items 6, 8, 12; hold-out container duration, unused `decoded_extent_*`, `reset_io` ignored |
 | [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill — **blocked** on media-session + verification-hardening |
+| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill — **blocked** on verification-hardening |
 
 ---
 
 ## Open work
-
-### Phase 4 — Edge cases and semantics
-
-| # | Item | Direction |
-|---|------|-----------|
-| 6 | [Duration-less files at open](#duration-less-files-at-open) | Audit remaining gaps; relax open when decodable |
-
-#### Duration-less files at open
-
-Partially addressed (`scan_container_audio_duration`, `mp3_no_duration_tag`). Audit paths that still fail at open; fail at clip planning if duration unknown after scan.
-
-**Refs:** `crates/clip-sync/src/infrastructure/symphonia/session.rs`, `tests/corpus/manifest.toml`
-
----
 
 ### Validation diagnostics — open concerns
 
@@ -45,19 +30,16 @@ Core flags ship (2026-06-10). Follow-ups from hardening pass and code review.
 
 | Concern | Direction |
 |---------|-----------|
-| Hold-out placement uses container duration | MKV tail regression test; consider hybrid extent policy |
 | Short media vs min `clip_length` (30 s committed WAV, 60 s min) | Regenerate fixtures ≥ 60 s or accept generated-only `corpus_verify_offset_pass` |
 | First hold-out candidate wins when `verified == false` | Try next candidate or log chosen window in verbose |
 | Default 15 min `clip_length` + `verify_offset` | Document cost; optional shorter verification segment (future) |
 | Option A (`find_offset`) false passes | Option B PCM lag-0 only if corpus proves need |
 | Committed corpus + `verify_offset` | `wav_leader_3s` = alignment only |
 | Test overlap (+3 s chirp) | Dedupe corpus vs integration vs unit roles |
-| Unused `decoded_extent_*` on hold-out input | Remove or revive extent-aware placement |
-| `reset_io` ignored in high-rate refinement | Match verification (log / propagate) |
 | Headline confidence uses `clips.first()` | Select start clip by label |
 | `AlignmentResult` test builder drift | Use `application/testing/alignment_fixtures.rs` |
 | Repetition downgrade vs `aligned` | Document intentional v1 in corpus-validation |
-| Plan doc drift | Archive [TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md); sync PLAN |
+| Plan doc drift | Sync PLAN after policy decisions |
 
 **Refs:** `offset_verification.rs`, `high_rate_refinement.rs`, `domain/policies.rs`, CLI/repair `output.rs`, `tests/corpus/manifest.toml`
 
@@ -67,14 +49,7 @@ Core flags ship (2026-06-10). Follow-ups from hardening pass and code review.
 
 | # | Item | Direction |
 |---|------|-----------|
-| 12 | [`MediaSession` interior mutability](#mediasession-interior-mutability) | `&mut self` or explicit handle; drop `expect()` |
 | 13 | [Documentation drift](#documentation-drift-plan-vs-code) | PLAN audit after policy decisions |
-
-#### `MediaSession` interior mutability
-
-`RefCell` + `extract_mono(&self)`; not `Sync`. Breaking port change when touching session code.
-
-**Refs:** `infrastructure/symphonia/session.rs`, `application/ports.rs`
 
 #### Documentation drift (PLAN vs code)
 
@@ -88,14 +63,14 @@ Defaults, domain errors, purity claims out of sync with code.
 
 | Item | Direction |
 |------|-----------|
-| [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | Document in PLAN; `Cow` / in-place prep when painful |
+| [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; WAV ≥ 60 s if verify on fixtures needed |
 | [Resampler port shrink](#resampler-port-drop-unused-resample_interleaved) | Drop trait method if still unused; repair keeps facade fn |
 
 #### Memory use and PCM cloning on long clips
 
-15-minute default clips; full PCM in memory; no streaming fingerprint. Structural ceiling until API changes.
+15-minute default clips; full PCM in memory per extracted window; no streaming fingerprint API yet. **Decided (2026-06-11):** future streaming should reuse `scan_*_buckets` callbacks; `MediaSession: Send` allows one session per thread when parallel decode lands — see [PLAN.md](PLAN.md) § Media session semantics and [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md).
 
 **Refs:** `application/align_videos.rs`, `domain/pcm_preparation.rs`
 
@@ -141,6 +116,7 @@ Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port com
 | `AlignmentError::NoMatch` / `AmbiguousMatch` removed | 2026-06-10 | Contract frozen: low-confidence = `Ok(confidence: 0.0)`; `EngineFailed` is the only error variant |
 | Resample rubato fallback warn | 2026-06-10 | [archive/output-error-contract-plan.md](docs/archive/output-error-contract-plan.md) Phase 1 — `domain/resample.rs` |
 | `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
+| `MediaSession` redesign + `MediaExtent` | 2026-06-11 | [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md): `&mut self` port, internal seek recovery, `media_scan.rs`, hold-out extent placement, duration-less open audit |
 
 ---
 

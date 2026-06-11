@@ -205,21 +205,6 @@ fn secs_to_duration(secs: f64) -> Duration {
     Duration::from_secs_f64(secs.max(0.0))
 }
 
-/// Latest timeline position covered by actually decoded samples (ignores end-of-window silence padding).
-pub fn decoded_timeline_extent(windows: &[ClipWindow], clips: &[MonoPcmClip]) -> Duration {
-    windows
-        .iter()
-        .zip(clips)
-        .map(|(window, clip)| {
-            let rate = f64::from(clip.sample_rate.max(1));
-            let decoded_secs = clip.effective_decoded_sample_count() as f64 / rate;
-            window.start.as_secs_f64() + decoded_secs
-        })
-        .map(Duration::from_secs_f64)
-        .max()
-        .unwrap_or(Duration::ZERO)
-}
-
 /// Pick a hold-out window on the shorter file's timeline, avoiding discovery windows when possible.
 pub fn pick_holdout_window(
     duration: Duration,
@@ -780,19 +765,6 @@ mod tests {
             }),
             "short B duration should make every candidate infeasible"
         );
-    }
-
-    #[test]
-    fn decoded_timeline_extent_ignores_silence_padding() {
-        let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start);
-        let clip = MonoPcmClip {
-            sample_rate: 44_100,
-            samples: vec![0; 441_000],
-            decode_error_skips: 0,
-            decoded_sample_count: Some(203 * 44_100),
-        };
-        let extent = decoded_timeline_extent(&[window], &[clip]);
-        assert!((extent.as_secs_f64() - 203.0).abs() < 0.01);
     }
 
     #[test]

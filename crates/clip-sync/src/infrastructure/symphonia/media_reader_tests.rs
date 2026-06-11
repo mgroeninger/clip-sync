@@ -312,7 +312,7 @@ fn media_reader_open_lists_tracks() {
     write_test_wav(&path, 44_100, 2);
 
     let reader = SymphoniaMediaReader;
-    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
+    let session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
     assert_eq!(tracks.len(), 1);
     assert!(tracks[0].duration.unwrap().as_secs() >= 1);
