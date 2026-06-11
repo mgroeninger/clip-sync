@@ -9,7 +9,7 @@ use symphonia::core::audio::{
 use symphonia::core::codecs::CodecInfo;
 use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia::core::codecs::audio::well_known::profiles::{
-    CODEC_PROFILE_AAC_HE, CODEC_PROFILE_AAC_HE_V2, CODEC_PROFILE_AAC_LC,
+    CODEC_PROFILE_AAC_HE, CODEC_PROFILE_AAC_HE_V2,
 };
 use symphonia::core::codecs::audio::{
     AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
@@ -66,13 +66,14 @@ impl AacDecoder {
             // ASC channelConfiguration 0 means layout is in the PCE, not the header.
             // ffmpeg often muxes 5.1 this way; Symphonia still provides channel count from the container.
             if m4a_info.channels == 0 {
-                m4a_info.channels = if let Some(channels) = &params.channels {
-                    channels.count() as u8
-                } else {
-                    return unsupported_error(
-                        "aac: ASC channel config 0 requires container channel layout",
-                    );
-                };
+                // ASC channelConfiguration 0 = layout carried in the PCE inside the bitstream.
+                // Symphonia often leaves `params.channels` unset for this case; FDK learns the
+                // true layout from the first access unit in `configure_metadata`.
+                m4a_info.channels = params
+                    .channels
+                    .as_ref()
+                    .map(|channels| channels.count() as u8)
+                    .unwrap_or(1);
             }
         } else {
             m4a_info.otype = M4AType::Lc;
@@ -216,7 +217,6 @@ impl RegisterableAudioDecoder for AacDecoder {
             "aac",
             "Advanced Audio Coding",
             &[
-                codec_profile!(CODEC_PROFILE_AAC_LC, "aac-lc", "Low Complexity"),
                 codec_profile!(CODEC_PROFILE_AAC_HE, "aac-he", "High Efficiency"),
                 codec_profile!(CODEC_PROFILE_AAC_HE_V2, "aac-he-v2", "High Efficiency V2"),
             ]

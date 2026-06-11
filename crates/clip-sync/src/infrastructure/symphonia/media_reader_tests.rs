@@ -1084,6 +1084,82 @@ fn track_decodable_extent_shorter_than_patched_container_duration() {
     );
 }
 
+/// Repair alignment calls `track_decodable_extent` before the first clip extract; the tail
+/// scan must not leave the MP4 reader at EOF (isomp4: no atom pending read on the next read).
+#[cfg(feature = "ffmpeg-tests")]
+#[test]
+fn extract_after_track_decodable_extent_on_mp4() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("extent_then_extract.mp4");
+    if !ffmpeg_util::write_lavfi_sine_container(
+        &path,
+        &["-f", "mp4"],
+        &["-c:a", "aac", "-b:a", "128k"],
+        5,
+    ) {
+        eprintln!("skipping extent-then-extract test: ffmpeg unavailable");
+        return;
+    }
+
+    let reader = SymphoniaMediaReader;
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
+    let tracks = session.list_tracks().unwrap();
+    let track = &tracks[0];
+
+    session
+        .track_decodable_extent(track)
+        .expect("track_decodable_extent should succeed");
+
+    let window = ClipWindow::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        ClipLabel::Interior,
+    );
+    session
+        .extract_mono(track, &window, &NoopProgress, "after extent")
+        .expect("extract after extent scan should not fail with corrupt MP4 reader state");
+}
+
+/// 5.1 AAC-LC in MP4 must decode via Symphonia native (not FDK ADTS) after tail extent scan.
+#[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
+#[test]
+fn extract_surround_aac_mp4_after_track_decodable_extent() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("surround_extent.mp4");
+    if !ffmpeg_util::write_lavfi_sine_container(
+        &path,
+        &["-f", "mp4"],
+        &["-ac", "6", "-c:a", "aac", "-b:a", "128k"],
+        5,
+    ) {
+        eprintln!("skipping surround extent test: ffmpeg unavailable");
+        return;
+    }
+
+    let reader = SymphoniaMediaReader;
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
+    let tracks = session.list_tracks().unwrap();
+    let track = &tracks[0];
+    assert!(track.decodable, "5.1 AAC-LC should be decodable with he-aac build");
+    assert_eq!(track.channels, 6);
+
+    session.track_decodable_extent(track).unwrap();
+
+    let window = ClipWindow::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        ClipLabel::Interior,
+    );
+    let clip = session
+        .extract_mono(track, &window, &NoopProgress, "surround after extent")
+        .expect("5.1 AAC-LC extract should succeed via native decoder");
+    assert!(!clip.samples.is_empty());
+}
+
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_eac3_surround_mp4() {

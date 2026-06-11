@@ -151,9 +151,36 @@ pub(crate) fn is_audio_track(track: &Track) -> bool {
     track.track_type() == Some(TrackType::Audio)
 }
 
+/// Channel count from the AAC AudioSpecificConfig in `extra_data` (MP4 esds / MKV CodecPrivate).
+fn aac_asc_channel_count(extra: &[u8]) -> Option<u16> {
+    if extra.len() < 2 {
+        return None;
+    }
+    // Bytes 0–1 hold object type (5 bits), sample-rate index (4 bits), channel config (4 bits).
+    let channel_config = (extra[1] >> 3) & 0x0f;
+    match channel_config {
+        0 => None,
+        1 => Some(1),
+        2 => Some(2),
+        3 => Some(3),
+        4 => Some(4),
+        5 => Some(5),
+        6 => Some(6),
+        7 => Some(8),
+        _ => None,
+    }
+}
+
 fn channel_count(params: &AudioCodecParameters) -> u16 {
     if let Some(ch) = params.channels.as_ref() {
         return ch.count() as u16;
+    }
+    if params.codec == CODEC_ID_AAC {
+        if let Some(extra) = params.extra_data.as_deref() {
+            if let Some(channels) = aac_asc_channel_count(extra) {
+                return channels;
+            }
+        }
     }
     // Symphonia's isomp4 dac3/dec3 atom handler sets codec_id and extra_data but
     // does NOT populate channels. Derive from the codec-specific box payload.
@@ -307,5 +334,39 @@ mod tests {
             is_audio_decodable(&params),
             "5.1 AAC with ASC channel config 0 should be decodable when container reports 6 channels"
         );
+    }
+
+    /// Symphonia often leaves `params.channels` unset for ffmpeg PCE-style 5.1 AAC.
+    #[cfg(feature = "he-aac")]
+    #[test]
+    fn lavc_aac_51_pce_extradata_without_container_channels_is_decodable() {
+        use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
+
+        let extradata: &[u8] = &[
+            0x11, 0x80, 0x04, 0xc8, 0x41, 0x00, 0x01, 0x08, 0x80, 0x0d, 0x4c, 0x61, 0x76, 0x63,
+            0x36, 0x32, 0x2e, 0x33, 0x34, 0x2e, 0x31, 0x30, 0x32, 0x56, 0xe5, 0x00,
+        ];
+        let params = AudioCodecParameters {
+            codec: CODEC_ID_AAC,
+            sample_rate: Some(48_000),
+            channels: None,
+            extra_data: Some(extradata.to_vec().into()),
+            ..Default::default()
+        };
+
+        assert!(
+            is_audio_decodable(&params),
+            "PCE ASC without container channels should still pass probe (FDK learns layout on decode)"
+        );
+    }
+
+    #[test]
+    fn aac_asc_channel_count_reads_explicit_5p1() {
+        assert_eq!(aac_asc_channel_count(&[0x11, 0xb0]), Some(6));
+    }
+
+    #[test]
+    fn aac_asc_channel_count_returns_none_for_pce() {
+        assert_eq!(aac_asc_channel_count(&[0x11, 0x80]), None);
     }
 }

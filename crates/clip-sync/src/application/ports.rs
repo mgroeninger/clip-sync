@@ -25,7 +25,7 @@ pub trait ProgressReporter {
 }
 
 pub trait MediaReader {
-    type Session: MediaSession;
+    type Session: MediaSession + Send;
 
     fn open(&self, source: &MediaSource) -> Result<Self::Session, MediaError>;
 }
@@ -209,7 +209,7 @@ mod scan_default_tests {
 
     use super::*;
     use crate::application::error::MediaError;
-    use crate::domain::{AudioTrack, ClipLabel, ClipWindow, MonoPcmClip};
+    use crate::domain::{AudioTrack, ClipWindow, MonoPcmClip};
 
     /// Minimal `MediaSession` for testing the default `scan_mono_buckets` implementation.
     /// Fails `extract_mono` when the window's start falls within `[fail_start, fail_end)`.

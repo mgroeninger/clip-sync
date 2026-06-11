@@ -97,6 +97,9 @@ impl MediaIoState {
     }
 }
 
+/// Symphonia-backed media session. `Send`: boxed Symphonia readers/decoders are `Send` on
+/// current symphonia versions, so a session can move to another thread — but parallel A/B
+/// decode still requires one session opened per thread because all IO methods take `&mut self`.
 pub struct SymphoniaMediaSession {
     path: PathBuf,
     tracks: Vec<AudioTrack>,
@@ -116,10 +119,9 @@ impl MediaSession for SymphoniaMediaSession {
         label: &str,
     ) -> Result<MonoPcmClip, MediaError> {
         ensure_regular_file(&self.path)?;
-        self.ensure_io()?;
         extract_mono_with_state(
             &self.path,
-            self.io.as_mut().expect("session io initialized"),
+            Self::open_io_state(&mut self.io, &self.path)?,
             track,
             window,
             progress,
@@ -135,10 +137,9 @@ impl MediaSession for SymphoniaMediaSession {
         label: &str,
     ) -> Result<MultiChannelPcm, MediaError> {
         ensure_regular_file(&self.path)?;
-        self.ensure_io()?;
         extract_interleaved_with_state(
             &self.path,
-            self.io.as_mut().expect("session io initialized"),
+            Self::open_io_state(&mut self.io, &self.path)?,
             track,
             window,
             progress,
@@ -155,10 +156,9 @@ impl MediaSession for SymphoniaMediaSession {
         on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
     ) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
-        self.ensure_io()?;
         scan_mono_buckets_with_state(
             &self.path,
-            self.io.as_mut().expect("session io initialized"),
+            Self::open_io_state(&mut self.io, &self.path)?,
             track,
             bucket_secs,
             progress,
@@ -176,10 +176,9 @@ impl MediaSession for SymphoniaMediaSession {
         on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
     ) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
-        self.ensure_io()?;
         scan_interleaved_buckets_with_state(
             &self.path,
-            self.io.as_mut().expect("session io initialized"),
+            Self::open_io_state(&mut self.io, &self.path)?,
             track,
             bucket_secs,
             progress,
@@ -198,14 +197,20 @@ impl MediaSession for SymphoniaMediaSession {
             ),
         )?;
 
-        self.ensure_io()?;
         let path = self.path.clone();
         let extent = scan_track_decodable_extent(
             &path,
-            self.io.as_mut().expect("session io initialized"),
+            Self::open_io_state(&mut self.io, &path)?,
             track,
             container_duration,
         )?;
+        // Tail scan reads packets through EOF; reopen so the next seek/extract starts clean.
+        debug!(
+            path = %path.display(),
+            track = track.index,
+            "reopening format reader after tail extent scan"
+        );
+        self.io = Some(MediaIoState::open(&path)?);
         Ok(extent)
     }
 }
@@ -265,15 +270,20 @@ pub(crate) fn ensure_track_decoder(
 }
 
 impl SymphoniaMediaSession {
-    fn ensure_io(&mut self) -> Result<(), MediaError> {
-        if self.io.is_none() {
+    fn open_io_state<'a>(
+        io: &'a mut Option<MediaIoState>,
+        path: &Path,
+    ) -> Result<&'a mut MediaIoState, MediaError> {
+        if io.is_none() {
             debug!(
-                path = %self.path.display(),
+                path = %path.display(),
                 "reopening format reader for session (probe rewind was unavailable)"
             );
-            self.io = Some(MediaIoState::open(&self.path)?);
+            *io = Some(MediaIoState::open(path)?);
         }
-        Ok(())
+        io.as_mut().ok_or_else(|| {
+            MediaError::open_failed(format!("session io unavailable for {}", path.display()))
+        })
     }
 }
 
@@ -285,5 +295,16 @@ impl SymphoniaMediaSession {
 
     pub(crate) fn cached_decoder_count(&self) -> usize {
         self.io.as_ref().map(|io| io.decoders.len()).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod send_bounds {
+    use super::SymphoniaMediaSession;
+
+    #[test]
+    fn symphonia_session_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<SymphoniaMediaSession>();
     }
 }

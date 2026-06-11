@@ -893,13 +893,7 @@ pub(crate) fn scan_track_decodable_extent(
         .saturating_sub(Duration::from_secs_f64(TAIL_PROBE_SECS))
         .min(container_duration);
 
-    seek_to_window_start(
-        path,
-        state.format.as_mut(),
-        track_id,
-        probe_start,
-        Some(container_duration),
-    )?;
+    seek_with_recovery(path, state, track, probe_start)?;
 
     let mut max_end = probe_start;
     loop {
