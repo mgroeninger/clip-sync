@@ -923,6 +923,167 @@ fn probe_and_extract_ac3_surround_mp4() {
     assert!(peak > 100, "expected non-silent PCM from AC-3 5.1 decode, peak={peak}");
 }
 
+/// Phase 0 — backward-seek characterization: extract a late window, seek back to an early
+/// window, then re-extract the late window. The two late extracts must be bit-exact.
+/// This pins correct seek recovery before Phase 2 restructures the session IO layer.
+fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
+    let reader = SymphoniaMediaReader;
+    let session = reader
+        .open(&MediaSource::new(path))
+        .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+    let tracks = session.list_tracks().unwrap();
+    let track = &tracks[0];
+    let sr = track.sample_rate;
+
+    // Late window: sits in the loud half of a split-tone WAV (or any deterministic region).
+    let late = ClipWindow::new(
+        Duration::from_millis(2500),
+        Duration::from_millis(3500),
+        ClipLabel::Interior,
+    );
+    // Early window: forces a backward seek when extracted after `late`.
+    let early = ClipWindow::new(
+        Duration::ZERO,
+        Duration::from_millis(500),
+        ClipLabel::Start,
+    );
+
+    let late1 = session
+        .extract_mono(track, &late, &NoopProgress, "late1")
+        .unwrap_or_else(|e| panic!("late1 extract from {}: {e}", path.display()));
+
+    let _ = session
+        .extract_mono(track, &early, &NoopProgress, "early")
+        .unwrap_or_else(|e| panic!("early extract from {}: {e}", path.display()));
+
+    let late2 = session
+        .extract_mono(track, &late, &NoopProgress, "late2")
+        .unwrap_or_else(|e| panic!("late2 extract from {}: {e}", path.display()));
+
+    let expected_samples = (1.0 * sr as f64) as usize;
+    assert!(
+        (late1.samples.len() as i64 - expected_samples as i64).abs()
+            <= sample_count_tolerance(sr) as i64,
+        "late1 sample count {} differs from expected ~{expected_samples}",
+        late1.samples.len()
+    );
+    assert_eq!(
+        late1.samples, late2.samples,
+        "re-extract after backward seek must be bit-exact (path={})",
+        path.display()
+    );
+
+    if check_cross_session {
+        let fresh = reader
+            .open(&MediaSource::new(path))
+            .unwrap_or_else(|e| panic!("fresh open {}: {e}", path.display()));
+        let fresh_tracks = fresh.list_tracks().unwrap();
+        let late_fresh = fresh
+            .extract_mono(&fresh_tracks[0], &late, &NoopProgress, "fresh")
+            .unwrap_or_else(|e| panic!("fresh extract from {}: {e}", path.display()));
+        assert_eq!(
+            late1.samples, late_fresh.samples,
+            "backward-seek re-extract must match fresh session (path={})",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn backward_seek_wav_bit_exact() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("seek_split.wav");
+    // First 1 s: silence; seconds 1–4: loud tone — makes mispositioning detectable by content.
+    write_split_tone_wav(&path, 44_100, 4);
+    assert_backward_seek_bit_exact(&path, true);
+}
+
+#[cfg(feature = "ffmpeg-tests")]
+#[test]
+fn backward_seek_mp4_bit_exact() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("seek_tone.mp4");
+    if !ffmpeg_util::write_lavfi_sine_container(
+        &path,
+        &["-f", "mp4"],
+        &["-c:a", "aac", "-b:a", "128k"],
+        5,
+    ) {
+        eprintln!("skipping backward_seek_mp4: ffmpeg unavailable or encode failed");
+        return;
+    }
+    // Lossy codec: within-session comparison is bit-exact; cross-session decode may differ
+    // due to AAC priming frames, so we skip the cross-session check.
+    assert_backward_seek_bit_exact(&path, false);
+}
+
+#[cfg(feature = "ffmpeg-tests")]
+#[test]
+fn backward_seek_mkv_bit_exact() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("seek_tone.mkv");
+    if !ffmpeg_util::write_lavfi_sine_container(&path, &["-f", "matroska"], &["-c:a", "flac"], 5) {
+        eprintln!("skipping backward_seek_mkv: ffmpeg unavailable or encode failed");
+        return;
+    }
+    // FLAC is lossless: cross-session comparison is also bit-exact.
+    assert_backward_seek_bit_exact(&path, true);
+}
+
+/// Phase 0 — MKV tail anchor: verify that `track_decodable_extent` returns a duration
+/// meaningfully shorter than the patched container duration. This anchors the fixture
+/// property that Phase 4 (MediaExtent) uses to fix hold-out placement.
+#[cfg(feature = "ffmpeg-tests")]
+#[test]
+fn track_decodable_extent_shorter_than_patched_container_duration() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("padded_duration.mkv");
+    if !ffmpeg_util::encode_mkv_with_padded_container_duration(
+        // Write a short WAV to encode from.
+        &{
+            let wav = temp.path().join("src.wav");
+            write_test_wav(&wav, 44_100, 5);
+            wav
+        },
+        &path,
+    ) {
+        eprintln!(
+            "skipping track_decodable_extent test: ffmpeg unavailable or duration patch failed"
+        );
+        return;
+    }
+
+    let reader = SymphoniaMediaReader;
+    let session = reader.open(&MediaSource::new(&path)).unwrap();
+    let tracks = session.list_tracks().unwrap();
+    let track = &tracks[0];
+
+    let container_secs = track.duration.unwrap().as_secs_f64();
+    assert!(
+        container_secs >= 8.0,
+        "patched container should report ≥8 s (2× the 5 s source), got {container_secs:.2} s"
+    );
+
+    let extent = session
+        .track_decodable_extent(track)
+        .expect("track_decodable_extent should succeed");
+    let extent_secs = extent
+        .unwrap_or(track.duration.unwrap())
+        .as_secs_f64();
+
+    assert!(
+        extent_secs < container_secs * 0.8,
+        "decodable extent ({extent_secs:.2} s) should be well under the patched \
+         container duration ({container_secs:.2} s)"
+    );
+}
+
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_eac3_surround_mp4() {

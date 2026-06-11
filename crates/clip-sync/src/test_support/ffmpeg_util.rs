@@ -168,6 +168,49 @@ pub fn encode_dual_track_mp4(
     ok
 }
 
+/// Encode a WAV to MKV FLAC, then double the declared container duration in the Matroska
+/// Segment Info header. The resulting file has real audio of `input_wav`'s duration but
+/// reports twice that duration to the Symphonia probe. Used to exercise hold-out placement
+/// and `track_decodable_extent` on fixtures where container metadata exceeds the decodable
+/// extent — the scenario Phase 4 of the MediaSession redesign addresses.
+///
+/// Returns `false` if ffmpeg is unavailable or the duration patch cannot locate the EBML
+/// Duration element (e.g. the encoder moved it, or the file is too small). Callers should
+/// skip rather than fail when this returns `false`.
+pub fn encode_mkv_with_padded_container_duration(input_wav: &Path, output: &Path) -> bool {
+    if !encode_audio(input_wav, output, EncodeFormat::MkvFlac) {
+        return false;
+    }
+    patch_mkv_container_duration(output, 2.0)
+}
+
+/// Locate the Matroska Segment Info Duration EBML element (`44 89 88 <f64-be>`) in the
+/// first 4 KB of `path` and multiply its value by `multiplier`. Operates entirely on the
+/// raw bytes — no Matroska parser needed.
+///
+/// The element layout is: `[44][89]` (EBML ID 0x4489) + `[88]` (1-byte size = 8) + 8-byte
+/// big-endian IEEE 754 f64. Duration is in TimecodeScale units (default 1 ms).
+fn patch_mkv_container_duration(path: &Path, multiplier: f64) -> bool {
+    let Ok(mut data) = std::fs::read(path) else {
+        return false;
+    };
+    let search_limit = data.len().min(4096);
+    let pattern = [0x44u8, 0x89, 0x88];
+    if let Some(pos) = data[..search_limit].windows(3).position(|w| w == pattern) {
+        let start = pos + 3;
+        if start + 8 <= data.len() {
+            let old =
+                f64::from_be_bytes(data[start..start + 8].try_into().unwrap());
+            if old > 0.0 {
+                data[start..start + 8]
+                    .copy_from_slice(&(old * multiplier).to_be_bytes());
+                return std::fs::write(path, &data).is_ok();
+            }
+        }
+    }
+    false
+}
+
 #[allow(dead_code)]
 pub fn delay_wav(input: &Path, output: &Path, delay_ms: u32) -> bool {
     if !ffmpeg_available() {

@@ -207,7 +207,7 @@ fn extension_for_format(format: &str) -> &'static str {
     match format {
         "mp3" | "mp3_no_duration" => "mp3",
         "mp4" | "mp4_stereo" | "mp4_he_aac" => "mp4",
-        "mkv" => "mkv",
+        "mkv" | "mkv_padded_duration" => "mkv",
         _ => "wav",
     }
 }
@@ -330,6 +330,21 @@ fn encode_or_rename_pair(
         assert!(
             ffmpeg_util::encode_dual_track_mp4(&wav_b, &decoy_b, &path_b, prefer_program),
             "case {}: dual-track encode b failed",
+            case.id
+        );
+        (path_a, path_b)
+    } else if format == "mkv_padded_duration" {
+        // MKV FLAC where the Matroska container duration is doubled via binary patch.
+        // Used for Phase 0 regression anchoring of hold-out placement when container
+        // duration exceeds the actual decodable extent (Phase 4 MediaExtent fixes this).
+        assert!(
+            ffmpeg_util::encode_mkv_with_padded_container_duration(&wav_a, &path_a),
+            "case {}: mkv_padded_duration encode a failed (ffmpeg unavailable or patch failed)",
+            case.id
+        );
+        assert!(
+            ffmpeg_util::encode_mkv_with_padded_container_duration(&wav_b, &path_b),
+            "case {}: mkv_padded_duration encode b failed (ffmpeg unavailable or patch failed)",
             case.id
         );
         (path_a, path_b)

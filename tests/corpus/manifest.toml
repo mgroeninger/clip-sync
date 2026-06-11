@@ -318,6 +318,26 @@ expect_recommended = true
 check_clip_repetition = true
 expect_clip_repetition = true
 
+# Phase 0 regression anchor: MKV where the Matroska container duration is 2× the actual
+# decodable extent. With the current code, hold-out placement uses container duration and
+# places the window beyond the decodable audio, so verification is unavailable (verified=false).
+# Phase 4 (MediaExtent) changes placement to use effective() duration; at that point add
+# expect_offset_verified = true and remove the comment.
+[[case]]
+id = "mkv_tail_decodable_extent_gap"
+tier = "generated"
+generator = "offset_chirp_pair"
+format = "mkv_padded_duration"
+offset_secs = 3
+total_secs = 30
+clip_length_secs = 20
+expected_offset_secs = 3.0
+tolerance_secs = 0.25
+expect_aligned = true
+expect_recommended = true
+verify_offset = true
+requires_ffmpeg = true
+
 [[case]]
 id = "long_smoke_60m"
 tier = "external"

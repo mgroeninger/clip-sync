@@ -1,6 +1,6 @@
 # CLI output UX polish (archived)
 
-> **Status:** All phases complete (2026-06-10). User docs: [README.md](../../README.md) § Progress and verbosity; [PLAN.md](../../PLAN.md) § Logging and progress.
+> **Status:** All phases complete (2026-06-10). **Living contract:** [docs/cli-output.md](../cli-output.md). User docs: [README.md](../../README.md) § Progress and verbosity; [PLAN.md](../../PLAN.md) § Logging and progress.
 
 **Problem:** A full `clip-sync-repair --mux` run emits ~60 lines mixing progress phases, progress percentages, third-party `tracing` INFO logs, and a final structured report. Information is duplicated (alignment mid-run vs final report; gap scan vs patch results), library noise dominates stderr, and non-TTY runs glue progress lines to timestamped log lines (`patch-a: 99%2026-06-09…`).
 

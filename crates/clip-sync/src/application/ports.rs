@@ -205,6 +205,133 @@ pub trait PcmCorrelator {
     fn cross_correlate_lag(&self, a: &[f64], b: &[f64]) -> Option<(isize, f64)>;
 }
 
+#[cfg(test)]
+mod scan_default_tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::application::error::MediaError;
+    use crate::domain::{AudioTrack, ClipLabel, ClipWindow, MonoPcmClip};
+
+    /// Minimal `MediaSession` for testing the default `scan_mono_buckets` implementation.
+    /// Fails `extract_mono` when the window's start falls within `[fail_start, fail_end)`.
+    /// Outside that range every extract succeeds with a dummy clip.
+    struct ScanTestSession {
+        track_duration_secs: f64,
+        fail_window: Option<(f64, f64)>,
+        fail_kind: ScanFailKind,
+    }
+
+    enum ScanFailKind {
+        DecodeFailed,
+        Unsupported,
+    }
+
+    impl ScanTestSession {
+        fn new(
+            track_duration_secs: f64,
+            fail_window: Option<(f64, f64)>,
+            fail_kind: ScanFailKind,
+        ) -> Self {
+            Self { track_duration_secs, fail_window, fail_kind }
+        }
+    }
+
+    impl MediaSession for ScanTestSession {
+        fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+            Ok(vec![AudioTrack {
+                index: 0,
+                codec: "pcm".into(),
+                channels: 1,
+                sample_rate: 11_025,
+                duration: Some(Duration::from_secs_f64(self.track_duration_secs)),
+                decodable: true,
+            }])
+        }
+
+        fn extract_mono(
+            &self,
+            _track: &AudioTrack,
+            window: &ClipWindow,
+            _progress: &dyn ProgressReporter,
+            _label: &str,
+        ) -> Result<MonoPcmClip, MediaError> {
+            let pos = window.start.as_secs_f64();
+            let should_fail = self
+                .fail_window
+                .is_some_and(|(start, end)| pos >= start && pos < end);
+            if should_fail {
+                return match self.fail_kind {
+                    ScanFailKind::DecodeFailed => {
+                        Err(MediaError::decode_failed(0, "injected decode failed"))
+                    }
+                    ScanFailKind::Unsupported => Err(MediaError::Unsupported("injected".into())),
+                };
+            }
+            Ok(MonoPcmClip {
+                sample_rate: 11_025,
+                samples: vec![0_i16; 11_025],
+                decode_error_skips: 0,
+                decoded_sample_count: None,
+            })
+        }
+    }
+
+    fn scan_bucket_starts(session: &ScanTestSession) -> Result<Vec<f64>, MediaError> {
+        let tracks = session.list_tracks().unwrap();
+        let track = &tracks[0];
+        let mut starts = Vec::new();
+        session.scan_mono_buckets(
+            track,
+            1.0,
+            &crate::application::testing::fakes::FakeProgressReporter,
+            "test",
+            &mut |bucket| {
+                starts.push(bucket.start_secs);
+                Ok(())
+            },
+        )?;
+        Ok(starts)
+    }
+
+    // Phase 0 snapshot: DecodeFailed within NEAR_TRACK_END_TOLERANCE_SECS (2 s) of end
+    // terminates the scan early (break) and returns Ok.
+    #[test]
+    fn scan_mono_default_swallows_decode_failed_near_end() {
+        // 10 s track, fail on [8, 10) — the first failure at pos=8.0 hits the tolerance
+        // boundary (8.0 >= 10.0 - 2.0) and breaks the loop immediately.
+        let session =
+            ScanTestSession::new(10.0, Some((8.0, 10.0)), ScanFailKind::DecodeFailed);
+        let starts = scan_bucket_starts(&session).expect("scan should return Ok");
+        assert_eq!(starts, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+    }
+
+    // Phase 0 snapshot: DecodeFailed more than 2 s before end is silently skipped; the
+    // scan continues and the failed bucket is absent from the output.
+    #[test]
+    fn scan_mono_default_skips_decode_failed_mid_file() {
+        // 10 s track, fail only on [5.0, 6.0) — one bucket skipped, rest succeed.
+        let session =
+            ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::DecodeFailed);
+        let starts = scan_bucket_starts(&session).expect("scan should return Ok");
+        assert_eq!(
+            starts,
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0]
+        );
+    }
+
+    // Phase 0 snapshot: non-DecodeFailed / non-SeekFailed errors propagate immediately.
+    #[test]
+    fn scan_mono_default_propagates_non_decode_error() {
+        let session = ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::Unsupported);
+        match scan_bucket_starts(&session) {
+            Err(MediaError::Unsupported(_)) => {}
+            Ok(starts) => panic!("expected Err, got Ok with {starts:?}"),
+            Err(other) => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+}
+
 pub trait Aligner {
     /// Compare clip fingerprints from video A (`left`) and video B (`right`).
     /// Returns seconds to add to A's timeline to align with B (see PLAN.md).

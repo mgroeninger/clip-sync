@@ -12,12 +12,13 @@ Last updated: 2026-06-11. Items 7, 8 done.
 
 **Next:** [Phase 4](#phase-4--edge-cases-and-semantics) edge cases → [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-11)** — layer-purity shipped 2026-06-11 (see [Completed](#completed)); land order: (verification-hardening ∥ media-session).
+**Active plans (2026-06-11)** — layer-purity shipped 2026-06-11 (see [Completed](#completed)); land order: (verification-hardening ∥ media-session) → query-reference.
 
 | Plan | Covers |
 |------|--------|
 | [TEMP-media-session-redesign-plan.md](docs/TEMP-media-session-redesign-plan.md) | Items 6, 8, 12; hold-out container duration, unused `decoded_extent_*`, `reset_io` ignored |
 | [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
+| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill — **blocked** on media-session + verification-hardening |
 
 ---
 
