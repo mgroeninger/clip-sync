@@ -259,7 +259,6 @@ fn test_track(duration: Duration) -> AudioTrack {
         codec: "test".into(),
         channels: 1,
         sample_rate: 44_100,
-        bitrate: None,
         duration: Some(duration),
         decodable: true,
     }

@@ -73,8 +73,6 @@ Messages come from `thiserror` `Display` implementations. Examples:
 | `Media(SeekFailed(detail))` | `seek failed: <detail>` |
 | `Fingerprint(InvalidPcm(detail))` | `invalid PCM: <detail>` |
 | `Fingerprint(EngineFailed(detail))` | `fingerprint engine failed: <detail>` |
-| `Alignment(NoMatch)` | `could not find a matching segment` |
-| `Alignment(AmbiguousMatch { candidates })` | `multiple equally likely matches (<n> candidates)` |
 | `Alignment(EngineFailed(detail))` | `alignment engine failed: <detail>` |
 
 ### Alignment vs “no match”
@@ -207,11 +205,9 @@ Maps to `AppError::Fingerprint` → exit **5**.
 
 | Variant | When |
 |---------|------|
-| `NoMatch` | Reserved for engine failures (not used for low-confidence clip pairs) |
-| `AmbiguousMatch` | Reserved for multiple equally likely engine candidates (not yet used) |
 | `EngineFailed` | Chromaprint `match_fingerprints` failure (e.g. fingerprint too long) |
 
-Low-confidence alignment (no segment above threshold) returns `Ok(ClipMatchEstimate { confidence: 0.0, .. })`, not an error.
+Low-confidence alignment (no segment above threshold) returns `Ok(ClipMatchEstimate { confidence: 0.0, .. })`, not an error. There is no `NoMatch` error variant — "clips did not match" is a successful result with zero confidence.
 
 Maps to `AppError::Alignment` → exit **6**.
 

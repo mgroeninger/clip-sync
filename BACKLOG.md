@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-10.
+Last updated: 2026-06-10. Items 7, 8 done.
 
 **How this doc works**
 
@@ -30,26 +30,12 @@ Last updated: 2026-06-10.
 | # | Item | Direction |
 |---|------|-----------|
 | 6 | [Duration-less files at open](#duration-less-files-at-open) | Audit remaining gaps; relax open when decodable |
-| 7 | [Chromaprint no match vs zero-confidence](#chromaprint-no-match-vs-zero-confidence-success) | Freeze JSON/failure contract; wire or remove dead error variants |
-| 8 | [Bitrate for track selection](#bitrate-for-track-selection) | Probe bitrate or remove dead tiebreaker |
 
 #### Duration-less files at open
 
 Partially addressed (`scan_container_audio_duration`, `mp3_no_duration_tag`). Audit paths that still fail at open; fail at clip planning if duration unknown after scan.
 
 **Refs:** `crates/clip-sync/src/infrastructure/symphonia/session.rs`, `tests/corpus/manifest.toml`
-
-#### Chromaprint “no match” vs zero-confidence success
-
-Aligner returns `Ok` with zero confidence; `NoMatch` / `AmbiguousMatch` unused. Pick one contract when JSON stabilizes.
-
-**Refs:** `crates/clip-sync/src/infrastructure/chromaprint/aligner.rs`, `docs/error-mapping.md`
-
-#### Bitrate for track selection
-
-`AudioTrack.bitrate` always `None`; tiebreaker in `select_best_track` is dead code. Parse or remove.
-
-**Refs:** `crates/clip-sync/src/infrastructure/symphonia/probe.rs`, `crates/clip-sync/src/domain/policies.rs`
 
 ---
 
@@ -177,7 +163,9 @@ Linear interpolation when `rubato` fails; no log.
 | `try_all_tracks` docs + CLI | 2026-06-06 | `docs/corpus-validation.md` |
 | Decode shortfall limits | 2026-06-06 | `symphonia/session.rs` |
 | Clip self-repetition check | 2026-06-10 | [archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) |
-| Hold-out offset verification | 2026-06-10 | [TEMP-offset-verification-plan.md](docs/TEMP-offset-verification-plan.md) (archive pending) |
+| Hold-out offset verification | 2026-06-10 | [archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) |
+| `AlignmentError::NoMatch` / `AmbiguousMatch` removed | 2026-06-10 | Contract frozen: low-confidence = `Ok(confidence: 0.0)`; `EngineFailed` is the only error variant |
+| `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
 
 ---
 

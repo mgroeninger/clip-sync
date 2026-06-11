@@ -6,7 +6,7 @@ use clip_sync::{
     RepetitionFinding, TimelineOverlap,
 };
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
-use clip_sync_cli::infrastructure::cli::output::format_human_output;
+use clip_sync_cli::infrastructure::cli::output::{format_human_output, format_json_output};
 use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
 
 // --- helpers ---
@@ -93,6 +93,74 @@ fn result_with_repetition(a_lag: Option<f64>, b_lag: Option<f64>) -> AlignmentRe
     }
 }
 
+/// Every optional top-level field and clip-level `repetition` populated for JSON contract goldens.
+fn full_surface_alignment_result() -> AlignmentResult {
+    AlignmentResult {
+        clips: vec![
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: false,
+                offset_secs: None,
+                confidence: 0.42,
+                video_a_decode_skips: 1,
+                video_b_decode_skips: 2,
+                repetition: Some(ClipRepetitionReport {
+                    a: Some(RepetitionFinding {
+                        lag_secs: 30.5,
+                        confidence: 0.72,
+                        items_count: 48,
+                    }),
+                    b: None,
+                }),
+            },
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: 1800.0,
+                window_end_secs: 2700.0,
+                aligned: true,
+                offset_secs: Some(12.355),
+                confidence: 0.91,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 3,
+                repetition: None,
+            },
+        ],
+        start_aligned: false,
+        end_aligned: Some(true),
+        recommended_offset_secs: Some(12.34),
+        offsets_consistent: false,
+        offset_drift_secs: Some(0.015),
+        start_overlap: Some(TimelineOverlap {
+            video_a_start_secs: 10.956,
+            video_a_end_secs: 600.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 589.044,
+            shared_length_secs: 589.044,
+        }),
+        high_rate_refinement: Some(HighRateRefinement {
+            segment_start_secs: 120.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: 0.01,
+            correlation_peak: 2_813_101_397.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        }),
+        offset_verification: Some(OffsetVerification {
+            window_a_start_secs: 60.0,
+            window_a_end_secs: 90.0,
+            window_b_start_secs: 63.0,
+            window_b_end_secs: 93.0,
+            confidence: 0.85,
+            verified: true,
+            skipped: false,
+            skip_reason: None,
+        }),
+    }
+}
+
 fn result_with_no_repetition_finding() -> AlignmentResult {
     AlignmentResult {
         clips: vec![ClipMatch {
@@ -132,6 +200,17 @@ fn exit_code_u8(error: &AppError) -> u8 {
 }
 
 // --- JSON output shape ---
+
+/// Plan 1 Phase 0: byte-identical guard for the analyzer JSON contract (pre-DTO split).
+#[test]
+fn full_surface_alignment_json_golden() {
+    let json = format_json_output(&full_surface_alignment_result());
+    assert_eq!(
+        json,
+        include_str!("fixtures/full_surface_alignment.json"),
+        "analyzer JSON contract changed — update the golden only with an explicit contract revision"
+    );
+}
 
 #[test]
 fn aligned_result_serializes_to_expected_json_shape() {

@@ -280,14 +280,21 @@ pub fn print_repair_output(
     }
 }
 
+/// JSON repair report for stdout (`--format json`). Golden-tested in this module's tests.
+pub fn format_repair_json_output(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+) -> Result<String, RepairError> {
+    let payload = RepairJsonOutput { scan: report, patch };
+    serde_json::to_string_pretty(&payload)
+        .map_err(|e| RepairError::Config(format!("JSON serialization failed: {e}")))
+}
+
 fn print_json_with_patch(
     report: &GapReport,
     patch: Option<&PatchSummary>,
 ) -> Result<(), RepairError> {
-    let payload = RepairJsonOutput { scan: report, patch };
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(|e| RepairError::Config(format!("JSON serialization failed: {e}")))?;
-    println!("{json}");
+    println!("{}", format_repair_json_output(report, patch)?);
     Ok(())
 }
 

@@ -567,7 +567,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -615,7 +614,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -661,7 +659,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -712,7 +709,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -764,7 +760,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -807,7 +802,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };
@@ -851,7 +845,6 @@ mod tests {
             codec: "test".into(),
             channels: 1,
             sample_rate: SAMPLE_RATE,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         };

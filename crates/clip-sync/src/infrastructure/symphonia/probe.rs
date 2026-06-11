@@ -93,7 +93,7 @@ fn probe_from_format(
             codec: codec_name(params.codec),
             channels: channel_count(params),
             sample_rate: params.sample_rate.unwrap_or(0),
-            bitrate: None,
+
             duration: track_duration,
             decodable,
         });

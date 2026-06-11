@@ -401,7 +401,6 @@ mod tests {
             codec: "pcm".into(),
             channels: 1,
             sample_rate: 11_025,
-            bitrate: None,
             duration: Some(duration),
             decodable: true,
         }
@@ -658,7 +657,6 @@ mod tests {
                 codec: "pcm".into(),
                 channels: 1,
                 sample_rate: 11_025,
-                bitrate: None,
                 duration: None,
                 decodable: true,
             }])

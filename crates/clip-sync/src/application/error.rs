@@ -44,12 +44,6 @@ pub enum FingerprintError {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AlignmentError {
-    #[error("could not find a matching segment")]
-    #[allow(dead_code)] // reserved; see BACKLOG.md and docs/error-mapping.md
-    NoMatch,
-    #[error("multiple equally likely matches ({candidates} candidates)")]
-    #[allow(dead_code)] // reserved; see BACKLOG.md and docs/error-mapping.md
-    AmbiguousMatch { candidates: usize },
     #[error("alignment engine failed: {0}")]
     EngineFailed(String),
 }

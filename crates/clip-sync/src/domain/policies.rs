@@ -386,7 +386,7 @@ mod tests {
             codec: "aac".into(),
             channels,
             sample_rate: 48_000,
-            bitrate: None,
+
             duration: Some(mins(60)),
             decodable,
         }
@@ -447,7 +447,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 44_100,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -456,7 +456,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -473,7 +473,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 11_025,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -482,7 +482,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -499,7 +499,7 @@ mod tests {
                 codec: "ac3".into(),
                 channels: 6,
                 sample_rate: 44_100,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -508,7 +508,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: false,
             },
@@ -524,7 +524,7 @@ mod tests {
             codec: "aac".into(),
             channels: 6,
             sample_rate: 48_000,
-            bitrate: None,
+
             duration: Some(mins(60)),
             decodable: false,
         }];
@@ -543,7 +543,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 6,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -552,7 +552,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },
@@ -569,7 +569,7 @@ mod tests {
                 codec: "ac3".into(),
                 channels: 6,
                 sample_rate: 48_000,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: false,
             },
@@ -578,7 +578,7 @@ mod tests {
                 codec: "aac".into(),
                 channels: 2,
                 sample_rate: 44_100,
-                bitrate: None,
+
                 duration: Some(mins(60)),
                 decodable: true,
             },

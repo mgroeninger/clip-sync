@@ -5,12 +5,15 @@ use clip_sync::{
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
+/// JSON report for stdout (`--format json`). Golden-tested in `clip-sync-cli/tests/cli_output.rs`.
+pub fn format_json_output(result: &AlignmentResult) -> String {
+    serde_json::to_string_pretty(result).expect("serialize alignment result")
+}
+
 pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<(), AppError> {
     match output.format {
         OutputFormat::Human => print_human(output.show_diagnostics, result),
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(result).unwrap());
-        }
+        OutputFormat::Json => println!("{}", format_json_output(result)),
     }
 
     Ok(())

@@ -691,7 +691,6 @@ fn extract_interleaved_default_port_method_is_unsupported() {
         codec: "pcm".into(),
         channels: 2,
         sample_rate: 44_100,
-        bitrate: None,
         duration: Some(Duration::from_secs(1)),
         decodable: true,
     };
