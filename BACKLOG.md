@@ -12,11 +12,10 @@ Last updated: 2026-06-10. Items 7, 8 done.
 
 **Next:** [Phase 4](#phase-4--edge-cases-and-semantics) edge cases → [validation open concerns](#validation-diagnostics--open-concerns) → [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-10)** — most open items below are owned by one of four drafts; land order: 1 → (2 ∥ 4) → 3.
+**Active plans (2026-06-10)** — most open items below are owned by one of three drafts (the output/error contract plan shipped 2026-06-10, see [Completed](#completed)); land order: (layer-purity ∥ verification-hardening) → media-session.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) | serde half of item 11, stringly port errors, JSON freeze (Phases 1–2 done) |
 | [TEMP-layer-purity-plan.md](docs/TEMP-layer-purity-plan.md) | Ports half of item 11, test helper coupling, type / dependency polish |
 | [TEMP-media-session-redesign-plan.md](docs/TEMP-media-session-redesign-plan.md) | Items 6, 8, 12; hold-out container duration, unused `decoded_extent_*`, `reset_io` ignored |
 | [TEMP-verification-hardening-plan.md](docs/TEMP-verification-hardening-plan.md) | Remaining [validation open concerns](#validation-diagnostics--open-concerns), committed-fixture gap, test dedupe, doc drift |
@@ -67,13 +66,13 @@ Core flags ship (2026-06-10). Follow-ups from hardening pass and code review.
 
 | # | Item | Direction |
 |---|------|-----------|
-| 11 | [Layer leaks](#architecture-domain-and-application-layer-leaks) | `Resampler` / `OffsetRefiner` ports; DTO serde; update PLAN |
+| 11 | [Layer leaks](#architecture-domain-and-application-layer-leaks) | `Resampler` / `OffsetRefiner` ports; update PLAN |
 | 12 | [`MediaSession` interior mutability](#mediasession-interior-mutability) | `&mut self` or explicit handle; drop `expect()` |
 | 13 | [Documentation drift](#documentation-drift-plan-vs-code) | PLAN audit after policy decisions |
 
 #### Architecture: domain and application layer leaks
 
-`rubato` in domain, `cross_correlate` in application, `Serialize` on domain types — conflicts with PLAN purity claim.
+`rubato` in domain, `cross_correlate` in application — conflicts with PLAN purity claim. (Serde half done 2026-06-10: domain is serde-free; JSON owned by `application/report.rs` — see [docs/json-output.md](docs/json-output.md).)
 
 **Refs:** `domain/resample.rs`, `application/offset_refinement.rs`, `application/ports.rs`, `PLAN.md`
 
@@ -100,7 +99,6 @@ Defaults, domain errors, purity claims out of sync with code.
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; WAV ≥ 60 s if verify on fixtures needed |
 | [Test helper coupling](#test-helper-cross-layer-coupling) | `tests/support/` when refactoring media tests |
 | [Type / dependency polish](#type-and-dependency-polish) | `Fingerprint` newtype; drop unused `anyhow` |
-| [Stringly port errors](#stringly-typed-port-errors) | Structured sub-enums |
 
 #### Memory use and PCM cloning on long clips
 
@@ -132,12 +130,6 @@ Bare `Fingerprint` vec; float `PartialEq`; sub-second config truncation.
 
 **Refs:** `domain/alignment.rs`, `Cargo.toml`, `application/config.rs`
 
-#### Stringly-typed port errors
-
-Free-form `String`; no `source()` chain from Symphonia.
-
-**Refs:** `application/error.rs`, `infrastructure/symphonia/error_mapping.rs`
-
 ---
 
 ## Completed
@@ -157,8 +149,9 @@ Free-form `String`; no `source()` chain from Symphonia.
 | Decode shortfall limits | 2026-06-06 | `symphonia/session.rs` |
 | Clip self-repetition check | 2026-06-10 | [archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) |
 | Hold-out offset verification | 2026-06-10 | [archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) |
+| Output & error contract (JSON freeze v1, report DTOs, error sources) | 2026-06-10 | [archive/output-error-contract-plan.md](docs/archive/output-error-contract-plan.md); contract in [docs/json-output.md](docs/json-output.md) |
 | `AlignmentError::NoMatch` / `AmbiguousMatch` removed | 2026-06-10 | Contract frozen: low-confidence = `Ok(confidence: 0.0)`; `EngineFailed` is the only error variant |
-| Resample rubato fallback warn | 2026-06-10 | [TEMP-output-error-contract-plan.md](docs/TEMP-output-error-contract-plan.md) Phase 1 — `domain/resample.rs` |
+| Resample rubato fallback warn | 2026-06-10 | [archive/output-error-contract-plan.md](docs/archive/output-error-contract-plan.md) Phase 1 — `domain/resample.rs` |
 | `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
 
 ---

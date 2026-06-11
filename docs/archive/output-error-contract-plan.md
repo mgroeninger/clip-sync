@@ -89,9 +89,9 @@ Locked before implementation. Change only with an explicit plan revision.
 
 ### Phase 4 — freeze
 
-- [ ] Write `docs/json-output.md` (analyzer + repair JSON, field semantics, optionality rules, v1 marker). Link from `README.md` and `docs/error-mapping.md`.
-- [ ] PLAN.md sync: Output section points at the DTO + contract doc; purity claim updated (domain serde-free).
-- [ ] BACKLOG cleanup: close item 7, the serde half of item 11, "stringly port errors", "silent resample fallback".
+- [x] Write `docs/json-output.md` (analyzer + repair JSON, field semantics, optionality rules, v1 marker). Link from `README.md` and `docs/error-mapping.md`.
+- [x] PLAN.md sync: Output section points at the DTO + contract doc; purity claim updated (domain serde-free).
+- [x] BACKLOG cleanup: close item 7, the serde half of item 11, "stringly port errors", "silent resample fallback".
 
 ---
 

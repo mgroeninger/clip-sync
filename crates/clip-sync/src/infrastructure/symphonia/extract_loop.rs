@@ -493,7 +493,7 @@ impl ExtractSink for MonoExtractSink {
     }
 
     fn target_reached(&self) -> bool {
-        self.target_samples.map_or(false, |target| self.mono_samples.len() >= target)
+        self.target_samples.is_some_and(|target| self.mono_samples.len() >= target)
     }
 
     fn append_packet(
