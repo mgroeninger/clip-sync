@@ -204,7 +204,8 @@ impl MediaSession for SymphoniaMediaSession {
             track,
             container_duration,
         )?;
-        // Tail scan reads packets through EOF; reopen so the next seek/extract starts clean.
+        // Tail scan reads packets through EOF. MP4/isomp4 leaves the reader in a state where
+        // the next decode fails even after a successful seek (`seek_with_recovery` is not enough).
         debug!(
             path = %path.display(),
             track = track.index,

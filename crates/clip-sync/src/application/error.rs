@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use thiserror::Error;
+use tracing::debug;
 
 use crate::domain::DomainError;
 
@@ -114,6 +115,27 @@ impl MediaError {
             detail: detail.into(),
             source: None,
         }
+    }
+}
+
+/// Formatted `Error::source()` chain for structured diagnostics.
+pub fn format_error_source_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = Vec::new();
+    let mut current = error.source();
+    while let Some(source) = current {
+        parts.push(source.to_string());
+        current = source.source();
+    }
+    parts.join(" -> ")
+}
+
+/// Log a [`MediaError`] at debug level with the full source chain when present.
+pub fn debug_media_error(error: &MediaError, message: &str) {
+    let sources = format_error_source_chain(error);
+    if sources.is_empty() {
+        debug!(error = ?error, "{message}");
+    } else {
+        debug!(error = ?error, sources = %sources, "{message}");
     }
 }
 

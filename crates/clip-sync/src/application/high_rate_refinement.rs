@@ -3,7 +3,7 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::application::config::AlignmentConfig;
-use crate::application::error::MediaError;
+use crate::application::error::{debug_media_error, MediaError};
 use crate::application::offset_refinement::refine_holdout_segment_lag;
 use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::{
@@ -119,13 +119,13 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
                         break;
                     }
                     Err(e) => {
-                        debug!(error = ?e, "high-rate hold-out extract B failed, trying next candidate");
+                        debug_media_error(&e, "high-rate hold-out extract B failed, trying next candidate");
                         last_failure = format!("{e}");
                     }
                 }
             }
             Err(e) => {
-                debug!(error = ?e, "high-rate hold-out extract A failed, trying next candidate");
+                debug_media_error(&e, "high-rate hold-out extract A failed, trying next candidate");
                 last_failure = format!("{e}");
             }
         }

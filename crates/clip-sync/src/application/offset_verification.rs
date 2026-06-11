@@ -3,6 +3,7 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::application::config::{ClipConfig, ValidationConfig};
+use crate::application::error::debug_media_error;
 use crate::application::ports::{
     Aligner, Fingerprinter, MediaSession, ProgressReporter, Resampler,
 };
@@ -122,7 +123,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
             Ok(clip) => clip,
             Err(e) => {
                 last_failure = format!("extract A failed: {e}");
-                debug!(error = %e, "offset verify: extract A failed, trying next candidate");
+                debug_media_error(&e, "offset verify: extract A failed, trying next candidate");
                 continue;
             }
         };
@@ -135,7 +136,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
             Ok(clip) => clip,
             Err(e) => {
                 last_failure = format!("extract B failed: {e}");
-                debug!(error = %e, "offset verify: extract B failed, trying next candidate");
+                debug_media_error(&e, "offset verify: extract B failed, trying next candidate");
                 continue;
             }
         };

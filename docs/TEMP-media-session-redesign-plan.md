@@ -14,8 +14,8 @@
 
 | Area | Path | Current state | Target phase |
 |------|------|---------------|--------------|
-| Port surface | `crates/clip-sync/src/application/ports.rs` ~27–173 | All methods `&self`; defaults: `extract_interleaved` → `Unsupported`, `reset_io` → `Ok(())`, `track_decodable_extent` → `None`, `scan_mono_buckets` / `scan_interleaved_buckets` = seek-loop fallbacks with `NEAR_TRACK_END_TOLERANCE_SECS = 2.0` + `DecodeFailed`/`SeekFailed` swallowing (~84–116, ~135–166) | 1, 3 |
-| Symphonia session | `infrastructure/symphonia/session.rs` | `io: Option<MediaIoState>`; `open_io_state()` lazy reopen; `Send` + compile test; tail extent reopens IO after scan | 1–2 ✓ |
+| Port surface | `crates/clip-sync/src/application/ports.rs` | Trait defaults delegate to `media_scan.rs`; symphonia overrides for production scans | 3 ✓ |
+| Symphonia session | `infrastructure/symphonia/session.rs` | `io: Option<MediaIoState>`; `open_io_state()` lazy reopen; `Send` + compile test; post-extent reopen (MP4/isomp4); extent probe via `seek_with_recovery` | 1–2 ✓ |
 | `reset_io` callers | `high_rate_refinement.rs` 65–66 (`let _ =` — **discarded**); `offset_verification.rs` 106–110 (debug-logged only); `session.rs` 256 (propagated) | Caller-driven, forgettable | 2 |
 | Hold-out extract errors | `high_rate_refinement.rs` 185–195 (`extract_native_holdout` → `Result<_, String>` via `.map_err(to_string)` — drops `MediaError`/`source()` before skip logging); `offset_verification.rs` 134–156 (matches `MediaError`, `debug!`s full error, then formats for `skip_reason`) | Match on `MediaError`; structured debug log; `Display` only at `skip_reason` boundary | 2 |
 | Implementors | lib: `SymphoniaMediaSession`, `FakeMediaSession` (`testing/fakes.rs` 113–155), `BareSession` (test); repair tests: `LoudSession`, `SilentSession`, `SkipWindowSession`, `TailSeekFailSession`, `DispatchSession`, `NoDurationSession` (`scan_gaps.rs` 323–689) | 9 impls to migrate | 1 |
@@ -76,20 +76,20 @@
 - [x] Phase 0 backward-seek characterization test still green (bit-exact): WAV always-on; MP4/MKV verified with `--features ffmpeg-tests`.
 - [x] Post-review hardening (2026-06-11): `open_io_state()` replaces `ensure_io()` + `expect()`; `seek_with_recovery` on tail extent probe seek.
 
-### Optional polish (non-blocking)
+### Optional polish (non-blocking) ✓ 2026-06-11
 
 Recorded after Phase 2 review (2026-06-11). None of these block Phase 3.
 
-- [ ] **Hold-out debug logging:** `offset_verification.rs` extract-failure paths use `debug!(error = %e)`; high-rate uses `?e`. Neither walks `Error::source()` — align when next touching hold-out code (e.g. Phase 4 or [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md)).
-- [ ] **`seek_with_recovery` fault injection:** Phase 2 deferred a unit test with a fake format reader; bit-exact backward-seek tests cover the path end-to-end. Revisit only if the extract layer changes again.
-- [ ] **CI container seek coverage:** MP4/MKV backward-seek and padded-duration extent tests require `--features ffmpeg-tests`. Command documented in [development.md](development.md); optional CI job not in-repo yet — add when CI is wired.
-- [ ] **Post-extent-scan reopen:** `track_decodable_extent` explicitly reopens `MediaIoState` after the tail packet scan (reader at EOF). Coexists with `seek_with_recovery` on the next op; drop the reopen if profiling shows redundant IO churn.
+- [x] **Hold-out debug logging:** `debug_media_error` in `error.rs` logs `?error` plus `Error::source()` chain; used in hold-out extract paths in `offset_verification.rs` and `high_rate_refinement.rs`.
+- [x] **`seek_with_recovery` fault injection:** `track_decodable_extent_after_prior_extracts` (WAV, always-on) plus existing backward-seek / extent-then-extract tests; no Symphonia format-reader mock.
+- [x] **CI container seek coverage:** [scripts/test-container-seek.ps1](../scripts/test-container-seek.ps1) (+ `.sh`); referenced from [development.md](development.md).
+- [x] **Post-extent-scan reopen:** Kept explicit reopen in `track_decodable_extent` — required for MP4/isomp4 (`extract_after_track_decodable_extent_on_mp4` fails without it). `seek_with_recovery` on the extent probe still helps reused sessions (`track_decodable_extent_after_prior_extracts` on WAV).
 
-### Phase 3 — scan policy extraction
+### Phase 3 — scan policy extraction ✓ 2026-06-11
 
-- [ ] `application/media_scan.rs`: move default scan-loop bodies; named constants + rustdoc for the near-end tolerance and swallow rule; direct unit tests.
-- [ ] Rustdoc records the duration-trust decision: fallback loops terminate on declared duration and fail loudly past the tolerance; production scans are EOF-driven (see Decisions).
-- [ ] Trait defaults delegate; symphonia sequential overrides untouched.
+- [x] `application/media_scan.rs`: move default scan-loop bodies; named constants + rustdoc for the near-end tolerance and swallow rule; direct unit tests.
+- [x] Rustdoc records the duration-trust decision: fallback loops terminate on declared duration and fail loudly past the tolerance; production scans are EOF-driven (see Decisions).
+- [x] Trait defaults delegate; symphonia sequential overrides untouched.
 
 ### Phase 4 — `MediaExtent`
 
@@ -111,14 +111,14 @@ Recorded after Phase 2 review (2026-06-11). None of these block Phase 3.
 | Seek recovery | Phase 0 bit-exact characterization (WAV always-on; MP4/MKV via `ffmpeg-tests`); optional io-layer fault injection (see Optional polish) |
 | Hold-out extract errors | Existing skip-reason / JSON tests unchanged; extract-failure paths log structured `MediaError` before `skip_reason` flattening |
 | Extent | MKV-tail regression; `MediaExtent::effective()` unit tests; `mp3_no_duration_tag` corpus anchor |
-| Scan policy | Direct unit tests on `media_scan.rs` (previously reachable only through fakes) |
+| Scan policy | Direct unit tests on `media_scan.rs`; trait defaults delegate to `scan_*_buckets_via_windows` |
 | Migration | Full workspace suite green at each phase boundary; repair fakes compile-checked under `cargo test -p clip-sync-repair` |
 
 ## Exit criteria
 
 - No `RefCell`, no `expect()` in `session.rs`; port methods honest about mutation.
 - `reset_io` gone from the port; no caller-managed IO state anywhere.
-- One named home for scan policy with direct tests.
+- One named home for scan policy with direct tests. ✓ Phase 3
 - Hold-out placement and clip planning consume `MediaExtent`; no dead extent fields.
 - Hold-out extract loops match on `MediaError`; no `Result<_, String>` extract wrappers.
 

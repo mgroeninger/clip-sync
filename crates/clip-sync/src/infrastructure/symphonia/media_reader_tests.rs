@@ -998,6 +998,37 @@ fn backward_seek_wav_bit_exact() {
     assert_backward_seek_bit_exact(&path, true);
 }
 
+/// Tail extent probe uses `seek_with_recovery` when prior extracts left the reader mid-file.
+#[test]
+fn track_decodable_extent_after_prior_extracts() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("extent_after_extracts.wav");
+    write_split_tone_wav(&path, 44_100, 4);
+
+    let reader = SymphoniaMediaReader;
+    let mut session = reader.open(&MediaSource::new(&path)).unwrap();
+    let tracks = session.list_tracks().unwrap();
+    let track = &tracks[0];
+
+    let late = ClipWindow::new(
+        Duration::from_millis(2500),
+        Duration::from_millis(3500),
+        ClipLabel::Interior,
+    );
+    session
+        .extract_mono(track, &late, &NoopProgress, "late")
+        .expect("late extract");
+
+    session
+        .track_decodable_extent(track)
+        .expect("extent scan after prior extract should recover seek");
+
+    let early = ClipWindow::new(Duration::ZERO, Duration::from_millis(500), ClipLabel::Start);
+    session
+        .extract_mono(track, &early, &NoopProgress, "after extent")
+        .expect("extract after extent without explicit reopen");
+}
+
 #[cfg(feature = "ffmpeg-tests")]
 #[test]
 fn backward_seek_mp4_bit_exact() {
@@ -1084,8 +1115,8 @@ fn track_decodable_extent_shorter_than_patched_container_duration() {
     );
 }
 
-/// Repair alignment calls `track_decodable_extent` before the first clip extract; the tail
-/// scan must not leave the MP4 reader at EOF (isomp4: no atom pending read on the next read).
+/// Repair alignment calls `track_decodable_extent` before clip extracts. MP4/isomp4 requires
+/// an explicit post-extent reopen — `seek_with_recovery` alone leaves a broken reader.
 #[cfg(feature = "ffmpeg-tests")]
 #[test]
 fn extract_after_track_decodable_extent_on_mp4() {

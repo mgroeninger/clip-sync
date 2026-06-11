@@ -253,8 +253,9 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`.
 
-**Optional CI step** for container-specific seek regressions:
+**Optional CI step** for container-specific seek regressions (see [scripts/test-container-seek.ps1](../scripts/test-container-seek.ps1)):
 
 ```powershell
-cargo test -p clip-sync --features ffmpeg-tests backward_seek track_decodable_extent
+.\scripts\test-container-seek.ps1
+# or: cargo test -p clip-sync --features ffmpeg-tests backward_seek track_decodable_extent
 ```

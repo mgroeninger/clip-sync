@@ -3,6 +3,7 @@ pub mod config;
 pub mod default_pipeline;
 pub mod error;
 pub mod high_rate_refinement;
+pub mod media_scan;
 pub mod offset_refinement;
 pub mod offset_verification;
 pub mod ports;
