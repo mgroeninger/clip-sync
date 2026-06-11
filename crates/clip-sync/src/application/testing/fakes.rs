@@ -6,9 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
-use crate::application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
+use crate::application::ports::{
+    Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter, Resampler,
+};
 use crate::domain::{
     AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
+    MultiChannelPcm,
 };
 
 pub struct FakeProgressReporter;
@@ -17,6 +20,26 @@ impl ProgressReporter for FakeProgressReporter {
     fn phase(&self, _message: &str) {}
 
     fn progress(&self, _label: &str, _current: u64, _total: u64) {}
+}
+
+/// Rate-stamping [`Resampler`] fake: relabels the clip's sample rate without touching samples.
+/// Use when a test only needs the pipeline to believe the rate changed.
+pub struct FakeResampler;
+
+impl Resampler for FakeResampler {
+    fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
+        MonoPcmClip {
+            sample_rate: target_rate,
+            ..clip.clone()
+        }
+    }
+
+    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm {
+        MultiChannelPcm {
+            sample_rate: target_rate,
+            ..pcm.clone()
+        }
+    }
 }
 
 pub struct FakeMediaReader {

@@ -1,13 +1,40 @@
-use rubato::{FftFixedIn, Resampler};
+//! Rubato-backed [`Resampler`] adapter (FFT sinc resample with linear-interpolation fallback).
+//!
+//! Moved from `domain/resample.rs` by the layer-purity plan — the domain holds no DSP engine
+//! code; `rubato` is referenced only here.
+
+use rubato::{FftFixedIn, Resampler as _};
 use tracing::warn;
 
-use crate::domain::MonoPcmClip;
+use crate::application::ports::Resampler;
+use crate::domain::{MonoPcmClip, MultiChannelPcm};
 
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
 const RESAMPLE_SUB_CHUNKS: usize = 4;
 
+/// Production [`Resampler`]: rubato `FftFixedIn`, degrading to linear interpolation (with a
+/// `warn!`) when the FFT engine fails to initialize or process.
+pub struct RubatoResampler;
+
+impl Resampler for RubatoResampler {
+    fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
+        resample_mono_pcm(clip, target_rate)
+    }
+
+    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm {
+        MultiChannelPcm {
+            sample_rate: target_rate,
+            channels: pcm.channels,
+            samples: resample_interleaved(&pcm.samples, pcm.channels, pcm.sample_rate, target_rate),
+            decode_error_skips: pcm.decode_error_skips,
+            // Frame counts no longer correspond to the source rate after conversion.
+            decoded_frame_count: None,
+        }
+    }
+}
+
 /// FFT-based sinc resample mono PCM to `target_rate`. Returns the input unchanged when rates match.
-pub fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
+fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
     if clip.sample_rate == target_rate || clip.samples.is_empty() {
         return clip.clone();
     }
@@ -106,8 +133,10 @@ fn linear_resample_fallback(
 
 /// Resample interleaved `i16` PCM from `from_rate` to `to_rate`.
 ///
-/// Deinterleaves to per-channel `MonoPcmClip`, resamples each via [`resample_mono_pcm`], then
+/// Deinterleaves to per-channel `MonoPcmClip`, resamples each via the mono path, then
 /// reinterleaves. Returns the input unchanged when rates match or when `channels` is zero.
+///
+/// Facade convenience for `clip-sync-repair` (which calls this without port injection).
 pub fn resample_interleaved(
     samples: &[i16],
     channels: u16,
@@ -284,5 +313,22 @@ mod tests {
             "len={}",
             resampled.samples.len()
         );
+    }
+
+    #[test]
+    fn port_resample_interleaved_converts_rate_and_clears_frame_count() {
+        let pcm = MultiChannelPcm {
+            sample_rate: 44_100,
+            channels: 2,
+            samples: vec![500_i16; 44_100 * 2],
+            decode_error_skips: 3,
+            decoded_frame_count: Some(44_100),
+        };
+        let out = RubatoResampler.resample_interleaved(&pcm, 22_050);
+        assert_eq!(out.sample_rate, 22_050);
+        assert_eq!(out.channels, 2);
+        assert_eq!(out.decode_error_skips, 3);
+        assert_eq!(out.decoded_frame_count, None);
+        assert!(!out.samples.is_empty());
     }
 }

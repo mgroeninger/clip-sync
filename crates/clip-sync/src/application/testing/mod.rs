@@ -1,7 +1,11 @@
 pub mod alignment_fixtures;
-pub mod audio_fixtures;
 pub mod fakes;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod corpus_fixtures;
+
+// Kept at `clip_sync::testing::{audio_fixtures, ffmpeg_util}` for external consumers (e.g.
+// repair's integration tests); the modules themselves live in `test_support` so infrastructure
+// tests don't import through the application layer.
+pub use crate::test_support::audio_fixtures;
 #[cfg(any(test, feature = "test-utils"))]
-pub mod ffmpeg_util;
+pub use crate::test_support::ffmpeg_util;

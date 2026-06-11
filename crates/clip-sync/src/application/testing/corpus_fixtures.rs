@@ -14,7 +14,7 @@ use crate::application::testing::audio_fixtures::{
     write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
     write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
-use crate::application::testing::ffmpeg_util::{self, EncodeFormat};
+use crate::test_support::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentResult;
 
 /// Short clips to keep Tier-B fixtures under the ~5 MB repo budget (see tests/corpus/README.md).
@@ -463,8 +463,8 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig
     config
 }
 
-pub fn run_corpus_case_with_config<MR, FP, AL>(
-    use_case: &AlignVideos<'_, MR, FP, AL>,
+pub fn run_corpus_case_with_config<MR, FP, AL, RS>(
+    use_case: &AlignVideos<'_, MR, FP, AL, RS>,
     video_a: PathBuf,
     video_b: PathBuf,
     config: AlignConfig,
@@ -473,6 +473,7 @@ where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
+    RS: crate::application::ports::Resampler,
 {
     let response = use_case.execute(AlignVideosRequest {
         video_a,
@@ -482,8 +483,8 @@ where
     Ok(response.result)
 }
 
-pub fn run_corpus_case<MR, FP, AL>(
-    use_case: &AlignVideos<'_, MR, FP, AL>,
+pub fn run_corpus_case<MR, FP, AL, RS>(
+    use_case: &AlignVideos<'_, MR, FP, AL, RS>,
     case: &CorpusCase,
     defaults: &CorpusDefaults,
     video_a: PathBuf,
@@ -493,6 +494,7 @@ where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
+    RS: crate::application::ports::Resampler,
 {
     run_corpus_case_with_config(
         use_case,
@@ -698,7 +700,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
 
         for case in manifest
             .case
@@ -800,7 +809,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
         let result = run_corpus_case(
             &use_case,
             case,

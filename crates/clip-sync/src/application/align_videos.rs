@@ -7,11 +7,13 @@ use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighR
 use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
-use crate::application::ports::{Aligner, Fingerprinter, MediaReader, ProgressReporter};
+use crate::application::ports::{
+    Aligner, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter, Resampler,
+};
 use crate::domain::{
     build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
     decoded_timeline_extent, end_clip_extract_unreliable, expand_window_for_slide,
-    prepare_clip_for_fingerprint, resample_mono_pcm, select_aligned_subclip_pair,
+    prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     select_best_track, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
@@ -31,29 +33,36 @@ pub struct AlignVideosResponse {
     pub result: AlignmentResult,
 }
 
-pub struct AlignVideos<'a, MR, FP, AL> {
+pub struct AlignVideos<'a, MR, FP, AL, RS> {
     media_reader: &'a MR,
     fingerprinter: &'a FP,
     aligner: &'a AL,
+    resampler: &'a RS,
+    correlator: &'a dyn PcmCorrelator,
     progress: &'a dyn ProgressReporter,
 }
 
-impl<'a, MR, FP, AL> AlignVideos<'a, MR, FP, AL>
+impl<'a, MR, FP, AL, RS> AlignVideos<'a, MR, FP, AL, RS>
 where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
+    RS: Resampler,
 {
     pub fn new(
         media_reader: &'a MR,
         fingerprinter: &'a FP,
         aligner: &'a AL,
+        resampler: &'a RS,
+        correlator: &'a dyn PcmCorrelator,
         progress: &'a dyn ProgressReporter,
     ) -> Self {
         Self {
             media_reader,
             fingerprinter,
             aligner,
+            resampler,
+            correlator,
             progress,
         }
     }
@@ -87,6 +96,8 @@ where
                 duration_b: outcome.duration_b,
                 decoded_extent_a: outcome.decoded_extent_a,
                 decoded_extent_b: outcome.decoded_extent_b,
+                resampler: self.resampler,
+                correlator: self.correlator,
             },
             &request.config.alignment,
             &mut result,
@@ -106,6 +117,7 @@ where
                 decoded_extent_b: outcome.decoded_extent_b,
                 min_holdout_decode_fraction: request.config.alignment.min_end_clip_decode_fraction,
                 max_holdout_decode_skips: request.config.alignment.max_end_clip_decode_skips,
+                resampler: self.resampler,
             },
             &request.config.clip,
             &request.config.validation,
@@ -384,7 +396,13 @@ where
                 if config.alignment.refine_offset_with_pcm
                     && independent.confidence >= config.alignment.min_match_score * 0.5
                 {
-                    independent = refine_offset_estimate(&clip_a, &clip_b, independent);
+                    independent = refine_offset_estimate(
+                        &clip_a,
+                        &clip_b,
+                        independent,
+                        self.resampler,
+                        self.correlator,
+                    );
                 }
 
                 let agree = (prior.offset_secs - independent.offset_secs).abs()
@@ -396,6 +414,8 @@ where
                             &clip_b,
                             prior,
                             config.alignment.end_clip_refine_radius_secs,
+                            self.resampler,
+                            self.correlator,
                         )
                     } else {
                         prior
@@ -410,8 +430,13 @@ where
                 if config.alignment.refine_offset_with_pcm
                     && chromaprint_estimate.confidence >= config.alignment.min_match_score * 0.5
                 {
-                    chromaprint_estimate =
-                        refine_offset_estimate(&clip_a, &clip_b, chromaprint_estimate);
+                    chromaprint_estimate = refine_offset_estimate(
+                        &clip_a,
+                        &clip_b,
+                        chromaprint_estimate,
+                        self.resampler,
+                        self.correlator,
+                    );
                 }
                 (false, chromaprint_estimate)
             };
@@ -582,7 +607,7 @@ where
                 &progress_label,
             )?;
             if let Some(target_rate) = config.clip.target_sample_rate {
-                clip = resample_mono_pcm(&clip, target_rate);
+                clip = self.resampler.resample_mono(&clip, target_rate);
             }
             raw_clips[index] = Some(clip);
         }
@@ -851,6 +876,8 @@ mod tests {
     use crate::infrastructure::chromaprint::repetition::{
         test_reset_repetition_detect_calls, test_repetition_detect_calls,
     };
+    use crate::infrastructure::correlation::FftCorrelator;
+    use crate::infrastructure::resample::RubatoResampler;
 
     /// Pure-tone repeat fixtures target ~30s; integration/corpus use this band for Chromaprint lag
     /// quantization (unit tests use tighter ±1–2s where prep is controlled).
@@ -964,7 +991,14 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
         use_case
             .execute(AlignVideosRequest {
                 video_a: PathBuf::from("a.wav"),
@@ -1008,7 +1042,14 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(request(two_clip_config()))
@@ -1038,7 +1079,14 @@ mod tests {
             confidence: 0.2,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(request(two_clip_config()))
@@ -1058,7 +1106,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let mut config = two_clip_config();
         config.clip.clip_length = Duration::from_secs(30);
@@ -1082,7 +1137,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(
@@ -1101,7 +1163,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(error, AppError::Media(MediaError::FileNotFound(_))));
@@ -1117,7 +1186,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(
@@ -1134,7 +1210,14 @@ mod tests {
             "matcher exploded".into(),
         ));
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(
@@ -1164,7 +1247,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(
@@ -1182,7 +1272,14 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let mut config = two_clip_config();
         config.clip.target_sample_rate = Some(11_025);
@@ -1215,7 +1312,14 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
         assert!(matches!(
@@ -1239,7 +1343,14 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let mut config = two_clip_config();
         config.alignment.prefer_start_clip = true;
@@ -1271,7 +1382,14 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(request(two_clip_config()))
@@ -1297,7 +1415,14 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(request(two_clip_config()))
@@ -1346,7 +1471,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(AlignVideosRequest {
@@ -1405,7 +1537,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(AlignVideosRequest {
@@ -1477,7 +1616,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(AlignVideosRequest {
@@ -1610,7 +1756,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(AlignVideosRequest {
@@ -1654,7 +1807,14 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         test_reset_repetition_detect_calls();
         use_case
@@ -1705,7 +1865,14 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(request(two_clip_config()))
@@ -1756,7 +1923,14 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let mut config = two_clip_config();
         config.alignment.try_all_tracks = true;
@@ -1835,7 +2009,14 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let mut config = two_clip_config();
         config.validation.check_clip_repetition = true;
@@ -1891,7 +2072,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let request = |config: AlignConfig| AlignVideosRequest {
             video_a: path_a.clone(),
@@ -1979,7 +2167,14 @@ mod tests {
         let fingerprinter = ChromaprintFingerprinter::new(preset);
         let aligner = ChromaprintAligner::new(preset);
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let request = |config: AlignConfig| AlignVideosRequest {
             video_a: path_a.clone(),
@@ -2060,7 +2255,14 @@ mod tests {
             confidence: 0.95,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response_base = use_case
             .execute(AlignVideosRequest {
@@ -2142,7 +2344,14 @@ mod tests {
             confidence: BASE_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
-        let use_case = AlignVideos::new(&media_reader, &fingerprinter, &aligner, &progress);
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
 
         let response = use_case
             .execute(AlignVideosRequest {

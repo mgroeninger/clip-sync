@@ -9,7 +9,6 @@ pub mod mono_pcm_clip;
 pub mod multichannel_pcm;
 pub mod pcm_preparation;
 pub mod policies;
-pub mod resample;
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
@@ -37,4 +36,3 @@ pub use policies::{
     holdout_extract_sufficient, holdout_window_feasible, truncate_padded_tail,
     ClipPlanningOptions, select_best_track,
 };
-pub use resample::{resample_interleaved, resample_mono_pcm};

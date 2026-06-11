@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn detect_clip_repetition_corpus_repeated_segment_fixture() {
-        use crate::application::testing::audio_fixtures::write_repeated_segment_wav_pair;
+        use crate::test_support::audio_fixtures::write_repeated_segment_wav_pair;
         use hound::WavReader;
 
         let temp = tempfile::tempdir().expect("tempdir");

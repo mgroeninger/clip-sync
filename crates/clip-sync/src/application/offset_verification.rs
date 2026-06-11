@@ -3,10 +3,12 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::application::config::{ClipConfig, ValidationConfig};
-use crate::application::ports::{Aligner, Fingerprinter, MediaSession, ProgressReporter};
+use crate::application::ports::{
+    Aligner, Fingerprinter, MediaSession, ProgressReporter, Resampler,
+};
 use crate::domain::{
     holdout_extract_sufficient, holdout_window_candidates, holdout_window_feasible,
-    prepare_clip_for_fingerprint, resample_mono_pcm, should_downgrade_repetition_confidence,
+    prepare_clip_for_fingerprint, should_downgrade_repetition_confidence,
     AlignmentResult, AudioTrack, ClipWindow, OffsetVerification,
     PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
@@ -26,6 +28,7 @@ pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub decoded_extent_b: Duration,
     pub min_holdout_decode_fraction: f64,
     pub max_holdout_decode_skips: u32,
+    pub resampler: &'a dyn Resampler,
 }
 
 /// Extract a hold-out window and score lag-0 similarity to independently verify the recommended
@@ -68,6 +71,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
         decoded_extent_b: _,
         min_holdout_decode_fraction,
         max_holdout_decode_skips,
+        resampler,
     } = input;
 
     // Placement uses container duration. decoded_extent reflects discovery clip windows
@@ -183,11 +187,11 @@ pub fn apply_offset_verification<MS, FP, AL>(
         let source_duration_b = raw_b.duration_secs();
 
         let raw_a = match clip_config.target_sample_rate {
-            Some(rate) => resample_mono_pcm(&raw_a, rate),
+            Some(rate) => resampler.resample_mono(&raw_a, rate),
             None => raw_a,
         };
         let raw_b = match clip_config.target_sample_rate {
-            Some(rate) => resample_mono_pcm(&raw_b, rate),
+            Some(rate) => resampler.resample_mono(&raw_b, rate),
             None => raw_b,
         };
 
@@ -395,6 +399,7 @@ mod tests {
             decoded_extent_b: duration,
             min_holdout_decode_fraction,
             max_holdout_decode_skips,
+            resampler: &crate::infrastructure::resample::RubatoResampler,
         }
     }
 
@@ -446,6 +451,7 @@ mod tests {
                 decoded_extent_b: duration,
                 min_holdout_decode_fraction,
                 max_holdout_decode_skips,
+                resampler: &crate::infrastructure::resample::RubatoResampler,
             },
             &clip_config,
             &validation,

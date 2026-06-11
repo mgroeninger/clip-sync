@@ -1,6 +1,6 @@
 # Temporary plan: internal layer purity
 
-> **Status:** Draft (2026-06-10). Plan 2 of 4 — see [BACKLOG.md](../BACKLOG.md). No behavior or contract changes. Plan 1 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)) shipped 2026-06-10 — the `resample.rs` warn exists and moves here with the code.
+> **Status:** Phases 1–3 implemented (2026-06-10); Phase 4 (polish + docs) remains. Plan 2 of 4 — see [BACKLOG.md](../BACKLOG.md). No behavior or contract changes. Plan 1 ([archive/output-error-contract-plan.md](archive/output-error-contract-plan.md)) shipped 2026-06-10 — the `resample.rs` warn moved to `infrastructure/resample/rubato.rs` with the code.
 
 **Problem:** PLAN.md claims "Domain depends on nothing external" and "application depends on domain only", but: `rubato` is used directly in `domain/resample.rs`; the `cross_correlate` crate is called directly from `application/offset_refinement.rs`; infrastructure tests import `application::testing::ffmpeg_util` (dependency arrow pointing the wrong way); and `Fingerprint` exposes a bare `pub data: Vec<u32>`.
 
@@ -51,23 +51,23 @@
 
 ### Phase 1 — `Resampler` port
 
-- [ ] Add `Resampler` trait to `application/ports.rs`; `RubatoResampler` in `infrastructure/resample/` (code moved from `domain/resample.rs`, tests move with it).
-- [ ] `AlignVideos` + `default_pipeline.rs` wiring; `FakeResampler` (identity or rate-stamp) in `testing/fakes.rs` for use-case tests.
-- [ ] Update call sites: `align_videos.rs`, `offset_verification.rs`, `offset_refinement.rs` (rate-mismatch path receives the port).
-- [ ] Facade: export `RubatoResampler` + keep `resample_interleaved` convenience fn; `clip-sync-repair` compiles untouched or with import-only diffs.
-- [ ] `cargo test --workspace` green; grep gate: no `rubato` outside `infrastructure/`.
+- [x] Add `Resampler` trait to `application/ports.rs`; `RubatoResampler` in `infrastructure/resample/` (code moved from `domain/resample.rs`, tests move with it).
+- [x] `AlignVideos` + `default_pipeline.rs` wiring; `FakeResampler` (identity or rate-stamp) in `testing/fakes.rs` for use-case tests. *(Use-case tests inject the real `RubatoResampler` — equivalence obligation; `FakeResampler` is a rate-stamp fake available for tests that don't need real DSP.)*
+- [x] Update call sites: `align_videos.rs`, `offset_verification.rs`, `offset_refinement.rs` (rate-mismatch path receives the port). *(`OffsetVerificationInput` / `HighRateRefinementInput` carry `&dyn Resampler` to keep `apply_*` signatures under the clippy argument limit.)*
+- [x] Facade: export `RubatoResampler` + keep `resample_interleaved` convenience fn; `clip-sync-repair` compiles untouched or with import-only diffs. *(Repair untouched; `resample_mono_pcm` dropped from the facade — no external consumers.)*
+- [x] `cargo test --workspace` green; grep gate: no `rubato` outside `infrastructure/`. *(One pre-existing, unrelated failure: `probe_and_extract_eac3_surround_mp4` decodes silence on this machine — fails identically at HEAD.)*
 
 ### Phase 2 — `PcmCorrelator` port
 
-- [ ] Add `PcmCorrelator` trait + `FftCorrelator` adapter in `infrastructure/correlation.rs` (move the `Correlate::create_real_f64` block from `pcm_cross_correlate_lag`).
-- [ ] Parameterize `pcm_cross_correlate_lag`, `refine_offset_estimate`, `refine_offset_around_prior`, `refine_holdout_segment_lag` with `&dyn PcmCorrelator`; update `align_videos.rs` and `high_rate_refinement.rs` callers and `offset_refinement.rs` tests (real adapter is fine in tests — it's deterministic).
-- [ ] Grep gate: no `cross_correlate` import outside `infrastructure/`.
+- [x] Add `PcmCorrelator` trait + `FftCorrelator` adapter in `infrastructure/correlation.rs` (move the `Correlate::create_real_f64` block from `pcm_cross_correlate_lag`). *(Signature deviation: returns `Option<(isize, f64)>` — lag **and** peak magnitude — because `pcm_cross_correlate_lag` reports the peak (surfaces in `correlation_peak` JSON).)*
+- [x] Parameterize `pcm_cross_correlate_lag`, `refine_offset_estimate`, `refine_offset_around_prior`, `refine_holdout_segment_lag` with `&dyn PcmCorrelator`; update `align_videos.rs` and `high_rate_refinement.rs` callers and `offset_refinement.rs` tests (real adapter is fine in tests — it's deterministic). *(`AlignVideos` holds `&dyn PcmCorrelator` alongside the generic `RS: Resampler` port.)*
+- [x] Grep gate: no `cross_correlate` import outside `infrastructure/`.
 
 ### Phase 3 — test-support relocation
 
-- [ ] Move `ffmpeg_util.rs` to `src/test_support/`; re-export at `clip_sync::testing::ffmpeg_util`; fix the 6 imports in `media_reader_tests.rs` and the one in `corpus_fixtures.rs`.
-- [ ] `cargo test -p clip-sync --features ffmpeg-tests,test-utils` and repair's `scan_gaps_integration` compile-check.
-- [ ] Grep gate: no `application::testing` import anywhere under `infrastructure/`.
+- [x] Move `ffmpeg_util.rs` to `src/test_support/`; re-export at `clip_sync::testing::ffmpeg_util`; fix the 6 imports in `media_reader_tests.rs` and the one in `corpus_fixtures.rs`.
+- [x] `cargo test -p clip-sync --features ffmpeg-tests,test-utils` and repair's `scan_gaps_integration` compile-check.
+- [x] Grep gate: no `application::testing` import anywhere under `infrastructure/`. *(Gate also caught `chromaprint/repetition.rs` importing `audio_fixtures`; `audio_fixtures.rs` moved to `test_support/` too, re-exported at `clip_sync::testing::audio_fixtures`.)*
 
 ### Phase 4 — polish + docs
 

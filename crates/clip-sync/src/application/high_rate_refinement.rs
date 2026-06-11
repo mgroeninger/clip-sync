@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::application::config::AlignmentConfig;
 use crate::application::offset_refinement::refine_holdout_segment_lag;
-use crate::application::ports::{MediaSession, ProgressReporter};
+use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::{
     holdout_window_candidates, holdout_window_feasible, refresh_start_overlap, AlignmentResult,
     AudioTrack, ClipWindow, HighRateRefinement, MonoPcmClip,
@@ -22,6 +22,8 @@ pub struct HighRateRefinementInput<'a, MS: MediaSession> {
     pub decoded_extent_a: Duration,
     #[allow(dead_code)]
     pub decoded_extent_b: Duration,
+    pub resampler: &'a dyn Resampler,
+    pub correlator: &'a dyn PcmCorrelator,
 }
 
 pub fn apply_high_rate_refinement<MS: MediaSession>(
@@ -40,6 +42,8 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         duration_b,
         decoded_extent_a: _,
         decoded_extent_b: _,
+        resampler,
+        correlator,
     } = input;
     if !alignment.refine_offset_high_rate {
         return;
@@ -148,6 +152,8 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
         &clip_a,
         &clip_b,
         alignment.high_rate_refine_max_adjustment_secs,
+        resampler,
+        correlator,
     ) else {
         debug!("high-rate refine skipped: correlation did not produce adjustment");
         result.high_rate_refinement = Some(HighRateRefinement {

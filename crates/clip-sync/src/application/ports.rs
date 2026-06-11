@@ -176,6 +176,28 @@ pub trait Fingerprinter {
     fn fingerprint(&self, clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError>;
 }
 
+/// Sample-rate conversion engine. The production adapter (rubato FFT with linear fallback)
+/// lives in `infrastructure/resample/`.
+///
+/// Infallible by design: the current pipeline never propagates resample errors — engine
+/// failure degrades to an internal fallback, not an error path.
+pub trait Resampler {
+    /// Resample mono PCM to `target_rate`. Returns the input unchanged when rates match.
+    fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip;
+
+    /// Resample interleaved PCM to `target_rate`, preserving channel layout.
+    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm;
+}
+
+/// FFT cross-correlation engine. The production adapter (`cross_correlate` crate) lives in
+/// `infrastructure/correlation.rs`.
+pub trait PcmCorrelator {
+    /// Full cross-correlation of `a` against `b`; returns the peak's lag in samples relative
+    /// to the centered (zero-lag) position, and the peak magnitude. `None` when the engine
+    /// cannot produce a correlation for these inputs.
+    fn cross_correlate_lag(&self, a: &[f64], b: &[f64]) -> Option<(isize, f64)>;
+}
+
 pub trait Aligner {
     /// Compare clip fingerprints from video A (`left`) and video B (`right`).
     /// Returns seconds to add to A's timeline to align with B (see PLAN.md).

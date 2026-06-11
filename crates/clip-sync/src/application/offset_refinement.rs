@@ -1,6 +1,5 @@
-use cross_correlate::{Correlate, CrossCorrelationMode};
-
-use crate::domain::{resample_mono_pcm, ClipMatchEstimate, MonoPcmClip};
+use crate::application::ports::{PcmCorrelator, Resampler};
+use crate::domain::{ClipMatchEstimate, MonoPcmClip};
 
 const REFINE_WINDOW_SECS: u32 = 20;
 const MAX_REFINE_ADJUSTMENT_SECS: f64 = 1.0;
@@ -138,6 +137,8 @@ pub fn refine_offset_estimate(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     coarse: ClipMatchEstimate,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
 ) -> ClipMatchEstimate {
     if coarse.confidence <= 0.0 || left.sample_rate != right.sample_rate {
         return coarse;
@@ -159,7 +160,9 @@ pub fn refine_offset_estimate(
     };
 
     let max_adjustment = max_refine_adjustment_secs(left);
-    if let Some(adjustment) = pcm_lag_adjustment_secs(left, right, estimate.offset_secs) {
+    if let Some(adjustment) =
+        pcm_lag_adjustment_secs(left, right, estimate.offset_secs, resampler, correlator)
+    {
         if adjustment.abs() <= max_adjustment {
             estimate.offset_secs += adjustment;
         }
@@ -177,6 +180,8 @@ pub fn refine_offset_around_prior(
     right: &MonoPcmClip,
     prior: ClipMatchEstimate,
     search_radius_secs: f64,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
 ) -> ClipMatchEstimate {
     if prior.confidence <= 0.0 || search_radius_secs <= 0.0 {
         return prior;
@@ -193,9 +198,14 @@ pub fn refine_offset_around_prior(
         prior
     };
 
-    if let Some((adjustment, _)) =
-        pcm_cross_correlate_lag(left, right, estimate.offset_secs, REFINE_WINDOW_SECS)
-    {
+    if let Some((adjustment, _)) = pcm_cross_correlate_lag(
+        left,
+        right,
+        estimate.offset_secs,
+        REFINE_WINDOW_SECS,
+        resampler,
+        correlator,
+    ) {
         if adjustment.abs() <= search_radius_secs {
             estimate.offset_secs += adjustment;
         }
@@ -382,9 +392,18 @@ fn pcm_lag_adjustment_secs(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     coarse_offset_secs: f64,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
 ) -> Option<f64> {
-    pcm_cross_correlate_lag(left, right, coarse_offset_secs, REFINE_WINDOW_SECS)
-        .map(|(adjustment, _)| adjustment)
+    pcm_cross_correlate_lag(
+        left,
+        right,
+        coarse_offset_secs,
+        REFINE_WINDOW_SECS,
+        resampler,
+        correlator,
+    )
+    .map(|(adjustment, _)| adjustment)
 }
 
 /// FFT cross-correlation lag adjustment between aligned PCM slices.
@@ -393,6 +412,8 @@ pub fn pcm_cross_correlate_lag(
     right: &MonoPcmClip,
     offset_secs: f64,
     window_secs: u32,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.samples.is_empty() || right.samples.is_empty() {
         return None;
@@ -402,12 +423,12 @@ pub fn pcm_cross_correlate_lag(
     let left = if left.sample_rate == target_rate {
         left.clone()
     } else {
-        resample_mono_pcm(left, target_rate)
+        resampler.resample_mono(left, target_rate)
     };
     let right = if right.sample_rate == target_rate {
         right.clone()
     } else {
-        resample_mono_pcm(right, target_rate)
+        resampler.resample_mono(right, target_rate)
     };
 
     let window_samples = usize::min(
@@ -442,26 +463,9 @@ pub fn pcm_cross_correlate_lag(
         return None;
     }
 
-    let correlation = Correlate::create_real_f64(
-        left_f64.len(),
-        right_f64.len(),
-        CrossCorrelationMode::Full,
-    )
-    .ok()?;
-    let corr = correlation.correlate_managed(&left_f64, &right_f64).ok()?;
-    let (peak_index, peak_value) = corr
-        .iter()
-        .enumerate()
-        .max_by(|(_, left), (_, right)| {
-            left.abs()
-                .partial_cmp(&right.abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
-
-    let center = (left_f64.len() + right_f64.len()).saturating_sub(1) / 2;
-    let lag_samples = peak_index as i64 - center as i64;
-    let adjustment = -lag_samples as f64 / f64::from(target_rate);
-    Some((adjustment, peak_value.abs()))
+    let (lag_samples, peak_magnitude) = correlator.cross_correlate_lag(&left_f64, &right_f64)?;
+    let adjustment = -(lag_samples as f64) / f64::from(target_rate);
+    Some((adjustment, peak_magnitude))
 }
 
 /// Refine lag on hold-out segments extracted at the discovery offset (lag ≈ 0).
@@ -469,6 +473,8 @@ pub fn refine_holdout_segment_lag(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     max_adjustment_secs: f64,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate == 0 || right.sample_rate == 0 {
         return None;
@@ -479,7 +485,8 @@ pub fn refine_holdout_segment_lag(
         .floor()
         .max(1.0) as u32;
 
-    let (adjustment, peak) = pcm_cross_correlate_lag(left, right, 0.0, window_secs)?;
+    let (adjustment, peak) =
+        pcm_cross_correlate_lag(left, right, 0.0, window_secs, resampler, correlator)?;
     if adjustment.abs() > max_adjustment_secs {
         return None;
     }
@@ -568,6 +575,8 @@ mod tests {
 
     use super::*;
     use crate::domain::pcm_preparation::{prepare_clip_for_fingerprint, PcmPreparationOptions};
+    use crate::infrastructure::correlation::FftCorrelator;
+    use crate::infrastructure::resample::RubatoResampler;
 
     fn chirp_clip(sample_rate: u32, start_index: u64, seconds: u32) -> MonoPcmClip {
         let count = sample_rate as usize * seconds as usize;
@@ -677,7 +686,7 @@ mod tests {
         let lag_secs = 0.020;
         let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
         let (adjustment, peak) =
-            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
+            refine_holdout_segment_lag(&left, &right, 0.1, &RubatoResampler, &FftCorrelator).expect("adjustment");
         assert!((adjustment - lag_secs).abs() < 0.003, "adjustment={adjustment}");
         assert!(peak > 0.0);
     }
@@ -688,13 +697,13 @@ mod tests {
         let lag_secs = 0.020;
         let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
         assert!(
-            refine_holdout_segment_lag(&left, &right, 0.1)
+            refine_holdout_segment_lag(&left, &right, 0.1, &RubatoResampler, &FftCorrelator)
                 .expect("within cap")
                 .0
                 .abs()
                 > 0.0
         );
-        assert!(refine_holdout_segment_lag(&left, &right, 0.010).is_none());
+        assert!(refine_holdout_segment_lag(&left, &right, 0.010, &RubatoResampler, &FftCorrelator).is_none());
     }
 
     #[test]
@@ -703,7 +712,7 @@ mod tests {
         let lag_secs = 3.0 - 2.971_428_573_131_561;
         let (left, right) = holdout_tone_pair_with_lag(sample_rate, 3, lag_secs);
         let (adjustment, peak) =
-            refine_holdout_segment_lag(&left, &right, 0.1).expect("adjustment");
+            refine_holdout_segment_lag(&left, &right, 0.1, &RubatoResampler, &FftCorrelator).expect("adjustment");
         assert!(peak > 0.0);
         assert!(
             (adjustment - lag_secs).abs() < 0.005,
@@ -717,7 +726,7 @@ mod tests {
         let (left, right) = delayed_pair(sample_rate, 120, 3);
         let coarse = 2.971_428_573_131_561;
         let (adjustment, peak) =
-            pcm_cross_correlate_lag(&left, &right, coarse, 3).expect("adjustment");
+            pcm_cross_correlate_lag(&left, &right, coarse, 3, &RubatoResampler, &FftCorrelator).expect("adjustment");
         assert!(peak > 0.0);
         assert!(
             (coarse + adjustment - 3.0).abs() < 0.015,
@@ -751,7 +760,7 @@ mod tests {
             offset_secs: 1.0,
             confidence: 0.9,
         };
-        let refined = refine_offset_around_prior(&left, &right, prior, 5.0);
+        let refined = refine_offset_around_prior(&left, &right, prior, 5.0, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs - 3.0).abs() < 0.15,
             "refined={}",
@@ -775,7 +784,7 @@ mod tests {
             offset_secs: 2.971_428_573_131_561,
             confidence: 0.8,
         };
-        let refined = refine_offset_estimate(&left, &right, coarse);
+        let refined = refine_offset_estimate(&left, &right, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs - 3.0).abs() < 0.050,
             "refined={}",
@@ -824,7 +833,7 @@ mod tests {
             offset_secs: -4.952_380_952_380_952,
             confidence: 0.8,
         };
-        let refined = refine_offset_estimate(&left, &right, coarse);
+        let refined = refine_offset_estimate(&left, &right, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs + 5.0).abs() < 0.050,
             "refined={}",
@@ -836,7 +845,7 @@ mod tests {
     fn pcm_cross_correlate_reports_zero_adjustment_when_already_aligned() {
         let sample_rate = 44_100;
         let (left, right) = delayed_pair(sample_rate, 10, 3);
-        let (adjustment, peak) = pcm_cross_correlate_lag(&left, &right, 3.0, 3).expect("adjustment");
+        let (adjustment, peak) = pcm_cross_correlate_lag(&left, &right, 3.0, 3, &RubatoResampler, &FftCorrelator).expect("adjustment");
         assert!(adjustment.abs() < 1.0 / f64::from(sample_rate));
         assert!(peak > 0.0);
     }
@@ -852,7 +861,7 @@ mod tests {
             offset_secs: -1.5,
             confidence: 0.8,
         };
-        let refined = refine_offset_estimate(&left, &right, coarse);
+        let refined = refine_offset_estimate(&left, &right, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs + f64::from(lead_secs)).abs()
                 < (coarse.offset_secs + f64::from(lead_secs)).abs() + 0.3,
@@ -909,7 +918,7 @@ mod tests {
             offset_secs: 14.980952389538288,
             confidence: 0.8,
         };
-        let refined = refine_offset_estimate(&left, &right, coarse);
+        let refined = refine_offset_estimate(&left, &right, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs - 15.0).abs() < 1.0,
             "refined={}",
@@ -1035,9 +1044,15 @@ mod tests {
     #[ignore = "slow diagnostic; cargo test diagnose_wav_leader_60s_full -- --ignored --nocapture"]
     fn diagnose_wav_leader_60s_full() {
         let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
-        let refined = refine_offset_estimate(&left_p, &right_p, coarse);
+        let refined = refine_offset_estimate(&left_p, &right_p, coarse, &RubatoResampler, &FftCorrelator);
         let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs);
-        let lag_adj = pcm_lag_adjustment_secs(&left_p, &right_p, refined.offset_secs);
+        let lag_adj = pcm_lag_adjustment_secs(
+            &left_p,
+            &right_p,
+            refined.offset_secs,
+            &RubatoResampler,
+            &FftCorrelator,
+        );
 
         eprintln!("=== wav_leader_60s full diagnostic ===");
         eprintln!(
@@ -1056,7 +1071,7 @@ mod tests {
     #[ignore = "slow: pcm_discover on 120s clips; cargo test refine_recovers_sixty_second_leader -- --ignored"]
     fn refine_recovers_sixty_second_leader_on_120_second_clips() {
         let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
-        let refined = refine_offset_estimate(&left_p, &right_p, coarse);
+        let refined = refine_offset_estimate(&left_p, &right_p, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs - 60.0).abs() < 1.5,
             "refined={}",
@@ -1075,7 +1090,7 @@ mod tests {
             offset_secs: 16.0,
             confidence: 0.8,
         };
-        let refined = refine_offset_estimate(&left, &right, coarse);
+        let refined = refine_offset_estimate(&left, &right, coarse, &RubatoResampler, &FftCorrelator);
         assert!(
             (refined.offset_secs - 30.0).abs() < 1.5,
             "refined={}",

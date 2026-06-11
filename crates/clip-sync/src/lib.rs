@@ -1,6 +1,8 @@
 mod application;
 mod domain;
 mod infrastructure;
+#[cfg(any(test, feature = "test-utils"))]
+mod test_support;
 
 // --- application ---
 pub use application::config::{
@@ -9,7 +11,9 @@ pub use application::config::{
 pub use application::default_pipeline::align_with_defaults;
 pub use application::{AlignVideos, AlignVideosRequest, AlignVideosResponse, AppError, ConfigError};
 pub use application::error::{AlignmentError, FingerprintError, MediaError};
-pub use application::ports::{Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter};
+pub use application::ports::{
+    Aligner, Fingerprinter, MediaReader, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
+};
 pub use application::report::{
     format_high_rate_refinement_lines, format_offset_verification_lines, AlignmentReport,
     ClipLabelReport, ClipMatchReport, HighRateRefinementReport, OffsetVerificationReport,
@@ -24,11 +28,12 @@ pub use domain::{
     MultiChannelPcm, OffsetVerification, RepetitionFinding, TimelineOverlap,
 };
 pub use domain::policies::{select_best_track, select_track_for_reference};
-pub use domain::{resample_interleaved, resample_mono_pcm};
 pub use application::offset_refinement::normalized_correlation;
 
 // --- default adapter types ---
 pub use infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+pub use infrastructure::correlation::FftCorrelator;
+pub use infrastructure::resample::{resample_interleaved, RubatoResampler};
 pub use infrastructure::symphonia::SymphoniaMediaReader;
 pub use infrastructure::config::file::load_align_config;
 pub use infrastructure::logging::{

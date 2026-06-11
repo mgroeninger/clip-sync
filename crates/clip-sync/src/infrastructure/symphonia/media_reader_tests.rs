@@ -377,7 +377,7 @@ fn write_split_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
 #[cfg(feature = "ffmpeg-tests")]
 #[test]
 fn probe_and_extract_mkv_container() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone.mkv");
@@ -405,7 +405,7 @@ fn probe_and_extract_mkv_container() {
 #[cfg(feature = "ffmpeg-tests")]
 #[test]
 fn probe_and_extract_mp4_container() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone.mp4");
@@ -438,7 +438,7 @@ fn probe_and_extract_mp4_container() {
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_he_aac_mp4_container() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone-he-aac.mp4");
@@ -478,7 +478,7 @@ fn probe_and_extract_he_aac_mp4_container() {
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_he_aac_surround_mp4_container() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone-he-aac-51.mp4");
@@ -883,7 +883,7 @@ fn open_rejects_directory() {
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_ac3_surround_mp4() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone-ac3-51.mp4");
@@ -926,7 +926,7 @@ fn probe_and_extract_ac3_surround_mp4() {
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 #[test]
 fn probe_and_extract_eac3_surround_mp4() {
-    use crate::application::testing::ffmpeg_util;
+    use crate::test_support::ffmpeg_util;
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone-eac3-51.mp4");
