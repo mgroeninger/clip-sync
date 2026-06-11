@@ -96,6 +96,11 @@ fn default_num_clips() -> u32 {
     DEFAULT_NUM_CLIPS
 }
 
+/// Whole-second `Duration` serde for TOML/JSON config fields (`clip_length`, etc.).
+///
+/// Sub-second precision is intentionally discarded on load and save (`as_secs()` /
+/// `Duration::from_secs`). Clip windows are minute-scale; fractional seconds are not
+/// part of the config contract.
 mod duration_secs {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;
@@ -299,5 +304,20 @@ mod tests {
             ..ClipConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn duration_secs_serde_truncates_subsecond_precision() {
+        use serde_json::json;
+
+        let config = ClipConfig {
+            clip_length: Duration::from_secs(90) + Duration::from_millis(500),
+            ..ClipConfig::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["clip_length"], json!(90));
+
+        let restored: ClipConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.clip_length, Duration::from_secs(90));
     }
 }

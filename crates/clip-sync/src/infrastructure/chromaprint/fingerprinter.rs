@@ -63,7 +63,7 @@ fn fingerprint_clip(
         "fingerprint complete"
     );
 
-    Ok(Fingerprint { data })
+    Ok(Fingerprint::new(data))
 }
 
 fn validate_clip(clip: &MonoPcmClip) -> Result<(), FingerprintError> {
@@ -150,6 +150,6 @@ mod tests {
     fn fingerprints_tone_clip() {
         let clip = tone_clip(44_100, 10);
         let fingerprint = fingerprint_clip(&clip, ChromaprintPreset::default()).unwrap();
-        assert!(!fingerprint.data.is_empty());
+        assert!(!fingerprint.is_empty());
     }
 }

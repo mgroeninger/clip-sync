@@ -3,12 +3,33 @@ use std::time::Duration;
 use crate::domain::ClipLabel;
 use crate::domain::ClipWindow;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Chromaprint item sequence for one prepared mono clip.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
-    pub data: Vec<u32>,
+    data: Vec<u32>,
+}
+
+impl Fingerprint {
+    pub fn new(data: Vec<u32>) -> Self {
+        Self { data }
+    }
+
+    pub fn items(&self) -> &[u32] {
+        &self.data
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 /// Raw offset estimate from comparing one clip pair (video A vs video B).
+///
+/// `PartialEq` is derived for test convenience; float fields are not semantically exact.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipMatchEstimate {
     /// Seconds to add to video A's timeline to align with video B.
@@ -17,6 +38,8 @@ pub struct ClipMatchEstimate {
 }
 
 /// Internal repeat detected within a single prepared clip.
+///
+/// `PartialEq` is derived for test convenience; float fields are not semantically exact.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RepetitionFinding {
     /// Positive seconds between repeated content.
@@ -421,6 +444,16 @@ mod tests {
 
     fn window(start: u64, end: u64, label: ClipLabel) -> ClipWindow {
         ClipWindow::new(Duration::from_secs(start), Duration::from_secs(end), label)
+    }
+
+    #[test]
+    fn fingerprint_accessors() {
+        let fp = Fingerprint::new(vec![1, 2, 3]);
+        assert_eq!(fp.len(), 3);
+        assert!(!fp.is_empty());
+        assert_eq!(fp.items(), &[1, 2, 3]);
+        assert_eq!(fp, Fingerprint::new(vec![1, 2, 3]));
+        assert!(Fingerprint::new(vec![]).is_empty());
     }
 
     fn report_input<'a>(

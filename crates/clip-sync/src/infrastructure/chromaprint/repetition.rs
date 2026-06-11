@@ -71,7 +71,7 @@ pub(crate) fn detect_clip_repetition(
         }
     });
 
-    if fingerprint.data.is_empty() {
+    if fingerprint.is_empty() {
         return None;
     }
 
@@ -84,7 +84,8 @@ pub(crate) fn detect_clip_repetition(
         return None;
     }
 
-    let n = fingerprint.data.len();
+    let items = fingerprint.items();
+    let n = items.len();
     let max_lag = n.saturating_sub(MIN_OVERLAP_ITEMS);
     if max_lag < MIN_LAG_ITEMS {
         return None;
@@ -95,9 +96,9 @@ pub(crate) fn detect_clip_repetition(
 
     for lag in MIN_LAG_ITEMS..=max_lag {
         let overlap = n - lag;
-        let mean_errors: f64 = fingerprint.data[..overlap]
+        let mean_errors: f64 = items[..overlap]
             .iter()
-            .zip(&fingerprint.data[lag..])
+            .zip(&items[lag..])
             .map(|(a, b)| f64::from((a ^ b).count_ones()))
             .sum::<f64>()
             / overlap as f64;
@@ -349,14 +350,14 @@ mod tests {
         let true_lag_items = (25.0_f64 / item_secs).round() as usize;
 
         let fp_untrimmed = fingerprint_untrimmed(&clip);
-        let max_lag_untrimmed = fp_untrimmed.data.len().saturating_sub(MIN_OVERLAP_ITEMS);
+        let max_lag_untrimmed = fp_untrimmed.len().saturating_sub(MIN_OVERLAP_ITEMS);
         assert!(
             true_lag_items <= max_lag_untrimmed,
             "fixture: true lag {true_lag_items} must be searchable without trim (max_lag={max_lag_untrimmed})"
         );
 
         let fp_trimmed = fingerprint_production_like(&clip);
-        let max_lag_trimmed = fp_trimmed.data.len().saturating_sub(MIN_OVERLAP_ITEMS);
+        let max_lag_trimmed = fp_trimmed.len().saturating_sub(MIN_OVERLAP_ITEMS);
         assert!(
             true_lag_items > max_lag_trimmed,
             "trim must push true lag {true_lag_items} beyond max_lag {max_lag_trimmed}"
@@ -421,7 +422,7 @@ mod tests {
                 x
             })
             .collect();
-        let fp = Fingerprint { data };
+        let fp = Fingerprint::new(data);
 
         let config = configuration_for_preset(ChromaprintPreset::default());
         let item_secs = f64::from(config.item_duration_in_seconds());
@@ -504,7 +505,7 @@ mod tests {
 
     #[test]
     fn detect_clip_repetition_none_when_too_short_or_empty() {
-        let empty = Fingerprint { data: vec![] };
+        let empty = Fingerprint::new(vec![]);
         assert!(
             detect(&empty, 60.0, MIN_CONFIDENCE, 60.0).is_none(),
             "empty fingerprint must not trigger detection"

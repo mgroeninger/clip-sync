@@ -41,7 +41,7 @@ Locked before implementation. Change only with an explicit plan revision.
 | **JSON shape** | **Byte-identical** to current output: same field names (snake_case), same `skip_serializing_if` / `#[serde(default)]` behavior, `ClipLabel` still `"start"`/`"interior"`/`"end"`. Verified by golden tests captured in Phase 0 *before* the swap. |
 | **Repair embedding** | `GapReport.alignment` switches from `AlignmentResult` to `AlignmentReport` (conversion at `scan_gaps` boundary). Repair JSON shape unchanged. |
 | **Structured errors** | Keep current variant set and display strings; **add a type-erased source** where an underlying error exists: `source: Option<Box<dyn std::error::Error + Send + Sync>>` (via `#[source]`). Port errors stay in the application layer without leaking Symphonia types. *Rejected alternative:* structured sub-enums per Symphonia error class — high churn, no consumer needs to match on them today; revisit if a caller ever does. |
-| **Resample warn** | One `tracing::warn!` at each fallback trigger in `resample.rs` (target rate, input rate, error). Tactical — [TEMP-layer-purity-plan.md](TEMP-layer-purity-plan.md) later relocates this code to infrastructure with the warn intact. |
+| **Resample warn** | One `tracing::warn!` at each fallback trigger in `infrastructure/resample/rubato.rs` (target rate, input rate, error). Shipped with [layer-purity-plan.md](layer-purity-plan.md). |
 | **Exit codes** | Unchanged in both CLIs. Deleting dead variants does not alter any mapping (they were never produced). |
 | **Error display text** | stderr messages may not change byte-for-byte (Phase 3 keeps `Display` strings stable; only `source()` is added). CLI tests asserting message text must keep passing. |
 | **Contract freeze artifact** | New **`docs/json-output.md`**: authoritative field-by-field JSON contract for analyzer and repair outputs, versioned "v1". `docs/error-mapping.md` updated for the deleted variants. Freeze happens only as the **last** phase. |
@@ -114,5 +114,5 @@ Locked before implementation. Change only with an explicit plan revision.
 ## Cross-plan sequencing
 
 - **Blocks** the JSON freeze and should land **before** [TEMP-media-session-redesign-plan.md](TEMP-media-session-redesign-plan.md) (both touch `MediaError`).
-- Independent of [TEMP-layer-purity-plan.md](TEMP-layer-purity-plan.md) (coordinate only on `resample.rs` warn relocation).
+- Layer-purity shipped 2026-06-11 ([layer-purity-plan.md](layer-purity-plan.md)); resample warn lives in `rubato.rs`.
 - [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) Phase 2 adds an additive JSON field — land it before Phase 4 freeze here, or version it explicitly.

@@ -33,27 +33,26 @@ pub struct AlignVideosResponse {
     pub result: AlignmentResult,
 }
 
-pub struct AlignVideos<'a, MR, FP, AL, RS> {
+pub struct AlignVideos<'a, MR, FP, AL> {
     media_reader: &'a MR,
     fingerprinter: &'a FP,
     aligner: &'a AL,
-    resampler: &'a RS,
+    resampler: &'a dyn Resampler,
     correlator: &'a dyn PcmCorrelator,
     progress: &'a dyn ProgressReporter,
 }
 
-impl<'a, MR, FP, AL, RS> AlignVideos<'a, MR, FP, AL, RS>
+impl<'a, MR, FP, AL> AlignVideos<'a, MR, FP, AL>
 where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    RS: Resampler,
 {
     pub fn new(
         media_reader: &'a MR,
         fingerprinter: &'a FP,
         aligner: &'a AL,
-        resampler: &'a RS,
+        resampler: &'a dyn Resampler,
         correlator: &'a dyn PcmCorrelator,
         progress: &'a dyn ProgressReporter,
     ) -> Self {
@@ -868,7 +867,8 @@ mod tests {
     use crate::application::config::{AlignConfig, AlignmentConfig, ClipConfig};
     use crate::application::error::{AlignmentError, AppError, ConfigError, FingerprintError, MediaError};
     use crate::application::testing::fakes::{
-        FakeAligner, FakeFingerprinter, FakeMediaReader, FakeMediaSession, FakeProgressReporter,
+        FakeAligner, FakePcmCorrelator, FakeFingerprinter, FakeMediaReader, FakeMediaSession,
+        FakeProgressReporter,
     };
     use crate::domain::{
         ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, DomainError,
@@ -991,12 +991,13 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
         use_case
@@ -1042,12 +1043,13 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1079,12 +1081,13 @@ mod tests {
             confidence: 0.2,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1106,12 +1109,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1137,12 +1141,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1163,12 +1168,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1186,12 +1192,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1210,12 +1217,13 @@ mod tests {
             "matcher exploded".into(),
         ));
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1247,12 +1255,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1272,12 +1281,13 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1312,12 +1322,13 @@ mod tests {
             confidence: 1.0,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1343,12 +1354,13 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1382,12 +1394,13 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1415,12 +1428,13 @@ mod tests {
             },
         ]);
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1807,12 +1821,13 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1865,12 +1880,13 @@ mod tests {
             confidence: 0.9,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -1923,12 +1939,13 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 
@@ -2009,12 +2026,13 @@ mod tests {
             confidence: FAKE_REPETITION_MATCH_CONFIDENCE,
         });
         let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
             &reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
-            &FftCorrelator,
+            &correlator,
             &progress,
         );
 

@@ -43,7 +43,7 @@ fn find_offset(
     right: &Fingerprint,
     preset: ChromaprintPreset,
 ) -> Result<ClipMatchEstimate, AlignmentError> {
-    if left.data.is_empty() || right.data.is_empty() {
+    if left.is_empty() || right.is_empty() {
         return Ok(ClipMatchEstimate {
             offset_secs: 0.0,
             confidence: 0.0,
@@ -51,7 +51,7 @@ fn find_offset(
     }
 
     let config = configuration_for_preset(preset);
-    let segments = match_fingerprints(&left.data, &right.data, &config)
+    let segments = match_fingerprints(left.items(), right.items(), &config)
         .map_err(map_match_error)?;
 
     let selection = select_best_segment(&segments);
@@ -190,8 +190,8 @@ mod tests {
 
     #[test]
     fn empty_fingerprint_returns_zero_confidence() {
-        let left = Fingerprint { data: vec![1, 2, 3] };
-        let right = Fingerprint { data: vec![] };
+        let left = Fingerprint::new(vec![1, 2, 3]);
+        let right = Fingerprint::new(vec![]);
 
         let estimate = ChromaprintAligner::default()
             .find_offset(&left, &right)

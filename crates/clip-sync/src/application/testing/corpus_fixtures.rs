@@ -8,7 +8,7 @@ use crate::application::align_videos::{AlignVideos, AlignVideosRequest};
 use crate::application::config::{AlignConfig, ClipConfig};
 use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
-use crate::application::testing::audio_fixtures::{
+use crate::test_support::audio_fixtures::{
     write_near_silence_wav_pair, write_offset_chirp_wav_pair,
     write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
     write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
@@ -463,8 +463,8 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig
     config
 }
 
-pub fn run_corpus_case_with_config<MR, FP, AL, RS>(
-    use_case: &AlignVideos<'_, MR, FP, AL, RS>,
+pub fn run_corpus_case_with_config<MR, FP, AL>(
+    use_case: &AlignVideos<'_, MR, FP, AL>,
     video_a: PathBuf,
     video_b: PathBuf,
     config: AlignConfig,
@@ -473,7 +473,6 @@ where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    RS: crate::application::ports::Resampler,
 {
     let response = use_case.execute(AlignVideosRequest {
         video_a,
@@ -483,8 +482,8 @@ where
     Ok(response.result)
 }
 
-pub fn run_corpus_case<MR, FP, AL, RS>(
-    use_case: &AlignVideos<'_, MR, FP, AL, RS>,
+pub fn run_corpus_case<MR, FP, AL>(
+    use_case: &AlignVideos<'_, MR, FP, AL>,
     case: &CorpusCase,
     defaults: &CorpusDefaults,
     video_a: PathBuf,
@@ -494,7 +493,6 @@ where
     MR: MediaReader,
     FP: Fingerprinter,
     AL: Aligner,
-    RS: crate::application::ports::Resampler,
 {
     run_corpus_case_with_config(
         use_case,

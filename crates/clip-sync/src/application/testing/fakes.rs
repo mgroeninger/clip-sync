@@ -7,11 +7,10 @@ use std::time::Duration;
 
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use crate::application::ports::{
-    Aligner, Fingerprinter, MediaReader, MediaSession, ProgressReporter, Resampler,
+    Aligner, Fingerprinter, MediaReader, MediaSession, PcmCorrelator, ProgressReporter,
 };
 use crate::domain::{
     AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, MediaSource, MonoPcmClip,
-    MultiChannelPcm,
 };
 
 pub struct FakeProgressReporter;
@@ -22,23 +21,38 @@ impl ProgressReporter for FakeProgressReporter {
     fn progress(&self, _label: &str, _current: u64, _total: u64) {}
 }
 
-/// Rate-stamping [`Resampler`] fake: relabels the clip's sample rate without touching samples.
-/// Use when a test only needs the pipeline to believe the rate changed.
-pub struct FakeResampler;
+/// Deterministic [`PcmCorrelator`] fake: returns a fixed `(lag_samples, magnitude)` or `None`.
+///
+/// Use in unit tests that need `AlignVideos` wired with a correlator but don't exercise the
+/// PCM refinement path (e.g., `refine_offset_with_pcm: false`). For tests that actually
+/// validate PCM lag correction, inject `&FftCorrelator` instead.
+pub struct FakePcmCorrelator {
+    result: Option<(isize, f64)>,
+}
 
-impl Resampler for FakeResampler {
-    fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
-        MonoPcmClip {
-            sample_rate: target_rate,
-            ..clip.clone()
-        }
+impl FakePcmCorrelator {
+    /// Always returns `None` — correlator is wired but never consulted.
+    pub fn new() -> Self {
+        Self { result: None }
     }
 
-    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm {
-        MultiChannelPcm {
-            sample_rate: target_rate,
-            ..pcm.clone()
+    /// Returns a fixed lag and magnitude regardless of input.
+    pub fn with_lag(lag_samples: isize, magnitude: f64) -> Self {
+        Self {
+            result: Some((lag_samples, magnitude)),
         }
+    }
+}
+
+impl Default for FakePcmCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PcmCorrelator for FakePcmCorrelator {
+    fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(isize, f64)> {
+        self.result
     }
 }
 
@@ -221,9 +235,7 @@ impl Fingerprinter for FakeFingerprinter {
         }
 
         self.seen_sample_rates.borrow_mut().push(clip.sample_rate);
-        Ok(Fingerprint {
-            data: vec![clip.samples.len() as u32],
-        })
+        Ok(Fingerprint::new(vec![clip.samples.len() as u32]))
     }
 }
 
