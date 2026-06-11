@@ -318,6 +318,19 @@ expect_recommended = true
 check_clip_repetition = true
 expect_clip_repetition = true
 
+# Option A false-pass probe: looped chirp (10 s tile), true offset +3 s; verification run with wrong Δ.
+# Skips standard alignment assertions — see corpus_verify_option_a_false_pass_probe.
+[[case]]
+id = "verify_option_a_false_pass_probe"
+tier = "generated"
+generator = "looped_chirp_pair"
+format = "wav"
+total_secs = 120
+offset_secs = 3
+clip_length_secs = 60
+probe_wrong_verification_offset_secs = 8.0
+ignore = true
+
 # MKV where container duration exceeds decodable extent — hold-out uses MediaExtent::effective().
 [[case]]
 id = "mkv_tail_decodable_extent_gap"

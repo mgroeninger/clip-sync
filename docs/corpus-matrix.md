@@ -17,7 +17,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | **Offset** | seconds to add to A to align with B (domain convention); `+` = B's matching audio later |
 | **Tracks** | 1 = single program; 2 = program + decoy |
 | **Duration** | short 120s (CI), medium 180–900s, long 3600s (ignored smoke) |
-| **Content** | chirp (oracle), tone (negative), near-silence |
+| **Content** | chirp (oracle), looped chirp (verify probe), tone (negative), near-silence |
 
 ---
 
@@ -61,6 +61,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | `wav_high_rate_refine_3s` | A | WAV 44.1k | +3s | 1 | 1 | 120s | chirp | `refine_offset_high_rate`; offset ±50 ms |
 | `mp4_aac_high_rate_refine_3s` | A | MP4/AAC 44.1k | +3s | 1 | 1 | 120s | chirp | high-rate refine; offset ±100 ms |
 | `require_consistent_blocks` | A | WAV | +10/+20‖ | 1 | 1 | 180s | chirp | `num_clips=2`; no recommended offset |
+| `verify_option_a_false_pass_probe` | A | WAV | +3s (true); +8/+18s (wrong Δ probe) | 1 | 1 | 120s | looped chirp | `ignore` in manifest; dedicated test; Option A does not false-pass wrong Δ |
 
 ### Notes
 

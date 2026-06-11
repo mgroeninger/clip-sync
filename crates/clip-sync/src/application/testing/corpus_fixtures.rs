@@ -9,7 +9,7 @@ use crate::application::config::{AlignConfig, ClipConfig};
 use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
 use crate::test_support::audio_fixtures::{
-    write_near_silence_wav_pair, write_offset_chirp_wav_pair,
+    write_looped_chirp_wav_pair, write_near_silence_wav_pair, write_offset_chirp_wav_pair,
     write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
     write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
     write_two_clip_inconsistent_pair, ChirpDelayOn,
@@ -155,6 +155,9 @@ pub struct CorpusCase {
     pub verify_offset: bool,
     #[serde(default)]
     pub expect_offset_verified: Option<bool>,
+    /// When set, dedicated probe tests run hold-out verification with this wrong Δ (seconds).
+    #[serde(default)]
+    pub probe_wrong_verification_offset_secs: Option<f64>,
     #[serde(default)]
     pub ignore: bool,
 }
@@ -270,6 +273,10 @@ fn write_chirp_pair_wavs(
         Some("repeated_segment_pair") => {
             let offset_secs = case.offset_secs.unwrap_or(0);
             write_repeated_segment_wav_pair(dir, sample_rate, total_secs, offset_secs)
+        }
+        Some("looped_chirp_pair") => {
+            let offset_secs = case.offset_secs.unwrap_or(0);
+            write_looped_chirp_wav_pair(dir, sample_rate, total_secs, offset_secs)
         }
         generator => panic!("case {}: unsupported generator {generator:?}", case.id),
     }
@@ -687,6 +694,103 @@ pub fn write_committed_wav_fixtures() {
     );
 }
 
+/// Runs hold-out verification with a deliberately wrong recommended offset (Option A probe).
+#[cfg(test)]
+pub fn run_wrong_offset_verification_probe(
+    path_a: &Path,
+    path_b: &Path,
+    wrong_offset_secs: f64,
+    clip_length_secs: u64,
+    target_sample_rate: u32,
+) -> crate::domain::OffsetVerification {
+    use std::time::Duration;
+
+    use crate::application::config::{AlignmentConfig, ChromaprintPreset, ClipConfig, ValidationConfig};
+    use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
+    use crate::application::ports::{MediaReader, MediaSession};
+    use crate::application::testing::fakes::FakeProgressReporter;
+    use crate::domain::{AlignmentResult, ClipLabel, ClipWindow, MediaExtent, MediaSource};
+    use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+    use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+    let media_reader = SymphoniaMediaReader;
+    let preset = ChromaprintPreset::default();
+    let fingerprinter = ChromaprintFingerprinter::new(preset);
+    let aligner = ChromaprintAligner::new(preset);
+    let progress = FakeProgressReporter;
+
+    let mut session_a = media_reader
+        .open(&MediaSource::new(path_a))
+        .expect("open a");
+    let mut session_b = media_reader
+        .open(&MediaSource::new(path_b))
+        .expect("open b");
+    let tracks_a = session_a.list_tracks().expect("tracks a");
+    let tracks_b = session_b.list_tracks().expect("tracks b");
+    let track_a = &tracks_a[0];
+    let track_b = &tracks_b[0];
+    let duration = track_a.duration.expect("duration");
+
+    let mut result = AlignmentResult {
+        clips: vec![],
+        start_aligned: true,
+        end_aligned: None,
+        recommended_offset_secs: Some(wrong_offset_secs),
+        offsets_consistent: true,
+        offset_drift_secs: None,
+        start_overlap: None,
+        high_rate_refinement: None,
+        offset_verification: None,
+    };
+
+    let clip_config = ClipConfig {
+        clip_length: Duration::from_secs(clip_length_secs),
+        num_clips: 1,
+        target_sample_rate: Some(target_sample_rate),
+        normalize_loudness: false,
+        trim_silence: false,
+        window_slide_secs: 0,
+        ..ClipConfig::default()
+    };
+    let validation = ValidationConfig {
+        verify_offset: true,
+        min_verification_confidence: 0.5,
+        ..Default::default()
+    };
+    let discovery_windows = vec![ClipWindow::new(
+        Duration::ZERO,
+        Duration::from_secs(30),
+        ClipLabel::Start,
+    )];
+    let alignment = AlignmentConfig::default();
+    let extent = MediaExtent::from_declared(duration);
+
+    apply_offset_verification(
+        &mut OffsetVerificationInput {
+            session_a: &mut session_a,
+            session_b: &mut session_b,
+            track_a,
+            track_b,
+            discovery_windows: &discovery_windows,
+            extent_a: extent,
+            extent_b: extent,
+            min_holdout_decode_fraction: alignment.min_end_clip_decode_fraction,
+            max_holdout_decode_skips: alignment.max_end_clip_decode_skips,
+            resampler: &crate::infrastructure::resample::RubatoResampler,
+        },
+        &clip_config,
+        &validation,
+        &mut result,
+        &fingerprinter,
+        &aligner,
+        &progress,
+    );
+
+    result
+        .offset_verification
+        .unwrap_or_else(|| panic!("offset_verification must be set for wrong-offset probe"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,6 +946,48 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("verify_offset_pass failed: {error}"));
         assert_corpus_expectations(case, &manifest.defaults, &result);
+    }
+
+    #[test]
+    fn corpus_verify_option_a_false_pass_probe() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|entry| entry.id == "verify_option_a_false_pass_probe")
+            .expect("verify_option_a_false_pass_probe case in manifest");
+        let wrong_offset = case
+            .probe_wrong_verification_offset_secs
+            .expect("manifest must set probe_wrong_verification_offset_secs");
+        let clip_length_secs = case.clip_length_secs.unwrap_or(manifest.defaults.clip_length_secs);
+        let target_sample_rate = case
+            .sample_rate
+            .unwrap_or(manifest.defaults.target_sample_rate);
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+
+        const LOOP_PERIOD_SECS: f64 = 10.0;
+        let wrong_offsets = [wrong_offset, wrong_offset + LOOP_PERIOD_SECS];
+        for probe_offset in wrong_offsets {
+            let verify = run_wrong_offset_verification_probe(
+                &paths.video_a,
+                &paths.video_b,
+                probe_offset,
+                clip_length_secs,
+                target_sample_rate,
+            );
+            assert!(
+                !verify.skipped,
+                "probe Δ={probe_offset}: verification should run, got skip_reason={:?}",
+                verify.skip_reason
+            );
+            assert!(
+                !verify.verified,
+                "Option A false-pass probe Δ={probe_offset}: verified=true confidence={} \
+                 (see docs/corpus-validation.md § Option A false-pass evidence)",
+                verify.confidence
+            );
+        }
     }
 
     #[test]

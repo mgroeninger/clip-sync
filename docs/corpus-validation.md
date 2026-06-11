@@ -41,6 +41,25 @@ Harness code: `crates/clip-sync/src/application/testing/corpus_fixtures.rs`, gen
 
 ---
 
+## Option A false-pass evidence (2026-06-11)
+
+Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0 left the “does Option A false-pass on self-similar hold-out?” spike unchecked. Phase 3 of [TEMP-verification-hardening-plan.md](TEMP-verification-hardening-plan.md) closes it.
+
+**Probe:** manifest case `verify_option_a_false_pass_probe` — 120 s mono WAV pair with a **10 s chirp loop** tiled across the file (true inter-file offset +3 s). The dedicated test runs hold-out verification with **deliberately wrong** injected recommended offsets (+8 s and +18 s = +8 s plus one loop period), independent of discovery output.
+
+**Discovery note:** the same looped fixture aliases in discovery to ≈ **+13 s** (+3 s true offset + 10 s loop period), not +3 s. That is a separate fingerprint-ambiguity signal; this probe does not assert on discovery offset.
+
+**Outcome:** Option A **does not** false-pass on wrong injected Δ (`verified == false` for both probe values). Confidence stays below the 0.5 threshold or lag exceeds 0.5 s tolerance. **Option B** (PCM lag-0 via `refine_holdout_segment_lag`) remains **deferred** — no corpus evidence that Chromaprint lag search is fooled on the verification probe.
+
+**Regression:** `cargo test -p clip-sync corpus_verify_option_a_false_pass_probe`
+
+| Wrong Δ | `verified` | Notes |
+|---------|------------|-------|
+| +8 s (manifest `probe_wrong_verification_offset_secs`) | `false` | Same wrong-Δ class as unit test `verify_offset_fails_wrong_delta` |
+| +18 s (+8 s + 10 s loop period) | `false` | Loop-period alias does not fool lag-0 fingerprint check |
+
+---
+
 ## Multi-track containers (`try_all_tracks`)
 
 `select_best_track` picks the **first decodable audio track** in container mux order. When the main program is muxed first, dual-track MP4/MKV aligns correctly without extra flags (`mp4_dual_track_wrong_default`). When commentary or a decoy is muxed **before** the program, use `try_all_tracks`.

@@ -81,6 +81,40 @@ pub fn write_offset_chirp_wav_pair_with_delay(
     (path_a, path_b)
 }
 
+/// Writes two mono WAV files with a short chirp segment tiled for the full duration.
+///
+/// Strongly self-similar content for hold-out verification probes: any window sees the same
+/// repeating chirp pattern. File B is delayed by `offset_secs` of leading silence.
+pub fn write_looped_chirp_wav_pair(
+    dir: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    offset_secs: u32,
+) -> (PathBuf, PathBuf) {
+    const LOOP_SECS: u32 = 10;
+
+    let loop_samples = u64::from(sample_rate) * u64::from(LOOP_SECS);
+    let total_samples = u64::from(sample_rate) * u64::from(total_secs);
+    let delay_samples = u64::from(sample_rate) * u64::from(offset_secs);
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+
+    let samples_for = |delay: u64| {
+        (0..total_samples).map(move |index| {
+            if index < delay {
+                0
+            } else {
+                chirp_sample(sample_rate, (index - delay) % loop_samples)
+            }
+        })
+    };
+
+    write_mono_wav(&path_a, sample_rate, samples_for(0));
+    write_mono_wav(&path_b, sample_rate, samples_for(delay_samples));
+
+    (path_a, path_b)
+}
+
 /// Steady tone (e.g. 220 Hz decoy track in dual-track MP4 cases).
 pub fn write_tone_wav_at_frequency(path: &Path, sample_rate: u32, seconds: u32, frequency: f32) {
     let total_samples = u64::from(sample_rate) * u64::from(seconds);

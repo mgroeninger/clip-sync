@@ -75,8 +75,13 @@
 
 ### Phase 3 — Option A false-pass evidence
 
-- [ ] Generated corpus case: looped/self-similar content + wrong-offset probe; record pass/fail.
-- [ ] Findings → `docs/corpus-validation.md`. If false-pass confirmed: follow-up Option B implementation (PCM lag-0 confirmation via `refine_holdout_segment_lag`) as its own checkbox set; otherwise close the BACKLOG concern with the evidence link.
+- [x] Generated corpus case: looped/self-similar content + wrong-offset probe; record pass/fail.
+- [x] Findings → `docs/corpus-validation.md`. **No false-pass observed** — Option B (PCM lag-0 via `refine_holdout_segment_lag`) remains deferred; BACKLOG concern closes with evidence link.
+
+**Option B follow-up (deferred — only if future probe false-passes):**
+
+- [ ] Add PCM lag-0 confirmation step after Option A in `apply_offset_verification`
+- [ ] Corpus case proving Option B catches the false-pass scenario
 
 ### Phase 4 — corpus + test hygiene
 
