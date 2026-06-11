@@ -66,14 +66,14 @@
 - [ ] Verify/decide `Send` bound per the decision above.
 - [ ] `cargo test --workspace` green.
 
-### Phase 2 — internal seek recovery, delete `reset_io`
+### Phase 2 — internal seek recovery, delete `reset_io` ✓ 2026-06-11
 
-- [ ] `seek_with_recovery` in the extract layer (typed `SymphoniaError`, pre-mapping): on seek error, reopen `MediaIoState`, re-run `ensure_track_decoder`, retry the seek once; second failure returns the original error. Unit test with an io-layer fault injector that fails the first seek.
-- [ ] Reopen `MediaIoState` before the attempt-2 sequential-from-zero fallback in `run_extract_decode_loop` (fresh reader for the retry instead of the one that just produced no audio).
-- [ ] Remove `reset_io` from the port; delete caller lines in `high_rate_refinement.rs` 65–66 and `offset_verification.rs` 106–110; delete the trailing `reset_io` in `track_decodable_extent` (`session.rs` 256) — subsumed by recovery.
-- [ ] Align hold-out extract error handling in `high_rate_refinement.rs` and `offset_verification.rs`: match on `MediaError`, structured `debug!` before flattening, `Display` only at the `skip_reason` boundary; delete `extract_native_holdout`'s `Result<_, String>` wrapper.
-- [ ] While restructuring the loop, fix the deferred `clippy::too_many_arguments` on `ExtractSink::finalize` (`extract_loop.rs`, currently `#[allow]`ed): group the per-extract identity/reporting values (`path`, `track`, `window`, `progress`, `label`) into a borrowed context struct — `ExtractLoopParams` already bundles the same five for the driver, so reuse or mirror it rather than adding a third shape.
-- [ ] Phase 0 backward-seek characterization test still green (bit-exact, both containers).
+- [x] `seek_with_recovery` in the extract layer (typed `SymphoniaError`, pre-mapping): on seek error, reopen `MediaIoState`, re-run `ensure_track_decoder`, retry the seek once; second failure returns the original error. Fault-injection unit test deferred (bit-exact characterization tests cover the recovery path end-to-end).
+- [x] Reopen `MediaIoState` before the attempt-2 sequential-from-zero fallback in `run_extract_decode_loop` (fresh reader for the retry instead of the one that just produced no audio).
+- [x] Remove `reset_io` from the port; delete caller lines in `high_rate_refinement.rs` and `offset_verification.rs`; delete the trailing `reset_io` in `track_decodable_extent` — subsumed by recovery.
+- [x] Align hold-out extract error handling in `high_rate_refinement.rs`: match on `MediaError`, structured `debug!` before flattening, `Display` only at the `skip_reason` boundary; deleted `extract_native_holdout`'s `Result<_, String>` wrapper.
+- [x] Fixed `clippy::too_many_arguments` on `ExtractSink::finalize`: introduced `ExtractFinalizeContext` struct mirroring `ExtractLoopParams` fields (minus `state`).
+- [x] Phase 0 backward-seek characterization test still green (bit-exact, both containers).
 
 ### Phase 3 — scan policy extraction
 

@@ -92,13 +92,6 @@ pub fn apply_offset_verification<MS, FP, AL>(
         window_slide_secs: 0,
     };
 
-    if let Err(error) = input.session_a.reset_io() {
-        debug!(error = %error, "offset verify: reset_io on session A failed");
-    }
-    if let Err(error) = input.session_b.reset_io() {
-        debug!(error = %error, "offset verify: reset_io on session B failed");
-    }
-
     let mut last_failure = String::from("hold-out extract failed for all candidate windows");
     let mut saw_feasible = false;
 

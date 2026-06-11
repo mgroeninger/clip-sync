@@ -3,6 +3,7 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::application::config::AlignmentConfig;
+use crate::application::error::MediaError;
 use crate::application::offset_refinement::refine_holdout_segment_lag;
 use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::{
@@ -52,9 +53,6 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     progress.phase_verbose("High-rate offset refinement...");
     let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
     let segment_length_secs = segment_length.as_secs_f64();
-
-    let _ = input.session_a.reset_io();
-    let _ = input.session_b.reset_io();
 
     let pick_duration = input.duration_a.min(input.duration_b);
     let dur_a = input.duration_a.as_secs_f64();
@@ -120,10 +118,16 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
                         clip_b = Some(other);
                         break;
                     }
-                    Err(reason) => last_failure = reason,
+                    Err(e) => {
+                        debug!(error = ?e, "high-rate hold-out extract B failed, trying next candidate");
+                        last_failure = format!("{e}");
+                    }
                 }
             }
-            Err(reason) => last_failure = reason,
+            Err(e) => {
+                debug!(error = ?e, "high-rate hold-out extract A failed, trying next candidate");
+                last_failure = format!("{e}");
+            }
         }
     }
 
@@ -185,10 +189,8 @@ fn extract_native_holdout<MS: MediaSession>(
     window: &ClipWindow,
     progress: &dyn ProgressReporter,
     label: &str,
-) -> Result<MonoPcmClip, String> {
-    session
-        .extract_mono(track, window, progress, label)
-        .map_err(|error| error.to_string())
+) -> Result<MonoPcmClip, MediaError> {
+    session.extract_mono(track, window, progress, label)
 }
 
 fn skipped_refinement(

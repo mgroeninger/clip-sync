@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::codecs::CodecParameters;
-use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::{SeekMode, SeekTo};
 use symphonia::core::units::{Duration as MediaDuration, Time, TimeBase, Timestamp};
 use tracing::{debug, warn};
@@ -934,6 +934,71 @@ pub(crate) fn scan_track_decodable_extent(
     );
 
     Ok(Some(max_end.min(container_duration)))
+}
+
+/// Raw seek that returns the Symphonia error unmapped, so callers can recover before mapping.
+fn raw_seek(
+    format: &mut dyn symphonia::core::formats::FormatReader,
+    track_id: u32,
+    start: Duration,
+) -> Result<(), SymphoniaError> {
+    // Duration values from media operations fit comfortably in i64 seconds.
+    let secs = start.as_secs().min(i64::MAX as u64) as i64;
+    let time = Time::try_new(secs, start.subsec_nanos())
+        .unwrap_or_else(|| Time::try_new(secs, 0).expect("valid time"));
+    format
+        .seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(track_id) })
+        .map(|_| ())
+}
+
+/// Seek to `start`, recovering once by reopening `MediaIoState` on seek failure.
+/// `OutOfRange` errors (expected tail-boundary seeks) are not retried.
+/// Returns the original (mapped) seek error if reopen fails or the retry also fails.
+pub(super) fn seek_with_recovery(
+    path: &Path,
+    state: &mut MediaIoState,
+    track: &AudioTrack,
+    start: Duration,
+) -> Result<(), MediaError> {
+    let track_id = track.index;
+    let first_err = match raw_seek(state.format.as_mut(), track_id, start) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+
+    if matches!(first_err, SymphoniaError::SeekError(SeekErrorKind::OutOfRange)) {
+        return Err(map_seek_error(
+            path,
+            track_id,
+            start.as_secs_f64(),
+            first_err,
+            track.duration.map(|d| d.as_secs_f64()),
+        ));
+    }
+
+    debug!(
+        path = %path.display(),
+        track = track_id,
+        start_secs = start.as_secs_f64(),
+        "seek failed; reopening io state and retrying once"
+    );
+
+    let mapped = map_seek_error(
+        path,
+        track_id,
+        start.as_secs_f64(),
+        first_err,
+        track.duration.map(|d| d.as_secs_f64()),
+    );
+    if let Ok(fresh) = MediaIoState::open(path) {
+        *state = fresh;
+        if ensure_track_decoder(path, state, track).is_ok()
+            && raw_seek(state.format.as_mut(), track_id, start).is_ok()
+        {
+            return Ok(());
+        }
+    }
+    Err(mapped)
 }
 
 pub(super) fn seek_to_window_start(

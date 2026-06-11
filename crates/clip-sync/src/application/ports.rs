@@ -58,11 +58,6 @@ pub trait MediaSession {
         ))
     }
 
-    /// Rewind the underlying format reader and drop cached decoders before a distant seek.
-    fn reset_io(&mut self) -> Result<(), MediaError> {
-        Ok(())
-    }
-
     /// Last decodable packet end for a track (tail scan). Default: unknown.
     fn track_decodable_extent(
         &mut self,

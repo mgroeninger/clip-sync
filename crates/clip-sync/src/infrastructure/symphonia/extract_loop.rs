@@ -17,7 +17,7 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     append_frames_in_window, append_interleaved_frames_in_window, decode_shortfall_limit,
-    media_duration_to_frames, seek_to_window_start, tail_partial_clip_acceptable,
+    media_duration_to_frames, seek_with_recovery, seek_to_window_start, tail_partial_clip_acceptable,
     timestamp_to_sample, timestamp_to_std_duration, window_sample_bounds, InterleavedCollectContext,
     WindowCollectContext, MAX_CONSECUTIVE_DECODE_ERRORS,
 };
@@ -26,6 +26,14 @@ use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoSta
 pub(super) struct ExtractLoopParams<'a> {
     pub path: &'a Path,
     pub state: &'a mut MediaIoState,
+    pub track: &'a AudioTrack,
+    pub window: &'a ClipWindow,
+    pub progress: &'a dyn ProgressReporter,
+    pub label: &'a str,
+}
+
+pub(super) struct ExtractFinalizeContext<'a> {
+    pub path: &'a Path,
     pub track: &'a AudioTrack,
     pub window: &'a ClipWindow,
     pub progress: &'a dyn ProgressReporter,
@@ -78,16 +86,9 @@ pub(super) trait ExtractSink {
     fn target_units(&self) -> Option<usize>;
     fn has_output(&self) -> bool;
 
-    // Grouping these into a context struct is deferred to the media-session redesign plan
-    // (Phase 2), which restructures this loop's signatures anyway.
-    #[allow(clippy::too_many_arguments)]
     fn finalize(
         &mut self,
-        path: &Path,
-        track: &AudioTrack,
-        window: &ClipWindow,
-        progress: &dyn ProgressReporter,
-        label: &str,
+        ctx: &ExtractFinalizeContext<'_>,
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<Self::Output, MediaError>;
@@ -281,10 +282,18 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 window_start_secs = window.start.as_secs_f64(),
                 "seek-based extract produced no audio; retrying via sequential scan from start"
             );
+            // Reopen state before the sequential-from-zero fallback: the reader that just
+            // produced no audio may be in a confused state and shouldn't be reused.
+            *state = MediaIoState::open(path)?;
+            ensure_track_decoder(path, state, track)?;
         }
 
         let seek_start = if attempt == 0 { window.start } else { Duration::ZERO };
-        seek_to_window_start(path, state.format.as_mut(), track_id, seek_start, track.duration)?;
+        if attempt == 0 {
+            seek_with_recovery(path, state, track, seek_start)?;
+        } else {
+            seek_to_window_start(path, state.format.as_mut(), track_id, seek_start, track.duration)?;
+        }
         state.decoders.get_mut(&track_id).expect("decoder cached").decoder.reset();
 
         sink.reset_attempt(
@@ -393,7 +402,11 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
         }
     }
 
-    sink.finalize(path, track, window, progress, label, allow_tail_padding, decode_error_skips)
+    sink.finalize(
+        &ExtractFinalizeContext { path, track, window, progress, label },
+        allow_tail_padding,
+        decode_error_skips,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -539,14 +552,11 @@ impl ExtractSink for MonoExtractSink {
     /// Mono finalize order: truncate first, then capture decoded count (after truncate).
     fn finalize(
         &mut self,
-        path: &Path,
-        track: &AudioTrack,
-        window: &ClipWindow,
-        progress: &dyn ProgressReporter,
-        label: &str,
+        ctx: &ExtractFinalizeContext<'_>,
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MonoPcmClip, MediaError> {
+        let ExtractFinalizeContext { path, track, window, progress, label } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,
@@ -833,14 +843,11 @@ impl ExtractSink for InterleavedExtractSink {
     /// Interleaved finalize order: capture decoded count BEFORE truncate, then truncate.
     fn finalize(
         &mut self,
-        path: &Path,
-        track: &AudioTrack,
-        window: &ClipWindow,
-        progress: &dyn ProgressReporter,
-        label: &str,
+        ctx: &ExtractFinalizeContext<'_>,
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MultiChannelPcm, MediaError> {
+        let ExtractFinalizeContext { path, track, window, progress, label } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,

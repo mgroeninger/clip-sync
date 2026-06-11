@@ -188,12 +188,6 @@ impl MediaSession for SymphoniaMediaSession {
         )
     }
 
-    fn reset_io(&mut self) -> Result<(), MediaError> {
-        ensure_regular_file(&self.path)?;
-        self.io = Some(MediaIoState::open(&self.path)?);
-        Ok(())
-    }
-
     fn track_decodable_extent(&mut self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
         ensure_regular_file(&self.path)?;
 
@@ -212,7 +206,6 @@ impl MediaSession for SymphoniaMediaSession {
             track,
             container_duration,
         )?;
-        self.reset_io()?;
         Ok(extent)
     }
 }
