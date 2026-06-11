@@ -283,4 +283,29 @@ mod tests {
     fn dac3_channel_count_too_short_returns_zero() {
         assert_eq!(ac3_channels_from_dac3(&[0x00, 0x3C]), 0);
     }
+
+    /// ffmpeg Lavc AAC 5.1 MP4: ASC channelConfiguration=0 (PCE) + encoder string in esds.
+    #[cfg(feature = "he-aac")]
+    #[test]
+    fn lavc_aac_51_mp4_extradata_is_decodable_when_container_has_channels() {
+        use symphonia::core::audio::layouts::CHANNEL_LAYOUT_AAC_5P1;
+        use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
+
+        let extradata: &[u8] = &[
+            0x11, 0x80, 0x04, 0xc8, 0x41, 0x00, 0x01, 0x08, 0x80, 0x0d, 0x4c, 0x61, 0x76, 0x63,
+            0x36, 0x32, 0x2e, 0x33, 0x34, 0x2e, 0x31, 0x30, 0x32, 0x56, 0xe5, 0x00,
+        ];
+        let params = AudioCodecParameters {
+            codec: CODEC_ID_AAC,
+            sample_rate: Some(48_000),
+            channels: Some(CHANNEL_LAYOUT_AAC_5P1),
+            extra_data: Some(extradata.to_vec().into()),
+            ..Default::default()
+        };
+
+        assert!(
+            is_audio_decodable(&params),
+            "5.1 AAC with ASC channel config 0 should be decodable when container reports 6 channels"
+        );
+    }
 }

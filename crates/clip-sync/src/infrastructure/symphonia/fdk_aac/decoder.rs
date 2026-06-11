@@ -63,6 +63,17 @@ impl AacDecoder {
         if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
             m4a_info.read(extra_data_buf)?;
+            // ASC channelConfiguration 0 means layout is in the PCE, not the header.
+            // ffmpeg often muxes 5.1 this way; Symphonia still provides channel count from the container.
+            if m4a_info.channels == 0 {
+                m4a_info.channels = if let Some(channels) = &params.channels {
+                    channels.count() as u8
+                } else {
+                    return unsupported_error(
+                        "aac: ASC channel config 0 requires container channel layout",
+                    );
+                };
+            }
         } else {
             m4a_info.otype = M4AType::Lc;
             m4a_info.sample_rate = params.sample_rate.unwrap_or_default();
