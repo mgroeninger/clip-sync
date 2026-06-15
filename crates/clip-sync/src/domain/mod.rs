@@ -18,8 +18,8 @@ pub use alignment::{
     RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap, refresh_start_overlap,
     periodic_ambiguity_period, periodic_recheck_period_multiple,
     display_repeat_period,
-    set_offset_ambiguous_mod_from_start_clip, should_apply_periodic_ambiguity,
-    should_downgrade_repetition_confidence,
+    set_offset_ambiguous_mod_from_start_clip,
+    should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence,
 };
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;

@@ -117,6 +117,15 @@ fn full_surface_alignment_result() -> AlignmentResult {
     }
 }
 
+fn inconclusive_verify_alignment_result() -> AlignmentResult {
+    let mut result = minimal_alignment_result(Some(13.0))
+        .with_clips(vec![start_clip_match(Some(13.0), 900.0, 0.9)])
+        .with_verification(Some(make_inconclusive_verification(0.85, 3.0)))
+        .build();
+    result.offset_ambiguous_mod_secs = Some(10.0);
+    result
+}
+
 fn result_with_no_repetition_finding() -> AlignmentResult {
     let mut clip = start_clip_match(Some(3.0), 900.0, 0.85);
     clip.repetition = Some(ClipRepetitionReport { a: None, b: None });
@@ -151,6 +160,28 @@ fn write_full_surface_alignment_golden() {
         .join("tests/fixtures/full_surface_alignment.json");
     std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
     std::fs::write(&path, json).expect("write golden fixture");
+}
+
+/// Regenerate `tests/fixtures/inconclusive_verification_alignment.json` after an intentional contract change:
+/// `cargo test -p clip-sync-cli write_inconclusive_verification_golden -- --ignored --nocapture`
+#[test]
+#[ignore = "fixture generator — run manually when the JSON contract is revised"]
+fn write_inconclusive_verification_golden() {
+    let json = format_json_output(&inconclusive_verify_alignment_result());
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/inconclusive_verification_alignment.json");
+    std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+    std::fs::write(&path, json).expect("write golden fixture");
+}
+
+#[test]
+fn inconclusive_verification_json_golden() {
+    let json = format_json_output(&inconclusive_verify_alignment_result());
+    assert_eq!(
+        json,
+        include_str!("fixtures/inconclusive_verification_alignment.json"),
+        "inconclusive verify JSON contract changed — update the golden only with an explicit contract revision"
+    );
 }
 
 /// Plan 1 Phase 0: byte-identical guard for the analyzer JSON contract (pre-DTO split).
@@ -718,4 +749,29 @@ fn verify_json_present_when_some() {
         verify.get("skip_reason").is_none(),
         "skip_reason must be absent when None"
     );
+    assert!(
+        verify.get("verify_inconclusive").is_none(),
+        "verify_inconclusive must be absent when false"
+    );
+    assert!(
+        verify.get("independent_offset_secs").is_none(),
+        "independent_offset_secs must be absent when None"
+    );
+    assert!(
+        verify.get("parallel_recheck_delta_secs").is_none(),
+        "parallel_recheck_delta_secs must be absent when None"
+    );
+}
+
+#[test]
+fn verify_json_includes_inconclusive_and_parallel_fields() {
+    let json = format_json_output(&inconclusive_verify_alignment_result());
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+    let verify = &value["offset_verification"];
+    assert_eq!(verify["verified"], false);
+    assert_eq!(verify["verify_inconclusive"], true);
+    assert!((verify["independent_offset_secs"].as_f64().unwrap() - 3.0).abs() < 0.001);
+    assert!((verify["parallel_recheck_delta_secs"].as_f64().unwrap() - 10.0).abs() < 0.001);
+    assert_eq!(value["offset_ambiguous_mod_secs"], 10.0);
 }

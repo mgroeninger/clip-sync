@@ -97,6 +97,23 @@ pub fn write_looped_chirp_wav_pair(
     total_secs: u32,
     offset_secs: u32,
 ) -> (PathBuf, PathBuf) {
+    write_looped_chirp_wav_pair_with_delay(
+        dir,
+        sample_rate,
+        total_secs,
+        offset_secs,
+        ChirpDelayOn::B,
+    )
+}
+
+/// Looped chirp pair with leading silence on A or B (see [`ChirpDelayOn`]).
+pub fn write_looped_chirp_wav_pair_with_delay(
+    dir: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    offset_secs: u32,
+    delay_on: ChirpDelayOn,
+) -> (PathBuf, PathBuf) {
     const LOOP_SECS: u32 = 10;
 
     let loop_samples = u64::from(sample_rate) * u64::from(LOOP_SECS);
@@ -115,8 +132,16 @@ pub fn write_looped_chirp_wav_pair(
         })
     };
 
-    write_mono_wav(&path_a, sample_rate, samples_for(0));
-    write_mono_wav(&path_b, sample_rate, samples_for(delay_samples));
+    match delay_on {
+        ChirpDelayOn::B => {
+            write_mono_wav(&path_a, sample_rate, samples_for(0));
+            write_mono_wav(&path_b, sample_rate, samples_for(delay_samples));
+        }
+        ChirpDelayOn::A => {
+            write_mono_wav(&path_a, sample_rate, samples_for(delay_samples));
+            write_mono_wav(&path_b, sample_rate, samples_for(0));
+        }
+    }
 
     (path_a, path_b)
 }

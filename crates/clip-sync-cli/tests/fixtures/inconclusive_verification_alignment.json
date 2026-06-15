@@ -1,0 +1,33 @@
+{
+  "clips": [
+    {
+      "label": "start",
+      "window_start_secs": 0.0,
+      "window_end_secs": 900.0,
+      "aligned": true,
+      "offset_secs": 13.0,
+      "confidence": 0.9,
+      "video_a_decode_skips": 0,
+      "video_b_decode_skips": 0
+    }
+  ],
+  "start_aligned": true,
+  "end_aligned": null,
+  "recommended_offset_secs": 13.0,
+  "offsets_consistent": true,
+  "start_overlap": null,
+  "offset_verification": {
+    "window_a_start_secs": 60.0,
+    "window_a_end_secs": 90.0,
+    "window_b_start_secs": 73.0,
+    "window_b_end_secs": 103.0,
+    "confidence": 0.85,
+    "verified": false,
+    "skipped": false,
+    "candidates_tried": 1,
+    "independent_offset_secs": 3.0,
+    "parallel_recheck_delta_secs": 10.0,
+    "verify_inconclusive": true
+  },
+  "offset_ambiguous_mod_secs": 10.0
+}

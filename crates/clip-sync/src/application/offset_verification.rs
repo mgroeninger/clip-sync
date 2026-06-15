@@ -1041,6 +1041,158 @@ mod tests {
     }
 
     #[test]
+    fn skipped_with_periodic_context_sets_inconclusive() {
+        let mut result = result_with_offset(13.0);
+        result.offset_ambiguous_mod_secs = Some(10.0);
+        let verify = skipped_with_periodic_context(
+            "hold-out window unavailable",
+            13.0,
+            Some(3.0),
+            &result,
+        );
+        assert!(verify.skipped);
+        assert!(verify.verify_inconclusive);
+        assert_eq!(verify.independent_offset_secs, Some(3.0));
+        assert!((verify.parallel_recheck_delta_secs.unwrap() - 10.0).abs() < 0.001);
+        assert_eq!(
+            verify.skip_reason.as_deref(),
+            Some("hold-out window unavailable")
+        );
+    }
+
+    #[test]
+    fn parallel_recheck_looped_chirp_negative_period_alias() {
+        use crate::application::testing::audio_fixtures::{
+            write_looped_chirp_wav_pair_with_delay, ChirpDelayOn,
+        };
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_looped_chirp_wav_pair_with_delay(
+            temp.path(),
+            SAMPLE_RATE,
+            TOTAL_SECS,
+            OFFSET_SECS,
+            ChirpDelayOn::A,
+        );
+
+        let mut validation = verification_validation();
+        validation.check_clip_repetition = true;
+
+        // True offset −3 s; period alias −13 s (−3 − 10 s loop).
+        let result = run_real_pipeline_verification(
+            &path_a,
+            &path_b,
+            -13.0,
+            validation,
+            Some(10.0),
+        );
+        let v = result
+            .offset_verification
+            .expect("offset_verification must be set");
+
+        assert!(
+            v.independent_offset_secs.is_some(),
+            "parallel recheck should run on looped pair with negative alias"
+        );
+        let independent = v.independent_offset_secs.unwrap();
+        assert!(
+            (independent - (-3.0)).abs() < 2.0,
+            "parallel recheck expected ~−3s true offset, got {independent}"
+        );
+        assert!(!v.verified, "period alias −13s must not verify");
+        assert!(v.verify_inconclusive);
+    }
+
+    struct SequencePcmCorrelator {
+        responses: std::sync::Mutex<Vec<(isize, f64)>>,
+    }
+
+    impl SequencePcmCorrelator {
+        fn new(responses: Vec<(isize, f64)>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(responses),
+            }
+        }
+    }
+
+    impl crate::application::ports::PcmCorrelator for SequencePcmCorrelator {
+        fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(isize, f64)> {
+            let mut guard = self.responses.lock().ok()?;
+            if guard.is_empty() {
+                return None;
+            }
+            Some(guard.remove(0))
+        }
+    }
+
+    #[test]
+    fn parallel_recheck_picks_highest_peak_when_windows_disagree() {
+        let duration = Duration::from_secs(120);
+        let track = AudioTrack {
+            index: 0,
+            codec: "test".into(),
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            duration: Some(duration),
+            decodable: true,
+        };
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
+        let mut result = result_with_offset(13.0);
+        result.offset_ambiguous_mod_secs = Some(10.0);
+
+        let clip_config = holdout_clip_config();
+        let validation = verification_validation();
+        let windows = discovery_windows();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 0.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        // Window T=0: weak peak, ~0 s adjustment; window T=max: strong peak, ~+3 s.
+        let correlator = SequencePcmCorrelator::new(vec![
+            (0, 1.0),
+            (-(SAMPLE_RATE as isize * OFFSET_SECS as isize), 50.0),
+        ]);
+        let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
+        let extent = MediaExtent::from_declared(duration);
+
+        apply_offset_verification(
+            &mut OffsetVerificationInput {
+                session_a: &mut session_a,
+                session_b: &mut session_b,
+                track_a: &track,
+                track_b: &track,
+                discovery_windows: &windows,
+                extent_a: extent,
+                extent_b: extent,
+                min_holdout_decode_fraction,
+                max_holdout_decode_skips,
+                resampler: &crate::infrastructure::resample::RubatoResampler,
+                correlator: &correlator,
+            },
+            &clip_config,
+            &validation,
+            &mut result,
+            &fingerprinter,
+            &aligner,
+            &progress,
+        );
+
+        let v = result
+            .offset_verification
+            .expect("offset_verification must be set");
+        let independent = v
+            .independent_offset_secs
+            .expect("parallel recheck should run");
+        assert!(
+            (independent - f64::from(OFFSET_SECS)).abs() < 0.5,
+            "expected highest-peak window offset ~+{OFFSET_SECS}s, got {independent}"
+        );
+    }
+
+    #[test]
     fn verify_offset_fails_wrong_delta() {
         use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
 

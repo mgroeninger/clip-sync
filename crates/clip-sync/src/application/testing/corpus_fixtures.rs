@@ -1132,6 +1132,77 @@ mod tests {
     }
 
     #[test]
+    fn corpus_repeated_segment_sets_ambiguity_flag() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|entry| entry.id == "repeated_segment_in_clip")
+            .expect("repeated_segment_in_clip case in manifest");
+        assert!(
+            case.check_clip_repetition && case.expect_clip_repetition == Some(true),
+            "manifest must request repetition on repeated_segment_in_clip"
+        );
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
+        let result = run_corpus_case(
+            &use_case,
+            case,
+            &manifest.defaults,
+            paths.video_a,
+            paths.video_b,
+        )
+        .unwrap_or_else(|error| panic!("repeated_segment_in_clip failed: {error}"));
+
+        assert!(
+            result.offset_ambiguous_mod_secs.is_some(),
+            "repeated segment pair should set offset_ambiguous_mod_secs, got {:?}",
+            result.offset_ambiguous_mod_secs
+        );
+        assert!(
+            result.start_aligned,
+            "repeated_segment_in_clip should align"
+        );
+        let actual = result
+            .recommended_offset_secs
+            .expect("repeated_segment_in_clip should recommend offset");
+        let tolerance = case.tolerance_secs.unwrap_or(manifest.defaults.tolerance_secs);
+        assert!(
+            (actual - case.expected_offset_secs.expect("expected offset in manifest")).abs()
+                <= tolerance,
+            "offset {actual}, expected {} ± {tolerance}",
+            case.expected_offset_secs.unwrap()
+        );
+        let report = result
+            .start_clip()
+            .and_then(|clip| clip.repetition.as_ref())
+            .expect("repeated_segment_in_clip: repetition report on start clip");
+        let finding = report
+            .a
+            .as_ref()
+            .or(report.b.as_ref())
+            .expect("repeated_segment_in_clip: repetition finding");
+        assert!(
+            (28.0..=32.0).contains(&finding.lag_secs),
+            "lag_secs={} expected in [28, 32]",
+            finding.lag_secs
+        );
+    }
+
+    #[test]
     #[ignore = "slow: generated corpus + ffmpeg; cargo test corpus_generated -- --ignored"]
     fn corpus_generated_cases() {
         run_manifest_cases(CorpusTier::Generated);

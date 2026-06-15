@@ -259,13 +259,19 @@ pub fn periodic_ambiguity_period(
     })
 }
 
-/// True when strong start-clip repetition warrants periodic ambiguity handling.
-pub fn should_apply_periodic_ambiguity(
+/// True when strong start-clip repetition makes the recommended offset a likely period alias, i.e.
+/// the offset is large enough (`|offset| ≥ T − 1`) that it could be the true offset plus N×T rather
+/// than the fundamental. Drives the discovery confidence downgrade so period aliases like +13 s
+/// (T = 10) are penalized, while content aligned well inside the first period (offset ≈ 0, T = 30) is
+/// not. See `docs/archive/periodic-ambiguity-plan.md`.
+pub fn should_downgrade_periodic_ambiguity(
     report: &ClipRepetitionReport,
     min_repetition_confidence: f32,
     clip_duration_secs: Option<f64>,
+    offset_secs: f64,
 ) -> bool {
-    periodic_ambiguity_period(report, min_repetition_confidence, clip_duration_secs).is_some()
+    periodic_ambiguity_period(report, min_repetition_confidence, clip_duration_secs)
+        .is_some_and(|period| offset_secs.abs() >= period - 1.0)
 }
 
 /// Rounds `recommended - independent` to the nearest integer multiple of `period_secs`.

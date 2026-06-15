@@ -15,7 +15,7 @@ use crate::domain::{
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     select_best_track, set_offset_ambiguous_mod_from_start_clip,
-    should_apply_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
+    should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
     ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
@@ -487,10 +487,11 @@ where
                 let report = ClipRepetitionReport { a: rep_a, b: rep_b };
                 let clip_duration_secs = clip.window_end_secs - clip.window_start_secs;
                 let periodic = clip.label == ClipLabel::Start
-                    && should_apply_periodic_ambiguity(
+                    && should_downgrade_periodic_ambiguity(
                         &report,
                         config.validation.min_repetition_confidence,
                         Some(clip_duration_secs),
+                        estimates[i].offset_secs,
                     );
                 if should_downgrade_repetition_confidence(&rep_a, &rep_b, estimates[i].offset_secs)
                     || periodic
