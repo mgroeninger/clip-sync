@@ -42,7 +42,7 @@ Controlled by `[logging].progress` in TOML (`auto` \| `verbose` \| `quiet`) and 
 
 | Binary | Set by | Effect on stdout |
 |--------|--------|------------------|
-| `clip-sync` | `-v` → `[output].show_diagnostics = true` | Per-clip window lines, decode-skip counts, repetition lines, high-rate peak, offset-verification skip reason |
+| `clip-sync` | `-v` → `[output].show_diagnostics = true` | Per-clip window lines, decode-skip counts, repetition lines, high-rate peak, offset-verification skip reason, parallel recheck offset on inconclusive verify |
 | `clip-sync-repair` | `-v` → `show_diagnostics` argument to `format_human` | Detailed gap patch status (struct pre/post, slide); high-rate peak; offset-verification skip reason |
 
 Both binaries wire `-v` to `ProgressMode::Verbose` **and** enable stdout diagnostics as above.
@@ -152,6 +152,19 @@ Shared helpers live in `clip_sync::application::report` (`format_high_rate_refin
 | Not verified | warn line always | — |
 | Verified | hidden | `Verify: offset confirmed …` |
 | Skipped | hidden | `Verify: skipped (reason)` |
+| **Inconclusive** (periodic gating) | `Verify: offset not independently verified (periodic content; hold-out confidence …)` | **plus** `parallel recheck offset …` and Δ vs recommended |
+
+**Inconclusive** is distinct from a normal not-verified outcome: Option A scored a pass on the offset-shifted hold-out, but calendar-parallel PCM recheck disagreed (or parallel PCM failed while `offset_ambiguous_mod_secs` was set). JSON: `verify_inconclusive: true`, optional `independent_offset_secs` / `parallel_recheck_delta_secs` — see [json-output.md](json-output.md).
+
+### Periodic offset ambiguity (stdout)
+
+When `offset_ambiguous_mod_secs` is set (strong start-clip repetition under `check_clip_repetition`):
+
+| Mode | Line |
+|------|------|
+| Default | `Warning: offset ambiguous (repeats every ~N s) — auto offset and verify may match the wrong period` |
+
+Emitted after high-rate refinement lines and before offset-verification lines. The period **N** is the normalized repeat tile from discovery (not necessarily the raw autocorrelation lag). Setting the flag does **not** imply confidence was halved — see [corpus-validation.md](corpus-validation.md) § Periodic offset ambiguity.
 
 ### Analyzer (`clip-sync`)
 

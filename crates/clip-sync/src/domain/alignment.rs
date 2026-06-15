@@ -704,6 +704,73 @@ mod tests {
         assert!((snap_suboctave_repeat_period(5.0, 60.0) - 10.0).abs() < 0.1);
     }
 
+    fn strong_repetition_report(lag_secs: f64) -> ClipRepetitionReport {
+        ClipRepetitionReport {
+            a: Some(RepetitionFinding {
+                lag_secs,
+                confidence: 0.9,
+                items_count: 100,
+            }),
+            b: None,
+        }
+    }
+
+    #[test]
+    fn should_downgrade_periodic_ambiguity_period_alias_offsets() {
+        let report = strong_repetition_report(10.0);
+        let clip_secs = Some(60.0);
+        assert!(
+            should_downgrade_periodic_ambiguity(&report, 0.5, clip_secs, 13.0),
+            "+13 s alias when T=10 should downgrade"
+        );
+        assert!(
+            !should_downgrade_periodic_ambiguity(&report, 0.5, clip_secs, 3.0),
+            "+3 s true offset inside first period should not downgrade"
+        );
+        assert!(
+            should_downgrade_periodic_ambiguity(&report, 0.5, clip_secs, -13.0),
+            "−13 s alias when T=10 should downgrade"
+        );
+        assert!(
+            !should_downgrade_periodic_ambiguity(&report, 0.5, clip_secs, -3.0),
+            "−3 s true offset should not downgrade"
+        );
+    }
+
+    #[test]
+    fn should_downgrade_periodic_ambiguity_boundary_at_period_minus_one() {
+        let report = strong_repetition_report(10.0);
+        assert!(should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 9.0));
+        assert!(!should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 8.9));
+    }
+
+    #[test]
+    fn should_downgrade_periodic_ambiguity_repeated_segment_offset_in_first_period() {
+        let report = strong_repetition_report(30.0);
+        let clip_secs = Some(65.0);
+        assert!(
+            periodic_ambiguity_period(&report, 0.5, clip_secs).is_some(),
+            "strong repeat should still set periodic period"
+        );
+        assert!(
+            !should_downgrade_periodic_ambiguity(&report, 0.5, clip_secs, 3.0),
+            "repeated_segment_in_clip: +3 s with T≈30 s should not trigger periodic downgrade"
+        );
+    }
+
+    #[test]
+    fn should_downgrade_periodic_ambiguity_false_without_strong_repeat() {
+        let report = ClipRepetitionReport {
+            a: Some(RepetitionFinding {
+                lag_secs: 10.0,
+                confidence: 0.2,
+                items_count: 100,
+            }),
+            b: None,
+        };
+        assert!(!should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 13.0));
+    }
+
     #[test]
     fn fingerprint_accessors() {
         let fp = Fingerprint::new(vec![1, 2, 3]);

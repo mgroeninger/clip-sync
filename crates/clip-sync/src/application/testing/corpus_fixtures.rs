@@ -158,6 +158,9 @@ pub struct CorpusCase {
     /// When set, dedicated probe tests run hold-out verification with this wrong Δ (seconds).
     #[serde(default)]
     pub probe_wrong_verification_offset_secs: Option<f64>,
+    /// Generator metadata for dedicated probe tests only — excluded from `corpus_generated_cases`.
+    #[serde(default)]
+    pub probe_only: bool,
     #[serde(default)]
     pub ignore: bool,
 }
@@ -842,7 +845,7 @@ mod tests {
         for case in manifest
             .case
             .iter()
-            .filter(|case| case.tier == tier && !case.ignore)
+            .filter(|case| case.tier == tier && !case.ignore && !case.probe_only)
         {
             if case.requires_ffmpeg && !ffmpeg_util::ffmpeg_available() {
                 eprintln!("skipping case {}: ffmpeg unavailable", case.id);

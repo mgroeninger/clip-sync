@@ -319,8 +319,7 @@ check_clip_repetition = true
 expect_clip_repetition = true
 
 # Option A false-pass probe: looped chirp (10 s tile), true offset +3 s.
-# Tests wrong Δ +8/+18 (reject) and period alias +13 (false-pass); not a discovery oracle.
-# Skips standard alignment assertions — see corpus_verify_option_a_false_pass_probe.
+# Dedicated tests only (corpus_verify_option_a_false_pass_probe) — not a discovery oracle.
 [[case]]
 id = "verify_option_a_false_pass_probe"
 tier = "generated"
@@ -330,7 +329,7 @@ total_secs = 120
 offset_secs = 3
 clip_length_secs = 60
 probe_wrong_verification_offset_secs = 8.0
-ignore = true
+probe_only = true
 
 # MKV where container duration exceeds decodable extent — hold-out uses MediaExtent::effective().
 [[case]]

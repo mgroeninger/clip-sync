@@ -59,7 +59,7 @@ Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0
 | +18 s (+8 s + 10 s loop period) | `false` | Same residue mod 10 as +8 s |
 | +13 s (true +3 s + one loop period) | **`false`** (gated) | Option A still scores a pass internally; periodic gating + PCM parallel recheck reject `verified` |
 
-**Shipped mitigation (2026-06-11):** with `check_clip_repetition`, discovery sets `offset_ambiguous_mod_secs` and may halve start-clip confidence. Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (only when a repeat period is already known), compares to recommended Δ, and sets `verify_inconclusive` when they disagree by **N×T** (or beyond tolerance). See [archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md).
+**Shipped mitigation (2026-06-11):** with `check_clip_repetition`, discovery sets `offset_ambiguous_mod_secs` when strong start-clip repetition is detected. Start-clip confidence is halved only when [`should_downgrade_periodic_ambiguity`](../../crates/clip-sync/src/domain/alignment.rs) applies (`|offset| ≥ T − 1`) or when the existing lag-near-offset rule fires — not for every periodic flag (e.g. `repeated_segment_in_clip` at +3 s with T ≈ 30 s sets the flag but keeps confidence). Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (only when a repeat period is already known), compares to recommended Δ, and sets `verify_inconclusive` when they disagree by **N×T** (or beyond tolerance). See [archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md).
 
 ---
 
@@ -69,24 +69,33 @@ Shipped in [verification-hardening plan](archive/verification-hardening-plan.md)
 
 ### Repetition downgrade vs `aligned`
 
-When `check_clip_repetition` is on and internal repeat lag is within 1 s of the clip offset, hold-out / discovery confidence may be inflated. v1 handles this as follows:
+When `check_clip_repetition` is on, hold-out / discovery confidence may be inflated by internal repeat. v1 applies **two separate downgrade rules** (each halves confidence once; they do not stack to ×0.25):
+
+| Rule | Function | Fires when |
+|------|----------|------------|
+| Lag near offset | `should_downgrade_repetition_confidence` | Strong repeat lag within ±1 s of `\|clip offset\|` |
+| Period alias | `should_downgrade_periodic_ambiguity` | Strong repeat **and** `\|offset\| ≥ T − 1` (offset likely a period alias, e.g. +13 s when T = 10 s) |
+
+`offset_ambiguous_mod_secs` is set whenever strong start-clip repetition is detected (`periodic_ambiguity_period`), **independent** of whether confidence is halved.
+
+Pipeline:
 
 1. `build_alignment_result` sets `aligned`, `offset_secs`, `start_aligned`, and `recommended_offset_secs` from **pre-downgrade** fingerprint confidence.
-2. `AlignVideos` then may halve `ClipMatch.confidence` and attach `repetition` diagnostics.
+2. `AlignVideos` may halve `ClipMatch.confidence` (either rule above) and attach `repetition` diagnostics; may set `offset_ambiguous_mod_secs` on the result.
 3. JSON and human output show **post-downgrade** confidence; `aligned` does **not** flip when downgrade runs.
 
-So a clip can show `aligned: true` with lowered confidence — by design in v1. See `align_videos.rs` (downgrade after `build_alignment_result`) and corpus case `repeated_segment_in_clip`.
+So a clip can show `aligned: true` with lowered confidence — by design in v1. Example: `repeated_segment_in_clip` (+3 s, T ≈ 30 s) sets the ambiguity flag but usually **does not** halve confidence. See `align_videos.rs` and `corpus_repeated_segment_sets_ambiguity_flag`.
 
 ### Periodic offset ambiguity
 
 When `check_clip_repetition` finds strong internal repeat on the **start** clip:
 
-1. `offset_ambiguous_mod_secs` is set to the repeat period **T** (diagnostic).
-2. Start-clip confidence may be halved (in addition to the existing lag-near-offset downgrade).
-3. Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (`parallel_holdout_window_candidates`, `T=0` first).
+1. `offset_ambiguous_mod_secs` is set to the repeat period **T** (diagnostic; may be normalized from harmonic/sub-octave autocorrelation lags).
+2. Start-clip confidence is halved only when `should_downgrade_periodic_ambiguity` or lag-near-offset downgrade applies (see table above) — **not** automatically for every periodic flag.
+3. Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (`parallel_holdout_window_candidates`, `T=0` first) **only when** a repeat period is already known from discovery or start-clip repetition.
 4. If parallel offset disagrees with recommended Δ by **N×T** (or beyond tolerance), `verified` is forced false and `verify_inconclusive` is set — even when Option A scored a pass on offset-shifted hold-out segments.
 
-Human output includes: `Warning: offset ambiguous (repeats every ~N s) — ...`
+Human output (default): `Warning: offset ambiguous (repeats every ~N s) — …` and, when gated, `Verify: offset not independently verified (periodic content; …)`. Verbose adds parallel recheck offset lines — see [cli-output.md](cli-output.md).
 
 ### Hold-out verification cost
 

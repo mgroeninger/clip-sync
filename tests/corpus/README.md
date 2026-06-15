@@ -53,7 +53,7 @@ Regenerate committed WAVs:
 | Generator | Use for |
 |-----------|---------|
 | `offset_chirp_pair` | Discovery / alignment offset assertions (+3 s chirp, non-periodic) |
-| `looped_chirp_pair` | Hold-out verify probes only (`verify_option_a_false_pass_probe`); discovery aliases mod 10 s period |
+| `looped_chirp_pair` | Hold-out verify probes only (`verify_option_a_false_pass_probe`, `probe_only` in manifest); discovery aliases mod 10 s period |
 
 See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Option A false-pass evidence for the looped-fixture discovery (+13 s) vs verify (+13 s false-pass) behaviour.
 
