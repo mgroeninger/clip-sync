@@ -20,6 +20,35 @@ pub fn ffmpeg_available() -> bool {
         .unwrap_or(false)
 }
 
+pub fn decode_to_mono_wav(
+    input: &Path,
+    output: &Path,
+    sample_rate: u32,
+    max_duration_secs: Option<u32>,
+) -> bool {
+    if !ffmpeg_available() {
+        return false;
+    }
+
+    let mut command = Command::new("ffmpeg");
+    command
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(input)
+        .args(["-ar", &sample_rate.to_string(), "-ac", "1"]);
+    if let Some(secs) = max_duration_secs {
+        command.args(["-t", &secs.to_string()]);
+    }
+    command.arg(output).stdout(Stdio::null()).stderr(Stdio::null());
+
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 pub fn resample_wav(input: &Path, output: &Path, sample_rate: u32) -> bool {
     if !ffmpeg_available() {
         return false;
@@ -211,7 +240,6 @@ fn patch_mkv_container_duration(path: &Path, multiplier: f64) -> bool {
     false
 }
 
-#[allow(dead_code)]
 pub fn delay_wav(input: &Path, output: &Path, delay_ms: u32) -> bool {
     if !ffmpeg_available() {
         return false;

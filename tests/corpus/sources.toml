@@ -1,0 +1,24 @@
+version = 1
+
+# Third-party audio for optional corpus cases (see tests/corpus/README.md).
+# Files live in _sources/ (gitignored). Run scripts/fetch_corpus_sources.ps1 to download.
+
+[[source]]
+id = "wikimedia_martin_amis_interview_1990"
+filename = "martin_amis_interview_1990.mp3"
+url = "https://upload.wikimedia.org/wikipedia/commons/6/61/Martin_Amis_and_creative_writing_%28Interview_1990%29.mp3"
+commons_page = "https://commons.wikimedia.org/wiki/File:Martin_Amis_and_creative_writing_(Interview_1990).mp3"
+license = "CC-BY-SA-4.0"
+author = "Maximilian Schönherr"
+title = "Martin Amis and creative writing (Interview 1990)"
+sha256 = "83b945501abbc79dfab723a952ea9f2403ad03d48c0c368c9286af2bcbd0597"
+
+[[source]]
+id = "wikimedia_schiphol_restaurant_ambience"
+filename = "schiphol_restaurant_ambience.ogg"
+url = "https://upload.wikimedia.org/wikipedia/commons/a/a7/Schiphol%2C_geroezemoes_in_het_restaurant_-_SoundCloud_-_Beeld_en_Geluid.ogg"
+commons_page = "https://commons.wikimedia.org/wiki/File:Schiphol,_geroezemoes_in_het_restaurant_-_SoundCloud_-_Beeld_en_Geluid.ogg"
+license = "CC-BY-SA-3.0"
+author = "Beeld en Geluid (Netherlands Institute for Sound and Vision)"
+title = "Schiphol: geroezemoes in het restaurant"
+sha256 = "9a09d3d3e68f0c64072fc7a2c90439a3f342ec01febba0cd230a66075ed4936"

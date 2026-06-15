@@ -14,6 +14,9 @@ use crate::test_support::audio_fixtures::{
     write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
     write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
+use crate::application::testing::corpus_sources::{
+    self, find_source, load_sources, source_cache_path, source_ready,
+};
 use crate::test_support::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentResult;
 
@@ -163,6 +166,11 @@ pub struct CorpusCase {
     pub probe_only: bool,
     #[serde(default)]
     pub ignore: bool,
+    /// Wikimedia (or other) master listed in tests/corpus/sources.toml.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub requires_source: bool,
 }
 
 pub struct GeneratedCasePaths {
@@ -172,13 +180,7 @@ pub struct GeneratedCasePaths {
 }
 
 pub fn corpus_root() -> PathBuf {
-    if let Ok(root) = std::env::var("CLIP_SYNC_WORKSPACE_ROOT") {
-        return PathBuf::from(root).join("tests").join("corpus");
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests")
-        .join("corpus")
+    corpus_sources::corpus_root()
 }
 
 pub fn load_manifest() -> CorpusManifest {
@@ -285,6 +287,65 @@ fn write_chirp_pair_wavs(
     }
 }
 
+fn write_source_offset_pair_wavs(
+    dir: &Path,
+    case: &CorpusCase,
+    defaults: &CorpusDefaults,
+) -> (PathBuf, PathBuf) {
+    let source_id = case
+        .source_id
+        .as_deref()
+        .expect("source_offset_pair case needs source_id");
+    let sources = load_sources();
+    let source = find_source(&sources, source_id);
+    let source_path = source_cache_path(source);
+    assert!(
+        source_path.is_file(),
+        "case {}: missing source {} at {} (run scripts/fetch_corpus_sources.ps1)",
+        case.id,
+        source_id,
+        source_path.display()
+    );
+
+    let sample_rate = case.sample_rate.unwrap_or(defaults.target_sample_rate);
+    let total_secs = case.total_secs;
+    let offset_secs = case.offset_secs.unwrap_or(0);
+    let delay_on = case.delay_on.unwrap_or_default();
+
+    let master = dir.join("master.wav");
+    assert!(
+        corpus_sources::prepare_source_master_wav(&source_path, &master, sample_rate, total_secs),
+        "case {}: ffmpeg decode/resample failed for {}",
+        case.id,
+        source_path.display()
+    );
+
+    let wav_a = dir.join("a.wav");
+    let wav_b = dir.join("b.wav");
+    let delay_ms = offset_secs * 1000;
+
+    match delay_on {
+        ChirpDelaySide::B => {
+            std::fs::copy(&master, &wav_a).expect("copy master to a");
+            assert!(
+                ffmpeg_util::delay_wav(&master, &wav_b, delay_ms),
+                "case {}: ffmpeg adelay on B failed",
+                case.id
+            );
+        }
+        ChirpDelaySide::A => {
+            std::fs::copy(&master, &wav_b).expect("copy master to b");
+            assert!(
+                ffmpeg_util::delay_wav(&master, &wav_a, delay_ms),
+                "case {}: ffmpeg adelay on A failed",
+                case.id
+            );
+        }
+    }
+
+    (wav_a, wav_b)
+}
+
 fn encode_or_rename_pair(
     dir: &Path,
     case: &CorpusCase,
@@ -384,7 +445,11 @@ pub fn generate_case_pair(case: &CorpusCase, defaults: &CorpusDefaults) -> Gener
     let temp = tempfile::tempdir().expect("tempdir");
     let dir = temp.path();
 
-    let (wav_a, wav_b) = write_chirp_pair_wavs(dir, case, sample_rate, total_secs);
+    let (wav_a, wav_b) = if case.generator.as_deref() == Some("source_offset_pair") {
+        write_source_offset_pair_wavs(dir, case, defaults)
+    } else {
+        write_chirp_pair_wavs(dir, case, sample_rate, total_secs)
+    };
     let (path_a, path_b) = encode_or_rename_pair(dir, case, wav_a, wav_b);
 
     GeneratedCasePaths {
@@ -826,7 +891,38 @@ mod tests {
         assert!(!manifest.case.is_empty());
     }
 
-    fn run_manifest_cases(tier: CorpusTier) {
+    #[test]
+    #[ignore = "optional CC sources; run scripts/fetch_corpus_sources.ps1 first"]
+    fn corpus_source_cases() {
+        let manifest = load_manifest();
+        let source_cases: Vec<_> = manifest
+            .case
+            .iter()
+            .filter(|case| case.requires_source && !case.ignore && !case.probe_only)
+            .collect();
+        if source_cases.is_empty() {
+            return;
+        }
+        if !ffmpeg_util::ffmpeg_available() {
+            eprintln!("skipping corpus_source_cases: ffmpeg unavailable");
+            return;
+        }
+        let ready = source_cases.iter().all(|case| {
+            case.source_id
+                .as_deref()
+                .map(source_ready)
+                .unwrap_or(false)
+        });
+        if !ready {
+            eprintln!(
+                "skipping corpus_source_cases: run scripts/fetch_corpus_sources.ps1 (see tests/corpus/README.md)"
+            );
+            return;
+        }
+        run_manifest_cases(CorpusTier::Generated, true);
+    }
+
+    fn run_manifest_cases(tier: CorpusTier, source_only: bool) {
         let manifest = load_manifest();
         let media_reader = SymphoniaMediaReader;
         let preset = ChromaprintPreset::default();
@@ -845,7 +941,12 @@ mod tests {
         for case in manifest
             .case
             .iter()
-            .filter(|case| case.tier == tier && !case.ignore && !case.probe_only)
+            .filter(|case| {
+                case.tier == tier
+                    && !case.ignore
+                    && !case.probe_only
+                    && case.requires_source == source_only
+            })
         {
             if case.requires_ffmpeg && !ffmpeg_util::ffmpeg_available() {
                 eprintln!("skipping case {}: ffmpeg unavailable", case.id);
@@ -920,7 +1021,7 @@ mod tests {
 
     #[test]
     fn corpus_committed_cases() {
-        run_manifest_cases(CorpusTier::Committed);
+        run_manifest_cases(CorpusTier::Committed, false);
     }
 
     #[test]
@@ -1208,7 +1309,7 @@ mod tests {
     #[test]
     #[ignore = "slow: generated corpus + ffmpeg; cargo test corpus_generated -- --ignored"]
     fn corpus_generated_cases() {
-        run_manifest_cases(CorpusTier::Generated);
+        run_manifest_cases(CorpusTier::Generated, false);
     }
 
     #[test]
@@ -1218,6 +1319,6 @@ mod tests {
             eprintln!("skipping corpus_external_cases: CLIP_SYNC_CORPUS not set");
             return;
         }
-        run_manifest_cases(CorpusTier::External);
+        run_manifest_cases(CorpusTier::External, false);
     }
 }

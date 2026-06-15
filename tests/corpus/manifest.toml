@@ -360,3 +360,70 @@ expected_offset_secs = 3.0
 expect_aligned = true
 expect_recommended = true
 ignore = true
+
+# Optional third-party sources (tests/corpus/sources.toml). Run scripts/fetch_corpus_sources.ps1.
+[[case]]
+id = "cc_speech_mp3_leader_3s"
+tier = "generated"
+generator = "source_offset_pair"
+source_id = "wikimedia_martin_amis_interview_1990"
+format = "mp3"
+offset_secs = 3
+total_secs = 120
+clip_length_secs = 60
+expected_offset_secs = 3.0
+tolerance_secs = 0.25
+expect_aligned = true
+expect_recommended = true
+requires_source = true
+requires_ffmpeg = true
+
+[[case]]
+id = "cc_speech_mp3_verify_3s"
+tier = "generated"
+generator = "source_offset_pair"
+source_id = "wikimedia_martin_amis_interview_1990"
+format = "mp3"
+offset_secs = 3
+total_secs = 120
+clip_length_secs = 60
+verify_offset = true
+expected_offset_secs = 3.0
+tolerance_secs = 0.25
+expect_aligned = true
+expect_recommended = true
+expect_offset_verified = true
+requires_source = true
+requires_ffmpeg = true
+
+[[case]]
+id = "cc_ambient_wav_leader_3s"
+tier = "generated"
+generator = "source_offset_pair"
+source_id = "wikimedia_schiphol_restaurant_ambience"
+format = "wav"
+offset_secs = 3
+total_secs = 120
+clip_length_secs = 60
+expected_offset_secs = 3.0
+tolerance_secs = 0.25
+expect_aligned = true
+expect_recommended = true
+requires_source = true
+requires_ffmpeg = true
+
+[[case]]
+id = "cc_ambient_mp3_leader_3s"
+tier = "generated"
+generator = "source_offset_pair"
+source_id = "wikimedia_schiphol_restaurant_ambience"
+format = "mp3"
+offset_secs = 3
+total_secs = 120
+clip_length_secs = 60
+expected_offset_secs = 3.0
+tolerance_secs = 0.25
+expect_aligned = true
+expect_recommended = true
+requires_source = true
+requires_ffmpeg = true

@@ -37,6 +37,7 @@ cargo test -p clip-sync corpus_
 - **Committed** (`corpus_committed_cases`): always runs; uses `tests/corpus/wav/`.
 - **Generated** (`corpus_generated_cases`): builds chirp pairs at test time; MP3/MP4/MKV/dual-track cases require **ffmpeg** on PATH (skipped when missing). Pure WAV generated cases run without ffmpeg.
 - **External** (`corpus_external_cases`): `#[ignore]` long smoke; set `CLIP_SYNC_CORPUS` to a persistent directory and run with `--ignored`.
+- **Third-party sources** (`corpus_source_cases`): `#[ignore]` optional real speech/ambient; run `scripts/fetch_corpus_sources.ps1` then `cargo test -p clip-sync corpus_source_cases -- --ignored`. See [THIRD_PARTY_AUDIO.md](THIRD_PARTY_AUDIO.md).
 
 Regenerate committed WAVs:
 
@@ -54,9 +55,10 @@ Regenerate committed WAVs:
 |-----------|---------|
 | `offset_chirp_pair` | Discovery / alignment offset assertions (+3 s chirp, non-periodic) |
 | `looped_chirp_pair` | Hold-out verify probes only (`verify_option_a_false_pass_probe`, `probe_only` in manifest); discovery aliases mod 10 s period |
+| `source_offset_pair` | Real audio from `sources.toml`; ffmpeg decode + known `adelay` offset (requires `_sources/` cache) |
 
 See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Option A false-pass evidence for the looped-fixture discovery (+13 s) vs verify (+13 s false-pass) behaviour.
 
 ## Licensing
 
-All fixtures are synthetically generated (chirp / tone). No third-party audio.
+Committed Tier-B fixtures are synthetically generated (chirp / tone). Optional third-party masters are listed in `sources.toml` with attribution in [THIRD_PARTY_AUDIO.md](THIRD_PARTY_AUDIO.md); files are downloaded to `_sources/` (gitignored).
