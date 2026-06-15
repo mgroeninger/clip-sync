@@ -154,7 +154,7 @@ impl AlignmentResult {
 }
 
 /// Returns the clip with the given label from a slice, if present.
-pub fn clip_with_label<'a>(clips: &'a [ClipMatch], label: ClipLabel) -> Option<&'a ClipMatch> {
+pub fn clip_with_label(clips: &[ClipMatch], label: ClipLabel) -> Option<&ClipMatch> {
     clips.iter().find(|clip| clip.label == label)
 }
 

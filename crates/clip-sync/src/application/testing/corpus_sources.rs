@@ -69,14 +69,6 @@ pub fn source_ready(id: &str) -> bool {
     };
     source_cache_path(source).is_file()
 }
-
-pub fn all_required_sources_ready(source_ids: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
-    source_ids
-        .into_iter()
-        .all(|id| source_ready(id.as_ref()))
-}
-
-/// Decode any ffmpeg-supported input to mono PCM WAV, optionally trimmed.
 pub fn prepare_source_master_wav(
     source_path: &Path,
     output_wav: &Path,

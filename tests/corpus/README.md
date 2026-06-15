@@ -37,7 +37,7 @@ cargo test -p clip-sync corpus_
 - **Committed** (`corpus_committed_cases`): always runs; uses `tests/corpus/wav/`.
 - **Generated** (`corpus_generated_cases`): builds chirp pairs at test time; MP3/MP4/MKV/dual-track cases require **ffmpeg** on PATH (skipped when missing). Pure WAV generated cases run without ffmpeg.
 - **External** (`corpus_external_cases`): `#[ignore]` long smoke; set `CLIP_SYNC_CORPUS` to a persistent directory and run with `--ignored`.
-- **Third-party sources** (`corpus_source_cases`): `#[ignore]` optional real speech/ambient; run `scripts/fetch_corpus_sources.ps1` then `cargo test -p clip-sync corpus_source_cases -- --ignored`. See [THIRD_PARTY_AUDIO.md](THIRD_PARTY_AUDIO.md).
+- **Third-party sources** (`corpus_source_cases`): `#[ignore]` optional real speech/ambient; run `scripts/fetch_corpus_sources.ps1` then `cargo test -p clip-sync corpus_source_cases -- --ignored --nocapture` to see per-case offset error in ms. High-rate precision cases: `cc_speech_mp3_high_rate_3s`, `cc_ambient_wav_high_rate_3s` (±100 ms). See [THIRD_PARTY_AUDIO.md](THIRD_PARTY_AUDIO.md).
 
 Regenerate committed WAVs:
 

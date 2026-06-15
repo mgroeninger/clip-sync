@@ -81,7 +81,6 @@ pub fn apply_offset_verification<MS, FP, AL>(
         validation,
         result,
         clip_length,
-        clip_length_secs,
         fingerprinter,
         progress,
     );
@@ -393,7 +392,6 @@ fn resolve_parallel_periodic_recheck<MS, FP>(
     validation: &ValidationConfig,
     result: &mut AlignmentResult,
     clip_length: Duration,
-    clip_length_secs: f64,
     fingerprinter: &FP,
     progress: &dyn ProgressReporter,
 ) -> (Option<f64>, Option<f64>)
@@ -401,6 +399,7 @@ where
     MS: MediaSession,
     FP: Fingerprinter,
 {
+    let clip_length_secs = clip_length.as_secs_f64();
     let mut period_secs = known_periodic_period_secs(result, validation);
     let parallel = if should_run_parallel_periodic_recheck(period_secs) {
         run_parallel_offset_recheck(
@@ -408,10 +407,7 @@ where
             clip_config,
             validation,
             clip_length,
-            clip_length_secs,
             fingerprinter,
-            input.resampler,
-            input.correlator,
             progress,
             &mut period_secs,
         )
@@ -508,10 +504,7 @@ fn run_parallel_offset_recheck<MS, FP>(
     clip_config: &ClipConfig,
     validation: &ValidationConfig,
     clip_length: Duration,
-    clip_length_secs: f64,
     fingerprinter: &FP,
-    resampler: &dyn Resampler,
-    correlator: &dyn PcmCorrelator,
     progress: &dyn ProgressReporter,
     period_secs: &mut Option<f64>,
 ) -> Option<f64>
@@ -519,6 +512,7 @@ where
     MS: MediaSession,
     FP: Fingerprinter,
 {
+    let clip_length_secs = clip_length.as_secs_f64();
     const PARALLEL_PCM_WINDOW_SECS: u32 = 20;
     let prep_options = PcmPreparationOptions {
         normalize_loudness: clip_config.normalize_loudness,
@@ -661,8 +655,8 @@ where
             &raw_b,
             0.0,
             pcm_window_secs,
-            resampler,
-            correlator,
+            input.resampler,
+            input.correlator,
         ) {
             Some(result) => result,
             None => {

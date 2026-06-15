@@ -15,7 +15,7 @@ use crate::test_support::audio_fixtures::{
     write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
 use crate::application::testing::corpus_sources::{
-    self, find_source, load_sources, source_cache_path, source_ready,
+    self, find_source, load_sources, source_cache_path,
 };
 use crate::test_support::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentResult;
@@ -592,6 +592,42 @@ where
     )
 }
 
+/// Logs recommended offset vs oracle for third-party source cases (`--nocapture`).
+pub fn log_source_offset_precision(
+    case: &CorpusCase,
+    defaults: &CorpusDefaults,
+    result: &AlignmentResult,
+) {
+    if !case.requires_source {
+        return;
+    }
+    let Some(expected) = case.expected_offset_secs else {
+        return;
+    };
+    let tolerance_ms = case
+        .tolerance_secs
+        .unwrap_or(defaults.tolerance_secs)
+        * 1000.0;
+    match result.recommended_offset_secs {
+        Some(actual) => {
+            let error_ms = (actual - expected).abs() * 1000.0;
+            eprintln!(
+                "case {}: offset error {error_ms:.1} ms (actual {actual:.6}s, expected {expected:.6}s, tolerance ±{tolerance_ms:.0} ms)",
+                case.id
+            );
+        }
+        None => eprintln!("case {}: offset error n/a (no recommendation)", case.id),
+    }
+    if case.verify_offset {
+        if let Some(verify) = &result.offset_verification {
+            eprintln!(
+                "case {}: verify verified={} confidence={:.3}",
+                case.id, verify.verified, verify.confidence
+            );
+        }
+    }
+}
+
 pub fn assert_corpus_expectations(
     case: &CorpusCase,
     defaults: &CorpusDefaults,
@@ -910,7 +946,7 @@ mod tests {
         let ready = source_cases.iter().all(|case| {
             case.source_id
                 .as_deref()
-                .map(source_ready)
+                .map(corpus_sources::source_ready)
                 .unwrap_or(false)
         });
         if !ready {
@@ -990,6 +1026,7 @@ mod tests {
                         panic!("case {} (refine={refine}) failed: {error}", case.id)
                     });
                     assert_corpus_expectations(case, &manifest.defaults, &result);
+                    log_source_offset_precision(case, &manifest.defaults, &result);
                 }
             } else {
                 let result = run_corpus_case(
@@ -1002,6 +1039,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("case {} failed: {error}", case.id));
 
                 assert_corpus_expectations(case, &manifest.defaults, &result);
+                log_source_offset_precision(case, &manifest.defaults, &result);
             }
 
             let elapsed = started.elapsed();
