@@ -66,6 +66,16 @@ Audit against the tree **after** media-session redesign and verification hardeni
 
 **Naming:** **Query** = shorter file (typically B in repair). **Reference** = longer file (typically A in repair). Offset convention unchanged: seconds to **add to A’s timeline** to align with B (`b = a + offset`).
 
+**Tolerance tiers:** Localization is coarse-to-fine — assertions must match the stage, not reuse one number. Mirrors existing pipeline constants.
+
+| Stage | Tolerance | Applies to |
+|-------|-----------|------------|
+| **Coarse** (Chromaprint sliding window) | **±2 s** | Q0 spike anchor, cluster radius (`PURE_TONE_REPEAT_LAG_TOLERANCE_SECS = 2.0`) |
+| **Agreement** (verification / repair gap cross-check) | **±0.5 s** | `apply_offset_verification` gate (`OFFSET_AGREEMENT_TOLERANCE_SECS = 0.5`) |
+| **Refined** (post-PCM-refine final anchor) | **±0.05 s** | `locate_query` final `anchor_a_secs`, corpus asserts (`TIGHT_TOLERANCE = 0.050`) |
+
+Do **not** carry the coarse ±2 s into refined or corpus assertions — the value feeds the repair patcher and must also pass the ±0.5 s verification gate, so a ±2 s final assertion is both too loose and self-contradictory with the verify step this plan delegates to.
+
 ---
 
 ## Decisions
@@ -78,21 +88,23 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Repair I/O** | Keep `VIDEO_A` = gaps (long), `VIDEO_B` = reference (short clip). Auto-detect query mode from **effective** durations; allow override via config/CLI. |
 | **Mode selection** | `AlignmentMode::Auto \| Symmetric \| QueryReference`. **Auto** (default): use query mode when `dur_short / dur_long < query_min_duration_ratio` (effective durations) **or** symmetric clip window counts differ. Ratio default **0.5**. |
 | **Which file is query** | Always the **shorter** effective duration (tie → symmetric). Repair convention: short B, long A. |
-| **Search strategy (v1)** | **Coarse-to-fine:** (1) fingerprint full query clip; (2) sliding windows on reference via `scan_mono_buckets`; (3) Chromaprint match per window; (4) cluster candidates by anchor on A; (5) PCM refine top candidate(s); (6) optional high-rate + hold-out verify on mapped region. |
-| **Coarse window length** | `L = min(query_prepared_duration, clip_length, reference_remaining)` — same prep pipeline as discovery (`prepare_clip_for_fingerprint`). |
-| **Coarse stride** | Configurable `query_search_stride_secs` (default **60**). Stride ≤ window length; minimum stride **15** s. |
+| **Search strategy (v1)** | **Coarse-to-fine:** (1) fingerprint full query clip; (2) **streaming sliding window** over reference via `scan_mono_buckets` + ring buffer; (3) Chromaprint match per window; (4) cluster candidates by anchor on A; (5) PCM refine top candidate(s); (6) optional high-rate + hold-out verify on mapped region. |
+| **Decode vs window vs stride** | Three **distinct** quantities — do not conflate (see [Coarse search](#coarse-search-reference-timeline)). **`bucket_secs`** = decode granularity handed to the `scan_mono_buckets` callback (small + fixed, default **10**s). **`L`** = window length fingerprinted per score. **`stride`** = how far the window advances between scores (`query_search_stride_secs`). A ring buffer of length `L` is fed by `bucket_secs` chunks and scored every `stride`. |
+| **Coarse window length** | `L = clamp(query_prepared_duration, MIN_CLIP_LENGTH, clip_length)`. **Invariant: `L ≥ query length`** — Chromaprint substring-matches the query *inside* the window, so the window must hold a full query's worth of audio. If `query_prepared_duration > clip_length`, cap **both** the query fingerprint and the window to `clip_length` (do **not** shrink `L` below the query). Same prep pipeline as discovery (`prepare_clip_for_fingerprint`). |
+| **Coarse stride** | Configurable `query_search_stride_secs` (default **60**). Stride ≤ window length `L`; minimum stride **15** s. Independent of `bucket_secs`. |
 | **Anchor definition** | `anchor_a_secs` = A timeline position where query **t = 0** aligns. `recommended_offset_secs = -anchor_a_secs` (equivalent to existing sign convention). |
 | **Mapped region** | A: `[anchor_a_secs, anchor_a_secs + query_duration_secs]` clamped to `extent_a.effective()`. B: `[0, query_duration_secs]` clamped to `extent_b.effective()`. Exposed as `TimelineOverlap` on `QueryLocalization.mapped_region`. |
 | **Overlap field** | In query mode, set `AlignmentResult.start_overlap` from **mapped region** (not start-clip window). Repair `GapReport.overlap` follows. |
 | **ClipMatch report** | Query mode emits **one synthetic `ClipMatch`** (label **`Start`**) describing the winning search window on A + match confidence — aligns with `start_clip()` headline selection after verification hardening. |
 | **Ambiguity** | Reuse `select_best_segment` cluster ambiguity (×0.5 confidence). Surface `query_localization.ambiguous: bool`. Do **not** hard-fail; warn in human output. |
-| **Verification** | Delegate to shipped `apply_offset_verification` (retry up to 3 candidates, `candidates_tried`). Hold-out **inside mapped region** on A (`holdout_window_candidates` with discovery window = winning coarse window; `pick_duration` from `MediaExtent::effective()`). Skip if mapped region shorter than `clip_length`. |
+| **Verification** | Delegate to shipped `apply_offset_verification` (retry up to 3 candidates, `candidates_tried`). Hold-out **inside mapped region** on A: call `holdout_window_candidates` with `duration = mapped_region.shared_length_secs` and discovery windows rebased to the region, then shift returned windows by `+video_a_start_secs` back to absolute A time (see [High-rate + verification](#high-rate--verification-in-query-mode)). **Not** `MediaExtent::effective()`. Skip if mapped region shorter than `clip_length`. |
+| **Confidence ownership** | Chromaprint owns selection + ambiguity; PCM refine only adjusts the anchor. `QueryLocalization.confidence` = winning coarse Chromaprint cluster confidence (×0.5 if ambiguous), gates `query_min_match_score`, drives `start_clip()` headline. `refine_query_anchor` returns the refined anchor **only**; if its correlation peak disagrees with the coarse anchor by more than `search_radius`, keep the coarse anchor and set `ambiguous = true`. Final headline is post-verification when verification runs, else coarse. |
 | **High-rate refine** | Run when enabled, **after** coarse+PCM localize, **before** verification — same order as symmetric path. Segment from mapped region, not file start. No `reset_io` (adapter recovers internally). |
 | **Gap scan scope** | Default **full A timeline** (gaps outside B coverage still reported). Add repair config `limit_fill_to_mapped_region` default **true** — gaps outside region stay in report but are not fillable (`GapFillSkipReason::OutsideReferenceCoverage`). |
 | **Alignment failure** | No match above threshold → `recommended_offset_secs: None`, scan A anyway (same as today). Exit **0** in repair report mode. |
 | **Memory / perf** | Coarse search fingerprints windows incrementally; do **not** retain all window PCM. Cap scored windows per file (`query_max_windows_scored`, default **500**) with coarser stride fallback + warn. |
 | **Scan re-entrancy** | `scan_mono_buckets` callback must **not** call back into the session (documented on `MediaSession` after media-session redesign). Fingerprint inside callback only. |
-| **try_all_tracks** | Query mode: try all decodable pairs; pick highest localization confidence (same pattern as `align_best_track_pair`). |
+| **try_all_tracks** | Query mode: best-effort under a **global** `query_max_windows_scored` budget (not per-pair). Localize cheapest/first decodable pair first; if it clears a high bar (`confidence ≥ 2 × query_min_match_score` and not ambiguous), stop and use it. Only sweep remaining pairs when no pair clears the bar. Pick highest localization confidence. Differs from exhaustive symmetric `align_best_track_pair`. |
 | **min clip length** | Query clip must satisfy existing `MIN_CLIP_LENGTH` (60s) after prep, else skip query mode with clear error/skip reason. If duration-less open is relaxed (media-session Phase 4), fail here when effective duration is still unknown. |
 | **Symmetric path** | Unchanged when mode is `Symmetric` or Auto chooses symmetric. |
 | **Phasing** | Q0 spike → Q1 lib core → Q2 lib integrate + refine/verify → Q3 repair → Q4 CLI + corpus → archive. |
@@ -131,15 +143,24 @@ pub struct AlignmentConfig {
     #[serde(default = "default_query_min_duration_ratio")]
     pub query_min_duration_ratio: f64,
 
-    /// Coarse search stride on the reference timeline (seconds).
+    /// Coarse search stride on the reference timeline (seconds) — how far the
+    /// window advances between scores. Independent of `query_decode_bucket_secs`.
     #[serde(default = "default_query_search_stride_secs")]
     pub query_search_stride_secs: f64,
+
+    /// Decode granularity for the coarse scan: PCM chunk size handed to the
+    /// `scan_mono_buckets` callback. Small + fixed; the window (length `L`) is
+    /// accumulated from these chunks in a ring buffer. NOT the stride.
+    #[serde(default = "default_query_decode_bucket_secs")]
+    pub query_decode_bucket_secs: f64,
 
     /// Maximum coarse windows to fingerprint per run (stride widens if exceeded).
     #[serde(default = "default_query_max_windows_scored")]
     pub query_max_windows_scored: u32,
 
     /// Minimum Chromaprint confidence to accept a localization candidate.
+    /// On the `[0,1]` `segment_confidence` scale (see `chromaprint/matching.rs`),
+    /// NOT the raw `MATCH_SCORE_THRESHOLD = 10.0`.
     #[serde(default = "default_query_min_match_score")]
     pub query_min_match_score: f32,
 
@@ -150,12 +171,13 @@ pub struct AlignmentConfig {
 
 fn default_query_min_duration_ratio() -> f64 { 0.5 }
 fn default_query_search_stride_secs() -> f64 { 60.0 }
+fn default_query_decode_bucket_secs() -> f64 { 10.0 }
 fn default_query_max_windows_scored() -> u32 { 500 }
 fn default_query_min_match_score() -> f32 { 0.3 }
 fn default_query_refine_top_k() -> u32 { 1 }
 ```
 
-Add **`AlignmentConfig::validate()`** (or extend `AlignConfig::validate()` to call it): require `query_search_stride_secs >= 15.0`, `0.0 < query_min_duration_ratio <= 1.0`, `query_refine_top_k >= 1`. Today `AlignConfig::validate()` only calls `clip.validate()` — wire alignment rules there.
+Add **`AlignmentConfig::validate()`** (or extend `AlignConfig::validate()` to call it): require `query_search_stride_secs >= 15.0`, `0.0 < query_min_duration_ratio <= 1.0`, `query_refine_top_k >= 1`, `query_decode_bucket_secs > 0.0`. Today `AlignConfig::validate()` only calls `clip.validate()` — wire alignment rules there.
 
 ### Repair (`RepairConfig`)
 
@@ -198,6 +220,7 @@ TOML example (`tests/fixtures/repair.toml`):
 [alignment]
 mode = "auto"
 query_search_stride_secs = 60
+query_decode_bucket_secs = 10
 query_min_duration_ratio = 0.5
 
 [repair]
@@ -252,7 +275,7 @@ pub alignment_mode_used: Option<AlignmentModeUsed>,
 pub query_localization: Option<QueryLocalization>,
 ```
 
-`compute_mapped_region(anchor_a, query_duration, extent_a, extent_b) -> TimelineOverlap` clamps to **`MediaExtent::effective()`**, not raw container duration.
+`compute_mapped_region(anchor_a, query_duration, extent_a, extent_b) -> TimelineOverlap` clamps to **`MediaExtent::effective()`**, not raw container duration. **Negative-anchor convention** (matches `holdout_window_candidates`): clamp the region's A low end with `.max(0.0)`. If the refined anchor goes negative beyond ~`bucket_secs`, set `ambiguous = true` / skip rather than emit a region starting before A's start.
 
 ### Report DTOs (`crates/clip-sync/src/application/report.rs`)
 
@@ -303,15 +326,16 @@ Per [json-output.md](json-output.md) revision procedure:
 
 ### Phase Q0 — Spike (lib)
 
-**Goal:** Prove coarse sliding fingerprint search finds a known anchor on synthetic media.
+**Goal:** Prove the **ring-buffer sliding window** localizes a known anchor within **±2 s** while holding memory to `O(L)` (one window), not `O(file)`. The buffering scheme — not the anchor math — is the real risk this spike retires.
 
 **Lib (`crates/clip-sync`)**
 
 - [ ] Unit test helper: build long A (e.g. 30 min chirp/noise) + short B (5 min segment copied from A at known anchor, e.g. 45:00)
-- [ ] Prototype function (test module or scratch): fingerprint B, `scan_mono_buckets` on A every 60s with window = B duration, score with `ChromaprintAligner::find_offset` — use `&mut` fake session per post-redesign port
-- [ ] Assert best anchor within **±2 s** of truth on spike fixture
+- [ ] Prototype: fingerprint B; `scan_mono_buckets` on A with small `bucket_secs` (10s) feeding a length-`L` ring buffer scored every `stride`; match each window with `ChromaprintAligner::find_offset` — use `&mut` fake session per post-redesign port
+- [ ] Assert best anchor within **±2 s** of truth on spike fixture (coarse tier — spike has no PCM refine; refined ±0.05 s is gated in Q1)
+- [ ] Assert peak live PCM retained is bounded by ~`L` (instrument ring buffer high-water mark) — guards the `O(L)` memory claim
 - [ ] Assert symmetric path still fails or misaligns on same pair (clip count mismatch or wrong offset)
-- [ ] Record: windows scored, runtime order-of-magnitude, whether stride=60 is sufficient for 2h reference
+- [ ] Record: windows scored vs. `ceil((dur_a - L)/stride)`, runtime order-of-magnitude, whether stride=60 is sufficient for 2h reference
 
 **CLI / repair:** none
 
@@ -323,8 +347,8 @@ Per [json-output.md](json-output.md) revision procedure:
 - [ ] `application/locate_query.rs` — **new** `LocateQueryInReference` use case:
   - Input: **`&mut` sessions**, tracks, `AlignConfig`, **`MediaExtent`** per file
   - Extract + prep full query clip (shorter file) via `session.extract_mono`
-  - `session.scan_mono_buckets` on reference @ `target_sample_rate` — **first production mono scan caller**; callback fingerprints only (no session re-entry)
-  - For each bucket: build window length L, fingerprint, match, convert segment → candidate `anchor_a_secs`
+  - `session.scan_mono_buckets` on reference @ `target_sample_rate` with small `query_decode_bucket_secs` — **first production mono scan caller**; callback fingerprints only (no session re-entry)
+  - Accumulate buckets into a length-`L` ring buffer; every `stride` fingerprint the window, match, convert segment → candidate `anchor_a_secs` (see [Coarse search](#coarse-search-reference-timeline))
   - Cluster candidates (reuse lag clustering idea from `matching.rs` on anchor positions)
   - Respect `query_max_windows_scored` (widen stride + log warn)
   - PCM refine top `query_refine_top_k` via **`refine_query_anchor`** in `offset_refinement.rs` (extract reference haystack with `extract_mono`, then reuse `refine_offset_around_prior` / `pcm_discover_offset`)
@@ -428,47 +452,62 @@ Per [json-output.md](json-output.md) revision procedure:
 flowchart TD
     OPEN["Open A (long) + B (short)"]
     EXT["Resolve MediaExtent per file"]
-    MODE{"Auto → query mode?"}
+    RATIO{"Tier 1: dur ratio\n< query_min_duration_ratio?"}
+    PLAN["Build symmetric clip plans\n(only when ratio inconclusive)"]
+    COUNT{"Tier 2: clip window\ncounts differ?"}
     SYM["Symmetric align_videos"]
-    LOC["LocateQueryInReference"]
+    LOC["LocateQueryInReference\n(ring-buffer sliding window)"]
     HR["apply_high_rate_refinement\n(mapped region)"]
     VER["apply_offset_verification\n(shipped retry path)"]
     SCAN["ScanGaps: full A timeline"]
     FILL["Gap fill gated by mapped region"]
     PATCH["PatchAudio (unchanged)"]
 
-    OPEN --> EXT --> MODE
-    MODE -->|no| SYM --> SCAN
-    MODE -->|yes| LOC --> HR --> VER --> SCAN
+    OPEN --> EXT --> RATIO
+    RATIO -->|yes| LOC
+    RATIO -->|no| PLAN --> COUNT
+    COUNT -->|yes| LOC
+    COUNT -->|no| SYM --> SCAN
+    LOC --> HR --> VER --> SCAN
     SCAN --> FILL --> PATCH
 ```
 
 ### Coarse search (reference timeline)
 
+**Streaming sliding window.** `scan_mono_buckets` yields contiguous, non-overlapping `bucket_secs` PCM chunks (`media_scan.rs`). The window `L` is generally much larger than `bucket_secs`, so accumulate chunks in a ring buffer of length `L` and score every `stride`. Memory is `O(L)` (one window), never `O(file)` — satisfies the "do not retain all window PCM" decision; PCM comes only from the bucket stream (no second extract).
+
 ```text
 query_clip = extract_mono(B, [0, extent_b.effective())) → prepare → fingerprint → FP_Q
+query_prepared_duration = query_clip.duration_secs
 
-stride = config.query_search_stride_secs
-L_secs = min(query_prepared_duration, clip_length)
-dur_a = extent_a.effective()
+bucket_secs = config.query_decode_bucket_secs   // small + fixed, default 10
+stride      = config.query_search_stride_secs   // window advance, default 60
+L_secs      = clamp(query_prepared_duration, MIN_CLIP_LENGTH, clip_length)  // INVARIANT: L >= query
+dur_a       = extent_a.effective()
 
-scan_mono_buckets(A, bucket_secs = stride):   // &mut session; callback must not re-enter session
-  for each bucket starting at pos:
-    window = [pos, pos + L_secs) clamped to dur_a
-    if window shorter than MIN_CLIP_LENGTH: continue
-    FP_W = fingerprint(bucket PCM → prepare)   // PCM from bucket callback, not a second extract
-    estimate = aligner.find_offset(FP_W, FP_Q)   // left=window, right=query
-    anchor_a = pos + estimate.offset_secs
-    record candidate(anchor_a, estimate.confidence, ambiguous)
+ring = ring buffer of mono PCM, capacity L_secs at target_sample_rate
+next_score_pos = 0.0
 
-cluster candidates by anchor_a (±2 s)
+scan_mono_buckets(A, bucket_secs):   // &mut session; callback must NOT re-enter session
+  on_bucket(b):                       // b.start_secs, b.end_secs, b.pcm — contiguous
+    ring.push(b.pcm); ring.trim_to_last(L_secs)
+    while ring covers [next_score_pos, next_score_pos + L_secs] and end <= dur_a:
+      win_pcm  = ring slice for that span
+      FP_W     = fingerprint(prepare(win_pcm))      // fingerprint inside callback only
+      estimate = aligner.find_offset(FP_W, FP_Q)    // left=window, right=query
+      anchor_a = next_score_pos + estimate.offset_secs
+      record candidate(anchor_a, estimate.confidence, estimate.ambiguous)
+      next_score_pos += stride
+    // window-cap check (see below) may widen stride mid-scan
+
+cluster candidates by anchor_a (±2 s)          // coarse tier; refined to ±0.05 s by PCM refine
 pick best by confidence (×0.5 if ambiguous)
 if best.confidence < query_min_match_score: no recommendation
 ```
 
 **Offset sign check:** After picking winner, set `recommended_offset_secs = -anchor_a_secs` and verify with `b_pos = a_pos + offset` at anchor.
 
-**Window cap:** If `ceil(dur_a / stride) > query_max_windows_scored`, multiply stride by 2 until under cap (log `tracing::warn`).
+**Window cap:** windows scored ≈ `ceil((dur_a - L_secs) / stride)`. If this exceeds `query_max_windows_scored`, multiply stride by 2 until under cap (log `tracing::warn`). Under `try_all_tracks` the cap is **global** across pairs, not per-pair.
 
 ### PCM refine (winner)
 
@@ -495,13 +534,22 @@ refine_query_anchor(
 Delegate to shipped `apply_high_rate_refinement` / `apply_offset_verification` — change **only** segment placement and input extents:
 
 ```text
-discovery_windows = [ClipWindow::new(win_start, win_end)]  // winning coarse window on A
-mapped_region = query_localization.mapped_region
-pick_duration = extent_a.effective().min(extent_b.effective())
-holdout_window_candidates(pick_duration, discovery_windows, segment_length, Δ)
+mapped_region  = query_localization.mapped_region
+region_a_start = mapped_region.video_a_start_secs
+region_a_len   = mapped_region.shared_length_secs
+Δ              = recommended_offset_secs (post-PCM refine)
+
+if region_a_len < clip_length: skip verification   // decision: mapped region too short
+
+// discovery window rebased into [0, region_a_len) space
+disc = [ClipWindow::new(win_start - region_a_start, win_end - region_a_start)]
+cands = holdout_window_candidates(region_a_len, disc, segment_length, Δ)
+// shift each candidate by +region_a_start back to absolute A time
+holdout = cands.map(|w| w.shift(region_a_start))
 // verification: retry up to 3 candidates; report candidates_tried (verification hardening)
-Δ = recommended_offset_secs (post-PCM refine)
 ```
+
+`holdout_window_candidates`' `duration` argument is the timeline it places windows within — pass `region_a_len` (mapped region), **not** `extent_a.effective().min(extent_b.effective())`, so hold-out stays inside the region as decided.
 
 ### Gap scan and fill (repair)
 
@@ -516,21 +564,25 @@ holdout_window_candidates(pick_duration, discovery_windows, segment_length, Δ)
 
 ### Auto mode selection
 
+**Two-tier resolution** — avoids building a discardable symmetric plan in the common case. Tier 1 needs only durations (no clip planning). Tier 2 (clip-window counts) runs **only** when durations are near-equal, where the symmetric plan is cheap anyway.
+
 ```text
-fn should_use_query(mode, extent_a, extent_b, windows_a, windows_b) -> bool:
+fn should_use_query(mode, extent_a, extent_b, plan_a, plan_b) -> bool:
   match mode:
     QueryReference => true
     Symmetric => false
     Auto =>
+      // Tier 1 — duration ratio (no decode / no clip planning)
       let dur_a = extent_a.effective().as_secs_f64()
       let dur_b = extent_b.effective().as_secs_f64()
       let (short, long) = if dur_a <= dur_b { (dur_a, dur_b) } else { (dur_b, dur_a) }
-      if short / long < query_min_duration_ratio: return true
-      if windows_a.len() != windows_b.len(): return true
+      if short / long < query_min_duration_ratio: return true   // primary use case exits here
+      // Tier 2 — only reached when lengths are similar
+      if plan_a.windows.len() != plan_b.windows.len(): return true
       return false
 ```
 
-When Auto picks query mode, **query is always the shorter file** (typically B in repair).
+When Auto picks query mode, **query is always the shorter file** (typically B in repair). Compute symmetric clip plans (`plan_a`/`plan_b`) lazily — only when Tier 1 is inconclusive — so the obvious query case never builds a plan it discards.
 
 ### Interaction with existing features
 
@@ -567,9 +619,10 @@ When Auto picks query mode, **query is always the shorter file** (typically B in
 |------|-------|-------|---------|
 | `coarse_search_finds_known_anchor` | Q0 | lib | Spike fixture anchor ±2 s |
 | `compute_mapped_region_clamps_to_effective_duration` | Q1 | lib | Region bounds vs `MediaExtent` |
-| `locate_query_passes_mid_file_embed` | Q1 | lib | 45 min anchor, confidence ≥ threshold |
+| `locate_query_passes_mid_file_embed` | Q1 | lib | 45 min anchor refined to **±0.05 s**, confidence ≥ threshold |
 | `locate_query_fails_below_threshold` | Q1 | lib | Unrelated A/B → no recommendation |
 | `locate_query_respects_window_cap` | Q1 | lib | Stride widens, `windows_scored` ≤ cap |
+| `coarse_search_ring_buffer_bounded_memory` | Q0/Q1 | lib | Live PCM high-water ≈ `L`, not `O(file)` |
 | `locate_query_ambiguous_lowers_confidence` | Q1 | lib | Repeated content → `ambiguous` |
 | `locate_query_scan_callback_no_reentry` | Q1 | lib | Bucket callback does not call session |
 | `resolve_alignment_mode_auto_ratio` | Q2 | lib | 8 min / 60 min effective → query |
@@ -593,9 +646,9 @@ When Auto picks query mode, **query is always the shorter file** (typically B in
 | Tier | **Generated only** (60 min + 8 min exceeds committed size budget) |
 | Generator | Long chirp A (3600 s); B = 480 s slice from A @ 2700 s |
 | `alignment.mode` | `query_reference` |
-| Assert | `\|anchor_a_secs - 2700\| ≤ 2` |
-| Assert | `recommended_offset_secs ≈ -2700` |
-| Assert | `mapped_region.shared_length_secs ≈ 480` |
+| Assert (refined) | `\|anchor_a_secs - 2700\| ≤ 0.05` (post-PCM-refine; ±0.05 s tier) |
+| Assert (refined) | `\|recommended_offset_secs + 2700\| ≤ 0.05` |
+| Assert | `\|mapped_region.shared_length_secs - 480\| ≤ 0.05` |
 
 ---
 
