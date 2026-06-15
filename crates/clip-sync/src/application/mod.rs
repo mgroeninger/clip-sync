@@ -3,6 +3,8 @@ pub mod config;
 pub mod default_pipeline;
 pub mod error;
 pub mod high_rate_refinement;
+#[cfg(test)]
+mod locate_query_spike;
 pub mod media_scan;
 pub mod offset_refinement;
 pub mod offset_verification;
