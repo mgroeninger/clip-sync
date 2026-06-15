@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment (short clip vs long video)
 
-> **Status:** Not started — prerequisites shipped (2026-06-11); ready to implement. Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
+> **Status:** Q0 in progress — prerequisites shipped (2026-06-11); design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers; pseudocode reflects this second pass). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -328,14 +328,25 @@ Per [json-output.md](json-output.md) revision procedure:
 
 **Goal:** Prove the **ring-buffer sliding window** localizes a known anchor within **±2 s** while holding memory to `O(L)` (one window), not `O(file)`. The buffering scheme — not the anchor math — is the real risk this spike retires.
 
+> **Status: ✅ done (2026-06-15)** — `crates/clip-sync/src/application/locate_query_spike.rs`. Findings below.
+
 **Lib (`crates/clip-sync`)**
 
-- [ ] Unit test helper: build long A (e.g. 30 min chirp/noise) + short B (5 min segment copied from A at known anchor, e.g. 45:00)
-- [ ] Prototype: fingerprint B; `scan_mono_buckets` on A with small `bucket_secs` (10s) feeding a length-`L` ring buffer scored every `stride`; match each window with `ChromaprintAligner::find_offset` — use `&mut` fake session per post-redesign port
-- [ ] Assert best anchor within **±2 s** of truth on spike fixture (coarse tier — spike has no PCM refine; refined ±0.05 s is gated in Q1)
-- [ ] Assert peak live PCM retained is bounded by ~`L` (instrument ring buffer high-water mark) — guards the `O(L)` memory claim
-- [ ] Assert symmetric path still fails or misaligns on same pair (clip count mismatch or wrong offset)
-- [ ] Record: windows scored vs. `ceil((dur_a - L)/stride)`, runtime order-of-magnitude, whether stride=60 is sufficient for 2h reference
+- [x] Unit test helper: build long A (15 min chirp) + short B (3 min slice from A @ 9:00) — monotonic chirp keeps windows spectrally distinct (unambiguous truth anchor)
+- [x] Prototype: fingerprint B; `scan_mono_buckets` on A with small `bucket_secs` (10s) feeding a length-`L` ring buffer scored every `stride`; match each window with `ChromaprintAligner::find_offset` — `&mut` fake session per post-redesign port
+- [x] Assert best anchor within **±2 s** of truth on spike fixture (coarse tier — spike has no PCM refine; refined ±0.05 s is gated in Q1)
+- [x] Assert peak live PCM retained is bounded by ~`L` (instrument ring buffer high-water mark) — guards the `O(L)` memory claim
+- [x] Assert symmetric path still fails or misaligns on same pair (clip count mismatch or wrong offset)
+- [x] Record: windows scored vs. `ceil((dur_a - L)/stride)`, runtime order-of-magnitude, whether stride=60 is sufficient for 2h reference
+
+**Q0 findings:**
+
+- ✅ Ring-buffer sliding window localizes the anchor **exactly** (540.000 s, well inside ±2 s) at **confidence 1.0**.
+- ✅ Memory is `O(L)`: ring high-water = **180.0 s = exactly the window length**, vs. the 900 s file — the scheme never buffers the reference.
+- ✅ `windows_scored = 13 = ceil((dur_a − L)/stride) + 1`, matching the window-cap formula.
+- ✅ Symmetric clip planning yields **2 vs 1** windows on the long/short pair (the clip-count mismatch this feature removes).
+- ⚠️ **Sign fix:** `find_offset(window, query)` returns `r` with `query_local = window_local + r`; the anchor is `pos − r`, **not** `pos + r` as the v1 draft had. Pseudocode + decisions corrected.
+- ⏱️ ~15 s to fingerprint 13 windows of a 15-min reference at 11.025 kHz → a 2 h reference at stride 60 is ~120 windows ≈ minutes without the cap → **`query_max_windows_scored` + stride-widen is load-bearing, not optional**. Heavy spike tests are `#[ignore]`d (run with `--ignored`).
 
 **CLI / repair:** none
 
@@ -495,7 +506,10 @@ scan_mono_buckets(A, bucket_secs):   // &mut session; callback must NOT re-enter
       win_pcm  = ring slice for that span
       FP_W     = fingerprint(prepare(win_pcm))      // fingerprint inside callback only
       estimate = aligner.find_offset(FP_W, FP_Q)    // left=window, right=query
-      anchor_a = next_score_pos + estimate.offset_secs
+      // find_offset returns r with query_local = window_local + r. window_local = a_abs - pos,
+      // so anchor (a_abs where query_local=0) = pos - r. (Q0 spike confirmed; v1 draft had
+      // `pos + r`, which is the wrong sign — recovers 0 instead of the true anchor.)
+      anchor_a = next_score_pos - estimate.offset_secs
       record candidate(anchor_a, estimate.confidence, estimate.ambiguous)
       next_score_pos += stride
     // window-cap check (see below) may widen stride mid-scan
@@ -505,7 +519,7 @@ pick best by confidence (×0.5 if ambiguous)
 if best.confidence < query_min_match_score: no recommendation
 ```
 
-**Offset sign check:** After picking winner, set `recommended_offset_secs = -anchor_a_secs` and verify with `b_pos = a_pos + offset` at anchor.
+**Offset sign check:** Per-window, `anchor_a = pos - find_offset(window, query).offset_secs` (see inline note above — Q0 confirmed). After picking winner, set `recommended_offset_secs = -anchor_a_secs` and verify with `b_pos = a_pos + offset` at anchor.
 
 **Window cap:** windows scored ≈ `ceil((dur_a - L_secs) / stride)`. If this exceeds `query_max_windows_scored`, multiply stride by 2 until under cap (log `tracing::warn`). Under `try_all_tracks` the cap is **global** across pairs, not per-pair.
 
