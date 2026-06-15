@@ -137,6 +137,16 @@ pub struct OffsetVerificationReport {
     pub skip_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates_tried: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub independent_offset_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_recheck_delta_secs: Option<f64>,
+    #[serde(skip_serializing_if = "is_false_bool")]
+    pub verify_inconclusive: bool,
+}
+
+fn is_false_bool(value: &bool) -> bool {
+    !*value
 }
 
 impl From<&OffsetVerification> for OffsetVerificationReport {
@@ -152,6 +162,9 @@ impl From<&OffsetVerification> for OffsetVerificationReport {
             skip_reason: verify.skip_reason.clone(),
             candidates_tried: (!verify.skipped && verify.candidates_tried > 0)
                 .then_some(verify.candidates_tried),
+            independent_offset_secs: verify.independent_offset_secs,
+            parallel_recheck_delta_secs: verify.parallel_recheck_delta_secs,
+            verify_inconclusive: verify.verify_inconclusive,
         }
     }
 }
@@ -202,6 +215,9 @@ pub struct AlignmentReport {
     pub high_rate_refinement: Option<HighRateRefinementReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset_verification: Option<OffsetVerificationReport>,
+    /// Repeat period when start-clip repetition makes offset ambiguous mod **T**.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_ambiguous_mod_secs: Option<f64>,
 }
 
 impl From<&AlignmentResult> for AlignmentReport {
@@ -216,6 +232,7 @@ impl From<&AlignmentResult> for AlignmentReport {
             start_overlap: result.start_overlap.map(Into::into),
             high_rate_refinement: result.high_rate_refinement.as_ref().map(Into::into),
             offset_verification: result.offset_verification.as_ref().map(Into::into),
+            offset_ambiguous_mod_secs: result.offset_ambiguous_mod_secs,
         }
     }
 }
@@ -256,6 +273,21 @@ pub fn format_offset_verification_lines(
         }
         return vec![];
     }
+    if verify.verify_inconclusive {
+        let mut lines = vec![format!(
+            "Verify:    offset not independently verified (periodic content; hold-out confidence {:.2})",
+            verify.confidence
+        )];
+        if show_diagnostics {
+            if let Some(independent) = verify.independent_offset_secs {
+                lines.push(format!(
+                    "           parallel recheck offset {independent:+.3}s (Δ {:+.3}s vs recommended)",
+                    verify.parallel_recheck_delta_secs.unwrap_or(0.0)
+                ));
+            }
+        }
+        return lines;
+    }
     if !verify.verified {
         return vec![format!(
             "Verify:    offset not independently verified (hold-out confidence {:.2})",
@@ -269,6 +301,13 @@ pub fn format_offset_verification_lines(
         )];
     }
     vec![]
+}
+
+/// Human-readable line when offset is ambiguous modulo a repeat period.
+pub fn format_periodic_ambiguity_line(period_secs: f64) -> String {
+    format!(
+        "Warning:   offset ambiguous (repeats every ~{period_secs:.0} s) — auto offset and verify may match the wrong period"
+    )
 }
 
 #[cfg(test)]
@@ -336,6 +375,9 @@ mod tests {
                 skipped: false,
                 skip_reason: None,
                 candidates_tried: 1,
+                independent_offset_secs: None,
+                parallel_recheck_delta_secs: None,
+                verify_inconclusive: false,
             }))
             .build();
         result.start_aligned = false;

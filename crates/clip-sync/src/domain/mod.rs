@@ -16,6 +16,9 @@ pub use alignment::{
     ClipRepetitionReport, Fingerprint, HighRateRefinement, OffsetVerification,
     OFFSET_AGREEMENT_TOLERANCE_SECS,
     RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap, refresh_start_overlap,
+    periodic_ambiguity_period, periodic_recheck_period_multiple,
+    display_repeat_period,
+    set_offset_ambiguous_mod_from_start_clip, should_apply_periodic_ambiguity,
     should_downgrade_repetition_confidence,
 };
 pub use audio_track::AudioTrack;
@@ -35,6 +38,7 @@ pub use media_extent::MediaExtent;
 pub use policies::{
     clip_windows_with_options,
     end_clip_extract_unreliable, holdout_window_candidates,
-    holdout_extract_sufficient, holdout_window_feasible, truncate_padded_tail,
+    holdout_extract_sufficient, holdout_window_feasible, parallel_holdout_window_candidates,
+    truncate_padded_tail,
     ClipPlanningOptions, select_best_track,
 };

@@ -468,7 +468,11 @@ mod tests {
                     skipped: false,
                     skip_reason: None,
                     candidates_tried: 1,
+                    independent_offset_secs: None,
+                    parallel_recheck_delta_secs: None,
+                    verify_inconclusive: false,
                 }),
+                offset_ambiguous_mod_secs: None,
             }),
             gaps: vec![
                 Gap {
@@ -572,6 +576,7 @@ mod tests {
                 start_overlap: Some(overlap),
                 high_rate_refinement: None,
                 offset_verification: None,
+                offset_ambiguous_mod_secs: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
@@ -725,6 +730,7 @@ mod tests {
                 start_overlap: None,
                 high_rate_refinement: None,
                 offset_verification: None,
+                offset_ambiguous_mod_secs: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,

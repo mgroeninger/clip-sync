@@ -652,6 +652,13 @@ pub fn assert_corpus_expectations(
                 case.id
             );
         }
+        if expect {
+            assert!(
+                result.offset_ambiguous_mod_secs.is_some(),
+                "case {}: expected offset_ambiguous_mod_secs when repetition finding present",
+                case.id
+            );
+        }
     }
 }
 
@@ -741,6 +748,7 @@ pub fn run_wrong_offset_verification_probe(
         start_overlap: None,
         high_rate_refinement: None,
         offset_verification: None,
+        offset_ambiguous_mod_secs: Some(10.0),
     };
 
     let clip_config = ClipConfig {
@@ -755,6 +763,7 @@ pub fn run_wrong_offset_verification_probe(
     let validation = ValidationConfig {
         verify_offset: true,
         min_verification_confidence: 0.5,
+        check_clip_repetition: true,
         ..Default::default()
     };
     let discovery_windows = vec![ClipWindow::new(
@@ -777,6 +786,7 @@ pub fn run_wrong_offset_verification_probe(
             min_holdout_decode_fraction: alignment.min_end_clip_decode_fraction,
             max_holdout_decode_skips: alignment.max_end_clip_decode_skips,
             resampler: &crate::infrastructure::resample::RubatoResampler,
+            correlator: &crate::infrastructure::correlation::FftCorrelator,
         },
         &clip_config,
         &validation,
@@ -1006,11 +1016,80 @@ mod tests {
             alias_verify.skip_reason
         );
         assert!(
-            alias_verify.verified,
-            "period-equivalent wrong Δ={period_alias_offset} should false-pass Option A \
-             (confidence={}, lag within tolerance); see docs/corpus-validation.md",
-            alias_verify.confidence
+            !alias_verify.verified,
+            "period-equivalent wrong Δ={period_alias_offset} must not report verified=true \
+             (confidence={}, inconclusive={}); see docs/corpus-validation.md",
+            alias_verify.confidence, alias_verify.verify_inconclusive
         );
+        assert!(
+            alias_verify.verify_inconclusive,
+            "period alias should set verify_inconclusive"
+        );
+        assert!(
+            alias_verify.independent_offset_secs.is_some_and(|o| (o - true_offset_secs).abs() < 1.5),
+            "parallel recheck should recover true offset ~{true_offset_secs}, got {:?}",
+            alias_verify.independent_offset_secs
+        );
+    }
+
+    #[test]
+    fn corpus_looped_discovery_alias_sets_ambiguity_flag() {
+        use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::fakes::FakeProgressReporter;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|entry| entry.id == "verify_option_a_false_pass_probe")
+            .expect("verify_option_a_false_pass_probe case in manifest");
+        let paths = generate_case_pair(case, &manifest.defaults);
+
+        let mut config = build_config(case, &manifest.defaults);
+        config.validation.check_clip_repetition = true;
+        config.validation.verify_offset = true;
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
+        let result = run_corpus_case_with_config(
+            &use_case,
+            paths.video_a,
+            paths.video_b,
+            config,
+        )
+        .expect("align looped pair");
+
+        assert!(
+            result.offset_ambiguous_mod_secs.is_some_and(|t| (t - 10.0).abs() < 3.0),
+            "strong repetition should set fundamental period ~10s, got {:?}",
+            result.offset_ambiguous_mod_secs
+        );
+        let recommended = result.recommended_offset_secs.expect("recommended offset");
+        assert!(
+            (recommended - 13.0).abs() < 2.0 || (recommended - 3.0).abs() < 1.5,
+            "discovery expected ~+13s alias or +3s true, got {recommended}"
+        );
+        let verify = result.offset_verification.expect("verify should run");
+        assert!(!verify.verified, "verify must not pass on period alias");
+        if (recommended - 13.0).abs() < 2.0 {
+            assert!(
+                verify.verify_inconclusive,
+                "period alias discovery should mark verify inconclusive"
+            );
+        }
     }
 
     #[test]

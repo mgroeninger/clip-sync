@@ -1,8 +1,8 @@
-# Temporary plan: periodic offset ambiguity
+# Periodic offset ambiguity (archived)
 
-> **Status:** Draft (2026-06-11). Motivated by looped-chirp corpus evidence: discovery aliases to **+13 s** (true **+3 s** + 10 s period); Option A hold-out verify **false-passes** the same period-equivalent wrong Δ. Option B (PCM lag-0) does not break periodic symmetry — see [corpus-validation.md](corpus-validation.md) § Option A false-pass evidence.
+> **Status:** Shipped (2026-06-11). Hardening pass (2026-06-11): parallel recheck gated on known period only, harmonic period normalization, multi-window PCM peak selection, skip/consistency fixes.
 >
-> Archive to `docs/archive/periodic-ambiguity-plan.md` when shipped.
+> Motivated by looped-chirp corpus evidence: discovery aliases to **+13 s** (true **+3 s** + 10 s period); Option A hold-out verify **false-passes** the same period-equivalent wrong Δ. Option B (PCM lag-0) does not break periodic symmetry — see [corpus-validation.md](../corpus-validation.md) § Option A false-pass evidence.
 
 **Problem:** When audio repeats every **T** seconds (loop, rebroadcast, applause), Chromaprint discovery can report any offset **≡ true (mod T)** with high confidence. Hold-out verification (Option A) extracts B at `window_A + recommended_offset`; a placement error of **N×T** still yields hold-out segments that match at lag 0, so `verified == true` is misleading.
 
@@ -53,55 +53,51 @@
 
 **Lib**
 
-- [ ] `domain/alignment.rs` — `offset_ambiguous_mod_secs: Option<f64>` on `AlignmentResult`; helper `periodic_ambiguity_period(start_clip_repetition) -> Option<f64>`
-- [ ] Extend downgrade policy: `should_downgrade_periodic_ambiguity` or widen `should_downgrade_repetition_confidence` when strong repeat on start clip (document behaviour in [corpus-validation.md](corpus-validation.md))
-- [ ] `application/align_videos.rs` — after repetition merge on start clip, set `result.offset_ambiguous_mod_secs` when trigger fires; apply confidence halving (stack with existing downgrade or single combined pass — pick one, test)
-- [ ] `application/report.rs` + `docs/json-output.md` — report field; regenerate CLI golden JSON if present
+- [x] `domain/alignment.rs` — `offset_ambiguous_mod_secs`, `periodic_ambiguity_period`, `set_offset_ambiguous_mod_from_start_clip`
+- [x] Extend downgrade: strong start-clip repetition halves confidence (with existing lag-near-offset downgrade)
+- [x] `application/align_videos.rs` — set flag after repetition merge; `try_all_tracks` uses full rep_result
+- [x] `application/report.rs` + `docs/json-output.md` + golden fixture
 
 **CLI**
 
-- [ ] `output.rs` — human warning line when `offset_ambiguous_mod_secs` is `Some`
+- [x] `output.rs` — human warning via `format_periodic_ambiguity_line`
 
 **Tests**
 
-- [ ] Unit tests on mod-**T** helper (pure tone / synthetic repetition from clip-self-repetition suite)
-- [ ] Integration: `repeated_segment_in_clip` or looped pair with `check_clip_repetition` → flag present
-- [ ] `corpus_verify_option_a_false_pass_probe` unchanged (+13 still passes Option A internally — gating is Phase 2)
+- [x] Unit tests on `periodic_recheck_period_multiple` / `periodic_ambiguity_period`
+- [x] `corpus_looped_discovery_alias_sets_ambiguity_flag`
 
 ### Phase 2 — Verify must not lie
 
 **Lib**
 
-- [ ] `offset_verification.rs` — after scoring, if strong hold-out repetition **or** `result.offset_ambiguous_mod_secs.is_some()` before verify, override `verified = false` on the reported best attempt (retain confidence/lag in JSON for debugging). Set `skip_reason: Some("periodic content; offset-shifted verify inconclusive")` **or** add `verified_false_reason` — prefer reusing `skip_reason` only when skipped; add optional `verify_inconclusive: bool` if needed
-- [ ] Ensure `phase_verbose` mentions periodic override
+- [x] `verify_inconclusive` + gating after best-attempt selection; `phase_verbose` on override
 
 **Tests**
 
-- [ ] Unit test in `offset_verification.rs`: fake periodic pass → `verified == false` when ambiguity active
-- [ ] Extend `corpus_verify_option_a_false_pass_probe` **or** new test `corpus_looped_discovery_alias_verify_gated`: full pipeline with discovery (alias +13) + `verify_offset` → `verified == false` when Phase 2 shipped
+- [x] `parallel_recheck_looped_chirp_disagrees_with_period_alias`
+- [x] `corpus_verify_option_a_false_pass_probe` (+13 → `verified == false`)
 
 ### Phase 3 — Edge parallel recheck (disambiguation)
 
 **Lib**
 
-- [ ] `domain/policies.rs` — `parallel_holdout_window_candidates(...)` when repetition detected: **prepend** `T=0` and other edge-feasible windows before interior list; label `ClipLabel::Interior` ok or add `Edge` if report needs it
-- [ ] `offset_verification.rs` — when ambiguity trigger: run calendar-parallel extract + `find_offset`; compare to recommended Δ; gate `verified` per decision table above; store `independent_offset_secs` on `OffsetVerification` (or nested struct)
-- [ ] Optional: if parallel recheck disagrees by **N×T**, adjust confidence / keep ambiguity; if agrees (**N=0**), clear `offset_ambiguous_mod_secs` and allow `verified == true`
+- [x] `parallel_holdout_window_candidates` (edge `T=0` first)
+- [x] Calendar-parallel **PCM** recheck (`pcm_cross_correlate_lag`); fingerprint parallel aliased on looped chirp — not used
+- [x] `independent_offset_secs`, `parallel_recheck_delta_secs`; clear ambiguity when parallel agrees mod **T**
 
 **Corpus**
 
-- [ ] Generated case `looped_chirp_discovery_alias` (or extend probe): assert discovery ≈ +13 s, parallel recheck ≈ +3 s, `verified == false` until recheck agrees; document in [corpus-matrix.md](corpus-matrix.md)
+- [x] `corpus_looped_discovery_alias_sets_ambiguity_flag`
 
 **Tests**
 
-- [ ] `corpus_looped_parallel_recheck_finds_true_offset` — true +3 s rediscovered via edge parallel window
-- [ ] Regression: non-periodic `corpus_verify_offset_pass` unchanged
+- [x] Parallel recheck recovers ~+3 s on looped fixture; `corpus_verify_offset_pass` unchanged
 
 ### Phase 4 — Documentation and archive
 
-- [ ] [corpus-validation.md](corpus-validation.md) — replace Follow-up bullet with shipped behaviour; operator guidance
-- [ ] [PLAN.md](../PLAN.md) validation flags paragraph — ambiguity + verify gating
-- [ ] [BACKLOG.md](../BACKLOG.md) — move periodic item to Completed; archive this plan
+- [x] [corpus-validation.md](../corpus-validation.md), [PLAN.md](../../PLAN.md), [json-output.md](../json-output.md)
+- [x] Archive to `docs/archive/periodic-ambiguity-plan.md`; BACKLOG completed row
 
 ---
 

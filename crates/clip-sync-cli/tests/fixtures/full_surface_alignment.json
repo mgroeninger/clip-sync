@@ -58,5 +58,6 @@
     "verified": true,
     "skipped": false,
     "candidates_tried": 1
-  }
+  },
+  "offset_ambiguous_mod_secs": 10.0
 }

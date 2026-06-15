@@ -57,9 +57,9 @@ Archived [offset-verification plan](archive/offset-verification-plan.md) Phase 0
 |------------|------------|-------|
 | +8 s (manifest `probe_wrong_verification_offset_secs`) | `false` | ≡ +8 mod 10; not equivalent to true +3 s |
 | +18 s (+8 s + 10 s loop period) | `false` | Same residue mod 10 as +8 s |
-| +13 s (true +3 s + one loop period) | **`true`** | Period-equivalent alias; matches typical discovery output on this fixture |
+| +13 s (true +3 s + one loop period) | **`false`** (gated) | Option A still scores a pass internally; periodic gating + PCM parallel recheck reject `verified` |
 
-**Implications:** `--verify-offset` does **not** disprove discovery when content repeats every **T** seconds and the wrong offset differs from the true offset by **N×T**. Enable `--check-clip-repetition` and treat strong internal repeat as “offset may be ambiguous mod repeat period.” **Option B** (PCM lag-0) is unlikely to help on identical periodic tiles. Planned fix: [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) (ambiguity flag, verify gating, edge parallel recheck).
+**Shipped mitigation (2026-06-11):** with `check_clip_repetition`, discovery sets `offset_ambiguous_mod_secs` and may halve start-clip confidence. Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (only when a repeat period is already known), compares to recommended Δ, and sets `verify_inconclusive` when they disagree by **N×T** (or beyond tolerance). See [archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md).
 
 ---
 
@@ -76,6 +76,17 @@ When `check_clip_repetition` is on and internal repeat lag is within 1 s of the 
 3. JSON and human output show **post-downgrade** confidence; `aligned` does **not** flip when downgrade runs.
 
 So a clip can show `aligned: true` with lowered confidence — by design in v1. See `align_videos.rs` (downgrade after `build_alignment_result`) and corpus case `repeated_segment_in_clip`.
+
+### Periodic offset ambiguity
+
+When `check_clip_repetition` finds strong internal repeat on the **start** clip:
+
+1. `offset_ambiguous_mod_secs` is set to the repeat period **T** (diagnostic).
+2. Start-clip confidence may be halved (in addition to the existing lag-near-offset downgrade).
+3. Hold-out verify runs calendar-parallel **PCM** recheck at the file edge (`parallel_holdout_window_candidates`, `T=0` first).
+4. If parallel offset disagrees with recommended Δ by **N×T** (or beyond tolerance), `verified` is forced false and `verify_inconclusive` is set — even when Option A scored a pass on offset-shifted hold-out segments.
+
+Human output includes: `Warning: offset ambiguous (repeats every ~N s) — ...`
 
 ### Hold-out verification cost
 
@@ -129,7 +140,7 @@ Default is `false` because track-pair brute force multiplies decode work. Prefer
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
 
-- **Periodic offset ambiguity** — [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) (active)
+- ~~Periodic offset ambiguity~~ — shipped 2026-06-11 ([archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md))
 - Tighten `max_wall_secs` on other multi-clip cases if regressions are caught
 - Dual-track case when decoy is muxed first (default pick still wrong; needs `try_all_tracks`)
 - Optional shorter verification segment (`validation.max_verification_secs`) — deferred Phase 6 in [verification-hardening plan](archive/verification-hardening-plan.md); implement only on demonstrated friction

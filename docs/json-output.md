@@ -33,6 +33,7 @@ Top-level object: **AlignmentReport**.
 | `start_overlap` | [TimelineOverlap](#timelineoverlap) \| null | always | Shared timeline region implied by the start clip match; `null` when not aligned |
 | `high_rate_refinement` | [HighRateRefinement](#highraterefinement) | **absent when feature off/not run** | Native-rate hold-out FFT correction details |
 | `offset_verification` | [OffsetVerification](#offsetverification) | **absent when feature off** | Hold-out lag-0 verification details |
+| `offset_ambiguous_mod_secs` | number | **absent when not periodic** | Repeat period **T** (seconds) when start-clip repetition makes offset ambiguous mod **T** |
 
 ### ClipMatch
 
@@ -98,6 +99,9 @@ Top-level object: **AlignmentReport**.
 | `skipped` | bool | always | Verification did not run |
 | `skip_reason` | string | **absent when not skipped** | Why verification was skipped |
 | `candidates_tried` | integer | **absent when skipped or zero** | Hold-out windows scored before reporting |
+| `independent_offset_secs` | number | **absent when parallel recheck did not run** | Calendar-parallel PCM recheck offset estimate |
+| `parallel_recheck_delta_secs` | number | **absent when parallel recheck did not run** | `recommended_offset_secs - independent_offset_secs` |
+| `verify_inconclusive` | bool | **absent when false** | Option A scored a pass but periodic gating rejected it |
 
 ---
 

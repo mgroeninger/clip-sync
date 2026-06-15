@@ -109,7 +109,11 @@ fn full_surface_alignment_result() -> AlignmentResult {
             skipped: false,
             skip_reason: None,
             candidates_tried: 1,
+            independent_offset_secs: None,
+            parallel_recheck_delta_secs: None,
+            verify_inconclusive: false,
         }),
+        offset_ambiguous_mod_secs: Some(10.0),
     }
 }
 
@@ -277,6 +281,7 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
         start_overlap: None,
         high_rate_refinement: None,
         offset_verification: None,
+        offset_ambiguous_mod_secs: None,
     };
 
     let output = format_human_output(false, &result);
@@ -320,6 +325,7 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
         start_overlap: None,
         high_rate_refinement: None,
         offset_verification: None,
+        offset_ambiguous_mod_secs: None,
     };
 
     let output = format_human_output(false, &result);
@@ -523,7 +529,12 @@ fn align_human_no_repetition_lines_when_repetition_field_absent() {
 
 // --- offset verification human output ---
 
-fn make_verification(verified: bool, confidence: f32, skipped: bool, skip_reason: Option<&str>) -> OffsetVerification {
+fn make_verification(
+    verified: bool,
+    confidence: f32,
+    skipped: bool,
+    skip_reason: Option<&str>,
+) -> OffsetVerification {
     OffsetVerification {
         window_a_start_secs: 60.0,
         window_a_end_secs: 90.0,
@@ -534,6 +545,26 @@ fn make_verification(verified: bool, confidence: f32, skipped: bool, skip_reason
         skipped,
         skip_reason: skip_reason.map(String::from),
         candidates_tried: if skipped { 0 } else { 1 },
+        independent_offset_secs: None,
+        parallel_recheck_delta_secs: None,
+        verify_inconclusive: false,
+    }
+}
+
+fn make_inconclusive_verification(confidence: f32, independent_offset_secs: f64) -> OffsetVerification {
+    OffsetVerification {
+        independent_offset_secs: Some(independent_offset_secs),
+        parallel_recheck_delta_secs: Some(10.0),
+        verify_inconclusive: true,
+        verified: false,
+        confidence,
+        skipped: false,
+        skip_reason: None,
+        candidates_tried: 1,
+        window_a_start_secs: 60.0,
+        window_a_end_secs: 90.0,
+        window_b_start_secs: 73.0,
+        window_b_end_secs: 103.0,
     }
 }
 
@@ -614,6 +645,46 @@ fn verify_human_verbose_shows_skip_reason() {
     assert!(
         output.contains("Verify:    skipped (hold-out window unavailable)"),
         "expected skip reason in verbose mode: {output}"
+    );
+}
+
+#[test]
+fn periodic_ambiguity_human_shows_warning_line() {
+    let result = full_surface_alignment_result();
+    let output = format_human_output(false, &result);
+    assert!(
+        output.contains("Warning:   offset ambiguous (repeats every ~10 s)"),
+        "expected periodic ambiguity warning: {output}"
+    );
+}
+
+#[test]
+fn verify_human_shows_inconclusive_periodic_message() {
+    let result = minimal_alignment_result(Some(13.0))
+        .with_clips(vec![start_clip_match(Some(13.0), 900.0, 0.9)])
+        .with_verification(Some(make_inconclusive_verification(0.85, 3.0)))
+        .build();
+
+    let output = format_human_output(false, &result);
+    assert!(
+        output.contains(
+            "Verify:    offset not independently verified (periodic content; hold-out confidence 0.85)"
+        ),
+        "expected inconclusive verify line: {output}"
+    );
+}
+
+#[test]
+fn verify_human_verbose_shows_parallel_recheck_on_inconclusive() {
+    let result = minimal_alignment_result(Some(13.0))
+        .with_clips(vec![start_clip_match(Some(13.0), 900.0, 0.9)])
+        .with_verification(Some(make_inconclusive_verification(0.85, 3.0)))
+        .build();
+
+    let output = format_human_output(true, &result);
+    assert!(
+        output.contains("parallel recheck offset +3.000s"),
+        "expected parallel recheck diagnostic: {output}"
     );
 }
 

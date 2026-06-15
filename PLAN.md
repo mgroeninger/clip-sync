@@ -280,7 +280,7 @@ Domain errors carry no I/O or library context; they describe business rule viola
 14. Log alignment summary (start/end aligned, per-clip status, recommended offset).
 15. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
-**Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/corpus-validation.md](docs/corpus-validation.md) § Repetition downgrade). Hold-out verification tries up to three scored window candidates and reports the best; see § Hold-out verification cost in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
+**Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/corpus-validation.md](docs/corpus-validation.md) § Repetition downgrade). Strong start-clip repetition also sets `offset_ambiguous_mod_secs` (periodic ambiguity). Hold-out verification tries up to three scored window candidates, runs calendar-parallel PCM recheck when repetition is active, and gates `verified` when parallel and recommended Δ disagree mod **T**; see § Hold-out verification cost and periodic ambiguity in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
 
 #### Default pipeline: `align_with_defaults`
 
@@ -979,7 +979,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
 | [docs/archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
 | [docs/archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
-| [docs/TEMP-periodic-ambiguity-plan.md](docs/TEMP-periodic-ambiguity-plan.md) | Draft: mod-**T** ambiguity diagnostic, verify gating, edge parallel recheck (looped +13 s false-pass) |
+| [docs/archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md) | Shipped (2026-06-11): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`) |
 | [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.

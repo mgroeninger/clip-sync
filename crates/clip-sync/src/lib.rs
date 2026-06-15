@@ -15,7 +15,8 @@ pub use application::ports::{
     Aligner, Fingerprinter, MediaReader, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
 };
 pub use application::report::{
-    format_high_rate_refinement_lines, format_offset_verification_lines, AlignmentReport,
+    format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_periodic_ambiguity_line, AlignmentReport,
     ClipLabelReport, ClipMatchReport, HighRateRefinementReport, OffsetVerificationReport,
     RepetitionFindingReport, RepetitionReport, TimelineOverlapReport,
 };

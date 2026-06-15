@@ -4,14 +4,16 @@ use tracing::debug;
 
 use crate::application::config::{ClipConfig, ValidationConfig};
 use crate::application::error::debug_media_error;
+use crate::application::offset_refinement::pcm_cross_correlate_lag;
 use crate::application::ports::{
-    Aligner, Fingerprinter, MediaSession, ProgressReporter, Resampler,
+    Aligner, Fingerprinter, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
 };
 use crate::domain::{
     holdout_extract_sufficient, holdout_window_candidates, holdout_window_feasible,
-    prepare_clip_for_fingerprint, should_downgrade_repetition_confidence,
-    AlignmentResult, AudioTrack, ClipWindow, MediaExtent, OffsetVerification,
-    PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    parallel_holdout_window_candidates, periodic_ambiguity_period, periodic_recheck_period_multiple,
+    display_repeat_period, prepare_clip_for_fingerprint, should_downgrade_repetition_confidence, AlignmentResult,
+    AudioTrack, ClipWindow,
+    MediaExtent, OffsetVerification, PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 
@@ -26,6 +28,7 @@ pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub min_holdout_decode_fraction: f64,
     pub max_holdout_decode_skips: u32,
     pub resampler: &'a dyn Resampler,
+    pub correlator: &'a dyn PcmCorrelator,
 }
 
 /// Extract a hold-out window and score lag-0 similarity to independently verify the recommended
@@ -72,11 +75,27 @@ pub fn apply_offset_verification<MS, FP, AL>(
     let dur_a = input.extent_a.effective().as_secs_f64();
     let dur_b = input.extent_b.effective().as_secs_f64();
 
+    let (_period_secs, parallel_independent) = resolve_parallel_periodic_recheck(
+        input,
+        clip_config,
+        validation,
+        result,
+        clip_length,
+        clip_length_secs,
+        fingerprinter,
+        progress,
+    );
+
     let candidates =
         holdout_window_candidates(pick_duration, input.discovery_windows, clip_length, offset_secs);
     if candidates.is_empty() {
         debug!("offset verify skipped: no hold-out window candidates");
-        result.offset_verification = Some(skipped("hold-out window unavailable"));
+        result.offset_verification = Some(skipped_with_periodic_context(
+            "hold-out window unavailable",
+            offset_secs,
+            parallel_independent,
+            result,
+        ));
         return;
     }
 
@@ -276,6 +295,9 @@ pub fn apply_offset_verification<MS, FP, AL>(
             skipped: false,
             skip_reason: None,
             candidates_tried: 0,
+            independent_offset_secs: None,
+            parallel_recheck_delta_secs: None,
+            verify_inconclusive: false,
         });
 
         if verified {
@@ -286,6 +308,13 @@ pub fn apply_offset_verification<MS, FP, AL>(
     if let Some(best) = pick_best_scored_attempt(&scored_attempts) {
         let mut best = best.clone();
         best.candidates_tried = scored_attempts.len() as u32;
+        apply_periodic_verify_gating(
+            &mut best,
+            offset_secs,
+            parallel_independent,
+            result,
+            progress,
+        );
         result.offset_verification = Some(best);
         return;
     }
@@ -299,6 +328,23 @@ pub fn apply_offset_verification<MS, FP, AL>(
     result.offset_verification = Some(skipped(&reason));
 }
 
+fn skipped_with_periodic_context(
+    reason: &str,
+    recommended_offset_secs: f64,
+    parallel_independent: Option<f64>,
+    result: &AlignmentResult,
+) -> OffsetVerification {
+    let mut verify = skipped(reason);
+    if result.offset_ambiguous_mod_secs.is_some() || parallel_independent.is_some() {
+        verify.verify_inconclusive = true;
+        if let Some(independent) = parallel_independent {
+            verify.independent_offset_secs = Some(independent);
+            verify.parallel_recheck_delta_secs = Some(recommended_offset_secs - independent);
+        }
+    }
+    verify
+}
+
 fn skipped(reason: &str) -> OffsetVerification {
     OffsetVerification {
         window_a_start_secs: 0.0,
@@ -310,7 +356,360 @@ fn skipped(reason: &str) -> OffsetVerification {
         skipped: true,
         skip_reason: Some(reason.into()),
         candidates_tried: 0,
+        independent_offset_secs: None,
+        parallel_recheck_delta_secs: None,
+        verify_inconclusive: false,
     }
+}
+
+fn known_periodic_period_secs(
+    result: &AlignmentResult,
+    validation: &ValidationConfig,
+) -> Option<f64> {
+    if let Some(period) = result.offset_ambiguous_mod_secs {
+        return Some(period);
+    }
+    if !validation.check_clip_repetition {
+        return None;
+    }
+    let clip = result.start_clip()?;
+    let clip_duration_secs = clip.window_end_secs - clip.window_start_secs;
+    clip.repetition.as_ref().and_then(|report| {
+        periodic_ambiguity_period(
+            report,
+            validation.min_repetition_confidence,
+            Some(clip_duration_secs),
+        )
+    })
+}
+
+fn should_run_parallel_periodic_recheck(period_secs: Option<f64>) -> bool {
+    period_secs.is_some()
+}
+
+fn resolve_parallel_periodic_recheck<MS, FP>(
+    input: &mut OffsetVerificationInput<'_, MS>,
+    clip_config: &ClipConfig,
+    validation: &ValidationConfig,
+    result: &mut AlignmentResult,
+    clip_length: Duration,
+    clip_length_secs: f64,
+    fingerprinter: &FP,
+    progress: &dyn ProgressReporter,
+) -> (Option<f64>, Option<f64>)
+where
+    MS: MediaSession,
+    FP: Fingerprinter,
+{
+    let mut period_secs = known_periodic_period_secs(result, validation);
+    let parallel = if should_run_parallel_periodic_recheck(period_secs) {
+        run_parallel_offset_recheck(
+            input,
+            clip_config,
+            validation,
+            clip_length,
+            clip_length_secs,
+            fingerprinter,
+            input.resampler,
+            input.correlator,
+            progress,
+            &mut period_secs,
+        )
+    } else {
+        None
+    };
+    if let Some(period) = period_secs {
+        let normalized = display_repeat_period(period, clip_length_secs);
+        period_secs = Some(normalized);
+        if result.offset_ambiguous_mod_secs.is_none() {
+            result.offset_ambiguous_mod_secs = Some(normalized);
+        } else if let Some(existing) = result.offset_ambiguous_mod_secs {
+            result.offset_ambiguous_mod_secs = Some(display_repeat_period(existing, clip_length_secs));
+        }
+    }
+    (period_secs, parallel)
+}
+
+fn parallel_recheck_disagrees(
+    recommended_offset_secs: f64,
+    independent_offset_secs: f64,
+    period_secs: Option<f64>,
+) -> bool {
+    if let Some(period) = period_secs {
+        match periodic_recheck_period_multiple(
+            recommended_offset_secs,
+            independent_offset_secs,
+            period,
+        ) {
+            Some(0) => return false,
+            Some(_) => return true,
+            None => {}
+        }
+    }
+    (recommended_offset_secs - independent_offset_secs).abs() > OFFSET_AGREEMENT_TOLERANCE_SECS
+}
+
+fn apply_periodic_verify_gating(
+    verify: &mut OffsetVerification,
+    recommended_offset_secs: f64,
+    parallel_independent: Option<f64>,
+    result: &mut AlignmentResult,
+    progress: &dyn ProgressReporter,
+) {
+    if let Some(independent) = parallel_independent {
+        verify.independent_offset_secs = Some(independent);
+        verify.parallel_recheck_delta_secs = Some(recommended_offset_secs - independent);
+
+        if verify.verified
+            && parallel_recheck_disagrees(
+                recommended_offset_secs,
+                independent,
+                result.offset_ambiguous_mod_secs,
+            )
+        {
+            verify.verified = false;
+            verify.verify_inconclusive = true;
+            let period_note = result
+                .offset_ambiguous_mod_secs
+                .map(|p| format!("~{p:.0}s repeat"))
+                .unwrap_or_else(|| "parallel recheck".into());
+            progress.phase_verbose(&format!(
+                "Hold-out verify: periodic ambiguity ({period_note}); offset-shifted pass rejected \
+                 (parallel {independent:.3}s vs recommended {recommended_offset_secs:.3}s)"
+            ));
+            return;
+        }
+
+        if verify.verified
+            && result.offset_ambiguous_mod_secs.is_some_and(|period| {
+                periodic_recheck_period_multiple(recommended_offset_secs, independent, period)
+                    == Some(0)
+            })
+        {
+            result.offset_ambiguous_mod_secs = None;
+            progress.phase_verbose(
+                "Hold-out verify: parallel recheck agrees with recommended offset; periodic ambiguity cleared",
+            );
+        }
+        return;
+    }
+
+    if result.offset_ambiguous_mod_secs.is_some() && verify.verified {
+        verify.verified = false;
+        verify.verify_inconclusive = true;
+        progress.phase_verbose(
+            "Hold-out verify: periodic content; offset-shifted pass rejected (no parallel recheck)",
+        );
+    }
+}
+
+fn run_parallel_offset_recheck<MS, FP>(
+    input: &mut OffsetVerificationInput<'_, MS>,
+    clip_config: &ClipConfig,
+    validation: &ValidationConfig,
+    clip_length: Duration,
+    clip_length_secs: f64,
+    fingerprinter: &FP,
+    resampler: &dyn Resampler,
+    correlator: &dyn PcmCorrelator,
+    progress: &dyn ProgressReporter,
+    period_secs: &mut Option<f64>,
+) -> Option<f64>
+where
+    MS: MediaSession,
+    FP: Fingerprinter,
+{
+    const PARALLEL_PCM_WINDOW_SECS: u32 = 20;
+    let prep_options = PcmPreparationOptions {
+        normalize_loudness: clip_config.normalize_loudness,
+        trim_silence: clip_config.trim_silence,
+        window_slide_secs: 0,
+    };
+
+    let duration_a = input.extent_a.effective();
+    let duration_b = input.extent_b.effective();
+    let windows = parallel_holdout_window_candidates(duration_a, duration_b, clip_length);
+    let pcm_window_secs = PARALLEL_PCM_WINDOW_SECS
+        .min(clip_length_secs.floor() as u32)
+        .max(1);
+    let sniff_period = period_secs.is_none();
+
+    struct ParallelAttempt {
+        offset_secs: f64,
+        peak: f64,
+    }
+
+    let mut attempts: Vec<ParallelAttempt> = Vec::new();
+
+    for window in &windows {
+        let window_start_secs = window.start.as_secs_f64();
+        progress.phase_verbose(&format!(
+            "Parallel hold-out recheck A/B [{:.1}–{:.1}] (calendar-aligned, PCM {:.0}s)",
+            window_start_secs,
+            window_start_secs + f64::from(pcm_window_secs),
+            pcm_window_secs,
+        ));
+
+        let raw_a = match input.session_a.extract_mono(
+            input.track_a,
+            window,
+            progress,
+            "Parallel recheck (video A)",
+        ) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug_media_error(&e, "parallel recheck: extract A failed, trying next window");
+                continue;
+            }
+        };
+        let raw_b = match input.session_b.extract_mono(
+            input.track_b,
+            window,
+            progress,
+            "Parallel recheck (video B)",
+        ) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug_media_error(&e, "parallel recheck: extract B failed, trying next window");
+                continue;
+            }
+        };
+
+        if !holdout_extract_sufficient(
+            &raw_a,
+            clip_length,
+            input.min_holdout_decode_fraction,
+            input.max_holdout_decode_skips,
+        ) || !holdout_extract_sufficient(
+            &raw_b,
+            clip_length,
+            input.min_holdout_decode_fraction,
+            input.max_holdout_decode_skips,
+        ) {
+            continue;
+        }
+
+        let raw_a = match clip_config.target_sample_rate {
+            Some(rate) => input.resampler.resample_mono(&raw_a, rate),
+            None => raw_a,
+        };
+        let raw_b = match clip_config.target_sample_rate {
+            Some(rate) => input.resampler.resample_mono(&raw_b, rate),
+            None => raw_b,
+        };
+
+        let prepared_a = match prepare_clip_for_fingerprint(&raw_a, prep_options) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug!(error = ?e, "parallel recheck: prepare A failed, trying next window");
+                continue;
+            }
+        };
+        let prepared_b = match prepare_clip_for_fingerprint(&raw_b, prep_options) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug!(error = ?e, "parallel recheck: prepare B failed, trying next window");
+                continue;
+            }
+        };
+
+        if sniff_period {
+            let fp_a = match fingerprinter.fingerprint(&prepared_a) {
+                Ok(fp) => fp,
+                Err(e) => {
+                    debug!(error = %e, "parallel recheck: fingerprint A failed, trying next window");
+                    continue;
+                }
+            };
+            let fp_b = match fingerprinter.fingerprint(&prepared_b) {
+                Ok(fp) => fp,
+                Err(e) => {
+                    debug!(error = %e, "parallel recheck: fingerprint B failed, trying next window");
+                    continue;
+                }
+            };
+
+            let preset = clip_config.chromaprint_preset;
+            let min_conf = validation.min_repetition_confidence;
+            let repetition_report = crate::domain::ClipRepetitionReport {
+                a: detect_clip_repetition(
+                    &fp_a,
+                    prepared_a.duration_secs(),
+                    preset,
+                    min_conf,
+                    raw_a.duration_secs(),
+                ),
+                b: detect_clip_repetition(
+                    &fp_b,
+                    prepared_b.duration_secs(),
+                    preset,
+                    min_conf,
+                    raw_b.duration_secs(),
+                ),
+            };
+            if period_secs.is_none() {
+                *period_secs = periodic_ambiguity_period(
+                    &repetition_report,
+                    min_conf,
+                    Some(clip_length_secs),
+                );
+            }
+        }
+
+        let (adjustment, peak) = match pcm_cross_correlate_lag(
+            &raw_a,
+            &raw_b,
+            0.0,
+            pcm_window_secs,
+            resampler,
+            correlator,
+        ) {
+            Some(result) => result,
+            None => {
+                debug!("parallel recheck: PCM correlate failed, trying next window");
+                continue;
+            }
+        };
+        debug!(
+            window_start_secs,
+            independent_offset_secs = adjustment,
+            correlation_peak = peak,
+            "parallel hold-out PCM recheck"
+        );
+        attempts.push(ParallelAttempt {
+            offset_secs: adjustment,
+            peak,
+        });
+    }
+
+    if attempts.is_empty() {
+        return None;
+    }
+
+    let best = attempts
+        .iter()
+        .max_by(|left, right| {
+            left.peak
+                .partial_cmp(&right.peak)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .expect("attempts non-empty");
+
+    if attempts.len() > 1 {
+        let agreeing = attempts.iter().filter(|attempt| {
+            (attempt.offset_secs - best.offset_secs).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
+        });
+        if agreeing.count() < attempts.len() {
+            debug!(
+                best_offset_secs = best.offset_secs,
+                best_peak = best.peak,
+                windows_tried = attempts.len(),
+                "parallel recheck: PCM windows disagree; using highest-correlation peak"
+            );
+        }
+    }
+
+    Some(best.offset_secs)
 }
 
 fn pick_best_scored_attempt(attempts: &[OffsetVerification]) -> Option<&OffsetVerification> {
@@ -330,7 +729,7 @@ mod tests {
     use super::*;
     use crate::application::config::{ClipConfig, ValidationConfig};
     use crate::application::testing::fakes::{
-        FakeAligner, FakeFingerprinter, FakeMediaSession, FakeProgressReporter,
+        FakeAligner, FakeFingerprinter, FakeMediaSession, FakePcmCorrelator, FakeProgressReporter,
     };
     use crate::domain::{AudioTrack, ClipLabel, ClipMatchEstimate, ClipWindow, MonoPcmClip};
 
@@ -405,6 +804,7 @@ mod tests {
             min_holdout_decode_fraction,
             max_holdout_decode_skips,
             resampler: &crate::infrastructure::resample::RubatoResampler,
+            correlator: &crate::infrastructure::correlation::FftCorrelator,
         }
     }
 
@@ -413,6 +813,7 @@ mod tests {
         path_b: &std::path::Path,
         offset_secs: f64,
         validation: ValidationConfig,
+        offset_ambiguous_mod_secs: Option<f64>,
     ) -> AlignmentResult {
         use crate::application::config::ChromaprintPreset;
         use crate::application::ports::MediaReader;
@@ -439,6 +840,7 @@ mod tests {
         let duration = track_a.duration.expect("duration");
 
         let mut result = result_with_offset(offset_secs);
+        result.offset_ambiguous_mod_secs = offset_ambiguous_mod_secs;
         let clip_config = holdout_clip_config();
         let windows = discovery_windows();
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
@@ -457,6 +859,7 @@ mod tests {
                 min_holdout_decode_fraction,
                 max_holdout_decode_skips,
                 resampler: &crate::infrastructure::resample::RubatoResampler,
+                correlator: &crate::infrastructure::correlation::FftCorrelator,
             },
             &clip_config,
             &validation,
@@ -481,6 +884,7 @@ mod tests {
             &path_b,
             f64::from(OFFSET_SECS),
             verification_validation(),
+            None,
         );
         let v = result
             .offset_verification
@@ -523,6 +927,7 @@ mod tests {
             &path_b,
             -f64::from(OFFSET_SECS),
             verification_validation(),
+            None,
         );
         let v = result
             .offset_verification
@@ -546,6 +951,96 @@ mod tests {
     }
 
     #[test]
+    fn parallel_recheck_looped_chirp_disagrees_with_period_alias() {
+        use crate::application::testing::audio_fixtures::write_looped_chirp_wav_pair;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) =
+            write_looped_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+
+        let mut validation = verification_validation();
+        validation.check_clip_repetition = true;
+
+        let result = run_real_pipeline_verification(&path_a, &path_b, 13.0, validation, Some(10.0));
+        let v = result
+            .offset_verification
+            .expect("offset_verification must be set");
+
+        assert!(
+            v.independent_offset_secs.is_some(),
+            "parallel recheck should run on looped pair"
+        );
+        let independent = v.independent_offset_secs.unwrap();
+        assert!(
+            (independent - 3.0).abs() < 2.0,
+            "parallel recheck expected ~+3s true offset, got {independent}"
+        );
+        assert!(!v.verified, "period alias +13s must not verify");
+        assert!(v.verify_inconclusive);
+    }
+
+    #[test]
+    fn verify_inconclusive_when_ambiguous_without_parallel_pcm() {
+        let duration = Duration::from_secs(120);
+        let track = AudioTrack {
+            index: 0,
+            codec: "test".into(),
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            duration: Some(duration),
+            decodable: true,
+        };
+        let mut session_a = FakeMediaSession::with_duration(duration);
+        let mut session_b = session_a.clone();
+        let mut result = result_with_offset(3.0);
+        result.offset_ambiguous_mod_secs = Some(10.0);
+
+        let clip_config = holdout_clip_config();
+        let validation = verification_validation();
+        let windows = discovery_windows();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 0.0,
+            confidence: 0.9,
+        });
+        let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
+        let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
+        let extent = MediaExtent::from_declared(duration);
+
+        apply_offset_verification(
+            &mut OffsetVerificationInput {
+                session_a: &mut session_a,
+                session_b: &mut session_b,
+                track_a: &track,
+                track_b: &track,
+                discovery_windows: &windows,
+                extent_a: extent,
+                extent_b: extent,
+                min_holdout_decode_fraction,
+                max_holdout_decode_skips,
+                resampler: &crate::infrastructure::resample::RubatoResampler,
+                correlator: &correlator,
+            },
+            &clip_config,
+            &validation,
+            &mut result,
+            &fingerprinter,
+            &aligner,
+            &progress,
+        );
+
+        let v = result
+            .offset_verification
+            .expect("offset_verification must be set");
+        assert!(
+            v.verify_inconclusive,
+            "ambiguous flag without parallel PCM should force inconclusive"
+        );
+        assert!(!v.verified);
+    }
+
+    #[test]
     fn verify_offset_fails_wrong_delta() {
         use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
 
@@ -553,7 +1048,7 @@ mod tests {
         let (path_a, path_b) =
             write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
 
-        let result = run_real_pipeline_verification(&path_a, &path_b, 8.0, verification_validation());
+        let result = run_real_pipeline_verification(&path_a, &path_b, 8.0, verification_validation(), None);
         let v = result
             .offset_verification
             .expect("offset_verification must be set when flag on");
@@ -670,6 +1165,9 @@ mod tests {
                 skipped: false,
                 skip_reason: None,
                 candidates_tried: 0,
+                independent_offset_secs: None,
+                parallel_recheck_delta_secs: None,
+                verify_inconclusive: false,
             },
             OffsetVerification {
                 window_a_start_secs: 30.0,
@@ -681,6 +1179,9 @@ mod tests {
                 skipped: false,
                 skip_reason: None,
                 candidates_tried: 0,
+                independent_offset_secs: None,
+                parallel_recheck_delta_secs: None,
+                verify_inconclusive: false,
             },
         ];
 
@@ -1028,6 +1529,7 @@ mod tests {
             &path_b,
             ALIGN_OFFSET,
             verification_validation(),
+            None,
         );
         let base = baseline
             .offset_verification
@@ -1043,6 +1545,7 @@ mod tests {
             &path_b,
             ALIGN_OFFSET,
             validation,
+            None,
         );
         let downgraded = downgraded_result
             .offset_verification

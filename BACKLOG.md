@@ -17,7 +17,6 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-periodic-ambiguity-plan.md](docs/TEMP-periodic-ambiguity-plan.md) | Mod-**T** offset ambiguity diagnostic, verify gating, edge parallel recheck (+13 s probe) |
 | [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill |
 
 ---
@@ -97,6 +96,7 @@ Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port com
 | `AudioTrack.bitrate` removed | 2026-06-10 | Symphonia doesn't expose encoding bitrate; field was always `None`; container-order heuristic is sufficient |
 | `MediaSession` redesign + `MediaExtent` | 2026-06-11 | [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md): `&mut self` port, internal seek recovery, `media_scan.rs`, hold-out extent placement, duration-less open audit |
 | Verification & validation hardening (phases 1–5) | 2026-06-11 | [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus README / test dedupe / `alignment_fixtures`; v1 docs in [corpus-validation.md](docs/corpus-validation.md) |
+| Periodic offset ambiguity | 2026-06-11 | [archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`); looped +13 s probe |
 
 ---
 

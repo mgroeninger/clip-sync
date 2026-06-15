@@ -14,7 +14,8 @@ use crate::domain::{
     build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
-    select_best_track, should_downgrade_repetition_confidence, truncate_padded_tail,
+    select_best_track, set_offset_ambiguous_mod_from_start_clip,
+    should_apply_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
     ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
@@ -113,6 +114,7 @@ where
                 min_holdout_decode_fraction: request.config.alignment.min_end_clip_decode_fraction,
                 max_holdout_decode_skips: request.config.alignment.max_end_clip_decode_skips,
                 resampler: self.resampler,
+                correlator: self.correlator,
             },
             &request.config.clip,
             &request.config.validation,
@@ -247,9 +249,7 @@ where
         if request.config.validation.check_clip_repetition {
             let rep_result =
                 self.align_extracted_pair(&winning_a, &winning_b, &request.config)?;
-            for (clip, new_clip) in outcome.result.clips.iter_mut().zip(rep_result.clips) {
-                clip.repetition = new_clip.repetition;
-            }
+            outcome.result = rep_result;
         }
 
         Ok(outcome)
@@ -484,11 +484,25 @@ where
             );
             for (i, clip) in result.clips.iter_mut().enumerate() {
                 let (rep_a, rep_b) = repetition_diagnostics[i]; // Copy
-                if should_downgrade_repetition_confidence(&rep_a, &rep_b, estimates[i].offset_secs) {
+                let report = ClipRepetitionReport { a: rep_a, b: rep_b };
+                let clip_duration_secs = clip.window_end_secs - clip.window_start_secs;
+                let periodic = clip.label == ClipLabel::Start
+                    && should_apply_periodic_ambiguity(
+                        &report,
+                        config.validation.min_repetition_confidence,
+                        Some(clip_duration_secs),
+                    );
+                if should_downgrade_repetition_confidence(&rep_a, &rep_b, estimates[i].offset_secs)
+                    || periodic
+                {
                     clip.confidence *= 0.5;
                 }
-                clip.repetition = Some(ClipRepetitionReport { a: rep_a, b: rep_b });
+                clip.repetition = Some(report);
             }
+            set_offset_ambiguous_mod_from_start_clip(
+                &mut result,
+                config.validation.min_repetition_confidence,
+            );
         }
 
         Ok(result)

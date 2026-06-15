@@ -29,7 +29,7 @@
 
 | Plan | Relationship |
 |------|----------------|
-| [TEMP-periodic-ambiguity-plan.md](TEMP-periodic-ambiguity-plan.md) | Symmetric pair mode: mod-**T** ambiguity on repeating **A**; query mode: `ambiguous` on repeating anchors in long **A** — align warning semantics in docs |
+| [archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md) | Symmetric pair mode: mod-**T** ambiguity on repeating **A**; query mode: `ambiguous` on repeating anchors in long **A** — align warning semantics in docs |
 
 **Already shipped (rebase on these, do not re-litigate):**
 

@@ -1,7 +1,7 @@
 use clip_sync::{
-    format_high_rate_refinement_lines, format_offset_verification_lines, format_timestamp,
-    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
-    RepetitionFindingReport,
+    format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_periodic_ambiguity_line, format_timestamp, AlignmentReport, AlignmentResult, AppError,
+    ClipLabelReport, ClipMatchReport, RepetitionFindingReport,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
@@ -93,6 +93,11 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
             out.push_str(&line);
             out.push('\n');
         }
+    }
+
+    if let Some(period) = result.offset_ambiguous_mod_secs {
+        out.push_str(&format_periodic_ambiguity_line(period));
+        out.push('\n');
     }
 
     if let Some(verify) = &result.offset_verification {

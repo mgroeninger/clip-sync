@@ -99,6 +99,12 @@ pub struct OffsetVerification {
     pub skip_reason: Option<String>,
     /// Hold-out windows scored before reporting (0 when skipped before any score).
     pub candidates_tried: u32,
+    /// Calendar-parallel hold-out `find_offset` (same window on A and B); present when periodic recheck ran.
+    pub independent_offset_secs: Option<f64>,
+    /// `recommended_offset_secs - independent_offset_secs` when parallel recheck ran.
+    pub parallel_recheck_delta_secs: Option<f64>,
+    /// Option A scored a pass but periodic gating rejected it.
+    pub verify_inconclusive: bool,
 }
 
 /// Native-rate hold-out FFT correction applied after discovery alignment.
@@ -131,6 +137,8 @@ pub struct AlignmentResult {
     pub start_overlap: Option<TimelineOverlap>,
     pub high_rate_refinement: Option<HighRateRefinement>,
     pub offset_verification: Option<OffsetVerification>,
+    /// Repeat period **T** (seconds) when start-clip repetition makes the offset family ambiguous mod **T**.
+    pub offset_ambiguous_mod_secs: Option<f64>,
 }
 
 impl AlignmentResult {
@@ -153,6 +161,9 @@ pub fn clip_with_label<'a>(clips: &'a [ClipMatch], label: ClipLabel) -> Option<&
 /// Maximum start/end clip offset delta treated as agreement when merging estimates.
 pub const OFFSET_AGREEMENT_TOLERANCE_SECS: f64 = 0.5;
 
+/// Minimum internal repeat lag treated as a periodic ambiguity period.
+pub const MIN_PERIODIC_REPEAT_LAG_SECS: f64 = 5.0;
+
 /// Returns true when a repetition lag is close enough to the alignment offset that the
 /// confidence estimate may be inflated by the repeated content.
 pub fn should_downgrade_repetition_confidence(
@@ -162,6 +173,143 @@ pub fn should_downgrade_repetition_confidence(
 ) -> bool {
     let close = |rep: &RepetitionFinding| (rep.lag_secs - offset_secs.abs()).abs() <= 1.0;
     rep_a.as_ref().is_some_and(close) || rep_b.as_ref().is_some_and(close)
+}
+
+fn is_strong_repetition_finding(finding: &RepetitionFinding, min_confidence: f32) -> bool {
+    finding.confidence >= min_confidence && finding.lag_secs >= MIN_PERIODIC_REPEAT_LAG_SECS
+}
+
+/// Minimum whole periods a clip should contain when inferring a fundamental repeat from a harmonic lag.
+const MIN_PERIODS_IN_CLIP_FOR_NORMALIZE: f64 = 3.0;
+
+/// Reduces a detected repeat lag to the smallest plausible fundamental period **T** when the clip
+/// contains several whole periods (e.g. 40 s harmonic → 10 s on a 60 s looped clip).
+pub fn normalize_repeat_period(period_secs: f64, clip_duration_secs: f64) -> f64 {
+    if period_secs <= MIN_PERIODIC_REPEAT_LAG_SECS
+        || clip_duration_secs <= MIN_PERIODIC_REPEAT_LAG_SECS
+        || period_secs <= 2.0 * MIN_PERIODIC_REPEAT_LAG_SECS
+    {
+        return period_secs;
+    }
+
+    let max_k = (period_secs / MIN_PERIODIC_REPEAT_LAG_SECS).floor() as i32;
+    let mut best = period_secs;
+    for k in 2..=max_k.max(2) {
+        let candidate = period_secs / f64::from(k);
+        if candidate < MIN_PERIODIC_REPEAT_LAG_SECS {
+            continue;
+        }
+        if k > 1 && candidate < period_secs / 4.0 {
+            continue;
+        }
+        let periods_in_clip = clip_duration_secs / candidate;
+        if periods_in_clip >= MIN_PERIODS_IN_CLIP_FOR_NORMALIZE
+            && (periods_in_clip - periods_in_clip.round()).abs() < 0.15
+        {
+            best = best.min(candidate);
+        }
+    }
+    best
+}
+
+/// User-facing repeat period **T** from a raw autocorrelation lag and clip duration.
+pub fn display_repeat_period(period_secs: f64, clip_duration_secs: f64) -> f64 {
+    snap_suboctave_repeat_period(
+        normalize_repeat_period(period_secs, clip_duration_secs),
+        clip_duration_secs,
+    )
+}
+
+/// When autocorrelation resolves a sub-multiple of the true tile (e.g. ~5 s for a 10 s loop),
+/// promote to the doubled period when the clip contains whole periods at that scale.
+fn snap_suboctave_repeat_period(period_secs: f64, clip_duration_secs: f64) -> f64 {
+    let doubled = period_secs * 2.0;
+    if period_secs >= 8.0 || doubled < MIN_PERIODIC_REPEAT_LAG_SECS {
+        return period_secs;
+    }
+    let periods_in_clip = clip_duration_secs / doubled;
+    if periods_in_clip >= MIN_PERIODS_IN_CLIP_FOR_NORMALIZE
+        && (periods_in_clip - periods_in_clip.round()).abs() < 0.15
+    {
+        doubled
+    } else {
+        period_secs
+    }
+}
+
+/// Best repeat period **T** from per-clip repetition diagnostics when either side has strong repeat.
+pub fn periodic_ambiguity_period(
+    report: &ClipRepetitionReport,
+    min_repetition_confidence: f32,
+    clip_duration_secs: Option<f64>,
+) -> Option<f64> {
+    let raw = match (&report.a, &report.b) {
+        (Some(a), Some(b)) if is_strong_repetition_finding(a, min_repetition_confidence)
+            && is_strong_repetition_finding(b, min_repetition_confidence) =>
+        {
+            Some(a.lag_secs.min(b.lag_secs))
+        }
+        (Some(a), _) if is_strong_repetition_finding(a, min_repetition_confidence) => Some(a.lag_secs),
+        (_, Some(b)) if is_strong_repetition_finding(b, min_repetition_confidence) => Some(b.lag_secs),
+        _ => None,
+    };
+    raw.map(|period| {
+        let clip_secs = clip_duration_secs.unwrap_or(period);
+        display_repeat_period(period, clip_secs)
+    })
+}
+
+/// True when strong start-clip repetition warrants periodic ambiguity handling.
+pub fn should_apply_periodic_ambiguity(
+    report: &ClipRepetitionReport,
+    min_repetition_confidence: f32,
+    clip_duration_secs: Option<f64>,
+) -> bool {
+    periodic_ambiguity_period(report, min_repetition_confidence, clip_duration_secs).is_some()
+}
+
+/// Rounds `recommended - independent` to the nearest integer multiple of `period_secs`.
+/// Returns `None` when the residual exceeds [`OFFSET_AGREEMENT_TOLERANCE_SECS`].
+pub fn periodic_recheck_period_multiple(
+    recommended_secs: f64,
+    independent_secs: f64,
+    period_secs: f64,
+) -> Option<i32> {
+    if period_secs <= 0.0 {
+        return None;
+    }
+    let diff = recommended_secs - independent_secs;
+    let multiple = (diff / period_secs).round();
+    let residual = (diff - multiple * period_secs).abs();
+    if residual > OFFSET_AGREEMENT_TOLERANCE_SECS {
+        return None;
+    }
+    Some(multiple as i32)
+}
+
+/// Sets [`AlignmentResult::offset_ambiguous_mod_secs`] from the start clip repetition report.
+pub fn set_offset_ambiguous_mod_from_start_clip(
+    result: &mut AlignmentResult,
+    min_repetition_confidence: f32,
+) {
+    let Some(clip) = result.start_clip() else {
+        return;
+    };
+    let clip_duration_secs = clip.window_end_secs - clip.window_start_secs;
+    let Some(period) = clip
+        .repetition
+        .as_ref()
+        .and_then(|report| {
+            periodic_ambiguity_period(
+                report,
+                min_repetition_confidence,
+                Some(clip_duration_secs),
+            )
+        })
+    else {
+        return;
+    };
+    result.offset_ambiguous_mod_secs = Some(period);
 }
 
 /// Per-clip alignment inputs for building an [`AlignmentResult`].
@@ -263,6 +411,7 @@ pub fn build_alignment_result(
         start_overlap,
         high_rate_refinement: None,
         offset_verification: None,
+        offset_ambiguous_mod_secs: None,
     }
 }
 
@@ -506,8 +655,47 @@ mod tests {
             start_overlap: None,
             high_rate_refinement: None,
             offset_verification: None,
+            offset_ambiguous_mod_secs: None,
         };
         assert!(result.start_clip().is_none());
+    }
+
+    #[test]
+    fn periodic_recheck_period_multiple_cases() {
+        assert_eq!(periodic_recheck_period_multiple(13.0, 3.0, 10.0), Some(1));
+        assert_eq!(periodic_recheck_period_multiple(3.0, 3.0, 10.0), Some(0));
+        assert_eq!(periodic_recheck_period_multiple(3.0, 5.0, 10.0), None);
+    }
+
+    #[test]
+    fn periodic_ambiguity_period_prefers_smaller_strong_lag() {
+        let report = ClipRepetitionReport {
+            a: Some(RepetitionFinding {
+                lag_secs: 10.0,
+                confidence: 0.8,
+                items_count: 40,
+            }),
+            b: Some(RepetitionFinding {
+                lag_secs: 30.0,
+                confidence: 0.6,
+                items_count: 20,
+            }),
+        };
+        assert_eq!(
+            periodic_ambiguity_period(&report, 0.5, Some(60.0)),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn normalize_repeat_period_reduces_harmonic_lag() {
+        assert!((normalize_repeat_period(40.0, 60.0) - 10.0).abs() < 0.01);
+        assert!((normalize_repeat_period(30.0, 65.0) - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn snap_suboctave_repeat_period_promotes_five_second_harmonic() {
+        assert!((snap_suboctave_repeat_period(5.0, 60.0) - 10.0).abs() < 0.1);
     }
 
     #[test]

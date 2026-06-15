@@ -95,7 +95,7 @@ Audit at plan draft (2026-06-10). All rows below were addressed in phases 1–5 
 
 **Option B follow-up (superseded — period alias false-pass):**
 
-- [ ] Mod-period diagnostic + verify gating — [TEMP-periodic-ambiguity-plan.md](../TEMP-periodic-ambiguity-plan.md) (not Option B PCM lag-0)
+- [x] Mod-period diagnostic + verify gating — [archive/periodic-ambiguity-plan.md](periodic-ambiguity-plan.md) (not Option B PCM lag-0)
 - [x] Corpus regression: `corpus_verify_option_a_false_pass_probe` (+8/+18 reject, +13 false-pass)
 
 ### Phase 4 — corpus + test hygiene

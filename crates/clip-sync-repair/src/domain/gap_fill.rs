@@ -129,6 +129,7 @@ mod tests {
             start_overlap: None,
             high_rate_refinement: None,
             offset_verification: None,
+            offset_ambiguous_mod_secs: None,
         }
     }
 

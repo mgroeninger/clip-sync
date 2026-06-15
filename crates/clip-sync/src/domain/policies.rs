@@ -333,6 +333,51 @@ pub fn holdout_window_candidates(
     candidates
 }
 
+/// Calendar-parallel hold-out windows (same `[T, T+L)` on A and B) for periodic offset recheck.
+/// Edge `T = 0` is listed first.
+pub fn parallel_holdout_window_candidates(
+    duration_a: Duration,
+    duration_b: Duration,
+    segment_length: Duration,
+) -> Vec<ClipWindow> {
+    let segment_secs = segment_length.as_secs_f64();
+    if segment_secs <= 0.0 {
+        return Vec::new();
+    }
+
+    let max_start = duration_a
+        .as_secs_f64()
+        .min(duration_b.as_secs_f64())
+        - segment_secs;
+    if max_start < 0.0 {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let mut push_unique = |start_secs: f64| {
+        if start_secs < 0.0 || start_secs > max_start + 0.001 {
+            return;
+        }
+        if candidates.iter().any(|w: &ClipWindow| {
+            (w.start.as_secs_f64() - start_secs).abs() < 0.001
+        }) {
+            return;
+        }
+        candidates.push(ClipWindow::new(
+            secs_to_duration(start_secs),
+            secs_to_duration(start_secs + segment_secs),
+            ClipLabel::Interior,
+        ));
+    };
+
+    push_unique(0.0);
+    if max_start > 0.0 {
+        push_unique(max_start);
+    }
+
+    candidates
+}
+
 pub fn holdout_window_feasible(
     window_start_secs: f64,
     segment_length_secs: f64,
