@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-ffmpeg-mux = ["dep:tempfile"]
+ffmpeg-mux = []
 he-aac = ["clip-sync/he-aac"]
 ac3 = ["clip-sync/ac3"]
 ffmpeg-tests = ["clip-sync/ffmpeg-tests"]
@@ -29,7 +29,6 @@ toml = "0.8"
 thiserror = "1"
 tracing = "0.1"
 hound = "3"
-tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }

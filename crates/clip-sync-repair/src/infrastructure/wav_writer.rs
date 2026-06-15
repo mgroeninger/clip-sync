@@ -7,11 +7,14 @@ use clip_sync::MultiChannelPcm;
 
 use crate::application::error::RepairError;
 use crate::application::ports::PatchedAudioWriter;
+use crate::infrastructure::pcm::validate_pcm_for_wav;
 
 pub struct WavPatchedAudioWriter;
 
 impl PatchedAudioWriter for WavPatchedAudioWriter {
     fn write(&self, audio: &MultiChannelPcm, path: &Path) -> Result<(), RepairError> {
+        validate_pcm_for_wav(audio)?;
+
         let spec = WavSpec {
             channels: audio.channels,
             sample_rate: audio.sample_rate,
@@ -30,7 +33,16 @@ impl PatchedAudioWriter for WavPatchedAudioWriter {
         }
 
         writer.finalize().map_err(|e| {
-            RepairError::Write(io::Error::other(format!("{}: {}", path.display(), e)))
+            let message = e.to_string();
+            if message.contains("not a multiple of the number of channels") {
+                RepairError::Write(io::Error::other(format!(
+                    "{}: WAV finalize failed ({message}); this often indicates patched audio \
+                     exceeds the classic WAV 4 GiB limit — use --mux instead",
+                    path.display()
+                )))
+            } else {
+                RepairError::Write(io::Error::other(format!("{}: {}", path.display(), e)))
+            }
         })?;
 
         Ok(())
