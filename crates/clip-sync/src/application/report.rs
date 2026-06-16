@@ -378,6 +378,7 @@ pub fn format_offset_verification_lines(
 /// `show_diagnostics`, adds the B span, offset, and coarse-search stats for debugging.
 pub fn format_query_localization_lines(
     loc: &QueryLocalizationReport,
+    recommended_offset_secs: Option<f64>,
     show_diagnostics: bool,
 ) -> Vec<String> {
     if let Some(reason) = &loc.skip_reason {
@@ -404,10 +405,12 @@ pub fn format_query_localization_lines(
             "Clip on B:  {}",
             format_time_range(loc.clip_on_b_start_secs, loc.clip_on_b_end_secs)
         ));
-        lines.push(format!(
-            "Offset:     {:+.3}s  (add to A to align with B)",
-            -loc.anchor_a_secs
-        ));
+        if let Some(offset) = recommended_offset_secs {
+            lines.push(format!(
+                "Offset:     {:+.3}s  (add to A to align with B)",
+                offset
+            ));
+        }
         lines.push(format!(
             "Search:     {} window(s) @ {:.0}s stride",
             loc.windows_scored, loc.search_stride_secs
@@ -438,11 +441,15 @@ pub fn format_periodic_ambiguity_line(period_secs: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::application::testing::alignment_fixtures::{
         minimal_alignment_result, start_clip_match,
     };
-    use crate::domain::build_query_alignment_result;
+    use crate::domain::{
+        build_query_alignment_result, MediaExtent, QueryLocalization, ReferenceLocalizationOutcome,
+    };
 
     fn domain_clip(label: ClipLabel, repetition: Option<ClipRepetitionReport>) -> ClipMatch {
         let mut clip = start_clip_match(Some(3.0), 900.0, 0.9);
@@ -590,7 +597,7 @@ mod tests {
     #[test]
     fn format_query_lines_lead_with_placement() {
         let report = QueryLocalizationReport::from(&sample_localization());
-        let lines = format_query_localization_lines(&report, false);
+        let lines = format_query_localization_lines(&report, Some(-2700.0), false);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("Match on video A: 45:00 – 53:00"));
         assert!(lines[0].contains("8m"));
@@ -600,7 +607,7 @@ mod tests {
     #[test]
     fn format_query_lines_verbose_adds_offset_and_b_span() {
         let report = QueryLocalizationReport::from(&sample_localization());
-        let lines = format_query_localization_lines(&report, true);
+        let lines = format_query_localization_lines(&report, Some(-2700.0), true);
         let joined = lines.join("\n");
         assert!(joined.contains("Clip on B:"));
         assert!(joined.contains("Offset:"));
@@ -608,10 +615,35 @@ mod tests {
     }
 
     #[test]
+    fn format_query_lines_verbose_b_longer_positive_offset() {
+        let loc = QueryLocalization::from_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: 240.0,
+                query_duration_secs: 90.0,
+                winning_window_start_secs: 180.0,
+                winning_window_end_secs: 270.0,
+                confidence: 0.91,
+                ambiguous: false,
+                windows_scored: 12,
+                search_stride_secs: 60.0,
+                skip_reason: None,
+            },
+            false,
+            MediaExtent::from_declared(Duration::from_secs(90)),
+            MediaExtent::from_declared(Duration::from_secs(360)),
+        );
+        let report = QueryLocalizationReport::from(&loc);
+        let lines = format_query_localization_lines(&report, Some(240.0), true);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Offset:"));
+        assert!(joined.contains("+240.000s"));
+    }
+
+    #[test]
     fn format_query_lines_skip_reason() {
         let loc = QueryLocalization::skipped("below threshold", 40, 60.0);
         let report = QueryLocalizationReport::from(&loc);
-        let lines = format_query_localization_lines(&report, false);
+        let lines = format_query_localization_lines(&report, None, false);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("below threshold"));
     }

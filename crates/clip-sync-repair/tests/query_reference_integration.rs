@@ -19,6 +19,9 @@ const GAP_INSIDE_START: u32 = 248;
 const GAP_INSIDE_END: u32 = 283;
 const GAP_OUTSIDE_START: u32 = 60;
 const GAP_OUTSIDE_END: u32 = 90;
+/// Inside gap on short A's timeline when B is the long donor (mirrors A-long layout).
+const GAP_INSIDE_A_START: u32 = GAP_INSIDE_START - QUERY_ANCHOR_SECS;
+const GAP_INSIDE_A_END: u32 = GAP_INSIDE_END - QUERY_ANCHOR_SECS;
 
 fn chirp_sample(sample_rate: u32, index: u64) -> i16 {
     let t = index as f32 / sample_rate as f32;
@@ -138,6 +141,66 @@ fn write_query_fixture(temp: &Path) -> (PathBuf, PathBuf) {
     (path_a, path_b)
 }
 
+fn write_b_longer_query_fixture(temp: &Path) -> (PathBuf, PathBuf) {
+    let path_a = temp.join("short_a.wav");
+    let path_b = temp.join("long_b.wav");
+    write_mono_chirp(&path_b, SAMPLE_RATE, A_TOTAL_SECS);
+    write_chirp_slice(
+        &path_a,
+        SAMPLE_RATE,
+        QUERY_ANCHOR_SECS,
+        QUERY_DURATION_SECS,
+    );
+    mute_segment(
+        &path_a,
+        SAMPLE_RATE,
+        GAP_INSIDE_A_START,
+        GAP_INSIDE_A_END,
+    );
+    (path_a, path_b)
+}
+
+fn mono_region(samples: &[i16], channels: u16, sample_rate: u32, start_secs: f64, end_secs: f64) -> Vec<i16> {
+    let ch = usize::from(channels.max(1));
+    let start = (start_secs * f64::from(sample_rate)).round() as usize * ch;
+    let end = (end_secs * f64::from(sample_rate)).round() as usize * ch;
+    samples[start..end.min(samples.len())]
+        .iter()
+        .step_by(ch)
+        .copied()
+        .collect()
+}
+
+fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_repair::application::PatchAudioResult {
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    patch
+        .execute(
+            PatchAudioRequest {
+                report,
+                normalize_fill: false,
+                normalize_window_secs: 5.0,
+                max_fill_gain_db: 12.0,
+                min_fill_correlation: 0.35,
+                fill_align_margin_secs: 1.0,
+                max_fill_align_adjustment_secs: 0.5,
+                fill_border_search_secs: 30.0,
+                min_border_discovery_secs: 2.0,
+                border_standoff_secs: 0.35,
+                short_gap_mean_correlation_secs: 2.0,
+                fill_length_slack_secs: 5.0,
+                fill_seam_search_secs: 0.25,
+                gap_signature_context_secs: 3.0,
+                gap_signature_bin_ms: 50,
+                min_structure_match_score: 0.55,
+                strong_structure_trust: 0.90,
+                partial_structure_waveform_soften: 0.85,
+                absolute_silence_rms: 0.0,
+            },
+            10,
+        )
+        .expect("patch inside-region gap")
+}
+
 #[test]
 fn repair_auto_no_clip_count_mismatch_error() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -220,34 +283,7 @@ fn repair_query_gap_inside_region_fillable() {
         "inside gap should be in fill plan"
     );
 
-    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
-    let result = patch
-        .execute(
-            PatchAudioRequest {
-                report,
-                normalize_fill: false,
-                normalize_window_secs: 5.0,
-                max_fill_gain_db: 12.0,
-                min_fill_correlation: 0.35,
-                fill_align_margin_secs: 1.0,
-                max_fill_align_adjustment_secs: 0.5,
-                fill_border_search_secs: 30.0,
-                min_border_discovery_secs: 2.0,
-                border_standoff_secs: 0.35,
-                short_gap_mean_correlation_secs: 2.0,
-                fill_length_slack_secs: 5.0,
-                fill_seam_search_secs: 0.25,
-                gap_signature_context_secs: 3.0,
-                gap_signature_bin_ms: 50,
-                min_structure_match_score: 0.55,
-                strong_structure_trust: 0.90,
-                partial_structure_waveform_soften: 0.85,
-                absolute_silence_rms: 0.0,
-            },
-            10,
-        )
-        .expect("patch inside-region gap");
-
+    let result = patch_inside_gap(report);
     let patched = result
         .summary
         .gaps
@@ -258,6 +294,121 @@ fn repair_query_gap_inside_region_fillable() {
         matches!(patched.status, GapPatchStatus::Patched { .. }),
         "expected patched, got {:?}",
         patched.status
+    );
+}
+
+#[test]
+fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) = write_b_longer_query_fixture(temp.path());
+
+    let report = ScanGaps::new(
+        &SymphoniaMediaReader,
+        &FakeProgressReporter,
+        &SymphoniaAligner,
+    )
+    .execute(scan_request(path_a.clone(), path_b.clone()))
+    .expect("short A + long B should complete under Auto query mode");
+
+    assert_eq!(
+        report.alignment.alignment_mode_used,
+        Some(AlignmentModeUsedReport::QueryReference)
+    );
+    let offset = report
+        .alignment
+        .recommended_offset_secs
+        .expect("recommended offset");
+    assert!(
+        offset > 0.0,
+        "B-longer query mode should yield positive offset, got {offset}"
+    );
+    assert!(
+        (offset - f64::from(QUERY_ANCHOR_SECS)).abs() < 2.0,
+        "offset {offset} expected ~{QUERY_ANCHOR_SECS}"
+    );
+    let loc = report
+        .alignment
+        .query_localization
+        .as_ref()
+        .expect("localization");
+    assert!(loc.skip_reason.is_none());
+    assert!(
+        loc.clip_on_a_start_secs.abs() < 2.0,
+        "short A clip should start near 0, got {}",
+        loc.clip_on_a_start_secs
+    );
+
+    let inside_gap = report
+        .gaps
+        .iter()
+        .find(|g| {
+            (g.video_a_start_secs - f64::from(GAP_INSIDE_A_START)).abs() < 5.0
+                && (g.video_a_end_secs - f64::from(GAP_INSIDE_A_END)).abs() < 5.0
+        })
+        .expect("inside gap on short A");
+    assert!(inside_gap.is_fillable());
+    assert!(!report.gap_outside_reference_coverage(inside_gap));
+
+    let gap_a_start = inside_gap.video_a_start_secs;
+    let gap_a_end = inside_gap.video_a_end_secs;
+    let gap_b_start = inside_gap.video_b_start_secs;
+    let result = patch_inside_gap(report);
+    let patched = result
+        .summary
+        .gaps
+        .iter()
+        .find(|g| (g.a_start_secs - gap_a_start).abs() < 5.0)
+        .expect("inside gap outcome");
+    assert!(
+        matches!(patched.status, GapPatchStatus::Patched { .. }),
+        "expected patched, got {:?}",
+        patched.status
+    );
+
+    let GapPatchStatus::Patched {
+        post_correlation,
+        pre_correlation,
+        ..
+    } = &patched.status
+    else {
+        panic!("expected patched, got {:?}", patched.status);
+    };
+    assert!(
+        *post_correlation >= 0.35,
+        "patch post-correlation {post_correlation} below min_fill_correlation gate (pre={pre_correlation})"
+    );
+    assert!(
+        *post_correlation > 0.85,
+        "patched gap should correlate strongly with donor chirp, post_correlation={post_correlation}"
+    );
+
+    let pcm = result.pcm.expect("patched pcm");
+    let interior_start = gap_a_start + 2.0;
+    let interior_end = gap_a_end - 2.0;
+    assert!(
+        interior_end > interior_start,
+        "gap too short for interior audio check"
+    );
+    let filled = mono_region(
+        &pcm.samples,
+        pcm.channels,
+        pcm.sample_rate,
+        interior_start,
+        interior_end,
+    );
+    let filled_rms: f64 = filled
+        .iter()
+        .map(|&s| f64::from(s) * f64::from(s))
+        .sum::<f64>()
+        / filled.len().max(1) as f64;
+    assert!(
+        filled_rms.sqrt() > 500.0,
+        "patched gap interior should contain donor audio, rms={}",
+        filled_rms.sqrt()
+    );
+    assert!(
+        gap_b_start.expect("b start") >= 0.0,
+        "gap_b = gap_a + offset must be non-negative"
     );
 }
 

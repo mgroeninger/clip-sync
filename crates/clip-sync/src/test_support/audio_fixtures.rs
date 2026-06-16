@@ -390,3 +390,32 @@ pub fn write_query_reference_chirp_pair(
     );
     (path_a, path_b)
 }
+
+/// Short query A (slice from B at `query_anchor_secs`) + long reference B (full chirp).
+///
+/// Mirror of [`write_query_reference_chirp_pair`] for the B-longer repair scenario.
+pub fn write_query_reference_b_longer_chirp_pair(
+    dir: &Path,
+    sample_rate: u32,
+    reference_secs: u32,
+    query_anchor_secs: u32,
+    query_duration_secs: u32,
+) -> (PathBuf, PathBuf) {
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+    let sweep_secs = f64::from(reference_secs);
+    let reference_samples = u64::from(sample_rate) * u64::from(reference_secs);
+    write_mono_wav(
+        &path_b,
+        sample_rate,
+        (0..reference_samples).map(|index| bounded_chirp_sample(sample_rate, index, sweep_secs)),
+    );
+    let start_index = u64::from(sample_rate) * u64::from(query_anchor_secs);
+    let query_samples = u64::from(sample_rate) * u64::from(query_duration_secs);
+    write_mono_wav(
+        &path_a,
+        sample_rate,
+        (0..query_samples).map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
+    );
+    (path_a, path_b)
+}

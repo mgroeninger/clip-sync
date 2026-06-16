@@ -147,16 +147,18 @@ Default is `false` because track-pair brute force multiplies decode work. Prefer
 
 ## Query-reference corpus (`wav_query_reference_*`)
 
-Shipped with [query-reference alignment](archive/query-reference-alignment-plan.md) (2026-06-15). Exercises **short B embedded mid-file on long A** via query-reference mode — not symmetric offset chirp pairs.
+Shipped with [query-reference alignment](archive/query-reference-alignment-plan.md) (2026-06-15). Exercises query-reference mode — not symmetric offset chirp pairs. A-long cases embed short B on long A; B-long cases embed short A on long B (donor-longer repair scenario).
 
 | Case | Tier | Generator | Asserts |
 |------|------|-----------|---------|
 | `wav_query_reference_45min_anchor` | **generated** (`#[ignore]`) | `query_reference_chirp_pair` | 60 min A + 8 min B @ 45:00; `anchor_a_secs` and `recommended_offset_secs` within **±0.05 s** |
+| `wav_query_reference_b_longer_anchor` | **generated** (`#[ignore]`) | `query_reference_b_longer_chirp_pair` | 60 min B + 8 min A @ 45:00 on B; `clip_on_a_start_secs ≈ 0`, `anchor_a_secs ≈ 2700`, `recommended_offset_secs ≈ +2700` |
 
 Run alone (slow — full coarse search on 60 min reference):
 
 ```powershell
 cargo test -p clip-sync corpus_query_reference_45min_anchor -- --ignored
+cargo test -p clip-sync corpus_query_reference_b_longer_anchor -- --ignored
 ```
 
 Included in `cargo test -p clip-sync corpus_generated -- --ignored`. Fields: `alignment_mode = "queryreference"`, `expect_clip_on_a_start_secs`, tight `tolerance_secs`.

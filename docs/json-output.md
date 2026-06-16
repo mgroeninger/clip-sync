@@ -78,18 +78,18 @@ Top-level object: **AlignmentReport**.
 
 ### QueryLocalization
 
-Present only when `alignment_mode_used` is `"queryreference"`. Describes where the short *query* clip (B) sits on the long *reference* timeline (A). The `clip_on_a_*` / `clip_on_b_*` fields are human-oriented aliases mirroring `mapped_region`; scripts may prefer the parent `recommended_offset_secs` / `start_overlap`.
+Present only when `alignment_mode_used` is `"queryreference"`. Describes where the short *query* clip sits relative to the long *reference* file. The result is always framed in repair roles: `mapped_region`, `clip_on_a_*`, and `clip_on_b_*` use A/B timelines regardless of which file was longer. Scripts should prefer the parent `recommended_offset_secs` / `start_overlap` for placement math.
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `anchor_a_secs` | number | always | A-timeline position where query `t = 0` aligns (`recommended_offset_secs = -anchor_a_secs`) |
-| `clip_on_a_start_secs` | number | always | Clip start on A's timeline (= `mapped_region.video_a_start_secs`) |
-| `clip_on_a_end_secs` | number | always | Clip end on A's timeline |
-| `clip_on_b_start_secs` | number | always | Clip start on B's timeline (usually 0) |
-| `clip_on_b_end_secs` | number | always | Clip end on B's timeline |
-| `mapped_region` | [TimelineOverlap](#timelineoverlap) | always | Shared region implied by the anchor + query duration |
+| `anchor_a_secs` | number | always | Position on the **longer (reference)** file where the short clip's `t = 0` aligns (= `mapped_region.video_a_start` when A is reference, else `video_b_start`). Not always an A-timeline value when B is the longer file. |
+| `clip_on_a_start_secs` | number | always | Clip start on **A's** timeline (= `mapped_region.video_a_start_secs`) |
+| `clip_on_a_end_secs` | number | always | Clip end on **A's** timeline |
+| `clip_on_b_start_secs` | number | always | Clip start on **B's** timeline (usually 0 when B is the query) |
+| `clip_on_b_end_secs` | number | always | Clip end on **B's** timeline |
+| `mapped_region` | [TimelineOverlap](#timelineoverlap) | always | Shared region implied by the anchor + query duration (A/B-oriented) |
 | `search_stride_secs` | number | always | Coarse search stride actually used (may widen if the window cap was hit) |
-| `winning_window_start_secs` | number | always | A-timeline bounds of the winning coarse search window |
+| `winning_window_start_secs` | number | always | **Reference**-timeline bounds of the winning coarse search window (A when A is longer, B when B is longer) |
 | `winning_window_end_secs` | number | always | |
 | `confidence` | number | always | Localization confidence in [0, 1] (×0.5 when ambiguous) |
 | `ambiguous` | bool | always | A competing anchor scored comparably (repeated content) |

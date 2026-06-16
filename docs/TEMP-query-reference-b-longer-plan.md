@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment when the donor (B) is the longer file
 
-> **Status:** Not started — **design signed off (A′)**, ready to implement (start at Phase B0). Follows up the shipped query-reference feature ([archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md), Q0–Q4). Archive into that doc (or alongside it) when shipped.
+> **Status:** Shipped (2026-06-16) — B0–B4 complete. Follows up the shipped query-reference feature ([archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md), Q0–Q4). Archive into that doc (or alongside it) when convenient.
 
 **Problem:** Query-reference localization searches a short *query* fingerprint across a long *reference* timeline — so the **reference must be the longer file and the query the shorter**, by construction. Today `AlignVideos::execute()` hard-wires `reference = A` and only runs query mode when `extent_b.effective() <= extent_a.effective()` (B is the shorter file). When **B is the longer file** (e.g. A = a short clip with a dropout, B = the full event recording), query mode is *selected* by Auto/ratio but then **falls back to symmetric** with a logged note — which fails the way the feature was meant to fix.
 
@@ -124,22 +124,22 @@ The only residual is cosmetic: in B-long mode the `_a`-named field carries a B-t
 
 ### Phase B3 — Tests
 
-- [ ] **Unit (no chromaprint):** `from_reference_outcome` with `reference_is_a = false` → assert `recommended_offset = +anchor`, `mapped_region.video_a = [0,qdur]∩A`, `video_b = [anchor,anchor+qdur]∩B`. Explicit `b = a + offset` check at the anchor for **both** orientations. Mirror with `reference_is_a = true` to lock A-long framing unchanged.
-- [ ] **Library integration (chirp, bounded):** localize a short **A** inside a long **B** (mirror of the A-long test); assert offset sign + A/B spans.
-- [ ] **Repair integration (headline capability):** new fixture in `query_reference_integration.rs` — short **A** with gap, long **B** donor (mirror of today's A-long fixture) → query mode runs, gap in A fillable from B, **patched with correct audio** (verify content/correlation or donor-sample match, not just `GapPatchStatus::Patched`).
-- [ ] **Regression:** existing A-long corpus oracle + repair integration tests stay green unchanged.
-- [ ] **Corpus oracle split (if adding B-long case):** today `expect_clip_on_a_start_secs` is asserted against *both* `clip_on_a_start_secs` and `anchor_a_secs` (`corpus_fixtures.rs`). After A′ those diverge when B is reference (`clip_on_a_start = 0`, `anchor_a_secs` = position on B). Add optional manifest field `expect_anchor_on_reference_secs`; when present, assert `anchor_a_secs` against it; always assert `clip_on_a_start_secs` against `expect_clip_on_a_start_secs`. A-long cases omit the new field (both expectations equal today).
+- [x] **Unit (no chromaprint):** `from_reference_outcome` with `reference_is_a = false` → assert `recommended_offset = +anchor`, `mapped_region.video_a = [0,qdur]∩A`, `video_b = [anchor,anchor+qdur]∩B`. Explicit `b = a + offset` check at the anchor for **both** orientations. Mirror with `reference_is_a = true` to lock A-long framing unchanged.
+- [x] **Library integration (chirp, bounded):** localize a short **A** inside a long **B** (mirror of the A-long test); assert offset sign + A/B spans.
+- [x] **Repair integration (headline capability):** new fixture in `query_reference_integration.rs` — short **A** with gap, long **B** donor (mirror of today's A-long fixture) → query mode runs, gap in A fillable from B, **patched with correct audio** (verify content/correlation or donor-sample match, not just `GapPatchStatus::Patched`).
+- [x] **Regression:** existing A-long corpus oracle + repair integration tests stay green unchanged.
+- [x] **Corpus oracle split (if adding B-long case):** today `expect_clip_on_a_start_secs` is asserted against *both* `clip_on_a_start_secs` and `anchor_a_secs` (`corpus_fixtures.rs`). After A′ those diverge when B is reference (`clip_on_a_start = 0`, `anchor_a_secs` = position on B). Add optional manifest field `expect_anchor_on_reference_secs`; when present, assert `anchor_a_secs` against it; always assert `clip_on_a_start_secs` against `expect_clip_on_a_start_secs`. A-long cases omit the new field (both expectations equal today).
 
 ### Phase B4 — Docs / contract
 
-- [ ] `docs/json-output.md`:
+- [x] `docs/json-output.md`:
   - `anchor_a_secs` → "position on the **longer (reference)** file where the short clip's `t = 0` aligns" (not always A-timeline); drop `recommended_offset_secs = -anchor_a_secs` identity.
   - `clip_on_a_*` / `clip_on_b_*` → always A/B timelines regardless of which file was reference.
   - `winning_window_*` → reference-timeline bounds (A when A is longer, B when B is longer) — not always A-timeline.
   - No field added/removed → additive; golden fixtures unchanged.
-- [ ] `crates/clip-sync/src/application/report.rs` — `format_query_localization_lines`: add a `recommended_offset_secs: Option<f64>` parameter (from parent `AlignmentReport` / domain `QueryLocalization`); diagnostic offset line uses it, **not** `-loc.anchor_a_secs` (wrong sign/meaning when B is reference). Update call sites in `clip-sync-cli` and `clip-sync-repair` output formatters.
-- [ ] Flip the two open deferral bullets in [archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md) (A-as-query orientation) from open to done.
-- [ ] Optional: add B-longer generated corpus case `wav_query_reference_b_longer_anchor` (mirror `wav_query_reference_45min_anchor` with A/B swapped in the generator; `expect_clip_on_a_start_secs = 0`, `expect_anchor_on_reference_secs = 2700`, `expected_offset_secs = +2700`).
+- [x] `crates/clip-sync/src/application/report.rs` — `format_query_localization_lines`: add a `recommended_offset_secs: Option<f64>` parameter (from parent `AlignmentReport` / domain `QueryLocalization`); diagnostic offset line uses it, **not** `-loc.anchor_a_secs` (wrong sign/meaning when B is reference). Update call sites in `clip-sync-cli` and `clip-sync-repair` output formatters.
+- [x] Flip the two open deferral bullets in [archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md) (A-as-query orientation) from open to done.
+- [x] Optional: add B-longer generated corpus case `wav_query_reference_b_longer_anchor` (mirror `wav_query_reference_45min_anchor` with A/B swapped in the generator; `expect_clip_on_a_start_secs = 0`, `expect_anchor_on_reference_secs = 2700`, `expected_offset_secs = +2700`).
 
 ---
 

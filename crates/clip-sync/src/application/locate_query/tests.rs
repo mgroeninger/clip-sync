@@ -130,6 +130,9 @@ fn run(
     reference: &mut FakeSession,
     query: &mut FakeSession,
     config: &AlignConfig,
+    reference_is_a: bool,
+    extent_a: MediaExtent,
+    extent_b: MediaExtent,
 ) -> QueryLocalization {
     let ref_track = reference.track();
     let query_track = query.track();
@@ -159,7 +162,13 @@ fn run(
         &FakeProgressReporter,
     )
     .expect("localization should not error");
-    QueryLocalization::from_reference_outcome(outcome, true, extent_reference, extent_query)
+    QueryLocalization::from_reference_outcome(outcome, reference_is_a, extent_a, extent_b)
+}
+
+fn run_a_long(reference: &mut FakeSession, query: &mut FakeSession, config: &AlignConfig) -> QueryLocalization {
+    let extent_a = extent(reference.duration_secs);
+    let extent_b = extent(query.duration_secs);
+    run(reference, query, config, true, extent_a, extent_b)
 }
 
 #[test]
@@ -168,7 +177,7 @@ fn locate_query_passes_mid_file_embed() {
     let mut query = query_from(90.0, 70.0);
     let config = AlignConfig::default();
 
-    let loc = run(&mut reference, &mut query, &config);
+    let loc = run_a_long(&mut reference, &mut query, &config);
 
     assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
     // Refined tier: post-PCM anchor within ±0.05 s of truth.
@@ -182,6 +191,50 @@ fn locate_query_passes_mid_file_embed() {
     // Mapped region: B spans [0, 70] on its own timeline.
     assert!((loc.mapped_region.video_b_start_secs - 0.0).abs() < 0.01);
     assert!((loc.mapped_region.shared_length_secs - 70.0).abs() < 0.5);
+}
+
+#[test]
+fn locate_query_passes_mid_file_embed_when_b_is_reference() {
+    let anchor_secs = 90.0;
+    let query_secs = 70.0;
+    let mut reference_b = reference(180.0, None);
+    let mut query_a = query_from(anchor_secs, query_secs);
+    let config = AlignConfig::default();
+    let extent_a = extent(query_secs);
+    let extent_b = extent(180.0);
+
+    let loc = run(
+        &mut reference_b,
+        &mut query_a,
+        &config,
+        false,
+        extent_a,
+        extent_b,
+    );
+
+    assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
+    assert!(
+        (loc.anchor_a_secs - anchor_secs).abs() <= 0.05,
+        "anchor {} not within ±0.05 s of {anchor_secs}",
+        loc.anchor_a_secs
+    );
+    let offset = loc.recommended_offset_secs().expect("offset");
+    assert!(
+        (offset - anchor_secs).abs() <= 0.05,
+        "offset {offset} expected ~+{anchor_secs}"
+    );
+    assert!((loc.mapped_region.video_a_start_secs - 0.0).abs() < 0.01);
+    assert!((loc.mapped_region.video_a_end_secs - query_secs).abs() < 0.5);
+    assert!((loc.mapped_region.video_b_start_secs - anchor_secs).abs() <= 0.05);
+    assert!(
+        (loc.mapped_region.video_b_end_secs - (anchor_secs + query_secs)).abs() < 0.5
+    );
+    assert!(
+        (loc.mapped_region.video_b_start_secs - (loc.mapped_region.video_a_start_secs + offset))
+            .abs()
+            < 1e-6,
+        "b = a + offset at anchor"
+    );
 }
 
 // Direct tests of the cross-window ambiguity logic (independent of chromaprint/chirp fixtures,
@@ -229,7 +282,7 @@ fn locate_query_fails_below_threshold() {
     };
     let config = AlignConfig::default();
 
-    let loc = run(&mut reference, &mut query, &config);
+    let loc = run_a_long(&mut reference, &mut query, &config);
 
     assert_eq!(loc.recommended_offset_secs(), None);
     assert!(loc.skip_reason.is_some());
@@ -241,7 +294,7 @@ fn locate_query_skips_query_shorter_than_min_clip_length() {
     let mut query = query_from(90.0, 30.0); // < MIN_CLIP_LENGTH (60 s)
     let config = AlignConfig::default();
 
-    let loc = run(&mut reference, &mut query, &config);
+    let loc = run_a_long(&mut reference, &mut query, &config);
 
     assert_eq!(loc.windows_scored, 0);
     assert_eq!(loc.recommended_offset_secs(), None);
@@ -258,7 +311,7 @@ fn locate_query_respects_window_cap() {
     let mut config = AlignConfig::default();
     config.alignment.query_max_windows_scored = 2;
 
-    let loc = run(&mut reference, &mut query, &config);
+    let loc = run_a_long(&mut reference, &mut query, &config);
 
     // Stride widened past the base, and we never scored more than the cap.
     assert!(
@@ -332,7 +385,7 @@ fn locate_query_ambiguous_repeat_lowers_confidence() {
     let mut query = query_from(0.0, 70.0);
     let config = AlignConfig::default();
 
-    let loc = run(&mut reference, &mut query, &config);
+    let loc = run_a_long(&mut reference, &mut query, &config);
 
     if loc.skip_reason.is_none() {
         assert!(loc.ambiguous, "expected ambiguous localization on repeated content");

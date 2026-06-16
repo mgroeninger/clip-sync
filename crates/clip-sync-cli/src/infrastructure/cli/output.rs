@@ -38,7 +38,11 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
 
     if query_mode {
         if let Some(loc) = &result.query_localization {
-            for line in format_query_localization_lines(loc, show_diagnostics) {
+            for line in format_query_localization_lines(
+                loc,
+                result.recommended_offset_secs,
+                show_diagnostics,
+            ) {
                 out.push_str(&line);
                 out.push('\n');
             }
