@@ -6,7 +6,7 @@ use crate::application::config::AlignConfig;
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
 use crate::application::testing::fakes::FakeProgressReporter;
-use crate::domain::AudioTrack;
+use crate::domain::{AudioTrack, MediaExtent, MonoPcmClip, QueryLocalization};
 use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
 use crate::infrastructure::correlation::FftCorrelator;
 use crate::infrastructure::resample::RubatoResampler;
@@ -147,7 +147,7 @@ fn run(
         correlator: &correlator,
     };
 
-    locate_query_in_reference(
+    let outcome = locate_query_in_reference(
         reference,
         &ref_track,
         query,
@@ -158,7 +158,8 @@ fn run(
         deps,
         &FakeProgressReporter,
     )
-    .expect("localization should not error")
+    .expect("localization should not error");
+    QueryLocalization::from_reference_outcome(outcome, true, extent_reference, extent_query)
 }
 
 #[test]
@@ -190,7 +191,7 @@ fn locate_query_passes_mid_file_embed() {
 // flagged ambiguous, halving its confidence.
 fn candidate(anchor: f64, confidence: f32) -> super::Candidate {
     super::Candidate {
-        anchor_a_secs: anchor,
+        anchor_ref_secs: anchor,
         confidence,
         window_start_secs: anchor,
         window_end_secs: anchor + 60.0,
@@ -207,7 +208,7 @@ fn select_best_cluster_shoulder_within_query_is_not_ambiguous() {
         candidate(2880.0, 0.78),
     ];
     let (best, ambiguous) = super::select_best_cluster(&cands, 480.0).expect("cluster");
-    assert!((best.anchor_a_secs - 2700.0).abs() < 1e-9);
+    assert!((best.anchor_ref_secs - 2700.0).abs() < 1e-9);
     assert!(!ambiguous, "decaying shoulders within query length must not be ambiguous");
 }
 

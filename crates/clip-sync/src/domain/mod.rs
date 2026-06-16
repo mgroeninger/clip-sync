@@ -14,6 +14,7 @@ pub mod query_localization;
 
 pub use query_localization::{
     build_query_alignment_result, compute_mapped_region, AlignmentModeUsed, QueryLocalization,
+    ReferenceLocalizationOutcome,
 };
 
 pub use alignment::{

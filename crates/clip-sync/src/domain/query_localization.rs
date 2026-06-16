@@ -13,6 +13,48 @@ pub enum AlignmentModeUsed {
     QueryReference,
 }
 
+/// Orientation-neutral result of sliding a short query across a long reference timeline.
+///
+/// All timeline positions are on the **reference** (longer) file. Callers map this into
+/// A/B-framed [`QueryLocalization`] via [`QueryLocalization::from_reference_outcome`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceLocalizationOutcome {
+    /// Reference-timeline position where the query clip's `t = 0` aligns.
+    pub anchor_ref_secs: f64,
+    /// Prepared query duration used for mapping (seconds).
+    pub query_duration_secs: f64,
+    /// Reference-timeline bounds of the winning coarse search window.
+    pub winning_window_start_secs: f64,
+    pub winning_window_end_secs: f64,
+    /// Localization confidence (coarse Chromaprint cluster; ×0.5 when ambiguous).
+    pub confidence: f32,
+    /// True when a competing anchor cluster scored comparably (repeated content).
+    pub ambiguous: bool,
+    /// Coarse windows fingerprinted (after any stride widening).
+    pub windows_scored: u32,
+    /// Coarse search stride actually used (may widen if the window cap was hit).
+    pub search_stride_secs: f64,
+    /// Set when search produced no usable localization (and why).
+    pub skip_reason: Option<String>,
+}
+
+impl ReferenceLocalizationOutcome {
+    /// A search outcome carrying no anchor (no match / skipped), with a reason.
+    pub fn skipped(reason: impl Into<String>, windows_scored: u32, search_stride_secs: f64) -> Self {
+        Self {
+            anchor_ref_secs: 0.0,
+            query_duration_secs: 0.0,
+            winning_window_start_secs: 0.0,
+            winning_window_end_secs: 0.0,
+            confidence: 0.0,
+            ambiguous: false,
+            windows_scored,
+            search_stride_secs,
+            skip_reason: Some(reason.into()),
+        }
+    }
+}
+
 /// Result of searching a short query clip against a long reference timeline.
 ///
 /// `PartialEq` is derived for test convenience; float fields are not semantically exact.
@@ -78,6 +120,36 @@ impl QueryLocalization {
             windows_scored,
             skip_reason: None,
         }
+    }
+
+    /// Map an orientation-neutral search outcome into A/B repair roles.
+    ///
+    /// Phase B0: `reference_is_a = true` only (A is the longer file). B-longer framing lands in B1.
+    pub fn from_reference_outcome(
+        outcome: ReferenceLocalizationOutcome,
+        reference_is_a: bool,
+        extent_a: MediaExtent,
+        extent_b: MediaExtent,
+    ) -> Self {
+        if let Some(reason) = outcome.skip_reason {
+            return Self::skipped(reason, outcome.windows_scored, outcome.search_stride_secs);
+        }
+        assert!(
+            reference_is_a,
+            "B-longer framing (reference_is_a = false) is implemented in Phase B1"
+        );
+        Self::from_anchor(
+            outcome.anchor_ref_secs,
+            outcome.query_duration_secs,
+            extent_a,
+            extent_b,
+            outcome.confidence,
+            outcome.ambiguous,
+            outcome.search_stride_secs,
+            outcome.winning_window_start_secs,
+            outcome.winning_window_end_secs,
+            outcome.windows_scored,
+        )
     }
 
     /// A localization carrying no recommendation (no match / skipped), with a reason.
@@ -206,6 +278,44 @@ mod tests {
 
     fn extent(secs: f64) -> MediaExtent {
         MediaExtent::from_declared(Duration::from_secs_f64(secs))
+    }
+
+    #[test]
+    fn from_reference_outcome_a_reference_matches_from_anchor() {
+        let outcome = ReferenceLocalizationOutcome {
+            anchor_ref_secs: 2700.0,
+            query_duration_secs: 480.0,
+            winning_window_start_secs: 2640.0,
+            winning_window_end_secs: 3120.0,
+            confidence: 0.91,
+            ambiguous: false,
+            windows_scored: 60,
+            search_stride_secs: 60.0,
+            skip_reason: None,
+        };
+        let from_outcome = QueryLocalization::from_reference_outcome(
+            outcome.clone(),
+            true,
+            extent(3600.0),
+            extent(480.0),
+        );
+        let from_anchor = QueryLocalization::from_anchor(
+            2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
+        );
+        assert_eq!(from_outcome, from_anchor);
+    }
+
+    #[test]
+    fn from_reference_outcome_skipped_matches_skipped() {
+        let outcome = ReferenceLocalizationOutcome::skipped("no match", 40, 60.0);
+        let loc = QueryLocalization::from_reference_outcome(
+            outcome,
+            true,
+            extent(3600.0),
+            extent(480.0),
+        );
+        assert_eq!(loc.skip_reason.as_deref(), Some("no match"));
+        assert_eq!(loc.recommended_offset_secs(), None);
     }
 
     #[test]

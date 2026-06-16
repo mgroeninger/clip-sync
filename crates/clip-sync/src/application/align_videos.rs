@@ -23,7 +23,7 @@ use crate::domain::{
     AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
     ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
-    PcmPreparationOptions, RepetitionFinding, TimelineOverlap,
+    PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 use crate::infrastructure::logging::ExtractionProgressScope;
@@ -257,7 +257,7 @@ where
             resampler: self.resampler,
             correlator: self.correlator,
         };
-        let localization = locate_query_in_reference(
+        let outcome = locate_query_in_reference(
             session_a,
             &track_a,
             session_b,
@@ -269,6 +269,8 @@ where
             self.progress,
         )
         .map_err(AppError::Alignment)?;
+        let localization =
+            QueryLocalization::from_reference_outcome(outcome, true, extent_a, extent_b);
 
         let win_start = localization.winning_window_start_secs;
         let win_end = localization.winning_window_end_secs.max(win_start);

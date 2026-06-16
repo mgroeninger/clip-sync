@@ -1,8 +1,9 @@
 //! `LocateQueryInReference` — Phase Q1 core of query-reference alignment.
 //!
 //! Searches a short *query* clip (the shorter file) against a long *reference* timeline (the
-//! longer file) and returns a [`QueryLocalization`]: where the query sits on the reference,
-//! plus the mapped coverage region. See `docs/archive/query-reference-alignment-plan.md` § Q1.
+//! longer file) and returns a [`ReferenceLocalizationOutcome`]: anchor and coarse-search facts
+//! on the reference timeline. Callers frame A/B roles via
+//! [`QueryLocalization::from_reference_outcome`]. See `docs/archive/query-reference-alignment-plan.md` § Q1.
 //!
 //! The coarse search is the ring-buffer sliding window proven in the Q0 spike: a small fixed
 //! `bucket_secs` decode granularity feeds a length-`L` ring buffer that is fingerprinted every
@@ -22,7 +23,7 @@ use crate::application::ports::{
 use crate::domain::pcm_preparation::{prepare_clip_for_fingerprint, PcmPreparationOptions};
 use crate::domain::{
     should_use_query_mode, AlignmentModeUsed, AudioTrack, ClipLabel, ClipMatchEstimate, ClipWindow,
-    MediaExtent, MonoPcmClip, QueryLocalization,
+    MediaExtent, MonoPcmClip, ReferenceLocalizationOutcome,
 };
 
 /// Anchors within this many seconds are treated as the same localization cluster (coarse tier).
@@ -73,7 +74,7 @@ pub struct LocateQueryDeps<'a> {
 
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
-    anchor_a_secs: f64,
+    anchor_ref_secs: f64,
     confidence: f32,
     window_start_secs: f64,
     window_end_secs: f64,
@@ -81,8 +82,8 @@ struct Candidate {
 
 /// Localize `query` (shorter file) on the `reference` (longer file) timeline.
 ///
-/// Returns a [`QueryLocalization`]; a skipped/no-match outcome carries `skip_reason` and no
-/// recommended offset rather than erroring (callers may still scan the reference).
+/// Returns a [`ReferenceLocalizationOutcome`] in reference-timeline terms; a skipped/no-match
+/// outcome carries `skip_reason` rather than erroring (callers may still scan the target file).
 #[allow(clippy::too_many_arguments)]
 pub fn locate_query_in_reference<RS, QS>(
     reference: &mut RS,
@@ -94,7 +95,7 @@ pub fn locate_query_in_reference<RS, QS>(
     config: &AlignConfig,
     deps: LocateQueryDeps<'_>,
     progress: &dyn ProgressReporter,
-) -> Result<QueryLocalization, AlignmentError>
+) -> Result<ReferenceLocalizationOutcome, AlignmentError>
 where
     RS: MediaSession,
     QS: MediaSession,
@@ -110,7 +111,7 @@ where
     };
     let query_effective = extent_query.effective();
     if query_effective.as_secs_f64() < min_clip_secs {
-        return Ok(QueryLocalization::skipped(
+        return Ok(ReferenceLocalizationOutcome::skipped(
             "query shorter than minimum clip length",
             0,
             stride_base,
@@ -123,7 +124,7 @@ where
     let prepared_query = match prepare_clip_for_fingerprint(&raw_query, prep) {
         Ok(clip) => clip,
         Err(_) => {
-            return Ok(QueryLocalization::skipped(
+            return Ok(ReferenceLocalizationOutcome::skipped(
                 "query had insufficient audio after preparation",
                 0,
                 stride_base,
@@ -136,7 +137,7 @@ where
     let clip_length_secs = config.clip.clip_length.as_secs_f64();
     let query_secs = prepared_query.duration_secs();
     if query_secs < min_clip_secs {
-        return Ok(QueryLocalization::skipped(
+        return Ok(ReferenceLocalizationOutcome::skipped(
             "query shorter than minimum clip length after preparation",
             0,
             stride_base,
@@ -152,7 +153,7 @@ where
 
     let dur_a = extent_reference.effective().as_secs_f64();
     if dur_a < l_secs {
-        return Ok(QueryLocalization::skipped(
+        return Ok(ReferenceLocalizationOutcome::skipped(
             "reference shorter than query window",
             0,
             stride_base,
@@ -182,7 +183,7 @@ where
 
     // 3. Cluster candidates and select the best anchor.
     let Some((winner, ambiguous)) = select_best_cluster(&candidates, query_duration_secs) else {
-        return Ok(QueryLocalization::skipped(
+        return Ok(ReferenceLocalizationOutcome::skipped(
             "no fingerprint match found in reference",
             windows_scored,
             stride,
@@ -195,7 +196,7 @@ where
         winner.confidence
     };
     if confidence < config.alignment.query_min_match_score {
-        return Ok(QueryLocalization::skipped(
+        return Ok(ReferenceLocalizationOutcome::skipped(
             "best localization confidence below threshold",
             windows_scored,
             stride,
@@ -208,7 +209,7 @@ where
         &query_clip,
         reference,
         reference_track,
-        winner.anchor_a_secs,
+        winner.anchor_ref_secs,
         query_duration_secs,
         dur_a,
         winner.confidence,
@@ -218,18 +219,17 @@ where
         progress,
     );
 
-    Ok(QueryLocalization::from_anchor(
-        refined_anchor,
+    Ok(ReferenceLocalizationOutcome {
+        anchor_ref_secs: refined_anchor,
         query_duration_secs,
-        extent_reference,
-        extent_query,
+        winning_window_start_secs: winner.window_start_secs,
+        winning_window_end_secs: winner.window_end_secs,
         confidence,
         ambiguous,
-        stride,
-        winner.window_start_secs,
-        winner.window_end_secs,
         windows_scored,
-    ))
+        search_stride_secs: stride,
+        skip_reason: None,
+    })
 }
 
 /// Ring-buffer sliding window. Buckets (`bucket_secs`) feed a length-`L` ring scored every
@@ -301,7 +301,7 @@ fn coarse_search<RS: MediaSession>(
                                 // anchor = pos - r (Q0-confirmed sign; see § Coarse search).
                                 let anchor = pos_secs - estimate.offset_secs;
                                 candidates.push(Candidate {
-                                    anchor_a_secs: anchor,
+                                    anchor_ref_secs: anchor,
                                     confidence: estimate.confidence,
                                     window_start_secs: pos_secs,
                                     window_end_secs: pos_secs + l_secs,
@@ -342,7 +342,7 @@ fn select_best_cluster(
     for cand in candidates {
         if let Some(rep) = clusters
             .iter_mut()
-            .find(|rep| (rep.anchor_a_secs - cand.anchor_a_secs).abs() <= ANCHOR_CLUSTER_TOLERANCE_SECS)
+            .find(|rep| (rep.anchor_ref_secs - cand.anchor_ref_secs).abs() <= ANCHOR_CLUSTER_TOLERANCE_SECS)
         {
             if cand.confidence > rep.confidence {
                 *rep = *cand;
@@ -364,7 +364,7 @@ fn select_best_cluster(
     let min_separation = query_duration_secs.max(ANCHOR_CLUSTER_TOLERANCE_SECS);
     let ambiguous = clusters.iter().skip(1).any(|other| {
         other.confidence >= best.confidence * AMBIGUITY_SCORE_FRACTION
-            && (other.anchor_a_secs - best.anchor_a_secs).abs() >= min_separation
+            && (other.anchor_ref_secs - best.anchor_ref_secs).abs() >= min_separation
     });
     Some((best, ambiguous))
 }
@@ -377,7 +377,7 @@ fn refine_query_anchor<RS: MediaSession>(
     query_clip: &MonoPcmClip,
     reference: &mut RS,
     reference_track: &AudioTrack,
-    coarse_anchor_a_secs: f64,
+    coarse_anchor_ref_secs: f64,
     query_duration_secs: f64,
     reference_effective_secs: f64,
     coarse_confidence: f32,
@@ -386,11 +386,11 @@ fn refine_query_anchor<RS: MediaSession>(
     correlator: &dyn PcmCorrelator,
     progress: &dyn ProgressReporter,
 ) -> f64 {
-    let hay_start = (coarse_anchor_a_secs - search_radius_secs).max(0.0);
+    let hay_start = (coarse_anchor_ref_secs - search_radius_secs).max(0.0);
     let hay_end =
-        (coarse_anchor_a_secs + query_duration_secs + search_radius_secs).min(reference_effective_secs);
+        (coarse_anchor_ref_secs + query_duration_secs + search_radius_secs).min(reference_effective_secs);
     if hay_end - hay_start < query_duration_secs * 0.5 {
-        return coarse_anchor_a_secs;
+        return coarse_anchor_ref_secs;
     }
 
     let window = ClipWindow::new(
@@ -400,16 +400,16 @@ fn refine_query_anchor<RS: MediaSession>(
     );
     let haystack = match reference.extract_mono(reference_track, &window, progress, "query-refine") {
         Ok(clip) => clip,
-        Err(_) => return coarse_anchor_a_secs,
+        Err(_) => return coarse_anchor_ref_secs,
     };
     if haystack.sample_rate != query_clip.sample_rate {
-        return coarse_anchor_a_secs;
+        return coarse_anchor_ref_secs;
     }
 
     // left = query template, right = haystack. prior: haystack_local = query_local + offset,
     // so offset = coarse_anchor - hay_start; refined anchor = hay_start + refined.offset.
     let prior = ClipMatchEstimate {
-        offset_secs: coarse_anchor_a_secs - hay_start,
+        offset_secs: coarse_anchor_ref_secs - hay_start,
         confidence: coarse_confidence.max(0.1),
     };
     let refined = refine_offset_around_prior(
@@ -421,8 +421,8 @@ fn refine_query_anchor<RS: MediaSession>(
         correlator,
     );
     let refined_anchor = hay_start + refined.offset_secs;
-    if (refined_anchor - coarse_anchor_a_secs).abs() > search_radius_secs {
-        return coarse_anchor_a_secs;
+    if (refined_anchor - coarse_anchor_ref_secs).abs() > search_radius_secs {
+        return coarse_anchor_ref_secs;
     }
     refined_anchor
 }
