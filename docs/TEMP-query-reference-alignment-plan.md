@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment (short clip vs long video)
 
-> **Status:** Q2a landed (2026-06-15) — Q0 spike, Q1 localization engine, and Q2a (`AlignmentResult` fields, `build_query_alignment_result`, `resolve_alignment_mode` / `should_use_query_mode`) done and tested (233 lib tests green). Next: **Q2b** — `AlignVideos::execute()` query/symmetric branch, report DTOs + formatters, integration tests, JSON golden fixtures. Design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
+> **Status:** Q2 complete (2026-06-15) — Q0 spike, Q1 localization engine, and Q2 (`AlignmentResult` fields, `build_query_alignment_result`, mode resolution, `AlignVideos` query/symmetric branch, report DTOs + formatter, JSON contract doc) all landed and tested (240 lib + repair + cli suites green; golden fixtures byte-identical). Next: **Q3** — repair integration (scan/fill gating by mapped region, CLI flags, human/JSON output). A few small Q2 deferrals (real-WAV execute oracle, A-as-query orientation, region-bounded hold-out) are noted in Q2b and folded into Q3/Q4. Design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -383,29 +383,20 @@ Per [json-output.md](json-output.md) revision procedure:
 - [x] Added `alignment_mode_used` / `query_localization` to `AlignmentResult`; updated all ~30 `AlignmentResult { … }` sites across the 3 crates (scripted insert after `offset_ambiguous_mod_secs`). Dropped the `query_localization` `#[allow(dead_code)]`; re-exported the domain items at the crate root (`build_query_alignment_result`, `compute_mapped_region`, `AlignmentModeUsed`, `QueryLocalization`).
 - [x] `should_use_query_mode(...)` (two-tier, pure) in `domain/policies.rs` + `resolve_alignment_mode(mode, extents, window counts, ratio) -> AlignmentModeUsed` in `application/locate_query.rs`. Unit-tested (ratio, clip-count mismatch, equal-pair symmetric, explicit override). **Deviation:** `resolve_alignment_mode` lives in `application` (not `domain/policies.rs`) because it matches on `AlignmentMode` (an application-layer enum); the pure tier logic is the domain `should_use_query_mode`.
 
-**Q2b — remaining:**
+> **Status: ✅ Q2b done (2026-06-15)** — `AlignVideos` query/symmetric branch, report DTOs, formatter, exports, contract doc all landed; 240 lib + repair + cli suites green.
 
-- [ ] `AlignVideos::execute()` — after open, resolve **`MediaExtent`** per video, then branch:
-  ```text
-  let mut session_a = open(...)?;
-  let mut session_b = open(...)?;
-  let extent_a = resolve_extent(&mut session_a, ...)?;
-  let extent_b = resolve_extent(&mut session_b, ...)?;
+- [x] `AlignVideos::execute()` — `resolve_mode(...)` resolves track+extent per file and `resolve_alignment_mode(...)`; branches to `align_query_reference` (query localization → `build_query_alignment_result`) or the existing symmetric path. high-rate + verification run unchanged on the resulting `AlignmentOutcome` (winning coarse window as the discovery window; config-gated, so default analyzer is a no-op).
+- [x] `result.alignment_mode_used` / `result.query_localization` set by `build_query_alignment_result` (start_overlap = mapped region directly, so no `refresh_start_overlap` change needed on the query path).
+- [x] `application/report.rs` — `QueryLocalizationReport`, `AlignmentModeUsedReport`, `From` impls, `format_query_localization_lines` (leads with "Match on video A: …", offset/B-span only with diagnostics). Unit-tested incl. JSON shape.
+- [x] Public facade exports (lib root): report DTOs + formatter; `AlignmentMode` already public via config.
+- [x] Integration tests in `align_videos.rs`: Auto routes clip-count mismatch → query mode; symmetric mode still hard-errors on mismatch. (`resolve_alignment_mode` unit-tested in `locate_query/tests.rs`.)
+- [x] JSON contract revision — `docs/json-output.md` updated (`alignment_mode_used`, `query_localization` + `QueryLocalization` table). Golden fixtures **unchanged** (new keys use `skip_serializing_if`, so symmetric output is byte-identical — 34 cli golden tests pass).
 
-  if mode == QueryReference || (mode == Auto && should_use_query(..., extent_a, extent_b, ...)):
-      outcome = locate_query_track_pair(&mut session_a, &mut session_b, extent_a, extent_b, ...)
-      apply_high_rate_refinement(...)   // MediaExtent inputs; segment inside mapped region
-      apply_offset_verification(...)    // shipped retry path; mapped-region placement
-  else:
-      existing symmetric path (&mut sessions, MediaExtent in clip planning)
-  ```
-- [ ] Set `result.alignment_mode_used`, `result.query_localization`
-- [ ] `refresh_start_overlap` → in query mode use `mapped_region` helper instead of start clip window
-- [ ] `application/report.rs` — `QueryLocalizationReport`, `AlignmentModeUsedReport`, `From` impls, `format_query_localization_lines`
-- [ ] `default_pipeline.rs` / public facade: export new config enums + formatters; no breaking pipeline API change
-- [ ] Integration tests in `align_videos.rs`: one real-WAV E2E query-mode oracle; unit tests for Auto detection and symmetric override — follow [verification hardening test roles](archive/verification-hardening-plan.md) (no redundant chirp duplication)
-- [ ] Use `application/testing/alignment_fixtures.rs` for hand-built `AlignmentResult` in new tests
-- [ ] JSON contract revision + golden fixture update
+**Q2b deferrals (small, scoped):**
+
+- [ ] **Real-WAV E2E query oracle through `execute()`** — folded into the Q4 corpus case (real fixtures + the 60-min generated case). The `locate_query` use-case tests already exercise real-chromaprint localization end-to-end; the execute branch is covered structurally by the Auto-routing test.
+- [ ] **A-as-query orientation** — query mode currently requires A = the longer (reference) file; when query mode is selected but A is shorter, `execute()` falls back to symmetric with a logged note. The general A-shorter orientation (offset-sign flip + A/B remap of the localization) is a Q4 analyzer follow-up. The repair use case (A = long recording, B = short clip) is fully covered.
+- [ ] **Mapped-region placement for high-rate/verify** — currently the winning coarse window is passed as the discovery window (inside the mapped region); the dedicated region-bounded hold-out placement from the Decisions table is deferred until Q3 repair exercises verification on the query path.
 
 **CLI (`clip-sync-cli`):** none required for repair path (Q3 handles repair CLI)
 

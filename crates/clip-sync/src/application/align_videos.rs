@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::application::config::AlignConfig;
+use crate::application::config::{AlignConfig, AlignmentMode};
 use crate::application::error::{AppError, FingerprintError};
 use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
+use crate::application::locate_query::{
+    locate_query_in_reference, resolve_alignment_mode, LocateQueryDeps,
+};
 use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
@@ -11,12 +14,13 @@ use crate::application::ports::{
     Aligner, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter, Resampler,
 };
 use crate::domain::{
-    build_alignment_result, clip_windows_with_options, compute_clip_timeline_overlap,
+    build_alignment_result, build_query_alignment_result, clip_windows_with_options,
+    compute_clip_timeline_overlap,
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     select_best_track, set_offset_ambiguous_mod_from_start_clip,
     should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
-    AlignmentMergePolicy, AlignmentResult, AudioTrack,
+    AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
     ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, RepetitionFinding, TimelineOverlap,
@@ -78,10 +82,37 @@ where
             .media_reader
             .open(&MediaSource::new(request.video_b.clone()))?;
 
-        let outcome = if request.config.alignment.try_all_tracks {
-            self.align_best_track_pair(&mut session_a, &mut session_b, &request)?
-        } else {
-            self.align_single_track_pair(&mut session_a, &mut session_b, &request)?
+        let mode_used = self.resolve_mode(&mut session_a, &mut session_b, &request)?;
+
+        let outcome = match mode_used {
+            // Query mode currently localizes B (query) against A (reference); requires A to be
+            // the longer file. When query mode is selected but A is the shorter input, fall back
+            // to symmetric (general A-as-query orientation is a Q4 follow-up).
+            Some((AlignmentModeUsed::QueryReference, track_a, extent_a, track_b, extent_b))
+                if extent_b.effective() <= extent_a.effective() =>
+            {
+                self.align_query_reference(
+                    &mut session_a,
+                    &mut session_b,
+                    track_a,
+                    extent_a,
+                    track_b,
+                    extent_b,
+                    &request,
+                )?
+            }
+            other => {
+                if matches!(other, Some((AlignmentModeUsed::QueryReference, ..))) {
+                    self.progress.phase_verbose(
+                        "Query mode selected but video A is shorter; using symmetric alignment",
+                    );
+                }
+                if request.config.alignment.try_all_tracks {
+                    self.align_best_track_pair(&mut session_a, &mut session_b, &request)?
+                } else {
+                    self.align_single_track_pair(&mut session_a, &mut session_b, &request)?
+                }
+            }
         };
 
         let mut result = outcome.result;
@@ -132,6 +163,130 @@ where
         );
 
         Ok(AlignVideosResponse { result })
+    }
+
+    /// Resolve which algorithm to run, plus the per-file track + extent needed by the query
+    /// path. Returns `None` when symmetric is forced or per-file resolution fails (the symmetric
+    /// path then runs and surfaces any error).
+    #[allow(clippy::type_complexity)]
+    fn resolve_mode(
+        &self,
+        session_a: &mut MR::Session,
+        session_b: &mut MR::Session,
+        request: &AlignVideosRequest,
+    ) -> Result<
+        Option<(AlignmentModeUsed, AudioTrack, MediaExtent, AudioTrack, MediaExtent)>,
+        AppError,
+    > {
+        if request.config.alignment.mode == AlignmentMode::Symmetric {
+            return Ok(None);
+        }
+        let plan = request.config.clip.as_plan();
+        let (track_a, extent_a) = match self.resolve_track_extent(session_a, &plan, &request.config)
+        {
+            Ok(resolved) => resolved,
+            Err(_) => return Ok(None),
+        };
+        let (track_b, extent_b) = match self.resolve_track_extent(session_b, &plan, &request.config)
+        {
+            Ok(resolved) => resolved,
+            Err(_) => return Ok(None),
+        };
+
+        let planning = ClipPlanningOptions {
+            end_tail_inset: Duration::from_secs_f64(
+                request.config.alignment.end_clip_tail_inset_secs.max(0.0),
+            ),
+        };
+        let windows_a = clip_windows_with_options(&extent_a, &plan, planning)
+            .map(|w| w.len())
+            .unwrap_or(0);
+        let windows_b = clip_windows_with_options(&extent_b, &plan, planning)
+            .map(|w| w.len())
+            .unwrap_or(0);
+
+        let mode = resolve_alignment_mode(
+            request.config.alignment.mode,
+            &extent_a,
+            &extent_b,
+            windows_a,
+            windows_b,
+            request.config.alignment.query_min_duration_ratio,
+        );
+        Ok(Some((mode, track_a, extent_a, track_b, extent_b)))
+    }
+
+    /// Lightweight track + extent resolution for the mode decision (mirrors `extract_clips`).
+    fn resolve_track_extent(
+        &self,
+        session: &mut MR::Session,
+        plan: &crate::domain::ClipPlan,
+        config: &AlignConfig,
+    ) -> Result<(AudioTrack, MediaExtent), AppError> {
+        let tracks = session.list_tracks()?;
+        let track = select_best_track(&tracks)?.clone();
+        let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
+            AppError::Domain(crate::domain::DomainError::InvalidDuration),
+        )?;
+        let mut extent = MediaExtent::from_declared(duration);
+        if config.needs_tail_extent_scan(plan) {
+            if let Ok(tail) = session.track_decodable_extent(&track) {
+                extent = extent.with_decodable(tail);
+            }
+        }
+        Ok((track, extent))
+    }
+
+    /// Query-reference path: localize B (query, shorter) against A (reference, longer) and build
+    /// a synthetic single-clip `AlignmentResult`.
+    #[allow(clippy::too_many_arguments)]
+    fn align_query_reference(
+        &self,
+        session_a: &mut MR::Session,
+        session_b: &mut MR::Session,
+        track_a: AudioTrack,
+        extent_a: MediaExtent,
+        track_b: AudioTrack,
+        extent_b: MediaExtent,
+        request: &AlignVideosRequest,
+    ) -> Result<AlignmentOutcome, AppError> {
+        self.progress.phase("Localizing clip against reference...");
+        let deps = LocateQueryDeps {
+            fingerprinter: self.fingerprinter,
+            aligner: self.aligner,
+            resampler: self.resampler,
+            correlator: self.correlator,
+        };
+        let localization = locate_query_in_reference(
+            session_a,
+            &track_a,
+            session_b,
+            &track_b,
+            extent_a,
+            extent_b,
+            &request.config,
+            deps,
+            self.progress,
+        )
+        .map_err(AppError::Alignment)?;
+
+        let win_start = localization.winning_window_start_secs;
+        let win_end = localization.winning_window_end_secs.max(win_start);
+        let winning = ClipWindow::new(
+            Duration::from_secs_f64(win_start),
+            Duration::from_secs_f64(win_end),
+            ClipLabel::Start,
+        );
+        let result =
+            build_query_alignment_result(localization, request.config.alignment.query_min_match_score);
+        Ok(AlignmentOutcome {
+            result,
+            track_a,
+            track_b,
+            discovery_windows: vec![winning],
+            extent_a,
+            extent_b,
+        })
     }
 
     fn align_single_track_pair(
@@ -1147,11 +1302,50 @@ mod tests {
             &progress,
         );
 
-        let error = use_case.execute(request(two_clip_config())).unwrap_err();
+        // The symmetric path still hard-errors on a clip-count mismatch. (Auto now routes such a
+        // pair to query mode instead — see `execute_auto_routes_clip_count_mismatch_to_query`.)
+        let mut config = two_clip_config();
+        config.alignment.mode = AlignmentMode::Symmetric;
+        let error = use_case.execute(request(config)).unwrap_err();
         assert!(matches!(
             error,
             AppError::Alignment(AlignmentError::EngineFailed(_))
         ));
+    }
+
+    #[test]
+    fn execute_auto_routes_clip_count_mismatch_to_query() {
+        // A=3min, B=45s: ratio 0.25 < 0.5 triggers query mode under Auto. B is shorter than
+        // MIN_CLIP_LENGTH, so query mode skips gracefully (no clip-count-mismatch error) and
+        // records that query mode ran.
+        let reader = FakeMediaReader::new()
+            .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
+            .with_session("b.wav", FakeMediaSession::with_duration(Duration::from_secs(45)));
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 0.0,
+            confidence: 1.0,
+        });
+        let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &correlator,
+            &progress,
+        );
+
+        let response = use_case
+            .execute(request(two_clip_config()))
+            .expect("query mode should not error on a short query");
+        assert_eq!(
+            response.result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference)
+        );
+        assert!(!response.result.start_aligned);
+        assert!(response.result.query_localization.is_some());
     }
 
     #[test]

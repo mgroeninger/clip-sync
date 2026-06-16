@@ -16,9 +16,10 @@ pub use application::ports::{
 };
 pub use application::report::{
     format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_periodic_ambiguity_line, AlignmentReport,
-    ClipLabelReport, ClipMatchReport, HighRateRefinementReport, OffsetVerificationReport,
-    RepetitionFindingReport, RepetitionReport, TimelineOverlapReport,
+    format_periodic_ambiguity_line, format_query_localization_lines, AlignmentModeUsedReport,
+    AlignmentReport, ClipLabelReport, ClipMatchReport, HighRateRefinementReport,
+    OffsetVerificationReport, QueryLocalizationReport, RepetitionFindingReport, RepetitionReport,
+    TimelineOverlapReport,
 };
 // --- domain (selected types) ---
 pub use domain::{

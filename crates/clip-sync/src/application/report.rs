@@ -9,8 +9,9 @@
 use serde::Serialize;
 
 use crate::domain::{
-    AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport, HighRateRefinement,
-    OffsetVerification, RepetitionFinding, TimelineOverlap,
+    format_time_range, AlignmentModeUsed, AlignmentResult, ClipLabel, ClipMatch,
+    ClipRepetitionReport, HighRateRefinement, OffsetVerification, QueryLocalization,
+    RepetitionFinding, TimelineOverlap,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -195,6 +196,66 @@ impl From<&HighRateRefinement> for HighRateRefinementReport {
     }
 }
 
+/// How the run chose its algorithm (query-reference feature).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlignmentModeUsedReport {
+    Symmetric,
+    #[serde(rename = "queryreference")]
+    QueryReference,
+}
+
+impl From<AlignmentModeUsed> for AlignmentModeUsedReport {
+    fn from(mode: AlignmentModeUsed) -> Self {
+        match mode {
+            AlignmentModeUsed::Symmetric => Self::Symmetric,
+            AlignmentModeUsed::QueryReference => Self::QueryReference,
+        }
+    }
+}
+
+/// Where a short query clip sits on the long reference timeline (query-reference mode).
+///
+/// Friendly `clip_on_a_*` / `clip_on_b_*` aliases mirror `mapped_region` for human-oriented
+/// scripts; `recommended_offset_secs` / `start_overlap` on the parent report remain for tools.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QueryLocalizationReport {
+    pub anchor_a_secs: f64,
+    pub clip_on_a_start_secs: f64,
+    pub clip_on_a_end_secs: f64,
+    pub clip_on_b_start_secs: f64,
+    pub clip_on_b_end_secs: f64,
+    pub mapped_region: TimelineOverlapReport,
+    pub search_stride_secs: f64,
+    pub winning_window_start_secs: f64,
+    pub winning_window_end_secs: f64,
+    pub confidence: f32,
+    pub ambiguous: bool,
+    pub windows_scored: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+}
+
+impl From<&QueryLocalization> for QueryLocalizationReport {
+    fn from(loc: &QueryLocalization) -> Self {
+        Self {
+            anchor_a_secs: loc.anchor_a_secs,
+            clip_on_a_start_secs: loc.clip_on_a_start_secs,
+            clip_on_a_end_secs: loc.clip_on_a_end_secs,
+            clip_on_b_start_secs: loc.clip_on_b_start_secs,
+            clip_on_b_end_secs: loc.clip_on_b_end_secs,
+            mapped_region: loc.mapped_region.into(),
+            search_stride_secs: loc.search_stride_secs,
+            winning_window_start_secs: loc.winning_window_start_secs,
+            winning_window_end_secs: loc.winning_window_end_secs,
+            confidence: loc.confidence,
+            ambiguous: loc.ambiguous,
+            windows_scored: loc.windows_scored,
+            skip_reason: loc.skip_reason.clone(),
+        }
+    }
+}
+
 /// Full alignment report — the analyzer's JSON output payload (contract v1).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AlignmentReport {
@@ -218,6 +279,12 @@ pub struct AlignmentReport {
     /// Repeat period when start-clip repetition makes offset ambiguous mod **T**.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset_ambiguous_mod_secs: Option<f64>,
+    /// How this run chose its algorithm. Absent for the legacy symmetric path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alignment_mode_used: Option<AlignmentModeUsedReport>,
+    /// Where the short clip sits on the long file. Present only in query-reference mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_localization: Option<QueryLocalizationReport>,
 }
 
 impl From<&AlignmentResult> for AlignmentReport {
@@ -233,6 +300,8 @@ impl From<&AlignmentResult> for AlignmentReport {
             high_rate_refinement: result.high_rate_refinement.as_ref().map(Into::into),
             offset_verification: result.offset_verification.as_ref().map(Into::into),
             offset_ambiguous_mod_secs: result.offset_ambiguous_mod_secs,
+            alignment_mode_used: result.alignment_mode_used.map(Into::into),
+            query_localization: result.query_localization.as_ref().map(Into::into),
         }
     }
 }
@@ -303,6 +372,63 @@ pub fn format_offset_verification_lines(
     vec![]
 }
 
+/// Human-readable lines for a query-reference localization.
+///
+/// Leads with *where the clip sits on the long file* (not offset/overlap jargon). With
+/// `show_diagnostics`, adds the B span, offset, and coarse-search stats for debugging.
+pub fn format_query_localization_lines(
+    loc: &QueryLocalizationReport,
+    show_diagnostics: bool,
+) -> Vec<String> {
+    if let Some(reason) = &loc.skip_reason {
+        return vec![format!("Clip not located on video A ({reason})")];
+    }
+
+    let span = format_time_range(loc.clip_on_a_start_secs, loc.clip_on_a_end_secs);
+    let clip_len_secs = (loc.clip_on_a_end_secs - loc.clip_on_a_start_secs).max(0.0);
+    let mut lines = vec![format!(
+        "Match on video A: {span}  ({}, confidence {:.2})",
+        format_clip_length(clip_len_secs),
+        loc.confidence
+    )];
+
+    if loc.ambiguous {
+        lines.push(
+            "Warning:   clip location ambiguous (repeated content) — verify before trusting"
+                .to_string(),
+        );
+    }
+
+    if show_diagnostics {
+        lines.push(format!(
+            "Clip on B:  {}",
+            format_time_range(loc.clip_on_b_start_secs, loc.clip_on_b_end_secs)
+        ));
+        lines.push(format!(
+            "Offset:     {:+.3}s  (add to A to align with B)",
+            -loc.anchor_a_secs
+        ));
+        lines.push(format!(
+            "Search:     {} window(s) @ {:.0}s stride",
+            loc.windows_scored, loc.search_stride_secs
+        ));
+    }
+
+    lines
+}
+
+/// Compact clip-length label, e.g. `8m`, `1m30s`, `45s`.
+fn format_clip_length(secs: f64) -> String {
+    let total = secs.round() as i64;
+    let minutes = total / 60;
+    let seconds = total % 60;
+    match (minutes, seconds) {
+        (0, s) => format!("{s}s"),
+        (m, 0) => format!("{m}m"),
+        (m, s) => format!("{m}m{s}s"),
+    }
+}
+
 /// Human-readable line when offset is ambiguous modulo a repeat period.
 pub fn format_periodic_ambiguity_line(period_secs: f64) -> String {
     format!(
@@ -316,6 +442,7 @@ mod tests {
     use crate::application::testing::alignment_fixtures::{
         minimal_alignment_result, start_clip_match,
     };
+    use crate::domain::build_query_alignment_result;
 
     fn domain_clip(label: ClipLabel, repetition: Option<ClipRepetitionReport>) -> ClipMatch {
         let mut clip = start_clip_match(Some(3.0), 900.0, 0.9);
@@ -407,5 +534,85 @@ mod tests {
     fn clip_label_serializes_lowercase() {
         let json = serde_json::to_string(&ClipLabelReport::Interior).expect("serialize");
         assert_eq!(json, "\"interior\"");
+    }
+
+    fn sample_localization() -> QueryLocalization {
+        QueryLocalization::from_anchor(
+            2700.0,
+            480.0,
+            crate::domain::MediaExtent::from_declared(std::time::Duration::from_secs(3600)),
+            crate::domain::MediaExtent::from_declared(std::time::Duration::from_secs(480)),
+            0.91,
+            false,
+            60.0,
+            2640.0,
+            3120.0,
+            60,
+        )
+    }
+
+    #[test]
+    fn query_localization_report_round_trips_fields() {
+        let report = QueryLocalizationReport::from(&sample_localization());
+        assert!((report.clip_on_a_start_secs - 2700.0).abs() < 1e-9);
+        assert!((report.clip_on_b_end_secs - 480.0).abs() < 1e-9);
+        assert!((report.mapped_region.shared_length_secs - 480.0).abs() < 1e-9);
+        assert_eq!(report.windows_scored, 60);
+    }
+
+    #[test]
+    fn alignment_report_includes_query_fields_when_present() {
+        let result = build_query_alignment_result(sample_localization(), 0.3);
+        let report = AlignmentReport::from(&result);
+        assert_eq!(
+            report.alignment_mode_used,
+            Some(AlignmentModeUsedReport::QueryReference)
+        );
+        assert!(report.query_localization.is_some());
+
+        let value = serde_json::to_value(&report).expect("serialize");
+        assert_eq!(value["alignment_mode_used"], "queryreference");
+        assert_eq!(value["query_localization"]["clip_on_a_start_secs"], 2700.0);
+    }
+
+    #[test]
+    fn alignment_report_omits_query_fields_for_symmetric() {
+        let result = minimal_alignment_result(Some(3.0)).build();
+        let report = AlignmentReport::from(&result);
+        assert!(report.alignment_mode_used.is_none());
+        assert!(report.query_localization.is_none());
+
+        let value = serde_json::to_value(&report).expect("serialize");
+        assert!(value.get("alignment_mode_used").is_none());
+        assert!(value.get("query_localization").is_none());
+    }
+
+    #[test]
+    fn format_query_lines_lead_with_placement() {
+        let report = QueryLocalizationReport::from(&sample_localization());
+        let lines = format_query_localization_lines(&report, false);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("Match on video A: 45:00 – 53:00"));
+        assert!(lines[0].contains("8m"));
+        assert!(!lines[0].to_lowercase().contains("offset"));
+    }
+
+    #[test]
+    fn format_query_lines_verbose_adds_offset_and_b_span() {
+        let report = QueryLocalizationReport::from(&sample_localization());
+        let lines = format_query_localization_lines(&report, true);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Clip on B:"));
+        assert!(joined.contains("Offset:"));
+        assert!(joined.contains("-2700.000s"));
+    }
+
+    #[test]
+    fn format_query_lines_skip_reason() {
+        let loc = QueryLocalization::skipped("below threshold", 40, 60.0);
+        let report = QueryLocalizationReport::from(&loc);
+        let lines = format_query_localization_lines(&report, false);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("below threshold"));
     }
 }
