@@ -3,7 +3,8 @@ name = "clip-sync-repair"
 version = "0.1.0"
 edition = "2021"
 description = "Gap scan and repair tool for clip-sync"
-license = "Non-commercial"
+authors = ["Matt Groeninger <mgroeninger@gmail.com>"]
+license = "PolyForm-Noncommercial-1.0.0"
 
 [lib]
 name = "clip_sync_repair"

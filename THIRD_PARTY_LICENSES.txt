@@ -1,0 +1,12 @@
+(Apache-2.0 OR MIT) AND Unicode-3.0 (1): unicode-ident
+Apache-2.0 (1): hound
+Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT (14): linux-raw-sys, rustix, wasip2, wasip3, wasm-encoder, wasm-metadata, wasmparser, wit-bindgen, wit-bindgen, wit-bindgen-core, wit-bindgen-rust, wit-bindgen-rust-macro, wit-component, wit-parser
+Apache-2.0 OR BSD-3-Clause (4): cross_correlate, novtb, pxfm, zaft
+Apache-2.0 OR LGPL-2.1-or-later OR MIT (2): r-efi, r-efi
+Apache-2.0 OR MIT (78): anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, autocfg, bitflags, cc, cfg-if, clap, clap_builder, clap_derive, clap_lex, colorchoice, core_affinity, equivalent, errno, fastrand, find-msvc-tools, getrandom, getrandom, hashbrown, hashbrown, heck, hermit-abi, id-arena, indexmap, is_terminal_polyfill, itoa, jobserver, lazy_static, leb128fmt, libc, log, num-complex, num-integer, num-traits, num_cpus, once_cell, once_cell_polyfill, pin-project-lite, prettyplease, primal-check, proc-macro2, quote, regex-automata, regex-lite, regex-syntax, rustfft, semver, serde, serde_core, serde_derive, serde_json, serde_spanned, shlex, smallvec, strength_reduce, syn, tempfile, thiserror, thiserror, thiserror-impl, thiserror-impl, thread_local, toml, toml_datetime, toml_edit, toml_write, transpose, unicode-xid, utf8parse, winapi, winapi-i686-pc-windows-gnu, winapi-x86_64-pc-windows-gnu, windows-link, windows-sys
+Apache-2.0 OR MIT OR Zlib (1): bytemuck
+MIT (20): extended, fdk-aac, fdk-aac-sys, matchers, nu-ansi-term, oxideav-ac3, oxideav-core, realfft, rubato, rusty-chromaprint, sharded-slab, strsim, tracing, tracing-attributes, tracing-core, tracing-log, tracing-subscriber, valuable, winnow, zmij
+MIT OR Unlicense (2): aho-corasick, memchr
+MPL-2.0 (14): symphonia, symphonia-bundle-flac, symphonia-bundle-mp3, symphonia-codec-aac, symphonia-codec-adpcm, symphonia-codec-pcm, symphonia-codec-vorbis, symphonia-common, symphonia-core, symphonia-format-isomp4, symphonia-format-mkv, symphonia-format-ogg, symphonia-format-riff, symphonia-metadata
+PolyForm-Noncommercial-1.0.0 (3): clip-sync, clip-sync-cli, clip-sync-repair
+Zlib (1): foldhash

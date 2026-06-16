@@ -395,6 +395,16 @@ The library's public surface is a facade of explicit re-exports in `lib.rs`. App
 
 ---
 
+## License
+
+Copyright (c) 2026 Matt Groeninger.
+
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and distribute the software for **noncommercial purposes** — personal projects, research, education, and use by nonprofit or government organizations. **Commercial use** (including use inside products or services sold for profit) is not permitted without a separate commercial license.
+
+Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt). Notable copyleft: the Symphonia audio stack is under [MPL-2.0](https://opensource.org/licenses/MPL-2.0). Optional test audio fixtures are documented separately in [tests/corpus/THIRD_PARTY_AUDIO.md](tests/corpus/THIRD_PARTY_AUDIO.md).
+
+---
+
 ## Documentation
 
 - [docs/development.md](docs/development.md) — features, build, full test suite
