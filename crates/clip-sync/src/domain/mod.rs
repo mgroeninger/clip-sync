@@ -10,6 +10,11 @@ pub mod multichannel_pcm;
 pub mod media_extent;
 pub mod pcm_preparation;
 pub mod policies;
+pub mod query_localization;
+
+// `compute_mapped_region` / `AlignmentModeUsed` are reachable via `domain::query_localization`
+// until Q2 consumes them through `AlignmentResult`; re-export here then to avoid an unused warning.
+pub use query_localization::QueryLocalization;
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,

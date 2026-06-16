@@ -33,7 +33,8 @@ pub struct AlignConfig {
 
 impl AlignConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.clip.validate()
+        self.clip.validate()?;
+        self.alignment.validate()
     }
 
     /// Whether a tail packet scan is needed to populate [`MediaExtent::decodable`].
@@ -184,6 +185,20 @@ impl ClipConfig {
     }
 }
 
+/// How to align when the two inputs differ greatly in length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlignmentMode {
+    /// Use query-reference when the shorter input is much shorter, else symmetric.
+    #[default]
+    Auto,
+    /// Always use the symmetric multi-clip path (legacy behaviour).
+    Symmetric,
+    /// Always treat the shorter input as a query localized against the longer reference.
+    #[serde(rename = "queryreference", alias = "query_reference")]
+    QueryReference,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AlignmentConfig {
     #[serde(default = "default_min_match_score")]
@@ -226,6 +241,93 @@ pub struct AlignmentConfig {
     /// End clip is unreliable when decode skips exceed this count.
     #[serde(default = "default_max_end_clip_decode_skips")]
     pub max_end_clip_decode_skips: u32,
+
+    /// How to align when inputs differ greatly in length.
+    #[serde(default)]
+    pub mode: AlignmentMode,
+
+    /// In Auto mode, treat the shorter file as a query when
+    /// `dur_short / dur_long < this ratio` (effective durations).
+    #[serde(default = "default_query_min_duration_ratio")]
+    pub query_min_duration_ratio: f64,
+
+    /// Coarse search stride on the reference timeline (seconds) — how far the window
+    /// advances between scores. Independent of `query_decode_bucket_secs`.
+    #[serde(default = "default_query_search_stride_secs")]
+    pub query_search_stride_secs: f64,
+
+    /// Decode granularity for the coarse scan: PCM chunk size handed to the
+    /// `scan_mono_buckets` callback. Small + fixed; the window (length `L`) is
+    /// accumulated from these chunks in a ring buffer. NOT the stride.
+    #[serde(default = "default_query_decode_bucket_secs")]
+    pub query_decode_bucket_secs: f64,
+
+    /// Maximum coarse windows to fingerprint per run (stride widens if exceeded).
+    #[serde(default = "default_query_max_windows_scored")]
+    pub query_max_windows_scored: u32,
+
+    /// Minimum Chromaprint confidence to accept a localization candidate. On the
+    /// `[0,1]` `segment_confidence` scale, NOT the raw `MATCH_SCORE_THRESHOLD`.
+    #[serde(default = "default_query_min_match_score")]
+    pub query_min_match_score: f32,
+
+    /// Number of top coarse candidates to PCM-refine (1 = winner only).
+    #[serde(default = "default_query_refine_top_k")]
+    pub query_refine_top_k: u32,
+}
+
+impl AlignmentConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.query_search_stride_secs < 15.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "query_search_stride_secs".into(),
+                reason: "must be at least 15 seconds".into(),
+            });
+        }
+        if !(self.query_min_duration_ratio > 0.0 && self.query_min_duration_ratio <= 1.0) {
+            return Err(ConfigError::InvalidValue {
+                field: "query_min_duration_ratio".into(),
+                reason: "must be in (0.0, 1.0]".into(),
+            });
+        }
+        if self.query_decode_bucket_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "query_decode_bucket_secs".into(),
+                reason: "must be greater than 0".into(),
+            });
+        }
+        if self.query_refine_top_k < 1 {
+            return Err(ConfigError::InvalidValue {
+                field: "query_refine_top_k".into(),
+                reason: "must be at least 1".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn default_query_min_duration_ratio() -> f64 {
+    0.5
+}
+
+fn default_query_search_stride_secs() -> f64 {
+    60.0
+}
+
+fn default_query_decode_bucket_secs() -> f64 {
+    10.0
+}
+
+fn default_query_max_windows_scored() -> u32 {
+    500
+}
+
+fn default_query_min_match_score() -> f32 {
+    0.3
+}
+
+fn default_query_refine_top_k() -> u32 {
+    1
 }
 
 fn default_end_clip_tail_inset_secs() -> f64 {
@@ -278,6 +380,13 @@ impl Default for AlignmentConfig {
             skip_unreliable_end_clip: true,
             min_end_clip_decode_fraction: default_min_end_clip_decode_fraction(),
             max_end_clip_decode_skips: default_max_end_clip_decode_skips(),
+            mode: AlignmentMode::default(),
+            query_min_duration_ratio: default_query_min_duration_ratio(),
+            query_search_stride_secs: default_query_search_stride_secs(),
+            query_decode_bucket_secs: default_query_decode_bucket_secs(),
+            query_max_windows_scored: default_query_max_windows_scored(),
+            query_min_match_score: default_query_min_match_score(),
+            query_refine_top_k: default_query_refine_top_k(),
         }
     }
 }
