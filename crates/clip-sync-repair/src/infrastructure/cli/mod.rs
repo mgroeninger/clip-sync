@@ -123,7 +123,6 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .repair
                         .partial_structure_waveform_soften,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
-                    limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
                 };
 
                 let write_request = RepairWriteRequest {

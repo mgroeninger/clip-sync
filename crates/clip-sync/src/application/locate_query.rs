@@ -181,7 +181,7 @@ where
     let windows_scored = candidates.len() as u32;
 
     // 3. Cluster candidates and select the best anchor.
-    let Some((winner, ambiguous)) = select_best_cluster(&candidates) else {
+    let Some((winner, ambiguous)) = select_best_cluster(&candidates, query_duration_secs) else {
         return Ok(QueryLocalization::skipped(
             "no fingerprint match found in reference",
             windows_scored,
@@ -324,7 +324,15 @@ fn coarse_search<RS: MediaSession>(
 
 /// Cluster candidates by anchor (±tolerance) and return the best cluster's representative
 /// plus whether a competing cluster makes the localization ambiguous.
-fn select_best_cluster(candidates: &[Candidate]) -> Option<(Candidate, bool)> {
+///
+/// `query_duration_secs` is the minimum anchor separation for ambiguity: a competing cluster
+/// *within* the query's footprint is the same match seen through an overlapping (offset) search
+/// window — partial-overlap windows report shifted anchors with high confidence — not a genuine
+/// alternate location. Genuine repeats sit at a distinct timeline position (≥ query length away).
+fn select_best_cluster(
+    candidates: &[Candidate],
+    query_duration_secs: f64,
+) -> Option<(Candidate, bool)> {
     if candidates.is_empty() {
         return None;
     }
@@ -351,9 +359,12 @@ fn select_best_cluster(candidates: &[Candidate]) -> Option<(Candidate, bool)> {
     });
 
     let best = clusters[0];
-    let ambiguous = clusters.get(1).is_some_and(|second| {
-        second.confidence >= best.confidence * AMBIGUITY_SCORE_FRACTION
-            && (second.anchor_a_secs - best.anchor_a_secs).abs() > ANCHOR_CLUSTER_TOLERANCE_SECS
+    // A competing cluster is genuinely ambiguous only when it is both comparably strong AND far
+    // enough away to be a distinct location (≥ one query length), not a partial-overlap artifact.
+    let min_separation = query_duration_secs.max(ANCHOR_CLUSTER_TOLERANCE_SECS);
+    let ambiguous = clusters.iter().skip(1).any(|other| {
+        other.confidence >= best.confidence * AMBIGUITY_SCORE_FRACTION
+            && (other.anchor_a_secs - best.anchor_a_secs).abs() >= min_separation
     });
     Some((best, ambiguous))
 }

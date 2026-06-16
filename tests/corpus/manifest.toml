@@ -473,7 +473,9 @@ total_secs = 3600
 query_anchor_secs = 2700
 query_duration_secs = 480
 alignment_mode = "queryreference"
-clip_length_secs = 60
+# Must be >= query_duration_secs so the query is not truncated to a tiny, non-distinctive
+# coarse window (a short L over a smooth reference causes neighbor windows to partial-match).
+clip_length_secs = 600
 num_clips = 2
 expected_offset_secs = -2700.0
 expect_clip_on_a_start_secs = 2700.0

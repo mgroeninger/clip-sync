@@ -35,12 +35,13 @@ pub struct GapFillPlan {
 ///
 /// Only gaps for which [`Gap::is_fillable`] returns `true` are included in `regions`.
 /// Other gaps are listed in `skipped` with a reason.
-pub fn build_gap_fill_plan(
-    report: &GapReport,
-    crossfade_ms: u64,
-    limit_fill_to_mapped_region: bool,
-) -> GapFillPlan {
+///
+/// The query-reference mapped-region gate is read from [`GapReport::limit_fill_to_mapped_region`]
+/// (the single source of truth, set when the report is built) so the plan can never disagree with
+/// [`GapReport::repairable_count`].
+pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan {
     let crossfade_secs = crossfade_ms as f64 / 1000.0;
+    let limit_fill_to_mapped_region = report.limit_fill_to_mapped_region;
 
     let plan_block_reason = match &report.track_compatibility {
         None => Some(GapFillSkipReason::TrackCompatibilityUnavailable),
@@ -204,7 +205,7 @@ mod tests {
         assert_eq!(report.fillable_count(), 1);
         assert_eq!(report.repairable_count(), 0);
         assert!(!report.patch_allowed());
-        let plan = build_gap_fill_plan(&report, 10, true);
+        let plan = build_gap_fill_plan(&report, 10);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -216,7 +217,7 @@ mod tests {
     #[test]
     fn build_gap_fill_plan_empty_when_no_compatibility() {
         let report = base_report(None, vec![fillable_gap(0.0, 3.0)]);
-        let plan = build_gap_fill_plan(&report, 10, true);
+        let plan = build_gap_fill_plan(&report, 10);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -238,7 +239,7 @@ mod tests {
             },
         ];
         let report = base_report(Some(stereo_identical()), gaps);
-        let plan = build_gap_fill_plan(&report, 10, true);
+        let plan = build_gap_fill_plan(&report, 10);
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 3.0).abs() < 0.001);
         assert!((plan.regions[0].a_end_secs - 6.0).abs() < 0.001);
@@ -263,7 +264,7 @@ mod tests {
             video_b_end_secs: 10.0,
             shared_length_secs: 10.0,
         });
-        let plan = build_gap_fill_plan(&report, 0, true);
+        let plan = build_gap_fill_plan(&report, 0);
         assert_eq!(plan.regions.len(), 2);
         assert!(plan.skipped.is_empty());
     }
@@ -306,7 +307,7 @@ mod tests {
         report.alignment.query_localization = Some(QueryLocalizationReport::from(&loc));
         assert_eq!(report.repairable_count(), 1);
 
-        let plan = build_gap_fill_plan(&report, 0, true);
+        let plan = build_gap_fill_plan(&report, 0);
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 1.0).abs() < 0.001);
         assert_eq!(plan.skipped.len(), 1);
@@ -315,7 +316,9 @@ mod tests {
             GapFillSkipReason::OutsideReferenceCoverage
         );
 
-        let plan_all = build_gap_fill_plan(&report, 0, false);
+        // With the mapped-region gate disabled, both gaps are planned.
+        report.limit_fill_to_mapped_region = false;
+        let plan_all = build_gap_fill_plan(&report, 0);
         assert_eq!(plan_all.regions.len(), 2);
     }
 }

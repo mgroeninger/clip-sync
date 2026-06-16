@@ -103,7 +103,13 @@ impl GapReport {
             .count()
     }
 
-    /// True when a gap lies outside the query-reference mapped region on A.
+    /// True when a gap is not **fully** covered by the query-reference mapped region on A.
+    ///
+    /// Full containment is required by design: B only has audio for the mapped region, so a gap
+    /// that straddles a region boundary is only partly covered. Filling it would splice
+    /// uncovered audio (silence / out-of-range B) into the exposed part, so such gaps are
+    /// conservatively excluded rather than partially filled. Returns `false` (not outside) in
+    /// symmetric mode or when no overlap was computed — the gate only applies to query mode.
     pub fn gap_outside_reference_coverage(&self, gap: &Gap) -> bool {
         if self.alignment.query_localization.is_none() {
             return false;

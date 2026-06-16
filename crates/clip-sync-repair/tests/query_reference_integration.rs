@@ -212,7 +212,7 @@ fn repair_query_gap_inside_region_fillable() {
         report.overlap
     );
 
-    let plan = build_gap_fill_plan(&report, 10, true);
+    let plan = build_gap_fill_plan(&report, 10);
     assert!(
         plan.regions
             .iter()
@@ -243,7 +243,6 @@ fn repair_query_gap_inside_region_fillable() {
                 strong_structure_trust: 0.90,
                 partial_structure_waveform_soften: 0.85,
                 absolute_silence_rms: 0.0,
-                limit_fill_to_mapped_region: true,
             },
             10,
         )
@@ -285,7 +284,7 @@ fn repair_query_gap_outside_region_skipped() {
         .expect("gap outside mapped region should still be reported");
     assert!(report.gap_outside_reference_coverage(outside_gap));
 
-    let plan = build_gap_fill_plan(&report, 10, true);
+    let plan = build_gap_fill_plan(&report, 10);
     assert!(
         !plan
             .regions

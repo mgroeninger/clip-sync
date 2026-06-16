@@ -185,7 +185,6 @@ fn patch_request(
         strong_structure_trust: 0.90,
         partial_structure_waveform_soften: 0.85,
         absolute_silence_rms: 0.0,
-        limit_fill_to_mapped_region: true,
     }
 }
 

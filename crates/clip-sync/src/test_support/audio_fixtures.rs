@@ -347,7 +347,24 @@ pub fn write_repeated_segment_wav_pair(
     (path_a, path_b)
 }
 
+/// Bounded linear chirp: instantaneous frequency f0 + k·t stays below Nyquist for the whole
+/// `sweep_secs` span, so long references do not alias into quasi-periodic (ambiguous) content.
+/// Unlike [`chirp_sample`] (naive `300 + 400·t`, which aliases past ~6.5 s), every window stays
+/// spectrally distinct — required for unambiguous query localization over minutes-long files.
+fn bounded_chirp_sample(sample_rate: u32, index: u64, sweep_secs: f64) -> i16 {
+    let rate = f64::from(sample_rate);
+    let t = index as f64 / rate;
+    let f0 = 200.0;
+    let f1 = 0.45 * rate; // stay below Nyquist (rate / 2) across the whole sweep
+    let k = (f1 - f0) / sweep_secs.max(1.0);
+    let phase = TAU as f64 * (f0 * t + 0.5 * k * t * t);
+    (phase.sin() * (f64::from(i16::MAX) * 0.5)).round() as i16
+}
+
 /// Long reference A (full chirp) + short query B (slice from A at `query_anchor_secs`).
+///
+/// Uses [`bounded_chirp_sample`] so the reference does not alias over long durations — the slice
+/// localizes unambiguously (confidence ≈ 1.0) rather than tripping the repeated-content downgrade.
 pub fn write_query_reference_chirp_pair(
     dir: &Path,
     sample_rate: u32,
@@ -357,18 +374,19 @@ pub fn write_query_reference_chirp_pair(
 ) -> (PathBuf, PathBuf) {
     let path_a = dir.join("a.wav");
     let path_b = dir.join("b.wav");
+    let sweep_secs = f64::from(reference_secs);
     let reference_samples = u64::from(sample_rate) * u64::from(reference_secs);
     write_mono_wav(
         &path_a,
         sample_rate,
-        (0..reference_samples).map(|index| chirp_sample(sample_rate, index)),
+        (0..reference_samples).map(|index| bounded_chirp_sample(sample_rate, index, sweep_secs)),
     );
     let start_index = u64::from(sample_rate) * u64::from(query_anchor_secs);
     let query_samples = u64::from(sample_rate) * u64::from(query_duration_secs);
     write_mono_wav(
         &path_b,
         sample_rate,
-        (0..query_samples).map(|offset| chirp_sample(sample_rate, start_index + offset)),
+        (0..query_samples).map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
     );
     (path_a, path_b)
 }

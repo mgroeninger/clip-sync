@@ -183,6 +183,42 @@ fn locate_query_passes_mid_file_embed() {
     assert!((loc.mapped_region.shared_length_secs - 70.0).abs() < 0.5);
 }
 
+// Direct tests of the cross-window ambiguity logic (independent of chromaprint/chirp fixtures,
+// which are chroma-periodic and so an unreliable proxy for "clean match"). These guard the
+// regression where partial-overlap neighbor windows of a single true match (a "shoulder" near
+// the peak, within one query length) were treated as a competing location and the match was
+// flagged ambiguous, halving its confidence.
+fn candidate(anchor: f64, confidence: f32) -> super::Candidate {
+    super::Candidate {
+        anchor_a_secs: anchor,
+        confidence,
+        window_start_secs: anchor,
+        window_end_secs: anchor + 60.0,
+    }
+}
+
+#[test]
+fn select_best_cluster_shoulder_within_query_is_not_ambiguous() {
+    // Strong peak at 2700 with decaying partial-overlap shoulders within one query length (480 s).
+    let cands = vec![
+        candidate(2700.0, 0.99),
+        candidate(2760.0, 0.86),
+        candidate(2820.0, 0.84),
+        candidate(2880.0, 0.78),
+    ];
+    let (best, ambiguous) = super::select_best_cluster(&cands, 480.0).expect("cluster");
+    assert!((best.anchor_a_secs - 2700.0).abs() < 1e-9);
+    assert!(!ambiguous, "decaying shoulders within query length must not be ambiguous");
+}
+
+#[test]
+fn select_best_cluster_distant_strong_peak_is_ambiguous() {
+    // Two comparably strong peaks a full query length apart (genuine repeated content).
+    let cands = vec![candidate(0.0, 0.98), candidate(600.0, 0.95)];
+    let (_, ambiguous) = super::select_best_cluster(&cands, 480.0).expect("cluster");
+    assert!(ambiguous, "two strong peaks at distinct locations must be ambiguous");
+}
+
 #[test]
 fn locate_query_fails_below_threshold() {
     let mut reference = reference(180.0, None);
