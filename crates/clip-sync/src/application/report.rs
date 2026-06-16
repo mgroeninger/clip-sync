@@ -373,10 +373,16 @@ pub fn format_offset_verification_lines(
     vec![]
 }
 
+/// True when A is the longer (reference) file — mirrors [`crate::domain::query_reference_is_a`].
+fn query_reference_is_a_report(loc: &QueryLocalizationReport) -> bool {
+    (loc.anchor_ref_secs - loc.clip_on_a_start_secs).abs() < 1e-6
+}
+
 /// Human-readable lines for a query-reference localization.
 ///
-/// Leads with *where the clip sits on the long file* (not offset/overlap jargon). With
-/// `show_diagnostics`, adds the B span, offset, and coarse-search stats for debugging.
+/// Leads with *where the clip sits on the long file* (not offset/overlap jargon). When B is the
+/// longer (donor) file, the default line adds the matching span on B. With `show_diagnostics`,
+/// adds the B span (if not already shown), offset, and coarse-search stats for debugging.
 pub fn format_query_localization_lines(
     loc: &QueryLocalizationReport,
     recommended_offset_secs: Option<f64>,
@@ -388,11 +394,17 @@ pub fn format_query_localization_lines(
 
     let span = format_time_range(loc.clip_on_a_start_secs, loc.clip_on_a_end_secs);
     let clip_len_secs = (loc.clip_on_a_end_secs - loc.clip_on_a_start_secs).max(0.0);
-    let mut lines = vec![format!(
+    let b_is_reference = query_reference_is_a_report(loc);
+    let mut match_line = format!(
         "Match on video A: {span}  ({}, confidence {:.2})",
         format_clip_length(clip_len_secs),
         loc.confidence
-    )];
+    );
+    if !b_is_reference {
+        let b_span = format_time_range(loc.clip_on_b_start_secs, loc.clip_on_b_end_secs);
+        match_line.push_str(&format!("  (donor on B: {b_span})"));
+    }
+    let mut lines = vec![match_line];
 
     if loc.ambiguous {
         lines.push(
@@ -628,6 +640,32 @@ mod tests {
         assert!(joined.contains("Clip on B:"));
         assert!(joined.contains("Offset:"));
         assert!(joined.contains("-2700.000s"));
+    }
+
+    #[test]
+    fn format_query_lines_b_longer_default_includes_donor_on_b() {
+        let loc = QueryLocalization::from_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: 240.0,
+                query_duration_secs: 90.0,
+                winning_window_start_secs: 180.0,
+                winning_window_end_secs: 270.0,
+                confidence: 0.91,
+                ambiguous: false,
+                windows_scored: 12,
+                search_stride_secs: 60.0,
+                skip_reason: None,
+            },
+            false,
+            MediaExtent::from_declared(Duration::from_secs(90)),
+            MediaExtent::from_declared(Duration::from_secs(360)),
+        );
+        let report = QueryLocalizationReport::from(&loc);
+        let lines = format_query_localization_lines(&report, Some(240.0), false);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("donor on B:"));
+        assert!(lines[0].contains("4:00"));
+        assert!(!lines[0].contains("Offset:"));
     }
 
     #[test]

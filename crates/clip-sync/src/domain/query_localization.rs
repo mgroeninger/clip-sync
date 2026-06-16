@@ -137,6 +137,14 @@ impl QueryLocalization {
             return Self::skipped(reason, outcome.windows_scored, outcome.search_stride_secs);
         }
 
+        debug_assert!(
+            reference_is_a == (extent_a.effective() >= extent_b.effective()),
+            "reference_is_a={reference_is_a} inconsistent with effective durations \
+             (A={:?}, B={:?})",
+            extent_a.effective(),
+            extent_b.effective(),
+        );
+
         let anchor = outcome.anchor_ref_secs;
         let mapped_region = if reference_is_a {
             compute_mapped_region(anchor, outcome.query_duration_secs, extent_a, extent_b)
@@ -426,6 +434,19 @@ mod tests {
         );
         assert_eq!(loc.skip_reason.as_deref(), Some("no match"));
         assert_eq!(loc.recommended_offset_secs(), None);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "reference_is_a")]
+    fn from_reference_outcome_debug_asserts_when_reference_is_a_wrong() {
+        let outcome = sample_outcome(90.0);
+        let _ = QueryLocalization::from_reference_outcome(
+            outcome,
+            true,
+            extent(70.0),
+            extent(180.0),
+        );
     }
 
     #[test]
