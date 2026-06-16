@@ -73,10 +73,12 @@ pub struct GapReport {
     /// Analysis block size used for silence-run detection (milliseconds).
     pub scan_block_ms: u64,
     pub silence_peak_fraction: f32,
+    /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
+    pub limit_fill_to_mapped_region: bool,
 }
 
 impl GapReport {
-    /// Gaps where B has mapped audio energy (ignores track layout).
+    /// Gaps where B has mapped audio energy (ignores track layout and mapped-region gate).
     pub fn fillable_count(&self) -> usize {
         self.gaps.iter().filter(|g| g.is_fillable()).count()
     }
@@ -90,11 +92,40 @@ impl GapReport {
         )
     }
 
-    /// Gaps that would be included in a fill plan (B energy + patch-allowed tracks).
+    /// Gaps that would be included in a fill plan (B energy + patch-allowed tracks + region gate).
     pub fn repairable_count(&self) -> usize {
         if !self.patch_allowed() {
             return 0;
         }
-        self.fillable_count()
+        self.gaps
+            .iter()
+            .filter(|g| self.is_gap_repairable(g))
+            .count()
+    }
+
+    /// True when a gap lies outside the query-reference mapped region on A.
+    pub fn gap_outside_reference_coverage(&self, gap: &Gap) -> bool {
+        if self.alignment.query_localization.is_none() {
+            return false;
+        }
+        let Some(overlap) = &self.overlap else {
+            return false;
+        };
+        !interval_fully_within_window(
+            gap.video_a_start_secs,
+            gap.video_a_end_secs,
+            overlap.video_a_start_secs,
+            overlap.video_a_end_secs,
+        )
+    }
+
+    fn is_gap_repairable(&self, gap: &Gap) -> bool {
+        if !gap.is_fillable() {
+            return false;
+        }
+        if self.limit_fill_to_mapped_region && self.gap_outside_reference_coverage(gap) {
+            return false;
+        }
+        true
     }
 }

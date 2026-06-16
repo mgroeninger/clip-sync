@@ -35,6 +35,8 @@ pub struct ScanGapsRequest {
     pub scan_both: bool,
     /// Tolerance (seconds) for the silence-based vs alignment offset agreement check.
     pub gap_offset_tolerance_secs: f64,
+    /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
+    pub limit_fill_to_mapped_region: bool,
 }
 
 pub struct ScanGaps<'r, MR: MediaReader> {
@@ -195,18 +197,20 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
+        let overlap = alignment.start_overlap.map(Into::into);
         let alignment = clip_sync::AlignmentReport::from(&alignment);
         Ok(GapReport {
             video_a: request.video_a,
             video_b: request.video_b,
             track_compatibility,
-            overlap: alignment.start_overlap,
+            overlap,
             alignment,
             gaps,
             gap_offset_agreement,
             decode_chunk_secs: request.decode_chunk_secs,
             scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
             silence_peak_fraction: request.silence_peak_fraction,
+            limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
         })
     }
 
@@ -628,6 +632,7 @@ mod tests {
             min_gap_secs: 1.0,
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
+            limit_fill_to_mapped_region: true,
         }
     }
 
@@ -829,6 +834,7 @@ mod tests {
             decode_chunk_secs: 60,
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
+            limit_fill_to_mapped_region: true,
         };
 
         assert_eq!(report.gaps.len(), 2);

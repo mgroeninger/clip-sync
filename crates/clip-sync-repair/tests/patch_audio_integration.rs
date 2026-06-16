@@ -185,6 +185,7 @@ fn patch_request(
         strong_structure_trust: 0.90,
         partial_structure_waveform_soften: 0.85,
         absolute_silence_rms: 0.0,
+        limit_fill_to_mapped_region: true,
     }
 }
 
@@ -200,6 +201,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         decode_chunk_secs: 60,
         scan_block_ms: 250,
         silence_peak_fraction: 0.01,
+        limit_fill_to_mapped_region: true,
     }
 }
 
@@ -604,6 +606,7 @@ fn scan_then_patch_fills_detected_gap() {
             min_gap_secs: 1.0,
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
+            limit_fill_to_mapped_region: true,
         })
         .expect("scan should succeed");
 

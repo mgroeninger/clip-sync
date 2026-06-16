@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use clip_sync::{
-    format_high_rate_refinement_lines, format_offset_verification_lines, format_time_range,
-    ClipLabelReport,
+    format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_query_localization_lines, format_time_range, ClipLabelReport,
 };
 use serde::Serialize;
 
@@ -34,38 +34,52 @@ fn format_human(
     output_written: Option<&Path>,
 ) -> String {
     let mut out = String::new();
+    let query_mode = report.alignment.query_localization.is_some();
 
-    let offset = report
-        .alignment
-        .recommended_offset_secs
-        .map(|o| format!("{o:+.3}s"))
-        .unwrap_or_else(|| "n/a (alignment failed)".into());
-    let confidence = report
-        .alignment
-        .clips
-        .first()
-        .map(|c| format!("{:.2}", c.confidence))
-        .unwrap_or_default();
+    if query_mode {
+        if let Some(loc) = &report.alignment.query_localization {
+            for line in format_query_localization_lines(loc, show_diagnostics) {
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+    } else {
+        let offset = report
+            .alignment
+            .recommended_offset_secs
+            .map(|o| format!("{o:+.3}s"))
+            .unwrap_or_else(|| "n/a (alignment failed)".into());
+        let confidence = report
+            .alignment
+            .clips
+            .first()
+            .map(|c| format!("{:.2}", c.confidence))
+            .unwrap_or_default();
 
-    out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+        out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
 
-    if report.alignment.clips.len() > 1 {
-        for clip in &report.alignment.clips {
-            let label = clip_label_name(clip.label);
-            if let Some(clip_offset) = clip.offset_secs {
-                out.push_str(&format!(
-                    "  {label} clip: {clip_offset:+.3}s  (confidence {:.2})\n",
-                    clip.confidence
-                ));
+        if report.alignment.clips.len() > 1 {
+            for clip in &report.alignment.clips {
+                let label = clip_label_name(clip.label);
+                if let Some(clip_offset) = clip.offset_secs {
+                    out.push_str(&format!(
+                        "  {label} clip: {clip_offset:+.3}s  (confidence {:.2})\n",
+                        clip.confidence
+                    ));
+                }
             }
         }
     }
 
-    if let Some(drift) = report.alignment.offset_drift_secs {
-        if !report.alignment.offsets_consistent {
-            out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
-            if report.alignment.recommended_offset_secs.is_some() {
-                out.push_str("           using start-clip offset for fill (clip offsets disagree)\n");
+    if !query_mode {
+        if let Some(drift) = report.alignment.offset_drift_secs {
+            if !report.alignment.offsets_consistent {
+                out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
+                if report.alignment.recommended_offset_secs.is_some() {
+                    out.push_str(
+                        "           using start-clip offset for fill (clip offsets disagree)\n",
+                    );
+                }
             }
         }
     }
@@ -84,15 +98,17 @@ fn format_human(
         out.push_str("Tracks:    video B unavailable — compatibility not assessed\n");
     }
 
-    if let Some(overlap) = &report.overlap {
-        out.push_str(&format!(
-            "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)\n",
-            overlap.video_a_start_secs,
-            overlap.video_a_end_secs,
-            overlap.video_b_start_secs,
-            overlap.video_b_end_secs,
-            overlap.shared_length_secs,
-        ));
+    if !query_mode {
+        if let Some(overlap) = &report.overlap {
+            out.push_str(&format!(
+                "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)\n",
+                overlap.video_a_start_secs,
+                overlap.video_a_end_secs,
+                overlap.video_b_start_secs,
+                overlap.video_b_end_secs,
+                overlap.shared_length_secs,
+            ));
+        }
     }
 
     if let Some(refine) = &report.alignment.high_rate_refinement {
@@ -225,6 +241,9 @@ fn format_unified_gap_status(
         }
         GapPatchStatus::NotPlanned { reason } => match reason {
             GapFillSkipReason::NotFillable => "unfillable".into(),
+            GapFillSkipReason::OutsideReferenceCoverage => {
+                "skipped (outside clip coverage)".into()
+            }
             other => format!("not planned: {}", format_fill_skip_reason(other)),
         },
     }
@@ -233,6 +252,9 @@ fn format_unified_gap_status(
 fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'static str {
     if !gap.is_fillable() {
         return "unfillable";
+    }
+    if report.limit_fill_to_mapped_region && report.gap_outside_reference_coverage(gap) {
+        return "outside clip coverage";
     }
     if !report.patch_allowed() {
         return "blocked (track layout)";
@@ -372,6 +394,7 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
         GapFillSkipReason::NotFillable => "no B energy or alignment offset missing",
         GapFillSkipReason::TrackLayoutMismatch => "track layout mismatch",
         GapFillSkipReason::TrackCompatibilityUnavailable => "track compatibility unavailable",
+        GapFillSkipReason::OutsideReferenceCoverage => "outside clip coverage",
     }
 }
 
@@ -501,6 +524,7 @@ mod tests {
             decode_chunk_secs: 10,
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
+            limit_fill_to_mapped_region: true,
         }
     }
 
@@ -593,6 +617,7 @@ mod tests {
             decode_chunk_secs: 60,
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
+            limit_fill_to_mapped_region: true,
         }
     }
 
@@ -749,6 +774,7 @@ mod tests {
             decode_chunk_secs: 60,
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
+            limit_fill_to_mapped_region: true,
         }
     }
 

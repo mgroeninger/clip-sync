@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment (short clip vs long video)
 
-> **Status:** Q2 complete (2026-06-15) — Q0 spike, Q1 localization engine, and Q2 (`AlignmentResult` fields, `build_query_alignment_result`, mode resolution, `AlignVideos` query/symmetric branch, report DTOs + formatter, JSON contract doc) all landed and tested (240 lib + repair + cli suites green; golden fixtures byte-identical). Next: **Q3** — repair integration (scan/fill gating by mapped region, CLI flags, human/JSON output). A few small Q2 deferrals (real-WAV execute oracle, A-as-query orientation, region-bounded hold-out) are noted in Q2b and folded into Q3/Q4. Design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
+> **Status:** Q3 complete (2026-06-15) — repair integration landed: `limit_fill_to_mapped_region`, `OutsideReferenceCoverage`, gap-fill gating, CLI flags, query-mode human/JSON output, integration tests. Next: **Q4** — analyzer CLI flags, corpus case, docs, archive. Q2 deferrals (A-as-query orientation, region-bounded hold-out) remain scoped to Q4.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -402,27 +402,17 @@ Per [json-output.md](json-output.md) revision procedure:
 
 ### Phase Q3 — Repair integration
 
+> **Status: ✅ done (2026-06-15)** — repair crate wired for query-reference mode.
+
 **Repair (`crates/clip-sync-repair`)**
 
-- [ ] `default_repair_align_config()`: document Auto mode; consider `num_clips = 1` when query mode expected (optional — Auto handles mismatch)
-- [ ] CLI flags: `--query-reference`, `--symmetric-align`, `--query-stride`, `--no-limit-fill-region`
-- [ ] `scan_gaps.rs`:
-  - `overlap` from `alignment.start_overlap` (mapped region in query mode)
-  - `check_gap_offset_agreement_in_overlap`: use mapped region when `query_localization` present
-  - When `limit_fill_to_mapped_region`: mark gaps outside `mapped_region` as not fillable → `GapFillSkipReason::OutsideReferenceCoverage`
-- [ ] `gap_fill.rs` / `patch_result.rs`: `OutsideReferenceCoverage` variant + human label in `format_fill_skip_reason`
-- [ ] `infrastructure/cli/output.rs` + lib `application/report.rs` (`format_query_localization_lines`):
-  - **Human (default):** lead with clip placement, not offset — e.g. `Match on A: 45:00 – 53:00  (8m clip, confidence 0.91)` via `start_clip()` confidence
-  - **Human (`--verbose`):** add B span, coarse-search stats, offset for debugging
-  - **JSON:** `AlignmentReport` passes through `query_localization` including `clip_on_a_*` / `clip_on_b_*`
-  - Replace or subordinate repair `Overlap:` line in query mode — use `Match on A:` / `Clip coverage:` instead
-  - Warn when `ambiguous == true`
-- [ ] Integration tests:
-  - Long A + short B with gap inside mapped region → fillable
-  - Gap outside mapped region → reported, `OutsideReferenceCoverage` when `limit_fill_to_mapped_region`
-  - Clip count mismatch pair succeeds under Auto
-
-**Lib:** none (unless Q2 gaps found)
+- [x] `default_repair_align_config()`: explicit `AlignmentMode::Auto`
+- [x] CLI flags: `--query-reference`, `--symmetric-align`, `--query-stride`, `--no-limit-fill-region`
+- [x] `scan_gaps.rs`: `overlap` from `alignment.start_overlap` (mapped region in query mode); `limit_fill_to_mapped_region` on request/report
+- [x] `gap_fill.rs` / `patch_result.rs`: `OutsideReferenceCoverage` variant + human label in `format_fill_skip_reason`
+- [x] `infrastructure/cli/output.rs`: query mode leads with `format_query_localization_lines`; symmetric `Overlap:` suppressed; ambiguous warning via lib formatter
+- [x] Integration tests: `query_reference_integration.rs` (Auto long+short, inside-region patch, outside-region gating)
+- [x] JSON contract: `outside_reference_coverage` in `json-output.md`; `full_surface_repair.json` regenerated (`limit_fill_to_mapped_region` on scan report)
 
 ### Phase Q4 — Analyzer CLI + corpus + documentation
 

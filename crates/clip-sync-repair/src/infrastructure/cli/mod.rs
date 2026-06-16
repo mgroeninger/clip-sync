@@ -6,7 +6,8 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use clip_sync::{
-    init_tracing, ProgressMode, ProgressReporter, StderrProgressReporter, SymphoniaMediaReader,
+    init_tracing, AlignmentMode, ProgressMode, ProgressReporter, StderrProgressReporter,
+    SymphoniaMediaReader,
 };
 
 use clip_sync::AppError;
@@ -82,6 +83,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         min_gap_secs: config.repair.min_gap_secs(),
         scan_both: config.repair.scan_both,
         gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
+        limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
     };
 
     let aligner = SymphoniaAligner;
@@ -121,6 +123,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .repair
                         .partial_structure_waveform_soften,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
+                    limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
                 };
 
                 let write_request = RepairWriteRequest {
@@ -253,5 +256,43 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
         config.align.alignment.refine_offset_high_rate = true;
     } else if args.no_refine_offset_high_rate {
         config.align.alignment.refine_offset_high_rate = false;
+    }
+    if args.query_reference {
+        config.align.alignment.mode = AlignmentMode::QueryReference;
+    } else if args.symmetric_align {
+        config.align.alignment.mode = AlignmentMode::Symmetric;
+    }
+    if let Some(stride) = args.query_stride {
+        config.align.alignment.query_search_stride_secs = stride;
+    }
+    if args.no_limit_fill_region {
+        config.repair.limit_fill_to_mapped_region = false;
+    }
+}
+
+#[cfg(test)]
+mod cli_override_tests {
+    use super::*;
+    use clip_sync::AlignmentMode;
+    use crate::infrastructure::config::RepairAppConfig;
+
+    #[test]
+    fn query_reference_cli_overrides_config() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--query-reference",
+            "--query-stride",
+            "45",
+            "--no-limit-fill-region",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.align.alignment.mode, AlignmentMode::QueryReference);
+        assert!((config.align.alignment.query_search_stride_secs - 45.0).abs() < f64::EPSILON);
+        assert!(!config.repair.limit_fill_to_mapped_region);
     }
 }

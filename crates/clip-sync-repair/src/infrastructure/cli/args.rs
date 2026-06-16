@@ -106,6 +106,22 @@ pub struct Args {
     /// Disable high-rate offset refinement (overrides config).
     #[arg(long, overrides_with = "refine_offset_high_rate")]
     pub no_refine_offset_high_rate: bool,
+
+    /// Force query-reference alignment (short clip localized against long recording).
+    #[arg(long)]
+    pub query_reference: bool,
+
+    /// Force symmetric multi-clip alignment (legacy behaviour).
+    #[arg(long)]
+    pub symmetric_align: bool,
+
+    /// Coarse search stride on the reference timeline when using query-reference mode (seconds).
+    #[arg(long, value_name = "SECS")]
+    pub query_stride: Option<f64>,
+
+    /// When using query-reference mode, allow filling gaps outside the located clip coverage.
+    #[arg(long)]
+    pub no_limit_fill_region: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

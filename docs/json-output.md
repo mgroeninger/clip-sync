@@ -205,7 +205,7 @@ Externally tagged (serde default): exactly one of the following keys.
 
 **GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"`, or the object form `{"correlation_below_threshold": {"pre_correlation": number, "post_correlation": number, "min_correlation": number}}`.
 
-**GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"`.
+**GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"` | `"outside_reference_coverage"`.
 
 ---
 

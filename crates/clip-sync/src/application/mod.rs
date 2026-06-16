@@ -3,8 +3,6 @@ pub mod config;
 pub mod default_pipeline;
 pub mod error;
 pub mod high_rate_refinement;
-// Q1 core; wired into `AlignVideos` + re-exported at the crate root in Q2 (drop allow then).
-#[allow(dead_code)]
 pub mod locate_query;
 #[cfg(test)]
 mod locate_query_spike;

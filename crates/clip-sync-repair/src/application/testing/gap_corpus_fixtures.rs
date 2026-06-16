@@ -569,6 +569,7 @@ fn build_scan_request(
         min_gap_secs: min_gap_ms as f64 / 1000.0,
         scan_both: false,
         gap_offset_tolerance_secs: 0.5,
+        limit_fill_to_mapped_region: true,
     }
 }
 

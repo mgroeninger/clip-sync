@@ -104,7 +104,8 @@
     },
     "decode_chunk_secs": 10,
     "scan_block_ms": 250,
-    "silence_peak_fraction": 0.01
+    "silence_peak_fraction": 0.01,
+    "limit_fill_to_mapped_region": true
   },
   "patch": {
     "patched_count": 1,

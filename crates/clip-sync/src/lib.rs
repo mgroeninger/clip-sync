@@ -6,7 +6,7 @@ mod test_support;
 
 // --- application ---
 pub use application::config::{
-    AlignConfig, AlignmentConfig, ChromaprintPreset, ClipConfig,
+    AlignConfig, AlignmentConfig, AlignmentMode, ChromaprintPreset, ClipConfig,
 };
 pub use application::default_pipeline::align_with_defaults;
 pub use application::{AlignVideos, AlignVideosRequest, AlignVideosResponse, AppError, ConfigError};

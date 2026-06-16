@@ -7,6 +7,7 @@ pub enum GapFillSkipReason {
     NotFillable,
     TrackLayoutMismatch,
     TrackCompatibilityUnavailable,
+    OutsideReferenceCoverage,
 }
 
 /// Why a planned gap was not patched during splice.

@@ -61,6 +61,8 @@ pub struct PatchAudioRequest {
     pub partial_structure_waveform_soften: f64,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
     pub absolute_silence_rms: f32,
+    /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
+    pub limit_fill_to_mapped_region: bool,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -96,7 +98,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         crossfade_ms: u64,
     ) -> Result<PatchAudioResult, RepairError> {
         // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy).
-        let plan = build_gap_fill_plan(&request.report, crossfade_ms);
+        let plan = build_gap_fill_plan(&request.report, crossfade_ms, request.limit_fill_to_mapped_region);
 
         if plan.regions.is_empty() {
             self.progress
