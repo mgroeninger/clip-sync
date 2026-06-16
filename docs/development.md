@@ -242,6 +242,8 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | Test / filter | Crate | Trigger |
 |---------------|-------|---------|
 | `corpus_generated_cases` | `clip-sync` | `--ignored`; ffmpeg for container cases |
+| `corpus_query_reference_45min_anchor` | `clip-sync` | `--ignored`; 60 min query-reference oracle |
+| `corpus_query_reference_45min_anchor` | `clip-sync` | `--ignored`; 60 min query-reference oracle (~minutes) |
 | `corpus_external_cases` | `clip-sync` | `--ignored`; `CLIP_SYNC_CORPUS` |
 | `regenerate_committed_wav_fixtures` | `clip-sync` | `--ignored`; overwrites committed WAVs |
 | `gap_corpus_generated` | `clip-sync-repair` | `--ignored` |

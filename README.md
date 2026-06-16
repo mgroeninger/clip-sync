@@ -69,6 +69,11 @@ clip-sync [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
 | `--refine-offset-high-rate` | — | Apply native-rate FFT refinement after fingerprint match |
 | `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
+| `--check-clip-repetition` | — | Diagnostic: detect internal clip repetition |
+| `--verify-offset` | — | Diagnostic: hold-out verification |
+| `--query-reference` | — | Force query-reference localization |
+| `--symmetric-align` | — | Force symmetric multi-clip alignment |
+| `--query-stride <SECS>` | — | Coarse search stride in query-reference mode |
 | `-h, --help` | | |
 | `-V, --version` | | |
 
@@ -85,7 +90,41 @@ clip-sync --num-clips 2 --format json camera_a.mp4 camera_b.mp4
 clip-sync --clip-length 10m --num-clips 3 recording_a.mp4 recording_b.mp4
 ```
 
-**Sample output:**
+#### Short clip against a long recording
+
+When one file is much shorter than the other (or symmetric clip windows do not match), **Auto** mode (default) localizes the short clip on the long timeline instead of failing with a clip-count mismatch. The repair tool uses the same engine: gaps **outside** the located clip coverage are still reported but are not filled unless you pass `--no-limit-fill-region`.
+
+```powershell
+# Analyzer: 8-minute phone clip vs 60-minute main recording
+clip-sync long_recording.mp4 phone_clip.mp4
+
+# Force query mode or tune coarse search
+clip-sync --query-reference --query-stride 60 long_recording.mp4 phone_clip.mp4
+
+# Repair: VIDEO_A = long file with gaps, VIDEO_B = short clean clip
+clip-sync-repair --query-reference long_recording.mp4 phone_clip.mp4
+```
+
+**Sample output (query mode, default human):**
+
+```text
+Match on video A: 45:00 – 53:00  (8m clip, confidence 0.91)
+
+Gaps in video A (2 found, 1 repaired, 0 skipped, 1 unfillable):
+  1   45:30 – 46:00          30.0s    patched
+  2   10:00 – 10:30          30.0s    outside clip coverage
+```
+
+Use `--verbose` to see offset, B-span, and coarse-search stats. JSON always includes `query_localization` and `recommended_offset_secs` for scripting — see [docs/json-output.md](docs/json-output.md).
+
+| Flag | Tool | Effect |
+|------|------|--------|
+| `--query-reference` | both | Force query-reference localization |
+| `--symmetric-align` | both | Force legacy symmetric multi-clip alignment |
+| `--query-stride <SECS>` | both | Coarse search stride on the long file |
+| `--no-limit-fill-region` | repair only | Allow gap fill outside located clip coverage |
+
+**Sample output (symmetric mode):**
 
 ```text
 Alignment report
@@ -132,6 +171,10 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
 | `--refine-offset-high-rate` | — | Apply native-rate FFT refinement (on by default in repair config) |
 | `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
+| `--query-reference` | — | Force query-reference alignment |
+| `--symmetric-align` | — | Force symmetric multi-clip alignment |
+| `--query-stride <SECS>` | — | Coarse search stride in query-reference mode |
+| `--no-limit-fill-region` | — | Allow gap fill outside located clip coverage |
 | `-h, --help` | | |
 | `-V, --version` | | |
 

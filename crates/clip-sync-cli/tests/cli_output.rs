@@ -1,9 +1,11 @@
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clip_sync::{
     AlignmentReport, AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport,
-    ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError,
-    OffsetVerification, RepetitionFinding, TimelineOverlap,
+    ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError, MediaExtent,
+    OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
+    build_query_alignment_result,
 };
 use clip_sync::testing::alignment_fixtures::{minimal_alignment_result, start_clip_match};
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
@@ -683,6 +685,56 @@ fn verify_human_verbose_shows_skip_reason() {
         output.contains("Verify:    skipped (hold-out window unavailable)"),
         "expected skip reason in verbose mode: {output}"
     );
+}
+
+#[test]
+fn query_human_leads_with_match_on_a_not_offset() {
+    let loc = QueryLocalization::from_anchor(
+        2700.0,
+        480.0,
+        MediaExtent::from_declared(Duration::from_secs(3600)),
+        MediaExtent::from_declared(Duration::from_secs(480)),
+        0.91,
+        false,
+        60.0,
+        2640.0,
+        3120.0,
+        60,
+    );
+    let result = build_query_alignment_result(loc, 0.3);
+    let output = format_human_output(false, &result);
+    assert!(
+        output.contains("Match on video A:"),
+        "expected clip placement headline: {output}"
+    );
+    assert!(
+        !output.contains("Alignment: offset"),
+        "query mode should not lead with offset: {output}"
+    );
+    assert!(
+        !output.contains("Overlap:"),
+        "query mode should omit overlap line: {output}"
+    );
+}
+
+#[test]
+fn query_human_verbose_shows_offset_and_b_span() {
+    let loc = QueryLocalization::from_anchor(
+        2700.0,
+        480.0,
+        MediaExtent::from_declared(Duration::from_secs(3600)),
+        MediaExtent::from_declared(Duration::from_secs(480)),
+        0.91,
+        false,
+        60.0,
+        2640.0,
+        3120.0,
+        60,
+    );
+    let result = build_query_alignment_result(loc, 0.3);
+    let output = format_human_output(true, &result);
+    assert!(output.contains("Offset:"), "expected offset in verbose: {output}");
+    assert!(output.contains("Clip on B:"), "expected B span in verbose: {output}");
 }
 
 #[test]

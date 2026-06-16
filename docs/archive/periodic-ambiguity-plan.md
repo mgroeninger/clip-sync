@@ -8,7 +8,7 @@
 
 **Goal (v1):** Stop claiming a unique offset when repetition makes it unknowable from fingerprint/lag-0 checks alone; optionally recover the true offset when **non-periodic file structure** (leading silence, unique head) breaks symmetry.
 
-**Non-goals (v1):** Option B lag-0 PCM as primary verify path; runtime query/reference mode ([TEMP-query-reference-alignment-plan.md](TEMP-query-reference-alignment-plan.md)); clearing `recommended_offset_secs` or changing exit codes; committed corpus budget changes.
+**Non-goals (v1):** Option B lag-0 PCM as primary verify path; runtime query/reference mode ([query-reference-alignment-plan.md](query-reference-alignment-plan.md)); clearing `recommended_offset_secs` or changing exit codes; committed corpus budget changes.
 
 **Workspace split:** Engine logic in **`crates/clip-sync`**; CLI flags unchanged (reuse `check_clip_repetition`); JSON/human via **`clip-sync-cli`** `output.rs` + `application/report.rs`. Repair consumes `AlignmentResult` only — no repair UI in v1.
 
@@ -144,6 +144,6 @@ flowchart TD
 ## Cross-plan sequencing
 
 - **Independent** of [TEMP-ac3-backend-plan.md](TEMP-ac3-backend-plan.md).
-- **Complements** [TEMP-query-reference-alignment-plan.md](TEMP-query-reference-alignment-plan.md) (short-B localization); share `ambiguous` semantics in docs only until query mode ships.
+- **Complements** [query-reference-alignment-plan.md](query-reference-alignment-plan.md) (short-B localization); share `ambiguous` semantics in docs only until query mode ships.
 - Follows [archive/verification-hardening-plan.md](archive/verification-hardening-plan.md) (verify retry, `candidates_tried`); Phase 2 override runs **after** best-attempt selection.
 - JSON additions stay **v1 additive** per [archive/output-error-contract-plan.md](archive/output-error-contract-plan.md).

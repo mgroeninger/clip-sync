@@ -75,6 +75,18 @@ pub struct Cli {
     /// Diagnostic only: never changes the exit code or recommended offset.
     #[arg(long)]
     pub verify_offset: bool,
+
+    /// Force query-reference alignment (short clip localized against long recording).
+    #[arg(long)]
+    pub query_reference: bool,
+
+    /// Force symmetric multi-clip alignment (legacy behaviour).
+    #[arg(long)]
+    pub symmetric_align: bool,
+
+    /// Coarse search stride on the reference timeline when using query-reference mode (seconds).
+    #[arg(long, value_name = "SECS")]
+    pub query_stride: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

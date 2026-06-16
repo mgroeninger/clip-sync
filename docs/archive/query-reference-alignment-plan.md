@@ -1,6 +1,6 @@
-# Temporary plan: query-reference alignment (short clip vs long video)
+# Query-reference alignment (short clip vs long video)
 
-> **Status:** Q3 complete (2026-06-15) — repair integration landed: `limit_fill_to_mapped_region`, `OutsideReferenceCoverage`, gap-fill gating, CLI flags, query-mode human/JSON output, integration tests. Next: **Q4** — analyzer CLI flags, corpus case, docs, archive. Q2 deferrals (A-as-query orientation, region-bounded hold-out) remain scoped to Q4.
+> **Status:** Shipped (2026-06-15) — Q0–Q4 complete. Archived from `docs/TEMP-query-reference-alignment-plan.md`.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -315,10 +315,10 @@ Update `docs/json-output.md` and repair golden fixture (`full_surface_repair.jso
 
 Per [json-output.md](json-output.md) revision procedure:
 
-- [ ] Add `alignment_mode_used`, `query_localization` to `AlignmentReport` table (optional-absent keys).
-- [ ] Add `outside_reference_coverage` to **GapFillSkipReason** enum in repair section.
-- [ ] Regenerate `tests/fixtures/full_surface_alignment.json` and `full_surface_repair.json`.
-- [ ] Note revision in changelog/commit (additive v1 extension).
+- [x] Add `alignment_mode_used`, `query_localization` to `AlignmentReport` table (optional-absent keys).
+- [x] Add `outside_reference_coverage` to **GapFillSkipReason** enum in repair section.
+- [x] Regenerate `tests/fixtures/full_surface_alignment.json` and `full_surface_repair.json`.
+- [x] Note revision in changelog/commit (additive v1 extension).
 
 ---
 
@@ -369,7 +369,7 @@ Per [json-output.md](json-output.md) revision procedure:
   - Returns `QueryLocalization`
 - [x] Unit tests (`locate_query/tests.rs`): known anchor pass (**refined ±0.05 s**), no match below threshold, query `< MIN_CLIP_LENGTH` skip, window-cap stride-widen, ambiguous repeat. Effective-duration clamp covered in `query_localization` domain tests.
 - [x] **`AlignVideos` not wired yet** — `pub mod locate_query` marked `#[allow(dead_code)]` until Q2 (drop allow then; also re-export `AlignmentModeUsed` / `compute_mapped_region` at domain root then).
-- [ ] **→ Q2:** `build_query_alignment_result(...)` — synthetic single `ClipMatch` (label `Start`), `recommended_offset_secs`, `start_overlap = mapped_region`; add `alignment_mode_used` / `query_localization` to `AlignmentResult` (~30 construction sites).
+- [x] **→ Q2:** `build_query_alignment_result(...)` — synthetic single `ClipMatch` (label `Start`), `recommended_offset_secs`, `start_overlap = mapped_region`; add `alignment_mode_used` / `query_localization` to `AlignmentResult` (~30 construction sites).
 
 **CLI / repair:** none
 
@@ -394,7 +394,7 @@ Per [json-output.md](json-output.md) revision procedure:
 
 **Q2b deferrals (small, scoped):**
 
-- [ ] **Real-WAV E2E query oracle through `execute()`** — folded into the Q4 corpus case (real fixtures + the 60-min generated case). The `locate_query` use-case tests already exercise real-chromaprint localization end-to-end; the execute branch is covered structurally by the Auto-routing test.
+- [x] **Real-WAV E2E query oracle through `execute()`** — folded into the Q4 corpus case (real fixtures + the 60-min generated case). The `locate_query` use-case tests already exercise real-chromaprint localization end-to-end; the execute branch is covered structurally by the Auto-routing test.
 - [ ] **A-as-query orientation** — query mode currently requires A = the longer (reference) file; when query mode is selected but A is shorter, `execute()` falls back to symmetric with a logged note. The general A-shorter orientation (offset-sign flip + A/B remap of the localization) is a Q4 analyzer follow-up. The repair use case (A = long recording, B = short clip) is fully covered.
 - [ ] **Mapped-region placement for high-rate/verify** — currently the winning coarse window is passed as the discovery window (inside the mapped region); the dedicated region-bounded hold-out placement from the Decisions table is deferred until Q3 repair exercises verification on the query path.
 
@@ -416,33 +416,35 @@ Per [json-output.md](json-output.md) revision procedure:
 
 ### Phase Q4 — Analyzer CLI + corpus + documentation
 
+> **Status: ✅ done (2026-06-15)** — analyzer CLI, generated corpus oracle, user docs, plan archived.
+
 **CLI (`clip-sync-cli`)**
 
-- [ ] Mirror query-mode flags on analyzer for debugging
-- [ ] Human/JSON lines for `query_localization` (reuse `format_query_localization_lines` from `clip_sync`)
-- [ ] Default human output: **start/finish on A** as primary line; offset only with `--verbose`; headline confidence via `start_clip()`
+- [x] Mirror query-mode flags on analyzer for debugging
+- [x] Human/JSON lines for `query_localization` (reuse `format_query_localization_lines` from `clip_sync`)
+- [x] Default human output: **start/finish on A** as primary line; offset only with `--verbose`; headline confidence via `start_clip()`
 
 **Corpus (alignment — `tests/corpus/`)**
 
-- [ ] `manifest.toml` case `wav_query_reference_45min_anchor` — 60 min A, 8 min B embedded at 45:00 — **generated tier only** (too large for committed corpus; unrelated to verification hardening’s ~75 s committed case)
-- [ ] `CorpusCase` extensions: `alignment_mode`, `expect_clip_on_a_start_secs`, tolerance
-- [ ] `application/testing/corpus_fixtures.rs` — generator for long+short pair
-- [ ] Wired into existing corpus test harness (`corpus_generated_cases` tier)
+- [x] `manifest.toml` case `wav_query_reference_45min_anchor` — 60 min A, 8 min B embedded at 45:00 — **generated tier only** (too large for committed corpus; unrelated to verification hardening’s ~75 s committed case)
+- [x] `CorpusCase` extensions: `alignment_mode`, `expect_clip_on_a_start_secs`, tolerance
+- [x] `application/testing/corpus_fixtures.rs` — generator for long+short pair
+- [x] Wired into existing corpus test harness (`corpus_generated_cases` tier)
 
 **Corpus (repair — `clip-sync-repair/tests/`)**
 
-- [ ] Integration: `repair_query_mid_file_gap` — long A with gap inside clip coverage → patched
-- [ ] Integration: `repair_query_gap_outside_coverage` — gap before clip anchor → skipped
-- [ ] Synthetic WAV only (same pattern as existing chirp fixtures); no gap-corpus manifest unless size budget allows
+- [x] Integration: `repair_query_mid_file_gap` — long A with gap inside clip coverage → patched
+- [x] Integration: `repair_query_gap_outside_coverage` — gap before clip anchor → skipped
+- [x] Synthetic WAV only (same pattern as existing chirp fixtures); no gap-corpus manifest unless size budget allows
 
 **Documentation**
 
-- [ ] **README** — new subsection “Short clip against long recording”: when Auto/query mode triggers, example command, sample human output (`Match on A: …`), note that gaps outside clip coverage are reported but not filled
-- [ ] **README** — symmetric vs query-mode flag table (`--query-reference`, `--symmetric-align`)
-- [ ] **docs/corpus-validation.md** — describe `wav_query_reference_*` (generated tier) and test roles
-- [ ] **docs/development.md** — brief pointer if corpus env vars apply
-- [ ] **BACKLOG.md** — link this plan until archived
-- [ ] Archive this doc → `docs/archive/query-reference-alignment-plan.md`
+- [x] **README** — new subsection “Short clip against long recording”: when Auto/query mode triggers, example command, sample human output (`Match on A: …`), note that gaps outside clip coverage are reported but not filled
+- [x] **README** — symmetric vs query-mode flag table (`--query-reference`, `--symmetric-align`)
+- [x] **docs/corpus-validation.md** — describe `wav_query_reference_*` (generated tier) and test roles
+- [x] **docs/development.md** — brief pointer if corpus env vars apply
+- [x] **BACKLOG.md** — link this plan until archived
+- [x] Archive this doc → `docs/archive/query-reference-alignment-plan.md`
 
 ---
 

@@ -5,19 +5,20 @@ use serde::Deserialize;
 use tempfile::TempDir;
 
 use crate::application::align_videos::{AlignVideos, AlignVideosRequest};
-use crate::application::config::{AlignConfig, ClipConfig};
+use crate::application::config::{AlignConfig, AlignmentMode, ClipConfig};
 use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
 use crate::test_support::audio_fixtures::{
     write_looped_chirp_wav_pair, write_near_silence_wav_pair, write_offset_chirp_wav_pair,
     write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
-    write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
-    write_two_clip_inconsistent_pair, ChirpDelayOn,
+    write_query_reference_chirp_pair, write_repeated_segment_wav_pair, write_tone_wav,
+    write_tone_wav_at_frequency, write_two_clip_inconsistent_pair, ChirpDelayOn,
 };
 use crate::application::testing::corpus_sources::{
     self, find_source, load_sources, source_cache_path,
 };
 use crate::test_support::ffmpeg_util::{self, EncodeFormat};
+use crate::domain::AlignmentModeUsed;
 use crate::domain::AlignmentResult;
 
 /// Short clips to keep Tier-B fixtures under the ~5 MB repo budget (see tests/corpus/README.md).
@@ -171,6 +172,18 @@ pub struct CorpusCase {
     pub source_id: Option<String>,
     #[serde(default)]
     pub requires_source: bool,
+    /// Force alignment algorithm: `auto`, `symmetric`, or `queryreference`.
+    #[serde(default)]
+    pub alignment_mode: Option<String>,
+    /// A timeline position where the short query clip starts (query-reference cases).
+    #[serde(default)]
+    pub expect_clip_on_a_start_secs: Option<f64>,
+    /// Duration of the short query clip on B (query-reference generator).
+    #[serde(default)]
+    pub query_duration_secs: Option<u32>,
+    /// Where the query clip is embedded on the long reference (query-reference generator).
+    #[serde(default)]
+    pub query_anchor_secs: Option<u32>,
 }
 
 pub struct GeneratedCasePaths {
@@ -282,6 +295,22 @@ fn write_chirp_pair_wavs(
         Some("looped_chirp_pair") => {
             let offset_secs = case.offset_secs.unwrap_or(0);
             write_looped_chirp_wav_pair(dir, sample_rate, total_secs, offset_secs)
+        }
+        Some("query_reference_chirp_pair") => {
+            let reference_secs = case.total_secs.expect("query_reference_chirp_pair needs total_secs");
+            let query_anchor_secs = case
+                .query_anchor_secs
+                .expect("query_reference_chirp_pair needs query_anchor_secs");
+            let query_duration_secs = case
+                .query_duration_secs
+                .expect("query_reference_chirp_pair needs query_duration_secs");
+            write_query_reference_chirp_pair(
+                dir,
+                sample_rate,
+                reference_secs,
+                query_anchor_secs,
+                query_duration_secs,
+            )
         }
         generator => panic!("case {}: unsupported generator {generator:?}", case.id),
     }
@@ -549,6 +578,13 @@ pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig
     if case.verify_offset {
         config.validation.verify_offset = true;
     }
+    if let Some(mode) = &case.alignment_mode {
+        config.alignment.mode = match mode.as_str() {
+            "symmetric" => AlignmentMode::Symmetric,
+            "queryreference" | "query_reference" => AlignmentMode::QueryReference,
+            _ => AlignmentMode::Auto,
+        };
+    }
 
     config
 }
@@ -717,6 +753,54 @@ pub fn assert_corpus_expectations(
                 case.id,
                 verify.confidence,
                 defaults.min_confidence
+            );
+        }
+    }
+
+    if case.alignment_mode.as_deref() == Some("queryreference")
+        || case.alignment_mode.as_deref() == Some("query_reference")
+    {
+        assert_eq!(
+            result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference),
+            "case {}: alignment_mode_used",
+            case.id
+        );
+        assert!(
+            result.query_localization.is_some(),
+            "case {}: expected query_localization",
+            case.id
+        );
+    }
+
+    if let Some(expect_anchor) = case.expect_clip_on_a_start_secs {
+        let loc = result
+            .query_localization
+            .as_ref()
+            .unwrap_or_else(|| panic!("case {}: expected query_localization", case.id));
+        let tolerance = case
+            .tolerance_secs
+            .unwrap_or(defaults.tolerance_secs);
+        assert!(
+            (loc.anchor_a_secs - expect_anchor).abs() <= tolerance,
+            "case {}: anchor_a_secs {} expected {expect_anchor} ± {tolerance}",
+            case.id,
+            loc.anchor_a_secs
+        );
+        assert!(
+            (loc.clip_on_a_start_secs - expect_anchor).abs() <= tolerance,
+            "case {}: clip_on_a_start_secs {} expected {expect_anchor} ± {tolerance}",
+            case.id,
+            loc.clip_on_a_start_secs
+        );
+        if let Some(expected_offset) = case.expected_offset_secs {
+            let actual = result
+                .recommended_offset_secs
+                .unwrap_or_else(|| panic!("case {}: missing recommended offset", case.id));
+            assert!(
+                (actual - expected_offset).abs() <= tolerance,
+                "case {}: recommended offset {actual}, expected {expected_offset} ± {tolerance}",
+                case.id
             );
         }
     }
@@ -1344,6 +1428,42 @@ mod tests {
             "lag_secs={} expected in [28, 32]",
             finding.lag_secs
         );
+    }
+
+    #[test]
+    #[ignore = "slow: 60 min query-reference generated case; cargo test corpus_query_reference_45min_anchor -- --ignored"]
+    fn corpus_query_reference_45min_anchor() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|c| c.id == "wav_query_reference_45min_anchor")
+            .expect("manifest case wav_query_reference_45min_anchor");
+        assert_eq!(case.tier, CorpusTier::Generated);
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
+        let result = run_corpus_case(
+            &use_case,
+            case,
+            &manifest.defaults,
+            paths.video_a,
+            paths.video_b,
+        )
+        .expect("query-reference corpus case should succeed");
+        assert_corpus_expectations(case, &manifest.defaults, &result);
     }
 
     #[test]

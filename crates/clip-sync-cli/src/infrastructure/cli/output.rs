@@ -1,7 +1,8 @@
 use clip_sync::{
     format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_periodic_ambiguity_line, format_timestamp, AlignmentReport, AlignmentResult, AppError,
-    ClipLabelReport, ClipMatchReport, RepetitionFindingReport,
+    format_periodic_ambiguity_line, format_query_localization_lines, format_timestamp,
+    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
+    RepetitionFindingReport,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
@@ -33,15 +34,25 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
 
     let result = AlignmentReport::from(domain_result);
     let mut out = String::new();
+    let query_mode = result.query_localization.is_some();
 
-    let offset = result
-        .recommended_offset_secs
-        .map(|o| format!("{o:+.3}s"))
-        .unwrap_or_else(|| "n/a".into());
-    let confidence = headline_confidence;
-    out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+    if query_mode {
+        if let Some(loc) = &result.query_localization {
+            for line in format_query_localization_lines(loc, show_diagnostics) {
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+    } else {
+        let offset = result
+            .recommended_offset_secs
+            .map(|o| format!("{o:+.3}s"))
+            .unwrap_or_else(|| "n/a".into());
+        let confidence = headline_confidence;
+        out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+    }
 
-    let show_per_clip_offsets = result.clips.len() > 1;
+    let show_per_clip_offsets = !query_mode && result.clips.len() > 1;
     let show_clip_window_lines = show_diagnostics
         || result.clips.iter().any(|clip| !clip.aligned);
 
@@ -62,7 +73,7 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
                 out.push_str(&format!("    {line}\n"));
             }
         }
-    } else {
+    } else if !query_mode {
         for clip in &result.clips {
             for line in format_repetition_lines(clip, show_diagnostics) {
                 out.push_str(&format!("  {line}\n"));
@@ -70,22 +81,26 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
         }
     }
 
-    if let Some(drift) = result.offset_drift_secs {
-        if !result.offsets_consistent {
-            out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
-            if result.recommended_offset_secs.is_some() {
-                out.push_str("           using start-clip offset (clip offsets disagree)\n");
+    if !query_mode {
+        if let Some(drift) = result.offset_drift_secs {
+            if !result.offsets_consistent {
+                out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
+                if result.recommended_offset_secs.is_some() {
+                    out.push_str("           using start-clip offset (clip offsets disagree)\n");
+                }
             }
         }
     }
 
-    if let Some(overlap) = result.start_overlap {
-        out.push_str(&format!(
-            "Overlap:   A {}   B {}   ({} shared)\n",
-            format_window(overlap.video_a_start_secs, overlap.video_a_end_secs),
-            format_window(overlap.video_b_start_secs, overlap.video_b_end_secs),
-            format_timestamp(overlap.shared_length_secs),
-        ));
+    if !query_mode {
+        if let Some(overlap) = result.start_overlap {
+            out.push_str(&format!(
+                "Overlap:   A {}   B {}   ({} shared)\n",
+                format_window(overlap.video_a_start_secs, overlap.video_a_end_secs),
+                format_window(overlap.video_b_start_secs, overlap.video_b_end_secs),
+                format_timestamp(overlap.shared_length_secs),
+            ));
+        }
     }
 
     if let Some(refine) = &result.high_rate_refinement {

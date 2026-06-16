@@ -1,5 +1,5 @@
 //! Phase Q0 spike — query-reference localization (see
-//! `docs/TEMP-query-reference-alignment-plan.md` § Phase Q0).
+//! `docs/archive/query-reference-alignment-plan.md` § Phase Q0).
 //!
 //! Goal: prove the **ring-buffer sliding window** coarse search finds a known anchor
 //! within the coarse tolerance (±2 s) while holding live PCM to `O(L)` (one window),

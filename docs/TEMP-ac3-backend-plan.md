@@ -192,7 +192,7 @@ No minimum version check — any successful `-version` exit is accepted.
 | Plan | Interaction |
 |------|-------------|
 | [archive/media-session-redesign-plan.md](archive/media-session-redesign-plan.md) | Shipped 2026-06-11: `&mut self` extract entry points and internal seek recovery. Implement AC-3 routing on current signatures. |
-| [TEMP-query-reference-alignment-plan.md](TEMP-query-reference-alignment-plan.md) | Blocked on media-session; AC-3 backend choice does not block query mode but repair on AC-3 sources benefits from `ac3-ffmpeg` first. |
+| [archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md) | Blocked on media-session; AC-3 backend choice does not block query mode but repair on AC-3 sources benefits from `ac3-ffmpeg` first. |
 | Repair `ffmpeg-mux` | Independent feature; typical repair build: `--features "ac3,ac3-ffmpeg,ffmpeg-mux"`. |
 
 **Suggested land order:** Phase 0 characterization (can run immediately) → Phase 1 + 3 (`ac3-ffmpeg` shippable) → Phase 2 oxideav hardening → Phase 4 docs. Phase 2 can parallel Phase 3.

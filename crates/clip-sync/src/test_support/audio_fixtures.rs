@@ -346,3 +346,29 @@ pub fn write_repeated_segment_wav_pair(
     write_mono_wav(&path_b, sample_rate, make_samples(delay));
     (path_a, path_b)
 }
+
+/// Long reference A (full chirp) + short query B (slice from A at `query_anchor_secs`).
+pub fn write_query_reference_chirp_pair(
+    dir: &Path,
+    sample_rate: u32,
+    reference_secs: u32,
+    query_anchor_secs: u32,
+    query_duration_secs: u32,
+) -> (PathBuf, PathBuf) {
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+    let reference_samples = u64::from(sample_rate) * u64::from(reference_secs);
+    write_mono_wav(
+        &path_a,
+        sample_rate,
+        (0..reference_samples).map(|index| chirp_sample(sample_rate, index)),
+    );
+    let start_index = u64::from(sample_rate) * u64::from(query_anchor_secs);
+    let query_samples = u64::from(sample_rate) * u64::from(query_duration_secs);
+    write_mono_wav(
+        &path_b,
+        sample_rate,
+        (0..query_samples).map(|offset| chirp_sample(sample_rate, start_index + offset)),
+    );
+    (path_a, path_b)
+}

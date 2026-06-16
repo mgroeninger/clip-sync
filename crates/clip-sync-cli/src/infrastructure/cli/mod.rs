@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use clip_sync::{AppError, ProgressMode, ProgressReporter, init_tracing, StderrProgressReporter};
+use clip_sync::{AppError, AlignmentMode, ProgressMode, ProgressReporter, init_tracing, StderrProgressReporter};
 
 use crate::application::run_align::run_align;
 use crate::infrastructure::config::{AppConfig, load_app_config};
@@ -81,5 +81,36 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     }
     if cli.verify_offset {
         config.align.validation.verify_offset = true;
+    }
+    if cli.query_reference {
+        config.align.alignment.mode = AlignmentMode::QueryReference;
+    } else if cli.symmetric_align {
+        config.align.alignment.mode = AlignmentMode::Symmetric;
+    }
+    if let Some(stride) = cli.query_stride {
+        config.align.alignment.query_search_stride_secs = stride;
+    }
+}
+
+#[cfg(test)]
+mod cli_override_tests {
+    use super::*;
+    use clap::Parser;
+    use clip_sync::AlignmentMode;
+
+    #[test]
+    fn query_reference_cli_overrides_config() {
+        let cli = Cli::parse_from([
+            "clip-sync",
+            "a.wav",
+            "b.wav",
+            "--query-reference",
+            "--query-stride",
+            "45",
+        ]);
+        let mut config = AppConfig::default();
+        apply_cli_overrides(&mut config, &cli);
+        assert_eq!(config.align.alignment.mode, AlignmentMode::QueryReference);
+        assert!((config.align.alignment.query_search_stride_secs - 45.0).abs() < f64::EPSILON);
     }
 }

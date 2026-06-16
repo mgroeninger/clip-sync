@@ -10,14 +10,13 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 - **Done** — one-line index in [Completed](#completed); design detail lives in `docs/archive/*` and git history.
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [query-reference alignment](#active-plans) (unblocked); [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
+**Next:** [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
 
-**Active plans (2026-06-11)** — AC-3 backend and periodic-ambiguity plans are independent and can land in parallel.
+**Active plans (2026-06-15)** — AC-3 backend is independent and can land in parallel.
 
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-query-reference-alignment-plan.md](docs/TEMP-query-reference-alignment-plan.md) | Short clip vs long video localization + repair mapped-region fill |
 
 ---
 
@@ -97,6 +96,7 @@ Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port com
 | `MediaSession` redesign + `MediaExtent` | 2026-06-11 | [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md): `&mut self` port, internal seek recovery, `media_scan.rs`, hold-out extent placement, duration-less open audit |
 | Verification & validation hardening (phases 1–5) | 2026-06-11 | [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus README / test dedupe / `alignment_fixtures`; v1 docs in [corpus-validation.md](docs/corpus-validation.md) |
 | Periodic offset ambiguity | 2026-06-11 | [archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`); looped +13 s probe |
+| Query-reference alignment (short clip vs long video) | 2026-06-15 | [archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md): localization engine, repair mapped-region fill, CLI flags, generated corpus `wav_query_reference_45min_anchor` |
 
 ---
 

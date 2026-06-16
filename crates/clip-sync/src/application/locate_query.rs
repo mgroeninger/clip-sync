@@ -2,7 +2,7 @@
 //!
 //! Searches a short *query* clip (the shorter file) against a long *reference* timeline (the
 //! longer file) and returns a [`QueryLocalization`]: where the query sits on the reference,
-//! plus the mapped coverage region. See `docs/TEMP-query-reference-alignment-plan.md` § Q1.
+//! plus the mapped coverage region. See `docs/archive/query-reference-alignment-plan.md` § Q1.
 //!
 //! The coarse search is the ring-buffer sliding window proven in the Q0 spike: a small fixed
 //! `bucket_secs` decode granularity feeds a length-`L` ring buffer that is fingerprinted every

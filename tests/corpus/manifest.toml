@@ -463,3 +463,22 @@ expect_recommended = true
 refine_offset_high_rate = true
 requires_source = true
 requires_ffmpeg = true
+
+[[case]]
+id = "wav_query_reference_45min_anchor"
+tier = "generated"
+generator = "query_reference_chirp_pair"
+format = "wav"
+total_secs = 3600
+query_anchor_secs = 2700
+query_duration_secs = 480
+alignment_mode = "queryreference"
+clip_length_secs = 60
+num_clips = 2
+expected_offset_secs = -2700.0
+expect_clip_on_a_start_secs = 2700.0
+tolerance_secs = 0.05
+expect_aligned = true
+expect_recommended = true
+refine_offset_high_rate = false
+max_wall_secs = 900

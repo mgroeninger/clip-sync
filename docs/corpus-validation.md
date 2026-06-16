@@ -19,7 +19,7 @@ cargo test -p clip-sync --features he-aac,test-utils corpus_            # + HE-A
 ```
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
-- **Generated tier** — 19 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
+- **Generated tier** — 20 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
 - **External tier** — `long_smoke_60m` (3600 s); `#[ignore]` unless `CLIP_SYNC_CORPUS` is set.
 
 Harness code: `crates/clip-sync/src/application/testing/corpus_fixtures.rs`, generators in `audio_fixtures.rs` and `ffmpeg_util.rs`.
@@ -142,6 +142,26 @@ try_all_tracks = true
 ```
 
 Default is `false` because track-pair brute force multiplies decode work. Prefer enabling it when you know a container has multiple audio tracks or alignment looks wrong with the default pick.
+
+---
+
+## Query-reference corpus (`wav_query_reference_*`)
+
+Shipped with [query-reference alignment](archive/query-reference-alignment-plan.md) (2026-06-15). Exercises **short B embedded mid-file on long A** via query-reference mode — not symmetric offset chirp pairs.
+
+| Case | Tier | Generator | Asserts |
+|------|------|-----------|---------|
+| `wav_query_reference_45min_anchor` | **generated** (`#[ignore]`) | `query_reference_chirp_pair` | 60 min A + 8 min B @ 45:00; `anchor_a_secs` and `recommended_offset_secs` within **±0.05 s** |
+
+Run alone (slow — full coarse search on 60 min reference):
+
+```powershell
+cargo test -p clip-sync corpus_query_reference_45min_anchor -- --ignored
+```
+
+Included in `cargo test -p clip-sync corpus_generated -- --ignored`. Fields: `alignment_mode = "queryreference"`, `expect_clip_on_a_start_secs`, tight `tolerance_secs`.
+
+**Test roles:** manifest-driven alignment oracle (lib `corpus_fixtures.rs`); repair integration uses smaller synthetic chirp pairs in `clip-sync-repair/tests/query_reference_integration.rs` (gap inside/outside mapped region).
 
 ---
 
