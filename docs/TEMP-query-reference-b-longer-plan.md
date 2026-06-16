@@ -101,26 +101,26 @@ The only residual is cosmetic: in B-long mode the `_a`-named field carries a B-t
 
 ### Phase B1 — Oriented constructor + offset field (lib)
 
-- [ ] Add stored `recommended_offset_secs: Option<f64>` to `QueryLocalization` (per [Part 1](#part-1--the-offset-the-actual-debt) of the anchor design — explicit per-orientation offset, independent of `anchor_a_secs` handling); `recommended_offset_secs()` returns it.
-- [ ] `QueryLocalization::from_reference_outcome(outcome, reference_is_a, extent_a, extent_b)` — `mapped_region` is the single source of truth; all convenience fields derive from it here:
+- [x] Add stored `recommended_offset_secs: Option<f64>` to `QueryLocalization` (per [Part 1](#part-1--the-offset-the-actual-debt) of the anchor design — explicit per-orientation offset, independent of `anchor_a_secs` handling); `recommended_offset_secs()` returns it.
+- [x] `QueryLocalization::from_reference_outcome(outcome, reference_is_a, extent_a, extent_b)` — `mapped_region` is the single source of truth; all convenience fields derive from it here:
   - `mapped_region` per the table (call `compute_mapped_region` with the reference as its first extent; swap a↔b when `!reference_is_a` — small `swap_timeline_overlap_a_b` helper or inline swap in this one place);
   - `recommended_offset_secs = if reference_is_a { -anchor } else { +anchor }` (stored explicitly as `Some(...)`);
   - `anchor_a_secs = if reference_is_a { mapped_region.video_a_start_secs } else { mapped_region.video_b_start_secs }` (derived at construction from `mapped_region`, not passed in from search);
   - `clip_on_*` from the (possibly swapped) mapped region; `winning_window_*` on the reference timeline.
-- [ ] Update `QueryLocalization::skipped` to set `recommended_offset_secs: None` (and keep placement fields zeroed) — no `-anchor` derivation on the skip path.
-- [ ] Keep `from_anchor` as a thin wrapper (`reference_is_a = true`) so existing unit tests don't churn.
-- [ ] `build_query_alignment_result` reads the stored `recommended_offset_secs` (not `-anchor`).
+- [x] Update `QueryLocalization::skipped` to set `recommended_offset_secs: None` (and keep placement fields zeroed) — no `-anchor` derivation on the skip path.
+- [x] Keep `from_anchor` as a thin wrapper (`reference_is_a = true`) so existing unit tests don't churn.
+- [x] `build_query_alignment_result` reads the stored `recommended_offset_secs` (not `-anchor`).
 
 ### Phase B2 — `execute()` picks reference by length (lib)
 
-- [ ] In `align_videos.rs`, drop the `extent_b <= extent_a` guard; run query mode whenever resolved mode is `QueryReference`.
-- [ ] `align_query_reference` chooses `reference`/`query` = longer/shorter of (A, B), sets `reference_is_a = extent_a.effective() >= extent_b.effective()` (tie → A is reference), threads `reference_is_a` into `from_reference_outcome`.
-- [ ] **Session argument order:** pass the longer file's session/track/extent as `locate_query_in_reference`'s `reference` args and the shorter as `query`. Concretely, when B is longer:
+- [x] In `align_videos.rs`, drop the `extent_b <= extent_a` guard; run query mode whenever resolved mode is `QueryReference`.
+- [x] `align_query_reference` chooses `reference`/`query` = longer/shorter of (A, B), sets `reference_is_a = extent_a.effective() >= extent_b.effective()` (tie → A is reference), threads `reference_is_a` into `from_reference_outcome`.
+- [x] **Session argument order:** pass the longer file's session/track/extent as `locate_query_in_reference`'s `reference` args and the shorter as `query`. Concretely, when B is longer:
   ```text
   locate_query_in_reference(session_b, &track_b, session_a, &track_a, extent_b, extent_a, …)
   ```
   When A is longer, keep today's argument order unchanged. `AlignmentOutcome` still carries `(track_a, track_b, extent_a, extent_b)` in A/B repair roles — only the localization call swaps.
-- [ ] Remove the "video A is shorter; using symmetric" fallback log.
+- [x] Remove the "video A is shorter; using symmetric" fallback log.
 
 ### Phase B3 — Tests
 

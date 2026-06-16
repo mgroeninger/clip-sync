@@ -57,24 +57,29 @@ impl ReferenceLocalizationOutcome {
 
 /// Result of searching a short query clip against a long reference timeline.
 ///
+/// `mapped_region` is the single source of truth for placement; `clip_on_*` and
+/// `anchor_a_secs` are derived in [`QueryLocalization::from_reference_outcome`].
 /// `PartialEq` is derived for test convenience; float fields are not semantically exact.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryLocalization {
-    /// Reference (A) timeline position where query (B) `t = 0` aligns.
+    /// Position on the **longer (reference)** file where the short clip's `t = 0` aligns
+    /// (= `mapped_region.video_a_start` when A is reference, else `video_b_start`).
     pub anchor_a_secs: f64,
     /// Same as `mapped_region.video_a_start_secs` — explicit alias for human-oriented output.
     pub clip_on_a_start_secs: f64,
     /// Same as `mapped_region.video_a_end_secs`.
     pub clip_on_a_end_secs: f64,
-    /// Same as `mapped_region.video_b_start_secs` (usually 0).
+    /// Same as `mapped_region.video_b_start_secs` (usually 0 when B is the query).
     pub clip_on_b_start_secs: f64,
     /// Same as `mapped_region.video_b_end_secs`.
     pub clip_on_b_end_secs: f64,
-    /// Shared region implied by the anchor + query duration.
+    /// Shared region implied by the anchor + query duration (always A/B-oriented).
     pub mapped_region: TimelineOverlap,
+    /// Seconds to add to A's timeline to align with B (`b = a + offset`). `None` when skipped.
+    pub recommended_offset_secs: Option<f64>,
     /// Coarse search stride actually used (may widen if the window cap was hit).
     pub search_stride_secs: f64,
-    /// Reference (A) timeline bounds of the winning coarse window.
+    /// Reference-timeline bounds of the winning coarse window (longer file).
     pub winning_window_start_secs: f64,
     pub winning_window_end_secs: f64,
     /// Localization confidence (coarse Chromaprint cluster; ×0.5 when ambiguous).
@@ -88,8 +93,8 @@ pub struct QueryLocalization {
 }
 
 impl QueryLocalization {
-    /// Build a localization from a chosen anchor + measured coarse-search facts, deriving the
-    /// mapped region (and its human-oriented aliases) from the file extents.
+    /// Build a localization when A is the longer (reference) file — thin wrapper over
+    /// [`from_reference_outcome`](Self::from_reference_outcome).
     #[allow(clippy::too_many_arguments)]
     pub fn from_anchor(
         anchor_a_secs: f64,
@@ -103,28 +108,25 @@ impl QueryLocalization {
         winning_window_end_secs: f64,
         windows_scored: u32,
     ) -> Self {
-        let mapped_region =
-            compute_mapped_region(anchor_a_secs, query_duration_secs, extent_a, extent_b);
-        Self {
-            anchor_a_secs,
-            clip_on_a_start_secs: mapped_region.video_a_start_secs,
-            clip_on_a_end_secs: mapped_region.video_a_end_secs,
-            clip_on_b_start_secs: mapped_region.video_b_start_secs,
-            clip_on_b_end_secs: mapped_region.video_b_end_secs,
-            mapped_region,
-            search_stride_secs,
-            winning_window_start_secs,
-            winning_window_end_secs,
-            confidence,
-            ambiguous,
-            windows_scored,
-            skip_reason: None,
-        }
+        Self::from_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: anchor_a_secs,
+                query_duration_secs,
+                winning_window_start_secs,
+                winning_window_end_secs,
+                confidence,
+                ambiguous,
+                windows_scored,
+                search_stride_secs,
+                skip_reason: None,
+            },
+            true,
+            extent_a,
+            extent_b,
+        )
     }
 
     /// Map an orientation-neutral search outcome into A/B repair roles.
-    ///
-    /// Phase B0: `reference_is_a = true` only (A is the longer file). B-longer framing lands in B1.
     pub fn from_reference_outcome(
         outcome: ReferenceLocalizationOutcome,
         reference_is_a: bool,
@@ -134,22 +136,42 @@ impl QueryLocalization {
         if let Some(reason) = outcome.skip_reason {
             return Self::skipped(reason, outcome.windows_scored, outcome.search_stride_secs);
         }
-        assert!(
-            reference_is_a,
-            "B-longer framing (reference_is_a = false) is implemented in Phase B1"
-        );
-        Self::from_anchor(
-            outcome.anchor_ref_secs,
-            outcome.query_duration_secs,
-            extent_a,
-            extent_b,
-            outcome.confidence,
-            outcome.ambiguous,
-            outcome.search_stride_secs,
-            outcome.winning_window_start_secs,
-            outcome.winning_window_end_secs,
-            outcome.windows_scored,
-        )
+
+        let anchor = outcome.anchor_ref_secs;
+        let mapped_region = if reference_is_a {
+            compute_mapped_region(anchor, outcome.query_duration_secs, extent_a, extent_b)
+        } else {
+            swap_timeline_overlap_a_b(compute_mapped_region(
+                anchor,
+                outcome.query_duration_secs,
+                extent_b,
+                extent_a,
+            ))
+        };
+
+        let recommended_offset_secs = Some(if reference_is_a { -anchor } else { anchor });
+        let anchor_a_secs = if reference_is_a {
+            mapped_region.video_a_start_secs
+        } else {
+            mapped_region.video_b_start_secs
+        };
+
+        Self {
+            anchor_a_secs,
+            clip_on_a_start_secs: mapped_region.video_a_start_secs,
+            clip_on_a_end_secs: mapped_region.video_a_end_secs,
+            clip_on_b_start_secs: mapped_region.video_b_start_secs,
+            clip_on_b_end_secs: mapped_region.video_b_end_secs,
+            mapped_region,
+            recommended_offset_secs,
+            search_stride_secs: outcome.search_stride_secs,
+            winning_window_start_secs: outcome.winning_window_start_secs,
+            winning_window_end_secs: outcome.winning_window_end_secs,
+            confidence: outcome.confidence,
+            ambiguous: outcome.ambiguous,
+            windows_scored: outcome.windows_scored,
+            skip_reason: None,
+        }
     }
 
     /// A localization carrying no recommendation (no match / skipped), with a reason.
@@ -168,6 +190,7 @@ impl QueryLocalization {
             clip_on_b_start_secs: 0.0,
             clip_on_b_end_secs: 0.0,
             mapped_region: empty,
+            recommended_offset_secs: None,
             search_stride_secs,
             winning_window_start_secs: 0.0,
             winning_window_end_secs: 0.0,
@@ -178,13 +201,9 @@ impl QueryLocalization {
         }
     }
 
-    /// `recommended_offset_secs = -anchor_a_secs` (seconds to add to A to align with B).
+    /// Stored offset (seconds to add to A to align with B). `None` when localization was skipped.
     pub fn recommended_offset_secs(&self) -> Option<f64> {
-        if self.skip_reason.is_some() {
-            None
-        } else {
-            Some(-self.anchor_a_secs)
-        }
+        self.recommended_offset_secs
     }
 }
 
@@ -271,6 +290,17 @@ pub fn compute_mapped_region(
     }
 }
 
+/// Exchange A/B spans when remapping a reference-first region into repair roles.
+fn swap_timeline_overlap_a_b(overlap: TimelineOverlap) -> TimelineOverlap {
+    TimelineOverlap {
+        video_a_start_secs: overlap.video_b_start_secs,
+        video_a_end_secs: overlap.video_b_end_secs,
+        video_b_start_secs: overlap.video_a_start_secs,
+        video_b_end_secs: overlap.video_a_end_secs,
+        shared_length_secs: overlap.shared_length_secs,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,19 +310,35 @@ mod tests {
         MediaExtent::from_declared(Duration::from_secs_f64(secs))
     }
 
-    #[test]
-    fn from_reference_outcome_a_reference_matches_from_anchor() {
-        let outcome = ReferenceLocalizationOutcome {
-            anchor_ref_secs: 2700.0,
+    fn sample_outcome(anchor: f64) -> ReferenceLocalizationOutcome {
+        ReferenceLocalizationOutcome {
+            anchor_ref_secs: anchor,
             query_duration_secs: 480.0,
-            winning_window_start_secs: 2640.0,
-            winning_window_end_secs: 3120.0,
+            winning_window_start_secs: anchor - 60.0,
+            winning_window_end_secs: anchor + 420.0,
             confidence: 0.91,
             ambiguous: false,
             windows_scored: 60,
             search_stride_secs: 60.0,
             skip_reason: None,
-        };
+        }
+    }
+
+    fn assert_b_equals_a_plus_offset(loc: &QueryLocalization) {
+        let offset = loc
+            .recommended_offset_secs()
+            .expect("expected stored offset");
+        let a = loc.mapped_region.video_a_start_secs;
+        let b = loc.mapped_region.video_b_start_secs;
+        assert!(
+            (b - (a + offset)).abs() < 1e-9,
+            "b = a + offset failed: a={a}, b={b}, offset={offset}"
+        );
+    }
+
+    #[test]
+    fn from_reference_outcome_a_reference_matches_from_anchor() {
+        let outcome = sample_outcome(2700.0);
         let from_outcome = QueryLocalization::from_reference_outcome(
             outcome.clone(),
             true,
@@ -303,6 +349,25 @@ mod tests {
             2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
         );
         assert_eq!(from_outcome, from_anchor);
+        assert_eq!(from_outcome.recommended_offset_secs(), Some(-2700.0));
+        assert_b_equals_a_plus_offset(&from_outcome);
+    }
+
+    #[test]
+    fn from_reference_outcome_b_reference_positive_offset_and_spans() {
+        let loc = QueryLocalization::from_reference_outcome(
+            sample_outcome(2700.0),
+            false,
+            extent(480.0),
+            extent(3600.0),
+        );
+        assert_eq!(loc.recommended_offset_secs(), Some(2700.0));
+        assert!((loc.mapped_region.video_a_start_secs - 0.0).abs() < 1e-9);
+        assert!((loc.mapped_region.video_a_end_secs - 480.0).abs() < 1e-9);
+        assert!((loc.mapped_region.video_b_start_secs - 2700.0).abs() < 1e-9);
+        assert!((loc.mapped_region.video_b_end_secs - 3180.0).abs() < 1e-9);
+        assert!((loc.anchor_a_secs - 2700.0).abs() < 1e-9);
+        assert_b_equals_a_plus_offset(&loc);
     }
 
     #[test]

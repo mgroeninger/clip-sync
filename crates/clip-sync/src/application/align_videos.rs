@@ -85,12 +85,7 @@ where
         let mode_used = self.resolve_mode(&mut session_a, &mut session_b, &request)?;
 
         let outcome = match mode_used {
-            // Query mode currently localizes B (query) against A (reference); requires A to be
-            // the longer file. When query mode is selected but A is the shorter input, fall back
-            // to symmetric (general A-as-query orientation is a Q4 follow-up).
-            Some((AlignmentModeUsed::QueryReference, track_a, extent_a, track_b, extent_b))
-                if extent_b.effective() <= extent_a.effective() =>
-            {
+            Some((AlignmentModeUsed::QueryReference, track_a, extent_a, track_b, extent_b)) => {
                 self.align_query_reference(
                     &mut session_a,
                     &mut session_b,
@@ -101,12 +96,7 @@ where
                     &request,
                 )?
             }
-            other => {
-                if matches!(other, Some((AlignmentModeUsed::QueryReference, ..))) {
-                    self.progress.phase_verbose(
-                        "Query mode selected but video A is shorter; using symmetric alignment",
-                    );
-                }
+            _ => {
                 if request.config.alignment.try_all_tracks {
                     self.align_best_track_pair(&mut session_a, &mut session_b, &request)?
                 } else {
@@ -237,8 +227,8 @@ where
         Ok((track, extent))
     }
 
-    /// Query-reference path: localize B (query, shorter) against A (reference, longer) and build
-    /// a synthetic single-clip `AlignmentResult`.
+    /// Query-reference path: localize the shorter file against the longer and build a synthetic
+    /// single-clip `AlignmentResult` in A/B repair roles.
     #[allow(clippy::too_many_arguments)]
     fn align_query_reference(
         &self,
@@ -251,26 +241,45 @@ where
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         self.progress.phase("Localizing clip against reference...");
+        let reference_is_a = extent_a.effective() >= extent_b.effective();
         let deps = LocateQueryDeps {
             fingerprinter: self.fingerprinter,
             aligner: self.aligner,
             resampler: self.resampler,
             correlator: self.correlator,
         };
-        let outcome = locate_query_in_reference(
-            session_a,
-            &track_a,
-            session_b,
-            &track_b,
+        let search_outcome = if reference_is_a {
+            locate_query_in_reference(
+                session_a,
+                &track_a,
+                session_b,
+                &track_b,
+                extent_a,
+                extent_b,
+                &request.config,
+                deps,
+                self.progress,
+            )
+        } else {
+            locate_query_in_reference(
+                session_b,
+                &track_b,
+                session_a,
+                &track_a,
+                extent_b,
+                extent_a,
+                &request.config,
+                deps,
+                self.progress,
+            )
+        }
+        .map_err(AppError::Alignment)?;
+        let localization = QueryLocalization::from_reference_outcome(
+            search_outcome,
+            reference_is_a,
             extent_a,
             extent_b,
-            &request.config,
-            deps,
-            self.progress,
-        )
-        .map_err(AppError::Alignment)?;
-        let localization =
-            QueryLocalization::from_reference_outcome(outcome, true, extent_a, extent_b);
+        );
 
         let win_start = localization.winning_window_start_secs;
         let win_end = localization.winning_window_end_secs.max(win_start);
@@ -1017,7 +1026,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::config::{AlignConfig, AlignmentConfig, ClipConfig};
+    use crate::application::config::{AlignConfig, AlignmentConfig, AlignmentMode, ClipConfig};
     use crate::application::error::{AlignmentError, AppError, ConfigError, FingerprintError, MediaError};
     use crate::application::testing::fakes::{
         FakeAligner, FakePcmCorrelator, FakeFingerprinter, FakeMediaReader, FakeMediaSession,
@@ -1347,6 +1356,41 @@ mod tests {
             Some(AlignmentModeUsed::QueryReference)
         );
         assert!(!response.result.start_aligned);
+        assert!(response.result.query_localization.is_some());
+    }
+
+    #[test]
+    fn execute_query_reference_runs_when_a_is_shorter_than_b() {
+        // A=45s, B=3min: forced query mode must run (not fall back to symmetric).
+        let reader = FakeMediaReader::new()
+            .with_session("a.wav", FakeMediaSession::with_duration(Duration::from_secs(45)))
+            .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
+            offset_secs: 0.0,
+            confidence: 1.0,
+        });
+        let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &correlator,
+            &progress,
+        );
+
+        let mut config = two_clip_config();
+        config.alignment.mode = AlignmentMode::QueryReference;
+        let response = use_case
+            .execute(request(config))
+            .expect("query mode should run when A is shorter than B");
+
+        assert_eq!(
+            response.result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference)
+        );
         assert!(response.result.query_localization.is_some());
     }
 
