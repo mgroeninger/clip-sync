@@ -382,7 +382,7 @@ pub fn format_query_localization_lines(
     show_diagnostics: bool,
 ) -> Vec<String> {
     if let Some(reason) = &loc.skip_reason {
-        return vec![format!("Clip not located on video A ({reason})")];
+        return vec![format!("Query clip not located ({reason})")];
     }
 
     let span = format_time_range(loc.clip_on_a_start_secs, loc.clip_on_a_end_secs);

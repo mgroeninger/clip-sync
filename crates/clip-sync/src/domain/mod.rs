@@ -13,8 +13,8 @@ pub mod policies;
 pub mod query_localization;
 
 pub use query_localization::{
-    build_query_alignment_result, compute_mapped_region, AlignmentModeUsed, QueryLocalization,
-    ReferenceLocalizationOutcome,
+    build_query_alignment_result, compute_mapped_region, winning_window_on_a_timeline,
+    AlignmentModeUsed, QueryLocalization, ReferenceLocalizationOutcome,
 };
 
 pub use alignment::{

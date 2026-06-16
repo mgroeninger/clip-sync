@@ -101,8 +101,11 @@ clip-sync long_recording.mp4 phone_clip.mp4
 # Force query mode or tune coarse search
 clip-sync --query-reference --query-stride 60 long_recording.mp4 phone_clip.mp4
 
-# Repair: VIDEO_A = long file with gaps, VIDEO_B = short clean clip
+# Repair (A long, B short): gaps on A, donor clip on B
 clip-sync-repair --query-reference long_recording.mp4 phone_clip.mp4
+
+# Repair (A short, B long): short damaged clip as A, full recording as donor B
+clip-sync-repair --query-reference short_clip_with_gaps.mp4 full_recording.mp4
 ```
 
 **Sample output (query mode, default human):**

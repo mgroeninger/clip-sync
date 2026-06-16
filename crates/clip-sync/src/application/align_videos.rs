@@ -15,6 +15,7 @@ use crate::application::ports::{
 };
 use crate::domain::{
     build_alignment_result, build_query_alignment_result, clip_windows_with_options,
+    winning_window_on_a_timeline,
     compute_clip_timeline_overlap,
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
@@ -281,8 +282,7 @@ where
             extent_b,
         );
 
-        let win_start = localization.winning_window_start_secs;
-        let win_end = localization.winning_window_end_secs.max(win_start);
+        let (win_start, win_end) = winning_window_on_a_timeline(&localization);
         let winning = ClipWindow::new(
             Duration::from_secs_f64(win_start),
             Duration::from_secs_f64(win_end),

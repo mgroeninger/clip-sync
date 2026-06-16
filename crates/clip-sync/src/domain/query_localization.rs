@@ -207,22 +207,45 @@ impl QueryLocalization {
     }
 }
 
+/// True when A is the longer (reference) file in query-reference mode.
+pub fn query_reference_is_a(loc: &QueryLocalization) -> bool {
+    (loc.anchor_a_secs - loc.mapped_region.video_a_start_secs).abs() < 1e-6
+}
+
+/// Winning coarse-search window rebased onto **A's** timeline for discovery/hold-out placement.
+///
+/// [`QueryLocalization::winning_window_*`] stay on the reference (longer) file; synthetic
+/// `ClipMatch` windows and `discovery_windows` use this helper so high-rate/verify see A time.
+pub fn winning_window_on_a_timeline(loc: &QueryLocalization) -> (f64, f64) {
+    let ws = loc.winning_window_start_secs;
+    let we = loc.winning_window_end_secs.max(ws);
+    if query_reference_is_a(loc) {
+        return (ws, we);
+    }
+    let offset = loc.recommended_offset_secs.unwrap_or(0.0);
+    let a_start = (ws - offset).max(0.0);
+    let a_end = (we - offset).max(a_start);
+    (a_start, a_end)
+}
+
 /// Build an [`AlignmentResult`] from a query-reference localization.
 ///
 /// Query mode emits a single synthetic `Start` `ClipMatch` describing the winning search window
-/// on A, so `start_clip()` headline selection still works. A skipped/no-match localization
-/// yields an un-aligned result (no recommended offset) so callers may still scan A.
+/// on **A's** timeline (rebased from the reference timeline when B is longer), so `start_clip()`
+/// and hold-out placement match the symmetric path. A skipped/no-match localization yields an
+/// un-aligned result (no recommended offset) so callers may still scan A.
 pub fn build_query_alignment_result(
     localization: QueryLocalization,
     min_match_score: f32,
 ) -> AlignmentResult {
     let recommended_offset_secs = localization.recommended_offset_secs();
     let aligned = recommended_offset_secs.is_some() && localization.confidence >= min_match_score;
+    let (window_start_secs, window_end_secs) = winning_window_on_a_timeline(&localization);
 
     let clip = ClipMatch {
         label: ClipLabel::Start,
-        window_start_secs: localization.winning_window_start_secs,
-        window_end_secs: localization.winning_window_end_secs,
+        window_start_secs,
+        window_end_secs,
         aligned,
         offset_secs: aligned.then_some(recommended_offset_secs).flatten(),
         confidence: localization.confidence,
@@ -381,6 +404,53 @@ mod tests {
         );
         assert_eq!(loc.skip_reason.as_deref(), Some("no match"));
         assert_eq!(loc.recommended_offset_secs(), None);
+    }
+
+    #[test]
+    fn from_reference_outcome_b_reference_negative_anchor_clamps_a_low() {
+        let outcome = ReferenceLocalizationOutcome {
+            anchor_ref_secs: -5.0,
+            query_duration_secs: 100.0,
+            winning_window_start_secs: -65.0,
+            winning_window_end_secs: 415.0,
+            confidence: 0.88,
+            ambiguous: false,
+            windows_scored: 20,
+            search_stride_secs: 60.0,
+            skip_reason: None,
+        };
+        let loc = QueryLocalization::from_reference_outcome(
+            outcome,
+            false,
+            extent(100.0),
+            extent(1000.0),
+        );
+        assert_eq!(loc.recommended_offset_secs(), Some(-5.0));
+        assert!((loc.mapped_region.video_a_start_secs - 5.0).abs() < 1e-9);
+        assert!((loc.mapped_region.video_b_start_secs - 0.0).abs() < 1e-9);
+        assert_b_equals_a_plus_offset(&loc);
+        let (a_ws, _) = winning_window_on_a_timeline(&loc);
+        assert!(
+            (a_ws - 0.0).abs() < 1e-9,
+            "reference window on B rebased to A should clamp at 0, got {a_ws}"
+        );
+    }
+
+    #[test]
+    fn winning_window_on_a_timeline_b_reference_mid_anchor() {
+        let loc = QueryLocalization::from_reference_outcome(
+            sample_outcome(2700.0),
+            false,
+            extent(480.0),
+            extent(3600.0),
+        );
+        let (a_ws, a_we) = winning_window_on_a_timeline(&loc);
+        assert!((a_ws - 0.0).abs() < 1e-9);
+        assert!((a_we - 420.0).abs() < 1e-9);
+        let result = build_query_alignment_result(loc, 0.3);
+        let start = result.start_clip().expect("synthetic start");
+        assert!((start.window_start_secs - 0.0).abs() < 1e-9);
+        assert!((start.window_end_secs - 420.0).abs() < 1e-9);
     }
 
     #[test]
