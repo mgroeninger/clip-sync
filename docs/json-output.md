@@ -82,7 +82,7 @@ Present only when `alignment_mode_used` is `"queryreference"`. Describes where t
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `anchor_a_secs` | number | always | Position on the **longer (reference)** file where the short clip's `t = 0` aligns (= `mapped_region.video_a_start` when A is reference, else `video_b_start`). Not always an A-timeline value when B is the longer file. |
+| `anchor_ref_secs` | number | always | Position on the **longer (reference)** file where the short clip's `t = 0` aligns (= `mapped_region.video_a_start` when A is reference, else `video_b_start`). **Deprecated alias:** `anchor_a_secs` (accepted on deserialize for backward compatibility). |
 | `clip_on_a_start_secs` | number | always | Clip start on **A's** timeline (= `mapped_region.video_a_start_secs`) |
 | `clip_on_a_end_secs` | number | always | Clip end on **A's** timeline |
 | `clip_on_b_start_secs` | number | always | Clip start on **B's** timeline (usually 0 when B is the query) |

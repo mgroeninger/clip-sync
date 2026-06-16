@@ -151,10 +151,17 @@ Shipped with [query-reference alignment](archive/query-reference-alignment-plan.
 
 | Case | Tier | Generator | Asserts |
 |------|------|-----------|---------|
-| `wav_query_reference_45min_anchor` | **generated** (`#[ignore]`) | `query_reference_chirp_pair` | 60 min A + 8 min B @ 45:00; `anchor_a_secs` and `recommended_offset_secs` within **±0.05 s** |
-| `wav_query_reference_b_longer_anchor` | **generated** (`#[ignore]`) | `query_reference_b_longer_chirp_pair` | 60 min B + 8 min A @ 45:00 on B; `clip_on_a_start_secs ≈ 0`, `anchor_a_secs ≈ 2700`, `recommended_offset_secs ≈ +2700` |
+| `wav_query_reference_b_longer_fast` | **generated** (default CI) | `query_reference_b_longer_chirp_pair` | 3 min B + 70 s A @ 1:30 on B; `clip_on_a_start_secs ≈ 0`, `anchor_ref_secs ≈ 90`, `recommended_offset_secs ≈ +90` |
+| `wav_query_reference_45min_anchor` | **generated** (`#[ignore]`) | `query_reference_chirp_pair` | 60 min A + 8 min B @ 45:00; `anchor_ref_secs` and `recommended_offset_secs` within **±0.05 s** |
+| `wav_query_reference_b_longer_anchor` | **generated** (`#[ignore]`) | `query_reference_b_longer_chirp_pair` | 60 min B + 8 min A @ 45:00 on B; `clip_on_a_start_secs ≈ 0`, `anchor_ref_secs ≈ 2700`, `recommended_offset_secs ≈ +2700` |
 
-Run alone (slow — full coarse search on 60 min reference):
+Run the fast B-longer case in default PR checks:
+
+```powershell
+cargo test -p clip-sync corpus_query_reference_b_longer_fast
+```
+
+Run slow 60 min oracles alone:
 
 ```powershell
 cargo test -p clip-sync corpus_query_reference_45min_anchor -- --ignored

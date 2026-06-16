@@ -58,13 +58,13 @@ impl ReferenceLocalizationOutcome {
 /// Result of searching a short query clip against a long reference timeline.
 ///
 /// `mapped_region` is the single source of truth for placement; `clip_on_*` and
-/// `anchor_a_secs` are derived in [`QueryLocalization::from_reference_outcome`].
+/// `anchor_ref_secs` are derived in [`QueryLocalization::from_reference_outcome`].
 /// `PartialEq` is derived for test convenience; float fields are not semantically exact.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryLocalization {
     /// Position on the **longer (reference)** file where the short clip's `t = 0` aligns
     /// (= `mapped_region.video_a_start` when A is reference, else `video_b_start`).
-    pub anchor_a_secs: f64,
+    pub anchor_ref_secs: f64,
     /// Same as `mapped_region.video_a_start_secs` — explicit alias for human-oriented output.
     pub clip_on_a_start_secs: f64,
     /// Same as `mapped_region.video_a_end_secs`.
@@ -97,7 +97,7 @@ impl QueryLocalization {
     /// [`from_reference_outcome`](Self::from_reference_outcome).
     #[allow(clippy::too_many_arguments)]
     pub fn from_anchor(
-        anchor_a_secs: f64,
+        anchor_ref_secs: f64,
         query_duration_secs: f64,
         extent_a: MediaExtent,
         extent_b: MediaExtent,
@@ -110,7 +110,7 @@ impl QueryLocalization {
     ) -> Self {
         Self::from_reference_outcome(
             ReferenceLocalizationOutcome {
-                anchor_ref_secs: anchor_a_secs,
+                anchor_ref_secs,
                 query_duration_secs,
                 winning_window_start_secs,
                 winning_window_end_secs,
@@ -150,14 +150,14 @@ impl QueryLocalization {
         };
 
         let recommended_offset_secs = Some(if reference_is_a { -anchor } else { anchor });
-        let anchor_a_secs = if reference_is_a {
+        let anchor_ref_secs = if reference_is_a {
             mapped_region.video_a_start_secs
         } else {
             mapped_region.video_b_start_secs
         };
 
         Self {
-            anchor_a_secs,
+            anchor_ref_secs,
             clip_on_a_start_secs: mapped_region.video_a_start_secs,
             clip_on_a_end_secs: mapped_region.video_a_end_secs,
             clip_on_b_start_secs: mapped_region.video_b_start_secs,
@@ -184,7 +184,7 @@ impl QueryLocalization {
             shared_length_secs: 0.0,
         };
         Self {
-            anchor_a_secs: 0.0,
+            anchor_ref_secs: 0.0,
             clip_on_a_start_secs: 0.0,
             clip_on_a_end_secs: 0.0,
             clip_on_b_start_secs: 0.0,
@@ -209,7 +209,28 @@ impl QueryLocalization {
 
 /// True when A is the longer (reference) file in query-reference mode.
 pub fn query_reference_is_a(loc: &QueryLocalization) -> bool {
-    (loc.anchor_a_secs - loc.mapped_region.video_a_start_secs).abs() < 1e-6
+    (loc.anchor_ref_secs - loc.mapped_region.video_a_start_secs).abs() < 1e-6
+}
+
+/// Assert stored offset matches orientation: `-anchor_ref` when A is reference, `+anchor_ref` when B is.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn assert_recommended_offset_matches_orientation(
+    loc: &QueryLocalization,
+    tolerance_secs: f64,
+) {
+    let offset = loc
+        .recommended_offset_secs()
+        .expect("expected recommended offset");
+    let expected = if query_reference_is_a(loc) {
+        -loc.anchor_ref_secs
+    } else {
+        loc.anchor_ref_secs
+    };
+    assert!(
+        (offset - expected).abs() <= tolerance_secs,
+        "offset {offset} expected {expected} ± {tolerance_secs} (anchor_ref={})",
+        loc.anchor_ref_secs
+    );
 }
 
 /// Winning coarse-search window rebased onto **A's** timeline for discovery/hold-out placement.
@@ -272,26 +293,27 @@ pub fn build_query_alignment_result(
     }
 }
 
-/// Shared region implied by `anchor_a` + `query_duration`, clamped to each file's
+/// Shared region implied by reference anchor + `query_duration`, clamped to each file's
 /// [`MediaExtent::effective`] (not raw container duration).
 ///
-/// Mirrors the `b = a + offset` convention with `offset = -anchor_a_secs`. The A low end is
-/// clamped to `0` (negative-anchor convention — matches `holdout_window_candidates`).
+/// `anchor_ref_secs` is on the **reference** (first extent) timeline. Mirrors the
+/// `b = a + offset` convention with `offset = -anchor_ref_secs` when the reference is A.
+/// The A low end is clamped to `0` (negative-anchor convention — matches `holdout_window_candidates`).
 pub fn compute_mapped_region(
-    anchor_a_secs: f64,
+    anchor_ref_secs: f64,
     query_duration_secs: f64,
     extent_a: MediaExtent,
     extent_b: MediaExtent,
 ) -> TimelineOverlap {
     let a_eff = extent_a.effective().as_secs_f64();
     let b_eff = extent_b.effective().as_secs_f64();
-    let offset = -anchor_a_secs;
+    let offset = -anchor_ref_secs;
 
-    let t_lo = anchor_a_secs.max(0.0);
+    let t_lo = anchor_ref_secs.max(0.0);
     // Upper bound: query end, clamped to A's extent and to B's extent expressed in A-space.
-    let t_hi = (anchor_a_secs + query_duration_secs)
+    let t_hi = (anchor_ref_secs + query_duration_secs)
         .min(a_eff)
-        .min(b_eff + anchor_a_secs);
+        .min(b_eff + anchor_ref_secs);
 
     if t_hi <= t_lo {
         let b_edge = (t_lo + offset).max(0.0);
@@ -389,7 +411,7 @@ mod tests {
         assert!((loc.mapped_region.video_a_end_secs - 480.0).abs() < 1e-9);
         assert!((loc.mapped_region.video_b_start_secs - 2700.0).abs() < 1e-9);
         assert!((loc.mapped_region.video_b_end_secs - 3180.0).abs() < 1e-9);
-        assert!((loc.anchor_a_secs - 2700.0).abs() < 1e-9);
+        assert!((loc.anchor_ref_secs - 2700.0).abs() < 1e-9);
         assert_b_equals_a_plus_offset(&loc);
     }
 

@@ -78,7 +78,7 @@ Audit against the tree **after** media-session redesign and verification hardeni
 |-------|-----------|------------|
 | **Coarse** (Chromaprint sliding window) | **±2 s** | Q0 spike anchor, cluster radius (`PURE_TONE_REPEAT_LAG_TOLERANCE_SECS = 2.0`) |
 | **Agreement** (verification / repair gap cross-check) | **±0.5 s** | `apply_offset_verification` gate (`OFFSET_AGREEMENT_TOLERANCE_SECS = 0.5`) |
-| **Refined** (post-PCM-refine final anchor) | **±0.05 s** | `locate_query` final `anchor_a_secs`, corpus asserts (`TIGHT_TOLERANCE = 0.050`) |
+| **Refined** (post-PCM-refine final anchor) | **±0.05 s** | `locate_query` final `anchor_ref_secs`, corpus asserts (`TIGHT_TOLERANCE = 0.050`) |
 
 Do **not** carry the coarse ±2 s into refined or corpus assertions — the value feeds the repair patcher and must also pass the ±0.5 s verification gate, so a ±2 s final assertion is both too loose and self-contradictory with the verify step this plan delegates to.
 
@@ -98,7 +98,7 @@ Locked before implementation. Change only with an explicit plan revision.
 | **Decode vs window vs stride** | Three **distinct** quantities — do not conflate (see [Coarse search](#coarse-search-reference-timeline)). **`bucket_secs`** = decode granularity handed to the `scan_mono_buckets` callback (small + fixed, default **10**s). **`L`** = window length fingerprinted per score. **`stride`** = how far the window advances between scores (`query_search_stride_secs`). A ring buffer of length `L` is fed by `bucket_secs` chunks and scored every `stride`. |
 | **Coarse window length** | `L = clamp(query_prepared_duration, MIN_CLIP_LENGTH, clip_length)`. **Invariant: `L ≥ query length`** — Chromaprint substring-matches the query *inside* the window, so the window must hold a full query's worth of audio. If `query_prepared_duration > clip_length`, cap **both** the query fingerprint and the window to `clip_length` (do **not** shrink `L` below the query). Same prep pipeline as discovery (`prepare_clip_for_fingerprint`). |
 | **Coarse stride** | Configurable `query_search_stride_secs` (default **60**). Stride ≤ window length `L`; minimum stride **15** s. Independent of `bucket_secs`. |
-| **Anchor definition** | `anchor_a_secs` = position on the **longer (reference)** file where query **t = 0** aligns (= `mapped_region.video_a_start` when A is reference, else `video_b_start`). `recommended_offset_secs` is stored explicitly: `-anchor_ref` when A is reference, `+anchor_ref` when B is reference (`b = a + offset`). Do **not** derive offset as `-anchor_a_secs` cross-orientation. |
+| **Anchor definition** | `anchor_ref_secs` = position on the **longer (reference)** file where query **t = 0** aligns (= `mapped_region.video_a_start` when A is reference, else `video_b_start`). `recommended_offset_secs` is stored explicitly: `-anchor_ref` when A is reference, `+anchor_ref` when B is reference (`b = a + offset`). Do **not** derive offset as `-anchor_ref_secs` cross-orientation without checking which file is reference. |
 | **Mapped region** | Always A/B-oriented on `QueryLocalization.mapped_region`: when A is reference, A span `[anchor, anchor+qdur]`, B span `[0, qdur]`; when B is reference, spans swap (short A is `[0, qdur]`, donor B is `[anchor, anchor+qdur]`). Clamped to each file's `effective()` duration. |
 | **Overlap field** | In query mode, set `AlignmentResult.start_overlap` from **mapped region** (not start-clip window). Repair `GapReport.overlap` follows. |
 | **ClipMatch report** | Query mode emits **one synthetic `ClipMatch`** (label **`Start`**) with the winning search window on **A's** timeline (rebased from the reference timeline when B is longer) + match confidence — aligns with `start_clip()` and hold-out placement. |
@@ -402,7 +402,7 @@ Per [json-output.md](json-output.md) revision procedure:
 
 - [x] **Real-WAV E2E query oracle through `execute()`** — folded into the Q4 corpus case (real fixtures + the 60-min generated case). The `locate_query` use-case tests already exercise real-chromaprint localization end-to-end; the execute branch is covered structurally by the Auto-routing test.
 - [x] **A-as-query orientation** — shipped 2026-06-16 ([query-reference-b-longer-plan.md](query-reference-b-longer-plan.md) B0–B4): `execute()` runs query mode whenever resolved mode is `QueryReference`; `align_query_reference` picks reference/query by length and frames via `from_reference_outcome` (offset sign + A/B remap). Repair unchanged.
-- [ ] **Mapped-region placement for high-rate/verify** — currently the winning coarse window is passed as the discovery window (inside the mapped region); the dedicated region-bounded hold-out placement from the Decisions table is deferred until Q3 repair exercises verification on the query path.
+- [x] **Mapped-region placement for high-rate/verify** — shipped 2026-06-16: `mapped_region_holdout_candidates` / `resolve_holdout_candidates` in `domain/policies.rs`; wired in `apply_high_rate_refinement` and `apply_offset_verification` (main hold-out path). Parallel periodic recheck still uses full-file extents.
 
 **CLI (`clip-sync-cli`):** none required for repair path (Q3 handles repair CLI)
 
@@ -540,7 +540,7 @@ refine_query_anchor(
 
 - `extract_mono` reference haystack `[anchor - radius, anchor + query_duration + radius)`
 - Reuse `refine_offset_around_prior` / `pcm_discover_offset` with query as template
-- Update `QueryLocalization.anchor_a_secs` and `recommended_offset_secs`
+- Update `QueryLocalization.anchor_ref_secs` and `recommended_offset_secs`
 
 ### High-rate + verification in query mode
 
@@ -700,7 +700,7 @@ Machine-oriented fields preserved for scripts; friendly aliases on `QueryLocaliz
   "alignment_mode_used": "queryreference",
   "recommended_offset_secs": -2700.0,
   "query_localization": {
-    "anchor_a_secs": 2700.0,
+    "anchor_ref_secs": 2700.0,
     "clip_on_a_start_secs": 2700.0,
     "clip_on_a_end_secs": 3180.0,
     "clip_on_b_start_secs": 0.0,

@@ -220,7 +220,8 @@ impl From<AlignmentModeUsed> for AlignmentModeUsedReport {
 /// scripts; `recommended_offset_secs` / `start_overlap` on the parent report remain for tools.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryLocalizationReport {
-    pub anchor_a_secs: f64,
+    #[serde(alias = "anchor_a_secs")]
+    pub anchor_ref_secs: f64,
     pub clip_on_a_start_secs: f64,
     pub clip_on_a_end_secs: f64,
     pub clip_on_b_start_secs: f64,
@@ -239,7 +240,7 @@ pub struct QueryLocalizationReport {
 impl From<&QueryLocalization> for QueryLocalizationReport {
     fn from(loc: &QueryLocalization) -> Self {
         Self {
-            anchor_a_secs: loc.anchor_a_secs,
+            anchor_ref_secs: loc.anchor_ref_secs,
             clip_on_a_start_secs: loc.clip_on_a_start_secs,
             clip_on_a_end_secs: loc.clip_on_a_end_secs,
             clip_on_b_start_secs: loc.clip_on_b_start_secs,
@@ -561,6 +562,7 @@ mod tests {
     #[test]
     fn query_localization_report_round_trips_fields() {
         let report = QueryLocalizationReport::from(&sample_localization());
+        assert!((report.anchor_ref_secs - 2700.0).abs() < 1e-9);
         assert!((report.clip_on_a_start_secs - 2700.0).abs() < 1e-9);
         assert!((report.clip_on_b_end_secs - 480.0).abs() < 1e-9);
         assert!((report.mapped_region.shared_length_secs - 480.0).abs() < 1e-9);
@@ -580,6 +582,20 @@ mod tests {
         let value = serde_json::to_value(&report).expect("serialize");
         assert_eq!(value["alignment_mode_used"], "queryreference");
         assert_eq!(value["query_localization"]["clip_on_a_start_secs"], 2700.0);
+        assert_eq!(value["query_localization"]["anchor_ref_secs"], 2700.0);
+        assert!(value["query_localization"].get("anchor_a_secs").is_none());
+    }
+
+    #[test]
+    fn query_localization_report_deserializes_anchor_a_secs_alias() {
+        #[derive(serde::Deserialize)]
+        struct AnchorField {
+            #[serde(alias = "anchor_a_secs")]
+            anchor_ref_secs: f64,
+        }
+        let parsed: AnchorField =
+            serde_json::from_str(r#"{"anchor_a_secs":42.0}"#).expect("deserialize");
+        assert!((parsed.anchor_ref_secs - 42.0).abs() < 1e-9);
     }
 
     #[test]

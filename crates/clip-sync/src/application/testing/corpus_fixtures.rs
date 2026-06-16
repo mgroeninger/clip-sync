@@ -806,10 +806,10 @@ pub fn assert_corpus_expectations(
             .expect_anchor_on_reference_secs
             .unwrap_or(expect_clip);
         assert!(
-            (loc.anchor_a_secs - expect_anchor).abs() <= tolerance,
-            "case {}: anchor_a_secs {} expected {expect_anchor} ± {tolerance}",
+            (loc.anchor_ref_secs - expect_anchor).abs() <= tolerance,
+            "case {}: anchor_ref_secs {} expected {expect_anchor} ± {tolerance}",
             case.id,
-            loc.anchor_a_secs
+            loc.anchor_ref_secs
         );
         assert!(
             (loc.clip_on_a_start_secs - expect_clip).abs() <= tolerance,
@@ -1487,6 +1487,41 @@ mod tests {
             paths.video_b,
         )
         .expect("query-reference corpus case should succeed");
+        assert_corpus_expectations(case, &manifest.defaults, &result);
+    }
+
+    #[test]
+    fn corpus_query_reference_b_longer_fast() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|c| c.id == "wav_query_reference_b_longer_fast")
+            .expect("manifest case wav_query_reference_b_longer_fast");
+        assert_eq!(case.tier, CorpusTier::Generated);
+
+        let paths = generate_case_pair(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &progress,
+        );
+        let result = run_corpus_case(
+            &use_case,
+            case,
+            &manifest.defaults,
+            paths.video_a,
+            paths.video_b,
+        )
+        .expect("fast B-longer query-reference corpus case should succeed");
         assert_corpus_expectations(case, &manifest.defaults, &result);
     }
 

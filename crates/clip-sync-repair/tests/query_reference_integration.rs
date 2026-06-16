@@ -230,9 +230,9 @@ fn repair_auto_no_clip_count_mismatch_error() {
         loc.skip_reason
     );
     assert!(
-        (loc.anchor_a_secs - f64::from(QUERY_ANCHOR_SECS)).abs() < 2.0,
+        (loc.anchor_ref_secs - f64::from(QUERY_ANCHOR_SECS)).abs() < 2.0,
         "anchor={} expected ~{QUERY_ANCHOR_SECS}",
-        loc.anchor_a_secs
+        loc.anchor_ref_secs
     );
 }
 

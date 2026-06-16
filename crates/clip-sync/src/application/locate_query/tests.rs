@@ -7,6 +7,7 @@ use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
 use crate::application::testing::fakes::FakeProgressReporter;
 use crate::domain::{AudioTrack, MediaExtent, MonoPcmClip, QueryLocalization};
+use crate::domain::assert_recommended_offset_matches_orientation;
 use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
 use crate::infrastructure::correlation::FftCorrelator;
 use crate::infrastructure::resample::RubatoResampler;
@@ -182,12 +183,12 @@ fn locate_query_passes_mid_file_embed() {
     assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
     // Refined tier: post-PCM anchor within ±0.05 s of truth.
     assert!(
-        (loc.anchor_a_secs - 90.0).abs() <= 0.05,
+        (loc.anchor_ref_secs - 90.0).abs() <= 0.05,
         "anchor {} not within ±0.05 s of 90",
-        loc.anchor_a_secs
+        loc.anchor_ref_secs
     );
     assert!(loc.confidence >= config.alignment.query_min_match_score);
-    assert_eq!(loc.recommended_offset_secs(), Some(-loc.anchor_a_secs));
+    assert_recommended_offset_matches_orientation(&loc, 1e-6);
     // Mapped region: B spans [0, 70] on its own timeline.
     assert!((loc.mapped_region.video_b_start_secs - 0.0).abs() < 0.01);
     assert!((loc.mapped_region.shared_length_secs - 70.0).abs() < 0.5);
@@ -214,15 +215,16 @@ fn locate_query_passes_mid_file_embed_when_b_is_reference() {
 
     assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
     assert!(
-        (loc.anchor_a_secs - anchor_secs).abs() <= 0.05,
+        (loc.anchor_ref_secs - anchor_secs).abs() <= 0.05,
         "anchor {} not within ±0.05 s of {anchor_secs}",
-        loc.anchor_a_secs
+        loc.anchor_ref_secs
     );
     let offset = loc.recommended_offset_secs().expect("offset");
     assert!(
         (offset - anchor_secs).abs() <= 0.05,
         "offset {offset} expected ~+{anchor_secs}"
     );
+    assert_recommended_offset_matches_orientation(&loc, 0.05);
     assert!((loc.mapped_region.video_a_start_secs - 0.0).abs() < 0.01);
     assert!((loc.mapped_region.video_a_end_secs - query_secs).abs() < 0.5);
     assert!((loc.mapped_region.video_b_start_secs - anchor_secs).abs() <= 0.05);

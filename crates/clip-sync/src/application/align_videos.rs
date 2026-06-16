@@ -1361,19 +1361,30 @@ mod tests {
 
     #[test]
     fn execute_query_reference_runs_when_a_is_shorter_than_b() {
-        // A=45s, B=3min: forced query mode must run (not fall back to symmetric).
-        let reader = FakeMediaReader::new()
-            .with_session("a.wav", FakeMediaSession::with_duration(Duration::from_secs(45)))
-            .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
-        let fingerprinter = FakeFingerprinter::new();
-        let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
-            offset_secs: 0.0,
-            confidence: 1.0,
-        });
+        use crate::application::testing::audio_fixtures::write_query_reference_b_longer_chirp_pair;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        const REFERENCE_SECS: u32 = 360;
+        const QUERY_ANCHOR_SECS: u32 = 240;
+        const QUERY_DURATION_SECS: u32 = 90;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_query_reference_b_longer_chirp_pair(
+            temp.path(),
+            11_025,
+            REFERENCE_SECS,
+            QUERY_ANCHOR_SECS,
+            QUERY_DURATION_SECS,
+        );
+
+        let media_reader = SymphoniaMediaReader;
+        let fingerprinter = ChromaprintFingerprinter::default();
+        let aligner = ChromaprintAligner::default();
         let progress = FakeProgressReporter;
         let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
-            &reader,
+            &media_reader,
             &fingerprinter,
             &aligner,
             &RubatoResampler,
@@ -1383,15 +1394,42 @@ mod tests {
 
         let mut config = two_clip_config();
         config.alignment.mode = AlignmentMode::QueryReference;
+        config.clip.clip_length = Duration::from_secs(u64::from(QUERY_DURATION_SECS));
+        config.alignment.refine_offset_high_rate = false;
+        config.validation.verify_offset = false;
+
         let response = use_case
-            .execute(request(config))
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
             .expect("query mode should run when A is shorter than B");
 
         assert_eq!(
             response.result.alignment_mode_used,
             Some(AlignmentModeUsed::QueryReference)
         );
-        assert!(response.result.query_localization.is_some());
+        let loc = response
+            .result
+            .query_localization
+            .as_ref()
+            .expect("localization");
+        assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
+        let offset = response
+            .result
+            .recommended_offset_secs
+            .expect("recommended offset");
+        assert!(
+            offset > 0.0,
+            "B-longer query mode should yield positive offset, got {offset}"
+        );
+        assert!(
+            (offset - f64::from(QUERY_ANCHOR_SECS)).abs() < 2.0,
+            "offset {offset} expected ~{QUERY_ANCHOR_SECS}"
+        );
+        assert!(loc.clip_on_a_start_secs.abs() < 2.0);
+        crate::domain::assert_recommended_offset_matches_orientation(loc, 2.0);
     }
 
     #[test]
