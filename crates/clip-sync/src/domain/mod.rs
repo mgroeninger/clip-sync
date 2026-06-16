@@ -43,8 +43,9 @@ pub use pcm_preparation::{
 pub use media_extent::MediaExtent;
 pub use policies::{
     clip_windows_with_options,
-    end_clip_extract_unreliable, holdout_window_candidates,
-    holdout_extract_sufficient, holdout_window_feasible, parallel_holdout_window_candidates,
+    end_clip_extract_unreliable, holdout_pick_duration, holdout_window_candidates,
+    holdout_extract_sufficient, holdout_window_feasible, mapped_region_holdout_candidates,
+    parallel_holdout_window_candidates, resolve_holdout_candidates,
     should_use_query_mode, truncate_padded_tail,
     ClipPlanningOptions, select_best_track,
 };

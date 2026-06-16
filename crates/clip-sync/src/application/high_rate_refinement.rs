@@ -7,8 +7,8 @@ use crate::application::error::{debug_media_error, MediaError};
 use crate::application::offset_refinement::refine_holdout_segment_lag;
 use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::{
-    holdout_window_candidates, holdout_window_feasible, refresh_start_overlap, AlignmentResult,
-    AudioTrack, ClipWindow, HighRateRefinement, MediaExtent, MonoPcmClip,
+    holdout_pick_duration, holdout_window_feasible, refresh_start_overlap, resolve_holdout_candidates,
+    AlignmentResult, AudioTrack, ClipWindow, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
 
 pub struct HighRateRefinementInput<'a, MS: MediaSession> {
@@ -50,12 +50,37 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     let segment_length = Duration::from_secs(u64::from(alignment.high_rate_refine_secs));
     let segment_length_secs = segment_length.as_secs_f64();
 
-    let pick_duration = input.extent_a.effective().min(input.extent_b.effective());
+    let pick_duration =
+        holdout_pick_duration(result, input.extent_a, input.extent_b);
     let dur_a = input.extent_a.effective().as_secs_f64();
     let dur_b = input.extent_b.effective().as_secs_f64();
 
-    let candidates =
-        holdout_window_candidates(pick_duration, input.discovery_windows, segment_length, offset_secs);
+    if segment_length.is_zero() || pick_duration < segment_length {
+        debug!(
+            pick_duration_secs = pick_duration.as_secs_f64(),
+            segment_length_secs,
+            "high-rate refine skipped: hold-out longer than available region"
+        );
+        result.high_rate_refinement = Some(HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs,
+            adjustment_secs: 0.0,
+            correlation_peak: 0.0,
+            applied: false,
+            skipped: true,
+            skip_reason: Some("hold-out window unavailable".into()),
+        });
+        return;
+    }
+
+    let candidates = resolve_holdout_candidates(
+        result,
+        input.extent_a,
+        input.extent_b,
+        input.discovery_windows,
+        segment_length,
+        offset_secs,
+    );
     if candidates.is_empty() {
         debug!("high-rate refine skipped: hold-out window unavailable");
         result.high_rate_refinement = Some(HighRateRefinement {

@@ -54,7 +54,7 @@ So B-longer = **negate the offset** and **swap which timeline gets the `[anchor,
 | **Synthetic `Start` clip** | `query_localization.winning_window_*` on reference timeline; `ClipMatch` + `discovery_windows` rebased to A via `winning_window_on_a_timeline`. |
 | **`skipped()` outcomes** | `recommended_offset_secs: None`; placement fields zeroed. |
 | **try_all_tracks** | Query path keeps using the best single track pair (unchanged). |
-| **High-rate/verify region placement** | Region-bounded hold-out inside mapped region still deferred; discovery windows now on A timeline. |
+| **High-rate/verify region placement** | Shipped: hold-outs confined to `mapped_region` via `resolve_holdout_candidates`. |
 
 ---
 

@@ -9,11 +9,11 @@ use crate::application::ports::{
     Aligner, Fingerprinter, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
 };
 use crate::domain::{
-    holdout_extract_sufficient, holdout_window_candidates, holdout_window_feasible,
+    holdout_extract_sufficient, holdout_pick_duration, holdout_window_feasible,
     parallel_holdout_window_candidates, periodic_ambiguity_period, periodic_recheck_period_multiple,
-    display_repeat_period, prepare_clip_for_fingerprint, should_downgrade_repetition_confidence, AlignmentResult,
-    AudioTrack, ClipWindow,
-    MediaExtent, OffsetVerification, PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    display_repeat_period, prepare_clip_for_fingerprint, resolve_holdout_candidates,
+    should_downgrade_repetition_confidence, AlignmentResult, AudioTrack, ClipWindow, MediaExtent,
+    OffsetVerification, PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 
@@ -59,7 +59,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
 
     progress.phase_verbose("Verifying offset at hold-out window...");
 
-    let pick_duration = input.extent_a.effective().min(input.extent_b.effective());
+    let pick_duration = holdout_pick_duration(result, input.extent_a, input.extent_b);
     let clip_length = clip_config.clip_length.min(pick_duration);
     let clip_length_secs = clip_length.as_secs_f64();
 
@@ -85,8 +85,14 @@ pub fn apply_offset_verification<MS, FP, AL>(
         progress,
     );
 
-    let candidates =
-        holdout_window_candidates(pick_duration, input.discovery_windows, clip_length, offset_secs);
+    let candidates = resolve_holdout_candidates(
+        result,
+        input.extent_a,
+        input.extent_b,
+        input.discovery_windows,
+        clip_length,
+        offset_secs,
+    );
     if candidates.is_empty() {
         debug!("offset verify skipped: no hold-out window candidates");
         result.offset_verification = Some(skipped_with_periodic_context(

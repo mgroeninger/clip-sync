@@ -1,11 +1,13 @@
 use std::time::Duration;
 
+use crate::domain::alignment::{AlignmentResult, TimelineOverlap};
 use crate::domain::audio_track::AudioTrack;
 use crate::domain::clip_plan::ClipPlan;
 use crate::domain::clip_window::{ClipLabel, ClipWindow};
 use crate::domain::error::DomainError;
 use crate::domain::media_extent::MediaExtent;
 use crate::domain::mono_pcm_clip::MonoPcmClip;
+use crate::domain::query_localization::AlignmentModeUsed;
 
 /// Pick the first decodable audio track in container order.
 ///
@@ -420,6 +422,98 @@ pub fn holdout_window_feasible(
         && window_start_secs + segment_length_secs <= duration_a_secs
         && window_start_secs + offset_secs >= 0.0
         && window_start_secs + segment_length_secs + offset_secs <= duration_b_secs
+}
+
+/// Timeline length used to decide whether a hold-out segment fits (symmetric vs query mode).
+pub fn holdout_pick_duration(
+    result: &AlignmentResult,
+    extent_a: MediaExtent,
+    extent_b: MediaExtent,
+) -> Duration {
+    if result.alignment_mode_used == Some(AlignmentModeUsed::QueryReference) {
+        if let Some(loc) = &result.query_localization {
+            if loc.skip_reason.is_none() {
+                return Duration::from_secs_f64(loc.mapped_region.shared_length_secs.max(0.0));
+            }
+        }
+    }
+    extent_a.effective().min(extent_b.effective())
+}
+
+/// Hold-out candidates confined to a query-reference mapped region on A (absolute A time).
+///
+/// Discovery windows are rebased into `[0, shared_length)` on A, candidates are picked in
+/// region-relative coordinates (offset `0` for placement), then shifted back to absolute A time.
+/// Callers still validate each window with [`holdout_window_feasible`] using the global offset.
+pub fn mapped_region_holdout_candidates(
+    mapped: &TimelineOverlap,
+    discovery_windows: &[ClipWindow],
+    segment_length: Duration,
+) -> Vec<ClipWindow> {
+    let region_a_start = mapped.video_a_start_secs;
+    let region_a_len_secs = mapped.shared_length_secs;
+    let segment_secs = segment_length.as_secs_f64();
+    if region_a_len_secs < segment_secs || segment_secs <= 0.0 {
+        return Vec::new();
+    }
+    let region_duration = Duration::from_secs_f64(region_a_len_secs);
+
+    let rebased: Vec<ClipWindow> = discovery_windows
+        .iter()
+        .map(|window| rebase_clip_window_to_region(*window, region_a_start, region_a_len_secs))
+        .collect();
+
+    let relative =
+        holdout_window_candidates(region_duration, &rebased, segment_length, 0.0);
+
+    relative
+        .into_iter()
+        .map(|window| shift_clip_window_on_a(window, region_a_start))
+        .collect()
+}
+
+/// Hold-out placement for symmetric alignment or query-reference mapped-region mode.
+pub fn resolve_holdout_candidates(
+    result: &AlignmentResult,
+    extent_a: MediaExtent,
+    extent_b: MediaExtent,
+    discovery_windows: &[ClipWindow],
+    segment_length: Duration,
+    offset_secs: f64,
+) -> Vec<ClipWindow> {
+    if result.alignment_mode_used == Some(AlignmentModeUsed::QueryReference) {
+        if let Some(loc) = &result.query_localization {
+            if loc.skip_reason.is_none() {
+                return mapped_region_holdout_candidates(
+                    &loc.mapped_region,
+                    discovery_windows,
+                    segment_length,
+                );
+            }
+        }
+    }
+
+    let pick_duration = extent_a.effective().min(extent_b.effective());
+    holdout_window_candidates(pick_duration, discovery_windows, segment_length, offset_secs)
+}
+
+fn rebase_clip_window_to_region(
+    window: ClipWindow,
+    region_a_start: f64,
+    region_a_len: f64,
+) -> ClipWindow {
+    let rel_start = (window.start.as_secs_f64() - region_a_start).clamp(0.0, region_a_len);
+    let rel_end = (window.end.as_secs_f64() - region_a_start).clamp(rel_start, region_a_len);
+    ClipWindow::new(
+        secs_to_duration(rel_start),
+        secs_to_duration(rel_end),
+        window.label,
+    )
+}
+
+fn shift_clip_window_on_a(window: ClipWindow, region_a_start: f64) -> ClipWindow {
+    let shift = secs_to_duration(region_a_start);
+    ClipWindow::new(window.start + shift, window.end + shift, window.label)
 }
 
 #[cfg(test)]
@@ -869,5 +963,87 @@ mod tests {
         );
         let first = candidates.first().expect("candidate");
         assert!((first.start.as_secs_f64() - 11.019).abs() < 0.001);
+    }
+
+    #[test]
+    fn mapped_region_holdout_a_long_negative_offset_stays_in_region() {
+        use crate::domain::query_localization::compute_mapped_region;
+
+        let mapped = compute_mapped_region(2700.0, 480.0, extent_secs(3600.0), extent_secs(480.0));
+        let discovery = vec![ClipWindow::new(
+            Duration::from_secs(2640),
+            Duration::from_secs(3120),
+            ClipLabel::Start,
+        )];
+        let segment = Duration::from_secs(3);
+        let candidates =
+            mapped_region_holdout_candidates(&mapped, &discovery, segment);
+        assert!(!candidates.is_empty());
+        let region_end = mapped.video_a_start_secs + mapped.shared_length_secs;
+        for window in &candidates {
+            let start = window.start.as_secs_f64();
+            let end = window.end.as_secs_f64();
+            assert!(
+                start >= mapped.video_a_start_secs - 0.001 && end <= region_end + 0.001,
+                "window [{start}, {end}] outside mapped A [{}, {region_end}]",
+                mapped.video_a_start_secs
+            );
+            assert!(holdout_window_feasible(start, 3.0, -2700.0, 3600.0, 480.0));
+        }
+    }
+
+    #[test]
+    fn mapped_region_holdout_b_long_positive_offset_stays_in_region() {
+        use crate::domain::query_localization::compute_mapped_region;
+
+        let pseudo = compute_mapped_region(2700.0, 480.0, extent_secs(3600.0), extent_secs(480.0));
+        let mapped = TimelineOverlap {
+            video_a_start_secs: pseudo.video_b_start_secs,
+            video_a_end_secs: pseudo.video_b_end_secs,
+            video_b_start_secs: pseudo.video_a_start_secs,
+            video_b_end_secs: pseudo.video_a_end_secs,
+            shared_length_secs: pseudo.shared_length_secs,
+        };
+        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(420), ClipLabel::Start)];
+        let segment = Duration::from_secs(3);
+        let candidates =
+            mapped_region_holdout_candidates(&mapped, &discovery, segment);
+        assert!(!candidates.is_empty());
+        let region_end = mapped.shared_length_secs;
+        for window in &candidates {
+            let start = window.start.as_secs_f64();
+            let end = window.end.as_secs_f64();
+            assert!(
+                start >= -0.001 && end <= region_end + 0.001,
+                "window [{start}, {end}] outside mapped A [0, {region_end}]"
+            );
+            assert!(holdout_window_feasible(start, 3.0, 2700.0, 480.0, 3600.0));
+        }
+    }
+
+    #[test]
+    fn mapped_region_holdout_empty_when_region_shorter_than_segment() {
+        let mapped = TimelineOverlap {
+            video_a_start_secs: 100.0,
+            video_a_end_secs: 102.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 2.0,
+            shared_length_secs: 2.0,
+        };
+        let discovery = vec![ClipWindow::new(
+            Duration::from_secs(100),
+            Duration::from_secs(102),
+            ClipLabel::Start,
+        )];
+        assert!(mapped_region_holdout_candidates(
+            &mapped,
+            &discovery,
+            Duration::from_secs(3),
+        )
+        .is_empty());
+    }
+
+    fn extent_secs(secs: f64) -> MediaExtent {
+        MediaExtent::from_declared(Duration::from_secs_f64(secs))
     }
 }
