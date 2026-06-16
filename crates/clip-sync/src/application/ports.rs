@@ -106,24 +106,17 @@ pub trait Fingerprinter {
     fn fingerprint(&self, clip: &MonoPcmClip) -> Result<Fingerprint, FingerprintError>;
 }
 
-/// Sample-rate conversion engine. The production adapter (rubato FFT with linear fallback)
-/// lives in `infrastructure/resample/`.
+/// Sample-rate conversion engine for the alignment pipeline. The production adapter (rubato FFT
+/// with linear fallback) lives in `infrastructure/resample/`.
 ///
 /// Infallible by design: the current pipeline never propagates resample errors — engine
 /// failure degrades to an internal fallback, not an error path.
+///
+/// Multichannel B→A resampling in `clip-sync-repair` uses the crate facade
+/// [`resample_interleaved`](crate::infrastructure::resample::resample_interleaved) (not this port).
 pub trait Resampler {
     /// Resample mono PCM to `target_rate`. Returns the input unchanged when rates match.
     fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip;
-
-    /// Resample interleaved PCM to `target_rate`, preserving channel layout.
-    ///
-    /// No production caller dispatches through this port method — the analyzer pipeline uses
-    /// [`resample_mono`](Self::resample_mono) only. Multichannel B→A resampling in
-    /// `clip-sync-repair` uses the crate facade
-    /// [`resample_interleaved`](crate::infrastructure::resample::resample_interleaved)
-    /// (`Vec<i16>` in/out, no port injection). Adapters should delegate to the same engine as
-    /// that function; keep the two shapes in sync if either changes.
-    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm;
 }
 
 /// FFT cross-correlation engine. The production adapter (`cross_correlate` crate) lives in

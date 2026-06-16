@@ -7,7 +7,7 @@ use rubato::{FftFixedIn, Resampler as _};
 use tracing::warn;
 
 use crate::application::ports::Resampler;
-use crate::domain::{MonoPcmClip, MultiChannelPcm};
+use crate::domain::MonoPcmClip;
 
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
 const RESAMPLE_SUB_CHUNKS: usize = 4;
@@ -19,17 +19,6 @@ pub struct RubatoResampler;
 impl Resampler for RubatoResampler {
     fn resample_mono(&self, clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
         resample_mono_pcm(clip, target_rate)
-    }
-
-    fn resample_interleaved(&self, pcm: &MultiChannelPcm, target_rate: u32) -> MultiChannelPcm {
-        MultiChannelPcm {
-            sample_rate: target_rate,
-            channels: pcm.channels,
-            samples: resample_interleaved(&pcm.samples, pcm.channels, pcm.sample_rate, target_rate),
-            decode_error_skips: pcm.decode_error_skips,
-            // Frame counts no longer correspond to the source rate after conversion.
-            decoded_frame_count: None,
-        }
     }
 }
 
@@ -313,22 +302,5 @@ mod tests {
             "len={}",
             resampled.samples.len()
         );
-    }
-
-    #[test]
-    fn port_resample_interleaved_converts_rate_and_clears_frame_count() {
-        let pcm = MultiChannelPcm {
-            sample_rate: 44_100,
-            channels: 2,
-            samples: vec![500_i16; 44_100 * 2],
-            decode_error_skips: 3,
-            decoded_frame_count: Some(44_100),
-        };
-        let out = RubatoResampler.resample_interleaved(&pcm, 22_050);
-        assert_eq!(out.sample_rate, 22_050);
-        assert_eq!(out.channels, 2);
-        assert_eq!(out.decode_error_skips, 3);
-        assert_eq!(out.decoded_frame_count, None);
-        assert!(!out.samples.is_empty());
     }
 }
