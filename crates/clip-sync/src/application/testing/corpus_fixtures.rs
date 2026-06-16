@@ -853,6 +853,8 @@ pub fn run_wrong_offset_verification_probe(
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: Some(10.0),
+        alignment_mode_used: None,
+        query_localization: None,
     };
 
     let clip_config = ClipConfig {

@@ -1,6 +1,6 @@
 # Temporary plan: query-reference alignment (short clip vs long video)
 
-> **Status:** Q0 in progress — prerequisites shipped (2026-06-11); design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers; pseudocode reflects this second pass). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
+> **Status:** Q2a landed (2026-06-15) — Q0 spike, Q1 localization engine, and Q2a (`AlignmentResult` fields, `build_query_alignment_result`, `resolve_alignment_mode` / `should_use_query_mode`) done and tested (233 lib tests green). Next: **Q2b** — `AlignVideos::execute()` query/symmetric branch, report DTOs + formatters, integration tests, JSON golden fixtures. Design hardened 2026-06-15 (ring-buffer sliding-window model + stage-explicit tolerance tiers). Archive to `docs/archive/query-reference-alignment-plan.md` when shipped.
 
 **Problem:** `clip-sync` and `clip-sync-repair` assume two recordings of roughly the same event with symmetric multi-clip fingerprint windows (default 15m start + end on long media). When **B is much shorter than A** (an excerpt, phone clip, or partial export), `clip_windows_with_options` yields **different window counts** → `align_extracted_pair` fails with `clip count mismatch`. Even when counts accidentally match, windows are anchored to each file’s start/end, so content that appears **mid-timeline** on the long file is never searched.
 
@@ -352,29 +352,39 @@ Per [json-output.md](json-output.md) revision procedure:
 
 ### Phase Q1 — Core localization (lib only)
 
+> **Status: ✅ core done (2026-06-15)** — localization engine landed and tested. **Split:** `build_query_alignment_result` + the `AlignmentResult` field additions are deferred to the **start of Q2** (they ripple across ~30 `AlignmentResult { … }` sites in 3 crates; cleaner as one focused change where `AlignVideos` actually populates them). All Q1 unit tests target the engine, not `AlignmentResult`, so the seam is clean.
+
+**Config (landed):** `AlignmentMode` enum + `query_*` fields on `AlignmentConfig` (incl. `query_decode_bucket_secs`, default 10) + `AlignmentConfig::validate()` wired into `AlignConfig::validate()`.
+
 **Lib (`crates/clip-sync`)**
 
-- [ ] `domain/query_localization.rs` — `compute_mapped_region(anchor_a, query_duration, extent_a, extent_b) -> TimelineOverlap`
-- [ ] `application/locate_query.rs` — **new** `LocateQueryInReference` use case:
-  - Input: **`&mut` sessions**, tracks, `AlignConfig`, **`MediaExtent`** per file
-  - Extract + prep full query clip (shorter file) via `session.extract_mono`
-  - `session.scan_mono_buckets` on reference @ `target_sample_rate` with small `query_decode_bucket_secs` — **first production mono scan caller**; callback fingerprints only (no session re-entry)
-  - Accumulate buckets into a length-`L` ring buffer; every `stride` fingerprint the window, match, convert segment → candidate `anchor_a_secs` (see [Coarse search](#coarse-search-reference-timeline))
-  - Cluster candidates (reuse lag clustering idea from `matching.rs` on anchor positions)
-  - Respect `query_max_windows_scored` (widen stride + log warn)
-  - PCM refine top `query_refine_top_k` via **`refine_query_anchor`** in `offset_refinement.rs` (extract reference haystack with `extract_mono`, then reuse `refine_offset_around_prior` / `pcm_discover_offset`)
-  - Return `QueryLocalization` + `ClipMatchEstimate`
-- [ ] `build_query_alignment_result(...)` — synthetic single `ClipMatch` (label `Start`), `recommended_offset_secs`, `start_overlap = mapped_region`
-- [ ] Unit tests: known anchor pass, ambiguous repeat (lower confidence), no match (confidence below threshold), query shorter than MIN_CLIP_LENGTH skip, effective-duration clamp
-- [ ] **`AlignVideos` not wired yet** — callable from tests and `locate_query` integration tests
+- [x] `domain/query_localization.rs` — `compute_mapped_region(...)` (clamps to `effective()`, negative-anchor `.max(0.0)`), `QueryLocalization` (+ `from_anchor` / `skipped` / `recommended_offset_secs`), `AlignmentModeUsed`. **No serde.**
+- [x] `application/locate_query.rs` — `locate_query_in_reference(&mut reference, &mut query, extents, config, deps)`:
+  - Extract + prep full query clip (shorter file); skip with reason when `< MIN_CLIP_LENGTH` after prep
+  - `scan_mono_buckets` on reference with small `query_decode_bucket_secs` — **first production mono scan caller**; callback fingerprints only (no re-entry)
+  - Length-`L` ring buffer scored every `stride`; per window `anchor = pos − find_offset(window, query)` (Q0 sign)
+  - Cluster candidates by anchor (±2 s); ambiguity = competing cluster ≥ 0.75× best at a different anchor → ×0.5 confidence
+  - Respect `query_max_windows_scored` (widen stride ×2 + `tracing::warn`)
+  - PCM refine winner via `refine_query_anchor` (extract haystack, reuse `refine_offset_around_prior`). **Deviation:** `refine_query_anchor` lives in `locate_query.rs`, not `offset_refinement.rs`, to keep the PCM module free of `MediaSession`.
+  - Returns `QueryLocalization`
+- [x] Unit tests (`locate_query/tests.rs`): known anchor pass (**refined ±0.05 s**), no match below threshold, query `< MIN_CLIP_LENGTH` skip, window-cap stride-widen, ambiguous repeat. Effective-duration clamp covered in `query_localization` domain tests.
+- [x] **`AlignVideos` not wired yet** — `pub mod locate_query` marked `#[allow(dead_code)]` until Q2 (drop allow then; also re-export `AlignmentModeUsed` / `compute_mapped_region` at domain root then).
+- [ ] **→ Q2:** `build_query_alignment_result(...)` — synthetic single `ClipMatch` (label `Start`), `recommended_offset_secs`, `start_overlap = mapped_region`; add `alignment_mode_used` / `query_localization` to `AlignmentResult` (~30 construction sites).
 
 **CLI / repair:** none
 
 ### Phase Q2 — Integrate into `AlignVideos` (lib)
 
-**Lib (`crates/clip-sync`)**
+> **Status: Q2a done (2026-06-15)** — the `AlignmentResult` surface + decision/builder functions landed and tested (233 lib tests green). **Remaining (Q2b):** `AlignVideos::execute()` query/symmetric branch, report DTOs + formatters, facade formatter export, integration tests, JSON golden fixtures. The `execute()` wiring is deferred to a focused session (track selection, extent resolution, `try_all_tracks`, threading refine/verify with mapped-region placement).
 
-- [ ] `resolve_alignment_mode(mode, extent_a, extent_b, plan_a, plan_b) -> AlignmentModeUsed` in `domain/policies.rs`
+**Q2a — landed:**
+
+- [x] `build_query_alignment_result(localization, min_match_score)` in `domain/query_localization.rs` — synthetic single `Start` `ClipMatch`, `recommended_offset_secs`, `start_overlap = mapped_region`, sets `alignment_mode_used` / `query_localization`; skipped localization → un-aligned result that still records the run. Unit-tested.
+- [x] Added `alignment_mode_used` / `query_localization` to `AlignmentResult`; updated all ~30 `AlignmentResult { … }` sites across the 3 crates (scripted insert after `offset_ambiguous_mod_secs`). Dropped the `query_localization` `#[allow(dead_code)]`; re-exported the domain items at the crate root (`build_query_alignment_result`, `compute_mapped_region`, `AlignmentModeUsed`, `QueryLocalization`).
+- [x] `should_use_query_mode(...)` (two-tier, pure) in `domain/policies.rs` + `resolve_alignment_mode(mode, extents, window counts, ratio) -> AlignmentModeUsed` in `application/locate_query.rs`. Unit-tested (ratio, clip-count mismatch, equal-pair symmetric, explicit override). **Deviation:** `resolve_alignment_mode` lives in `application` (not `domain/policies.rs`) because it matches on `AlignmentMode` (an application-layer enum); the pure tier logic is the domain `should_use_query_mode`.
+
+**Q2b — remaining:**
+
 - [ ] `AlignVideos::execute()` — after open, resolve **`MediaExtent`** per video, then branch:
   ```text
   let mut session_a = open(...)?;

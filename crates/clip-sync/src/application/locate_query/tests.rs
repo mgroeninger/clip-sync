@@ -233,6 +233,62 @@ fn locate_query_respects_window_cap() {
 }
 
 #[test]
+fn resolve_mode_auto_uses_query_on_short_vs_long() {
+    use crate::application::config::AlignmentMode;
+    let mode = resolve_alignment_mode(
+        AlignmentMode::Auto,
+        &extent(3600.0),
+        &extent(480.0),
+        1,
+        1,
+        0.5,
+    );
+    assert_eq!(mode, AlignmentModeUsed::QueryReference);
+}
+
+#[test]
+fn resolve_mode_auto_uses_query_on_clip_count_mismatch() {
+    use crate::application::config::AlignmentMode;
+    // Near-equal durations (ratio above threshold) but differing window counts → Tier 2.
+    let mode = resolve_alignment_mode(
+        AlignmentMode::Auto,
+        &extent(1000.0),
+        &extent(900.0),
+        3,
+        1,
+        0.5,
+    );
+    assert_eq!(mode, AlignmentModeUsed::QueryReference);
+}
+
+#[test]
+fn resolve_mode_auto_stays_symmetric_for_equal_pair() {
+    use crate::application::config::AlignmentMode;
+    let mode = resolve_alignment_mode(
+        AlignmentMode::Auto,
+        &extent(1000.0),
+        &extent(950.0),
+        2,
+        2,
+        0.5,
+    );
+    assert_eq!(mode, AlignmentModeUsed::Symmetric);
+}
+
+#[test]
+fn resolve_mode_explicit_overrides() {
+    use crate::application::config::AlignmentMode;
+    assert_eq!(
+        resolve_alignment_mode(AlignmentMode::Symmetric, &extent(10.0), &extent(3600.0), 1, 1, 0.5),
+        AlignmentModeUsed::Symmetric
+    );
+    assert_eq!(
+        resolve_alignment_mode(AlignmentMode::QueryReference, &extent(1000.0), &extent(1000.0), 2, 2, 0.5),
+        AlignmentModeUsed::QueryReference
+    );
+}
+
+#[test]
 fn locate_query_ambiguous_repeat_lowers_confidence() {
     // Reference content repeats every 90 s, so a 70 s query slice matches two anchors.
     let mut reference = reference(180.0, Some(90.0));

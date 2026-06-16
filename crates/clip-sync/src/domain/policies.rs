@@ -145,6 +145,37 @@ pub fn clip_windows_with_options(
     Ok(windows)
 }
 
+/// Two-tier query-mode decision for `Auto`: shorter file is treated as a query when it is
+/// much shorter than the reference (Tier 1, durations only) or — for near-equal lengths —
+/// when symmetric clip planning yields different window counts (Tier 2).
+///
+/// `query_min_duration_ratio` must be in `(0, 1]`. `windows_a` / `windows_b` are the symmetric
+/// clip-window counts; callers may compute them lazily (only Tier 2 needs them).
+pub fn should_use_query_mode(
+    extent_a: &MediaExtent,
+    extent_b: &MediaExtent,
+    windows_a: usize,
+    windows_b: usize,
+    query_min_duration_ratio: f64,
+) -> bool {
+    let dur_a = extent_a.effective().as_secs_f64();
+    let dur_b = extent_b.effective().as_secs_f64();
+    let (short, long) = if dur_a <= dur_b {
+        (dur_a, dur_b)
+    } else {
+        (dur_b, dur_a)
+    };
+    if long <= 0.0 {
+        return false;
+    }
+    // Tier 1: duration ratio.
+    if short / long < query_min_duration_ratio {
+        return true;
+    }
+    // Tier 2: clip-window count mismatch (lengths are similar).
+    windows_a != windows_b
+}
+
 /// Drop silence padding appended when a tail extract ended before the planned window end.
 pub fn truncate_padded_tail(mut clip: MonoPcmClip) -> MonoPcmClip {
     if let Some(decoded) = clip.decoded_sample_count {

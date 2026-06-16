@@ -114,6 +114,8 @@ fn full_surface_alignment_result() -> AlignmentResult {
             verify_inconclusive: false,
         }),
         offset_ambiguous_mod_secs: Some(10.0),
+        alignment_mode_used: None,
+        query_localization: None,
     }
 }
 
@@ -313,6 +315,8 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: None,
+        alignment_mode_used: None,
+        query_localization: None,
     };
 
     let output = format_human_output(false, &result);
@@ -357,6 +361,8 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: None,
+        alignment_mode_used: None,
+        query_localization: None,
     };
 
     let output = format_human_output(false, &result);

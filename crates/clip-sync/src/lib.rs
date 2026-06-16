@@ -22,11 +22,11 @@ pub use application::report::{
 };
 // --- domain (selected types) ---
 pub use domain::{
-    format_time_range,
-    format_timestamp, AlignmentResult, AudioTrack, ClipMatch,
+    build_query_alignment_result, compute_mapped_region, format_time_range,
+    format_timestamp, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipMatch,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
-    MultiChannelPcm, OffsetVerification, RepetitionFinding, TimelineOverlap,
+    MultiChannelPcm, OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
 pub use domain::policies::{select_best_track, select_track_for_reference};
 pub use application::offset_refinement::normalized_correlation;

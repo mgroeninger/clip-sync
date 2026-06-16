@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::domain::ClipLabel;
 use crate::domain::ClipWindow;
+use crate::domain::query_localization::{AlignmentModeUsed, QueryLocalization};
 
 /// Chromaprint item sequence for one prepared mono clip.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +140,11 @@ pub struct AlignmentResult {
     pub offset_verification: Option<OffsetVerification>,
     /// Repeat period **T** (seconds) when start-clip repetition makes the offset family ambiguous mod **T**.
     pub offset_ambiguous_mod_secs: Option<f64>,
+    /// How this run chose its algorithm. `None` for the legacy symmetric path that predates the
+    /// query-reference feature; `Some(Symmetric)` / `Some(QueryReference)` once mode is resolved.
+    pub alignment_mode_used: Option<AlignmentModeUsed>,
+    /// Present only when query-reference mode ran: where the short clip sits on the long file.
+    pub query_localization: Option<QueryLocalization>,
 }
 
 impl AlignmentResult {
@@ -418,6 +424,8 @@ pub fn build_alignment_result(
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: None,
+        alignment_mode_used: None,
+        query_localization: None,
     }
 }
 
@@ -662,6 +670,8 @@ mod tests {
             high_rate_refinement: None,
             offset_verification: None,
             offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
         };
         assert!(result.start_clip().is_none());
     }

@@ -2,12 +2,11 @@
 //! against a long *reference* timeline. No serde here (layer purity) — JSON DTOs live in
 //! `application::report`.
 
-use crate::domain::alignment::TimelineOverlap;
+use crate::domain::alignment::{AlignmentResult, ClipMatch, TimelineOverlap};
+use crate::domain::clip_window::ClipLabel;
 use crate::domain::media_extent::MediaExtent;
 
 /// How an alignment run actually chose its algorithm (recorded on the result).
-// Consumed by `AlignmentResult` in Q2.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentModeUsed {
     Symmetric,
@@ -108,14 +107,54 @@ impl QueryLocalization {
     }
 
     /// `recommended_offset_secs = -anchor_a_secs` (seconds to add to A to align with B).
-    // Consumed by `build_query_alignment_result` in Q2.
-    #[allow(dead_code)]
     pub fn recommended_offset_secs(&self) -> Option<f64> {
         if self.skip_reason.is_some() {
             None
         } else {
             Some(-self.anchor_a_secs)
         }
+    }
+}
+
+/// Build an [`AlignmentResult`] from a query-reference localization.
+///
+/// Query mode emits a single synthetic `Start` `ClipMatch` describing the winning search window
+/// on A, so `start_clip()` headline selection still works. A skipped/no-match localization
+/// yields an un-aligned result (no recommended offset) so callers may still scan A.
+pub fn build_query_alignment_result(
+    localization: QueryLocalization,
+    min_match_score: f32,
+) -> AlignmentResult {
+    let recommended_offset_secs = localization.recommended_offset_secs();
+    let aligned = recommended_offset_secs.is_some() && localization.confidence >= min_match_score;
+
+    let clip = ClipMatch {
+        label: ClipLabel::Start,
+        window_start_secs: localization.winning_window_start_secs,
+        window_end_secs: localization.winning_window_end_secs,
+        aligned,
+        offset_secs: aligned.then(|| recommended_offset_secs).flatten(),
+        confidence: localization.confidence,
+        video_a_decode_skips: 0,
+        video_b_decode_skips: 0,
+        repetition: None,
+    };
+
+    let start_overlap = aligned.then_some(localization.mapped_region);
+
+    AlignmentResult {
+        clips: vec![clip],
+        start_aligned: aligned,
+        end_aligned: None,
+        recommended_offset_secs: aligned.then(|| recommended_offset_secs).flatten(),
+        offsets_consistent: true,
+        offset_drift_secs: None,
+        start_overlap,
+        high_rate_refinement: None,
+        offset_verification: None,
+        offset_ambiguous_mod_secs: None,
+        alignment_mode_used: Some(AlignmentModeUsed::QueryReference),
+        query_localization: Some(localization),
     }
 }
 
@@ -216,5 +255,50 @@ mod tests {
         let loc = QueryLocalization::skipped("below threshold", 12, 60.0);
         assert_eq!(loc.recommended_offset_secs(), None);
         assert_eq!(loc.skip_reason.as_deref(), Some("below threshold"));
+    }
+
+    #[test]
+    fn build_result_aligned_emits_synthetic_start_clip() {
+        let loc = QueryLocalization::from_anchor(
+            2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
+        );
+        let result = build_query_alignment_result(loc, 0.3);
+
+        assert_eq!(result.alignment_mode_used, Some(AlignmentModeUsed::QueryReference));
+        assert!(result.start_aligned);
+        assert_eq!(result.recommended_offset_secs, Some(-2700.0));
+        let start = result.start_clip().expect("synthetic start clip");
+        assert_eq!(start.window_start_secs, 2640.0);
+        assert_eq!(start.offset_secs, Some(-2700.0));
+        assert!(result.start_overlap.is_some());
+        assert!(result.query_localization.is_some());
+    }
+
+    #[test]
+    fn build_result_skipped_is_unaligned_but_carries_localization() {
+        let loc = QueryLocalization::skipped("no match", 40, 60.0);
+        let result = build_query_alignment_result(loc, 0.3);
+
+        assert!(!result.start_aligned);
+        assert_eq!(result.recommended_offset_secs, None);
+        assert!(result.start_overlap.is_none());
+        // Still records that query mode ran (for reporting) + the skip reason.
+        assert_eq!(result.alignment_mode_used, Some(AlignmentModeUsed::QueryReference));
+        assert!(result
+            .query_localization
+            .as_ref()
+            .and_then(|q| q.skip_reason.as_deref())
+            .is_some());
+    }
+
+    #[test]
+    fn build_result_below_min_match_score_is_unaligned() {
+        let loc = QueryLocalization::from_anchor(
+            100.0, 90.0, extent(1000.0), extent(90.0), 0.2, false, 60.0, 40.0, 130.0, 16,
+        );
+        // Confidence 0.2 < min_match_score 0.3 → not aligned even with an anchor.
+        let result = build_query_alignment_result(loc, 0.3);
+        assert!(!result.start_aligned);
+        assert_eq!(result.recommended_offset_secs, None);
     }
 }

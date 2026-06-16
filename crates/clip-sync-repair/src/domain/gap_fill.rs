@@ -130,6 +130,8 @@ mod tests {
             high_rate_refinement: None,
             offset_verification: None,
             offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
         }
     }
 

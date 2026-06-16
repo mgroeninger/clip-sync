@@ -473,6 +473,8 @@ mod tests {
                     verify_inconclusive: false,
                 }),
                 offset_ambiguous_mod_secs: None,
+                alignment_mode_used: None,
+                query_localization: None,
             }),
             gaps: vec![
                 Gap {
@@ -577,6 +579,8 @@ mod tests {
                 high_rate_refinement: None,
                 offset_verification: None,
                 offset_ambiguous_mod_secs: None,
+                alignment_mode_used: None,
+                query_localization: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
@@ -731,6 +735,8 @@ mod tests {
                 high_rate_refinement: None,
                 offset_verification: None,
                 offset_ambiguous_mod_secs: None,
+                alignment_mode_used: None,
+                query_localization: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,

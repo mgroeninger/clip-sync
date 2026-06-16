@@ -12,9 +12,9 @@ pub mod pcm_preparation;
 pub mod policies;
 pub mod query_localization;
 
-// `compute_mapped_region` / `AlignmentModeUsed` are reachable via `domain::query_localization`
-// until Q2 consumes them through `AlignmentResult`; re-export here then to avoid an unused warning.
-pub use query_localization::QueryLocalization;
+pub use query_localization::{
+    build_query_alignment_result, compute_mapped_region, AlignmentModeUsed, QueryLocalization,
+};
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
@@ -44,6 +44,6 @@ pub use policies::{
     clip_windows_with_options,
     end_clip_extract_unreliable, holdout_window_candidates,
     holdout_extract_sufficient, holdout_window_feasible, parallel_holdout_window_candidates,
-    truncate_padded_tail,
+    should_use_query_mode, truncate_padded_tail,
     ClipPlanningOptions, select_best_track,
 };

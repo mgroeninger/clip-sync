@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tracing::warn;
 
-use crate::application::config::{AlignConfig, MIN_CLIP_LENGTH};
+use crate::application::config::{AlignConfig, AlignmentMode, MIN_CLIP_LENGTH};
 use crate::application::error::AlignmentError;
 use crate::application::offset_refinement::refine_offset_around_prior;
 use crate::application::ports::{
@@ -21,8 +21,8 @@ use crate::application::ports::{
 };
 use crate::domain::pcm_preparation::{prepare_clip_for_fingerprint, PcmPreparationOptions};
 use crate::domain::{
-    AudioTrack, ClipLabel, ClipMatchEstimate, ClipWindow, MediaExtent, MonoPcmClip,
-    QueryLocalization,
+    should_use_query_mode, AlignmentModeUsed, AudioTrack, ClipLabel, ClipMatchEstimate, ClipWindow,
+    MediaExtent, MonoPcmClip, QueryLocalization,
 };
 
 /// Anchors within this many seconds are treated as the same localization cluster (coarse tier).
@@ -31,6 +31,37 @@ const ANCHOR_CLUSTER_TOLERANCE_SECS: f64 = 2.0;
 const AMBIGUITY_SCORE_FRACTION: f32 = 0.75;
 /// Confidence multiplier applied to an ambiguous localization.
 const AMBIGUOUS_CONFIDENCE_FACTOR: f32 = 0.5;
+
+/// Resolve which algorithm to run from the configured [`AlignmentMode`] and the two files.
+///
+/// For `Auto`, callers pass the symmetric clip-window counts (`windows_a`/`windows_b`); these
+/// are only consulted in Tier 2 (near-equal durations), so callers may compute clip plans
+/// lazily after a Tier-1 ratio check if they want to avoid the work.
+pub fn resolve_alignment_mode(
+    mode: AlignmentMode,
+    extent_a: &MediaExtent,
+    extent_b: &MediaExtent,
+    windows_a: usize,
+    windows_b: usize,
+    query_min_duration_ratio: f64,
+) -> AlignmentModeUsed {
+    let use_query = match mode {
+        AlignmentMode::QueryReference => true,
+        AlignmentMode::Symmetric => false,
+        AlignmentMode::Auto => should_use_query_mode(
+            extent_a,
+            extent_b,
+            windows_a,
+            windows_b,
+            query_min_duration_ratio,
+        ),
+    };
+    if use_query {
+        AlignmentModeUsed::QueryReference
+    } else {
+        AlignmentModeUsed::Symmetric
+    }
+}
 
 /// Injected ports for localization (mirrors the symmetric path's dependency set).
 pub struct LocateQueryDeps<'a> {
