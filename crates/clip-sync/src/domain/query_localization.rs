@@ -213,7 +213,7 @@ pub fn query_reference_is_a(loc: &QueryLocalization) -> bool {
 }
 
 /// Assert stored offset matches orientation: `-anchor_ref` when A is reference, `+anchor_ref` when B is.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 pub fn assert_recommended_offset_matches_orientation(
     loc: &QueryLocalization,
     tolerance_secs: f64,

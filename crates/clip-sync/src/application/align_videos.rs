@@ -1429,7 +1429,7 @@ mod tests {
             "offset {offset} expected ~{QUERY_ANCHOR_SECS}"
         );
         assert!(loc.clip_on_a_start_secs.abs() < 2.0);
-        crate::domain::assert_recommended_offset_matches_orientation(loc, 2.0);
+        crate::domain::query_localization::assert_recommended_offset_matches_orientation(loc, 2.0);
     }
 
     #[test]
