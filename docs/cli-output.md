@@ -166,15 +166,53 @@ When `offset_ambiguous_mod_secs` is set (strong start-clip repetition under `che
 
 Emitted after high-rate refinement lines and before offset-verification lines. The period **N** is the normalized repeat tile from discovery (not necessarily the raw autocorrelation lag). Setting the flag does **not** imply confidence was halved — see [corpus-validation.md](corpus-validation.md) § Periodic offset ambiguity.
 
+### Query-reference mode (stdout)
+
+When `query_localization` is present (`alignment_mode_used: queryreference`), the human report **replaces** the symmetric headline (`Alignment: offset … confidence …`) with placement-first lines from `format_query_localization_lines` in `application/report.rs`. Both `clip-sync` and `clip-sync-repair` use the same helper for the alignment header.
+
+| Scenario | Default (`show_diagnostics = false`) | Verbose (`-v`) |
+|----------|--------------------------------------|----------------|
+| **A-long** (query on B, reference is A) | `Match on video A: <span>  (<length>, confidence …)` — span is where the short clip sits on A | **plus** `Clip on B: …`, `Offset: …`, `Search: …` |
+| **B-longer donor** (query on A, reference is B) | Same line **plus** `(donor on B: <span>)` suffix on the match line | Same verbose block as A-long |
+| **Not located** | `Query clip not located (<reason>)` | — |
+| **Ambiguous location** | **plus** `Warning:   clip location ambiguous …` | — |
+
+**Layout rules (query mode):**
+
+- No per-clip offset block or symmetric `Overlap:` line on stdout (overlap is in JSON via `start_overlap` / `query_localization`).
+- High-rate refinement, periodic ambiguity, and offset-verification lines follow unchanged (same order as symmetric).
+- JSON: `query_localization` object with `anchor_ref_secs` (deserialize alias `anchor_a_secs`); see [json-output.md](json-output.md).
+
+**Examples:**
+
+```text
+Match on video A: 45:00 – 53:00  (8m, confidence 0.94)
+```
+
+B-longer default (short A on long B):
+
+```text
+Match on video A: 0:00 – 1:10  (1m 10s, confidence 0.91)  (donor on B: 1:30 – 2:40)
+```
+
+Verbose adds (after the match line):
+
+```text
+Clip on B:  0:00 – 1:10
+Offset:     +90.000s  (add to A to align with B)
+Search:     3 window(s) @ 60s stride
+```
+
 ### Analyzer (`clip-sync`)
 
-- **Header:** `Alignment report` with per-clip lines, recommended offset, overlap, optional high-rate / verify / repetition.
-- **Verbose-only:** clip window timestamps, decode-skip annotations, repetition diagnostics.
+- **Symmetric header:** `Alignment: offset …  confidence …` with optional per-clip offset lines when `clips.len() > 1`.
+- **Query-reference header:** see [Query-reference mode](#query-reference-mode-stdout) above (no symmetric headline).
+- **Verbose-only:** clip window timestamps, decode-skip annotations, repetition diagnostics; overlap line when not in query mode.
 - **Implementation:** `crates/clip-sync-cli/src/infrastructure/cli/output.rs`
 
 ### Repair (`clip-sync-repair`)
 
-- **Header:** `Alignment: offset … confidence …`, per-clip offsets when len > 1, drift, tracks, overlap, cross-check, optional high-rate / verify.
+- **Alignment header:** query-reference block or symmetric `Alignment: offset …` (see above); symmetric verbose adds drift, track compatibility, overlap, cross-check when applicable.
 - **Gap section:** single unified table — **not** separate scan + patch sections.
 
 ```

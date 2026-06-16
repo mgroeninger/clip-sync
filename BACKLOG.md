@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling.
 
-Last updated: 2026-06-11. Media-session redesign shipped.
+Last updated: 2026-06-16. Phase 6 complete (6A–6C).
 
 **How this doc works**
 
@@ -10,9 +10,9 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 - **Done** — one-line index in [Completed](#completed); design detail lives in `docs/archive/*` and git history.
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Phase 6](#phase-6--architecture-cleanup) cleanup; repair follow-ups (`--dry-run` / `--write`, scratch-buffer test, streaming WAV encode).
+**Next:** [Repair R6](#repair-r6-follow-ups); AC-3 backend independent. Phase 6 closed.
 
-**Active plans (2026-06-15)** — AC-3 backend is independent and can land in parallel.
+**Active plans (2026-06-16)** — AC-3 backend can land in parallel with Phase 6.
 
 | Plan | Covers |
 |------|--------|
@@ -22,17 +22,47 @@ Last updated: 2026-06-11. Media-session redesign shipped.
 
 ## Open work
 
-### Phase 6 — Architecture cleanup
+### Phase 6 — Architecture & documentation cleanup
 
-| # | Item | Direction |
-|---|------|-----------|
-| 13 | [Documentation drift](#documentation-drift-plan-vs-code) | PLAN audit after policy decisions |
+**Done when:** `PLAN.md` describes current paths (6A ✓); satellite docs current (6B ✓); clippy clean; no stale primary API names in active docs; 6C facade shrink optional.
 
-#### Documentation drift (PLAN vs code)
+| # | Item | Status | Direction |
+|---|------|--------|-----------|
+| 6A | [PLAN.md audit](#6a--planmd-audit) | **done** | Query-reference, repair write path, workflows, `AlignmentResult`/Report, config tables |
+| 6B | [Satellite docs](#6b--satellite-docs) | **done** | `corpus-matrix`, `cli-output`, `error-mapping`; BACKLOG hygiene |
+| 6C | [Facade / port shrink](#6c--facade--port-shrink) | **done** | Removed unused `Resampler::resample_interleaved`; facade fn retained |
 
-Defaults, domain errors, purity claims out of sync with code.
+#### 6A — PLAN.md audit
 
-**Refs:** `PLAN.md`, `application/config.rs`
+**Done (2026-06-16).** `PLAN.md` now documents query-reference + symmetric branches, repair write path (R0–R5), expanded `AlignmentResult` / `AlignmentConfig`, query-mode hold-out, and links to archive plans.
+
+**Refs:** `PLAN.md`, `application/config.rs`, [archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md)
+
+#### 6B — Satellite docs
+
+**Done (2026-06-16).** `corpus-matrix.md` lists all `wav_query_reference_*` cases; `cli-output.md` documents query-mode placement lines and B-longer `(donor on B: …)` suffix; `error-mapping.md` has complete repair exit codes and `RepairError` user messages.
+
+- `docs/corpus-matrix.md` — `wav_query_reference_*` cases + coverage checklist
+- `docs/cli-output.md` — query-mode default/verbose lines; B-longer donor suffix
+- `docs/error-mapping.md` — repair exit codes + `RepairError` Display table
+
+#### 6C — Facade / port shrink
+
+**Done (2026-06-16).** Grep confirmed no `resampler.resample_interleaved` dispatch — repair uses facade `resample_interleaved`. Removed the port trait method and `RubatoResampler` impl; kept facade fn and `resample_mono` wiring.
+
+**Refs:** `application/ports.rs`, `infrastructure/resample/rubato.rs`, [archive/layer-purity-plan.md](docs/archive/layer-purity-plan.md)
+
+---
+
+### Repair R6 follow-ups
+
+Parallel track — **not** blocking Phase 6 closure. From [archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) post-ship gaps.
+
+| Item | Direction |
+|------|-----------|
+| `--dry-run` / `--write` | Explicit CLI flags; today write mode is implied by `--wav` / `--mux` or TOML `dry_run = false` |
+| Scratch-buffer regression test | Dedicated unit test for patch PCM path |
+| Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM |
 
 ---
 
@@ -43,7 +73,7 @@ Defaults, domain errors, purity claims out of sync with code.
 | [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
-| [Resampler port shrink](#resampler-port-drop-unused-resample_interleaved) | Drop trait method if still unused; repair keeps facade fn |
+| [Verification cost knob](#verification-cost-knob) | `validation.max_verification_secs` — only on demonstrated friction |
 
 #### Memory use and PCM cloning on long clips
 
@@ -63,11 +93,11 @@ Tier B = 3× 30 s WAV pairs; ffmpeg for encoded formats. Hold-out verify on comm
 
 **Refs:** `tests/corpus/`, `Cargo.toml` features
 
-#### Resampler port — drop unused `resample_interleaved`
+#### Verification cost knob
 
-Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port completeness; nothing in production calls it (analyzer uses `resample_mono`; repair uses `clip_sync::resample_interleaved` on the facade). **Before removing:** grep for `resampler.resample_interleaved` and trait-object dispatch to this method — skip if any caller has appeared. Safe shrink: delete the trait method and matching `FakeResampler` / `RubatoResampler` impl blocks; keep the facade `resample_interleaved` fn and all `resample_mono` wiring.
+Optional `validation.max_verification_secs` — deferred in [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) (that plan’s “Phase 6”, not workspace Phase 6). Implement only if verify decode cost becomes painful in practice.
 
-**Refs:** `application/ports.rs`, `infrastructure/resample/rubato.rs`, `clip-sync-repair/src/application/patch_audio.rs`, [archive/layer-purity-plan.md](docs/archive/layer-purity-plan.md)
+**Refs:** [corpus-validation.md](docs/corpus-validation.md) § Hold-out verification cost
 
 ---
 
@@ -96,7 +126,13 @@ Layer-purity (Phases 1–3) added `Resampler::resample_interleaved` for port com
 | `MediaSession` redesign + `MediaExtent` | 2026-06-11 | [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md): `&mut self` port, internal seek recovery, `media_scan.rs`, hold-out extent placement, duration-less open audit |
 | Verification & validation hardening (phases 1–5) | 2026-06-11 | [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus README / test dedupe / `alignment_fixtures`; v1 docs in [corpus-validation.md](docs/corpus-validation.md) |
 | Periodic offset ambiguity | 2026-06-11 | [archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`); looped +13 s probe |
-| Query-reference alignment (short clip vs long video) | 2026-06-15 | [archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md): localization engine, repair mapped-region fill, CLI flags, generated corpus `wav_query_reference_45min_anchor` |
+| Query-reference alignment (Q0–Q4) | 2026-06-15 | [archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md): localization, repair mapped-region fill, CLI flags, generated corpus `wav_query_reference_45min_anchor` |
+| Query-reference B-longer (B0–B4) | 2026-06-16 | [archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md): either file may be shorter; offset sign + A/B span remapping |
+| Phase 6C — facade port shrink | 2026-06-16 | Dropped `Resampler::resample_interleaved`; repair keeps facade `resample_interleaved` |
+| Phase 6B — satellite docs | 2026-06-16 | `corpus-matrix`, `cli-output`, `error-mapping` aligned with query-reference + repair |
+| Phase 6A — PLAN.md audit | 2026-06-16 | Query-reference workflows, repair write path, `AlignmentResult`/config tables |
+| Region-bounded hold-out in query mode | 2026-06-16 | `resolve_holdout_candidates` / `mapped_region_holdout_candidates` in `domain/policies.rs` |
+| `anchor_ref_secs` rename + fast B-long corpus | 2026-06-16 | JSON field rename with `anchor_a_secs` deserialize alias; `wav_query_reference_b_longer_fast` in default CI |
 
 ---
 

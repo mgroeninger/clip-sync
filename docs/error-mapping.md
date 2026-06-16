@@ -47,14 +47,31 @@ All non-zero codes print a single user-safe line to **stderr**. The process does
 
 | Code | `RepairError` variant | When |
 |------|-----------------------|------|
-| 0 | — | Gap analysis complete (gaps found or not) |
+| 0 | — | Gap analysis or write path complete (scan-only, WAV patch, or mux) |
 | 2 | `Config(String)` | Invalid config, argument, or validation failure (including `--mux` without `ffmpeg-mux` build feature) |
 | 3 | `Domain(DomainError)` | No decodable audio track in A or B, or video A duration unknown during gap scan (`InvalidDuration`) |
 | 4 | `Media(MediaError)`, `Io(std::io::Error)`, or `Write(std::io::Error)` | File I/O, decode failure during gap scan/patch, or WAV write failure |
 | 5 | `Align(AppError)` | Any failure from the alignment sub-flow |
 | 6 | `Mux(String)` | ffmpeg missing on PATH, non-zero ffmpeg exit, or mux stderr message (R5, `--mux` / `repair.output.video_path`) |
 
-Low-confidence alignment (no matching segment) is **not** an error — the gap report still prints with `recommended_offset_secs: null` and `b_has_energy: false` for all gaps.
+Low-confidence alignment (no matching segment) is **not** an error — the gap report still prints with `recommended_offset_secs: null` and gaps marked unfillable when B has no energy.
+
+**Write path (R4/R5):** exit **0** when scan + patch/mux complete successfully. WAV write failures map to exit **4** (`RepairError::Write`); ffmpeg mux failures to exit **6** (`RepairError::Mux`). Partial stdout report on failure: none — same as analyzer.
+
+### Repair user messages
+
+Messages come from `RepairError`'s `Display` implementation (`clip-sync-repair/src/application/error.rs`). Alignment sub-flow failures are prefixed `alignment failed:` and inherit the wrapped `AppError` text.
+
+| RepairError | Typical stderr output |
+|-------------|----------------------|
+| `Config(String)` | `config error: <detail>` (e.g. `--mux` without `ffmpeg-mux` feature, JSON serialize failure) |
+| `Domain(DomainError::NoAudioTracks)` | `no audio tracks found` |
+| `Domain(DomainError::InvalidDuration)` | `invalid media duration` |
+| `Media(MediaError)` | Same text as lib `MediaError` (no extra prefix) |
+| `Io(std::io::Error)` | `I/O error: <detail>` |
+| `Write(std::io::Error)` | `write error: <detail>` |
+| `Align(AppError::…)` | `alignment failed: <AppError Display>` |
+| `Mux(String)` | `mux error: <detail>` (e.g. `ffmpeg not found on PATH`) |
 
 ## User messages
 

@@ -4,7 +4,7 @@
 
 `clip-sync` is a Rust workspace for synchronizing video recordings by comparing audio. The primary tool **`clip-sync`** aligns two video files: it opens each file, selects the best audio track, extracts clips, fingerprints them, and computes the time offset between matching segments.
 
-A companion tool **`clip-sync-repair`** reuses the same alignment engine to detect silent gaps in one recording and (when the write path ships) patch them from an aligned partner file.
+A companion tool **`clip-sync-repair`** reuses the same alignment engine to detect silent gaps in one recording and patch them from an aligned partner file (WAV output by default; optional ffmpeg mux).
 
 The workspace is intended for workflows where two recordings of the same event (e.g. different cameras or re-encoded copies) need to be synchronized or repaired without manual scrubbing.
 
@@ -119,41 +119,41 @@ flowchart TB
 ## Analyzer workflow (`clip-sync`)
 
 1. Parse CLI arguments and load configuration (`AppConfig`).
-2. Call `run_align` → lib alignment pipeline.
-3. Open video A and video B.
-4. For each video:
-   - Discover audio tracks.
-   - Select the highest-quality track (domain policy).
-   - Compute clip windows from duration and `ClipConfig` (see [Clip window policy](#clip-window-policy)).
-   - Decode, down-mix to mono, and produce one PCM clip per window.
-5. Fingerprint all clips (same count per video).
-6. Compare fingerprints pairwise by clip index and compute offset (merging multiple estimates when `num_clips > 1`).
-7. Optionally refine the recommended offset with a native-rate hold-out PCM pass (`refine_offset_high_rate`).
+2. Call `run_align` → lib alignment pipeline (`AlignVideos`).
+3. Open video A and video B; resolve [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) per file.
+4. **Mode selection** (`alignment.mode`: `auto` | `symmetric` | `queryreference`):
+   - **`auto` (default):** query-reference when the shorter effective duration is much shorter than the longer (`query_min_duration_ratio`, default **0.5**) or symmetric clip window counts differ; otherwise symmetric multi-clip alignment.
+   - **`queryreference`:** always localize the shorter file against the longer (see [Query-reference mode](#query-reference-mode)).
+   - **`symmetric`:** always multi-clip fingerprint alignment (legacy path).
+5. **Symmetric path:** for each video — select track, compute clip windows, extract mono PCM per window, fingerprint, pairwise `find_offset` by clip index, merge offsets when `num_clips > 1`.
+6. **Query-reference path:** fingerprint the full prepared query clip; coarse sliding-window search on the reference timeline; PCM-refine winning anchor; build synthetic single-clip `AlignmentResult` with mapped region (see archive plan).
+7. Optionally refine the recommended offset (PCM around discovery, native-rate hold-out, hold-out verification per `AlignConfig.validation`).
 8. Emit result (offset, confidence, diagnostics) via CLI output; log progress throughout.
+
+Full design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md). B-longer donor (short A, long B): [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md).
 
 ---
 
 ## Repair workflow (`clip-sync-repair`)
 
-> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) (shipped; not the thin Phase 5 checklist in the archived refactor plan).
+> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) (shipped 2026-06-09). Open CLI/test follow-ups: [BACKLOG.md](BACKLOG.md) § Repair R6.
 
-**Report-only (migration Phase 4 — shipped):**
+1. Parse CLI arguments and load `RepairAppConfig` (align + repair + logging sections). Repair defaults: `alignment.mode = auto`, `clip.num_clips = 2` (symmetric path); query-reference selected automatically for long+short pairs.
+2. Run in-process alignment via `clip_sync::align_with_defaults` (same offset semantics as analyzer, including query-reference and B-longer donor scenarios).
+3. Scan video **A** (target) timeline in chunks: extract mono PCM via `MediaSession`, detect internal silent runs.
+4. Map each gap to video **B** using `recommended_offset_secs` (`b = a + offset`). In query-reference mode, `GapReport.overlap` comes from `alignment.start_overlap` (mapped region); gaps outside the region may be reported but not fillable when `limit_fill_to_mapped_region` is true (default).
+5. For each candidate gap: report whether B has energy; apply fill gates (structure match, correlation, mapped-region coverage).
+6. Output gap table (human + JSON). Exit **0** when analysis completes.
+7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6).
 
-1. Parse CLI arguments and load `RepairAppConfig` (align + repair + logging sections).
-2. Run in-process alignment via `clip_sync::align_with_defaults` (same offset semantics as analyzer).
-3. Scan video A timeline in chunks: extract mono PCM via `MediaSession`, detect internal silent runs.
-4. Map video B timeline using `recommended_offset_secs` (skip B mapping when alignment produced no offset — see write-path plan § Alignment gate).
-5. For each candidate gap: report whether B has energy.
-6. Output gap table (human + JSON). Exit **0** when analysis completes. **No file writes.**
+Repair always aligns in-process; it does not require piping JSON from a prior `clip-sync` run.
 
-**Write path (R0–R5 in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md), shipped):**
+**Shipped write-path capabilities (R0–R5):**
 
 - **R0–R1 (lib):** native multi-channel `extract_interleaved` for fill-quality PCM.
 - **R2–R3 (repair):** track compatibility, overlap on report, bidirectional silence scan, mutual-silence cross-check.
 - **R4 (repair):** `PatchAudio` / `gap_fill` → multi-channel **WAV** (default deliverable; crossfade + optional normalization).
 - **R5 (repair, optional):** `RepairVideos` + `MediaMuxer` ffmpeg subprocess behind `ffmpeg-mux` feature.
-
-Repair always aligns in-process; it does not require piping JSON from a prior `clip-sync` run.
 
 ---
 
@@ -172,14 +172,17 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 | `MonoPcmClip` | Sample rate, channel count (1), PCM samples for one window |
 | `Fingerprint` | Opaque fingerprint blob for a clip |
 | `ClipMatchEstimate` | Raw offset + confidence from comparing one clip pair |
-| `ClipMatch` | Per-clip report: window, aligned or not, offset if matched |
-| `AlignmentResult` | Full report: start/end alignment flags, per-clip results, recommended offset |
+| `ClipMatch` | Per-clip report: window, aligned or not, offset if matched, repetition diagnostics |
+| `AlignmentResult` | Full report: start/end alignment flags, per-clip results, recommended offset, optional high-rate/verify fields, query localization |
+| `QueryLocalization` | Query-reference placement: `mapped_region`, `anchor_ref_secs`, stored `recommended_offset_secs`, coarse-search stats |
+| `AlignmentModeUsed` | `Symmetric` or `QueryReference` — how the run chose its algorithm |
 
 #### Domain policies (pure functions)
 
 - **`select_best_track(tracks) -> AudioTrack`** — First decodable track in container order. Fail if no audio tracks. When the main program is not first, use `alignment.try_all_tracks` or `--try-all-tracks` (see [docs/corpus-validation.md](docs/corpus-validation.md)).
 - **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy). Multi-clip placement with end anchoring uses `MediaExtent` and `clip_windows_with_options` when tail extent or end-clip clamping matters.
 - **`pcm_preparation`** — Peak normalization, silence trimming, energy gates (shared with repair gap detection).
+- **`should_use_query_mode` / `resolve_holdout_candidates`** — Query-mode Auto gating and mapped-region hold-out placement (see [Query-reference mode](#query-reference-mode)).
 
 #### Clip window policy
 
@@ -242,6 +245,22 @@ Return windows in chronological order (start → interior(s) → end).
 - Reject at runtime: `duration == 0` → `InvalidDuration`.
 - Log effective clip count, each window boundary, and labels (`start`, `interior`, `end`) when `num_clips > 2`.
 
+#### Query-reference mode
+
+When the shorter recording is much shorter than the longer one (or `alignment.mode = queryreference`), the engine localizes the **query** (shorter effective duration) on the **reference** (longer) timeline instead of extracting symmetric multi-clip windows.
+
+| Concept | Meaning |
+|---------|---------|
+| Query / reference | Shorter vs longer file by `MediaExtent::effective()` — either CLI argument may be the query (B-longer donor) |
+| `mapped_region` | Query span on the reference timeline + corresponding span on the query file |
+| `anchor_ref_secs` | Reference-timeline start of the mapped region (JSON field; deserializes `anchor_a_secs` alias) |
+| `recommended_offset_secs` | Same A-reference convention as symmetric mode: seconds to add to **A**'s clock to align with **B** |
+| Synthetic `clips` | Single start clip covering the query; repair overlap uses `start_overlap` from this result |
+
+**Auto gating** (`should_use_query_mode`): shorter/longer ratio below `query_min_duration_ratio` (default **0.5**), or symmetric clip window counts would differ. **Hold-out** in query mode: `mapped_region_holdout_candidates` / `resolve_holdout_candidates` keep verification PCM inside the mapped region; calendar-parallel periodic recheck (repetition ambiguity) still uses the full effective extent.
+
+Implementation: `application/align_videos.rs` (`align_query_reference`), `domain/query_localization.rs`. Archive design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md), B-longer: [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md).
+
 #### Domain errors
 
 ```rust
@@ -266,19 +285,12 @@ Domain errors carry no I/O or library context; they describe business rule viola
 
 1. Log phase start: `Opening media`.
 2. Open both sources via `MediaReader::open`.
-3. For each source, list tracks; apply `select_best_track` (or try all track pairs when configured).
-4. Log: track chosen (index, sample rate, channels).
-5. Resolve [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) per video (declared from track duration; optional tail packet scan when end anchoring, hold-out verification, or high-rate refinement need decodable extent).
-6. Compute clip windows from `MediaExtent` and `ClipConfig` (see [Clip window policy](#clip-window-policy)).
-7. Log: effective clip count and each window boundary.
-8. Extract mono PCM for each window via `MediaSession::extract_mono`.
-9. Log: extraction progress (see Progress port).
-10. Fingerprint each clip via `Fingerprinter::fingerprint`.
-11. Log: fingerprint complete.
-12. For each clip index `i`, run `Aligner::find_offset` on clip *i* from A vs clip *i* from B; build `AlignmentResult` with per-clip alignment and recommended offset.
-13. Optionally apply PCM refinement (`refine_offset_with_pcm`), high-rate hold-out refinement (`refine_offset_high_rate`), and hold-out offset verification (`verify_offset`).
-14. Log alignment summary (start/end aligned, per-clip status, recommended offset).
-15. Return `AlignmentResult` (always on successful analysis, even when no clips match).
+3. **Resolve mode** (`resolve_mode`): if `alignment.mode` is `queryreference` or `auto` with a long+short pair (or mismatched symmetric clip counts), plan query-reference; otherwise symmetric. Per-file track + [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) are resolved up front for the query path.
+4. **Query-reference branch** (`align_query_reference`): fingerprint the prepared query clip; coarse sliding-window search on the reference timeline; PCM-refine top candidates; build synthetic single-clip `AlignmentResult` with `query_localization` and `alignment_mode_used: QueryReference`.
+5. **Symmetric branch** (`align_single_track_pair` / `align_best_track_pair`): for each source — list tracks, `select_best_track` (or try all pairs); compute clip windows; extract mono PCM; fingerprint; pairwise `find_offset` by clip index; merge offsets when `num_clips > 1`; set `alignment_mode_used: Symmetric`.
+6. Optionally apply PCM refinement (`refine_offset_with_pcm`), high-rate hold-out refinement (`refine_offset_high_rate`), and hold-out offset verification (`verify_offset`). In query mode, hold-out window placement uses the **mapped region** via `resolve_holdout_candidates` (parallel periodic recheck still scans the full effective timeline).
+7. Log alignment summary (mode, start/end aligned, per-clip status, recommended offset, query localization when present).
+8. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
 **Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/corpus-validation.md](docs/corpus-validation.md) § Repetition downgrade). Strong start-clip repetition also sets `offset_ambiguous_mod_secs` (periodic ambiguity). Hold-out verification tries up to three scored window candidates, runs calendar-parallel PCM recheck when repetition is active, and gates `verified` when parallel and recommended Δ disagree mod **T**; see § Hold-out verification cost and periodic ambiguity in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
 
@@ -303,7 +315,7 @@ Wires `SymphoniaMediaReader`, `ChromaprintFingerprinter`, `ChromaprintAligner` f
 | `MediaSession` | List tracks (`&self`); decode/scan/tail-extent (`&mut self`) — see [Media session semantics](#media-session-semantics) |
 | `Fingerprinter` | `MonoPcmClip` → `Fingerprint` |
 | `Aligner` | Compare fingerprint pairs; return offset and match segments |
-| `Resampler` | Mono (and optional interleaved) PCM rate conversion |
+| `Resampler` | Mono PCM rate conversion (`resample_mono`); multichannel via facade `resample_interleaved` |
 | `PcmCorrelator` | FFT cross-correlation for PCM offset refinement |
 | `ProgressReporter` | Phase messages and granular progress callbacks |
 
@@ -327,7 +339,7 @@ struct MediaExtent {
 // effective() = decodable.unwrap_or(declared).min(declared)
 ```
 
-Tail scan runs when `AlignConfig::needs_tail_extent_scan` (end-clip clamp with `num_clips >= 2`, `verify_offset`, or `refine_offset_high_rate`). Hold-out window placement and feasibility use `extent_a.effective().min(extent_b.effective())`. Declared duration remains the ceiling — planning beyond it risks `OutOfRange` seeks.
+Tail scan runs when `AlignConfig::needs_tail_extent_scan` (end-clip clamp with `num_clips >= 2`, `verify_offset`, or `refine_offset_high_rate`). Symmetric hold-out placement uses `extent_a.effective().min(extent_b.effective())`. **Query-reference mode** uses `resolve_holdout_candidates` so verification windows stay inside the mapped region on each timeline (see [Query-reference mode](#query-reference-mode)). Declared duration remains the ceiling — planning beyond it risks `OutOfRange` seeks.
 
 **Duration-less open.** Open succeeds when tracks are decodable but container duration is zero (probe → chapters → packet scan may still leave duration unknown). Clip planning fails with `InvalidDuration` when no usable duration exists (`mp3_no_duration_tag` corpus anchor).
 
@@ -579,7 +591,7 @@ struct ClipConfig {
 }
 
 struct AlignmentConfig {
-    min_match_score: f32,
+    min_match_score: f32,             // symmetric path; default 0.5
     prefer_start_clip: bool,
     require_consistent_offsets: bool,
     refine_offset_with_pcm: bool,
@@ -587,6 +599,22 @@ struct AlignmentConfig {
     high_rate_refine_secs: u32,       // default 3
     high_rate_refine_max_adjustment_secs: f64,  // default 0.1
     try_all_tracks: bool,
+    // end-clip refinement / tail extent (symmetric multi-clip)
+    refine_end_clip_around_start_offset: bool,
+    end_clip_refine_radius_secs: f64,
+    clamp_end_clip_to_decodable_extent: bool,
+    end_clip_tail_inset_secs: f64,
+    skip_unreliable_end_clip: bool,
+    min_end_clip_decode_fraction: f64,
+    max_end_clip_decode_skips: u32,
+    // query-reference
+    mode: AlignmentMode,              // default Auto
+    query_min_duration_ratio: f64,    // default 0.5
+    query_search_stride_secs: f64,    // default 60 (min 15 at validate)
+    query_decode_bucket_secs: f64,  // default 10
+    query_max_windows_scored: u32,    // default 500
+    query_min_match_score: f32,       // default 0.3
+    query_refine_top_k: u32,          // default 1
 }
 ```
 
@@ -623,7 +651,8 @@ scan_block_ms = 250
 decode_chunk_secs = 10
 min_fill_correlation = 0.35
 crossfade_ms = 10
-dry_run = true                      # default true until mux phase
+dry_run = true                      # default true; set false or use --wav / --mux to write
+limit_fill_to_mapped_region = true  # query-reference: skip fills outside mapped region
 
 [repair.output]
 path = "repaired.mp4"               # required when dry_run = false
@@ -725,7 +754,13 @@ struct AlignmentResult {
     end_aligned: Option<bool>,
     recommended_offset_secs: Option<f64>,
     offsets_consistent: bool,
+    offset_drift_secs: Option<f64>,
+    start_overlap: Option<TimelineOverlap>,
     high_rate_refinement: Option<HighRateRefinement>,
+    offset_verification: Option<OffsetVerification>,
+    offset_ambiguous_mod_secs: Option<f64>,
+    alignment_mode_used: Option<AlignmentModeUsed>,
+    query_localization: Option<QueryLocalization>,
 }
 ```
 
@@ -785,7 +820,7 @@ Mapped in `clip-sync-cli/src/infrastructure/cli/exit_code.rs`.
 
 ### Repair exit codes
 
-Documented in [docs/error-mapping.md](docs/error-mapping.md) when repair ships. Mapped in `clip-sync-repair/src/infrastructure/cli/exit_code.rs`.
+Documented in [docs/error-mapping.md](docs/error-mapping.md). Mapped in `clip-sync-repair/src/infrastructure/cli/exit_code.rs`.
 
 ### Plan-level notes
 
@@ -815,26 +850,35 @@ Options:
       --log-file <FILE>           Write logs to file
       --try-all-tracks            Try all decodable track pairs
       --refine-offset-high-rate   Native-rate hold-out FFT refinement (default off)
+      --query-reference           Force query-reference alignment
+      --symmetric-align           Force symmetric multi-clip alignment
+      --query-stride <SECS>       Coarse search stride (query-reference mode)
   -h, --help
   -V, --version
 ```
 
-### Repair (report-only shipped; write path R0–R5 planned)
+### Repair (shipped R0–R5; R6 CLI polish in [BACKLOG.md](BACKLOG.md))
 
 ```text
 clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 
   VIDEO_A    Recording with gaps (patched in write mode)
-  VIDEO_B    Aligned reference recording
+  VIDEO_B    Aligned reference / donor recording
 
 Options:
   -c, --config <FILE>
-      --dry-run                   Report gaps only (default)
-  -o, --output <PATH>             Output path (required when not dry-run)
+      --wav                     Write patched multi-channel WAV (R4)
+      --mux                     Mux patched audio into video via ffmpeg (R5, feature)
+  -o, --output <PATH>             Output path (required when writing)
       --format <human|json>
-  # align overrides mirror analyzer where useful
+      --limit-fill-to-mapped-region   Default on in query mode; use --no-limit-fill-region to disable
+      --no-limit-fill-region
+      --query-reference               Force query-reference alignment
+      --symmetric-align               Force symmetric multi-clip alignment
   -h, --help
 ```
+
+Write mode today: `--wav` / `--mux` or TOML `dry_run = false`. Explicit `--dry-run` / `--write` flags deferred (R6).
 
 ---
 
@@ -858,9 +902,9 @@ clip-sync/
     ├── clip-sync/
     │   └── src/
     │       ├── lib.rs                  # facade
-    │       ├── domain/                   # includes media_extent.rs
+    │       ├── domain/                   # includes media_extent.rs, query_localization.rs
     │       ├── application/
-    │       │   ├── align_videos.rs, config.rs, default_pipeline.rs, error.rs
+    │       │   ├── align_videos.rs, config.rs, default_pipeline.rs, error.rs, report.rs
     │       │   ├── high_rate_refinement.rs, offset_refinement.rs, offset_verification.rs
     │       │   ├── media_scan.rs, ports.rs
     │       │   └── testing/            # test-utils: fakes, audio_fixtures, corpus_fixtures, ffmpeg_util
@@ -912,7 +956,7 @@ cargo test -p clip-sync-cli                          # CLI adapter tests only
 cargo test --workspace
 ```
 
-Default PR gate: `cargo test -p clip-sync corpus_` (committed tier; no ffmpeg).
+Default PR gate: `cargo test -p clip-sync corpus_` (committed tier; no ffmpeg). Includes `corpus_query_reference_*` and fast B-longer case — see [docs/corpus-validation.md](docs/corpus-validation.md).
 
 ---
 
@@ -981,6 +1025,8 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
 | [docs/archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md) | Shipped (2026-06-11): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`) |
 | [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
+| [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md) | Archived (2026-06-15): query-reference localization, repair mapped-region fill |
+| [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md) | Archived (2026-06-16): B-longer donor (short A, long B), offset sign + span remapping |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 

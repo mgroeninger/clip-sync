@@ -48,7 +48,7 @@ So B-longer = **negate the offset** and **swap which timeline gets the `[anchor,
 | **Where the work lives** | `clip-sync` library only (`align_videos.rs`, `query_localization.rs`). `clip-sync-repair` unchanged. |
 | **Reference selection** | `reference = longer effective duration`, `query = shorter`, regardless of A/B. Tie (equal effective durations) → `reference_is_a = true` (deterministic). |
 | **Gating** | Run query mode whenever the resolved mode is `QueryReference` (drop the `extent_b <= extent_a` guard and the "video A is shorter; using symmetric" fallback). |
-| **Offset** | Store `recommended_offset_secs` **explicitly** on `QueryLocalization` (set per-orientation), instead of deriving it as `-anchor_a_secs`. Domain-only field; the serialized offset stays the top-level `AlignmentReport.recommended_offset_secs`. |
+| **Offset** | Store `recommended_offset_secs` **explicitly** on `QueryLocalization` (set per-orientation: `-anchor_ref` when A is reference, `+anchor_ref` when B is reference). Domain-only field; the serialized offset stays the top-level `AlignmentReport.recommended_offset_secs`. |
 | **Source of truth** | `mapped_region` is the **single source of truth** for placement; `clip_on_a_*` / `clip_on_b_*` and `anchor_ref_secs` are **derived** in `from_reference_outcome`. |
 | **`anchor_ref_secs`** | Derive from `mapped_region`: longer-file anchor (= `video_a_start` when A is reference, else `video_b_start`). JSON field was `anchor_a_secs` until 2026-06-16 (`anchor_ref_secs` with serde alias). |
 | **Synthetic `Start` clip** | `query_localization.winning_window_*` on reference timeline; `ClipMatch` + `discovery_windows` rebased to A via `winning_window_on_a_timeline`. |

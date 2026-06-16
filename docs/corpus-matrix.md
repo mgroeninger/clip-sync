@@ -18,6 +18,7 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | **Tracks** | 1 = single program; 2 = program + decoy |
 | **Duration** | short 120s (CI), medium 180–900s, long 3600s (ignored smoke) |
 | **Content** | chirp (oracle), looped chirp (verify probe), tone (negative), near-silence |
+| **Alignment mode** | `symmetric` (default multi-clip) or `queryreference` (short-on-long localization) |
 
 ---
 
@@ -62,6 +63,9 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 | `mp4_aac_high_rate_refine_3s` | A | MP4/AAC 44.1k | +3s | 1 | 1 | 120s | chirp | high-rate refine; offset ±100 ms |
 | `require_consistent_blocks` | A | WAV | +10/+20‖ | 1 | 1 | 180s | chirp | `num_clips=2`; no recommended offset |
 | `verify_option_a_false_pass_probe` | A | WAV | +3s (true); +8/+18s reject; +13s period alias gated | 1 | 1 | 120s | looped chirp | `probe_only` in manifest; dedicated tests; not a discovery oracle |
+| `wav_query_reference_45min_anchor` | A | WAV | −2700s†† | 1 | 1 | 3600s / 480s query | chirp | `queryreference`; B embedded @ 45:00 on A; `anchor_ref_secs` ≈ 2700; `#[ignore]` |
+| `wav_query_reference_b_longer_fast` | A | WAV | +90s‡‡ | 1 | 1 | 180s B / 70s A | chirp | `queryreference`; A embedded @ 1:30 on B; default CI (~8s) |
+| `wav_query_reference_b_longer_anchor` | A | WAV | +2700s‡‡ | 1 | 1 | 3600s B / 480s A | chirp | `queryreference`; A embedded @ 45:00 on B; `#[ignore]` |
 
 ### Notes
 
@@ -70,6 +74,8 @@ See [corpus-validation.md](corpus-validation.md) for harness overview and [archi
 - `‡` — `near_silence` / inconsistent cases may need clip-skip behavior; mark `ignore` until implemented.
 - `§` — B truncated or different in end window while start matches.
 - `‖` — synthetic two-window pair with different true offsets per window.
+- `††` — A-long query-reference: short B localized on long A; negative offset (B starts later on B's clock).
+- `‡‡` — B-longer donor: short A localized on long B; positive offset; `clip_on_a_start_secs ≈ 0`, `anchor_ref_secs` on B timeline.
 
 ---
 
@@ -90,6 +96,9 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 - [x] HE-AAC (feature-gated; `he_aac_mp4_leader_3s`, skip without `he-aac`)
 - [x] High-rate refinement (±50 ms WAV; `wav_high_rate_refine_3s`)
 - [x] High-rate on encoded AAC (±100 ms; `mp4_aac_high_rate_refine_3s`)
+- [x] Query-reference A-long (`wav_query_reference_45min_anchor`, ignored 60 min oracle)
+- [x] Query-reference B-longer fast CI (`wav_query_reference_b_longer_fast`)
+- [x] Query-reference B-longer anchor (`wav_query_reference_b_longer_anchor`, ignored 60 min oracle)
 
 ---
 
@@ -121,8 +130,12 @@ Mark when at least one case exists in the manifest **and** passes in CI:
 | `near_silence_window` | yes | generated at test time | yes |
 | `he_aac_mp4_leader_3s` | yes | generated (ffmpeg) | yes‡ |
 | `long_smoke_60m` | yes | external (`#[ignore]`) | manual |
+| `wav_query_reference_45min_anchor` | yes | generated at test time | yes†† |
+| `wav_query_reference_b_longer_fast` | yes | generated at test time | yes |
+| `wav_query_reference_b_longer_anchor` | yes | generated at test time | yes†† |
 
 \* Requires `ffmpeg` on PATH; skipped when unavailable.  
-‡ Requires `--features he-aac` + ffmpeg; skipped otherwise.
+‡ Requires `--features he-aac` + ffmpeg; skipped otherwise.  
+†† Slow generated case — `#[ignore]` in `corpus_fixtures.rs`; run with `--ignored`.
 
 Update the status table as new cases land.
