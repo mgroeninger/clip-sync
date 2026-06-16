@@ -3,8 +3,9 @@ name = "clip-sync"
 version = "0.1.0"
 edition = "2021"
 description = "Align two videos by comparing audio fingerprints (library)"
-authors = ["Matt Groeninger <mgroeninger@gmail.com>"]
+authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]
 license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/mgroeninger/clip-sync"
 
 [features]
 default = ["default-tracing"]

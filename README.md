@@ -2,6 +2,8 @@
 
 Synchronize video recordings by comparing audio. Given two recordings of the same event, `clip-sync` fingerprints audio segments from each file, matches them, and reports the time offset needed to align the two timelines.
 
+Repository: [github.com/mgroeninger/clip-sync](https://github.com/mgroeninger/clip-sync)
+
 A companion tool `clip-sync-repair` (in development) uses the same alignment engine to detect silent gaps in one recording and optionally patch them from an aligned partner file.
 
 ---
