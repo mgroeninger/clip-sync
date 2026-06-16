@@ -417,6 +417,11 @@ mod tests {
         HighRateRefinement, OffsetVerification, RepetitionFinding, TimelineOverlap,
     };
 
+    /// `include_str!` on Windows can embed CRLF from checkout; serde JSON uses LF.
+    fn normalize_golden_newlines(s: &str) -> String {
+        s.replace("\r\n", "\n")
+    }
+
     fn full_surface_gap_report() -> GapReport {
         let overlap = TimelineOverlap {
             video_a_start_secs: 10.956,
@@ -646,8 +651,8 @@ mod tests {
         let patch = full_surface_patch_summary();
         let json = format_repair_json_output(&report, Some(&patch)).expect("serialize");
         assert_eq!(
-            json,
-            include_str!("../../../tests/fixtures/full_surface_repair.json"),
+            normalize_golden_newlines(&json),
+            normalize_golden_newlines(include_str!("../../../tests/fixtures/full_surface_repair.json")),
             "repair JSON contract changed — update the golden only with an explicit contract revision"
         );
     }

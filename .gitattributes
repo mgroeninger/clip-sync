@@ -1,0 +1,2 @@
+# Golden JSON fixtures are compared byte-for-byte against serde output (LF).
+crates/**/tests/fixtures/*.json text eol=lf

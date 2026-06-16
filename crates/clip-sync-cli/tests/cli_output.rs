@@ -14,6 +14,11 @@ use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
 
 // --- helpers ---
 
+/// `include_str!` on Windows can embed CRLF from checkout; serde JSON uses LF.
+fn normalize_golden_newlines(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}
+
 fn aligned_result(offset: f64) -> AlignmentResult {
     minimal_alignment_result(Some(offset))
         .with_clips(vec![start_clip_match(Some(offset), 900.0, 0.9)])
@@ -182,8 +187,10 @@ fn write_inconclusive_verification_golden() {
 fn inconclusive_verification_json_golden() {
     let json = format_json_output(&inconclusive_verify_alignment_result());
     assert_eq!(
-        json,
-        include_str!("fixtures/inconclusive_verification_alignment.json"),
+        normalize_golden_newlines(&json),
+        normalize_golden_newlines(include_str!(
+            "fixtures/inconclusive_verification_alignment.json"
+        )),
         "inconclusive verify JSON contract changed — update the golden only with an explicit contract revision"
     );
 }
@@ -193,8 +200,8 @@ fn inconclusive_verification_json_golden() {
 fn full_surface_alignment_json_golden() {
     let json = format_json_output(&full_surface_alignment_result());
     assert_eq!(
-        json,
-        include_str!("fixtures/full_surface_alignment.json"),
+        normalize_golden_newlines(&json),
+        normalize_golden_newlines(include_str!("fixtures/full_surface_alignment.json")),
         "analyzer JSON contract changed — update the golden only with an explicit contract revision"
     );
 }
