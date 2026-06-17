@@ -180,13 +180,12 @@ pub fn format_unified_gap_report(
         out.push_str("  B timeline mapping skipped (no alignment offset).\n");
     }
     if patch.is_some_and(|summary| gap_table_uses_markers(report, summary)) {
-        out.push_str("           (> skipped, - unfillable, rows sorted with notable gaps first)\n");
+        out.push_str("           (> skipped, - unfillable)\n");
     }
     out.push('\n');
     out.push_str("  #   Range                Dur      Status\n");
 
-    let row_order = gap_table_row_order(report, patch);
-    for i in row_order {
+    for i in 0..report.gaps.len() {
         let gap = &report.gaps[i];
         let patch_outcome = patch.and_then(|summary| summary.gaps.get(i));
         let priority = gap_display_priority(patch_outcome);
@@ -202,7 +201,7 @@ pub fn format_unified_gap_report(
     out
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum GapDisplayPriority {
     Skipped,
     NotPlanned,
@@ -217,21 +216,6 @@ fn gap_display_priority(outcome: Option<&GapPatchOutcome>) -> GapDisplayPriority
         Some(GapPatchStatus::Patched { .. }) => GapDisplayPriority::Patched,
         None => GapDisplayPriority::ScanOnly,
     }
-}
-
-fn gap_table_row_order(report: &GapReport, patch: Option<&PatchSummary>) -> Vec<usize> {
-    let mut rows: Vec<usize> = (0..report.gaps.len()).collect();
-    rows.sort_by(|&a, &b| {
-        let pa = gap_display_priority(patch.and_then(|s| s.gaps.get(a)));
-        let pb = gap_display_priority(patch.and_then(|s| s.gaps.get(b)));
-        pa.cmp(&pb).then_with(|| {
-            report.gaps[b]
-                .duration_secs()
-                .partial_cmp(&report.gaps[a].duration_secs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }).then(a.cmp(&b))
-    });
-    rows
 }
 
 fn gap_table_uses_markers(report: &GapReport, patch: &PatchSummary) -> bool {
@@ -1257,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn unified_gap_report_sorts_notable_gaps_first() {
+    fn unified_gap_report_lists_gaps_in_timeline_order() {
         use crate::domain::{GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary};
 
         let mut report = minimal_report();
@@ -1312,11 +1296,11 @@ mod tests {
         ]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false);
-        let skipped_pos = text.find(">3 ").expect("skipped marker");
-        let unfillable_pos = text.find("-2 ").expect("unfillable marker");
         let patched_pos = text.find("patched (struct").expect("patched row");
-        assert!(skipped_pos < unfillable_pos);
-        assert!(patched_pos > unfillable_pos);
+        let unfillable_pos = text.find("-2 ").expect("unfillable marker");
+        let skipped_pos = text.find(">3 ").expect("skipped marker");
+        assert!(patched_pos < unfillable_pos);
+        assert!(unfillable_pos < skipped_pos);
     }
 
     #[test]

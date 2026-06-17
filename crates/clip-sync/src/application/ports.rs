@@ -22,6 +22,9 @@ pub trait ProgressReporter {
     }
 
     fn progress(&self, label: &str, current: u64, total: u64);
+
+    /// End an in-progress TTY progress line before unrelated stderr output (e.g. `tracing` logs).
+    fn flush_progress(&self) {}
 }
 
 pub trait MediaReader {

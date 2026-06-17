@@ -94,6 +94,10 @@ impl ProgressReporter for ClipExtractProgress<'_> {
             unit_total,
         );
     }
+
+    fn flush_progress(&self) {
+        self.scope.inner.flush_progress();
+    }
 }
 
 #[cfg(test)]

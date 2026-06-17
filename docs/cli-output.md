@@ -69,7 +69,7 @@ trait ProgressReporter {
 | `phase_verbose()` | Operational detail (open, track select, clip plan, per-clip offset, mid-run summary) | no | yes | no |
 | `progress()` | Long-running sub-steps (extract, scan-a/b, patch-a/b, mux) | TTY bar only | TTY bar + off-TTY `%` | no |
 
-**Before every `phase()` / `phase_verbose()` write**, the reporter finishes any active TTY progress line so stderr lines do not glue to `%` output.
+**Before every `phase()` / `phase_verbose()` write**, the reporter finishes any active TTY progress line so stderr lines do not glue to `%` output. Gap-fill skip warnings call `flush_progress()` for the same reason before `tracing::warn`.
 
 **Extraction progress:** `detailed_extraction_progress()` returns true only in Verbose mode. Auto mode uses aggregated extraction progress (no per-clip extraction labels on stderr).
 
@@ -80,7 +80,7 @@ trait ProgressReporter {
 | Startup | `clip-sync: aligning <A> with <B>` | `clip-sync-repair: aligning <A> with <B>` |
 | Fingerprint align | — | `Aligning audio fingerprints (video A)...` then `(video B)...` (per-video scopes; one 100% bar each) |
 | Match | `Searching for match...` | (via shared align path) |
-| Scan | — | `Scanning video A for gaps...` |
+| Scan | — | `Scanning video A for gaps...`; after scan, one summary line: `Gap scan: N silent run(s) ≥…ms — block …ms, silence …% peak, hold …ms, decode …s chunks, scan-both on/off` |
 | Patch | — | `Aligning N fill region(s)...` (or `Repairing N gap(s)...` — see gaps below) |
 | Splice | — | `Splicing N fill(s) into timeline...` (when N > 0) |
 | Mux | — | `Muxing → <output>` or `Muxing video with patched audio...` (when `--mux`) |
@@ -219,7 +219,7 @@ Search:     3 window(s) @ 60s stride
 ```
 Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
            repaired 12.5s of audio; skipped 231.7s (gap #12 at 1:42:08)
-           (> skipped, - unfillable, rows sorted with notable gaps first)
+           (> skipped, - unfillable)
 
   #   Range                Dur      Status
   >12 1:42:08 – 1:46:00    231.7s!  skipped: boundary alignment failed
@@ -229,7 +229,7 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 ```
 
 - **Duration summary:** when patching ran, a sub-line under the header totals repaired/skipped seconds and points at the longest skipped gap (`gap #N at H:MM:SS`).
-- **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows sort with skipped first, then unfillable, then patched (original gap numbers preserved).
+- **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows follow timeline order (gap #1, #2, …).
 
 - **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`).
 - **Default patch detail:** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.

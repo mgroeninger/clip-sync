@@ -39,6 +39,23 @@ pub struct ScanGapsRequest {
     pub limit_fill_to_mapped_region: bool,
 }
 
+/// One-line stderr summary after gap detection (thresholds + count).
+pub(crate) fn format_scan_summary(request: &ScanGapsRequest, gap_count: usize) -> String {
+    let min_gap_ms = (request.min_gap_secs * 1000.0).round() as u64;
+    let block_ms = (request.scan_block_secs * 1000.0).round() as u64;
+    let hold_ms = request.silence_hold_blocks as u64 * block_ms;
+    let silence_pct = request.silence_peak_fraction * 100.0;
+    let scan_both = if request.scan_both { "on" } else { "off" };
+    let mut line = format!(
+        "Gap scan: {gap_count} silent run(s) ≥{min_gap_ms}ms — block {block_ms}ms, silence {silence_pct:.1}% peak, hold {hold_ms}ms, decode {}s chunks, scan-both {scan_both}",
+        request.decode_chunk_secs,
+    );
+    if request.absolute_silence_rms > 0.0 {
+        line.push_str(&format!(", rms floor {:.0}", request.absolute_silence_rms));
+    }
+    line
+}
+
 pub struct ScanGaps<'r, MR: MediaReader> {
     media_reader: &'r MR,
     progress: &'r dyn ProgressReporter,
@@ -196,6 +213,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         } else {
             None
         };
+
+        progress.phase(&format_scan_summary(&request, gaps.len()));
 
         let overlap = alignment.start_overlap.map(Into::into);
         let alignment = clip_sync::AlignmentReport::from(&alignment);
@@ -951,5 +970,32 @@ mod tests {
             2,
             "expected gaps in [0,60) and [120,180); mid-file failure must not truncate scan"
         );
+    }
+
+    #[test]
+    fn format_scan_summary_includes_thresholds_and_count() {
+        let request = ScanGapsRequest {
+            video_a: PathBuf::from("a.wav"),
+            video_b: PathBuf::from("b.wav"),
+            align: AlignConfig::default(),
+            decode_chunk_secs: 10,
+            scan_block_secs: 0.25,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 33.0,
+            silence_hold_blocks: 2,
+            min_gap_secs: 1.0,
+            scan_both: true,
+            gap_offset_tolerance_secs: 0.5,
+            limit_fill_to_mapped_region: false,
+        };
+        let line = format_scan_summary(&request, 30);
+        assert!(line.contains("30 silent run(s)"));
+        assert!(line.contains("≥1000ms"));
+        assert!(line.contains("block 250ms"));
+        assert!(line.contains("1.0% peak"));
+        assert!(line.contains("hold 500ms"));
+        assert!(line.contains("decode 10s"));
+        assert!(line.contains("scan-both on"));
+        assert!(line.contains("rms floor 33"));
     }
 }

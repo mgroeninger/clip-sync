@@ -110,6 +110,15 @@ impl ProgressReporter for StderrProgressReporter {
             let _ = writeln!(stderr, "{label}: {percent}%");
         }
     }
+
+    fn flush_progress(&self) {
+        if !self.enabled() {
+            return;
+        }
+        let mut stderr = std::io::stderr().lock();
+        self.finish_progress_line(&mut stderr);
+        self.last_percent.set(None);
+    }
 }
 
 #[cfg(test)]

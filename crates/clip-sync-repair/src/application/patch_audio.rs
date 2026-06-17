@@ -193,15 +193,19 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 region.a_start_secs, region.a_end_secs
             ));
 
-            let (patch, outcome) =
-                prepare_region_patch(&b_samples_full, &a_pcm, region, &request, &region_ctx);
+            let (patch, outcome) = prepare_region_patch(
+                self.progress,
+                &b_samples_full,
+                &a_pcm,
+                region,
+                &request,
+                &region_ctx,
+            );
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
                 patches.push(patch);
             }
         }
-
-        self.progress.progress("patch-gap", region_count, region_count);
 
         // Step 9: Apply patches to A samples.
         let patch_count = patches.len() as u64;
@@ -276,7 +280,14 @@ pub(crate) fn format_skip_gap_fill_log(
     }
 }
 
-fn warn_skip_gap_fill(gaps: &[Gap], a_start_secs: f64, a_end_secs: f64, reason: &str) {
+fn warn_skip_gap_fill(
+    progress: &dyn ProgressReporter,
+    gaps: &[Gap],
+    a_start_secs: f64,
+    a_end_secs: f64,
+    reason: &str,
+) {
+    progress.flush_progress();
     tracing::warn!(
         "{}",
         format_skip_gap_fill_log(gaps, a_start_secs, a_end_secs, reason)
@@ -348,6 +359,7 @@ struct RegionPatchContext {
 }
 
 fn prepare_region_patch(
+    progress: &dyn ProgressReporter,
     b_samples_full: &[i16],
     a_pcm: &MultiChannelPcm,
     region: &FillRegion,
@@ -448,6 +460,7 @@ fn prepare_region_patch(
         Some(samples) => samples,
         None => {
             warn_skip_gap_fill(
+                progress,
                 &request.report.gaps,
                 region.a_start_secs,
                 region.a_end_secs,
@@ -518,6 +531,7 @@ fn prepare_region_patch(
         Some(alignment) => alignment,
         None => {
             warn_skip_gap_fill(
+                progress,
                 &request.report.gaps,
                 region.a_start_secs,
                 region.a_end_secs,
@@ -541,6 +555,7 @@ fn prepare_region_patch(
         short_gap_mean_correlation_secs,
     ) {
         warn_skip_gap_fill(
+            progress,
             &request.report.gaps,
             region.a_start_secs,
             region.a_end_secs,
@@ -605,6 +620,7 @@ fn prepare_region_patch(
             short_gap_mean_correlation_secs,
         ) {
             warn_skip_gap_fill(
+                progress,
                 &request.report.gaps,
                 region.a_start_secs,
                 region.a_end_secs,
@@ -626,6 +642,7 @@ fn prepare_region_patch(
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
         warn_skip_gap_fill(
+            progress,
             &request.report.gaps,
             region.a_start_secs,
             region.a_end_secs,

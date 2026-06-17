@@ -313,7 +313,7 @@ pub fn format_high_rate_refinement_lines(
     show_diagnostics: bool,
 ) -> Vec<String> {
     if refine.applied {
-        let adjustment_secs = if refine.adjustment_secs == 0.0 {
+        let adjustment_secs = if refine.adjustment_secs.abs() < 5e-4 {
             0.0
         } else {
             refine.adjustment_secs
@@ -734,5 +734,17 @@ mod tests {
         });
         let lines = format_high_rate_refinement_lines(&negative, false);
         assert_eq!(lines, vec!["High-rate: -0.012s refinement applied"]);
+
+        let tiny_negative = HighRateRefinementReport::from(&HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: -0.0002,
+            correlation_peak: 1.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        });
+        let lines = format_high_rate_refinement_lines(&tiny_negative, false);
+        assert_eq!(lines, vec!["High-rate: +0.000s refinement applied"]);
     }
 }
