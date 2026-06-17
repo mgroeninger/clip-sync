@@ -59,5 +59,6 @@
     "skipped": false,
     "candidates_tried": 1
   },
-  "offset_ambiguous_mod_secs": 10.0
+  "offset_ambiguous_mod_secs": 10.0,
+  "end_clip_anchor": "shared_timeline"
 }

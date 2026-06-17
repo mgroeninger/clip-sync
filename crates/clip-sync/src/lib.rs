@@ -15,9 +15,11 @@ pub use application::ports::{
     Aligner, Fingerprinter, MediaReader, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
 };
 pub use application::report::{
-    format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_periodic_ambiguity_line, format_query_localization_lines, AlignmentModeUsedReport,
-    AlignmentReport, ClipLabelReport, ClipMatchReport, HighRateRefinementReport,
+    format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_periodic_ambiguity_line, format_query_localization_lines,
+    format_symmetric_clip_window_line, AlignmentModeUsedReport,
+    AlignmentReport, ClipLabelReport, ClipMatchReport, EndClipAnchorReport,
+    HighRateRefinementReport,
     OffsetVerificationReport, QueryLocalizationReport, RepetitionFindingReport, RepetitionReport,
     TimelineOverlapReport,
 };
@@ -29,7 +31,10 @@ pub use domain::{
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
-pub use domain::policies::{select_best_track, select_track_for_reference, EndClipAnchor, clip_windows_paired};
+pub use domain::policies::{
+    attach_symmetric_planning_report_metadata, select_best_track, select_track_for_reference,
+    EndClipAnchor, clip_windows_paired,
+};
 pub use application::offset_refinement::normalized_correlation;
 
 // --- default adapter types ---

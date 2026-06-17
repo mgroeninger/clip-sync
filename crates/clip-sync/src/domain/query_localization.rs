@@ -281,6 +281,8 @@ pub fn build_query_alignment_result(
         video_a_decode_skips: 0,
         video_b_decode_skips: 0,
         repetition: None,
+        video_b_window_start_secs: None,
+        video_b_window_end_secs: None,
     };
 
     let start_overlap = aligned.then_some(localization.mapped_region);
@@ -298,6 +300,7 @@ pub fn build_query_alignment_result(
         offset_ambiguous_mod_secs: None,
         alignment_mode_used: Some(AlignmentModeUsed::QueryReference),
         query_localization: Some(localization),
+        end_clip_anchor: None,
     }
 }
 

@@ -963,6 +963,7 @@ pub fn run_wrong_offset_verification_probe(
         offset_ambiguous_mod_secs: Some(10.0),
         alignment_mode_used: None,
         query_localization: None,
+        end_clip_anchor: None,
     };
 
     let clip_config = ClipConfig {

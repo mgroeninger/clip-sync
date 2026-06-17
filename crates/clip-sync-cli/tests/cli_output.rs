@@ -72,6 +72,8 @@ fn full_surface_alignment_result() -> AlignmentResult {
                     }),
                     b: None,
                 }),
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
             ClipMatch {
                 label: ClipLabel::End,
@@ -83,6 +85,8 @@ fn full_surface_alignment_result() -> AlignmentResult {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 3,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
         ],
         start_aligned: false,
@@ -123,6 +127,7 @@ fn full_surface_alignment_result() -> AlignmentResult {
         offset_ambiguous_mod_secs: Some(10.0),
         alignment_mode_used: None,
         query_localization: None,
+        end_clip_anchor: Some(clip_sync::EndClipAnchor::SharedTimeline),
     }
 }
 
@@ -302,6 +307,8 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
             ClipMatch {
                 label: ClipLabel::End,
@@ -313,6 +320,8 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
         ],
         start_aligned: true,
@@ -326,6 +335,7 @@ fn compact_human_output_shows_per_clip_offsets_when_multiple_clips() {
         offset_ambiguous_mod_secs: None,
         alignment_mode_used: None,
         query_localization: None,
+        end_clip_anchor: None,
     };
 
     let output = format_human_output(false, &result);
@@ -348,6 +358,8 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
             ClipMatch {
                 label: ClipLabel::Start,
@@ -359,6 +371,8 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
         ],
         start_aligned: true,
@@ -372,6 +386,7 @@ fn compact_human_output_headline_uses_start_clip_not_first_clip() {
         offset_ambiguous_mod_secs: None,
         alignment_mode_used: None,
         query_localization: None,
+        end_clip_anchor: None,
     };
 
     let output = format_human_output(false, &result);

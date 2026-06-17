@@ -207,13 +207,13 @@ Search:     3 window(s) @ 60s stride
 
 - **Symmetric header:** `Alignment: offset …  confidence …` with optional per-clip offset lines when `clips.len() > 1`.
 - **Query-reference header:** see [Query-reference mode](#query-reference-mode-stdout) above (no symmetric headline).
-- **Verbose-only:** clip window timestamps, decode-skip annotations, repetition diagnostics; overlap line when not in query mode.
+- **Verbose-only:** clip window timestamps, decode-skip annotations, repetition diagnostics; overlap line when not in query mode. With `num_clips ≥ 2`, verbose also prints `End anchor: …` and end-clip absolute windows on A and B (B omitted when identical to A).
 - **Implementation:** `crates/clip-sync-cli/src/infrastructure/cli/output.rs`
 
 ### Repair (`clip-sync-repair`)
 
 - **Alignment header:** query-reference block or symmetric `Alignment: offset …` (see above); symmetric verbose adds drift, track compatibility, overlap, cross-check when applicable.
-- **Alignment instability warning (default):** when clip offsets disagree **and** silence cross-check `MISMATCH`, emit one synthesis line after cross-check: `Warning: alignment unstable — fills used start-clip offset; clip drift and silence cross-check disagree (review gap #N …)` listing skipped gap numbers when a patch summary is available.
+- **Alignment instability warning (default):** when clip offsets disagree **and** silence cross-check `MISMATCH`, emit one synthesis line after cross-check: `Warning: alignment unstable — fills used start-clip offset; clip drift and silence cross-check disagree (review gap #N …)` listing skipped gap numbers when a patch summary is available. With the default **shared-timeline** end anchor, large `end − start` drift is more likely to reflect real timeline instability (edits, speed change, tail damage) than a spurious file-tail mismatch on unequal-length pairs; the warning still fires when drift and cross-check disagree.
 - **Gap section:** single unified table — **not** separate scan + patch sections.
 
 ```

@@ -134,6 +134,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             }],
             start_aligned: offset.is_some(),
             end_aligned: None,
@@ -146,6 +148,7 @@ mod tests {
             offset_ambiguous_mod_secs: None,
             alignment_mode_used: None,
             query_localization: None,
+            end_clip_anchor: None,
         }
     }
 

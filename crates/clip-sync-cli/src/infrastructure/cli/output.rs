@@ -1,7 +1,7 @@
 use clip_sync::{
-    format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_periodic_ambiguity_line, format_query_localization_lines, format_timestamp,
-    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
+    format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_periodic_ambiguity_line, format_query_localization_lines, format_symmetric_clip_window_line,
+    format_timestamp, AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
     RepetitionFindingReport,
 };
 
@@ -71,7 +71,7 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
         for clip in &result.clips {
             out.push_str(&format!(
                 "  {}\n",
-                format_clip_window_line(clip, show_diagnostics)
+                format_symmetric_clip_window_line(clip, show_diagnostics)
             ));
             for line in format_repetition_lines(clip, show_diagnostics) {
                 out.push_str(&format!("    {line}\n"));
@@ -91,6 +91,23 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
                 out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
                 if result.recommended_offset_secs.is_some() {
                     out.push_str("           using start-clip offset (clip offsets disagree)\n");
+                }
+            }
+        }
+        if show_diagnostics {
+            if let Some(anchor) = result.end_clip_anchor {
+                out.push_str(&format!("{}\n", format_end_clip_anchor_line(anchor)));
+            }
+            if show_per_clip_offsets {
+                if let Some(end) = result
+                    .clips
+                    .iter()
+                    .find(|clip| clip.label == ClipLabelReport::End)
+                {
+                    out.push_str(&format!(
+                        "  {}\n",
+                        format_symmetric_clip_window_line(end, true)
+                    ));
                 }
             }
         }
@@ -143,33 +160,6 @@ fn format_per_clip_offset_line(clip: &ClipMatchReport) -> String {
         "  {label} clip: not aligned (confidence {:.2})\n",
         clip.confidence
     )
-}
-
-fn format_clip_window_line(clip: &ClipMatchReport, show_diagnostics: bool) -> String {
-    let label = clip_label_name(clip.label);
-    let window = format_window(clip.window_start_secs, clip.window_end_secs);
-
-    let mut line = if clip.aligned {
-        format!(
-            "{label} clip {window}: aligned, offset {:+.3}s (confidence {:.2})",
-            clip.offset_secs.unwrap_or(0.0),
-            clip.confidence
-        )
-    } else {
-        format!(
-            "{label} clip {window}: not aligned (confidence {:.2})",
-            clip.confidence
-        )
-    };
-
-    if show_diagnostics && (clip.video_a_decode_skips > 0 || clip.video_b_decode_skips > 0) {
-        line.push_str(&format!(
-            " [decode skips: A={}, B={}]",
-            clip.video_a_decode_skips, clip.video_b_decode_skips
-        ));
-    }
-
-    line
 }
 
 fn format_repetition_lines(clip: &ClipMatchReport, show_diagnostics: bool) -> Vec<String> {

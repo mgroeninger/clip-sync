@@ -13,6 +13,7 @@ use crate::domain::{
     ClipRepetitionReport, HighRateRefinement, OffsetVerification, QueryLocalization,
     RepetitionFinding, TimelineOverlap,
 };
+use crate::domain::policies::EndClipAnchor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -84,6 +85,11 @@ pub struct ClipMatchReport {
     /// Present when `validation.check_clip_repetition` was on for this run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repetition: Option<RepetitionReport>,
+    /// B-side window when paired planning differs from A.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_b_window_start_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_b_window_end_secs: Option<f64>,
 }
 
 impl From<&ClipMatch> for ClipMatchReport {
@@ -98,6 +104,24 @@ impl From<&ClipMatch> for ClipMatchReport {
             video_a_decode_skips: clip.video_a_decode_skips,
             video_b_decode_skips: clip.video_b_decode_skips,
             repetition: clip.repetition.as_ref().map(Into::into),
+            video_b_window_start_secs: clip.video_b_window_start_secs,
+            video_b_window_end_secs: clip.video_b_window_end_secs,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndClipAnchorReport {
+    FileTail,
+    SharedTimeline,
+}
+
+impl From<EndClipAnchor> for EndClipAnchorReport {
+    fn from(anchor: EndClipAnchor) -> Self {
+        match anchor {
+            EndClipAnchor::FileTail => Self::FileTail,
+            EndClipAnchor::SharedTimeline => Self::SharedTimeline,
         }
     }
 }
@@ -286,6 +310,9 @@ pub struct AlignmentReport {
     /// Where the short clip sits on the long file. Present only in query-reference mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_localization: Option<QueryLocalizationReport>,
+    /// End-clip placement policy for symmetric multi-clip runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_clip_anchor: Option<EndClipAnchorReport>,
 }
 
 impl From<&AlignmentResult> for AlignmentReport {
@@ -303,8 +330,84 @@ impl From<&AlignmentResult> for AlignmentReport {
             offset_ambiguous_mod_secs: result.offset_ambiguous_mod_secs,
             alignment_mode_used: result.alignment_mode_used.map(Into::into),
             query_localization: result.query_localization.as_ref().map(Into::into),
+            end_clip_anchor: result.end_clip_anchor.map(Into::into),
         }
     }
+}
+
+fn clip_label_report_name(label: ClipLabelReport) -> &'static str {
+    match label {
+        ClipLabelReport::Start => "Start",
+        ClipLabelReport::Interior => "Interior",
+        ClipLabelReport::End => "End",
+    }
+}
+
+/// Human-readable end-clip anchor policy (symmetric multi-clip runs).
+pub fn format_end_clip_anchor_line(anchor: EndClipAnchorReport) -> String {
+    let policy = match anchor {
+        EndClipAnchorReport::SharedTimeline => "shared timeline",
+        EndClipAnchorReport::FileTail => "file tail",
+    };
+    format!("End anchor: {policy}")
+}
+
+/// Clip window line for symmetric runs; end clip may show separate A and B absolute windows.
+pub fn format_symmetric_clip_window_line(
+    clip: &ClipMatchReport,
+    show_diagnostics: bool,
+) -> String {
+    let label = clip_label_report_name(clip.label);
+    let window = format_time_range(clip.window_start_secs, clip.window_end_secs);
+    let window_prefix = if clip.label == ClipLabelReport::End {
+        format!("A {window}")
+    } else {
+        window
+    };
+
+    let mut line = if clip.aligned {
+        format!(
+            "{label} clip {window_prefix}: aligned, offset {:+.3}s (confidence {:.2})",
+            clip.offset_secs.unwrap_or(0.0),
+            clip.confidence
+        )
+    } else {
+        format!(
+            "{label} clip {window_prefix}: not aligned (confidence {:.2})",
+            clip.confidence
+        )
+    };
+
+    if clip.label == ClipLabelReport::End {
+        let b_differs = matches!(
+            (clip.video_b_window_start_secs, clip.video_b_window_end_secs),
+            (Some(bs), Some(be))
+                if (bs - clip.window_start_secs).abs() > 1e-9
+                    || (be - clip.window_end_secs).abs() > 1e-9
+        );
+        if show_diagnostics || b_differs {
+            let (b_start, b_end) = match (
+                clip.video_b_window_start_secs,
+                clip.video_b_window_end_secs,
+            ) {
+                (Some(start), Some(end)) => (start, end),
+                _ => (clip.window_start_secs, clip.window_end_secs),
+            };
+            line.push_str(&format!(
+                "; B {}",
+                format_time_range(b_start, b_end)
+            ));
+        }
+    }
+
+    if show_diagnostics && (clip.video_a_decode_skips > 0 || clip.video_b_decode_skips > 0) {
+        line.push_str(&format!(
+            " [decode skips: A={}, B={}]",
+            clip.video_a_decode_skips, clip.video_b_decode_skips
+        ));
+    }
+
+    line
 }
 
 /// Human-readable lines for high-rate refinement (CLI / repair reports).
@@ -559,6 +662,27 @@ mod tests {
     fn clip_label_serializes_lowercase() {
         let json = serde_json::to_string(&ClipLabelReport::Interior).expect("serialize");
         assert_eq!(json, "\"interior\"");
+    }
+
+    #[test]
+    fn alignment_report_serializes_end_clip_anchor() {
+        let mut result = minimal_alignment_result(Some(12.0))
+            .with_clips(vec![domain_clip(ClipLabel::End, None)])
+            .build();
+        result.end_clip_anchor = Some(EndClipAnchor::SharedTimeline);
+        let report = AlignmentReport::from(&result);
+        let value: serde_json::Value = serde_json::to_value(&report).expect("serialize");
+        assert_eq!(value["end_clip_anchor"], "shared_timeline");
+    }
+
+    #[test]
+    fn alignment_report_omits_end_clip_anchor_when_none() {
+        let result = minimal_alignment_result(Some(3.0))
+            .with_clips(vec![domain_clip(ClipLabel::Start, None)])
+            .build();
+        let report = AlignmentReport::from(&result);
+        let value: serde_json::Value = serde_json::to_value(&report).expect("serialize");
+        assert!(value.get("end_clip_anchor").is_none());
     }
 
     fn sample_localization() -> QueryLocalization {

@@ -41,8 +41,9 @@ pub use pcm_preparation::{
     PcmPreparationOptions,
 };
 pub use media_extent::MediaExtent;
+#[allow(unused_imports)]
 pub use policies::{
-    clip_windows_paired, clip_windows_with_options,
+    attach_symmetric_planning_report_metadata, clip_windows_paired, clip_windows_with_options,
     end_clip_extract_unreliable, holdout_pick_duration,
     holdout_extract_sufficient, holdout_window_feasible,
     interior_overlaps_fixed_clip, interior_windows_along_timeline,

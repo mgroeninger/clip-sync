@@ -1,6 +1,8 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revision (2026-06-17): optional `end_clip_anchor` on analyzer/repair alignment reports; optional `video_b_window_*` on clip entries when B differs from A.
+
+Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
 | Producer | Payload | Rust type | Golden test |
 |----------|---------|-----------|-------------|
@@ -36,6 +38,7 @@ Top-level object: **AlignmentReport**.
 | `offset_ambiguous_mod_secs` | number | **absent when not periodic** | Repeat period **T** (seconds) when start-clip repetition makes offset ambiguous mod **T** |
 | `alignment_mode_used` | `"symmetric"` \| `"queryreference"` | **absent on the legacy symmetric path** | How this run chose its algorithm (query-reference feature) |
 | `query_localization` | [QueryLocalization](#querylocalization) | **present only in query-reference mode** | Where the short clip sits on the long file |
+| `end_clip_anchor` | `"file_tail"` \| `"shared_timeline"` | **absent in query-reference and single-clip runs** | End-clip placement policy used for this symmetric multi-clip run |
 
 ### ClipMatch
 
@@ -49,6 +52,8 @@ Top-level object: **AlignmentReport**.
 | `confidence` | number | always | Fingerprint match confidence in [0, 1]; `0.0` is the contract for "clips did not match" (not an error) |
 | `video_a_decode_skips` | integer | always | Corrupt decode packets skipped extracting this clip from A |
 | `video_b_decode_skips` | integer | always | Same for B |
+| `video_b_window_start_secs` | number | **absent when same as A** | B-side clip window start when paired planning differs from A |
+| `video_b_window_end_secs` | number | **absent when same as A** | B-side clip window end when paired planning differs from A |
 | `repetition` | [Repetition](#repetition) | **absent when `check_clip_repetition` off** | Internal-repeat diagnostics |
 
 ### Repetition

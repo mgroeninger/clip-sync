@@ -14,16 +14,19 @@ use crate::application::ports::{
     Aligner, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter, Resampler,
 };
 use crate::domain::{
-    build_alignment_result, build_query_alignment_result, clip_windows_with_options,
+    build_alignment_result, build_query_alignment_result, clip_windows_paired,
+    clip_windows_with_options,
     winning_window_on_a_timeline,
     compute_clip_timeline_overlap,
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
-    select_best_track, set_offset_ambiguous_mod_from_start_clip,
+    select_best_track, attach_symmetric_planning_report_metadata,
+    set_offset_ambiguous_mod_from_start_clip,
     should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
     ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipRepetitionReport,
-    ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    ClipWindow, DomainError, EndClipAnchor, MediaExtent, MediaSource, MonoPcmClip,
+    OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
@@ -153,6 +156,17 @@ where
             self.progress,
         );
 
+        if result.query_localization.is_none() {
+            attach_symmetric_planning_report_metadata(
+                &mut result,
+                &outcome.extent_a,
+                &outcome.extent_b,
+                &request.config.clip.as_plan(),
+                request.config.alignment.clip_planning_options(),
+                request.config.clip.num_clips,
+            );
+        }
+
         Ok(AlignVideosResponse { result })
     }
 
@@ -173,24 +187,39 @@ where
             return Ok(None);
         }
         let plan = request.config.clip.as_plan();
-        let (track_a, extent_a) = match self.resolve_track_extent(session_a, &plan, &request.config)
-        {
+        let (track_a, extent_a) = match self.resolve_track_extent(
+            session_a,
+            &plan,
+            &request.config,
+            None,
+        ) {
             Ok(resolved) => resolved,
             Err(_) => return Ok(None),
         };
-        let (track_b, extent_b) = match self.resolve_track_extent(session_b, &plan, &request.config)
-        {
+        let (track_b, extent_b) = match self.resolve_track_extent(
+            session_b,
+            &plan,
+            &request.config,
+            None,
+        ) {
             Ok(resolved) => resolved,
             Err(_) => return Ok(None),
         };
 
         let planning = request.config.alignment.clip_planning_options();
-        let windows_a = clip_windows_with_options(&extent_a, &plan, planning)
-            .map(|w| w.len())
-            .unwrap_or(0);
-        let windows_b = clip_windows_with_options(&extent_b, &plan, planning)
-            .map(|w| w.len())
-            .unwrap_or(0);
+        let (windows_a, windows_b) = if planning.end_clip_anchor == EndClipAnchor::SharedTimeline {
+            clip_windows_paired(&extent_a, &extent_b, &plan, planning)
+                .map(|(a, b)| (a.len(), b.len()))
+                .unwrap_or((0, 0))
+        } else {
+            let windows_a = clip_windows_with_options(&extent_a, &plan, planning)
+                .map(|w| w.len())
+                .unwrap_or(0);
+            let windows_b = clip_windows_with_options(&extent_b, &plan, planning)
+                .map(|w| w.len())
+                .unwrap_or(0);
+            (windows_a, windows_b)
+        };
 
         let mode = resolve_alignment_mode(
             request.config.alignment.mode,
@@ -209,9 +238,13 @@ where
         session: &mut MR::Session,
         plan: &crate::domain::ClipPlan,
         config: &AlignConfig,
+        track: Option<&AudioTrack>,
     ) -> Result<(AudioTrack, MediaExtent), AppError> {
         let tracks = session.list_tracks()?;
-        let track = select_best_track(&tracks)?.clone();
+        let track = match track {
+            Some(track) => track.clone(),
+            None => select_best_track(&tracks)?.clone(),
+        };
         let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
             AppError::Domain(crate::domain::DomainError::InvalidDuration),
         )?;
@@ -222,6 +255,27 @@ where
             }
         }
         Ok((track, extent))
+    }
+
+    fn log_selected_track(&self, label: &str, track: &AudioTrack) {
+        self.progress.phase_verbose(&format!(
+            "Selected track {} ({} Hz, {} channel{}, {}decodable) [{label}]",
+            track.index,
+            track.sample_rate,
+            track.channels,
+            if track.channels == 1 { "" } else { "s" },
+            if track.decodable { "" } else { "not " }
+        ));
+    }
+
+    fn log_decodable_extent(&self, label: &str, extent: &MediaExtent) {
+        if extent.decodable.is_some_and(|tail| tail + Duration::from_secs(1) < extent.declared) {
+            self.progress.phase_verbose(&format!(
+                "{label}: decodable extent {:.0}s (container {:.0}s)",
+                extent.decodable.unwrap().as_secs_f64(),
+                extent.declared.as_secs_f64()
+            ));
+        }
     }
 
     /// Query-reference path: localize the shorter file against the longer and build a synthetic
@@ -303,23 +357,51 @@ where
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
-        let extracted_a = self.extract_clips(
+        let planning = request.config.alignment.clip_planning_options();
+
+        let (track_a, extent_a) =
+            self.resolve_track_extent(session_a, &plan, &request.config, None)?;
+        let (track_b, extent_b) =
+            self.resolve_track_extent(session_b, &plan, &request.config, None)?;
+        self.log_selected_track("video A", &track_a);
+        self.log_selected_track("video B", &track_b);
+        self.log_decodable_extent("video A", &extent_a);
+        self.log_decodable_extent("video B", &extent_b);
+
+        let (windows_a, windows_b) = clip_windows_paired(&extent_a, &extent_b, &plan, planning)?;
+        let plan_ctx = ClipPlanFormatContext {
+            end_clip_anchor: planning.end_clip_anchor,
+        };
+
+        let extracted_a = self.extract_clips_at_windows(
             session_a,
-            &plan,
+            &track_a,
+            &extent_a,
+            &windows_a,
             &request.config,
             "video A",
-            None,
+            &ClipPlanSideContext {
+                label: "video A",
+                timeline_end: extent_a.effective(),
+            },
+            &plan_ctx,
             &ExtractionProgressScope::with_stage_label(
                 self.progress,
                 "Aligning audio fingerprints (video A)...".into(),
             ),
         )?;
-        let extracted_b = self.extract_clips(
+        let extracted_b = self.extract_clips_at_windows(
             session_b,
-            &plan,
+            &track_b,
+            &extent_b,
+            &windows_b,
             &request.config,
             "video B",
-            None,
+            &ClipPlanSideContext {
+                label: "video B",
+                timeline_end: extent_b.effective(),
+            },
+            &plan_ctx,
             &ExtractionProgressScope::with_stage_label(
                 self.progress,
                 "Aligning audio fingerprints (video B)...".into(),
@@ -372,20 +454,50 @@ where
                     "Trying track pair A:{} / B:{}",
                     track_a.index, track_b.index
                 ));
-                let extracted_a = self.extract_clips(
+                let (resolved_a, extent_a) = self.resolve_track_extent(
                     session_a,
                     &plan,
                     &request.config,
-                    "video A",
                     Some(track_a),
-                    &extraction,
                 )?;
-                let extracted_b = self.extract_clips(
+                let (resolved_b, extent_b) = self.resolve_track_extent(
                     session_b,
                     &plan,
                     &request.config,
-                    "video B",
                     Some(track_b),
+                )?;
+                let planning = request.config.alignment.clip_planning_options();
+                let (windows_a, windows_b) =
+                    clip_windows_paired(&extent_a, &extent_b, &plan, planning)?;
+                let plan_ctx = ClipPlanFormatContext {
+                    end_clip_anchor: planning.end_clip_anchor,
+                };
+                let extracted_a = self.extract_clips_at_windows(
+                    session_a,
+                    &resolved_a,
+                    &extent_a,
+                    &windows_a,
+                    &request.config,
+                    "video A",
+                    &ClipPlanSideContext {
+                        label: "video A",
+                        timeline_end: extent_a.effective(),
+                    },
+                    &plan_ctx,
+                    &extraction,
+                )?;
+                let extracted_b = self.extract_clips_at_windows(
+                    session_b,
+                    &resolved_b,
+                    &extent_b,
+                    &windows_b,
+                    &request.config,
+                    "video B",
+                    &ClipPlanSideContext {
+                        label: "video B",
+                        timeline_end: extent_b.effective(),
+                    },
+                    &plan_ctx,
                     &extraction,
                 )?;
                 let result =
@@ -676,6 +788,8 @@ where
         Ok(result)
     }
 
+    /// Single-file planning: `clip_windows_with_options` + [`extract_clips_at_windows`].
+    #[allow(dead_code)]
     fn extract_clips(
         &self,
         session: &mut MR::Session,
@@ -685,54 +799,51 @@ where
         track: Option<&AudioTrack>,
         extraction: &ExtractionProgressScope<'_>,
     ) -> Result<ExtractedClips, AppError> {
-        let tracks = session.list_tracks()?;
-        let track = match track {
-            Some(track) => track,
-            None => select_best_track(&tracks)?,
-        };
-        self.progress.phase_verbose(&format!(
-            "Selected track {} ({} Hz, {} channel{}, {}decodable)",
-            track.index,
-            track.sample_rate,
-            track.channels,
-            if track.channels == 1 { "" } else { "s" },
-            if track.decodable { "" } else { "not " }
-        ));
-
-        let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
-            AppError::Domain(crate::domain::DomainError::InvalidDuration),
-        )?;
-
-        let mut extent = MediaExtent::from_declared(duration);
-
-        if config.needs_tail_extent_scan(plan) {
-            match session.track_decodable_extent(track) {
-                Ok(tail) => extent = extent.with_decodable(tail),
-                Err(_) => {
-                    self.progress.phase_verbose(&format!(
-                        "{label}: tail extent scan failed; using container duration"
-                    ));
-                }
-            }
-        }
-
-        if extent.decodable.is_some_and(|tail| tail + Duration::from_secs(1) < extent.declared) {
-            self.progress.phase_verbose(&format!(
-                "{label}: decodable extent {:.0}s (container {:.0}s)",
-                extent.decodable.unwrap().as_secs_f64(),
-                extent.declared.as_secs_f64()
-            ));
-        }
+        let (track, extent) = self.resolve_track_extent(session, plan, config, track)?;
+        self.log_selected_track(label, &track);
+        self.log_decodable_extent(label, &extent);
 
         let planning = config.alignment.clip_planning_options();
         let windows = clip_windows_with_options(&extent, plan, planning)?;
+        let plan_ctx = ClipPlanFormatContext {
+            end_clip_anchor: planning.end_clip_anchor,
+        };
+        self.extract_clips_at_windows(
+            session,
+            &track,
+            &extent,
+            &windows,
+            config,
+            label,
+            &ClipPlanSideContext {
+                label,
+                timeline_end: extent.effective(),
+            },
+            &plan_ctx,
+            extraction,
+        )
+    }
+
+    fn extract_clips_at_windows(
+        &self,
+        session: &mut MR::Session,
+        track: &AudioTrack,
+        extent: &MediaExtent,
+        windows: &[ClipWindow],
+        config: &AlignConfig,
+        label: &str,
+        side: &ClipPlanSideContext<'_>,
+        plan_ctx: &ClipPlanFormatContext,
+        extraction: &ExtractionProgressScope<'_>,
+    ) -> Result<ExtractedClips, AppError> {
+        self.progress
+            .phase_verbose(&format_clip_plan(side, windows, plan_ctx));
+
         let timeline_end = windows
             .iter()
             .find(|window| window.label == ClipLabel::End)
             .map(|window| window.end)
-            .unwrap_or(extent.effective());
-
-        self.progress.phase_verbose(&format_clip_plan(label, &windows));
+            .unwrap_or_else(|| extent.effective());
 
         extraction.register_batch(windows.len() as u64);
 
@@ -799,8 +910,8 @@ where
         Ok(ExtractedClips {
             raw_clips,
             decode_skips,
-            windows,
-            extent,
+            windows: windows.to_vec(),
+            extent: *extent,
             track: track.clone(),
             end_clip_unreliable,
         })
@@ -814,6 +925,16 @@ struct AlignmentOutcome {
     discovery_windows: Vec<ClipWindow>,
     extent_a: MediaExtent,
     extent_b: MediaExtent,
+}
+
+/// Per-file context for verbose clip-plan lines (symmetric paired extraction).
+struct ClipPlanSideContext<'a> {
+    label: &'a str,
+    timeline_end: Duration,
+}
+
+struct ClipPlanFormatContext {
+    end_clip_anchor: EndClipAnchor,
 }
 
 fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool {
@@ -975,22 +1096,43 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
-fn format_clip_plan(label: &str, windows: &[ClipWindow]) -> String {
+fn format_clip_plan(
+    side: &ClipPlanSideContext<'_>,
+    windows: &[ClipWindow],
+    ctx: &ClipPlanFormatContext,
+) -> String {
+    let anchor_note = match ctx.end_clip_anchor {
+        EndClipAnchor::SharedTimeline => "shared timeline anchor",
+        EndClipAnchor::FileTail => "file tail anchor",
+    };
+
     let parts: Vec<String> = windows
         .iter()
         .map(|window| {
-            format!(
+            let mut part = format!(
                 "[{}–{}] {} ({})",
                 format_duration(window.start),
                 format_duration(window.end),
                 clip_label_name(window.label),
                 format_duration(window.duration())
-            )
+            );
+            if ctx.end_clip_anchor == EndClipAnchor::SharedTimeline
+                && window.label == ClipLabel::End
+                && window.end + Duration::from_secs(1) < side.timeline_end
+            {
+                part.push_str(&format!(
+                    " (anchored at {}, not file tail {})",
+                    format_duration(window.end),
+                    format_duration(side.timeline_end)
+                ));
+            }
+            part
         })
         .collect();
 
     format!(
-        "Clip plan for {label}: {} clip(s) — {}",
+        "Clip plan for {} ({anchor_note}): {} clip(s) — {}",
+        side.label,
         windows.len(),
         parts.join(", ")
     )
@@ -1023,14 +1165,14 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::config::{AlignConfig, AlignmentConfig, AlignmentMode, ClipConfig};
+    use crate::application::config::{AlignConfig, AlignmentConfig, AlignmentMode, ClipConfig, ValidationConfig};
     use crate::application::error::{AlignmentError, AppError, ConfigError, FingerprintError, MediaError};
     use crate::application::testing::fakes::{
         FakeAligner, FakePcmCorrelator, FakeFingerprinter, FakeMediaReader, FakeMediaSession,
         FakeProgressReporter,
     };
     use crate::domain::{
-        ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, DomainError,
+        ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, DomainError, EndClipAnchor,
     };
     use crate::infrastructure::chromaprint::repetition::{
         test_reset_repetition_detect_calls, test_repetition_detect_calls,
@@ -1290,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_rejects_clip_count_mismatch() {
+    fn execute_symmetric_paired_planning_aligns_unequal_lengths() {
         let reader = FakeMediaReader::new()
             .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
             .with_session("b.wav", FakeMediaSession::with_duration(Duration::from_secs(45)));
@@ -1310,22 +1452,19 @@ mod tests {
             &progress,
         );
 
-        // The symmetric path still hard-errors on a clip-count mismatch. (Auto now routes such a
-        // pair to query mode instead — see `execute_auto_routes_clip_count_mismatch_to_query`.)
         let mut config = two_clip_config();
         config.alignment.mode = AlignmentMode::Symmetric;
-        let error = use_case.execute(request(config)).unwrap_err();
-        assert!(matches!(
-            error,
-            AppError::Alignment(AlignmentError::EngineFailed(_))
-        ));
+        let response = use_case
+            .execute(request(config))
+            .expect("paired planning should keep clip counts aligned");
+        assert!(response.result.start_aligned);
+        assert_eq!(response.result.clips.len(), 1);
     }
 
     #[test]
     fn execute_auto_routes_clip_count_mismatch_to_query() {
-        // A=3min, B=45s: ratio 0.25 < 0.5 triggers query mode under Auto. B is shorter than
-        // MIN_CLIP_LENGTH, so query mode skips gracefully (no clip-count-mismatch error) and
-        // records that query mode ran.
+        // A=3min, B=45s: ratio 0.25 < 0.5 triggers query mode under Auto (Tier 1). B is shorter
+        // than MIN_CLIP_LENGTH, so query mode skips gracefully and records that query mode ran.
         let reader = FakeMediaReader::new()
             .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
             .with_session("b.wav", FakeMediaSession::with_duration(Duration::from_secs(45)));
@@ -2600,5 +2739,214 @@ mod tests {
             clip.confidence < min_match_score,
             "halved confidence must fall below min_match_score without clearing aligned"
         );
+    }
+
+    fn anchored_end_chromaprint_config(
+        num_clips: u32,
+        anchor: EndClipAnchor,
+        mode: AlignmentMode,
+    ) -> AlignConfig {
+        AlignConfig {
+            clip: ClipConfig {
+                clip_length: Duration::from_secs(60),
+                num_clips,
+                target_sample_rate: Some(11_025),
+                normalize_loudness: false,
+                trim_silence: false,
+                window_slide_secs: 0,
+                ..ClipConfig::default()
+            },
+            alignment: AlignmentConfig {
+                mode,
+                end_clip_anchor: anchor,
+                refine_offset_high_rate: false,
+                refine_offset_with_pcm: false,
+                ..Default::default()
+            },
+            validation: ValidationConfig {
+                verify_offset: false,
+                check_clip_repetition: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn run_anchored_end_chirp_alignment(
+        shared_secs: u32,
+        long_secs: u32,
+        offset_secs: u32,
+        config: AlignConfig,
+    ) -> AlignVideosResponse {
+        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
+        use crate::application::config::ChromaprintPreset;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_anchored_end_symmetric_pair(
+            temp.path(),
+            11_025,
+            shared_secs,
+            long_secs,
+            offset_secs,
+        );
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &progress,
+        );
+        use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("anchored end chirp execute")
+    }
+
+    #[test]
+    fn symmetric_shared_timeline_end_clips_agree_on_unequal_pair() {
+        const SHARED_SECS: u32 = 120;
+        const LONG_SECS: u32 = 300;
+        const OFFSET_SECS: u32 = 12;
+
+        let response = run_anchored_end_chirp_alignment(
+            SHARED_SECS,
+            LONG_SECS,
+            OFFSET_SECS,
+            anchored_end_chromaprint_config(
+                2,
+                EndClipAnchor::SharedTimeline,
+                AlignmentMode::Symmetric,
+            ),
+        );
+        let result = &response.result;
+        assert_eq!(result.clips.len(), 2);
+        let start = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::Start)
+            .expect("start clip");
+        let end = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::End)
+            .expect("end clip");
+        assert!(start.aligned && end.aligned, "both clips should align");
+        assert!(
+            start.confidence >= 0.5 && end.confidence >= 0.5,
+            "start={:.2} end={:.2}",
+            start.confidence,
+            end.confidence
+        );
+        let start_off = start.offset_secs.expect("start offset");
+        let end_off = end.offset_secs.expect("end offset");
+        assert!(
+            (start_off - end_off).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS,
+            "start={start_off} end={end_off}"
+        );
+        assert!(
+            (start_off - f64::from(OFFSET_SECS)).abs() < 2.0,
+            "start offset {start_off} expected ~{OFFSET_SECS}"
+        );
+        assert!(result.offsets_consistent);
+        assert_eq!(result.end_aligned, Some(true));
+    }
+
+    #[test]
+    fn symmetric_file_tail_end_clip_disagrees_on_unequal_pair() {
+        const SHARED_SECS: u32 = 120;
+        const LONG_SECS: u32 = 300;
+        const OFFSET_SECS: u32 = 12;
+
+        let response = run_anchored_end_chirp_alignment(
+            SHARED_SECS,
+            LONG_SECS,
+            OFFSET_SECS,
+            anchored_end_chromaprint_config(2, EndClipAnchor::FileTail, AlignmentMode::Symmetric),
+        );
+        let result = &response.result;
+        assert_eq!(result.clips.len(), 2);
+        let start_off = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::Start)
+            .and_then(|c| c.offset_secs)
+            .expect("start offset");
+        let end_off = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::End)
+            .and_then(|c| c.offset_secs);
+        if let Some(end_off) = end_off {
+            assert!(
+                (start_off - end_off).abs() > OFFSET_AGREEMENT_TOLERANCE_SECS
+                    || !result.offsets_consistent,
+                "file-tail end should disagree with start (start={start_off} end={end_off})"
+            );
+        } else {
+            assert_eq!(result.end_aligned, Some(false));
+        }
+    }
+
+    #[test]
+    fn auto_routes_unequal_anchored_pair_to_query_reference() {
+        const SHARED_SECS: u32 = 120;
+        const LONG_SECS: u32 = 600;
+        const OFFSET_SECS: u32 = 12;
+
+        let response = run_anchored_end_chirp_alignment(
+            SHARED_SECS,
+            LONG_SECS,
+            OFFSET_SECS,
+            anchored_end_chromaprint_config(2, EndClipAnchor::SharedTimeline, AlignmentMode::Auto),
+        );
+        assert_eq!(
+            response.result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference)
+        );
+        assert!(response.result.query_localization.is_some());
+    }
+
+    #[test]
+    fn symmetric_three_clip_shared_timeline_offsets_consistent() {
+        const SHARED_SECS: u32 = 180;
+        const LONG_SECS: u32 = 600;
+        const OFFSET_SECS: u32 = 12;
+
+        let response = run_anchored_end_chirp_alignment(
+            SHARED_SECS,
+            LONG_SECS,
+            OFFSET_SECS,
+            anchored_end_chromaprint_config(
+                3,
+                EndClipAnchor::SharedTimeline,
+                AlignmentMode::Symmetric,
+            ),
+        );
+        let result = &response.result;
+        assert_eq!(result.clips.len(), 3);
+        assert!(result.offsets_consistent);
+        let offsets: Vec<f64> = result
+            .clips
+            .iter()
+            .filter_map(|clip| clip.offset_secs)
+            .collect();
+        assert_eq!(offsets.len(), 3);
+        for offset in &offsets {
+            assert!(
+                (*offset - f64::from(OFFSET_SECS)).abs() < 2.5,
+                "offset {offset} expected ~{OFFSET_SECS}"
+            );
+        }
     }
 }

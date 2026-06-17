@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::alignment::{AlignmentResult, TimelineOverlap};
+use crate::domain::alignment::{clip_with_label, AlignmentResult, TimelineOverlap};
 use crate::domain::audio_track::AudioTrack;
 use crate::domain::clip_plan::ClipPlan;
 use crate::domain::clip_window::{ClipLabel, ClipWindow};
@@ -282,6 +282,52 @@ pub fn clip_windows_paired(
     let windows_b = assemble_labeled_windows(start, interiors_b, end_b)?;
     debug_assert_eq!(windows_a.len(), windows_b.len());
     Ok((windows_a, windows_b))
+}
+
+/// Attaches symmetric clip-planning metadata for reporting (end anchor + per-clip B windows).
+pub fn attach_symmetric_planning_report_metadata(
+    result: &mut AlignmentResult,
+    extent_a: &MediaExtent,
+    extent_b: &MediaExtent,
+    plan: &ClipPlan,
+    options: ClipPlanningOptions,
+    num_clips_configured: u32,
+) {
+    if result.query_localization.is_some()
+        || result.alignment_mode_used == Some(AlignmentModeUsed::QueryReference)
+    {
+        return;
+    }
+    if num_clips_configured < 2 || clip_with_label(&result.clips, ClipLabel::End).is_none() {
+        return;
+    }
+
+    result.end_clip_anchor = Some(options.end_clip_anchor);
+
+    let Ok((windows_a, windows_b)) = clip_windows_paired(extent_a, extent_b, plan, options) else {
+        return;
+    };
+    if windows_a.len() != result.clips.len() {
+        return;
+    }
+
+    for (clip, (window_a, window_b)) in result
+        .clips
+        .iter_mut()
+        .zip(windows_a.iter().zip(windows_b.iter()))
+    {
+        let a_start = window_a.start.as_secs_f64();
+        let a_end = window_a.end.as_secs_f64();
+        let b_start = window_b.start.as_secs_f64();
+        let b_end = window_b.end.as_secs_f64();
+        if (b_start - a_start).abs() > 1e-9 || (b_end - a_end).abs() > 1e-9 {
+            clip.video_b_window_start_secs = Some(b_start);
+            clip.video_b_window_end_secs = Some(b_end);
+        } else {
+            clip.video_b_window_start_secs = None;
+            clip.video_b_window_end_secs = None;
+        }
+    }
 }
 
 fn end_window_for_file(
@@ -1361,6 +1407,54 @@ mod tests {
                 .unwrap();
         assert_eq!(from_helper.len(), 1);
         assert_eq!(from_helper[0], windows[1]);
+    }
+
+    #[test]
+    fn attach_symmetric_planning_report_metadata_sets_anchor_and_b_windows() {
+        use crate::domain::alignment::{build_alignment_result, ClipMatchEstimate, ClipPairReportInput};
+
+        let plan = ClipPlan::new(mins(15), 2);
+        let short = MediaExtent::from_declared(mins(40));
+        let long = MediaExtent::from_declared(mins(300));
+        let windows = clip_windows_with_options(&short, &plan, ClipPlanningOptions::default()).unwrap();
+        let estimates = windows
+            .iter()
+            .map(|_| ClipMatchEstimate {
+                offset_secs: 12.0,
+                confidence: 0.9,
+            })
+            .collect::<Vec<_>>();
+        let mut result = build_alignment_result(
+            ClipPairReportInput {
+                windows: &windows,
+                estimates: &estimates,
+                decode_skips_a: &[],
+                decode_skips_b: &[],
+                duration_a: Some(short.declared),
+                duration_b: Some(long.declared),
+            },
+            crate::domain::alignment::AlignmentMergePolicy {
+                min_match_score: 0.5,
+                prefer_start_clip: true,
+                require_consistent_offsets: false,
+            },
+        );
+        attach_symmetric_planning_report_metadata(
+            &mut result,
+            &short,
+            &long,
+            &plan,
+            paired_options(EndClipAnchor::FileTail),
+            2,
+        );
+        assert_eq!(result.end_clip_anchor, Some(EndClipAnchor::FileTail));
+        let end = result
+            .clips
+            .iter()
+            .find(|clip| clip.label == ClipLabel::End)
+            .expect("end clip");
+        assert_eq!(end.video_b_window_start_secs, Some(mins(285).as_secs_f64()));
+        assert_eq!(end.video_b_window_end_secs, Some(mins(300).as_secs_f64()));
     }
 
     fn extent_secs(secs: f64) -> MediaExtent {

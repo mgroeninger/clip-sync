@@ -73,6 +73,9 @@ pub struct ClipMatch {
     pub video_b_decode_skips: u32,
     /// Present when `validation.check_clip_repetition` was on for this run.
     pub repetition: Option<ClipRepetitionReport>,
+    /// B-side window when paired planning differs from A (symmetric multi-clip runs).
+    pub video_b_window_start_secs: Option<f64>,
+    pub video_b_window_end_secs: Option<f64>,
 }
 
 /// Shared timeline region implied by the start clip and recommended offset.
@@ -145,6 +148,8 @@ pub struct AlignmentResult {
     pub alignment_mode_used: Option<AlignmentModeUsed>,
     /// Present only when query-reference mode ran: where the short clip sits on the long file.
     pub query_localization: Option<QueryLocalization>,
+    /// End-clip placement policy for this symmetric run; absent in query-reference and single-clip runs.
+    pub end_clip_anchor: Option<crate::domain::policies::EndClipAnchor>,
 }
 
 impl AlignmentResult {
@@ -376,6 +381,8 @@ pub fn build_alignment_result(
                 video_a_decode_skips: decode_skips_a.get(index).copied().unwrap_or(0),
                 video_b_decode_skips: decode_skips_b.get(index).copied().unwrap_or(0),
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             }
         })
         .collect();
@@ -426,6 +433,7 @@ pub fn build_alignment_result(
         offset_ambiguous_mod_secs: None,
         alignment_mode_used: None,
         query_localization: None,
+        end_clip_anchor: None,
     }
 }
 
@@ -660,6 +668,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             }],
             start_aligned: false,
             end_aligned: None,
@@ -672,6 +682,7 @@ mod tests {
             offset_ambiguous_mod_secs: None,
             alignment_mode_used: None,
             query_localization: None,
+            end_clip_anchor: None,
         };
         assert!(result.start_clip().is_none());
     }

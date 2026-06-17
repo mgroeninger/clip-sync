@@ -29,6 +29,8 @@ impl AlignmentResultBuilder {
                     video_a_decode_skips: 0,
                     video_b_decode_skips: 0,
                     repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
                 }],
                 start_aligned: aligned,
                 end_aligned: None,
@@ -41,6 +43,7 @@ impl AlignmentResultBuilder {
                 offset_ambiguous_mod_secs: None,
                 alignment_mode_used: None,
                 query_localization: None,
+                end_clip_anchor: None,
             },
         }
     }
@@ -108,6 +111,8 @@ pub fn start_clip_match(
         video_a_decode_skips: 0,
         video_b_decode_skips: 0,
         repetition: None,
+        video_b_window_start_secs: None,
+        video_b_window_end_secs: None,
     }
 }
 

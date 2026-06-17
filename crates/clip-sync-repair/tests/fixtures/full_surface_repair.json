@@ -78,7 +78,8 @@
         "verified": true,
         "skipped": false,
         "candidates_tried": 1
-      }
+      },
+      "end_clip_anchor": "shared_timeline"
     },
     "gaps": [
       {

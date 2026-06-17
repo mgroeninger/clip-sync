@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use clip_sync::{
-    format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_query_localization_lines, format_time_range, format_timestamp, ClipLabelReport,
+    format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
+    format_query_localization_lines, format_symmetric_clip_window_line, format_time_range,
+    format_timestamp, ClipLabelReport,
 };
 use serde::Serialize;
 
@@ -87,6 +88,22 @@ fn format_human(
                         "           using start-clip offset for fill (clip offsets disagree)\n",
                     );
                 }
+            }
+        }
+        if show_diagnostics {
+            if let Some(anchor) = report.alignment.end_clip_anchor {
+                out.push_str(&format!("{}\n", format_end_clip_anchor_line(anchor)));
+            }
+            if let Some(end) = report
+                .alignment
+                .clips
+                .iter()
+                .find(|clip| clip.label == ClipLabelReport::End)
+            {
+                out.push_str(&format!(
+                    "  {}\n",
+                    format_symmetric_clip_window_line(end, true)
+                ));
             }
         }
     }
@@ -634,6 +651,8 @@ mod tests {
                             }),
                             b: None,
                         }),
+                        video_b_window_start_secs: None,
+                        video_b_window_end_secs: None,
                     },
                     ClipMatch {
                         label: ClipLabel::End,
@@ -645,6 +664,8 @@ mod tests {
                         video_a_decode_skips: 0,
                         video_b_decode_skips: 3,
                         repetition: None,
+                        video_b_window_start_secs: None,
+                        video_b_window_end_secs: None,
                     },
                 ],
                 start_aligned: false,
@@ -679,6 +700,7 @@ mod tests {
                 offset_ambiguous_mod_secs: None,
                 alignment_mode_used: None,
                 query_localization: None,
+                end_clip_anchor: Some(clip_sync::EndClipAnchor::SharedTimeline),
             }),
             gaps: vec![
                 Gap {
@@ -774,6 +796,8 @@ mod tests {
                     video_a_decode_skips: 0,
                     video_b_decode_skips: 0,
                     repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
                 }],
                 start_aligned: true,
                 end_aligned: None,
@@ -786,6 +810,7 @@ mod tests {
                 offset_ambiguous_mod_secs: None,
                 alignment_mode_used: None,
                 query_localization: None,
+                end_clip_anchor: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
@@ -931,6 +956,8 @@ mod tests {
                     video_a_decode_skips: 0,
                     video_b_decode_skips: 0,
                     repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
                 }],
                 start_aligned: false,
                 end_aligned: None,
@@ -943,6 +970,7 @@ mod tests {
                 offset_ambiguous_mod_secs: None,
                 alignment_mode_used: None,
                 query_localization: None,
+                end_clip_anchor: None,
             }),
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
@@ -973,6 +1001,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
             ClipMatch {
                 label: ClipLabel::End,
@@ -984,6 +1014,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
         ]
         .iter()
@@ -1184,6 +1216,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
             ClipMatch {
                 label: ClipLabel::End,
@@ -1195,6 +1229,8 @@ mod tests {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 0,
                 repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
             },
         ]
         .iter()
@@ -1204,6 +1240,7 @@ mod tests {
         report.alignment.offsets_consistent = false;
         report.alignment.offset_drift_secs = Some(235.966);
         report.alignment.recommended_offset_secs = Some(-4.853);
+        report.alignment.end_clip_anchor = Some(clip_sync::EndClipAnchorReport::SharedTimeline);
         report.gap_offset_agreement = Some(GapOffsetAgreement {
             silence_based_offset_secs: 246.0,
             alignment_offset_secs: -4.853,
@@ -1238,6 +1275,10 @@ mod tests {
         assert!(text.contains("skipped 231.7s (gap #2 at"));
         assert!(text.contains(">2 "));
         assert!(text.contains("231.7s!"));
+
+        let verbose = super::format_human(&report, Some(&summary), true, None);
+        assert!(verbose.contains("End anchor: shared timeline"));
+        assert!(verbose.contains("End clip A"));
     }
 
     #[test]
