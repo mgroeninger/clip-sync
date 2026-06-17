@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clip_sync::{
-    select_best_track, select_track_for_reference, ClipLabel, ClipWindow, DomainError,
-    MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter, resample_interleaved,
+    format_time_range, select_best_track, select_track_for_reference, ClipLabel, ClipWindow,
+    DomainError, MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter,
+    resample_interleaved,
 };
 
 use crate::application::error::RepairError;
@@ -229,9 +230,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 sample_rate,
             );
         }
-        if patch_count > 0 {
-            self.progress.progress("patch-splice", patch_count, patch_count);
-        }
 
         let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
@@ -258,6 +256,31 @@ enum RegionPatchOutcome {
 
 fn gap_key(start_secs: f64, end_secs: f64) -> (u64, u64) {
     (start_secs.to_bits(), end_secs.to_bits())
+}
+
+/// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
+pub(crate) fn format_skip_gap_fill_log(
+    gaps: &[Gap],
+    a_start_secs: f64,
+    a_end_secs: f64,
+    reason: &str,
+) -> String {
+    let total = gaps.len();
+    let range = format_time_range(a_start_secs, a_end_secs);
+    if let Some(index) = gaps.iter().position(|gap| {
+        gap_key(gap.video_a_start_secs, gap.video_a_end_secs) == gap_key(a_start_secs, a_end_secs)
+    }) {
+        format!("gap {index}/{total} ({range}): {reason}", index = index + 1)
+    } else {
+        format!("gap ({range}): {reason}")
+    }
+}
+
+fn warn_skip_gap_fill(gaps: &[Gap], a_start_secs: f64, a_end_secs: f64, reason: &str) {
+    tracing::warn!(
+        "{}",
+        format_skip_gap_fill_log(gaps, a_start_secs, a_end_secs, reason)
+    );
 }
 
 fn outcomes_in_report_order(
@@ -424,11 +447,11 @@ fn prepare_region_patch(
     ) {
         Some(samples) => samples,
         None => {
-            tracing::warn!(
-                a_start_secs,
-                b_extract_start_secs,
-                b_extract_end_secs,
-                "skipping gap fill region: B slice out of range"
+            warn_skip_gap_fill(
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "B audio slice out of range",
             );
             return (
                 None,
@@ -494,9 +517,11 @@ fn prepare_region_patch(
     ) {
         Some(alignment) => alignment,
         None => {
-            tracing::warn!(
-                a_start_secs,
-                "skipping gap fill: structure alignment failed"
+            warn_skip_gap_fill(
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "structure alignment failed",
             );
             return (
                 None,
@@ -515,12 +540,11 @@ fn prepare_region_patch(
         gap_secs,
         short_gap_mean_correlation_secs,
     ) {
-        tracing::warn!(
-            structure_pre,
-            structure_post,
-            min_structure_match_score,
-            a_start_secs,
-            "skipping gap fill: structure match below threshold"
+        warn_skip_gap_fill(
+            &request.report.gaps,
+            region.a_start_secs,
+            region.a_end_secs,
+            "structure match below threshold",
         );
         return (
             None,
@@ -580,21 +604,11 @@ fn prepare_region_patch(
             gap_secs,
             short_gap_mean_correlation_secs,
         ) {
-            tracing::warn!(
-                pre_correlation = pre_corr,
-                post_correlation = post_corr,
-                effective_min_corr,
-                min_fill_correlation,
-                structure_pre,
-                structure_post,
-                waveform_gate_frames,
-                align_adjustment_secs = (alignment.start_frame as f64
-                    - offset_nominal_start as f64)
-                    / sample_rate as f64,
-                b_fill_frames = alignment.fill_frames,
-                a_gap_frames = gap_frames,
-                a_start_secs,
-                "skipping gap fill: waveform seam correlation below threshold"
+            warn_skip_gap_fill(
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "waveform seam correlation below threshold",
             );
             return (
                 None,
@@ -611,10 +625,11 @@ fn prepare_region_patch(
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
-        tracing::warn!(
-            a_start_secs,
-            b_fill_frames = alignment.fill_frames,
-            "skipping gap fill: aligned B segment out of range"
+        warn_skip_gap_fill(
+            &request.report.gaps,
+            region.a_start_secs,
+            region.a_end_secs,
+            "aligned B segment out of range",
         );
         return (
             None,
@@ -878,6 +893,7 @@ fn splice_into_a(
 #[cfg(test)]
 mod tests {
     use super::fit_fill_to_gap_frames;
+    use crate::domain::Gap;
 
     #[test]
     fn fit_fill_trims_tail_without_resampling() {
@@ -900,5 +916,30 @@ mod tests {
         let samples = vec![1000i16, 1000, 2000, 2000];
         let fitted = fit_fill_to_gap_frames(&samples, 2, 4);
         assert_eq!(fitted, vec![1000, 1000, 2000, 2000, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn skip_gap_fill_log_matches_stdout_gap_number() {
+        let gaps = vec![
+            Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 8.0,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
+                b_has_energy: false,
+            },
+            Gap {
+                video_a_start_secs: 6128.25,
+                video_a_end_secs: 6360.0,
+                video_b_start_secs: Some(0.0),
+                video_b_end_secs: Some(1.0),
+                b_has_energy: true,
+            },
+        ];
+
+        assert_eq!(
+            super::format_skip_gap_fill_log(&gaps, 6128.25, 6360.0, "structure alignment failed"),
+            "gap 2/2 (1:42:08 – 1:46:00): structure alignment failed"
+        );
     }
 }

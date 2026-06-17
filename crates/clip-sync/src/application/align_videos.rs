@@ -307,14 +307,16 @@ where
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         let plan = request.config.clip.as_plan();
-        let extraction = ExtractionProgressScope::new(self.progress);
         let extracted_a = self.extract_clips(
             session_a,
             &plan,
             &request.config,
             "video A",
             None,
-            &extraction,
+            &ExtractionProgressScope::with_stage_label(
+                self.progress,
+                "Aligning audio fingerprints (video A)...".into(),
+            ),
         )?;
         let extracted_b = self.extract_clips(
             session_b,
@@ -322,7 +324,10 @@ where
             &request.config,
             "video B",
             None,
-            &extraction,
+            &ExtractionProgressScope::with_stage_label(
+                self.progress,
+                "Aligning audio fingerprints (video B)...".into(),
+            ),
         )?;
         let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
         Ok(AlignmentOutcome {

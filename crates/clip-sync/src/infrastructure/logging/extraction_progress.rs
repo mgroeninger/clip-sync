@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::Cell;
 
 use crate::application::ports::ProgressReporter;
@@ -9,14 +10,20 @@ const UNITS_PER_CLIP: u64 = 1000;
 /// Tracks clip extraction across one or more videos and maps decode progress to a single stage bar.
 pub struct ExtractionProgressScope<'a> {
     inner: &'a dyn ProgressReporter,
+    stage_label: Cow<'a, str>,
     global_total: Cell<u64>,
     global_done: Cell<u64>,
 }
 
 impl<'a> ExtractionProgressScope<'a> {
     pub fn new(inner: &'a dyn ProgressReporter) -> Self {
+        Self::with_stage_label(inner, Cow::Borrowed(FINGERPRINT_ALIGN_STAGE))
+    }
+
+    pub fn with_stage_label(inner: &'a dyn ProgressReporter, stage_label: Cow<'a, str>) -> Self {
         Self {
             inner,
+            stage_label,
             global_total: Cell::new(0),
             global_done: Cell::new(0),
         }
@@ -32,7 +39,7 @@ impl<'a> ExtractionProgressScope<'a> {
 
         let unit_total = self.global_total.get().max(1) * UNITS_PER_CLIP;
         self.inner.progress(
-            FINGERPRINT_ALIGN_STAGE,
+            &self.stage_label,
             self.global_done.get() * UNITS_PER_CLIP,
             unit_total,
         );
@@ -82,7 +89,7 @@ impl ProgressReporter for ClipExtractProgress<'_> {
         let global_clip_index = self.scope.global_done.get() + self.clip_in_batch;
         let global_current = (global_clip_index * UNITS_PER_CLIP + within).min(unit_total);
         self.scope.inner.progress(
-            FINGERPRINT_ALIGN_STAGE,
+            &self.scope.stage_label,
             global_current,
             unit_total,
         );
@@ -132,6 +139,24 @@ mod tests {
                 (label.as_str(), *current, *total)
             }),
             Some((FINGERPRINT_ALIGN_STAGE, 0, 2000))
+        );
+    }
+
+    #[test]
+    fn custom_stage_label_is_used_for_aggregated_progress() {
+        let inner = RecordingProgress::new(false);
+        let scope = ExtractionProgressScope::with_stage_label(
+            &inner,
+            "Aligning audio fingerprints (video A)...".into(),
+        );
+        scope.register_batch(1);
+        scope.for_clip(0).progress("extract", 500, 1000);
+
+        assert_eq!(
+            inner.last.borrow().as_ref().map(|(label, current, total)| {
+                (label.as_str(), *current, *total)
+            }),
+            Some(("Aligning audio fingerprints (video A)...", 500, 1000))
         );
     }
 

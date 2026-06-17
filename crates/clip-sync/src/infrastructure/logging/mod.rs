@@ -39,10 +39,10 @@ pub struct LoggingConfig {
     pub progress: ProgressMode,
 }
 
-/// Default `EnvFilter` when `RUST_LOG` is unset: clip-sync crates at `level`, all other targets at `warn`.
+/// Default `EnvFilter` when `RUST_LOG` is unset: app crates at `level`, symphonia demuxer noise at `error`, other third-party at `warn`.
 pub fn default_env_filter(level: LogLevel) -> String {
     let app = log_level_name(level);
-    format!("clip_sync={app},clip_sync_repair={app},warn")
+    format!("clip_sync={app},clip_sync_repair={app},symphonia_core=error,warn")
 }
 
 fn log_level_name(level: LogLevel) -> &'static str {
@@ -107,11 +107,11 @@ mod tests {
     fn default_env_filter_sets_app_crates_and_warn_root() {
         assert_eq!(
             default_env_filter(LogLevel::Info),
-            "clip_sync=info,clip_sync_repair=info,warn"
+            "clip_sync=info,clip_sync_repair=info,symphonia_core=error,warn"
         );
         assert_eq!(
             default_env_filter(LogLevel::Debug),
-            "clip_sync=debug,clip_sync_repair=debug,warn"
+            "clip_sync=debug,clip_sync_repair=debug,symphonia_core=error,warn"
         );
     }
 }

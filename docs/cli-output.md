@@ -78,7 +78,7 @@ trait ProgressReporter {
 | Stage | `clip-sync` | `clip-sync-repair` |
 |-------|-------------|-------------------|
 | Startup | `clip-sync: aligning <A> with <B>` | `clip-sync-repair: aligning <A> with <B>` |
-| Fingerprint align | — | `Aligning audio fingerprints...` |
+| Fingerprint align | — | `Aligning audio fingerprints (video A)...` then `(video B)...` (per-video scopes; one 100% bar each) |
 | Match | `Searching for match...` | (via shared align path) |
 | Scan | — | `Scanning video A for gaps...` |
 | Patch | — | `Aligning N fill region(s)...` (or `Repairing N gap(s)...` — see gaps below) |
@@ -109,7 +109,7 @@ Examples (both tools where applicable):
 When `RUST_LOG` is unset, `init_tracing` uses:
 
 ```text
-clip_sync=<level>,clip_sync_repair=<level>,warn
+clip_sync=<level>,clip_sync_repair=<level>,symphonia_core=error,warn
 ```
 
 (`<level>` from `[logging].level` or `--log-level`; default `info`.)
@@ -117,9 +117,9 @@ clip_sync=<level>,clip_sync_repair=<level>,warn
 | Level | Typical content |
 |-------|-----------------|
 | **info** (app crates) | Rare in default UX — prefer phases for user-visible steps |
-| **warn** | Skipped gap fills, correlation below threshold, verification failures worth surfacing |
+| **warn** | Skipped gap fills (`gap N/M (range): reason`), correlation below threshold, verification failures worth surfacing |
 | **debug** | Structure-match trust, B fill trim/extend, ffmpeg mux command detail, symphonia demuxer |
-| **Third-party** | `warn` unless raised in `RUST_LOG` |
+| **Third-party** | `warn` unless raised in `RUST_LOG`; `symphonia_core` defaults to `error` (suppresses MP4 junk-byte probe noise) |
 
 Precedence: `RUST_LOG` > `--log-level` / `[logging].level` > default filter above.
 
