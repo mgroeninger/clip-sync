@@ -38,6 +38,7 @@ pub(super) struct ExtractFinalizeContext<'a> {
     pub window: &'a ClipWindow,
     pub progress: &'a dyn ProgressReporter,
     pub label: &'a str,
+    pub compressed_bytes: u64,
 }
 
 pub(super) trait ExtractSink {
@@ -273,8 +274,10 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
     let max_attempts = if window.start.is_zero() { 1 } else { 2 };
     let mut allow_tail_padding = false;
     let mut decode_error_skips = 0_u32;
+    let mut compressed_bytes = 0_u64;
 
     for attempt in 0..max_attempts {
+        compressed_bytes = 0;
         if attempt > 0 {
             debug!(
                 path = %path.display(),
@@ -346,6 +349,8 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 PacketWindowPos::Within => {}
             }
 
+            compressed_bytes += packet.data.len() as u64;
+
             let decoded = match decode_packet_or_skip(
                 state,
                 &packet,
@@ -403,7 +408,14 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
     }
 
     sink.finalize(
-        &ExtractFinalizeContext { path, track, window, progress, label },
+        &ExtractFinalizeContext {
+            path,
+            track,
+            window,
+            progress,
+            label,
+            compressed_bytes,
+        },
         allow_tail_padding,
         decode_error_skips,
     )
@@ -556,7 +568,7 @@ impl ExtractSink for MonoExtractSink {
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MonoPcmClip, MediaError> {
-        let ExtractFinalizeContext { path, track, window, progress, label } = ctx;
+        let ExtractFinalizeContext { path, track, window, progress, label, .. } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,
@@ -847,7 +859,7 @@ impl ExtractSink for InterleavedExtractSink {
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MultiChannelPcm, MediaError> {
-        let ExtractFinalizeContext { path, track, window, progress, label } = ctx;
+        let ExtractFinalizeContext { path, track, window, progress, label, .. } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,
@@ -968,6 +980,7 @@ impl ExtractSink for InterleavedExtractSink {
             samples: std::mem::take(&mut self.out),
             decode_error_skips,
             decoded_frame_count: (decoded_frame_count < target).then_some(decoded_frame_count),
+            compressed_bytes: Some(ctx.compressed_bytes),
         })
     }
 }

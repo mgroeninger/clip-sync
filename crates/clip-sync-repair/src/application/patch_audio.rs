@@ -22,6 +22,10 @@ pub struct PatchAudioResult {
     /// Present when A was decoded for patching; `None` when the fill plan was empty.
     pub pcm: Option<MultiChannelPcm>,
     pub summary: PatchSummary,
+    /// Measured encoded bitrate of video A's selected audio track (bits/s).
+    pub source_audio_bitrate_a_bps: Option<u32>,
+    /// Measured encoded bitrate of video B's selected audio track (bits/s).
+    pub source_audio_bitrate_b_bps: Option<u32>,
 }
 
 pub struct PatchAudioRequest {
@@ -107,7 +111,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &plan,
                 &[],
             ));
-            return Ok(PatchAudioResult { pcm: None, summary });
+            return Ok(PatchAudioResult {
+                pcm: None,
+                summary,
+                source_audio_bitrate_a_bps: None,
+                source_audio_bitrate_b_bps: None,
+            });
         }
 
         // Step 2: Open A, select best track, get duration.
@@ -128,6 +137,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut a_pcm = session_a
             .extract_interleaved(&track_a, &full_window_a, self.progress, "patch-a")
             .map_err(RepairError::Media)?;
+        let source_audio_bitrate_a_bps = a_pcm.measured_bitrate_bps();
 
         // Step 5: Open B, select best track.
         let source_b = MediaSource::new(request.report.video_b.clone());
@@ -146,6 +156,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let b_pcm_full = session_b
             .extract_interleaved(&track_b, &full_window_b, self.progress, "patch-b")
             .map_err(RepairError::Media)?;
+        let source_audio_bitrate_b_bps = b_pcm_full.measured_bitrate_bps();
         let b_samples_full = if b_pcm_full.sample_rate != a_pcm.sample_rate {
             resample_interleaved(
                 &b_pcm_full.samples,
@@ -244,6 +255,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         Ok(PatchAudioResult {
             pcm: Some(a_pcm),
             summary,
+            source_audio_bitrate_a_bps,
+            source_audio_bitrate_b_bps,
         })
     }
 }

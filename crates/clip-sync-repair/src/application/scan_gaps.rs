@@ -315,6 +315,7 @@ mod tests {
                 samples: clip.samples,
                 decode_error_skips: clip.decode_error_skips,
                 decoded_frame_count: clip.decoded_sample_count,
+                compressed_bytes: None,
             };
         }
 
@@ -333,6 +334,7 @@ mod tests {
             decoded_frame_count: clip
                 .decoded_sample_count
                 .map(|frames| frames * channels as usize),
+            compressed_bytes: None,
         }
     }
 

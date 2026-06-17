@@ -29,6 +29,7 @@ fn repair_fixture_deserializes_and_validates() {
     assert!(config.repair.dry_run);
     assert_eq!(config.repair.output.video_codec, "copy");
     assert_eq!(config.repair.output.audio_codec, "aac");
+    assert_eq!(config.repair.output.mux_audio_bitrate, "match_min");
 
     config
         .align

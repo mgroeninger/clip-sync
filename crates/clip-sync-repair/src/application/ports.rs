@@ -30,6 +30,8 @@ pub trait PatchedAudioWriter {
 pub struct MuxOptions {
     pub video_codec: String,
     pub audio_codec: String,
+    /// ffmpeg `-b:a` value (e.g. `247k`). `None` omits the flag (ffmpeg encoder default).
+    pub audio_bitrate: Option<String>,
 }
 
 #[cfg(feature = "ffmpeg-mux")]

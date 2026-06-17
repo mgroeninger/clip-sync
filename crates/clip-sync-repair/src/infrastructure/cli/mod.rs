@@ -20,6 +20,7 @@ use crate::application::repair_videos::{RepairVideos, RepairWriteRequest};
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::config::{load_repair_app_config, RepairAppConfig};
+use crate::infrastructure::mux_bitrate::parse_mux_audio_bitrate_policy;
 use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 
 #[cfg(feature = "ffmpeg-mux")]
@@ -136,7 +137,13 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     mux_options: MuxOptions {
                         video_codec: config.repair.output.video_codec.clone(),
                         audio_codec: config.repair.output.audio_codec.clone(),
+                        audio_bitrate: None,
                     },
+                    #[cfg(feature = "ffmpeg-mux")]
+                    mux_audio_bitrate_policy: parse_mux_audio_bitrate_policy(
+                        &config.repair.output.mux_audio_bitrate,
+                    )
+                    .map_err(|reason| RepairError::Config(reason))?,
                 };
 
                 let repair = RepairVideos::new(&media_reader, &progress, &WavPatchedAudioWriter);

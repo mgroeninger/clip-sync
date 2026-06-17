@@ -440,6 +440,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
                     samples,
                     decode_error_skips: skips,
                     decoded_frame_count: None,
+                    compressed_bytes: None,
                 },
             })?;
         }
@@ -621,6 +622,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
                 samples: std::mem::take(&mut bucket_buf),
                 decode_error_skips,
                 decoded_frame_count: None,
+                compressed_bytes: None,
             },
         })?;
     }

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
 
+use crate::infrastructure::mux_bitrate::parse_mux_audio_bitrate_policy;
+
 /// Default clip count for repair alignment (start + end windows on long media).
 pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
 
@@ -242,6 +244,10 @@ fn default_audio_codec() -> String {
     "aac".into()
 }
 
+fn default_mux_audio_bitrate() -> String {
+    "match_min".into()
+}
+
 /// Output configuration for the repair tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepairOutputConfig {
@@ -255,6 +261,9 @@ pub struct RepairOutputConfig {
     /// Audio stream codec for mux (patched WAV is encoded with this codec).
     #[serde(default = "default_audio_codec")]
     pub audio_codec: String,
+    /// Mux AAC bitrate: `match_min`, `match_a`, `default`, or explicit e.g. `256k`.
+    #[serde(default = "default_mux_audio_bitrate")]
+    pub mux_audio_bitrate: String,
 }
 
 impl Default for RepairOutputConfig {
@@ -264,6 +273,7 @@ impl Default for RepairOutputConfig {
             video_path: None,
             video_codec: default_video_codec(),
             audio_codec: default_audio_codec(),
+            mux_audio_bitrate: default_mux_audio_bitrate(),
         }
     }
 }
@@ -430,6 +440,12 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "repair.output.video_path".into(),
                 reason: "requires building clip-sync-repair with --features ffmpeg-mux".into(),
+            });
+        }
+        if parse_mux_audio_bitrate_policy(&self.output.mux_audio_bitrate).is_err() {
+            return Err(ConfigError::InvalidValue {
+                field: "repair.output.mux_audio_bitrate".into(),
+                reason: "must be match_min, match_a, default, or a rate like 256k".into(),
             });
         }
         Ok(())

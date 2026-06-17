@@ -844,6 +844,7 @@ mod tests {
             samples,
             decode_error_skips: 0,
             decoded_frame_count: None,
+            compressed_bytes: None,
         }
     }
 

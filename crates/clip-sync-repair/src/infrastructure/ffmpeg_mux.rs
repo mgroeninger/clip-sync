@@ -40,8 +40,14 @@ pub fn build_ffmpeg_mux_args(
         options.video_codec.clone(),
         "-c:a".into(),
         options.audio_codec.clone(),
-        "-shortest".into(),
     ];
+
+    if let Some(bitrate) = &options.audio_bitrate {
+        args.push("-b:a".into());
+        args.push(bitrate.clone());
+    }
+
+    args.push("-shortest".into());
 
     if let Some(ext) = output.extension().and_then(|e| e.to_str()) {
         if matches!(ext.to_lowercase().as_str(), "mp4" | "m4v" | "mov") {
@@ -299,6 +305,7 @@ mod tests {
         let options = MuxOptions {
             video_codec: "copy".into(),
             audio_codec: "aac".into(),
+            audio_bitrate: Some("247k".into()),
         };
 
         let args = build_ffmpeg_mux_args(&source, &out, &options, 48_000, 6);
@@ -327,6 +334,8 @@ mod tests {
                 "copy",
                 "-c:a",
                 "aac",
+                "-b:a",
+                "247k",
                 "-shortest",
                 "-movflags",
                 "+faststart",
@@ -336,10 +345,28 @@ mod tests {
     }
 
     #[test]
+    fn ffmpeg_arg_construction_omits_bitrate_when_unset() {
+        let options = MuxOptions {
+            video_codec: "copy".into(),
+            audio_codec: "aac".into(),
+            audio_bitrate: None,
+        };
+        let args = build_ffmpeg_mux_args(
+            Path::new("a.mp4"),
+            Path::new("out.mp4"),
+            &options,
+            48_000,
+            2,
+        );
+        assert!(!args.contains(&"-b:a".to_string()));
+    }
+
+    #[test]
     fn ffmpeg_arg_construction_mkv_omits_faststart() {
         let options = MuxOptions {
             video_codec: "copy".into(),
             audio_codec: "flac".into(),
+            audio_bitrate: None,
         };
         let args = build_ffmpeg_mux_args(
             Path::new("a.mkv"),
@@ -393,6 +420,7 @@ Error: no video stream\n";
             samples: vec![0i16; 48_000 * 6],
             decode_error_skips: 0,
             decoded_frame_count: None,
+            compressed_bytes: None,
         };
         assert_eq!(pcm_duration_ms(&pcm), Some(1000));
     }
@@ -455,6 +483,7 @@ Error: no video stream\n";
             samples,
             decode_error_skips: 0,
             decoded_frame_count: None,
+            compressed_bytes: None,
         };
 
         let progress = RecordingProgress::new();
@@ -466,6 +495,7 @@ Error: no video stream\n";
                 &MuxOptions {
                     video_codec: "copy".into(),
                     audio_codec: "aac".into(),
+                    audio_bitrate: None,
                 },
                 &progress,
             )

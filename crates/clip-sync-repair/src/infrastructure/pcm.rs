@@ -89,6 +89,7 @@ mod tests {
             samples: vec![0i16; sample_count],
             decode_error_skips: 0,
             decoded_frame_count: None,
+            compressed_bytes: None,
         }
     }
 

@@ -7,6 +7,8 @@ use crate::application::patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioR
 use crate::application::ports::PatchedAudioWriter;
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::ports::{MediaMuxer, MuxOptions};
+#[cfg(feature = "ffmpeg-mux")]
+use crate::infrastructure::mux_bitrate::{resolve_mux_audio_bitrate, MuxAudioBitratePolicy};
 
 pub struct RepairWriteRequest {
     /// Video A path — used as the video source for mux.
@@ -18,6 +20,8 @@ pub struct RepairWriteRequest {
     pub video_path: Option<PathBuf>,
     #[cfg(feature = "ffmpeg-mux")]
     pub mux_options: MuxOptions,
+    #[cfg(feature = "ffmpeg-mux")]
+    pub mux_audio_bitrate_policy: MuxAudioBitratePolicy,
 }
 
 /// Output paths for a repair write pass (patch request is handled separately).
@@ -29,6 +33,8 @@ pub(crate) struct RepairFileOutput {
     video_path: Option<PathBuf>,
     #[cfg(feature = "ffmpeg-mux")]
     mux_options: MuxOptions,
+    #[cfg(feature = "ffmpeg-mux")]
+    mux_audio_bitrate_policy: MuxAudioBitratePolicy,
 }
 
 impl RepairFileOutput {
@@ -96,12 +102,14 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
             wav_path,
             video_path,
             mux_options,
+            mux_audio_bitrate_policy,
         } = request;
         let file_output = RepairFileOutput {
             source_video,
             wav_path,
             video_path,
             mux_options,
+            mux_audio_bitrate_policy,
         };
 
         let patch_result = PatchAudio::new(self.media_reader, self.progress)
@@ -168,11 +176,25 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
         self.write_wav_if_requested(pcm, output)?;
 
         if let Some(video_path) = &output.video_path {
+            let mut mux_options = output.mux_options.clone();
+            mux_options.audio_bitrate = resolve_mux_audio_bitrate(
+                output.mux_audio_bitrate_policy,
+                result.source_audio_bitrate_a_bps,
+                result.source_audio_bitrate_b_bps,
+            );
+            if let Some(ref bitrate) = mux_options.audio_bitrate {
+                self.progress.phase_verbose(&format!(
+                    "Mux AAC bitrate {bitrate} (A {:?} bps, B {:?} bps, policy {:?})",
+                    result.source_audio_bitrate_a_bps,
+                    result.source_audio_bitrate_b_bps,
+                    output.mux_audio_bitrate_policy,
+                ));
+            }
             muxer.mux_video_with_replaced_audio(
                 &output.source_video,
                 pcm,
                 video_path,
-                &output.mux_options,
+                &mux_options,
                 self.progress,
             )?;
         }
@@ -192,6 +214,9 @@ mod tests {
 
     use crate::application::patch_audio::PatchAudioResult;
     use crate::domain::patch_result::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+
+    #[cfg(feature = "ffmpeg-mux")]
+    use crate::infrastructure::mux_bitrate::MuxAudioBitratePolicy;
 
     use super::*;
 
@@ -312,6 +337,7 @@ mod tests {
             samples: vec![1_000; 100],
             decode_error_skips: 0,
             decoded_frame_count: Some(100),
+            compressed_bytes: None,
         }
     }
 
@@ -325,7 +351,10 @@ mod tests {
             mux_options: MuxOptions {
                 video_codec: "copy".into(),
                 audio_codec: "aac".into(),
+                audio_bitrate: None,
             },
+            #[cfg(feature = "ffmpeg-mux")]
+            mux_audio_bitrate_policy: MuxAudioBitratePolicy::MatchMin,
         }
     }
 
@@ -348,6 +377,8 @@ mod tests {
         PatchAudioResult {
             pcm,
             summary: PatchSummary::from_outcomes(gaps),
+            source_audio_bitrate_a_bps: None,
+            source_audio_bitrate_b_bps: None,
         }
     }
 
@@ -420,7 +451,9 @@ mod tests {
             mux_options: MuxOptions {
                 video_codec: "copy".into(),
                 audio_codec: "aac".into(),
+                audio_bitrate: None,
             },
+            mux_audio_bitrate_policy: MuxAudioBitratePolicy::MatchMin,
         };
 
         repair
@@ -464,7 +497,9 @@ mod tests {
                 mux_options: MuxOptions {
                     video_codec: "copy".into(),
                     audio_codec: "aac".into(),
+                    audio_bitrate: None,
                 },
+                mux_audio_bitrate_policy: MuxAudioBitratePolicy::MatchMin,
             };
             assert!(mux_only.wants_file_output());
         }
