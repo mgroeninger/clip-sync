@@ -27,27 +27,27 @@ pub struct Args {
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
 
-    /// Clip window length (e.g. 15m, 90s).
+    /// Clip window length (e.g. 15m, 90s) [default: 15m].
     #[arg(long, value_parser = parse_duration)]
     pub clip_length: Option<std::time::Duration>,
 
-    /// Override: minimum gap duration to report (ms).
+    /// Override: minimum gap duration to report (ms) [default: 1000].
     #[arg(long, value_name = "MS")]
     pub min_gap_ms: Option<u64>,
 
-    /// Override: silence threshold as a fraction of peak amplitude.
+    /// Override: silence threshold as a fraction of peak amplitude [default: 0.01].
     #[arg(long, value_name = "FRACTION")]
     pub silence_fraction: Option<f32>,
 
-    /// Override: decode chunk size for sequential scan (seconds).
+    /// Override: decode chunk size for sequential scan (seconds) [default: 10].
     #[arg(long, value_name = "SECS", alias = "scan-window-secs")]
     pub decode_chunk_secs: Option<u64>,
 
-    /// Override: analysis block size for silence detection (ms).
+    /// Override: analysis block size for silence detection (ms) [default: 250].
     #[arg(long, value_name = "MS")]
     pub scan_block_ms: Option<u64>,
 
-    /// Enable bidirectional silence scan (scan B's timeline too) — on by default.
+    /// Enable bidirectional silence scan (scan B's timeline too) [default: enabled].
     #[arg(long, overrides_with = "no_scan_both")]
     pub scan_both: bool,
 
@@ -63,15 +63,15 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub mux: Option<PathBuf>,
 
-    /// Disable loudness normalization of fill segments.
+    /// Disable loudness normalization of fill segments [default: normalization enabled].
     #[arg(long)]
     pub no_normalize: bool,
 
-    /// Crossfade duration at gap boundaries (ms).
+    /// Crossfade duration at gap boundaries (ms) [default: 10].
     #[arg(long, value_name = "MS")]
     pub crossfade_ms: Option<u64>,
 
-    /// Override: number of alignment clips per video (repair default: 2).
+    /// Override: number of alignment clips per video [default: 2].
     #[arg(long, value_name = "N")]
     pub num_clips: Option<u32>,
 
@@ -83,7 +83,7 @@ pub struct Args {
     #[arg(short, long)]
     pub quiet: bool,
 
-    /// Log level for tracing.
+    /// Log level for tracing [default: info].
     #[arg(long, value_enum)]
     pub log_level: Option<LogLevelArg>,
 
@@ -91,7 +91,7 @@ pub struct Args {
     #[arg(long)]
     pub log_file: Option<PathBuf>,
 
-    /// Try every decodable audio track on both files and keep the best alignment.
+    /// Try every decodable audio track on both files and keep the best alignment [default: disabled].
     #[arg(long, overrides_with = "no_try_all_tracks")]
     pub try_all_tracks: bool,
 
@@ -99,7 +99,7 @@ pub struct Args {
     #[arg(long, overrides_with = "try_all_tracks")]
     pub no_try_all_tracks: bool,
 
-    /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment.
+    /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment [default: enabled].
     #[arg(long, overrides_with = "no_refine_offset_high_rate")]
     pub refine_offset_high_rate: bool,
 
@@ -115,11 +115,12 @@ pub struct Args {
     #[arg(long)]
     pub symmetric_align: bool,
 
-    /// Coarse search stride on the reference timeline when using query-reference mode (seconds).
+    /// Coarse search stride on the reference timeline when using query-reference mode (seconds) [default: 60].
     #[arg(long, value_name = "SECS")]
     pub query_stride: Option<f64>,
 
-    /// When using query-reference mode, allow filling gaps outside the located clip coverage.
+    /// When using query-reference mode, allow filling gaps outside the located clip coverage
+    /// [default: gaps outside mapped region are not fillable].
     #[arg(long)]
     pub no_limit_fill_region: bool,
 }
@@ -167,7 +168,9 @@ fn parse_duration(raw: &str) -> Result<std::time::Duration, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_duration;
+    use super::*;
+    use clap::CommandFactory;
+    use crate::infrastructure::config::RepairAppConfig;
 
     #[test]
     fn parse_duration_minutes() {
@@ -177,5 +180,39 @@ mod tests {
     #[test]
     fn parse_duration_seconds() {
         assert_eq!(parse_duration("90s").unwrap().as_secs(), 90);
+    }
+
+    #[test]
+    fn optional_overrides_remain_none_when_omitted() {
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav"]);
+        assert!(args.min_gap_ms.is_none());
+        assert!(args.clip_length.is_none());
+        assert!(args.query_stride.is_none());
+        assert!(args.log_level.is_none());
+    }
+
+    #[test]
+    fn help_documents_repair_defaults() {
+        let defaults = RepairAppConfig::default();
+        let help = Args::command().render_help().to_string();
+
+        for needle in [
+            "[default: 15m]",
+            &format!("[default: {}]", defaults.repair.min_gap_ms),
+            &format!("[default: {}]", defaults.repair.silence_peak_fraction),
+            &format!("[default: {}]", defaults.repair.decode_chunk_secs),
+            &format!("[default: {}]", defaults.repair.scan_block_ms),
+            &format!("[default: {}]", defaults.repair.crossfade_ms),
+            "[default: 2]",
+            "[default: 60]",
+            "[default: info]",
+            "[default: enabled]",
+            "[default: disabled]",
+        ] {
+            assert!(
+                help.contains(needle),
+                "help missing {needle:?}:\n{help}"
+            );
+        }
     }
 }

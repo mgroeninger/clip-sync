@@ -141,7 +141,7 @@ Shared helpers live in `clip_sync::application::report` (`format_high_rate_refin
 
 | Mode | Line |
 |------|------|
-| Applied, default | `High-rate: +0.010s refinement applied` (no raw correlation peak) |
+| Applied, default | `High-rate: +0.010s refinement applied` (signed `{:+0.3}s`; no raw correlation peak) |
 | Applied, verbose | `High-rate: +0.010s refinement applied (peak …)` |
 | Skipped | verbose only: `High-rate: skipped (reason)` |
 
@@ -213,16 +213,23 @@ Search:     3 window(s) @ 60s stride
 ### Repair (`clip-sync-repair`)
 
 - **Alignment header:** query-reference block or symmetric `Alignment: offset …` (see above); symmetric verbose adds drift, track compatibility, overlap, cross-check when applicable.
+- **Alignment instability warning (default):** when clip offsets disagree **and** silence cross-check `MISMATCH`, emit one synthesis line after cross-check: `Warning: alignment unstable — fills used start-clip offset; clip drift and silence cross-check disagree (review gap #N …)` listing skipped gap numbers when a patch summary is available.
 - **Gap section:** single unified table — **not** separate scan + patch sections.
 
 ```
 Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
+           repaired 12.5s of audio; skipped 231.7s (gap #12 at 1:42:08)
+           (> skipped, - unfillable, rows sorted with notable gaps first)
 
   #   Range                Dur      Status
-  1   0:00 – 0:16          16.2s    unfillable
+  >12 1:42:08 – 1:46:00    231.7s!  skipped: boundary alignment failed
+  -1  0:00 – 0:16          16.2s    unfillable
   2   19:43 – 19:44        1.0s     patched (struct 0.98→1.00)
   …
 ```
+
+- **Duration summary:** when patching ran, a sub-line under the header totals repaired/skipped seconds and points at the longest skipped gap (`gap #N at H:MM:SS`).
+- **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows sort with skipped first, then unfillable, then patched (original gap numbers preserved).
 
 - **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`).
 - **Default patch detail:** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.

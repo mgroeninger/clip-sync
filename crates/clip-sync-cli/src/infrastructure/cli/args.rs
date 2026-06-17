@@ -19,15 +19,15 @@ pub struct Cli {
     #[arg(short, long)]
     pub config: Option<PathBuf>,
 
-    /// Clip window length (e.g. 15m, 90s)
+    /// Clip window length (e.g. 15m, 90s) [default: 15m]
     #[arg(long, value_parser = parse_duration)]
     pub clip_length: Option<std::time::Duration>,
 
-    /// Number of clips to extract per video
+    /// Number of clips to extract per video [default: 1]
     #[arg(long)]
     pub num_clips: Option<u32>,
 
-    /// Output format
+    /// Output format [default: human]
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatArg>,
 
@@ -39,7 +39,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub quiet: bool,
 
-    /// Log level for tracing
+    /// Log level for tracing [default: info]
     #[arg(long, value_enum)]
     pub log_level: Option<LogLevelArg>,
 
@@ -50,6 +50,7 @@ pub struct Cli {
     /// Try every decodable audio track on both files and keep the best alignment.
     /// Use for multi-track MP4/MKV when the default track pick may be wrong (e.g. commentary
     /// at 48 kHz chosen over main program at 44.1 kHz). Slower: decodes each track pair.
+    /// [default: disabled]
     #[arg(long, overrides_with = "no_try_all_tracks")]
     pub try_all_tracks: bool,
 
@@ -57,7 +58,8 @@ pub struct Cli {
     #[arg(long, overrides_with = "try_all_tracks")]
     pub no_try_all_tracks: bool,
 
-    /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment.
+    /// After discovery alignment, FFT-refine offset on a short native-rate hold-out segment
+    /// [default: disabled]
     #[arg(long, overrides_with = "no_refine_offset_high_rate")]
     pub refine_offset_high_rate: bool,
 
@@ -84,7 +86,7 @@ pub struct Cli {
     #[arg(long)]
     pub symmetric_align: bool,
 
-    /// Coarse search stride on the reference timeline when using query-reference mode (seconds).
+    /// Coarse search stride on the reference timeline when using query-reference mode (seconds) [default: 60]
     #[arg(long, value_name = "SECS")]
     pub query_stride: Option<f64>,
 }
@@ -147,7 +149,8 @@ fn parse_duration(raw: &str) -> Result<std::time::Duration, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_duration;
+    use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn parse_duration_minutes() {
@@ -157,5 +160,34 @@ mod tests {
     #[test]
     fn parse_duration_seconds() {
         assert_eq!(parse_duration("90s").unwrap().as_secs(), 90);
+    }
+
+    #[test]
+    fn optional_overrides_remain_none_when_omitted() {
+        let cli = Cli::parse_from(["clip-sync", "a.wav", "b.wav"]);
+        assert!(cli.num_clips.is_none());
+        assert!(cli.clip_length.is_none());
+        assert!(cli.query_stride.is_none());
+        assert!(cli.format.is_none());
+        assert!(cli.log_level.is_none());
+    }
+
+    #[test]
+    fn help_documents_align_defaults() {
+        let help = Cli::command().render_help().to_string();
+
+        for needle in [
+            "[default: 15m]",
+            "[default: 1]",
+            "[default: human]",
+            "[default: info]",
+            "[default: 60]",
+            "[default: disabled]",
+        ] {
+            assert!(
+                help.contains(needle),
+                "help missing {needle:?}:\n{help}"
+            );
+        }
     }
 }

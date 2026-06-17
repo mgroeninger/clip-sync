@@ -313,15 +313,20 @@ pub fn format_high_rate_refinement_lines(
     show_diagnostics: bool,
 ) -> Vec<String> {
     if refine.applied {
+        let adjustment_secs = if refine.adjustment_secs == 0.0 {
+            0.0
+        } else {
+            refine.adjustment_secs
+        };
         if show_diagnostics {
             return vec![format!(
-                "High-rate: +{:.3}s refinement applied (peak {:.2})",
-                refine.adjustment_secs, refine.correlation_peak
+                "High-rate: {:+0.3}s refinement applied (peak {:.2})",
+                adjustment_secs, refine.correlation_peak
             )];
         }
         return vec![format!(
-            "High-rate: +{:.3}s refinement applied",
-            refine.adjustment_secs
+            "High-rate: {:+0.3}s refinement applied",
+            adjustment_secs
         )];
     }
     if show_diagnostics {
@@ -700,5 +705,34 @@ mod tests {
         let lines = format_query_localization_lines(&report, None, false);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("below threshold"));
+    }
+
+    #[test]
+    fn format_high_rate_refinement_uses_signed_adjustment() {
+        use crate::domain::HighRateRefinement;
+
+        let refine = HighRateRefinementReport::from(&HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: -0.0,
+            correlation_peak: 1.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        });
+        let lines = format_high_rate_refinement_lines(&refine, false);
+        assert_eq!(lines, vec!["High-rate: +0.000s refinement applied"]);
+
+        let negative = HighRateRefinementReport::from(&HighRateRefinement {
+            segment_start_secs: 0.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: -0.012,
+            correlation_peak: 1.0,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+        });
+        let lines = format_high_rate_refinement_lines(&negative, false);
+        assert_eq!(lines, vec!["High-rate: -0.012s refinement applied"]);
     }
 }

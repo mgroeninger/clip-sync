@@ -2,17 +2,20 @@ use std::path::Path;
 
 use clip_sync::{
     format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_query_localization_lines, format_time_range, ClipLabelReport,
+    format_query_localization_lines, format_time_range, format_timestamp, ClipLabelReport,
 };
 use serde::Serialize;
 
 use crate::application::error::RepairError;
 use crate::application::ports::GapReporter;
 use crate::domain::{
-    CompatibilityVerdict, GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, GapReport,
-    PatchSummary,
+    CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
+    GapPatchStatus, GapReport, PatchSummary,
 };
 use crate::infrastructure::config::OutputFormat;
+
+/// Gaps at or above this length get a duration marker when skipped or unfillable.
+const LONG_GAP_SECS: f64 = 30.0;
 
 pub struct StdoutGapReporter {
     pub format: OutputFormat,
@@ -144,6 +147,10 @@ fn format_human(
         }
     }
 
+    if let Some(warning) = format_alignment_instability_warning(report, patch) {
+        out.push_str(&warning);
+    }
+
     out.push('\n');
     out.push_str(&format_unified_gap_report(report, patch, show_diagnostics));
 
@@ -165,24 +172,205 @@ pub fn format_unified_gap_report(
 
     let mut out = String::new();
     out.push_str(&format_unified_gap_header(report, patch));
+    if let Some(summary_line) = patch.and_then(|summary| format_patch_duration_summary(report, summary))
+    {
+        out.push_str(&summary_line);
+    }
     if report.alignment.recommended_offset_secs.is_none() {
         out.push_str("  B timeline mapping skipped (no alignment offset).\n");
+    }
+    if patch.is_some_and(|summary| gap_table_uses_markers(report, summary)) {
+        out.push_str("           (> skipped, - unfillable, rows sorted with notable gaps first)\n");
     }
     out.push('\n');
     out.push_str("  #   Range                Dur      Status\n");
 
-    for (i, gap) in report.gaps.iter().enumerate() {
+    let row_order = gap_table_row_order(report, patch);
+    for i in row_order {
+        let gap = &report.gaps[i];
         let patch_outcome = patch.and_then(|summary| summary.gaps.get(i));
+        let priority = gap_display_priority(patch_outcome);
         let status = format_unified_gap_status(gap, report, patch_outcome, show_diagnostics);
         out.push_str(&format!(
             "  {:<3} {:<20} {:<8} {status}\n",
-            i + 1,
+            format_gap_row_index(priority, i + 1),
             format_time_range(gap.video_a_start_secs, gap.video_a_end_secs),
-            format!("{:.1}s", gap.duration_secs()),
+            format_gap_duration(gap.duration_secs(), priority),
         ));
     }
 
     out
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum GapDisplayPriority {
+    Skipped,
+    NotPlanned,
+    Patched,
+    ScanOnly,
+}
+
+fn gap_display_priority(outcome: Option<&GapPatchOutcome>) -> GapDisplayPriority {
+    match outcome.map(|o| &o.status) {
+        Some(GapPatchStatus::Skipped { .. }) => GapDisplayPriority::Skipped,
+        Some(GapPatchStatus::NotPlanned { .. }) => GapDisplayPriority::NotPlanned,
+        Some(GapPatchStatus::Patched { .. }) => GapDisplayPriority::Patched,
+        None => GapDisplayPriority::ScanOnly,
+    }
+}
+
+fn gap_table_row_order(report: &GapReport, patch: Option<&PatchSummary>) -> Vec<usize> {
+    let mut rows: Vec<usize> = (0..report.gaps.len()).collect();
+    rows.sort_by(|&a, &b| {
+        let pa = gap_display_priority(patch.and_then(|s| s.gaps.get(a)));
+        let pb = gap_display_priority(patch.and_then(|s| s.gaps.get(b)));
+        pa.cmp(&pb).then_with(|| {
+            report.gaps[b]
+                .duration_secs()
+                .partial_cmp(&report.gaps[a].duration_secs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }).then(a.cmp(&b))
+    });
+    rows
+}
+
+fn gap_table_uses_markers(report: &GapReport, patch: &PatchSummary) -> bool {
+    patch.gaps.iter().enumerate().any(|(i, outcome)| {
+        let priority = gap_display_priority(Some(outcome));
+        priority != GapDisplayPriority::Patched
+            || report.gaps.get(i).is_some_and(|g| g.duration_secs() >= LONG_GAP_SECS)
+    })
+}
+
+fn format_gap_row_index(priority: GapDisplayPriority, index: usize) -> String {
+    match priority {
+        GapDisplayPriority::Skipped => format!(">{index:<2}"),
+        GapDisplayPriority::NotPlanned => format!("-{index:<2}"),
+        _ => format!("{index:<3}"),
+    }
+}
+
+fn format_gap_duration(duration_secs: f64, priority: GapDisplayPriority) -> String {
+    let marker = if duration_secs >= LONG_GAP_SECS
+        && matches!(
+            priority,
+            GapDisplayPriority::Skipped | GapDisplayPriority::NotPlanned
+        )
+    {
+        "!"
+    } else {
+        ""
+    };
+    format!("{duration_secs:.1}s{marker}")
+}
+
+fn alignment_is_unstable(report: &GapReport) -> bool {
+    if report.alignment.query_localization.is_some() {
+        return false;
+    }
+    let drift = !report.alignment.offsets_consistent;
+    let cross_mismatch = report
+        .gap_offset_agreement
+        .as_ref()
+        .is_some_and(|agreement| !agreement.agrees);
+    drift && cross_mismatch
+}
+
+fn notable_skipped_gap_refs(report: &GapReport, patch: &PatchSummary) -> Vec<usize> {
+    let mut refs: Vec<(usize, f64)> = patch
+        .gaps
+        .iter()
+        .enumerate()
+        .filter_map(|(i, outcome)| {
+            if matches!(outcome.status, GapPatchStatus::Skipped { .. }) {
+                Some((i + 1, report.gaps.get(i).map(Gap::duration_secs).unwrap_or(0.0)))
+            } else {
+                None
+            }
+        })
+        .collect();
+    refs.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    refs.into_iter().map(|(index, _)| index).collect()
+}
+
+fn format_skipped_gap_hint(gap_refs: &[usize]) -> String {
+    if gap_refs.is_empty() {
+        return String::new();
+    }
+    if gap_refs.len() == 1 {
+        format!(" (review gap #{})", gap_refs[0])
+    } else {
+        format!(
+            " (review gaps #{})",
+            gap_refs
+                .iter()
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>()
+                .join(", #")
+        )
+    }
+}
+
+fn format_alignment_instability_warning(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+) -> Option<String> {
+    if !alignment_is_unstable(report) {
+        return None;
+    }
+    let gap_hint = patch
+        .map(|summary| format_skipped_gap_hint(&notable_skipped_gap_refs(report, summary)))
+        .unwrap_or_default();
+    Some(format!(
+        "Warning:   alignment unstable — fills used start-clip offset; clip drift and silence cross-check disagree{gap_hint}\n"
+    ))
+}
+
+fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Option<String> {
+    if patch.patched_count == 0 && patch.skipped_count == 0 {
+        return None;
+    }
+
+    let mut patched_secs = 0.0;
+    let mut skipped_secs = 0.0;
+    let mut longest_skip: Option<(usize, f64, f64)> = None;
+
+    for (i, outcome) in patch.gaps.iter().enumerate() {
+        let duration_secs = report.gaps.get(i).map(Gap::duration_secs).unwrap_or(0.0);
+        match &outcome.status {
+            GapPatchStatus::Patched { .. } => patched_secs += duration_secs,
+            GapPatchStatus::Skipped { .. } => {
+                skipped_secs += duration_secs;
+                if longest_skip.is_none_or(|(_, dur, _)| duration_secs > dur) {
+                    let start_secs = report.gaps.get(i).map(|g| g.video_a_start_secs).unwrap_or(0.0);
+                    longest_skip = Some((i + 1, duration_secs, start_secs));
+                }
+            }
+            GapPatchStatus::NotPlanned { .. } => {}
+        }
+    }
+
+    let mut parts = Vec::new();
+    if patch.patched_count > 0 {
+        parts.push(format!("repaired {:.1}s of audio", patched_secs));
+    }
+    if patch.skipped_count > 0 {
+        if let Some((index, _, start_secs)) = longest_skip {
+            parts.push(format!(
+                "skipped {:.1}s (gap #{index} at {})",
+                skipped_secs,
+                format_timestamp(start_secs)
+            ));
+        } else {
+            parts.push(format!("skipped {:.1}s", skipped_secs));
+        }
+    }
+
+    Some(format!("           {}\n", parts.join("; ")))
 }
 
 fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -> String {
@@ -977,6 +1165,158 @@ mod tests {
             Some(std::path::Path::new("out/repaired.mp4")),
         );
         assert!(text.contains("Output: out/repaired.mp4"));
+    }
+
+    #[test]
+    fn human_report_shows_alignment_instability_warning() {
+        use crate::domain::gap::GapOffsetAgreement;
+        use crate::domain::{GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary};
+
+        let mut report = minimal_report();
+        report.gaps = vec![
+            Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 2.0,
+                video_b_start_secs: Some(12.5),
+                video_b_end_secs: Some(14.5),
+                b_has_energy: true,
+            },
+            Gap {
+                video_a_start_secs: 6128.0,
+                video_a_end_secs: 6359.7,
+                video_b_start_secs: Some(6140.0),
+                video_b_end_secs: Some(6371.7),
+                b_has_energy: true,
+            },
+        ];
+        report.alignment.clips = [
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: true,
+                offset_secs: Some(-4.853),
+                confidence: 0.97,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: 5280.0,
+                window_end_secs: 6180.0,
+                aligned: true,
+                offset_secs: Some(231.114),
+                confidence: 0.93,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+            },
+        ]
+        .iter()
+        .map(Into::into)
+        .collect();
+        report.alignment.end_aligned = Some(true);
+        report.alignment.offsets_consistent = false;
+        report.alignment.offset_drift_secs = Some(235.966);
+        report.alignment.recommended_offset_secs = Some(-4.853);
+        report.gap_offset_agreement = Some(GapOffsetAgreement {
+            silence_based_offset_secs: 246.0,
+            alignment_offset_secs: -4.853,
+            delta_secs: 250.853,
+            agrees: false,
+        });
+
+        let summary = PatchSummary::from_outcomes(vec![
+            GapPatchOutcome {
+                a_start_secs: 0.0,
+                a_end_secs: 2.0,
+                status: GapPatchStatus::Patched {
+                    pre_correlation: 0.9,
+                    post_correlation: 0.9,
+                    align_adjustment_secs: 0.0,
+                    structure_trusted: true,
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 6128.0,
+                a_end_secs: 6359.7,
+                status: GapPatchStatus::Skipped {
+                    reason: GapPatchSkipReason::BoundaryAlignmentFailed,
+                },
+            },
+        ]);
+
+        let text = super::format_human(&report, Some(&summary), false, None);
+        assert!(text.contains("alignment unstable"));
+        assert!(text.contains("review gap #2"));
+        assert!(text.contains("repaired 2.0s of audio"));
+        assert!(text.contains("skipped 231.7s (gap #2 at"));
+        assert!(text.contains(">2 "));
+        assert!(text.contains("231.7s!"));
+    }
+
+    #[test]
+    fn unified_gap_report_sorts_notable_gaps_first() {
+        use crate::domain::{GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary};
+
+        let mut report = minimal_report();
+        report.gaps = vec![
+            Gap {
+                video_a_start_secs: 192.0,
+                video_a_end_secs: 194.0,
+                video_b_start_secs: Some(204.5),
+                video_b_end_secs: Some(206.5),
+                b_has_energy: true,
+            },
+            Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 8.0,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
+                b_has_energy: false,
+            },
+            Gap {
+                video_a_start_secs: 6128.0,
+                video_a_end_secs: 6359.7,
+                video_b_start_secs: Some(6140.0),
+                video_b_end_secs: Some(6371.7),
+                b_has_energy: true,
+            },
+        ];
+        let summary = PatchSummary::from_outcomes(vec![
+            GapPatchOutcome {
+                a_start_secs: 192.0,
+                a_end_secs: 194.0,
+                status: GapPatchStatus::Patched {
+                    pre_correlation: 0.9,
+                    post_correlation: 0.9,
+                    align_adjustment_secs: 0.0,
+                    structure_trusted: true,
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 0.0,
+                a_end_secs: 8.0,
+                status: GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable,
+                },
+            },
+            GapPatchOutcome {
+                a_start_secs: 6128.0,
+                a_end_secs: 6359.7,
+                status: GapPatchStatus::Skipped {
+                    reason: GapPatchSkipReason::BoundaryAlignmentFailed,
+                },
+            },
+        ]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let skipped_pos = text.find(">3 ").expect("skipped marker");
+        let unfillable_pos = text.find("-2 ").expect("unfillable marker");
+        let patched_pos = text.find("patched (struct").expect("patched row");
+        assert!(skipped_pos < unfillable_pos);
+        assert!(patched_pos > unfillable_pos);
     }
 
     #[test]
