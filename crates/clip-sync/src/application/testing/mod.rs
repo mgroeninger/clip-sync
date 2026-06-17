@@ -1,4 +1,5 @@
 pub mod alignment_fixtures;
+pub mod anchored_end_oracles;
 pub mod fakes;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod corpus_fixtures;

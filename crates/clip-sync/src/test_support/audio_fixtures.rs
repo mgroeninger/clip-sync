@@ -419,3 +419,162 @@ pub fn write_query_reference_b_longer_chirp_pair(
     );
     (path_a, path_b)
 }
+
+/// Short excerpt **A** + long master **B** for symmetric anchored-end alignment tests.
+///
+/// - **A:** `shared_secs` of [`bounded_chirp_sample`] on `0..shared`.
+/// - **B:** the same chirp through `shared_secs` (optional inter-file offset via [`ChirpDelayOn`]),
+///   then silence through `long_secs`.
+///
+/// With `SharedTimeline` end anchoring, both end windows should land on `[shared − L, shared]`.
+/// With legacy `FileTail` on B, B's end window sits at `[long − L, long]` (unrelated tail audio).
+pub fn write_anchored_end_symmetric_pair(
+    dir: &Path,
+    sample_rate: u32,
+    shared_secs: u32,
+    long_secs: u32,
+    offset_secs: u32,
+) -> (PathBuf, PathBuf) {
+    write_anchored_end_symmetric_pair_with_delay(
+        dir,
+        sample_rate,
+        shared_secs,
+        long_secs,
+        offset_secs,
+        ChirpDelayOn::B,
+    )
+}
+
+/// [`write_anchored_end_symmetric_pair`] with explicit delay role (see [`ChirpDelayOn`]).
+pub fn write_anchored_end_symmetric_pair_with_delay(
+    dir: &Path,
+    sample_rate: u32,
+    shared_secs: u32,
+    long_secs: u32,
+    offset_secs: u32,
+    delay_on: ChirpDelayOn,
+) -> (PathBuf, PathBuf) {
+    assert!(
+        shared_secs <= long_secs,
+        "shared_secs ({shared_secs}) must be <= long_secs ({long_secs})"
+    );
+
+    let path_a = dir.join("a.wav");
+    let path_b = dir.join("b.wav");
+    let sweep_secs = f64::from(long_secs);
+    let rate = u64::from(sample_rate);
+    let shared_samples = rate * u64::from(shared_secs);
+    let long_samples = rate * u64::from(long_secs);
+    let delay_samples = rate * u64::from(offset_secs);
+
+    let a_chirp_start = match delay_on {
+        ChirpDelayOn::B => 0,
+        ChirpDelayOn::A => delay_samples,
+    };
+    write_mono_wav(
+        &path_a,
+        sample_rate,
+        (0..shared_samples).map(|index| {
+            if index < a_chirp_start {
+                0
+            } else {
+                bounded_chirp_sample(sample_rate, index - a_chirp_start, sweep_secs)
+            }
+        }),
+    );
+
+    let b_chirp_start = match delay_on {
+        ChirpDelayOn::B => delay_samples,
+        ChirpDelayOn::A => 0,
+    };
+    let b_chirp_end = b_chirp_start.saturating_add(shared_samples);
+    write_mono_wav(
+        &path_b,
+        sample_rate,
+        (0..long_samples).map(|index| {
+            if index < b_chirp_start {
+                0
+            } else if index < b_chirp_end {
+                bounded_chirp_sample(sample_rate, index - b_chirp_start, sweep_secs)
+            } else {
+                0
+            }
+        }),
+    );
+
+    (path_a, path_b)
+}
+
+#[cfg(test)]
+mod anchored_end_symmetric_tests {
+    use super::*;
+    use hound::WavReader;
+
+    fn wav_duration_secs(path: &Path, sample_rate: u32) -> f64 {
+        let reader = WavReader::open(path).expect("open wav");
+        reader.len() as f64 / f64::from(sample_rate)
+    }
+
+    #[test]
+    fn anchored_end_symmetric_pair_writes_expected_durations() {
+        use crate::application::testing::anchored_end_oracles::{
+            CI_LONG_SECS, CI_SAMPLE_RATE, CI_SHARED_SECS,
+        };
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (path_a, path_b) = write_anchored_end_symmetric_pair(
+            temp.path(),
+            CI_SAMPLE_RATE,
+            CI_SHARED_SECS,
+            CI_LONG_SECS,
+            0,
+        );
+        assert!(
+            (wav_duration_secs(&path_a, CI_SAMPLE_RATE) - f64::from(CI_SHARED_SECS)).abs() < 0.01
+        );
+        assert!(
+            (wav_duration_secs(&path_b, CI_SAMPLE_RATE) - f64::from(CI_LONG_SECS)).abs() < 0.01
+        );
+    }
+
+    #[test]
+    fn anchored_end_symmetric_pair_b_delay_offsets_chirp_block() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sample_rate = 11_025;
+        let offset_secs = 3;
+        let (path_a, path_b) = write_anchored_end_symmetric_pair_with_delay(
+            temp.path(),
+            sample_rate,
+            60,
+            300,
+            offset_secs,
+            ChirpDelayOn::B,
+        );
+        let mut reader_a = WavReader::open(&path_a).expect("open a");
+        let mut reader_b = WavReader::open(&path_b).expect("open b");
+        let delay_samples = u64::from(sample_rate) * u64::from(offset_secs);
+
+        let samples_a: Vec<i16> = reader_a
+            .samples()
+            .map(|s| s.expect("sample"))
+            .collect();
+        let samples_b: Vec<i16> = reader_b
+            .samples()
+            .map(|s| s.expect("sample"))
+            .collect();
+
+        let a_lead: i32 = samples_a.iter().take(100).map(|s| s.unsigned_abs() as i32).sum();
+        let b_lead: i32 = samples_b
+            .iter()
+            .take(delay_samples as usize)
+            .map(|s| s.unsigned_abs() as i32)
+            .sum();
+        assert!(a_lead > 0);
+        assert_eq!(b_lead, 0);
+
+        // A's chirp at t lines up with B's chirp at t + offset on B's timeline.
+        let a_head = &samples_a[..100];
+        let b_aligned = &samples_b[delay_samples as usize..delay_samples as usize + 100];
+        assert_eq!(a_head, b_aligned);
+    }
+}
