@@ -165,7 +165,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--scan-both` | on | Scan B's timeline for silence (bidirectional agreement) |
 | `--no-scan-both` | — | Disable bidirectional silence scan |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
-| `--mux <PATH>` | — | Mux patched audio into video A (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`) |
+| `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
 | `-v, --verbose` | — | Verbose progress on stderr plus detailed gap-patch lines in the human report |
@@ -184,6 +184,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `-V, --version` | | |
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
+
+**Write output:** `--wav` writes lossless 16-bit PCM (no re-encode). `--mux` copies video from A and re-encodes the patched audio track (default `audio_codec = "aac"`). Mux bitrate is chosen from compressed bytes counted during patch decode — default `mux_audio_bitrate = "match_min"` uses the lower of A and B measured rates so output is not upsampled above either source. Use `"default"` to omit `-b:a` and let ffmpeg pick (~128 kb/s stereo); use `"256k"` (or `match_a`) to override.
 
 **Sample output (repair, after patch):**
 
@@ -314,6 +316,7 @@ wav_path = "patched.wav"
 # video_path = "repaired.mp4"   # requires `--features ffmpeg-mux`
 video_codec = "copy"
 audio_codec = "aac"
+mux_audio_bitrate = "match_min"   # match_min | match_a | default | 256k (mux only)
 ```
 
 Example fixtures: `crates/clip-sync-cli/tests/fixtures/analyzer.toml`, `crates/clip-sync-repair/tests/fixtures/repair.toml`.

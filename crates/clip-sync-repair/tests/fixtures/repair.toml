@@ -47,3 +47,4 @@ dry_run = true
 [repair.output]
 video_codec = "copy"
 audio_codec = "aac"
+# mux_audio_bitrate = "match_min"   # match_min | match_a | default | 256k (when using --mux)

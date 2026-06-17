@@ -180,6 +180,8 @@ cargo test -p clip-sync-repair --features ac3,ffmpeg-tests ac3_dual_track
 
 ### 5. Repair mux integration
 
+Mux re-encodes patched audio as AAC. Default `mux_audio_bitrate = "match_min"` in `[repair.output]` sets ffmpeg `-b:a` from measured compressed bitrates of A and B during patch decode (see README § Write output).
+
 ```powershell
 # Build feature required; test is #[ignore] — needs ffmpeg on PATH
 cargo test -p clip-sync-repair --features ffmpeg-mux mux_writes -- --ignored

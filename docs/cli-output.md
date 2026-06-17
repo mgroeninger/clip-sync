@@ -99,6 +99,7 @@ Examples (both tools where applicable):
 - Mid-run alignment summary: `Recommended offset: …`, overlap windows, drift
 - `High-rate offset refinement...`
 - Per-gap patch: `gap i/n: A [t0 – t1]`
+- Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 247k (A Some(255000) bps, B Some(247000) bps, policy MatchMin)` — `phase_verbose` only
 
 `log_alignment_summary()` in `align_videos.rs` must use **`phase_verbose` only** — never `phase()` — so default runs do not duplicate the final stdout report.
 
@@ -118,7 +119,7 @@ clip_sync=<level>,clip_sync_repair=<level>,symphonia_core=error,warn
 |-------|-----------------|
 | **info** (app crates) | Rare in default UX — prefer phases for user-visible steps |
 | **warn** | Skipped gap fills (`gap N/M (range): reason`), correlation below threshold, verification failures worth surfacing |
-| **debug** | Structure-match trust, B fill trim/extend, ffmpeg mux command detail, symphonia demuxer |
+| **debug** | Structure-match trust, B fill trim/extend, ffmpeg mux command detail, mux AAC bitrate (`Mux AAC bitrate …` with A/B bps and policy), symphonia demuxer |
 | **Third-party** | `warn` unless raised in `RUST_LOG`; `symphonia_core` defaults to `error` (suppresses MP4 junk-byte probe noise) |
 
 Precedence: `RUST_LOG` > `--log-level` / `[logging].level` > default filter above.

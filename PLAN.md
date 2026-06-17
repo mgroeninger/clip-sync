@@ -144,7 +144,7 @@ Full design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query
 4. Map each gap to video **B** using `recommended_offset_secs` (`b = a + offset`). In query-reference mode, `GapReport.overlap` comes from `alignment.start_overlap` (mapped region); gaps outside the region may be reported but not fillable when `limit_fill_to_mapped_region` is true (default).
 5. For each candidate gap: report whether B has energy; apply fill gates (structure match, correlation, mapped-region coverage).
 6. Output gap table (human + JSON). Exit **0** when analysis completes.
-7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6).
+7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Mux re-encodes audio; default `mux_audio_bitrate = "match_min"` sets ffmpeg `-b:a` from the lower measured compressed bitrate of A and B (counted during patch decode). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6).
 
 Repair always aligns in-process; it does not require piping JSON from a prior `clip-sync` run.
 
@@ -153,7 +153,7 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 - **R0–R1 (lib):** native multi-channel `extract_interleaved` for fill-quality PCM.
 - **R2–R3 (repair):** track compatibility, overlap on report, bidirectional silence scan, mutual-silence cross-check.
 - **R4 (repair):** `PatchAudio` / `gap_fill` → multi-channel **WAV** (default deliverable; crossfade + optional normalization).
-- **R5 (repair, optional):** `RepairVideos` + `MediaMuxer` ffmpeg subprocess behind `ffmpeg-mux` feature.
+- **R5 (repair, optional):** `RepairVideos` + `MediaMuxer` ffmpeg subprocess behind `ffmpeg-mux` feature. AAC bitrate from `repair.output.mux_audio_bitrate` (default `match_min`).
 
 ---
 
@@ -666,6 +666,7 @@ limit_fill_to_mapped_region = true  # query-reference: skip fills outside mapped
 path = "repaired.mp4"               # required when dry_run = false
 video_codec = "copy"
 audio_codec = "aac"
+mux_audio_bitrate = "match_min"     # match_min | match_a | default | 256k (mux only)
 ```
 
 ### Sources and precedence
