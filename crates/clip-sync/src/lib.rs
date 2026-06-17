@@ -29,7 +29,7 @@ pub use domain::{
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
-pub use domain::policies::{select_best_track, select_track_for_reference};
+pub use domain::policies::{select_best_track, select_track_for_reference, EndClipAnchor, clip_windows_paired};
 pub use application::offset_refinement::normalized_correlation;
 
 // --- default adapter types ---

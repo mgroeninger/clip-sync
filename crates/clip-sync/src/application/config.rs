@@ -274,6 +274,10 @@ pub struct AlignmentConfig {
     /// Number of top coarse candidates to PCM-refine (1 = winner only).
     #[serde(default = "default_query_refine_top_k")]
     pub query_refine_top_k: u32,
+
+    /// How symmetric multi-clip planning anchors end (and interior) windows on unequal lengths.
+    #[serde(default)]
+    pub end_clip_anchor: crate::domain::policies::EndClipAnchor,
 }
 
 impl AlignmentConfig {
@@ -303,6 +307,15 @@ impl AlignmentConfig {
             });
         }
         Ok(())
+    }
+
+    pub fn clip_planning_options(&self) -> crate::domain::policies::ClipPlanningOptions {
+        crate::domain::policies::ClipPlanningOptions {
+            end_tail_inset: std::time::Duration::from_secs_f64(
+                self.end_clip_tail_inset_secs.max(0.0),
+            ),
+            end_clip_anchor: self.end_clip_anchor,
+        }
     }
 }
 
@@ -387,6 +400,7 @@ impl Default for AlignmentConfig {
             query_max_windows_scored: default_query_max_windows_scored(),
             query_min_match_score: default_query_min_match_score(),
             query_refine_top_k: default_query_refine_top_k(),
+            end_clip_anchor: crate::domain::policies::EndClipAnchor::default(),
         }
     }
 }
@@ -394,6 +408,14 @@ impl Default for AlignmentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_end_clip_anchor_is_shared_timeline() {
+        assert_eq!(
+            AlignmentConfig::default().end_clip_anchor,
+            crate::domain::policies::EndClipAnchor::SharedTimeline
+        );
+    }
 
     #[test]
     fn default_config_is_valid() {

@@ -22,7 +22,7 @@ use crate::domain::{
     select_best_track, set_offset_ambiguous_mod_from_start_clip,
     should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
-    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipPlanningOptions, ClipRepetitionReport,
+    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipRepetitionReport,
     ClipWindow, DomainError, MediaExtent, MediaSource, MonoPcmClip, OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
 };
@@ -184,11 +184,7 @@ where
             Err(_) => return Ok(None),
         };
 
-        let planning = ClipPlanningOptions {
-            end_tail_inset: Duration::from_secs_f64(
-                request.config.alignment.end_clip_tail_inset_secs.max(0.0),
-            ),
-        };
+        let planning = request.config.alignment.clip_planning_options();
         let windows_a = clip_windows_with_options(&extent_a, &plan, planning)
             .map(|w| w.len())
             .unwrap_or(0);
@@ -728,11 +724,7 @@ where
             ));
         }
 
-        let planning = ClipPlanningOptions {
-            end_tail_inset: Duration::from_secs_f64(
-                config.alignment.end_clip_tail_inset_secs.max(0.0),
-            ),
-        };
+        let planning = config.alignment.clip_planning_options();
         let windows = clip_windows_with_options(&extent, plan, planning)?;
         let timeline_end = windows
             .iter()
