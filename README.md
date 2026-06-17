@@ -331,6 +331,8 @@ Each video is split into one or more fixed-length windows before fingerprinting.
 
 When the video is shorter than `clip_length`, a single window covering the full duration is used regardless of `num_clips`. With two or more windows, the first is always anchored at the start, the last at the end, and any interior windows are centered in equal subdivisions of the timeline.
 
+**Symmetric multi-clip (`num_clips ≥ 2`):** end and interior windows default to **shared timeline** anchoring — both files sample the same clock times up to the shorter file’s effective end (`end_clip_anchor = shared_timeline` in `[alignment]`; legacy per-file tails: `end_clip_anchor = "file_tail"`). JSON reports include `end_clip_anchor` when applicable.
+
 **Examples** (`clip_length = 15m`, `num_clips = 2`):
 
 | Duration | Windows |

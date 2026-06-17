@@ -122,7 +122,7 @@ flowchart TB
 2. Call `run_align` → lib alignment pipeline (`AlignVideos`).
 3. Open video A and video B; resolve [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) per file.
 4. **Mode selection** (`alignment.mode`: `auto` | `symmetric` | `queryreference`):
-   - **`auto` (default):** query-reference when the shorter effective duration is much shorter than the longer (`query_min_duration_ratio`, default **0.5**) or symmetric clip window counts differ; otherwise symmetric multi-clip alignment.
+   - **`auto` (default):** query-reference when the shorter effective duration is much shorter than the longer (`query_min_duration_ratio`, default **0.5**); otherwise symmetric multi-clip alignment. Tier-2 auto gating compares **paired** symmetric window counts when `end_clip_anchor = SharedTimeline` (default), so unequal-length excerpts no longer spuriously route to query-reference solely because per-file tail windows would have differed in count.
    - **`queryreference`:** always localize the shorter file against the longer (see [Query-reference mode](#query-reference-mode)).
    - **`symmetric`:** always multi-clip fingerprint alignment (legacy path).
 5. **Symmetric path:** for each video — select track, compute clip windows, extract mono PCM per window, fingerprint, pairwise `find_offset` by clip index, merge offsets when `num_clips > 1`.
@@ -215,11 +215,18 @@ When the video is shorter than `clip_length`, **`num_clips` is ignored** and a s
 
 **Two or more clips** (`effective_num_clips >= 2`):
 
-Always anchor the **first clip at the start** and the **last clip at the end**. Any remaining clips sit between them, centered in equal subdivisions of the full timeline. End-clip placement uses [`MediaExtent::effective()`](crates/clip-sync/src/domain/media_extent.rs) (declared duration clamped by tail-scanned decodable extent when known) minus optional `end_clip_tail_inset_secs`.
+Symmetric alignment plans windows **once per pair** via `clip_windows_paired` (not independently per file). Both sides extract at the same absolute timeline coordinates.
 
-1. **Start clip:** `[0, clip_length)`
-2. **End clip:** `[effective_end - clip_length, effective_end)` where `effective_end = effective_timeline_end(extent, end_tail_inset)`
-3. **Interior clips** (when `effective_num_clips > 2`): divide `[0, duration)` into `effective_num_clips` equal segments. For each interior segment (indices `1 .. effective_num_clips - 1`), place a window of length `clip_length` centered on that segment’s midpoint (clamp to `[0, duration)`).
+1. **Start clip:** `[0, clip_length)` on both files.
+2. **End clip** — controlled by `alignment.end_clip_anchor` (default **`SharedTimeline`**):
+   - **`SharedTimeline`:** `T_anchor = min(timeline_end_a, timeline_end_b)` (each file’s [`MediaExtent::effective()`](crates/clip-sync/src/domain/media_extent.rs) minus optional `end_clip_tail_inset_secs`). End window `[T_anchor − clip_length, T_anchor]` on **both** clocks.
+   - **`FileTail`:** legacy per-file placement — `[timeline_end − clip_length, timeline_end)` on each file’s own timeline.
+3. **Interior clips** (when `effective_num_clips > 2`):
+   - **`SharedTimeline`:** subdivide `[0, T_anchor)` once; identical interior windows on both files. Omit an interior window when it overlaps start or end by more than `INTERIOR_OVERLAP_TOLERANCE` (1 s).
+   - **`FileTail`:** per-file `timeline_end` subdivision (interiors may differ on unequal lengths).
+4. **Pair-collapse:** when either declared duration `< clip_length` or `T_anchor < clip_length`, both sides collapse to a single start window.
+
+Single-file planning (`clip_windows_with_options`) still uses each file’s own timeline — used for mode resolution (legacy `FileTail` counts) and query-reference spikes only.
 
 Return windows in chronological order (start → interior(s) → end).
 
@@ -257,7 +264,7 @@ When the shorter recording is much shorter than the longer one (or `alignment.mo
 | `recommended_offset_secs` | Same A-reference convention as symmetric mode: seconds to add to **A**'s clock to align with **B** |
 | Synthetic `clips` | Single start clip covering the query; repair overlap uses `start_overlap` from this result |
 
-**Auto gating** (`should_use_query_mode`): shorter/longer ratio below `query_min_duration_ratio` (default **0.5**), or symmetric clip window counts would differ. **Hold-out** in query mode: `mapped_region_holdout_candidates` / `resolve_holdout_candidates` keep verification PCM inside the mapped region; calendar-parallel periodic recheck (repetition ambiguity) still uses the full effective extent.
+**Auto gating** (`should_use_query_mode`): shorter/longer ratio below `query_min_duration_ratio` (default **0.5**), or symmetric clip window counts would differ. With default **`SharedTimeline`**, counts come from `clip_windows_paired` so Tier 2 does not fire merely because per-file tail windows would have mismatched. **Hold-out** in query mode: `mapped_region_holdout_candidates` / `resolve_holdout_candidates` keep verification PCM inside the mapped region; calendar-parallel periodic recheck (repetition ambiguity) still uses the full effective extent.
 
 Implementation: `application/align_videos.rs` (`align_query_reference`), `domain/query_localization.rs`. Archive design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md), B-longer: [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md).
 
@@ -285,9 +292,9 @@ Domain errors carry no I/O or library context; they describe business rule viola
 
 1. Log phase start: `Opening media`.
 2. Open both sources via `MediaReader::open`.
-3. **Resolve mode** (`resolve_mode`): if `alignment.mode` is `queryreference` or `auto` with a long+short pair (or mismatched symmetric clip counts), plan query-reference; otherwise symmetric. Per-file track + [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) are resolved up front for the query path.
+3. **Resolve mode** (`resolve_mode`): if `alignment.mode` is `queryreference` or `auto` with a long+short pair (or mismatched symmetric clip counts under legacy `FileTail` planning), plan query-reference; otherwise symmetric. Per-file track + [`MediaExtent`](crates/clip-sync/src/domain/media_extent.rs) are resolved up front for the query path.
 4. **Query-reference branch** (`align_query_reference`): fingerprint the prepared query clip; coarse sliding-window search on the reference timeline; PCM-refine top candidates; build synthetic single-clip `AlignmentResult` with `query_localization` and `alignment_mode_used: QueryReference`.
-5. **Symmetric branch** (`align_single_track_pair` / `align_best_track_pair`): for each source — list tracks, `select_best_track` (or try all pairs); compute clip windows; extract mono PCM; fingerprint; pairwise `find_offset` by clip index; merge offsets when `num_clips > 1`; set `alignment_mode_used: Symmetric`.
+5. **Symmetric branch** (`align_single_track_pair` / `align_best_track_pair`): resolve both extents; `clip_windows_paired` once per track pair; `extract_clips_at_windows` on each file with its paired windows; fingerprint; pairwise `find_offset` by clip index; merge offsets when `num_clips > 1`; set `alignment_mode_used: Symmetric`.
 6. Optionally apply PCM refinement (`refine_offset_with_pcm`), high-rate hold-out refinement (`refine_offset_high_rate`), and hold-out offset verification (`verify_offset`). In query mode, hold-out window placement uses the **mapped region** via `resolve_holdout_candidates` (parallel periodic recheck still scans the full effective timeline).
 7. Log alignment summary (mode, start/end aligned, per-clip status, recommended offset, query localization when present).
 8. Return `AlignmentResult` (always on successful analysis, even when no clips match).
@@ -607,6 +614,7 @@ struct AlignmentConfig {
     skip_unreliable_end_clip: bool,
     min_end_clip_decode_fraction: f64,
     max_end_clip_decode_skips: u32,
+    end_clip_anchor: EndClipAnchor,  // default SharedTimeline; FileTail = legacy per-file tails
     // query-reference
     mode: AlignmentMode,              // default Auto
     query_min_duration_ratio: f64,    // default 0.5
@@ -1027,6 +1035,8 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
 | [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md) | Archived (2026-06-15): query-reference localization, repair mapped-region fill |
 | [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md) | Archived (2026-06-16): B-longer donor (short A, long B), offset sign + span remapping |
+| [docs/archive/anchored-end-extraction-plan.md](docs/archive/anchored-end-extraction-plan.md) | Shipped (2026-06-17): shared-timeline end anchoring, paired symmetric extraction, `end_clip_anchor` config + JSON |
+| [docs/archive/anchored-interior-extraction-plan.md](docs/archive/anchored-interior-extraction-plan.md) | Shipped (2026-06-17): combined with end plan — `SharedTimeline` interior from `T_anchor` when `num_clips > 2` |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 

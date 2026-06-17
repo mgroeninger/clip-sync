@@ -1,8 +1,8 @@
-# Temporary plan: anchored end extraction (symmetric alignment)
+# Anchored end extraction (symmetric alignment)
 
-> **Status:** Draft (2026-06-17). Motivated by symmetric multi-clip alignment comparing unrelated tail audio when file durations differ (e.g. 40 min excerpt vs 300 min master), and by misleading end-clip drift on near-equal pairs where independent file tails still disagree (recording dropout, edits).
+> **Status:** Shipped (2026-06-17). Archived from `docs/TEMP-anchored-end-extraction-plan.md`.
 >
-> Archive to `docs/archive/anchored-end-extraction-plan.md` when shipped.
+> **Combined delivery:** Interior anchoring for `num_clips > 2` shipped in the same release — see [anchored-interior-extraction-plan.md](anchored-interior-extraction-plan.md).
 
 **Problem:** Today each file gets its own clip windows from **its own** duration. Start clips are both `[0, clip_length]` — usually fine. End clips are both `[timeline_end − clip_length, timeline_end]` on **native clocks**, so for unequal lengths we fingerprint different story moments (e.g. A `25:00–40:00` vs B `285:00–300:00`). Chromaprint still returns a global `offset_secs`, but the end estimate is not a meaningful check on the start offset.
 
@@ -12,7 +12,7 @@
 
 - Changing query-reference mode (short-on-long search).
 - Offset-mapped end placement (`B_end = A_end + Δ_start`) — useful follow-up when B has a long leader; not required for the core fix.
-- **Required** user-facing scope is anchored **end** only (`num_clips ≥ 2`). Anchored **interior** (`num_clips > 2`) is a [follow-up plan](TEMP-anchored-interior-extraction-plan.md) — may ship in the **same PR** if `clip_windows_paired` is built with the [anti-churn structure](#implementation-sequencing) below (recommended).
+- **Required** user-facing scope is anchored **end** only (`num_clips ≥ 2`). Anchored **interior** (`num_clips > 2`) shipped combined — see [interior plan](anchored-interior-extraction-plan.md).
 - Using anchored end offset for `recommended_offset_secs` when it disagrees with start (start remains primary; see repair policy below).
 - Updating `locate_query_spike.rs` — spike intentionally uses independent per-file windows to reproduce clip-count mismatch.
 
@@ -99,7 +99,7 @@ Anchored end makes disagreement **more meaningful**; it does not automatically t
 | **Anchor duration** | `min(effective_timeline_end(extent_a), effective_timeline_end(extent_b))` with existing per-file `end_tail_inset` applied before min. |
 | **Which file is “shorter”** | Purely duration-based; no A/B role preference. |
 | **Start clip** | `[0, clip_length]` unless pair-collapse applies (above). |
-| **Interior clips** | **Delivery slice A (end-only ship):** per-file `timeline_end` when interior ships later. **Delivery slice B (combined ship, recommended in code):** `SharedTimeline` uses `T_anchor` for interior — see [interior plan](TEMP-anchored-interior-extraction-plan.md). `FileTail` always per-file. |
+| **Interior clips** | **`SharedTimeline`:** interior from `T_anchor` on both files (shipped combined). **`FileTail`:** per-file `timeline_end`. See [interior plan](anchored-interior-extraction-plan.md). |
 | **Window-count mismatch** | Pair-level collapse when either `declared < clip_length` or `T_anchor < clip_length` (see above). |
 | **Config** | `alignment.end_clip_anchor = file_tail \| shared_timeline` (serde alias `anchored`). Default **`shared_timeline`** for new installs; **`file_tail`** optional for backward-compat paranoia. Repair inherits via shared `AlignmentConfig`. |
 | **Query-reference** | Unaffected — no multi-clip end window. |
@@ -269,7 +269,7 @@ Symmetric path (`align_single_track_pair`, `align_best_track_pair`):
 
 ## Implementation sequencing
 
-Relationship to [TEMP-anchored-interior-extraction-plan.md](TEMP-anchored-interior-extraction-plan.md).
+Relationship to [anchored-interior-extraction-plan.md](anchored-interior-extraction-plan.md).
 
 ### What churns vs what does not
 
@@ -329,7 +329,7 @@ Interior plan — only if end-only ship
 - [x] `EndClipAnchor` enum + config wire-up (`AlignConfig.alignment.end_clip_anchor`).
 - [x] `clip_windows_paired` with structured start / interior / end steps ([API sketch](#domain-domainpoliciesrs)).
 - [x] **Required:** `SharedTimeline` end, `FileTail`, pair-collapse.
-- [x] **Optional (combined ship):** `SharedTimeline` interior from `T_anchor` + overlap omission — defers [interior plan](TEMP-anchored-interior-extraction-plan.md) Phase 0–1.
+- [x] **Optional (combined ship):** `SharedTimeline` interior from `T_anchor` + overlap omission — see [interior plan](anchored-interior-extraction-plan.md).
 - [x] Unit tests:
   - `45 min / 45 min` → same windows as today (including `num_clips = 3`).
   - `40 min / 300 min`, `num_clips = 2` → end `[25,40]` on both, not `[285,300]` on B.
@@ -359,9 +359,9 @@ Interior plan — only if end-only ship
 
 ### Phase 4 — docs & cleanup
 
-- [ ] `PLAN.md` symmetric alignment section: anchored end default; `SharedTimeline` covers interior when combined ship (or note interior follow-up if end-only).
-- [ ] `README.md` one-line note under clip alignment.
-- [ ] `BACKLOG.md` row; archive this plan.
+- [x] `PLAN.md` symmetric alignment section: anchored end default; `SharedTimeline` covers interior when combined ship (or note interior follow-up if end-only).
+- [x] `README.md` one-line note under clip alignment.
+- [x] `BACKLOG.md` row; archive this plan.
 
 ---
 
@@ -370,7 +370,7 @@ Interior plan — only if end-only ship
 | Item | Benefit |
 |------|---------|
 | **Offset-mapped end** (`[T_a−L, T_a]` on A, `[T_a−L+Δ, T_a+Δ]` on B after start clip) | Correct when B has long leader but equal “content length” |
-| **Anchored interior clips** | Multi-clip symmetry on unequal lengths (`num_clips > 2`) — [interior plan](TEMP-anchored-interior-extraction-plan.md); **may ship in same PR** as end ([sequencing](#implementation-sequencing)) |
+| **Anchored interior clips** | Shipped combined (2026-06-17) — [interior plan](anchored-interior-extraction-plan.md) |
 | **Skip end fingerprint when `T_anchor − L < start_end_overlap`** | Avoid comparing overlapping windows |
 | **Weighted drift in repair warning** | Down-rank end when end confidence low or tail damaged |
 

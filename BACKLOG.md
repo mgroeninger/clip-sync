@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-16.
+Last updated: 2026-06-17.
 
 **How this doc works**
 
@@ -19,7 +19,7 @@ Last updated: 2026-06-16.
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
 
----
+**Recently shipped:** [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17) — `SharedTimeline` paired clip planning, symmetric pipeline wiring, `end_clip_anchor` reporting.
 
 ## Open work
 
@@ -39,6 +39,9 @@ From [archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md)
 
 | Item | Direction |
 |------|-----------|
+| [Offset-mapped end placement](#offset-mapped-end-placement) | After start clip, place B end window at `A_end + Δ` when B has a long leader — see [archive/anchored-end-extraction-plan.md](docs/archive/anchored-end-extraction-plan.md) follow-ups |
+| [Skip overlapping end fingerprint](#skip-overlapping-end-fingerprint) | Omit end clip when `T_anchor − L` overlaps start window |
+| [Weighted drift in repair warning](#weighted-drift-in-repair-warning) | Down-rank end clip in instability synthesis when end confidence is low |
 | [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
@@ -67,6 +70,24 @@ Tier B = 3× 30 s WAV pairs; ffmpeg for encoded formats. Hold-out verify on comm
 Optional `validation.max_verification_secs` — deferred in [archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md). Implement only if verify decode cost becomes painful in practice.
 
 **Refs:** [corpus-validation.md](docs/corpus-validation.md) § Hold-out verification cost
+
+#### Offset-mapped end placement
+
+Symmetric `SharedTimeline` places end windows at the same absolute times on A and B; when B has a long leader before shared content, offset-mapped end (`[T_a−L, T_a]` on A, shifted by Δ on B) would align fingerprints to the same story region.
+
+**Refs:** [archive/anchored-end-extraction-plan.md](docs/archive/anchored-end-extraction-plan.md)
+
+#### Skip overlapping end fingerprint
+
+When `T_anchor − clip_length` overlaps the start window (short shared span), skip end fingerprinting to avoid comparing redundant audio.
+
+**Refs:** `domain/policies.rs`, `application/align_videos.rs`
+
+#### Weighted drift in repair warning
+
+Repair instability warning treats end − start drift equally; down-rank or de-emphasize end when end confidence is low or tail decode was unreliable.
+
+**Refs:** `clip-sync-repair/src/infrastructure/cli/output.rs`
 
 ---
 
