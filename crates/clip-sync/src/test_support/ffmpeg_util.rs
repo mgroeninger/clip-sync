@@ -391,6 +391,106 @@ pub fn write_dual_track_aac_ac3_mp4(source_wav: &Path, output: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Encode a WAV to stereo AC-3 in MP4 (production-like: 48 kHz, configurable bitrate).
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+pub fn encode_wav_to_ac3_mp4(
+    input_wav: &Path,
+    output: &Path,
+    sample_rate: u32,
+    channels: u16,
+    bit_rate_kbps: u32,
+) -> bool {
+    if !ffmpeg_available() {
+        return false;
+    }
+
+    Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            input_wav.to_str().unwrap_or(""),
+            "-c:a",
+            "ac3",
+            "-b:a",
+            &format!("{bit_rate_kbps}k"),
+            "-ar",
+            &sample_rate.to_string(),
+            "-ac",
+            &channels.to_string(),
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+            output.to_str().unwrap_or(""),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Decode an audio track to interleaved S16LE PCM via ffmpeg (reference path for AC-3 characterization).
+#[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
+pub fn extract_pcm_s16le_ffmpeg(
+    path: &Path,
+    sample_rate: u32,
+    channels: u16,
+    start_secs: f64,
+    duration_secs: f64,
+) -> Option<Vec<i16>> {
+    if !ffmpeg_available() {
+        return None;
+    }
+
+    let child = Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-ss",
+            &start_secs.to_string(),
+            "-t",
+            &duration_secs.to_string(),
+            "-i",
+            path.to_str()?,
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            &sample_rate.to_string(),
+            "-ac",
+            &channels.to_string(),
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let bytes = output.stdout;
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+
+    let samples: Vec<i16> = bytes
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect();
+    Some(samples)
+}
+
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 pub fn write_ac3_surround_mp4_fixture(path: &Path) -> bool {
     write_lavfi_sine_container(

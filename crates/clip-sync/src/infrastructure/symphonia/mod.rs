@@ -15,4 +15,7 @@ mod oxideav_ac3;
 #[cfg(test)]
 mod media_reader_tests;
 
+#[cfg(all(test, feature = "ac3", feature = "ffmpeg-tests"))]
+mod ac3_oxideav_characterization_tests;
+
 pub use session::SymphoniaMediaReader;

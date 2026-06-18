@@ -34,6 +34,16 @@ pub enum ChirpDelayOn {
     A,
 }
 
+/// Mono WAV using the same 300–700 Hz sweep as committed corpus chirp fixtures (`chirp_a.wav`).
+pub fn write_corpus_chirp_wav(path: &Path, sample_rate: u32, total_secs: u32) {
+    let total_samples = u64::from(sample_rate) * u64::from(total_secs);
+    write_mono_wav(
+        path,
+        sample_rate,
+        (0..total_samples).map(|index| chirp_sample(sample_rate, index)),
+    );
+}
+
 /// Writes two mono WAV files with the same chirp and a fixed timing offset.
 pub fn write_offset_chirp_wav_pair(
     dir: &Path,

@@ -176,6 +176,9 @@ cargo test -p clip-sync --features ffmpeg-tests,he-aac,ac3
 
 # Repair: AC-3 dual-track scan smoke (generates dual-track MP4 via ffmpeg)
 cargo test -p clip-sync-repair --features ac3,ffmpeg-tests ac3_dual_track
+
+# AC-3 oxideav decode quality (corpus chirp → ffmpeg AC-3 → compare railing vs ffmpeg reference)
+cargo test -p clip-sync --features ac3,ffmpeg-tests ac3_corpus_chirp -- --nocapture
 ```
 
 ### 5. Repair mux integration
@@ -255,7 +258,7 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | `mux_writes_video` | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
 | `mux_writes_video` (integration) | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
 
-Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`.
+Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 
 **Optional CI step** for container-specific seek regressions (see [scripts/test-container-seek.ps1](../scripts/test-container-seek.ps1)):
 

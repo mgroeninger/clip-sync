@@ -60,11 +60,13 @@
 
 ## Phases
 
-### Phase 0 — characterization (before behaviour change)
+### Phase 0 — characterization ✓ 2026-06-16
 
-- [ ] Document reproduction: user’s 256 kb/s AC-3 @ 48 kHz; pops on WAV and mux; ffmpeg PCM reference clean.
-- [ ] Script or test helper: count samples with `abs(s) >= 32767` in extracted PCM (oxideav) vs ffmpeg reference on the same window.
-- [ ] Pin oxideav issue / version in this plan when a public URL exists.
+- [x] Document reproduction: corpus chirp (300–700 Hz sweep) → ffmpeg AC-3 256 kb/s @ 48 kHz stereo → oxideav rails; ffmpeg reference clean.
+- [x] Test helper `ac3_pcm_analysis::railed_sample_count` + `ffmpeg_util::extract_pcm_s16le_ffmpeg`; integration tests in `ac3_oxideav_characterization_tests.rs`.
+- [x] Pin oxideav fork: [mgroeninger/oxideav-ac3](https://github.com/mgroeninger/oxideav-ac3) (git dep; 0.0.9+ fixes railing on corpus chirp fixture).
+
+**Quantified baseline (oxideav-ac3 0.0.8 crates.io, 60 s stereo clip):** 3043 samples at `|s| >= 32767` (0.053% of 5.76M); peak 32767 vs ffmpeg peak 15510 with 0 railed. **Fixed** with mgroeninger fork (0 railed). Run: `cargo test -p clip-sync --features ac3,ffmpeg-tests ac3_corpus_chirp -- --nocapture`.
 
 ### Phase 1 — feature split + ffmpeg extract skeleton
 
