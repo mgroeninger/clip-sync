@@ -648,6 +648,29 @@ pub fn parallel_holdout_window_candidates(
     candidates
 }
 
+/// Short hold-out segment centered inside a discovery clip window on A's timeline.
+pub fn holdout_window_centered_in(
+    window: &ClipWindow,
+    segment_length: Duration,
+) -> Option<ClipWindow> {
+    let segment_secs = segment_length.as_secs_f64();
+    if segment_secs <= 0.0 {
+        return None;
+    }
+    let win_start = window.start.as_secs_f64();
+    let win_end = window.end.as_secs_f64();
+    if win_end - win_start < segment_secs {
+        return None;
+    }
+    let center = (win_start + win_end) / 2.0;
+    let start_secs = (center - segment_secs / 2.0).clamp(win_start, win_end - segment_secs);
+    Some(ClipWindow::new(
+        secs_to_duration(start_secs),
+        secs_to_duration(start_secs + segment_secs),
+        window.label,
+    ))
+}
+
 pub fn holdout_window_feasible(
     window_start_secs: f64,
     segment_length_secs: f64,
@@ -1145,6 +1168,20 @@ mod tests {
             decoded_sample_count: Some(11_025 * 30),
         };
         assert!(!holdout_extract_sufficient(&short, segment, 0.95, 8));
+    }
+
+    #[test]
+    fn holdout_window_centered_in_discovery_clip() {
+        let window = ClipWindow::new(
+            Duration::from_secs(100),
+            Duration::from_secs(1000),
+            ClipLabel::End,
+        );
+        let holdout = holdout_window_centered_in(&window, Duration::from_secs(3))
+            .expect("hold-out should fit");
+        assert!((holdout.start.as_secs_f64() - 548.5).abs() < 0.001);
+        assert!((holdout.end.as_secs_f64() - 551.5).abs() < 0.001);
+        assert_eq!(holdout.label, ClipLabel::End);
     }
 
     #[test]

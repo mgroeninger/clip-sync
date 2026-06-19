@@ -682,6 +682,8 @@ mod tests {
                     applied: true,
                     skipped: false,
                     skip_reason: None,
+                    end_anchor: None,
+                    refined_drift_secs: None,
                 }),
                 offset_verification: Some(OffsetVerification {
                     window_a_start_secs: 60.0,

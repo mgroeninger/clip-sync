@@ -195,6 +195,34 @@ impl From<&OffsetVerification> for OffsetVerificationReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HighRateAnchorRefinementReport {
+    pub segment_start_secs: f64,
+    pub segment_length_secs: f64,
+    pub offset_before_secs: f64,
+    pub adjustment_secs: f64,
+    pub correlation_peak: f64,
+    pub applied: bool,
+    pub skipped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+}
+
+impl From<&crate::domain::HighRateAnchorRefinement> for HighRateAnchorRefinementReport {
+    fn from(anchor: &crate::domain::HighRateAnchorRefinement) -> Self {
+        Self {
+            segment_start_secs: anchor.segment_start_secs,
+            segment_length_secs: anchor.segment_length_secs,
+            offset_before_secs: anchor.offset_before_secs,
+            adjustment_secs: anchor.adjustment_secs,
+            correlation_peak: anchor.correlation_peak,
+            applied: anchor.applied,
+            skipped: anchor.skipped,
+            skip_reason: anchor.skip_reason.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HighRateRefinementReport {
     pub segment_start_secs: f64,
     pub segment_length_secs: f64,
@@ -204,6 +232,10 @@ pub struct HighRateRefinementReport {
     pub skipped: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_anchor: Option<HighRateAnchorRefinementReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refined_drift_secs: Option<f64>,
 }
 
 impl From<&HighRateRefinement> for HighRateRefinementReport {
@@ -216,6 +248,8 @@ impl From<&HighRateRefinement> for HighRateRefinementReport {
             applied: refine.applied,
             skipped: refine.skipped,
             skip_reason: refine.skip_reason.clone(),
+            end_anchor: refine.end_anchor.as_ref().map(Into::into),
+            refined_drift_secs: refine.refined_drift_secs,
         }
     }
 }
@@ -422,15 +456,33 @@ pub fn format_high_rate_refinement_lines(
             refine.adjustment_secs
         };
         if show_diagnostics {
-            return vec![format!(
+            let mut line = format!(
                 "High-rate: {:+0.3}s refinement applied (peak {:.2})",
                 adjustment_secs, refine.correlation_peak
-            )];
+            );
+            if let Some(end) = &refine.end_anchor {
+                if end.applied {
+                    line.push_str(&format!(
+                        "; end anchor {:+0.3}s (peak {:.2})",
+                        end.adjustment_secs, end.correlation_peak
+                    ));
+                } else if end.skipped {
+                    let reason = end.skip_reason.as_deref().unwrap_or("skipped");
+                    line.push_str(&format!("; end anchor skipped ({reason})"));
+                }
+            }
+            if let Some(drift) = refine.refined_drift_secs {
+                line.push_str(&format!("; refined drift {:+0.3}s", drift));
+            }
+            return vec![line];
         }
-        return vec![format!(
-            "High-rate: {:+0.3}s refinement applied",
-            adjustment_secs
-        )];
+        let mut line = format!("High-rate: {:+0.3}s refinement applied", adjustment_secs);
+        if refine.end_anchor.as_ref().is_some_and(|a| a.applied) {
+            if let Some(drift) = refine.refined_drift_secs {
+                line.push_str(&format!("; refined drift {:+0.3}s", drift));
+            }
+        }
+        return vec![line];
     }
     if show_diagnostics {
         let reason = refine.skip_reason.as_deref().unwrap_or("not applied");
@@ -619,6 +671,8 @@ mod tests {
                 applied: true,
                 skipped: false,
                 skip_reason: None,
+                end_anchor: None,
+                refined_drift_secs: None,
             }))
             .with_verification(Some(OffsetVerification {
                 window_a_start_secs: 60.0,
@@ -843,6 +897,8 @@ mod tests {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         });
         let lines = format_high_rate_refinement_lines(&refine, false);
         assert_eq!(lines, vec!["High-rate: +0.000s refinement applied"]);
@@ -855,6 +911,8 @@ mod tests {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         });
         let lines = format_high_rate_refinement_lines(&negative, false);
         assert_eq!(lines, vec!["High-rate: -0.012s refinement applied"]);
@@ -867,8 +925,39 @@ mod tests {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         });
         let lines = format_high_rate_refinement_lines(&tiny_negative, false);
         assert_eq!(lines, vec!["High-rate: +0.000s refinement applied"]);
+    }
+
+    #[test]
+    fn format_high_rate_refinement_includes_dual_anchor_drift() {
+        use crate::domain::{HighRateAnchorRefinement, HighRateRefinement};
+
+        let refine = HighRateRefinementReport::from(&HighRateRefinement {
+            segment_start_secs: 450.0,
+            segment_length_secs: 3.0,
+            adjustment_secs: 0.325,
+            correlation_peak: 0.91,
+            applied: true,
+            skipped: false,
+            skip_reason: None,
+            end_anchor: Some(HighRateAnchorRefinement {
+                segment_start_secs: 7097.0,
+                segment_length_secs: 3.0,
+                offset_before_secs: -6.674,
+                adjustment_secs: 0.280,
+                correlation_peak: 0.88,
+                applied: true,
+                skipped: false,
+                skip_reason: None,
+            }),
+            refined_drift_secs: Some(0.629),
+        });
+        let lines = format_high_rate_refinement_lines(&refine, true);
+        assert!(lines[0].contains("end anchor +0.280s"));
+        assert!(lines[0].contains("refined drift +0.629s"));
     }
 }

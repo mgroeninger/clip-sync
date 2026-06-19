@@ -19,9 +19,11 @@ pub use query_localization::{
 
 pub use alignment::{
     AlignmentMergePolicy, AlignmentResult, ClipMatch, ClipMatchEstimate, ClipPairReportInput,
-    ClipRepetitionReport, Fingerprint, HighRateRefinement, OffsetVerification,
+    ClipRepetitionReport, Fingerprint, HighRateAnchorRefinement, HighRateRefinement,
+    OffsetVerification,
     OFFSET_AGREEMENT_TOLERANCE_SECS,
-    RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap, refresh_start_overlap,
+    RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap,
+    refresh_alignment_drift_summary, refresh_start_overlap,
     periodic_ambiguity_period, periodic_recheck_period_multiple,
     display_repeat_period,
     set_offset_ambiguous_mod_from_start_clip,
@@ -45,7 +47,7 @@ pub use media_extent::MediaExtent;
 pub use policies::{
     attach_symmetric_planning_report_metadata, clip_windows_paired, clip_windows_with_options,
     end_clip_extract_unreliable, holdout_pick_duration,
-    holdout_extract_sufficient, holdout_window_feasible,
+    holdout_extract_sufficient, holdout_window_centered_in, holdout_window_feasible,
     interior_overlaps_fixed_clip, interior_windows_along_timeline,
     parallel_holdout_window_candidates, resolve_holdout_candidates,
     should_use_query_mode, truncate_padded_tail,

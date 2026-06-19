@@ -112,8 +112,28 @@ pub struct OffsetVerification {
 }
 
 /// Native-rate hold-out FFT correction applied after discovery alignment.
+/// Native-rate hold-out refinement at one discovery clip anchor (start or end).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HighRateAnchorRefinement {
+    pub segment_start_secs: f64,
+    pub segment_length_secs: f64,
+    pub offset_before_secs: f64,
+    pub adjustment_secs: f64,
+    pub correlation_peak: f64,
+    pub applied: bool,
+    pub skipped: bool,
+    pub skip_reason: Option<String>,
+}
+
+impl HighRateAnchorRefinement {
+    pub fn offset_after_secs(&self) -> f64 {
+        self.offset_before_secs + if self.applied { self.adjustment_secs } else { 0.0 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HighRateRefinement {
+    /// Start-anchor hold-out (backward-compatible primary fields).
     pub segment_start_secs: f64,
     pub segment_length_secs: f64,
     pub adjustment_secs: f64,
@@ -121,6 +141,10 @@ pub struct HighRateRefinement {
     pub applied: bool,
     pub skipped: bool,
     pub skip_reason: Option<String>,
+    /// End-anchor hold-out when symmetric multi-clip alignment ran dual refinement.
+    pub end_anchor: Option<HighRateAnchorRefinement>,
+    /// `end − start` clip offsets after any applied anchor adjustments.
+    pub refined_drift_secs: Option<f64>,
 }
 
 /// Full alignment report for all extracted clip pairs.
@@ -449,6 +473,20 @@ pub fn refresh_start_overlap(
         Some(duration_a),
         Some(duration_b),
     );
+}
+
+/// Recompute drift and consistency after high-rate updates to per-clip offsets.
+pub fn refresh_alignment_drift_summary(result: &mut AlignmentResult) {
+    let aligned_offsets: Vec<f64> = result
+        .clips
+        .iter()
+        .filter_map(|clip| clip.offset_secs)
+        .collect();
+    result.offsets_consistent = aligned_offsets.len() <= 1
+        || aligned_offsets.windows(2).all(|pair| {
+            (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
+        });
+    result.offset_drift_secs = compute_offset_drift(&result.clips);
 }
 
 /// Timeline overlap implied by one aligned clip and its offset estimate.
@@ -869,6 +907,59 @@ mod tests {
         assert!((overlap.video_b_start_secs - fused).abs() < 0.01);
         assert!((overlap.video_b_end_secs - (900.0 + fused)).abs() < 0.01);
         assert_eq!(overlap.shared_length_secs, 900.0);
+    }
+
+    #[test]
+    fn refresh_alignment_drift_summary_recomputes_after_clip_updates() {
+        let mut result = AlignmentResult {
+            clips: vec![
+                ClipMatch {
+                    label: ClipLabel::Start,
+                    window_start_secs: 0.0,
+                    window_end_secs: 900.0,
+                    aligned: true,
+                    offset_secs: Some(-7.326),
+                    confidence: 0.95,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+                ClipMatch {
+                    label: ClipLabel::End,
+                    window_start_secs: 6647.0,
+                    window_end_secs: 7547.0,
+                    aligned: true,
+                    offset_secs: Some(-6.674),
+                    confidence: 0.95,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+            ],
+            start_aligned: true,
+            end_aligned: Some(true),
+            recommended_offset_secs: Some(-7.001),
+            offsets_consistent: false,
+            offset_drift_secs: Some(0.652),
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+            offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
+            end_clip_anchor: None,
+        };
+
+        result.clips[0].offset_secs = Some(-7.001);
+        result.clips[1].offset_secs = Some(-6.350);
+        refresh_alignment_drift_summary(&mut result);
+
+        assert!((result.offset_drift_secs.unwrap() - 0.651).abs() < 0.001);
+        assert!(!result.offsets_consistent);
     }
 
     #[test]

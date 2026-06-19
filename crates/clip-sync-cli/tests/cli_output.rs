@@ -109,6 +109,8 @@ fn full_surface_alignment_result() -> AlignmentResult {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         }),
         offset_verification: Some(OffsetVerification {
             window_a_start_secs: 60.0,
@@ -409,6 +411,8 @@ fn high_rate_refinement_omits_peak_by_default() {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         }))
         .build();
 
@@ -435,6 +439,8 @@ fn high_rate_refinement_shows_peak_with_diagnostics() {
             applied: true,
             skipped: false,
             skip_reason: None,
+            end_anchor: None,
+            refined_drift_secs: None,
         }))
         .build();
 
