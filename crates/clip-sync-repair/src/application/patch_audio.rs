@@ -7,14 +7,18 @@ use clip_sync::{
     resample_interleaved,
 };
 
+use crate::application::patch_region::{
+    evaluate_seam_gate, try_extend_gap_end_for_post_seam, SeamGateFailure, SeamGateOutcome,
+    SeamGateParams,
+};
 use crate::application::error::RepairError;
 use crate::domain::{
+    fill_offset::fill_offset_secs,
     gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan},
-    gap_structure::{self, StructureMatchParams},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
-    policies::{self, FillAlignment},
+    policies::{self, RefinedGapFrames},
     Gap, GapReport,
 };
 
@@ -68,12 +72,18 @@ pub struct PatchAudioRequest {
     pub partial_structure_waveform_soften: f64,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
     pub absolute_silence_rms: f32,
+    /// How to map each gap on A to B (`recommended` vs drift-interpolated clip offsets).
+    pub fill_offset_mode: crate::domain::FillOffsetMode,
+    /// When waveform post-seam correlation fails, try extending the gap end on A in small steps.
+    pub gap_end_extend_on_post_seam_fail: bool,
+    /// Maximum gap-end extension when retrying a failed post seam (milliseconds).
+    pub gap_end_extend_max_ms: u64,
+    /// Step size for gap-end extension retries (milliseconds).
+    pub gap_end_extend_step_ms: u64,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
-/// Pearson floor used when partial structure trust softens the waveform gate.
-const PARTIAL_WAVEFORM_MIN_CORRELATION: f32 = 0.12;
 
 // Collected B segment ready to splice into A.
 struct RegionPatch {
@@ -373,6 +383,64 @@ struct RegionPatchContext {
     silence_peak_fraction: f32,
 }
 
+fn seam_failure_outcome(
+    progress: &dyn ProgressReporter,
+    request: &PatchAudioRequest,
+    region: &FillRegion,
+    fail: SeamGateFailure,
+    min_structure_match_score: f32,
+) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    match fail {
+        SeamGateFailure::StructureAlignmentFailed => {
+            warn_skip_gap_fill(
+                progress,
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "structure alignment failed",
+            );
+            (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed),
+            )
+        }
+        SeamGateFailure::StructureBelowThreshold { pre, post } => {
+            warn_skip_gap_fill(
+                progress,
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "structure match below threshold",
+            );
+            (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: pre,
+                    post_correlation: post,
+                    min_correlation: min_structure_match_score,
+                }),
+            )
+        }
+        SeamGateFailure::WaveformBelowThreshold { pre, post, min } => {
+            warn_skip_gap_fill(
+                progress,
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "waveform seam correlation below threshold",
+            );
+            (
+                None,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: pre,
+                    post_correlation: post,
+                    min_correlation: min,
+                }),
+            )
+        }
+    }
+}
+
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     b_samples_full: &[i16],
@@ -407,15 +475,23 @@ fn prepare_region_patch(
     let normalize_fill = request.normalize_fill;
     let max_fill_gain_db = request.max_fill_gain_db;
     let absolute_silence_rms = request.absolute_silence_rms;
+    let fill_offset_mode = request.fill_offset_mode;
+    let gap_end_extend_on_post_seam_fail = request.gap_end_extend_on_post_seam_fail;
+    let gap_end_extend_max_ms = request.gap_end_extend_max_ms;
+    let gap_end_extend_step_ms = request.gap_end_extend_step_ms;
 
     debug_assert!(
         region.b_start_secs >= 0.0,
         "fill plan must not include gaps with negative B start"
     );
 
+    let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
+    let gap_offset_secs = fill_offset_secs(&request.report.alignment, fill_offset_mode, gap_time_on_a)
+        .unwrap_or(region.b_start_secs - region.a_start_secs);
+
     let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    let refined = policies::refine_gap_frames(
+    let mut refined: RefinedGapFrames = policies::refine_gap_frames(
         &a_pcm.samples,
         channels,
         reported_start_frame,
@@ -425,14 +501,18 @@ fn prepare_region_patch(
         max_refine_frames,
     );
 
-    let start_delta_frames =
-        refined.start_frame as i64 - reported_start_frame as i64;
-    let end_delta_frames = refined.end_frame as i64 - reported_end_frame as i64;
-    let refined_b_start_secs =
-        region.b_start_secs + start_delta_frames as f64 / sample_rate as f64;
-    let refined_b_end_secs =
-        region.b_end_secs + end_delta_frames as f64 / sample_rate as f64;
-    let a_start_secs = refined.start_frame as f64 / sample_rate as f64;
+    let refined_a_start_secs = refined.start_frame as f64 / sample_rate as f64;
+    let refined_b_start_secs = refined_a_start_secs + gap_offset_secs;
+    let a_start_secs = refined_a_start_secs;
+
+    if fill_offset_mode != crate::domain::FillOffsetMode::Recommended {
+        tracing::debug!(
+            a_start_secs,
+            gap_offset_secs,
+            mode = ?fill_offset_mode,
+            "using per-gap fill offset"
+        );
+    }
 
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
@@ -455,6 +535,12 @@ fn prepare_region_patch(
     let seam_gate_frames =
         seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
     let search_radius_secs = border_search_secs.max(margin_secs);
+    let extend_slack_secs = if gap_end_extend_on_post_seam_fail {
+        gap_end_extend_max_ms as f64 / 1000.0
+    } else {
+        0.0
+    };
+    let refined_b_end_secs = refined.end_frame as f64 / sample_rate as f64 + gap_offset_secs;
     let b_extract_start_secs = (refined_b_start_secs
         - gap_signature_context_secs
         - search_radius_secs
@@ -465,7 +551,8 @@ fn prepare_region_patch(
         + gap_signature_context_secs
         + search_radius_secs
         + length_slack_secs
-        + margin_secs;
+        + margin_secs
+        + extend_slack_secs;
     let b_samples = match slice_b_segment(
         b_samples_full,
         channels,
@@ -493,167 +580,90 @@ fn prepare_region_patch(
         .min(correlate_frames);
     let border_standoff_frames =
         (border_standoff_secs * sample_rate as f64).round() as usize;
-    let border_spec = policies::GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames,
-        border_standoff_frames,
-        silence_peak_fraction,
-        absolute_rms_floor: absolute_silence_rms,
-    };
-    let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&a_pcm.samples, channels, &border_spec);
-    let (a_pre_ch, a_post_ch) =
-        policies::border_templates_per_channel_for_gap(&a_pcm.samples, channels, &border_spec);
-    let b_mono = policies::interleaved_to_mono(b_samples, channels);
-    let b_ch = policies::interleaved_to_channels(b_samples, channels);
-
-    let offset_nominal_start =
-        ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
-    let gap_end_in_haystack =
-        ((refined_b_end_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
     let search_radius_frames =
         (border_search_secs * sample_rate as f64).round() as usize;
     let fill_length_slack_frames =
         (fill_length_slack_secs * sample_rate as f64).round() as usize;
+    let max_extend_frames =
+        (gap_end_extend_max_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
+    let step_frames =
+        (gap_end_extend_step_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
 
-    let structure_params = StructureMatchParams {
-        gap_frames,
-        bin_frames: bin_frames.max(1),
+    let seam_params = SeamGateParams {
+        a_pcm,
+        b_samples,
+        b_extract_start_secs,
+        refined_b_start_secs,
+        refined_b_end_secs,
+        channels,
+        sample_rate,
+        context_frames,
+        bin_frames,
+        seam_gate_frames,
+        border_frames,
+        border_standoff_frames,
         search_radius_frames,
         fill_length_slack_frames,
-        max_fine_adjustment_frames: max_adjustment_frames,
+        max_adjustment_frames,
         silence_peak_fraction,
         absolute_silence_rms,
-    };
-
-    let signature = gap_structure::build_gap_context_signature(
-        &a_pcm.samples,
-        channels,
-        refined.start_frame,
-        refined.end_frame,
-        context_frames,
-        &structure_params,
-    );
-
-    let mut alignment = match gap_structure::match_gap_structure_in_b(
-        &signature,
-        b_samples,
-        channels,
-        offset_nominal_start,
-        gap_end_in_haystack,
-        &structure_params,
-    ) {
-        Some(alignment) => alignment,
-        None => {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "structure alignment failed",
-            );
-            return (
-                None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed),
-            );
-        }
-    };
-
-    let structure_pre = alignment.pre_correlation;
-    let structure_post = alignment.post_correlation;
-    let gap_secs = gap_frames as f64 / sample_rate as f64;
-    if !structure_passes_gate(
-        structure_pre,
-        structure_post,
         min_structure_match_score,
-        gap_secs,
+        strong_structure_trust,
+        disable_structure_trust,
+        partial_structure_waveform_soften,
+        min_fill_correlation,
         short_gap_mean_correlation_secs,
-    ) {
-        warn_skip_gap_fill(
-            progress,
-            &request.report.gaps,
-            region.a_start_secs,
-            region.a_end_secs,
-            "structure match below threshold",
-        );
-        return (
-            None,
-            RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
-                pre_correlation: structure_pre,
-                post_correlation: structure_post,
-                min_correlation: min_structure_match_score,
-            }),
-        );
-    }
-
-    let structure_trusted = !disable_structure_trust
-        && structure_pre >= strong_structure_trust
-        && structure_post >= strong_structure_trust;
-
-    let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
-        tracing::debug!(
-            structure_pre,
-            structure_post,
-            a_start_secs,
-            "trusting structure match (skipping waveform seam gate)"
-        );
-        (structure_pre, structure_post, true)
-    } else {
-        let waveform_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
-        let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
-        let (pre_corr, post_corr) = policies::fill_seam_correlations(
-            &policies::SeamTemplates {
-                a_pre: &a_pre_border,
-                a_post: &a_post_border,
-                a_pre_ch: &a_pre_ch,
-                a_post_ch: &a_post_ch,
-                b_mono: &b_mono,
-                b_ch: &b_ch,
-            },
-            policies::SeamPlacement {
-                start: alignment.start_frame,
-                gap_frames,
-                pre_window: waveform_gate_frames,
-                post_window: post_gate_frames,
-            },
-        );
-
-        let soften_waveform_gate = structure_pre >= partial_structure_waveform_soften
-            && structure_post >= partial_structure_waveform_soften;
-        let effective_min_corr = if soften_waveform_gate {
-            min_fill_correlation.min(PARTIAL_WAVEFORM_MIN_CORRELATION)
-        } else {
-            min_fill_correlation
-        };
-
-        alignment.pre_correlation = pre_corr;
-        alignment.post_correlation = post_corr;
-
-        if !seams_pass_correlation_gate(
-            &alignment,
-            effective_min_corr,
-            gap_secs,
-            short_gap_mean_correlation_secs,
-        ) {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "waveform seam correlation below threshold",
-            );
-            return (
-                None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
-                    pre_correlation: pre_corr,
-                    post_correlation: post_corr,
-                    min_correlation: effective_min_corr,
-                }),
-            );
-        }
-        (pre_corr, post_corr, false)
     };
+
+    let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
+        Ok(outcome) => outcome,
+        Err(fail) => match fail {
+            SeamGateFailure::WaveformBelowThreshold { .. }
+                if gap_end_extend_on_post_seam_fail =>
+            {
+                match try_extend_gap_end_for_post_seam(
+                    &mut refined,
+                    gap_offset_secs,
+                    &seam_params,
+                    fail,
+                    max_extend_frames,
+                    step_frames.max(1),
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(retry_fail) => {
+                        return seam_failure_outcome(
+                            progress,
+                            request,
+                            region,
+                            retry_fail,
+                            min_structure_match_score,
+                        );
+                    }
+                }
+            }
+            other => {
+                return seam_failure_outcome(
+                    progress,
+                    request,
+                    region,
+                    other,
+                    min_structure_match_score,
+                );
+            }
+        },
+    };
+
+    let SeamGateOutcome {
+        alignment,
+        report_pre,
+        report_post,
+        structure_trusted: patched_structure_trusted,
+        gap_frames,
+        ..
+    } = gate_outcome;
+
+    let offset_nominal_start =
+        ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
 
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
@@ -797,37 +807,6 @@ fn slice_b_segment(
         return None;
     }
     Some(&b_samples[start_frame * channels..end_frame * channels])
-}
-
-fn structure_passes_gate(
-    pre_score: f64,
-    post_score: f64,
-    min_structure_match_score: f32,
-    gap_secs: f64,
-    short_gap_mean_correlation_secs: f64,
-) -> bool {
-    let pre = pre_score as f32;
-    let post = post_score as f32;
-    if gap_secs <= short_gap_mean_correlation_secs {
-        (pre + post) / 2.0 >= min_structure_match_score
-    } else {
-        pre >= min_structure_match_score && post >= min_structure_match_score
-    }
-}
-
-fn seams_pass_correlation_gate(
-    alignment: &FillAlignment,
-    min_fill_correlation: f32,
-    gap_secs: f64,
-    short_gap_mean_correlation_secs: f64,
-) -> bool {
-    let pre = alignment.pre_correlation as f32;
-    let post = alignment.post_correlation as f32;
-    if gap_secs <= short_gap_mean_correlation_secs {
-        (pre + post) / 2.0 >= min_fill_correlation
-    } else {
-        pre >= min_fill_correlation && post >= min_fill_correlation
-    }
 }
 
 /// Compute RMS of the A samples bordering the gap region.

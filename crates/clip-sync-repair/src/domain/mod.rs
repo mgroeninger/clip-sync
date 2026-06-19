@@ -1,10 +1,14 @@
 pub mod cross_check;
+pub mod fill_offset;
 pub mod gap;
+pub mod gap_end_extend;
 pub mod gap_fill;
 pub mod gap_structure;
 pub mod patch_result;
 pub mod policies;
 pub mod track_match;
+
+pub use fill_offset::{FillOffsetMode, fill_offset_secs};
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};

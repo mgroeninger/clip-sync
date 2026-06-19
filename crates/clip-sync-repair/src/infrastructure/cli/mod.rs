@@ -126,6 +126,12 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .repair
                         .partial_structure_waveform_soften,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
+                    fill_offset_mode: config.repair.fill_offset_mode,
+                    gap_end_extend_on_post_seam_fail: config
+                        .repair
+                        .gap_end_extend_on_post_seam_fail,
+                    gap_end_extend_max_ms: config.repair.gap_end_extend_max_ms,
+                    gap_end_extend_step_ms: config.repair.gap_end_extend_step_ms,
                 };
 
                 let write_request = RepairWriteRequest {
@@ -255,6 +261,18 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(secs) = args.border_standoff_secs {
         config.repair.border_standoff_secs = secs;
     }
+    if let Some(mode) = args.fill_offset {
+        config.repair.fill_offset_mode = mode;
+    }
+    if args.no_gap_end_extend {
+        config.repair.gap_end_extend_on_post_seam_fail = false;
+    }
+    if let Some(ms) = args.gap_end_extend_max_ms {
+        config.repair.gap_end_extend_max_ms = ms;
+    }
+    if let Some(ms) = args.gap_end_extend_step_ms {
+        config.repair.gap_end_extend_step_ms = ms;
+    }
     if let Some(ms) = args.crossfade_ms {
         config.repair.crossfade_ms = ms;
     }
@@ -300,6 +318,7 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
 mod cli_override_tests {
     use super::*;
     use clip_sync::AlignmentMode;
+    use crate::domain::FillOffsetMode;
     use crate::infrastructure::config::RepairAppConfig;
 
     #[test]
@@ -355,6 +374,13 @@ mod cli_override_tests {
             "0.25",
             "--border-standoff-secs",
             "0.5",
+            "--fill-offset",
+            "interpolated",
+            "--no-gap-end-extend",
+            "--gap-end-extend-max-ms",
+            "300",
+            "--gap-end-extend-step-ms",
+            "10",
         ]);
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
@@ -363,5 +389,9 @@ mod cli_override_tests {
         assert!((config.repair.min_fill_correlation - 0.45).abs() < f32::EPSILON);
         assert!((config.repair.max_fill_align_adjustment_secs - 0.25).abs() < f64::EPSILON);
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
+        assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
+        assert!(!config.repair.gap_end_extend_on_post_seam_fail);
+        assert_eq!(config.repair.gap_end_extend_max_ms, 300);
+        assert_eq!(config.repair.gap_end_extend_step_ms, 10);
     }
 }

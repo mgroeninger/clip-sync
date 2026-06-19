@@ -99,7 +99,7 @@ Examples (both tools where applicable):
 - Mid-run alignment summary: `Recommended offset: …`, overlap windows, drift
 - `High-rate offset refinement...`
 - Per-gap patch: `gap i/n: A [t0 – t1]`
-- Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 247k (A Some(255000) bps, B Some(247000) bps, policy MatchMin)` — `phase_verbose` only
+- Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 256k (A 256 kbps, B 384 kbps, policy match_min)` — `phase_verbose` only
 
 `log_alignment_summary()` in `align_videos.rs` must use **`phase_verbose` only** — never `phase()` — so default runs do not duplicate the final stdout report.
 

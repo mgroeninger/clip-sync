@@ -4,6 +4,7 @@ use clap::{Parser, ValueEnum};
 
 use clip_sync::LogLevel;
 
+use crate::domain::FillOffsetMode;
 use crate::infrastructure::config::OutputFormat;
 
 #[derive(Parser, Debug)]
@@ -94,6 +95,22 @@ pub struct Args {
     /// [default: 0.35].
     #[arg(long, value_name = "SECS")]
     pub border_standoff_secs: Option<f64>,
+
+    /// Per-gap B mapping: `recommended` (single offset) or `interpolated` (drift between clips).
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub fill_offset: Option<FillOffsetMode>,
+
+    /// Disable post-seam gap-end extension retries when waveform correlation fails at the tail.
+    #[arg(long)]
+    pub no_gap_end_extend: bool,
+
+    /// Maximum gap-end extension when retrying a failed post seam (ms) [default: 500].
+    #[arg(long, value_name = "MS")]
+    pub gap_end_extend_max_ms: Option<u64>,
+
+    /// Step size for gap-end extension retries (ms) [default: 20].
+    #[arg(long, value_name = "MS")]
+    pub gap_end_extend_step_ms: Option<u64>,
 
     /// Crossfade duration at gap boundaries (ms) [default: 10].
     #[arg(long, value_name = "MS")]
