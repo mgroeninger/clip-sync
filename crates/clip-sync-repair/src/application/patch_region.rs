@@ -451,12 +451,12 @@ mod tests {
     }
 
     #[test]
-    fn short_gap_one_strong_fallback_can_be_disabled() {
+    fn waveform_gate_mean_fails_without_one_strong_for_asymmetric_seams() {
         let alignment = FillAlignment {
             start_frame: 0,
             fill_frames: 48_000,
-            pre_correlation: -0.01,
-            post_correlation: 0.17,
+            pre_correlation: 0.998,
+            post_correlation: -0.90,
         };
         assert!(!seams_pass_correlation_gate(
             &alignment,
@@ -464,6 +464,13 @@ mod tests {
             1.0,
             2.0,
             false,
+        ));
+        assert!(seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            true,
         ));
     }
 }

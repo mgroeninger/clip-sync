@@ -6,9 +6,11 @@ use clip_sync::MultiChannelPcm;
 use clip_sync::{
     AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
 };
-use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
+use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 use clip_sync_repair::domain::policies;
+use clip_sync_repair::domain::GapPatchSkipReason;
 use clip_sync_repair::domain::GapPatchStatus;
+use clip_sync_repair::domain::FillOffsetMode;
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
@@ -80,6 +82,38 @@ fn write_stereo_sine_with_gap(
         } else {
             sine_sample(sample_rate, frame, freq, amplitude)
         };
+        writer.write_sample(s).expect("write L");
+        writer.write_sample(s).expect("write R");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
+/// Like [`write_stereo_sine_wav`] but phase-inverts a frame range (per channel).
+fn write_stereo_sine_with_inverted_region(
+    path: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    invert_start_secs: f64,
+    invert_end_secs: f64,
+    freq: f32,
+    amplitude: f32,
+) {
+    let spec = WavSpec {
+        channels: CHANNELS,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    let total_frames = u64::from(sample_rate) * u64::from(total_secs);
+    let invert_start = (invert_start_secs * sample_rate as f64) as u64;
+    let invert_end = (invert_end_secs * sample_rate as f64) as u64;
+
+    for frame in 0..total_frames {
+        let mut s = sine_sample(sample_rate, frame, freq, amplitude);
+        if frame >= invert_start && frame < invert_end {
+            s = s.saturating_neg();
+        }
         writer.write_sample(s).expect("write L");
         writer.write_sample(s).expect("write R");
     }
@@ -162,11 +196,54 @@ fn default_gap() -> Gap {
     }
 }
 
+#[derive(Clone)]
+struct PatchTestOptions {
+    disable_structure_trust: bool,
+    fill_offset_mode: FillOffsetMode,
+    short_gap_one_strong_seam_fallback: bool,
+    gap_end_extend_on_post_seam_fail: bool,
+    gap_start_extend_on_pre_seam_fail: bool,
+    short_gap_mean_correlation_secs: f64,
+    max_fill_align_adjustment_secs: f64,
+    partial_structure_waveform_soften: f64,
+}
+
+impl Default for PatchTestOptions {
+    fn default() -> Self {
+        Self {
+            disable_structure_trust: false,
+            fill_offset_mode: FillOffsetMode::Recommended,
+            short_gap_one_strong_seam_fallback: true,
+            gap_end_extend_on_post_seam_fail: true,
+            gap_start_extend_on_pre_seam_fail: true,
+            short_gap_mean_correlation_secs: 2.0,
+            max_fill_align_adjustment_secs: 1.0,
+            partial_structure_waveform_soften: 0.85,
+        }
+    }
+}
+
 fn patch_request(
     report: GapReport,
     normalize_fill: bool,
     normalize_window_secs: f64,
     min_fill_correlation: f32,
+) -> PatchAudioRequest {
+    patch_request_with_options(
+        report,
+        normalize_fill,
+        normalize_window_secs,
+        min_fill_correlation,
+        PatchTestOptions::default(),
+    )
+}
+
+fn patch_request_with_options(
+    report: GapReport,
+    normalize_fill: bool,
+    normalize_window_secs: f64,
+    min_fill_correlation: f32,
+    options: PatchTestOptions,
 ) -> PatchAudioRequest {
     PatchAudioRequest {
         report,
@@ -175,26 +252,102 @@ fn patch_request(
         max_fill_gain_db: 12.0,
         min_fill_correlation,
         fill_align_margin_secs: 1.0,
-        max_fill_align_adjustment_secs: 1.0,
+        max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
         fill_border_search_secs: 30.0,
         min_border_discovery_secs: 2.0,
         border_standoff_secs: 0.0,
-        short_gap_mean_correlation_secs: 2.0,
+        short_gap_mean_correlation_secs: options.short_gap_mean_correlation_secs,
         fill_length_slack_secs: 5.0,
         fill_seam_search_secs: 0.25,
         gap_signature_context_secs: 3.0,
         gap_signature_bin_ms: 50,
         min_structure_match_score: 0.55,
         strong_structure_trust: 0.90,
-        disable_structure_trust: false,
-        partial_structure_waveform_soften: 0.85,
+        disable_structure_trust: options.disable_structure_trust,
+        partial_structure_waveform_soften: options.partial_structure_waveform_soften,
         absolute_silence_rms: 0.0,
-        fill_offset_mode: clip_sync_repair::domain::FillOffsetMode::Recommended,
-        gap_end_extend_on_post_seam_fail: true,
-        gap_start_extend_on_pre_seam_fail: true,
+        fill_offset_mode: options.fill_offset_mode,
+        gap_end_extend_on_post_seam_fail: options.gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail: options.gap_start_extend_on_pre_seam_fail,
         gap_end_extend_max_ms: 500,
         gap_end_extend_step_ms: 20,
-        short_gap_one_strong_seam_fallback: true,
+        short_gap_one_strong_seam_fallback: options.short_gap_one_strong_seam_fallback,
+    }
+}
+
+fn run_patch(request: PatchAudioRequest, crossfade_ms: u64) -> PatchAudioResult {
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    PatchAudio::new(&media_reader, &progress)
+        .execute(request, crossfade_ms)
+        .expect("patch should succeed")
+}
+
+fn make_drift_alignment(start_offset: f64, end_offset: f64, timeline_secs: f64) -> AlignmentResult {
+    let half = timeline_secs / 2.0;
+    AlignmentResult {
+        clips: vec![
+            ClipMatch {
+                label: ClipLabel::Start,
+                window_start_secs: 0.0,
+                window_end_secs: half,
+                aligned: true,
+                offset_secs: Some(start_offset),
+                confidence: 0.95,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
+            },
+            ClipMatch {
+                label: ClipLabel::End,
+                window_start_secs: half,
+                window_end_secs: timeline_secs,
+                aligned: true,
+                offset_secs: Some(end_offset),
+                confidence: 0.95,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                repetition: None,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
+            },
+        ],
+        start_aligned: true,
+        end_aligned: Some(true),
+        recommended_offset_secs: Some(start_offset),
+        offsets_consistent: false,
+        offset_drift_secs: Some(end_offset - start_offset),
+        start_overlap: None,
+        high_rate_refinement: None,
+        offset_verification: None,
+        offset_ambiguous_mod_secs: None,
+        alignment_mode_used: None,
+        query_localization: None,
+        end_clip_anchor: None,
+    }
+}
+
+fn make_report_with_alignment(
+    path_a: PathBuf,
+    path_b: PathBuf,
+    compat: TrackCompatibility,
+    alignment: AlignmentResult,
+    gaps: Vec<Gap>,
+) -> GapReport {
+    GapReport {
+        video_a: path_a,
+        video_b: path_b,
+        track_compatibility: Some(compat),
+        overlap: None,
+        alignment: clip_sync::AlignmentReport::from(&alignment),
+        gaps,
+        gap_offset_agreement: None,
+        decode_chunk_secs: 60,
+        scan_block_ms: 250,
+        silence_peak_fraction: 0.01,
+        limit_fill_to_mapped_region: true,
     }
 }
 
@@ -646,5 +799,329 @@ fn scan_then_patch_fills_detected_gap() {
     assert!(
         gap_rms > 100.0,
         "scan-detected gap should be filled, got rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_skips_when_structure_trust_disabled_and_waveform_disagrees() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 2200.0, 16_000.0);
+
+    let mut options = PatchTestOptions::default();
+    options.disable_structure_trust = true;
+
+    let result = run_patch(
+        patch_request_with_options(
+            make_report(
+                fixture.path_a,
+                fixture.path_b,
+                stereo_identical_compat(SAMPLE_RATE),
+            ),
+            false,
+            5.0,
+            0.35,
+            options,
+        ),
+        10,
+    );
+
+    assert_eq!(result.summary.patched_count, 0);
+    assert_eq!(result.summary.skipped_count, 1);
+    match &result.summary.gaps[0].status {
+        GapPatchStatus::Skipped {
+            reason: GapPatchSkipReason::CorrelationBelowThreshold { .. },
+        } => {}
+        other => panic!("expected waveform skip with --no-structure-trust, got {other:?}"),
+    }
+}
+
+#[test]
+fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
+    const SHORT_GAP_END: f64 = 4.0;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        SHORT_GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    // Invert B's post-gap border so Pearson post correlation collapses while pre stays high.
+    write_stereo_sine_with_inverted_region(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        SHORT_GAP_END - 0.05,
+        SHORT_GAP_END + 0.50,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = default_gap();
+    let gap = Gap {
+        video_a_end_secs: SHORT_GAP_END,
+        video_b_end_secs: Some(SHORT_GAP_END),
+        ..gap
+    };
+
+    let report = make_report(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![gap],
+        ..report
+    };
+
+    let mut strict = PatchTestOptions::default();
+    strict.short_gap_one_strong_seam_fallback = false;
+    strict.gap_end_extend_on_post_seam_fail = false;
+    strict.gap_start_extend_on_pre_seam_fail = false;
+    strict.disable_structure_trust = true;
+    strict.partial_structure_waveform_soften = 1.0;
+
+    let skipped = run_patch(
+        patch_request_with_options(report.clone(), false, 2.0, 0.12, strict),
+        10,
+    );
+    assert_eq!(
+        skipped.summary.patched_count, 0,
+        "mean seam score should fail without one-strong-seam fallback, got {:?}",
+        skipped.summary.gaps
+    );
+
+    let mut relaxed = PatchTestOptions::default();
+    relaxed.gap_end_extend_on_post_seam_fail = false;
+    relaxed.gap_start_extend_on_pre_seam_fail = false;
+    relaxed.disable_structure_trust = true;
+    relaxed.partial_structure_waveform_soften = 1.0;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 2.0, 0.12, relaxed),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "one-strong-seam fallback should patch when a single seam passes, got {:?}",
+        patched.summary.gaps
+    );
+
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            structure_trusted: false,
+            ..
+        } => {
+            assert!(
+                *pre_correlation >= 0.12,
+                "pre seam should pass threshold, got {pre_correlation}"
+            );
+            assert!(
+                *post_correlation < 0.12,
+                "post seam should fail threshold, got {post_correlation}"
+            );
+        }
+        other => panic!("expected patched gap, got {other:?}"),
+    }
+
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, SHORT_GAP_END);
+    assert!(
+        gap_rms > 100.0,
+        "gap should contain audio after one-strong-seam patch, rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_gap_end_extension_retries_failed_post_seam() {
+    const EARLY_GAP_END: f64 = 5.85;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_inverted_region(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_END - 0.20,
+        GAP_END + 0.20,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = Gap {
+        video_a_start_secs: GAP_START,
+        video_a_end_secs: EARLY_GAP_END,
+        video_b_start_secs: Some(GAP_START),
+        video_b_end_secs: Some(EARLY_GAP_END),
+        b_has_energy: true,
+    };
+
+    let report = make_report(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![gap],
+        ..report
+    };
+
+    let mut no_extend = PatchTestOptions::default();
+    no_extend.gap_end_extend_on_post_seam_fail = false;
+    no_extend.gap_start_extend_on_pre_seam_fail = false;
+    no_extend.short_gap_one_strong_seam_fallback = false;
+    no_extend.disable_structure_trust = true;
+    no_extend.partial_structure_waveform_soften = 1.0;
+
+    let skipped = run_patch(
+        patch_request_with_options(report.clone(), false, 5.0, 0.35, no_extend),
+        10,
+    );
+    assert_eq!(
+        skipped.summary.patched_count, 0,
+        "inverted post border should fail without extension, got {:?}",
+        skipped.summary.gaps
+    );
+
+    let mut with_extend = PatchTestOptions::default();
+    with_extend.short_gap_one_strong_seam_fallback = false;
+    with_extend.disable_structure_trust = true;
+    with_extend.partial_structure_waveform_soften = 1.0;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, with_extend),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "gap-end extension should recover weak post seam, got {:?}",
+        patched.summary.gaps
+    );
+
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    assert!(
+        gap_rms > 100.0,
+        "extended gap should be filled, rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
+    const TIMELINE_SECS: u32 = 120;
+    const LATE_GAP_START: f64 = 90.0;
+    const LATE_GAP_END: f64 = 93.0;
+    const START_OFFSET: f64 = 0.0;
+    const END_OFFSET: f64 = 1.0;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TIMELINE_SECS,
+        LATE_GAP_START as u32,
+        LATE_GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    // B keeps audio at A's gap (90–93) but is silent one second later (91–94),
+    // matching end-clip offset (+1.0 s) rather than start-clip offset (0.0 s).
+    write_stereo_sine_with_gap(
+        &path_b,
+        SAMPLE_RATE,
+        TIMELINE_SECS,
+        (LATE_GAP_START + END_OFFSET) as u32,
+        (LATE_GAP_END + END_OFFSET) as u32,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = Gap {
+        video_a_start_secs: LATE_GAP_START,
+        video_a_end_secs: LATE_GAP_END,
+        video_b_start_secs: Some(LATE_GAP_START + START_OFFSET),
+        video_b_end_secs: Some(LATE_GAP_END + START_OFFSET),
+        b_has_energy: true,
+    };
+
+    let alignment = make_drift_alignment(
+        START_OFFSET,
+        END_OFFSET,
+        f64::from(TIMELINE_SECS),
+    );
+    let report = make_report_with_alignment(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+        alignment,
+        vec![gap],
+    );
+
+    let mut recommended_opts = PatchTestOptions::default();
+    recommended_opts.short_gap_one_strong_seam_fallback = false;
+    recommended_opts.short_gap_mean_correlation_secs = 0.5;
+
+    let recommended = run_patch(
+        patch_request_with_options(
+            report.clone(),
+            false,
+            5.0,
+            0.35,
+            recommended_opts,
+        ),
+        10,
+    );
+    assert_eq!(
+        recommended.summary.patched_count, 0,
+        "start-clip offset should not bracket late gap on B, got {:?}",
+        recommended.summary.gaps
+    );
+
+    let mut interpolated = PatchTestOptions::default();
+    interpolated.fill_offset_mode = FillOffsetMode::Interpolated;
+    interpolated.short_gap_one_strong_seam_fallback = false;
+    interpolated.short_gap_mean_correlation_secs = 0.5;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, interpolated),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "interpolated offset should patch late gap under drift, got {:?}",
+        patched.summary.gaps
+    );
+
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(
+        &pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        LATE_GAP_START,
+        LATE_GAP_END,
+    );
+    assert!(
+        gap_rms > 100.0,
+        "late gap should be filled with interpolated offset, rms={gap_rms}"
     );
 }

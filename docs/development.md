@@ -120,6 +120,9 @@ cargo test -p clip-sync-cli
 
 # Repair: committed gap corpus + unit tests
 cargo test -p clip-sync-repair gap_corpus_committed
+
+# Repair: patch seam integration (fill offset, structure trust, extension retries)
+cargo test -p clip-sync-repair --test patch_audio_integration
 ```
 
 **Recommended PR check** (alignment committed tier):
