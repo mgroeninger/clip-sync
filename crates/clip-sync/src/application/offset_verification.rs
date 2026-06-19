@@ -9,7 +9,8 @@ use crate::application::ports::{
     Aligner, Fingerprinter, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
 };
 use crate::domain::{
-    holdout_extract_sufficient, holdout_pick_duration, holdout_window_feasible,
+    holdout_b_window_for_offset, holdout_extract_sufficient, holdout_pick_duration,
+    holdout_window_feasible,
     parallel_holdout_window_candidates, periodic_ambiguity_period, periodic_recheck_period_multiple,
     display_repeat_period, prepare_clip_for_fingerprint, resolve_holdout_candidates,
     should_downgrade_repetition_confidence, AlignmentResult, AudioTrack, ClipWindow, MediaExtent,
@@ -131,10 +132,9 @@ pub fn apply_offset_verification<MS, FP, AL>(
         }
         saw_feasible = true;
 
-        let window_b_start = Duration::from_secs_f64(window_start_secs + offset_secs);
-        let window_b_end =
-            Duration::from_secs_f64(window_start_secs + clip_length_secs + offset_secs);
-        let window_b = ClipWindow::new(window_b_start, window_b_end, holdout.label);
+        let Some(window_b) = holdout_b_window_for_offset(holdout, clip_length, offset_secs) else {
+            continue;
+        };
 
         let raw_a = match input.session_a.extract_mono(
             input.track_a,

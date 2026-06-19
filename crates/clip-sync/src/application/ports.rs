@@ -70,6 +70,14 @@ pub trait MediaSession {
         Ok(None)
     }
 
+    /// Drop cached decode state and reopen the container reader on the next extract.
+    ///
+    /// Symphonia sessions use this after long seeks or tail scans so the next window decode
+    /// does not inherit a corrupted reader position (common on MKV after backward seeks).
+    fn reset_decode_io(&mut self) -> Result<(), MediaError> {
+        Ok(())
+    }
+
     /// Scan a track by decoding sequentially from the start and invoking `on_bucket` for each
     /// fixed-duration sample bucket (avoids per-window seek on long files).
     ///

@@ -750,6 +750,31 @@ pub fn holdout_window_feasible(
         && window_start_secs + segment_length_secs + offset_secs <= duration_b_secs
 }
 
+/// Map an A-timeline hold-out to the corresponding B window.
+///
+/// Returns `None` when the mapped range is negative or empty — callers must skip the candidate
+/// instead of [`Duration::from_secs_f64`](Duration::from_secs_f64), which panics on negatives.
+pub fn holdout_b_window_for_offset(
+    holdout_on_a: &ClipWindow,
+    segment_length: Duration,
+    offset_secs: f64,
+) -> Option<ClipWindow> {
+    let segment_secs = segment_length.as_secs_f64();
+    if segment_secs <= 0.0 {
+        return None;
+    }
+    let b_start_secs = holdout_on_a.start.as_secs_f64() + offset_secs;
+    let b_end_secs = b_start_secs + segment_secs;
+    if b_start_secs < 0.0 || b_end_secs <= b_start_secs {
+        return None;
+    }
+    Some(ClipWindow::new(
+        secs_to_duration(b_start_secs),
+        secs_to_duration(b_end_secs),
+        holdout_on_a.label,
+    ))
+}
+
 /// Timeline length used to decide whether a hold-out segment fits (symmetric vs query mode).
 pub fn holdout_pick_duration(
     result: &AlignmentResult,
@@ -782,7 +807,7 @@ pub fn mapped_region_holdout_candidates(
     if region_a_len_secs < segment_secs || segment_secs <= 0.0 {
         return Vec::new();
     }
-    let region_duration = Duration::from_secs_f64(region_a_len_secs);
+    let region_duration = Duration::from_secs_f64(region_a_len_secs.max(0.0));
 
     let rebased: Vec<ClipWindow> = discovery_windows
         .iter()
@@ -1214,6 +1239,19 @@ mod tests {
     fn holdout_window_feasible_respects_offset() {
         assert!(holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 120.0));
         assert!(!holdout_window_feasible(10.0, 3.0, 3.0, 120.0, 12.0));
+    }
+
+    #[test]
+    fn holdout_b_window_for_offset_rejects_negative_b_start() {
+        let holdout = ClipWindow::new(
+            Duration::from_secs_f64(8422.029),
+            Duration::from_secs_f64(8425.029),
+            ClipLabel::End,
+        );
+        assert!(holdout_b_window_for_offset(&holdout, Duration::from_secs(3), -8423.0).is_none());
+        let mapped =
+            holdout_b_window_for_offset(&holdout, Duration::from_secs(3), -100.0).expect("mapped");
+        assert!((mapped.start.as_secs_f64() - 8322.029).abs() < 0.001);
     }
 
     #[test]

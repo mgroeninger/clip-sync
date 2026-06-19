@@ -221,6 +221,18 @@ impl MediaSession for SymphoniaMediaSession {
         self.io = Some(MediaIoState::open(&path)?);
         Ok(extent)
     }
+
+    fn reset_decode_io(&mut self) -> Result<(), MediaError> {
+        ensure_regular_file(&self.path)?;
+        if self.io.is_some() {
+            debug!(
+                path = %self.path.display(),
+                "reopening format reader to reset decode state"
+            );
+            self.io = Some(MediaIoState::open(&self.path)?);
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn ensure_track_decoder(

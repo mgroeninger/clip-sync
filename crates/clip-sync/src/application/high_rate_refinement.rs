@@ -9,8 +9,9 @@ use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, R
 use crate::domain::clip_window::ClipLabel;
 use crate::domain::{
     alignment::clip_with_label,
-    anchor_holdout_candidates, holdout_extract_sufficient, holdout_pick_duration,
-    holdout_window_feasible, refresh_alignment_drift_summary, refresh_start_overlap,
+    anchor_holdout_candidates, holdout_b_window_for_offset, holdout_extract_sufficient,
+    holdout_pick_duration, holdout_window_feasible, refresh_alignment_drift_summary,
+    refresh_start_overlap,
     resolve_holdout_candidates, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipWindow,
     HighRateAnchorRefinement, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
@@ -168,6 +169,21 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
         .and_then(|clip| clip.offset_secs)
         .expect("dual anchor requires end offset");
 
+    // End anchor first: session A is still near the end clip from alignment; MKV decoders
+    // often fail on forward seeks deep in the file after a prior backward seek (start anchor).
+    let end_anchor = refine_at_discovery_anchor(
+        input,
+        progress,
+        end_window,
+        end_prior,
+        run,
+        DiscoveryAnchor::End,
+    );
+
+    if end_anchor.applied {
+        apply_anchor_adjustment(result, ClipLabel::End, end_anchor.adjustment_secs);
+    }
+
     let start_anchor = refine_at_discovery_anchor(
         input,
         progress,
@@ -186,19 +202,6 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
             input.extent_a.effective(),
             input.extent_b.effective(),
         );
-    }
-
-    let end_anchor = refine_at_discovery_anchor(
-        input,
-        progress,
-        end_window,
-        end_prior,
-        run,
-        DiscoveryAnchor::End,
-    );
-
-    if end_anchor.applied {
-        apply_anchor_adjustment(result, ClipLabel::End, end_anchor.adjustment_secs);
     }
 
     refresh_alignment_drift_summary(result);
@@ -268,9 +271,11 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
             continue;
         }
 
-        let window_b_start = Duration::from_secs_f64(window_start_secs + offset_secs);
-        let window_b_end =
-            Duration::from_secs_f64(window_start_secs + run.segment_length_secs + offset_secs);
+        let Some(b_window) =
+            holdout_b_window_for_offset(holdout, run.segment_length, offset_secs)
+        else {
+            continue;
+        };
 
         let ra = extract_native_holdout(
             input.session_a,
@@ -278,15 +283,17 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
             holdout,
             progress,
             "Extracting high-rate hold-out (video A)",
+            true,
         );
         match ra {
             Ok(clip) => {
                 let rb = extract_native_holdout(
                     input.session_b,
                     input.track_b,
-                    &ClipWindow::new(window_b_start, window_b_end, holdout.label),
+                    &b_window,
                     progress,
                     "Extracting high-rate hold-out (video B)",
+                    false,
                 );
                 match rb {
                     Ok(other) => {
@@ -404,9 +411,12 @@ fn refine_at_discovery_anchor<MS: MediaSession>(
         let window_start_secs = holdout.start.as_secs_f64();
         last_window_start = window_start_secs;
 
-        let window_b_start = Duration::from_secs_f64(window_start_secs + prior_offset_secs);
-        let window_b_end =
-            Duration::from_secs_f64(window_start_secs + run.segment_length_secs + prior_offset_secs);
+        let Some(b_window) =
+            holdout_b_window_for_offset(holdout, run.segment_length, prior_offset_secs)
+        else {
+            last_failure = "hold-out B window infeasible".into();
+            continue;
+        };
 
         let clip_a = match extract_native_holdout(
             input.session_a,
@@ -414,6 +424,7 @@ fn refine_at_discovery_anchor<MS: MediaSession>(
             holdout,
             progress,
             label_a,
+            true,
         ) {
             Ok(clip) => clip,
             Err(e) => {
@@ -440,9 +451,10 @@ fn refine_at_discovery_anchor<MS: MediaSession>(
         let clip_b = match extract_native_holdout(
             input.session_b,
             input.track_b,
-            &ClipWindow::new(window_b_start, window_b_end, holdout.label),
+            &b_window,
             progress,
             label_b,
+            false,
         ) {
             Ok(clip) => clip,
             Err(e) => {
@@ -539,7 +551,11 @@ fn extract_native_holdout<MS: MediaSession>(
     window: &ClipWindow,
     progress: &dyn ProgressReporter,
     label: &str,
+    reset_decode_io: bool,
 ) -> Result<MonoPcmClip, MediaError> {
+    if reset_decode_io {
+        session.reset_decode_io()?;
+    }
     session.extract_mono(track, window, progress, label)
 }
 
