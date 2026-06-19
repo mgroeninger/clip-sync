@@ -40,8 +40,31 @@ pub fn parse_mux_audio_bitrate_policy(raw: &str) -> Result<MuxAudioBitratePolicy
 
 /// Format a bits-per-second rate for ffmpeg `-b:a` (nearest kilobit, minimum 8k).
 pub fn format_ffmpeg_audio_bitrate(bps: u32) -> String {
-    let kb = ((u64::from(bps) + 500) / 1000).max(8);
+    let kb = bps_to_kbps_rounded(bps);
     format!("{kb}k")
+}
+
+/// Round bits per second to the nearest kilobit (minimum 8).
+fn bps_to_kbps_rounded(bps: u32) -> u64 {
+    ((u64::from(bps) + 500) / 1000).max(8)
+}
+
+/// Human-readable source bitrate for progress logs (`256 kbps`, or `unknown`).
+pub fn format_optional_bitrate_kbps(bps: Option<u32>) -> String {
+    match bps {
+        None | Some(0) => "unknown".into(),
+        Some(bps) => format!("{} kbps", bps_to_kbps_rounded(bps)),
+    }
+}
+
+/// Config keyword for a mux bitrate policy (matches TOML / CLI values).
+pub fn format_mux_bitrate_policy(policy: MuxAudioBitratePolicy) -> String {
+    match policy {
+        MuxAudioBitratePolicy::MatchMin => "match_min".into(),
+        MuxAudioBitratePolicy::MatchA => "match_a".into(),
+        MuxAudioBitratePolicy::Default => "default".into(),
+        MuxAudioBitratePolicy::ExplicitKbps(kbps) => format!("{kbps}k"),
+    }
 }
 
 /// Resolve ffmpeg `-b:a` from policy and patch-time measurements.
@@ -109,6 +132,26 @@ mod tests {
             Some(247_000),
         )
         .is_none());
+    }
+
+    #[test]
+    fn format_optional_bitrate_kbps_rounds_and_handles_missing() {
+        assert_eq!(format_optional_bitrate_kbps(Some(255_998)), "256 kbps");
+        assert_eq!(format_optional_bitrate_kbps(Some(384_124)), "384 kbps");
+        assert_eq!(format_optional_bitrate_kbps(None), "unknown");
+        assert_eq!(format_optional_bitrate_kbps(Some(0)), "unknown");
+    }
+
+    #[test]
+    fn format_mux_bitrate_policy_matches_config_keywords() {
+        assert_eq!(
+            format_mux_bitrate_policy(MuxAudioBitratePolicy::MatchMin),
+            "match_min"
+        );
+        assert_eq!(
+            format_mux_bitrate_policy(MuxAudioBitratePolicy::ExplicitKbps(256)),
+            "256k"
+        );
     }
 
     #[test]

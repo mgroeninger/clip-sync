@@ -8,7 +8,10 @@ use crate::application::ports::PatchedAudioWriter;
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::ports::{MediaMuxer, MuxOptions};
 #[cfg(feature = "ffmpeg-mux")]
-use crate::infrastructure::mux_bitrate::{resolve_mux_audio_bitrate, MuxAudioBitratePolicy};
+use crate::infrastructure::mux_bitrate::{
+    format_mux_bitrate_policy, format_optional_bitrate_kbps, resolve_mux_audio_bitrate,
+    MuxAudioBitratePolicy,
+};
 
 pub struct RepairWriteRequest {
     /// Video A path — used as the video source for mux.
@@ -184,10 +187,10 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
             );
             if let Some(ref bitrate) = mux_options.audio_bitrate {
                 self.progress.phase_verbose(&format!(
-                    "Mux AAC bitrate {bitrate} (A {:?} bps, B {:?} bps, policy {:?})",
-                    result.source_audio_bitrate_a_bps,
-                    result.source_audio_bitrate_b_bps,
-                    output.mux_audio_bitrate_policy,
+                    "Mux AAC bitrate {bitrate} (A {}, B {}, policy {})",
+                    format_optional_bitrate_kbps(result.source_audio_bitrate_a_bps),
+                    format_optional_bitrate_kbps(result.source_audio_bitrate_b_bps),
+                    format_mux_bitrate_policy(output.mux_audio_bitrate_policy),
                 ));
             }
             muxer.mux_video_with_replaced_audio(
