@@ -10,5 +10,5 @@ pub mod corpus_sources;
 // repair's integration tests); the modules themselves live in `test_support` so infrastructure
 // tests don't import through the application layer.
 pub use crate::test_support::audio_fixtures;
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(feature = "test-utils")]
 pub use crate::test_support::ffmpeg_util;

@@ -152,12 +152,16 @@ fn run(
     };
 
     let outcome = locate_query_in_reference(
-        reference,
-        &ref_track,
-        query,
-        &query_track,
-        extent_reference,
-        extent_query,
+        LocateQueryFile {
+            session: reference,
+            track: &ref_track,
+            extent: extent_reference,
+        },
+        LocateQueryFile {
+            session: query,
+            track: &query_track,
+            extent: extent_query,
+        },
         config,
         deps,
         &FakeProgressReporter,

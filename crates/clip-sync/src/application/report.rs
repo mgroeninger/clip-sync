@@ -740,17 +740,20 @@ mod tests {
     }
 
     fn sample_localization() -> QueryLocalization {
-        QueryLocalization::from_anchor(
-            2700.0,
-            480.0,
+        QueryLocalization::from_a_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: 2700.0,
+                query_duration_secs: 480.0,
+                winning_window_start_secs: 2640.0,
+                winning_window_end_secs: 3120.0,
+                confidence: 0.91,
+                ambiguous: false,
+                windows_scored: 60,
+                search_stride_secs: 60.0,
+                skip_reason: None,
+            },
             crate::domain::MediaExtent::from_declared(std::time::Duration::from_secs(3600)),
             crate::domain::MediaExtent::from_declared(std::time::Duration::from_secs(480)),
-            0.91,
-            false,
-            60.0,
-            2640.0,
-            3120.0,
-            60,
         )
     }
 

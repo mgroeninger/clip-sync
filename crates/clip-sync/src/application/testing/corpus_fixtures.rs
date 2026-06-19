@@ -143,9 +143,6 @@ pub struct CorpusCase {
     #[serde(default)]
     pub expect_offsets_consistent: Option<bool>,
     #[serde(default)]
-    #[allow(dead_code)]
-    pub expect_exit_code: Option<u32>,
-    #[serde(default)]
     pub requires_ffmpeg: bool,
     #[serde(default)]
     pub requires_he_aac: bool,

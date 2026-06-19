@@ -29,7 +29,7 @@ pub struct RepairWriteRequest {
 
 /// Output paths for a repair write pass (patch request is handled separately).
 pub(crate) struct RepairFileOutput {
-    #[cfg_attr(not(feature = "ffmpeg-mux"), allow(dead_code))]
+    #[cfg(feature = "ffmpeg-mux")]
     source_video: PathBuf,
     wav_path: Option<PathBuf>,
     #[cfg(feature = "ffmpeg-mux")]
@@ -75,15 +75,12 @@ impl<'r, MR: MediaReader, PW: PatchedAudioWriter> RepairVideos<'r, MR, PW> {
     #[cfg(not(feature = "ffmpeg-mux"))]
     pub fn execute(&self, request: RepairWriteRequest) -> Result<PatchAudioResult, RepairError> {
         let RepairWriteRequest {
-            source_video,
+            source_video: _,
             patch_request,
             crossfade_ms,
             wav_path,
         } = request;
-        let file_output = RepairFileOutput {
-            source_video,
-            wav_path,
-        };
+        let file_output = RepairFileOutput { wav_path };
 
         let patch_result = PatchAudio::new(self.media_reader, self.progress)
             .execute(patch_request, crossfade_ms)?;
@@ -346,6 +343,7 @@ mod tests {
 
     fn file_output(wav_path: Option<PathBuf>) -> RepairFileOutput {
         RepairFileOutput {
+            #[cfg(feature = "ffmpeg-mux")]
             source_video: PathBuf::from("a.mp4"),
             wav_path,
             #[cfg(feature = "ffmpeg-mux")]

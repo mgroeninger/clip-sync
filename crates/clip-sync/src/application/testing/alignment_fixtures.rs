@@ -1,7 +1,4 @@
 #[cfg(any(test, feature = "test-utils"))]
-use std::time::Duration;
-
-#[cfg(any(test, feature = "test-utils"))]
 use crate::domain::{
     AlignmentResult, ClipLabel, ClipMatch, HighRateRefinement, OffsetVerification,
 };
@@ -46,22 +43,6 @@ impl AlignmentResultBuilder {
                 end_clip_anchor: None,
             },
         }
-    }
-
-    pub fn with_offset(mut self, recommended_offset_secs: Option<f64>) -> Self {
-        let aligned = recommended_offset_secs.is_some();
-        self.result.recommended_offset_secs = recommended_offset_secs;
-        self.result.start_aligned = aligned;
-        if let Some(start) = self
-            .result
-            .clips
-            .iter_mut()
-            .find(|clip| clip.label == ClipLabel::Start)
-        {
-            start.aligned = aligned;
-            start.offset_secs = recommended_offset_secs;
-        }
-        self
     }
 
     pub fn with_clips(mut self, clips: Vec<ClipMatch>) -> Self {
@@ -114,9 +95,4 @@ pub fn start_clip_match(
         video_b_window_start_secs: None,
         video_b_window_end_secs: None,
     }
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub fn mins(m: u64) -> Duration {
-    Duration::from_secs(m * 60)
 }

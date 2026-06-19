@@ -6,7 +6,6 @@ use crate::test_support::ffmpeg_util;
 
 #[derive(Debug, Deserialize)]
 pub struct CorpusSourcesManifest {
-    pub version: u32,
     #[serde(default)]
     pub source: Vec<CorpusSource>,
 }
@@ -15,17 +14,6 @@ pub struct CorpusSourcesManifest {
 pub struct CorpusSource {
     pub id: String,
     pub filename: String,
-    #[allow(dead_code)]
-    pub url: String,
-    #[allow(dead_code)]
-    pub commons_page: String,
-    #[allow(dead_code)]
-    pub license: String,
-    #[allow(dead_code)]
-    pub author: String,
-    #[allow(dead_code)]
-    pub title: String,
-    pub sha256: String,
 }
 
 pub fn corpus_root() -> PathBuf {

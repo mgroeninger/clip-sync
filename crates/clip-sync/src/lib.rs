@@ -29,7 +29,8 @@ pub use domain::{
     format_timestamp, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipMatch,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
-    MultiChannelPcm, OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
+    MultiChannelPcm, OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome,
+    RepetitionFinding, TimelineOverlap,
 };
 pub use domain::policies::{
     attach_symmetric_planning_report_metadata, select_best_track, select_track_for_reference,

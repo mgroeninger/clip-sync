@@ -35,6 +35,7 @@ pub enum ChirpDelayOn {
 }
 
 /// Mono WAV using the same 300–700 Hz sweep as committed corpus chirp fixtures (`chirp_a.wav`).
+#[cfg(feature = "ac3")]
 pub fn write_corpus_chirp_wav(path: &Path, sample_rate: u32, total_secs: u32) {
     let total_samples = u64::from(sample_rate) * u64::from(total_secs);
     write_mono_wav(

@@ -35,13 +35,6 @@ impl FakePcmCorrelator {
     pub fn new() -> Self {
         Self { result: None }
     }
-
-    /// Returns a fixed lag and magnitude regardless of input.
-    pub fn with_lag(lag_samples: isize, magnitude: f64) -> Self {
-        Self {
-            result: Some((lag_samples, magnitude)),
-        }
-    }
 }
 
 impl Default for FakePcmCorrelator {

@@ -807,8 +807,10 @@ fn patch_audio_skips_when_structure_trust_disabled_and_waveform_disagrees() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 2200.0, 16_000.0);
 
-    let mut options = PatchTestOptions::default();
-    options.disable_structure_trust = true;
+    let options = PatchTestOptions {
+        disable_structure_trust: true,
+        ..Default::default()
+    };
 
     let result = run_patch(
         patch_request_with_options(
@@ -879,12 +881,14 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         ..report
     };
 
-    let mut strict = PatchTestOptions::default();
-    strict.short_gap_one_strong_seam_fallback = false;
-    strict.gap_end_extend_on_post_seam_fail = false;
-    strict.gap_start_extend_on_pre_seam_fail = false;
-    strict.disable_structure_trust = true;
-    strict.partial_structure_waveform_soften = 1.0;
+    let strict = PatchTestOptions {
+        short_gap_one_strong_seam_fallback: false,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
 
     let skipped = run_patch(
         patch_request_with_options(report.clone(), false, 2.0, 0.12, strict),
@@ -896,11 +900,13 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         skipped.summary.gaps
     );
 
-    let mut relaxed = PatchTestOptions::default();
-    relaxed.gap_end_extend_on_post_seam_fail = false;
-    relaxed.gap_start_extend_on_pre_seam_fail = false;
-    relaxed.disable_structure_trust = true;
-    relaxed.partial_structure_waveform_soften = 1.0;
+    let relaxed = PatchTestOptions {
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
 
     let patched = run_patch(
         patch_request_with_options(report, false, 2.0, 0.12, relaxed),
@@ -983,12 +989,14 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         ..report
     };
 
-    let mut no_extend = PatchTestOptions::default();
-    no_extend.gap_end_extend_on_post_seam_fail = false;
-    no_extend.gap_start_extend_on_pre_seam_fail = false;
-    no_extend.short_gap_one_strong_seam_fallback = false;
-    no_extend.disable_structure_trust = true;
-    no_extend.partial_structure_waveform_soften = 1.0;
+    let no_extend = PatchTestOptions {
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        short_gap_one_strong_seam_fallback: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
 
     let skipped = run_patch(
         patch_request_with_options(report.clone(), false, 5.0, 0.35, no_extend),
@@ -1000,10 +1008,12 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         skipped.summary.gaps
     );
 
-    let mut with_extend = PatchTestOptions::default();
-    with_extend.short_gap_one_strong_seam_fallback = false;
-    with_extend.disable_structure_trust = true;
-    with_extend.partial_structure_waveform_soften = 1.0;
+    let with_extend = PatchTestOptions {
+        short_gap_one_strong_seam_fallback: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
 
     let patched = run_patch(
         patch_request_with_options(report, false, 5.0, 0.35, with_extend),
@@ -1077,9 +1087,11 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         vec![gap],
     );
 
-    let mut recommended_opts = PatchTestOptions::default();
-    recommended_opts.short_gap_one_strong_seam_fallback = false;
-    recommended_opts.short_gap_mean_correlation_secs = 0.5;
+    let recommended_opts = PatchTestOptions {
+        short_gap_one_strong_seam_fallback: false,
+        short_gap_mean_correlation_secs: 0.5,
+        ..Default::default()
+    };
 
     let recommended = run_patch(
         patch_request_with_options(
@@ -1097,10 +1109,12 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         recommended.summary.gaps
     );
 
-    let mut interpolated = PatchTestOptions::default();
-    interpolated.fill_offset_mode = FillOffsetMode::Interpolated;
-    interpolated.short_gap_one_strong_seam_fallback = false;
-    interpolated.short_gap_mean_correlation_secs = 0.5;
+    let interpolated = PatchTestOptions {
+        fill_offset_mode: FillOffsetMode::Interpolated,
+        short_gap_one_strong_seam_fallback: false,
+        short_gap_mean_correlation_secs: 0.5,
+        ..Default::default()
+    };
 
     let patched = run_patch(
         patch_request_with_options(report, false, 5.0, 0.35, interpolated),

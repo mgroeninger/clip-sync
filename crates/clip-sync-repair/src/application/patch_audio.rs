@@ -8,7 +8,8 @@ use clip_sync::{
 };
 
 use crate::application::patch_region::{
-    evaluate_seam_gate, retry_waveform_seam_extensions, SeamGateFailure, SeamGateOutcome,
+    evaluate_seam_gate, retry_waveform_seam_extensions, SeamExtensionRetry, SeamGateFailure,
+    SeamGateOutcome,
     SeamGateParams,
 };
 use crate::application::error::RepairError;
@@ -634,10 +635,12 @@ fn prepare_region_patch(
                     gap_offset_secs,
                     &seam_params,
                     fail,
-                    max_extend_frames,
-                    step_frames.max(1),
-                    gap_end_extend_on_post_seam_fail,
-                    gap_start_extend_on_pre_seam_fail,
+                    SeamExtensionRetry {
+                        max_extend_frames,
+                        step_frames: step_frames.max(1),
+                        gap_end_extend_on_post_seam_fail,
+                        gap_start_extend_on_pre_seam_fail,
+                    },
                 ) {
                     Ok(outcome) => outcome,
                     Err(retry_fail) => {

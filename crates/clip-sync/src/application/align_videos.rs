@@ -5,7 +5,7 @@ use crate::application::config::{AlignConfig, AlignmentMode};
 use crate::application::error::{AppError, FingerprintError};
 use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
 use crate::application::locate_query::{
-    locate_query_in_reference, resolve_alignment_mode, LocateQueryDeps,
+    locate_query_in_reference, resolve_alignment_mode, LocateQueryDeps, LocateQueryFile,
 };
 use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
@@ -93,10 +93,14 @@ where
                 self.align_query_reference(
                     &mut session_a,
                     &mut session_b,
-                    track_a,
-                    extent_a,
-                    track_b,
-                    extent_b,
+                    ResolvedMediaSide {
+                        track: track_a,
+                        extent: extent_a,
+                    },
+                    ResolvedMediaSide {
+                        track: track_b,
+                        extent: extent_b,
+                    },
                     &request,
                 )?
             }
@@ -280,19 +284,16 @@ where
 
     /// Query-reference path: localize the shorter file against the longer and build a synthetic
     /// single-clip `AlignmentResult` in A/B repair roles.
-    #[allow(clippy::too_many_arguments)]
     fn align_query_reference(
         &self,
         session_a: &mut MR::Session,
         session_b: &mut MR::Session,
-        track_a: AudioTrack,
-        extent_a: MediaExtent,
-        track_b: AudioTrack,
-        extent_b: MediaExtent,
+        side_a: ResolvedMediaSide,
+        side_b: ResolvedMediaSide,
         request: &AlignVideosRequest,
     ) -> Result<AlignmentOutcome, AppError> {
         self.progress.phase("Localizing clip against reference...");
-        let reference_is_a = extent_a.effective() >= extent_b.effective();
+        let reference_is_a = side_a.extent.effective() >= side_b.extent.effective();
         let deps = LocateQueryDeps {
             fingerprinter: self.fingerprinter,
             aligner: self.aligner,
@@ -301,24 +302,32 @@ where
         };
         let search_outcome = if reference_is_a {
             locate_query_in_reference(
-                session_a,
-                &track_a,
-                session_b,
-                &track_b,
-                extent_a,
-                extent_b,
+                LocateQueryFile {
+                    session: session_a,
+                    track: &side_a.track,
+                    extent: side_a.extent,
+                },
+                LocateQueryFile {
+                    session: session_b,
+                    track: &side_b.track,
+                    extent: side_b.extent,
+                },
                 &request.config,
                 deps,
                 self.progress,
             )
         } else {
             locate_query_in_reference(
-                session_b,
-                &track_b,
-                session_a,
-                &track_a,
-                extent_b,
-                extent_a,
+                LocateQueryFile {
+                    session: session_b,
+                    track: &side_b.track,
+                    extent: side_b.extent,
+                },
+                LocateQueryFile {
+                    session: session_a,
+                    track: &side_a.track,
+                    extent: side_a.extent,
+                },
                 &request.config,
                 deps,
                 self.progress,
@@ -328,8 +337,8 @@ where
         let localization = QueryLocalization::from_reference_outcome(
             search_outcome,
             reference_is_a,
-            extent_a,
-            extent_b,
+            side_a.extent,
+            side_b.extent,
         );
 
         let (win_start, win_end) = winning_window_on_a_timeline(&localization);
@@ -342,11 +351,11 @@ where
             build_query_alignment_result(localization, request.config.alignment.query_min_match_score);
         Ok(AlignmentOutcome {
             result,
-            track_a,
-            track_b,
+            track_a: side_a.track,
+            track_b: side_b.track,
             discovery_windows: vec![winning],
-            extent_a,
-            extent_b,
+            extent_a: side_a.extent,
+            extent_b: side_b.extent,
         })
     }
 
@@ -372,23 +381,22 @@ where
         let plan_ctx = ClipPlanFormatContext {
             end_clip_anchor: planning.end_clip_anchor,
         };
-
+        let side = ClipExtractionSideContext {
+            label: "video A",
+            timeline_end: extent_a.effective(),
+            plan: &plan_ctx,
+            progress: &ExtractionProgressScope::with_stage_label(
+                self.progress,
+                "Aligning audio fingerprints (video A)...".into(),
+            ),
+        };
         let extracted_a = self.extract_clips_at_windows(
             session_a,
             &track_a,
             &extent_a,
             &windows_a,
             &request.config,
-            "video A",
-            &ClipPlanSideContext {
-                label: "video A",
-                timeline_end: extent_a.effective(),
-            },
-            &plan_ctx,
-            &ExtractionProgressScope::with_stage_label(
-                self.progress,
-                "Aligning audio fingerprints (video A)...".into(),
-            ),
+            &side,
         )?;
         let extracted_b = self.extract_clips_at_windows(
             session_b,
@@ -396,16 +404,15 @@ where
             &extent_b,
             &windows_b,
             &request.config,
-            "video B",
-            &ClipPlanSideContext {
+            &ClipExtractionSideContext {
                 label: "video B",
                 timeline_end: extent_b.effective(),
+                plan: &plan_ctx,
+                progress: &ExtractionProgressScope::with_stage_label(
+                    self.progress,
+                    "Aligning audio fingerprints (video B)...".into(),
+                ),
             },
-            &plan_ctx,
-            &ExtractionProgressScope::with_stage_label(
-                self.progress,
-                "Aligning audio fingerprints (video B)...".into(),
-            ),
         )?;
         let result = self.align_extracted_pair(&extracted_a, &extracted_b, &request.config)?;
         Ok(AlignmentOutcome {
@@ -478,13 +485,12 @@ where
                     &extent_a,
                     &windows_a,
                     &request.config,
-                    "video A",
-                    &ClipPlanSideContext {
+                    &ClipExtractionSideContext {
                         label: "video A",
                         timeline_end: extent_a.effective(),
+                        plan: &plan_ctx,
+                        progress: &extraction,
                     },
-                    &plan_ctx,
-                    &extraction,
                 )?;
                 let extracted_b = self.extract_clips_at_windows(
                     session_b,
@@ -492,13 +498,12 @@ where
                     &extent_b,
                     &windows_b,
                     &request.config,
-                    "video B",
-                    &ClipPlanSideContext {
+                    &ClipExtractionSideContext {
                         label: "video B",
                         timeline_end: extent_b.effective(),
+                        plan: &plan_ctx,
+                        progress: &extraction,
                     },
-                    &plan_ctx,
-                    &extraction,
                 )?;
                 let result =
                     self.align_extracted_pair(&extracted_a, &extracted_b, &search_config)?;
@@ -788,42 +793,6 @@ where
         Ok(result)
     }
 
-    /// Single-file planning: `clip_windows_with_options` + [`extract_clips_at_windows`].
-    #[allow(dead_code)]
-    fn extract_clips(
-        &self,
-        session: &mut MR::Session,
-        plan: &crate::domain::ClipPlan,
-        config: &AlignConfig,
-        label: &str,
-        track: Option<&AudioTrack>,
-        extraction: &ExtractionProgressScope<'_>,
-    ) -> Result<ExtractedClips, AppError> {
-        let (track, extent) = self.resolve_track_extent(session, plan, config, track)?;
-        self.log_selected_track(label, &track);
-        self.log_decodable_extent(label, &extent);
-
-        let planning = config.alignment.clip_planning_options();
-        let windows = clip_windows_with_options(&extent, plan, planning)?;
-        let plan_ctx = ClipPlanFormatContext {
-            end_clip_anchor: planning.end_clip_anchor,
-        };
-        self.extract_clips_at_windows(
-            session,
-            &track,
-            &extent,
-            &windows,
-            config,
-            label,
-            &ClipPlanSideContext {
-                label,
-                timeline_end: extent.effective(),
-            },
-            &plan_ctx,
-            extraction,
-        )
-    }
-
     fn extract_clips_at_windows(
         &self,
         session: &mut MR::Session,
@@ -831,13 +800,10 @@ where
         extent: &MediaExtent,
         windows: &[ClipWindow],
         config: &AlignConfig,
-        label: &str,
-        side: &ClipPlanSideContext<'_>,
-        plan_ctx: &ClipPlanFormatContext,
-        extraction: &ExtractionProgressScope<'_>,
+        side: &ClipExtractionSideContext<'_>,
     ) -> Result<ExtractedClips, AppError> {
         self.progress
-            .phase_verbose(&format_clip_plan(side, windows, plan_ctx));
+            .phase_verbose(&format_clip_plan(side, windows));
 
         let timeline_end = windows
             .iter()
@@ -845,7 +811,7 @@ where
             .map(|window| window.end)
             .unwrap_or_else(|| extent.effective());
 
-        extraction.register_batch(windows.len() as u64);
+        side.progress.register_batch(windows.len() as u64);
 
         let mut extract_order: Vec<usize> = (0..windows.len()).collect();
         if windows.len() > 1 {
@@ -853,8 +819,9 @@ where
             let chronological: Vec<usize> = (0..windows.len()).collect();
             if extract_order != chronological {
                 self.progress.phase_verbose(&format!(
-                    "Extracting {} clip(s) in chronological order ({label})",
-                    windows.len()
+                    "Extracting {} clip(s) in chronological order ({})",
+                    windows.len(),
+                    side.label
                 ));
             }
         }
@@ -868,12 +835,13 @@ where
                 timeline_end,
             );
             let progress_label = format!(
-                "Extracting clip {}/{} ({label}, {})",
+                "Extracting clip {}/{} ({}, {})",
                 step + 1,
                 windows.len(),
+                side.label,
                 format_duration(window.duration())
             );
-            let clip_progress = extraction.for_clip(step as u64);
+            let clip_progress = side.progress.for_clip(step as u64);
             let mut clip = session.extract_mono(
                 track,
                 &extract_window,
@@ -886,7 +854,7 @@ where
             raw_clips[index] = Some(clip);
         }
 
-        extraction.finish_batch(windows.len() as u64);
+        side.progress.finish_batch(windows.len() as u64);
 
         let raw_clips: Vec<MonoPcmClip> = raw_clips
             .into_iter()
@@ -927,10 +895,18 @@ struct AlignmentOutcome {
     extent_b: MediaExtent,
 }
 
-/// Per-file context for verbose clip-plan lines (symmetric paired extraction).
-struct ClipPlanSideContext<'a> {
+/// Resolved track + decodable extent for one input file.
+struct ResolvedMediaSide {
+    track: AudioTrack,
+    extent: MediaExtent,
+}
+
+/// Per-file context for paired clip planning, extraction, and verbose plan lines.
+struct ClipExtractionSideContext<'a> {
     label: &'a str,
     timeline_end: Duration,
+    plan: &'a ClipPlanFormatContext,
+    progress: &'a ExtractionProgressScope<'a>,
 }
 
 struct ClipPlanFormatContext {
@@ -1096,12 +1072,8 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
-fn format_clip_plan(
-    side: &ClipPlanSideContext<'_>,
-    windows: &[ClipWindow],
-    ctx: &ClipPlanFormatContext,
-) -> String {
-    let anchor_note = match ctx.end_clip_anchor {
+fn format_clip_plan(side: &ClipExtractionSideContext<'_>, windows: &[ClipWindow]) -> String {
+    let anchor_note = match side.plan.end_clip_anchor {
         EndClipAnchor::SharedTimeline => "shared timeline anchor",
         EndClipAnchor::FileTail => "file tail anchor",
     };
@@ -1116,7 +1088,7 @@ fn format_clip_plan(
                 clip_label_name(window.label),
                 format_duration(window.duration())
             );
-            if ctx.end_clip_anchor == EndClipAnchor::SharedTimeline
+            if side.plan.end_clip_anchor == EndClipAnchor::SharedTimeline
                 && window.label == ClipLabel::End
                 && window.end + Duration::from_secs(1) < side.timeline_end
             {
@@ -2768,7 +2740,6 @@ mod tests {
                 check_clip_repetition: false,
                 ..Default::default()
             },
-            ..Default::default()
         }
     }
 

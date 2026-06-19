@@ -47,7 +47,8 @@ pub use media_extent::MediaExtent;
 pub use policies::{
     attach_symmetric_planning_report_metadata, clip_windows_paired, clip_windows_with_options,
     end_clip_extract_unreliable, holdout_pick_duration,
-    holdout_extract_sufficient, holdout_window_centered_in, holdout_window_feasible,
+    holdout_extract_sufficient, holdout_window_centered_in, anchor_holdout_candidates,
+    holdout_window_feasible,
     interior_overlaps_fixed_clip, interior_windows_along_timeline,
     parallel_holdout_window_candidates, resolve_holdout_candidates,
     should_use_query_mode, truncate_padded_tail,

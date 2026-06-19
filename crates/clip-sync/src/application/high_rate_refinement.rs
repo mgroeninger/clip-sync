@@ -9,10 +9,10 @@ use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, R
 use crate::domain::clip_window::ClipLabel;
 use crate::domain::{
     alignment::clip_with_label,
-    holdout_pick_duration, holdout_window_centered_in, holdout_window_feasible,
-    refresh_alignment_drift_summary, refresh_start_overlap, resolve_holdout_candidates,
-    AlignmentModeUsed, AlignmentResult, AudioTrack, ClipWindow, HighRateAnchorRefinement,
-    HighRateRefinement, MediaExtent, MonoPcmClip,
+    anchor_holdout_candidates, holdout_extract_sufficient, holdout_pick_duration,
+    holdout_window_feasible, refresh_alignment_drift_summary, refresh_start_overlap,
+    resolve_holdout_candidates, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipWindow,
+    HighRateAnchorRefinement, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
 
 pub struct HighRateRefinementInput<'a, MS: MediaSession> {
@@ -67,32 +67,75 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
 
     let dur_a = input.extent_a.effective().as_secs_f64();
     let dur_b = input.extent_b.effective().as_secs_f64();
+    let run = HighRateRunParams::new(alignment, segment_length, dur_a, dur_b);
 
     if dual_anchor_eligible(result, input.discovery_windows) {
         apply_dual_anchor_high_rate_refinement(
             input,
-            alignment,
             result,
             progress,
             recommended_offset_secs,
-            segment_length,
-            dur_a,
-            dur_b,
+            &run,
         );
         return;
     }
 
     apply_single_holdout_high_rate_refinement(
         input,
-        alignment,
         result,
         progress,
         recommended_offset_secs,
-        segment_length,
-        segment_length_secs,
-        dur_a,
-        dur_b,
+        &run,
     );
+}
+
+struct HighRateRunParams {
+    segment_length: Duration,
+    segment_length_secs: f64,
+    max_adjustment_secs: f64,
+    min_holdout_decode_fraction: f64,
+    max_holdout_decode_skips: u32,
+    dur_a: f64,
+    dur_b: f64,
+}
+
+impl HighRateRunParams {
+    fn new(
+        alignment: &AlignmentConfig,
+        segment_length: Duration,
+        dur_a: f64,
+        dur_b: f64,
+    ) -> Self {
+        Self {
+            segment_length,
+            segment_length_secs: segment_length.as_secs_f64(),
+            max_adjustment_secs: alignment.high_rate_refine_max_adjustment_secs,
+            min_holdout_decode_fraction: alignment.min_end_clip_decode_fraction,
+            max_holdout_decode_skips: alignment.max_end_clip_decode_skips,
+            dur_a,
+            dur_b,
+        }
+    }
+}
+
+enum DiscoveryAnchor {
+    Start,
+    End,
+}
+
+impl DiscoveryAnchor {
+    fn extract_labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Start => (
+                "Extracting high-rate hold-out (video A, start anchor)",
+                "Extracting high-rate hold-out (video B, start anchor)",
+            ),
+            Self::End => (
+                "Extracting high-rate hold-out (video A, end anchor)",
+                "Extracting high-rate hold-out (video B, end anchor)",
+            ),
+        }
+    }
 }
 
 fn dual_anchor_eligible(result: &AlignmentResult, discovery_windows: &[ClipWindow]) -> bool {
@@ -110,17 +153,11 @@ fn dual_anchor_eligible(result: &AlignmentResult, discovery_windows: &[ClipWindo
 
 fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
     input: &mut HighRateRefinementInput<'_, MS>,
-    alignment: &AlignmentConfig,
     result: &mut AlignmentResult,
     progress: &dyn ProgressReporter,
     recommended_offset_secs: f64,
-    segment_length: Duration,
-    dur_a: f64,
-    dur_b: f64,
+    run: &HighRateRunParams,
 ) {
-    let segment_length_secs = segment_length.as_secs_f64();
-    let max_adjustment = alignment.high_rate_refine_max_adjustment_secs;
-
     let start_window = discovery_window(input.discovery_windows, ClipLabel::Start);
     let end_window = discovery_window(input.discovery_windows, ClipLabel::End);
 
@@ -136,13 +173,8 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
         progress,
         start_window,
         start_prior,
-        segment_length,
-        segment_length_secs,
-        max_adjustment,
-        dur_a,
-        dur_b,
-        "Extracting high-rate hold-out (video A, start anchor)",
-        "Extracting high-rate hold-out (video B, start anchor)",
+        run,
+        DiscoveryAnchor::Start,
     );
 
     if start_anchor.applied {
@@ -161,13 +193,8 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
         progress,
         end_window,
         end_prior,
-        segment_length,
-        segment_length_secs,
-        max_adjustment,
-        dur_a,
-        dur_b,
-        "Extracting high-rate hold-out (video A, end anchor)",
-        "Extracting high-rate hold-out (video B, end anchor)",
+        run,
+        DiscoveryAnchor::End,
     );
 
     if end_anchor.applied {
@@ -201,28 +228,24 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
 
 fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
     input: &mut HighRateRefinementInput<'_, MS>,
-    alignment: &AlignmentConfig,
     result: &mut AlignmentResult,
     progress: &dyn ProgressReporter,
     offset_secs: f64,
-    segment_length: Duration,
-    segment_length_secs: f64,
-    dur_a: f64,
-    dur_b: f64,
+    run: &HighRateRunParams,
 ) {
     let candidates = resolve_holdout_candidates(
         result,
         input.extent_a,
         input.extent_b,
         input.discovery_windows,
-        segment_length,
+        run.segment_length,
         offset_secs,
     );
     if candidates.is_empty() {
         debug!("high-rate refine skipped: hold-out window unavailable");
         result.high_rate_refinement = Some(skipped_refinement(
             0.0,
-            segment_length_secs,
+            run.segment_length_secs,
             "hold-out window unavailable".into(),
         ));
         return;
@@ -237,17 +260,17 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
         let window_start_secs = holdout.start.as_secs_f64();
         if !holdout_window_feasible(
             window_start_secs,
-            segment_length_secs,
+            run.segment_length_secs,
             offset_secs,
-            dur_a,
-            dur_b,
+            run.dur_a,
+            run.dur_b,
         ) {
             continue;
         }
 
         let window_b_start = Duration::from_secs_f64(window_start_secs + offset_secs);
         let window_b_end =
-            Duration::from_secs_f64(window_start_secs + segment_length_secs + offset_secs);
+            Duration::from_secs_f64(window_start_secs + run.segment_length_secs + offset_secs);
 
         let ra = extract_native_holdout(
             input.session_a,
@@ -293,7 +316,7 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
         _ => {
             result.high_rate_refinement = Some(skipped_refinement(
                 chosen_start_secs,
-                segment_length_secs,
+                run.segment_length_secs,
                 last_failure,
             ));
             return;
@@ -303,14 +326,14 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
     let Some((adjustment_secs, correlation_peak)) = refine_holdout_segment_lag(
         &clip_a,
         &clip_b,
-        alignment.high_rate_refine_max_adjustment_secs,
+        run.max_adjustment_secs,
         input.resampler,
         input.correlator,
     ) else {
         debug!("high-rate refine skipped: correlation did not produce adjustment");
         result.high_rate_refinement = Some(HighRateRefinement {
             segment_start_secs: chosen_start_secs,
-            segment_length_secs,
+            segment_length_secs: run.segment_length_secs,
             adjustment_secs: 0.0,
             correlation_peak: 0.0,
             applied: false,
@@ -337,7 +360,7 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
     );
     result.high_rate_refinement = Some(HighRateRefinement {
         segment_start_secs: chosen_start_secs,
-        segment_length_secs,
+        segment_length_secs: run.segment_length_secs,
         adjustment_secs,
         correlation_peak,
         applied: true,
@@ -353,113 +376,128 @@ fn refine_at_discovery_anchor<MS: MediaSession>(
     progress: &dyn ProgressReporter,
     discovery_window: &ClipWindow,
     prior_offset_secs: f64,
-    segment_length: Duration,
-    segment_length_secs: f64,
-    max_adjustment_secs: f64,
-    dur_a: f64,
-    dur_b: f64,
-    label_a: &str,
-    label_b: &str,
+    run: &HighRateRunParams,
+    anchor: DiscoveryAnchor,
 ) -> HighRateAnchorRefinement {
-    let Some(holdout) = holdout_window_centered_in(discovery_window, segment_length) else {
+    let (label_a, label_b) = anchor.extract_labels();
+    let candidates = anchor_holdout_candidates(
+        discovery_window,
+        run.segment_length,
+        prior_offset_secs,
+        run.dur_a,
+        run.dur_b,
+    );
+    if candidates.is_empty() {
         return skipped_anchor(
             0.0,
-            segment_length_secs,
+            run.segment_length_secs,
             prior_offset_secs,
             "hold-out does not fit discovery window".into(),
         );
-    };
-
-    let window_start_secs = holdout.start.as_secs_f64();
-    if !holdout_window_feasible(
-        window_start_secs,
-        segment_length_secs,
-        prior_offset_secs,
-        dur_a,
-        dur_b,
-    ) {
-        return skipped_anchor(
-            window_start_secs,
-            segment_length_secs,
-            prior_offset_secs,
-            "hold-out window infeasible on A or B".into(),
-        );
     }
 
-    let window_b_start = Duration::from_secs_f64(window_start_secs + prior_offset_secs);
-    let window_b_end =
-        Duration::from_secs_f64(window_start_secs + segment_length_secs + prior_offset_secs);
+    let mut last_failure =
+        String::from("hold-out extract failed for all anchor candidates");
+    let mut last_window_start = 0.0;
 
-    let clip_a = match extract_native_holdout(
-        input.session_a,
-        input.track_a,
-        &holdout,
-        progress,
-        label_a,
-    ) {
-        Ok(clip) => clip,
-        Err(e) => {
-            debug_media_error(&e, "dual high-rate hold-out extract A failed");
-            return skipped_anchor(
+    for holdout in &candidates {
+        let window_start_secs = holdout.start.as_secs_f64();
+        last_window_start = window_start_secs;
+
+        let window_b_start = Duration::from_secs_f64(window_start_secs + prior_offset_secs);
+        let window_b_end =
+            Duration::from_secs_f64(window_start_secs + run.segment_length_secs + prior_offset_secs);
+
+        let clip_a = match extract_native_holdout(
+            input.session_a,
+            input.track_a,
+            holdout,
+            progress,
+            label_a,
+        ) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug_media_error(&e, "dual high-rate hold-out extract A failed, trying next");
+                last_failure = format!("{e}");
+                continue;
+            }
+        };
+
+        if !holdout_extract_sufficient(
+            &clip_a,
+            run.segment_length,
+            run.min_holdout_decode_fraction,
+            run.max_holdout_decode_skips,
+        ) {
+            last_failure = "hold-out extract A shorter than segment".into();
+            debug!(
                 window_start_secs,
-                segment_length_secs,
-                prior_offset_secs,
-                format!("{e}"),
+                "dual high-rate: extract A truncated, trying next candidate"
             );
+            continue;
         }
-    };
 
-    let clip_b = match extract_native_holdout(
-        input.session_b,
-        input.track_b,
-        &ClipWindow::new(window_b_start, window_b_end, holdout.label),
-        progress,
-        label_b,
-    ) {
-        Ok(clip) => clip,
-        Err(e) => {
-            debug_media_error(&e, "dual high-rate hold-out extract B failed");
-            return skipped_anchor(
+        let clip_b = match extract_native_holdout(
+            input.session_b,
+            input.track_b,
+            &ClipWindow::new(window_b_start, window_b_end, holdout.label),
+            progress,
+            label_b,
+        ) {
+            Ok(clip) => clip,
+            Err(e) => {
+                debug_media_error(&e, "dual high-rate hold-out extract B failed, trying next");
+                last_failure = format!("{e}");
+                continue;
+            }
+        };
+
+        if !holdout_extract_sufficient(
+            &clip_b,
+            run.segment_length,
+            run.min_holdout_decode_fraction,
+            run.max_holdout_decode_skips,
+        ) {
+            last_failure = "hold-out extract B shorter than segment".into();
+            debug!(
                 window_start_secs,
-                segment_length_secs,
-                prior_offset_secs,
-                format!("{e}"),
+                "dual high-rate: extract B truncated, trying next candidate"
             );
+            continue;
         }
-    };
 
-    let Some((adjustment_secs, correlation_peak)) = refine_holdout_segment_lag(
-        &clip_a,
-        &clip_b,
-        max_adjustment_secs,
-        input.resampler,
-        input.correlator,
-    ) else {
+        let Some((adjustment_secs, correlation_peak)) = refine_holdout_segment_lag(
+            &clip_a,
+            &clip_b,
+            run.max_adjustment_secs,
+            input.resampler,
+            input.correlator,
+        ) else {
+            last_failure = "correlation produced no usable adjustment".into();
+            continue;
+        };
+
         return HighRateAnchorRefinement {
             segment_start_secs: window_start_secs,
-            segment_length_secs,
+            segment_length_secs: run.segment_length_secs,
             offset_before_secs: prior_offset_secs,
-            adjustment_secs: 0.0,
-            correlation_peak: 0.0,
-            applied: false,
+            adjustment_secs,
+            correlation_peak,
+            applied: true,
             skipped: false,
-            skip_reason: Some("correlation produced no usable adjustment".into()),
+            skip_reason: None,
         };
-    };
-
-    HighRateAnchorRefinement {
-        segment_start_secs: window_start_secs,
-        segment_length_secs,
-        offset_before_secs: prior_offset_secs,
-        adjustment_secs,
-        correlation_peak,
-        applied: true,
-        skipped: false,
-        skip_reason: None,
     }
+
+    skipped_anchor(
+        last_window_start,
+        run.segment_length_secs,
+        prior_offset_secs,
+        last_failure,
+    )
 }
 
-fn discovery_window<'a>(windows: &'a [ClipWindow], label: ClipLabel) -> &'a ClipWindow {
+fn discovery_window(windows: &[ClipWindow], label: ClipLabel) -> &ClipWindow {
     windows
         .iter()
         .find(|window| window.label == label)

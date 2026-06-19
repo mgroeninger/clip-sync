@@ -4,8 +4,8 @@ use std::time::Duration;
 use clip_sync::{
     AlignmentReport, AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport,
     ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError, MediaExtent,
-    OffsetVerification, QueryLocalization, RepetitionFinding, TimelineOverlap,
-    build_query_alignment_result,
+    OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome, RepetitionFinding,
+    TimelineOverlap, build_query_alignment_result,
 };
 use clip_sync::testing::alignment_fixtures::{minimal_alignment_result, start_clip_match};
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
@@ -715,21 +715,27 @@ fn verify_human_verbose_shows_skip_reason() {
     );
 }
 
-#[test]
-fn query_human_leads_with_match_on_a_not_offset() {
-    let loc = QueryLocalization::from_anchor(
-        2700.0,
-        480.0,
+fn sample_query_localization() -> QueryLocalization {
+    QueryLocalization::from_a_reference_outcome(
+        ReferenceLocalizationOutcome {
+            anchor_ref_secs: 2700.0,
+            query_duration_secs: 480.0,
+            winning_window_start_secs: 2640.0,
+            winning_window_end_secs: 3120.0,
+            confidence: 0.91,
+            ambiguous: false,
+            windows_scored: 60,
+            search_stride_secs: 60.0,
+            skip_reason: None,
+        },
         MediaExtent::from_declared(Duration::from_secs(3600)),
         MediaExtent::from_declared(Duration::from_secs(480)),
-        0.91,
-        false,
-        60.0,
-        2640.0,
-        3120.0,
-        60,
-    );
-    let result = build_query_alignment_result(loc, 0.3);
+    )
+}
+
+#[test]
+fn query_human_leads_with_match_on_a_not_offset() {
+    let result = build_query_alignment_result(sample_query_localization(), 0.3);
     let output = format_human_output(false, &result);
     assert!(
         output.contains("Match on video A:"),
@@ -747,19 +753,7 @@ fn query_human_leads_with_match_on_a_not_offset() {
 
 #[test]
 fn query_human_verbose_shows_offset_and_b_span() {
-    let loc = QueryLocalization::from_anchor(
-        2700.0,
-        480.0,
-        MediaExtent::from_declared(Duration::from_secs(3600)),
-        MediaExtent::from_declared(Duration::from_secs(480)),
-        0.91,
-        false,
-        60.0,
-        2640.0,
-        3120.0,
-        60,
-    );
-    let result = build_query_alignment_result(loc, 0.3);
+    let result = build_query_alignment_result(sample_query_localization(), 0.3);
     let output = format_human_output(true, &result);
     assert!(output.contains("Offset:"), "expected offset in verbose: {output}");
     assert!(output.contains("Clip on B:"), "expected B span in verbose: {output}");

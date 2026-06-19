@@ -671,6 +671,72 @@ pub fn holdout_window_centered_in(
     ))
 }
 
+/// Hold-out candidates inside one discovery clip window, overlap-safe positions first.
+///
+/// Prefer near the window start (and overlap floor) before mid-window seeks that often fail
+/// on MKV timestamp boundaries — same policy as [`holdout_window_candidates`].
+pub fn anchor_holdout_candidates(
+    discovery_window: &ClipWindow,
+    segment_length: Duration,
+    prior_offset_secs: f64,
+    duration_a_secs: f64,
+    duration_b_secs: f64,
+) -> Vec<ClipWindow> {
+    let segment_secs = segment_length.as_secs_f64();
+    if segment_secs <= 0.0 {
+        return Vec::new();
+    }
+    let win_start = discovery_window.start.as_secs_f64();
+    let win_end = discovery_window.end.as_secs_f64();
+    if win_end - win_start < segment_secs {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let mut push = |start_secs: f64| {
+        if start_secs < win_start - 0.001 || start_secs + segment_secs > win_end + 0.001 {
+            return;
+        }
+        if !holdout_window_feasible(
+            start_secs,
+            segment_secs,
+            prior_offset_secs,
+            duration_a_secs,
+            duration_b_secs,
+        ) {
+            return;
+        }
+        if candidates.iter().any(|window: &ClipWindow| {
+            (window.start.as_secs_f64() - start_secs).abs() < 0.001
+        }) {
+            return;
+        }
+        candidates.push(ClipWindow::new(
+            secs_to_duration(start_secs),
+            secs_to_duration(start_secs + segment_secs),
+            discovery_window.label,
+        ));
+    };
+
+    let overlap_floor = (-prior_offset_secs).max(win_start);
+    push(overlap_floor);
+
+    let early = overlap_floor + 30.0;
+    if early + segment_secs <= win_end {
+        push(early);
+    }
+
+    push(win_start);
+
+    if let Some(centered) = holdout_window_centered_in(discovery_window, segment_length) {
+        push(centered.start.as_secs_f64());
+    }
+
+    push(win_end - segment_secs);
+
+    candidates
+}
+
 pub fn holdout_window_feasible(
     window_start_secs: f64,
     segment_length_secs: f64,
@@ -1182,6 +1248,45 @@ mod tests {
         assert!((holdout.start.as_secs_f64() - 548.5).abs() < 0.001);
         assert!((holdout.end.as_secs_f64() - 551.5).abs() < 0.001);
         assert_eq!(holdout.label, ClipLabel::End);
+    }
+
+    #[test]
+    fn anchor_holdout_candidates_prefer_overlap_safe_window_start() {
+        let start = ClipWindow::new(Duration::ZERO, Duration::from_secs(900), ClipLabel::Start);
+        let candidates = anchor_holdout_candidates(
+            &start,
+            Duration::from_secs(3),
+            -7.326,
+            7_547.0,
+            7_547.0,
+        );
+        assert!(!candidates.is_empty());
+        let first = candidates[0].start.as_secs_f64();
+        assert!(
+            first < 50.0,
+            "first candidate should be near window start, got {first}"
+        );
+        assert!(
+            !candidates.iter().any(|window| {
+                (window.start.as_secs_f64() - 448.5).abs() < 1.0
+            }) || candidates[0].start.as_secs_f64() < 100.0,
+            "centered mid-window seek should not be first choice"
+        );
+
+        let end = ClipWindow::new(
+            Duration::from_secs(6_647),
+            Duration::from_secs(7_547),
+            ClipLabel::End,
+        );
+        let end_candidates = anchor_holdout_candidates(
+            &end,
+            Duration::from_secs(3),
+            -6.674,
+            7_547.0,
+            7_547.0,
+        );
+        assert!(!end_candidates.is_empty());
+        assert!((end_candidates[0].start.as_secs_f64() - 6_647.0).abs() < 1.0);
     }
 
     #[test]

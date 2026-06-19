@@ -276,6 +276,7 @@ mod tests {
     fn build_gap_fill_plan_skips_gaps_outside_query_mapped_region() {
         use clip_sync::{
             AlignmentModeUsedReport, MediaExtent, QueryLocalization, QueryLocalizationReport,
+            ReferenceLocalizationOutcome,
         };
         use std::time::Duration;
 
@@ -294,17 +295,20 @@ mod tests {
             video_b_end_secs: 10.0,
             shared_length_secs: 10.0,
         });
-        let loc = QueryLocalization::from_anchor(
-            0.0,
-            10.0,
+        let loc = QueryLocalization::from_a_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: 0.0,
+                query_duration_secs: 10.0,
+                winning_window_start_secs: 0.0,
+                winning_window_end_secs: 60.0,
+                confidence: 0.9,
+                ambiguous: false,
+                windows_scored: 1,
+                search_stride_secs: 60.0,
+                skip_reason: None,
+            },
             extent(6000.0),
             extent(10.0),
-            0.9,
-            false,
-            60.0,
-            0.0,
-            60.0,
-            1,
         );
         report.alignment.alignment_mode_used = Some(AlignmentModeUsedReport::QueryReference);
         report.alignment.query_localization = Some(QueryLocalizationReport::from(&loc));

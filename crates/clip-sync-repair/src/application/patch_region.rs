@@ -327,31 +327,35 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
     Err(last_fail)
 }
 
+pub(crate) struct SeamExtensionRetry {
+    pub max_extend_frames: usize,
+    pub step_frames: usize,
+    pub gap_end_extend_on_post_seam_fail: bool,
+    pub gap_start_extend_on_pre_seam_fail: bool,
+}
+
 /// Retry waveform gate failures by extending the gap end, then the gap start.
 pub(crate) fn retry_waveform_seam_extensions(
     refined: &mut RefinedGapFrames,
     gap_offset_secs: f64,
     params: &SeamGateParams<'_>,
     initial_fail: SeamGateFailure,
-    max_extend_frames: usize,
-    step_frames: usize,
-    gap_end_extend_on_post_seam_fail: bool,
-    gap_start_extend_on_pre_seam_fail: bool,
+    retry: SeamExtensionRetry,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     let SeamGateFailure::WaveformBelowThreshold { .. } = initial_fail else {
         return Err(initial_fail);
     };
 
-    let step = step_frames.max(1);
+    let step = retry.step_frames.max(1);
     let mut last_fail = initial_fail;
 
-    if gap_end_extend_on_post_seam_fail {
+    if retry.gap_end_extend_on_post_seam_fail {
         match try_extend_gap_end_for_post_seam(
             refined,
             gap_offset_secs,
             params,
             last_fail,
-            max_extend_frames,
+            retry.max_extend_frames,
             step,
         ) {
             Ok(outcome) => return Ok(outcome),
@@ -359,13 +363,13 @@ pub(crate) fn retry_waveform_seam_extensions(
         }
     }
 
-    if gap_start_extend_on_pre_seam_fail {
+    if retry.gap_start_extend_on_pre_seam_fail {
         return try_extend_gap_start_for_pre_seam(
             refined,
             gap_offset_secs,
             params,
             last_fail,
-            max_extend_frames,
+            retry.max_extend_frames,
             step,
         );
     }

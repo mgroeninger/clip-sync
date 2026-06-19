@@ -93,37 +93,13 @@ pub struct QueryLocalization {
 }
 
 impl QueryLocalization {
-    /// Build a localization when A is the longer (reference) file — thin wrapper over
-    /// [`from_reference_outcome`](Self::from_reference_outcome).
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_anchor(
-        anchor_ref_secs: f64,
-        query_duration_secs: f64,
+    /// Build localization when A is the reference (longer) file.
+    pub fn from_a_reference_outcome(
+        outcome: ReferenceLocalizationOutcome,
         extent_a: MediaExtent,
         extent_b: MediaExtent,
-        confidence: f32,
-        ambiguous: bool,
-        search_stride_secs: f64,
-        winning_window_start_secs: f64,
-        winning_window_end_secs: f64,
-        windows_scored: u32,
     ) -> Self {
-        Self::from_reference_outcome(
-            ReferenceLocalizationOutcome {
-                anchor_ref_secs,
-                query_duration_secs,
-                winning_window_start_secs,
-                winning_window_end_secs,
-                confidence,
-                ambiguous,
-                windows_scored,
-                search_stride_secs,
-                skip_reason: None,
-            },
-            true,
-            extent_a,
-            extent_b,
-        )
+        Self::from_reference_outcome(outcome, true, extent_a, extent_b)
     }
 
     /// Map an orientation-neutral search outcome into A/B repair roles.
@@ -393,20 +369,16 @@ mod tests {
     }
 
     #[test]
-    fn from_reference_outcome_a_reference_matches_from_anchor() {
+    fn from_reference_outcome_a_reference_maps_anchor() {
         let outcome = sample_outcome(2700.0);
-        let from_outcome = QueryLocalization::from_reference_outcome(
-            outcome.clone(),
+        let loc = QueryLocalization::from_reference_outcome(
+            outcome,
             true,
             extent(3600.0),
             extent(480.0),
         );
-        let from_anchor = QueryLocalization::from_anchor(
-            2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
-        );
-        assert_eq!(from_outcome, from_anchor);
-        assert_eq!(from_outcome.recommended_offset_secs(), Some(-2700.0));
-        assert_b_equals_a_plus_offset(&from_outcome);
+        assert_eq!(loc.recommended_offset_secs(), Some(-2700.0));
+        assert_b_equals_a_plus_offset(&loc);
     }
 
     #[test]
@@ -531,9 +503,11 @@ mod tests {
     }
 
     #[test]
-    fn from_anchor_populates_aliases_from_mapped_region() {
-        let loc = QueryLocalization::from_anchor(
-            2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
+    fn from_a_reference_outcome_populates_aliases_from_mapped_region() {
+        let loc = QueryLocalization::from_a_reference_outcome(
+            sample_outcome(2700.0),
+            extent(3600.0),
+            extent(480.0),
         );
         assert_eq!(loc.clip_on_a_start_secs, loc.mapped_region.video_a_start_secs);
         assert_eq!(loc.clip_on_a_end_secs, loc.mapped_region.video_a_end_secs);
@@ -550,8 +524,10 @@ mod tests {
 
     #[test]
     fn build_result_aligned_emits_synthetic_start_clip() {
-        let loc = QueryLocalization::from_anchor(
-            2700.0, 480.0, extent(3600.0), extent(480.0), 0.91, false, 60.0, 2640.0, 3120.0, 60,
+        let loc = QueryLocalization::from_a_reference_outcome(
+            sample_outcome(2700.0),
+            extent(3600.0),
+            extent(480.0),
         );
         let result = build_query_alignment_result(loc, 0.3);
 
@@ -584,8 +560,20 @@ mod tests {
 
     #[test]
     fn build_result_below_min_match_score_is_unaligned() {
-        let loc = QueryLocalization::from_anchor(
-            100.0, 90.0, extent(1000.0), extent(90.0), 0.2, false, 60.0, 40.0, 130.0, 16,
+        let loc = QueryLocalization::from_a_reference_outcome(
+            ReferenceLocalizationOutcome {
+                anchor_ref_secs: 100.0,
+                query_duration_secs: 90.0,
+                winning_window_start_secs: 40.0,
+                winning_window_end_secs: 130.0,
+                confidence: 0.2,
+                ambiguous: false,
+                windows_scored: 16,
+                search_stride_secs: 60.0,
+                skip_reason: None,
+            },
+            extent(1000.0),
+            extent(90.0),
         );
         // Confidence 0.2 < min_match_score 0.3 → not aligned even with an anchor.
         let result = build_query_alignment_result(loc, 0.3);
