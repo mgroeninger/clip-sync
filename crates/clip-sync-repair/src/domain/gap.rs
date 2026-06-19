@@ -75,6 +75,9 @@ pub struct GapReport {
     pub silence_peak_fraction: f32,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
+    /// Maximum |PTS − sample-clock| observed during gap scan on video A, when measurable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
 }
 
 impl GapReport {

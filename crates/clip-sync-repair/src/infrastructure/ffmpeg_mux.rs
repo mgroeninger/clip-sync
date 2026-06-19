@@ -8,6 +8,8 @@ use clip_sync::{MultiChannelPcm, ProgressReporter};
 
 use crate::application::error::RepairError;
 use crate::application::ports::{MediaMuxer, MuxOptions};
+use crate::domain::diagnostics::format_mux_duration_error;
+use crate::domain::diagnostics::MUX_DURATION_ERROR_SECS;
 use crate::infrastructure::pcm::{validate_pcm_layout, write_pcm_s16le};
 
 /// Build ffmpeg argv for remuxing `source_video` with replacement audio from stdin (`pipe:0`).
@@ -131,6 +133,28 @@ fn pcm_duration_ms(pcm: &MultiChannelPcm) -> Option<u64> {
     Some(pcm.frames() as u64 * 1000 / rate)
 }
 
+fn pcm_duration_secs(pcm: &MultiChannelPcm) -> Option<f64> {
+    if pcm.sample_rate == 0 {
+        return None;
+    }
+    Some(pcm.frames() as f64 / f64::from(pcm.sample_rate))
+}
+
+fn validate_mux_duration(pcm: &MultiChannelPcm, source_video: &Path) -> Result<(), RepairError> {
+    let pcm_secs = pcm_duration_secs(pcm).ok_or_else(|| {
+        RepairError::Mux("patched audio has no decodable duration".into())
+    })?;
+    let video_secs = probe_media_duration_ms(source_video)
+        .map(|ms| ms as f64 / 1000.0)
+        .ok_or_else(|| RepairError::Mux("could not probe video duration via ffprobe".into()))?;
+    if (pcm_secs - video_secs).abs() > MUX_DURATION_ERROR_SECS {
+        return Err(RepairError::Mux(format_mux_duration_error(
+            pcm_secs, video_secs,
+        )));
+    }
+    Ok(())
+}
+
 fn mux_duration_ms(source_video: &Path, pcm: &MultiChannelPcm) -> Option<u64> {
     probe_media_duration_ms(source_video).or_else(|| pcm_duration_ms(pcm))
 }
@@ -171,6 +195,14 @@ fn run_ffmpeg_mux_with_progress(
             let _ = pcm_tx.send(result);
         });
 
+        let stderr_handle = scope.spawn(move || {
+            BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+
         if let Some(total_ms) = duration_ms.filter(|ms| *ms > 0) {
             progress.progress("mux", 0, total_ms);
         }
@@ -183,7 +215,12 @@ fn run_ffmpeg_mux_with_progress(
                     Ok(line) => line,
                     Err(err) => {
                         let _ = pcm_rx.recv();
-                        return Err(RepairError::Io(err));
+                        let _ = child.wait();
+                        let stderr = stderr_handle.join().unwrap_or_default();
+                        let detail = trim_ffmpeg_stderr(&stderr);
+                        return Err(RepairError::Mux(format!(
+                            "failed to read ffmpeg progress: {err}; ffmpeg: {detail}"
+                        )));
                     }
                 };
                 if let Some(ms) = parse_progress_out_time_ms(&line) {
@@ -203,22 +240,22 @@ fn run_ffmpeg_mux_with_progress(
         let pcm_write_err = pcm_rx
             .recv()
             .map_err(|_| RepairError::Mux("PCM writer thread exited before reporting".into()))?;
-        if let Err(err) = pcm_write_err {
-            return Err(RepairError::Mux(format!(
-                "failed to write replacement audio to ffmpeg stdin: {err}"
-            )));
-        }
-
-        let stderr_handle = scope.spawn(move || {
-            BufReader::new(stderr)
-                .lines()
-                .map_while(Result::ok)
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
-
         let status = child.wait().map_err(RepairError::Io)?;
         let stderr = stderr_handle.join().unwrap_or_default();
+        let ffmpeg_suffix = {
+            let detail = trim_ffmpeg_stderr(&stderr);
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("; ffmpeg: {detail}")
+            }
+        };
+
+        if let Err(err) = pcm_write_err {
+            return Err(RepairError::Mux(format!(
+                "failed to write replacement audio to ffmpeg stdin: {err}{ffmpeg_suffix}"
+            )));
+        }
 
         if status.success() {
             if let Some(total_ms) = duration_ms.filter(|ms| *ms > 0) {
@@ -227,8 +264,7 @@ fn run_ffmpeg_mux_with_progress(
             return Ok(());
         }
 
-        let detail = trim_ffmpeg_stderr(&stderr);
-        Err(RepairError::Mux(detail))
+        Err(RepairError::Mux(trim_ffmpeg_stderr(&stderr)))
     })
 }
 
@@ -243,6 +279,9 @@ impl MediaMuxer for FfmpegMediaMuxer {
         options: &MuxOptions,
         progress: &dyn ProgressReporter,
     ) -> Result<(), RepairError> {
+        validate_pcm_layout(replacement_audio)?;
+        validate_mux_duration(replacement_audio, source_video)?;
+
         let mut args = build_ffmpeg_mux_args(
             source_video,
             output,
@@ -413,7 +452,22 @@ Error: no video stream\n";
     }
 
     #[test]
-    fn pcm_duration_ms_uses_frame_count() {
+    fn validate_mux_duration_rejects_large_skew() {
+        let pcm = clip_sync::MultiChannelPcm {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0i16; 48_000 * 100],
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+        };
+        let err = super::validate_mux_duration(&pcm, Path::new("missing-probe.mp4"))
+            .expect_err("should fail without ffprobe or on skew");
+        assert!(err.to_string().contains("ffprobe") || err.to_string().contains("differ"));
+    }
+
+    #[test]
+    fn pcm_duration_secs_uses_frame_count() {
         let pcm = clip_sync::MultiChannelPcm {
             sample_rate: 48_000,
             channels: 6,

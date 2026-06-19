@@ -199,6 +199,8 @@ Report-only mode exits `0` when analysis completes (default `dry_run = true` in 
 
 **Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--no-structure-trust`, `--min-fill-correlation`, `--max-fill-align-adjust-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`, `--no-short-gap-one-strong-seam`) can be set on the CLI or in `[repair]` in a config file. Other patch settings (structure signature size, fill search radius, normalization window, etc.) are config-only — see the example below.
 
+**Timeline / duration warnings and mux preflight** (overlap start, PTS vs sample-clock skew, PCM vs container length, mux duration gate) are documented in [docs/cli-output.md](docs/cli-output.md#timeline--duration-warnings).
+
 **Write output:** `--wav` writes lossless 16-bit PCM (no re-encode). `--mux` copies video from A and re-encodes the patched audio track (default `audio_codec = "aac"`). Mux bitrate is chosen from compressed bytes counted during patch decode — default `mux_audio_bitrate = "match_min"` uses the lower of A and B measured rates so output is not upsampled above either source. Use `"default"` to omit `-b:a` and let ffmpeg pick (~128 kb/s stereo); use `"256k"` (or `match_a`) to override.
 
 **Sample output (repair, after patch):**
@@ -522,7 +524,7 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 ## Documentation
 
 - [docs/development.md](docs/development.md) — features, build, full test suite
-- [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes
+- [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes, timeline/duration warnings, mux failures
 - [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy
 - [docs/corpus-validation.md](docs/corpus-validation.md) — test tiers, CI commands, known offsets

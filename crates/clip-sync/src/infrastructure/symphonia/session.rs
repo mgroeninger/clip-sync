@@ -20,7 +20,7 @@ use crate::infrastructure::symphonia::error_mapping::{
 use crate::infrastructure::symphonia::extract::{
     extract_interleaved_with_state, extract_mono_with_state, scan_interleaved_buckets_with_state,
     scan_mono_buckets_with_state,
-    scan_track_decodable_extent,
+    scan_track_decodable_extent, TimelineSkewTracker,
 };
 use crate::infrastructure::symphonia::probe::{open_format_reader, probe_media_reusable};
 
@@ -181,8 +181,10 @@ impl MediaSession for SymphoniaMediaSession {
         progress: &dyn ProgressReporter,
         label: &str,
         on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
+        timeline_skew: &mut Option<crate::domain::AudioTimelineSkew>,
     ) -> Result<(), MediaError> {
         ensure_regular_file(&self.path)?;
+        let mut tracker = TimelineSkewTracker::default();
         scan_interleaved_buckets_with_state(
             &self.path,
             Self::open_io_state(&mut self.io, &self.path)?,
@@ -191,7 +193,10 @@ impl MediaSession for SymphoniaMediaSession {
             progress,
             label,
             on_bucket,
-        )
+            &mut tracker,
+        )?;
+        *timeline_skew = tracker.finish();
+        Ok(())
     }
 
     fn track_decodable_extent(&mut self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {

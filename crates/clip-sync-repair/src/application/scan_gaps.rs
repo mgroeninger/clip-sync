@@ -147,9 +147,27 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         };
 
         progress.phase("Scanning video A for gaps...");
+        let mut audio_timeline_skew = None;
         session_a
-            .scan_interleaved_buckets(&track_a, decode_chunk_secs, progress, "scan-a", &mut scan_a)
+            .scan_interleaved_buckets(
+                &track_a,
+                decode_chunk_secs,
+                progress,
+                "scan-a",
+                &mut scan_a,
+                &mut audio_timeline_skew,
+            )
             .map_err(RepairError::Media)?;
+        if let Some(skew) = audio_timeline_skew {
+            if skew.delta_secs > crate::domain::diagnostics::TIMELINE_SKEW_WARN_SECS {
+                tracing::warn!(
+                    pts_secs = skew.pts_secs,
+                    sample_clock_secs = skew.sample_clock_secs,
+                    delta_secs = skew.delta_secs,
+                    "audio timeline mismatch during gap scan on video A"
+                );
+            }
+        }
 
         // Step 5: scan B's native timeline sequentially to build its silence map.
         // Used for both per-gap energy lookup (replaces per-gap seeks) and the cross-check.
@@ -226,6 +244,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
             silence_peak_fraction: request.silence_peak_fraction,
             limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
+            audio_timeline_skew,
         })
     }
 
@@ -254,8 +273,16 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             Ok(())
         };
 
+        let mut b_timeline_skew = None;
         if session
-            .scan_interleaved_buckets(track, decode_chunk_secs, progress, "scan-b", &mut on_bucket)
+            .scan_interleaved_buckets(
+                track,
+                decode_chunk_secs,
+                progress,
+                "scan-b",
+                &mut on_bucket,
+                &mut b_timeline_skew,
+            )
             .is_err()
         {
             return scanner
@@ -855,6 +882,7 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            audio_timeline_skew: None,
         };
 
         assert_eq!(report.gaps.len(), 2);

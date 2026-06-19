@@ -348,6 +348,7 @@ fn make_report_with_alignment(
         scan_block_ms: 250,
         silence_peak_fraction: 0.01,
         limit_fill_to_mapped_region: true,
+        audio_timeline_skew: None,
     }
 }
 
@@ -364,6 +365,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         scan_block_ms: 250,
         silence_peak_fraction: 0.01,
         limit_fill_to_mapped_region: true,
+        audio_timeline_skew: None,
     }
 }
 

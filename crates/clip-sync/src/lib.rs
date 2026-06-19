@@ -30,7 +30,7 @@ pub use domain::{
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome,
-    RepetitionFinding, TimelineOverlap,
+    RepetitionFinding, TimelineOverlap, AudioTimelineSkew,
 };
 pub use domain::policies::{
     attach_symmetric_planning_report_metadata, select_best_track, select_track_for_reference,

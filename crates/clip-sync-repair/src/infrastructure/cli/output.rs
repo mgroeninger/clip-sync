@@ -8,10 +8,12 @@ use clip_sync::{
 use serde::Serialize;
 
 use crate::application::error::RepairError;
+use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
     CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
     GapPatchStatus, GapReport, PatchSummary,
+    diagnostics::collect_repair_warnings,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -34,6 +36,7 @@ impl GapReporter for StdoutGapReporter {
 fn format_human(
     report: &GapReport,
     patch: Option<&PatchSummary>,
+    patch_result: Option<&PatchAudioResult>,
     show_diagnostics: bool,
     output_written: Option<&Path>,
 ) -> String {
@@ -166,6 +169,18 @@ fn format_human(
 
     if let Some(warning) = format_alignment_instability_warning(report, patch) {
         out.push_str(&warning);
+    }
+
+    let repair_warnings = collect_repair_warnings(
+        report.overlap.as_ref().map(|o| o.video_a_start_secs),
+        query_mode,
+        report.audio_timeline_skew,
+        patch_result.and_then(|r| r.pcm_container_skew),
+    );
+    for warning in &repair_warnings {
+        out.push_str(warning);
+        out.push('\n');
+        tracing::warn!("{warning}");
     }
 
     out.push('\n');
@@ -464,7 +479,7 @@ fn clip_label_name(label: ClipLabelReport) -> &'static str {
 }
 
 fn print_human(report: &GapReport) -> Result<(), RepairError> {
-    print!("{}", format_human(report, None, false, None));
+    print!("{}", format_human(report, None, None, false, None));
     Ok(())
 }
 
@@ -482,13 +497,17 @@ struct RepairJsonOutput<'a> {
 pub fn print_repair_output(
     report: &GapReport,
     patch: Option<&PatchSummary>,
+    patch_result: Option<&PatchAudioResult>,
     format: OutputFormat,
     show_diagnostics: bool,
     output_written: Option<&Path>,
 ) -> Result<(), RepairError> {
     match format {
         OutputFormat::Human => {
-            print!("{}", format_human(report, patch, show_diagnostics, output_written));
+            print!(
+                "{}",
+                format_human(report, patch, patch_result, show_diagnostics, output_written)
+            );
             Ok(())
         }
         OutputFormat::Json => print_json_with_patch(report, patch),
@@ -730,6 +749,7 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            audio_timeline_skew: None,
         }
     }
 
@@ -826,6 +846,7 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            audio_timeline_skew: None,
         }
     }
 
@@ -986,6 +1007,7 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            audio_timeline_skew: None,
         }
     }
 
@@ -1028,7 +1050,7 @@ mod tests {
         report.alignment.offset_drift_secs = Some(-0.244);
         report.alignment.recommended_offset_secs = Some(-10.956);
 
-        let text = super::format_human(&report, None, false, None);
+        let text = super::format_human(&report, None, None, false, None);
         assert!(text.contains("Start clip: -10.956s"));
         assert!(text.contains("End clip: -11.200s"));
         assert!(text.contains("Drift:"));
@@ -1050,7 +1072,7 @@ mod tests {
             delta_secs: 0.02,
             agrees: true,
         });
-        let text = super::format_human(&report, None, false, None);
+        let text = super::format_human(&report, None, None, false, None);
         assert!(text.contains("Cross-chk"), "expected cross-check line");
         assert!(text.contains("AGREE"));
         assert!(!text.contains("WARNING"));
@@ -1066,14 +1088,14 @@ mod tests {
             delta_secs: 5.5,
             agrees: false,
         });
-        let text = super::format_human(&report, None, false, None);
+        let text = super::format_human(&report, None, None, false, None);
         assert!(text.contains("MISMATCH"));
         assert!(text.contains("WARNING"));
     }
 
     #[test]
     fn human_failed_alignment_notes_b_mapping_skipped() {
-        let text = super::format_human(&failed_alignment_report(), None, false, None);
+        let text = super::format_human(&failed_alignment_report(), None, None, false, None);
         assert!(
             text.contains("B timeline mapping skipped"),
             "expected B mapping skipped note in human output"
@@ -1123,7 +1145,7 @@ mod tests {
             },
         ];
 
-        let text = super::format_human(&report, None, false, None);
+        let text = super::format_human(&report, None, None, false, None);
         assert!(text.contains("0 repairable"));
         assert!(text.contains("fill blocked by track layout"));
         assert!(text.contains("blocked (track layout)"));
@@ -1178,6 +1200,7 @@ mod tests {
         let report = minimal_report();
         let text = super::format_human(
             &report,
+            None,
             None,
             false,
             Some(std::path::Path::new("out/repaired.mp4")),
@@ -1270,7 +1293,7 @@ mod tests {
             },
         ]);
 
-        let text = super::format_human(&report, Some(&summary), false, None);
+        let text = super::format_human(&report, Some(&summary), None, false, None);
         assert!(text.contains("alignment unstable"));
         assert!(text.contains("review gap #2"));
         assert!(text.contains("repaired 2.0s of audio"));
@@ -1278,7 +1301,7 @@ mod tests {
         assert!(text.contains(">2 "));
         assert!(text.contains("231.7s!"));
 
-        let verbose = super::format_human(&report, Some(&summary), true, None);
+        let verbose = super::format_human(&report, Some(&summary), None, true, None);
         assert!(verbose.contains("End anchor: shared timeline"));
         assert!(verbose.contains("End clip A"));
     }
@@ -1344,6 +1367,29 @@ mod tests {
         let skipped_pos = text.find(">3 ").expect("skipped marker");
         assert!(patched_pos < unfillable_pos);
         assert!(unfillable_pos < skipped_pos);
+    }
+
+    #[test]
+    fn human_output_includes_repair_timeline_warnings() {
+        use clip_sync::AudioTimelineSkew;
+
+        let mut report = minimal_report();
+        report.overlap = Some(clip_sync::TimelineOverlapReport {
+            video_a_start_secs: 4.97,
+            video_a_end_secs: 900.0,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: 895.03,
+            shared_length_secs: 895.03,
+        });
+        report.audio_timeline_skew = Some(AudioTimelineSkew {
+            pts_secs: 0.0,
+            sample_clock_secs: 4.9,
+            delta_secs: 4.9,
+        });
+
+        let text = super::format_human(&report, None, None, false, None);
+        assert!(text.contains("overlap starts at 5.0s"));
+        assert!(text.contains("timeline mismatch on video A"));
     }
 
     #[test]

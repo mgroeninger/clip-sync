@@ -7,12 +7,12 @@ use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::{SeekMode, SeekTo};
 use symphonia::core::units::{Duration as MediaDuration, Time, TimeBase, Timestamp};
-use tracing::{debug, warn};
 
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
 use crate::domain::{
-    AudioTrack, ClipWindow, InterleavedScanBucket, MonoPcmClip, MonoScanBucket, MultiChannelPcm,
+    AudioTrack, AudioTimelineSkew, ClipWindow, InterleavedScanBucket, MonoPcmClip, MonoScanBucket,
+    MultiChannelPcm,
 };
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
 use crate::infrastructure::symphonia::error_mapping::{
@@ -21,6 +21,50 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoState};
 use super::extract_loop;
+use tracing::{debug, warn};
+
+/// Tracks the maximum |PTS − sample-clock| observed during a sequential scan.
+#[derive(Debug, Default)]
+pub(crate) struct TimelineSkewTracker {
+    max_skew: Option<AudioTimelineSkew>,
+}
+
+impl TimelineSkewTracker {
+    pub fn observe_packet_start(
+        &mut self,
+        packet_pts: Timestamp,
+        time_base: Option<TimeBase>,
+        sample_rate: u32,
+        sample_clock_frame: u64,
+    ) {
+        let Some(tb) = time_base else {
+            return;
+        };
+        if sample_rate == 0 {
+            return;
+        }
+        let pts_frame = timestamp_to_sample(packet_pts, tb, sample_rate);
+        let pts_secs = pts_frame as f64 / f64::from(sample_rate);
+        let sample_clock_secs = sample_clock_frame as f64 / f64::from(sample_rate);
+        let delta_secs = (pts_secs - sample_clock_secs).abs();
+        let update = self
+            .max_skew
+            .as_ref()
+            .map(|current| delta_secs > current.delta_secs)
+            .unwrap_or(true);
+        if update {
+            self.max_skew = Some(AudioTimelineSkew {
+                pts_secs,
+                sample_clock_secs,
+                delta_secs,
+            });
+        }
+    }
+
+    pub fn finish(self) -> Option<AudioTimelineSkew> {
+        self.max_skew
+    }
+}
 
 /// Fail extract after this many consecutive packet decode errors.
 pub(crate) const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 64;
@@ -354,6 +398,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
     progress: &dyn ProgressReporter,
     label: &str,
     on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
+    timeline_skew: &mut TimelineSkewTracker,
 ) -> Result<(), MediaError> {
     if bucket_secs <= 0.0 {
         return Err(fail_media(
@@ -465,6 +510,20 @@ pub(crate) fn scan_interleaved_buckets_with_state(
 
         if packet.track_id != track_id {
             continue;
+        }
+
+        let rate_for_skew = resolved_rate.or(sample_rate).unwrap_or(0);
+        let ch_for_skew = channels.unwrap_or(channels_hint.unwrap_or(1)).max(1);
+        let sample_clock_frame = bucket_index
+            .saturating_mul(bucket_frame_capacity.unwrap_or(0) as u64)
+            .saturating_add((bucket_buf.len() / ch_for_skew) as u64);
+        if rate_for_skew > 0 {
+            timeline_skew.observe_packet_start(
+                packet.pts,
+                time_base,
+                rate_for_skew,
+                sample_clock_frame,
+            );
         }
 
         let decoded = match state

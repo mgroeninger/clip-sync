@@ -1,4 +1,5 @@
 pub mod alignment;
+pub mod audio_timeline;
 pub mod audio_track;
 pub mod human_format;
 pub mod clip_plan;
@@ -29,6 +30,7 @@ pub use alignment::{
     set_offset_ambiguous_mod_from_start_clip,
     should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence,
 };
+pub use audio_timeline::AudioTimelineSkew;
 pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};

@@ -208,6 +208,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     print_repair_output(
         &report,
         patch_summary,
+        write_result.as_ref().ok().and_then(|r| r.as_ref()),
         args.format,
         args.verbose,
         output_written,

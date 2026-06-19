@@ -99,6 +99,8 @@ pub trait MediaSession {
     ///
     /// Default implementation falls back to seek-based [`extract_interleaved`](Self::extract_interleaved)
     /// windows (slower on long files; symphonia sessions override with a sequential decoder).
+    ///
+    /// When supported, the maximum observed |PTS − sample-clock| skew is stored in `timeline_skew`.
     fn scan_interleaved_buckets(
         &mut self,
         track: &AudioTrack,
@@ -106,7 +108,9 @@ pub trait MediaSession {
         progress: &dyn ProgressReporter,
         label: &str,
         on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
+        timeline_skew: &mut Option<crate::domain::AudioTimelineSkew>,
     ) -> Result<(), MediaError> {
+        let _ = timeline_skew;
         crate::application::media_scan::scan_interleaved_buckets_via_windows(
             self, track, bucket_secs, progress, label, on_bucket,
         )

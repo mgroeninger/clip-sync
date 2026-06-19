@@ -15,6 +15,7 @@ use crate::application::patch_region::{
 use crate::application::error::RepairError;
 use crate::domain::{
     fill_offset::fill_offset_secs,
+    diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
@@ -31,6 +32,8 @@ pub struct PatchAudioResult {
     pub source_audio_bitrate_a_bps: Option<u32>,
     /// Measured encoded bitrate of video B's selected audio track (bits/s).
     pub source_audio_bitrate_b_bps: Option<u32>,
+    /// Present when patched PCM length differs materially from the container duration.
+    pub pcm_container_skew: Option<crate::domain::diagnostics::PcmContainerDurationSkew>,
 }
 
 pub struct PatchAudioRequest {
@@ -133,6 +136,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 summary,
                 source_audio_bitrate_a_bps: None,
                 source_audio_bitrate_b_bps: None,
+                pcm_container_skew: None,
             });
         }
 
@@ -269,11 +273,29 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             &region_results,
         ));
 
+        let container_secs = duration_a.as_secs_f64();
+        let pcm_secs = a_pcm.frames() as f64 / f64::from(a_pcm.sample_rate);
+        let pcm_container_skew = {
+            let skew = pcm_container_duration_skew(pcm_secs, container_secs);
+            if skew.delta_secs > PCM_CONTAINER_WARN_SECS {
+                tracing::warn!(
+                    pcm_secs,
+                    container_secs,
+                    delta_secs = skew.delta_secs,
+                    "patched PCM length differs from container duration"
+                );
+                Some(skew)
+            } else {
+                None
+            }
+        };
+
         Ok(PatchAudioResult {
             pcm: Some(a_pcm),
             summary,
             source_audio_bitrate_a_bps,
             source_audio_bitrate_b_bps,
+            pcm_container_skew,
         })
     }
 }

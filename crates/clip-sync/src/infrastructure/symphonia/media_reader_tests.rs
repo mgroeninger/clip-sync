@@ -292,7 +292,7 @@ fn scan_interleaved_buckets_emits_full_frame_windows() {
     };
 
     session
-        .scan_interleaved_buckets(&tracks[0], 1.0, &NoopProgress, "scan", &mut collect)
+        .scan_interleaved_buckets(&tracks[0], 1.0, &NoopProgress, "scan", &mut collect, &mut None)
         .unwrap();
 
     assert_eq!(buckets.len(), 4);

@@ -215,6 +215,32 @@ Search:     3 window(s) @ 60s stride
 
 - **Alignment header:** query-reference block or symmetric `Alignment: offset …` (see above); symmetric verbose adds drift, track compatibility, overlap, cross-check when applicable.
 - **Alignment instability warning (default):** when clip offsets disagree **and** silence cross-check `MISMATCH`, emit one synthesis line after cross-check: `Warning: alignment unstable — fills used start-clip offset; clip drift and silence cross-check disagree (review gap #N …)` listing skipped gap numbers when a patch summary is available. With the default **shared-timeline** end anchor, large `end − start` drift is more likely to reflect real timeline instability (edits, speed change, tail damage) than a spurious file-tail mismatch on unequal-length pairs; the warning still fires when drift and cross-check disagree.
+
+#### Timeline / duration warnings
+
+Up to three `Warning:` lines may appear after the alignment block and before the gap table. Each is also emitted on stderr via `tracing::warn`. Thresholds are fixed in `crates/clip-sync-repair/src/domain/diagnostics.rs` (not configurable today).
+
+| ID | When | Condition | Example stdout line |
+|----|------|-----------|---------------------|
+| **A1** | Report (symmetric mode only) | `overlap.video_a_start_secs > 1.0` | `Warning: video A shared overlap starts at 5.0s (not 0:00) — gap times are on the decoded-sample clock and may not match ffmpeg/container timestamps; prefer a clean source file or MKV` |
+| **A2** | Report + scan | Gap scan on A measures max \|PTS − sample-clock\| `> 1.0` s | `Warning: audio timeline mismatch on video A (PTS 0.0s vs decoded-sample clock 4.9s, Δ 4.9s) — gap positions may be shifted relative to ffmpeg silencedetect` |
+| **A3** | Report (write mode, after patch) | `\|patched_pcm_secs − container_secs\| > 2.0` | `Warning: patched audio length 10210.0s differs from container duration 10205.0s by 5.0s — mux may fail or truncate` |
+
+**Why these fire:** gap scan timestamps audio by **sequential decoded-sample count**; patch extract maps samples by **packet PTS**. Sloppy remuxes (e.g. `ffmpeg -ss … -c copy` MKV→MP4) can desync those clocks. A1 is a cheap proxy (alignment overlap not starting at 0:00); A2 is the direct measurement. A3 catches decode length vs declared container duration before mux.
+
+**What to do:** prefer the original MKV; remux with timestamp cleanup (`-avoid_negative_ts make_zero`); validate with `--wav` before `--mux`; compare gap times against `ffmpeg silencedetect` on the same file.
+
+**JSON:** structured skew is available as `scan.audio_timeline_skew` (see [json-output.md](json-output.md)). Human warning lines are not duplicated as a JSON array; A1 is derived from `scan.overlap`, A3 from patch diagnostics (not in JSON today).
+
+#### Mux failures (`--mux`)
+
+| Stage | Condition | Outcome |
+|-------|-----------|---------|
+| **B1 — preflight** | Before spawning ffmpeg: `\|patched_pcm_secs − video_secs\| > 5.0` (video duration from ffprobe) | **Error** on stderr; exit non-zero; mux not started. Message: `mux error: patched audio (…) and video (…) differ by …s (>5s); use --wav to inspect audio or fix source timestamps` |
+| **B3 — stdin / process** | PCM write to ffmpeg stdin fails, or ffmpeg exits non-zero | **Error** on stderr. Stdin failures append trimmed ffmpeg stderr: `mux error: failed to write replacement audio to ffmpeg stdin: …; ffmpeg: …` |
+
+Implementation: `crates/clip-sync-repair/src/infrastructure/ffmpeg_mux.rs` (`validate_mux_duration`, `run_ffmpeg_mux_with_progress`).
+
 - **Gap section:** single unified table — **not** separate scan + patch sections.
 
 ```

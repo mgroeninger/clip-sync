@@ -1,4 +1,5 @@
 pub mod cross_check;
+pub mod diagnostics;
 pub mod fill_offset;
 pub mod gap;
 pub mod gap_seam_extend;

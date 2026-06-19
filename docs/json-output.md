@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revision (2026-06-17): optional `end_clip_anchor` on analyzer/repair alignment reports; optional `video_b_window_*` on clip entries when B differs from A.
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -155,6 +155,20 @@ Top-level object: **RepairJsonOutput**.
 | `decode_chunk_secs` | integer | always | Decode chunk size used during sequential scan |
 | `scan_block_ms` | integer | always | Analysis block size for silence-run detection |
 | `silence_peak_fraction` | number | always | Peak-fraction threshold used for silence classification |
+| `limit_fill_to_mapped_region` | bool | always | When true (default in query-reference mode), gaps outside mapped clip coverage are reported but not fillable |
+| `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
+
+### AudioTimelineSkew
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `pts_secs` | number | always | Packet PTS mapped to seconds at the observation point |
+| `sample_clock_secs` | number | always | Sequential decoded-sample clock at the same point |
+| `delta_secs` | number | always | Absolute difference \|PTS − sample_clock\| (maximum observed during scan) |
+
+Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is large, times may not match `ffmpeg silencedetect` or container timestamps. See [cli-output.md](cli-output.md) § Timeline / duration warnings.
+
+**Human-only diagnostics (not in JSON):** overlap-start warning (derived from `overlap.video_a_start_secs`) and patched-PCM vs container warning (after write mode) appear as `Warning:` lines on stdout only. Parse `scan.overlap` and compare patched WAV duration to container metadata if scripting those checks.
 
 ### TrackCompatibility
 
