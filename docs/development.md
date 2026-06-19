@@ -2,7 +2,7 @@
 
 Build commands, Cargo feature flags per crate, and how to run the full test matrix (including slow and `#[ignore]` tiers).
 
-**Related:** [cli-output.md](cli-output.md) (CLI progress and human-report contract), [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
+**Related:** [cli-output.md](cli-output.md) (CLI progress and human-report contract), [README.md](../README.md) § Gap patching pipeline, [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 
 ---
 

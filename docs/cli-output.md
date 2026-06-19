@@ -241,6 +241,39 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 
 Dry-run / scan-only: header uses repairable counts from scan; status from scan labels only.
 
+#### Gap patch gate and skip reasons
+
+Normative detail for patch outcomes; user-facing summary in [README.md](../README.md) § Gap patching pipeline.
+
+**Per-gap pipeline (write mode):**
+
+1. Map gap on A to B (`fill_offset_mode`: `recommended` or `interpolated` drift).
+2. Refine gap edges on A; structure-match dropout pattern on B.
+3. Unless `disable_structure_trust` and both structure scores ≥ `strong_structure_trust`, run waveform Pearson gate at pre/post borders.
+4. On waveform failure, retry with gap-end extension then gap-start extension (when enabled).
+
+**Waveform gate (short gaps ≤ `short_gap_mean_correlation_secs`):** pass if mean(pre, post) ≥ threshold; else if `short_gap_one_strong_seam_fallback`, pass when either seam ≥ threshold. Longer gaps require both seams individually. Partial structure soften caps threshold at `0.12` when structure scores ≥ `partial_structure_waveform_soften`.
+
+**Boundary extension retries** (shared `gap_end_extend_max_ms` / `gap_end_extend_step_ms`):
+
+| Direction | Config / CLI off | Retry when |
+|-----------|------------------|------------|
+| Post-end | `gap_end_extend_on_post_seam_fail` / `--no-gap-end-extend` | Post &lt; min and (pre ≥ min, or post within 0.05 of pre, or pre ≥ post + 0.10) |
+| Pre-start | `gap_start_extend_on_pre_seam_fail` / `--no-gap-start-extend` | Pre &lt; min and post ≥ min |
+
+**Human skip strings (status column):**
+
+| Pattern | `GapPatchSkipReason` |
+|---------|----------------------|
+| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform gate failed after retries |
+| `skipped: boundary alignment failed` | Structure bracket failed on B |
+| `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
+| `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |
+
+**stderr (`tracing::warn`):** `gap N/M (range): waveform seam correlation below threshold` (and similar) when a fill is skipped; `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).
+
+**Verbose stdout patch lines:** `patched (struct pre→post)` when structure-trusted; `patched (pre→post slide=+Xs)` otherwise; skipped rows show full skip reason in the status column.
+
 ---
 
 ## Per-binary wiring

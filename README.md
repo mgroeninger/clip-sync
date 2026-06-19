@@ -177,8 +177,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-gap-end-extend` | — | Disable post-seam gap-end extension retries |
 | `--no-gap-start-extend` | — | Disable pre-seam gap-start extension retries |
 | `--no-short-gap-one-strong-seam` | — | Disable short-gap patch when either seam passes (after mean fails) |
-| `--gap-end-extend-max-ms <MS>` | `500` | Maximum gap-end extension when retrying a failed post seam |
-| `--gap-end-extend-step-ms <MS>` | `20` | Step size for gap-end extension retries |
+| `--gap-end-extend-max-ms <MS>` | `500` | Max boundary extension for seam retries (post-end and pre-start) |
+| `--gap-end-extend-step-ms <MS>` | `20` | Step size for seam extension retries |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
 | `-v, --verbose` | — | Verbose progress on stderr plus detailed gap-patch lines in the human report |
 | `-q, --quiet` | — | Suppress progress on stderr (errors still print) |
@@ -219,6 +219,81 @@ Output: patched.wav
 ```
 
 Progress stages (`Aligning audio fingerprints…`, `Scanning video A for gaps…`, etc.) print on **stderr**; the report above is on **stdout** and is safe to pipe or redirect.
+
+#### Gap patching pipeline
+
+When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, optional waveform seam checks, and boundary retries before splice. See also [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
+
+**1. Per-gap B timeline (`fill_offset_mode`)**
+
+| Mode | Behavior |
+|------|----------|
+| `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (start clip when clip offsets disagree). |
+| `interpolated` | Linearly interpolates between start-clip and end-clip offsets by each gap's position on A. Use when alignment drift is significant (`end − start` offset differs by more than ~50 ms). CLI: `--fill-offset interpolated`. |
+
+**2. Structure match**
+
+Active/silent signatures around the gap locate the matching dropout on B. Both structure seam scores must pass `min_structure_match_score` (default `0.55`). Short gaps (≤ `short_gap_mean_correlation_secs`, default `2.0` s) may pass on **mean** structure score instead of both individually.
+
+**3. Waveform seam gate**
+
+Unless structure scores meet `strong_structure_trust` (default `0.90`) on **both** seams — and `disable_structure_trust` is false — Pearson correlation is measured at the pre- and post-gap borders after fine alignment.
+
+| Rule | Applies when |
+|------|----------------|
+| Both seams ≥ `min_fill_correlation` | Gap longer than `short_gap_mean_correlation_secs` |
+| Mean(pre, post) ≥ threshold | Short gap (default ≤ 2 s) |
+| **One strong seam** (either ≥ threshold) | Short gap, after mean fails; on by default (`short_gap_one_strong_seam_fallback`) |
+
+When structure scores meet `partial_structure_waveform_soften` (default `0.85`), the waveform threshold is softened to `min(min_fill_correlation, 0.12)`. Pass `--no-structure-trust` to always run the waveform gate and never skip it via high structure scores.
+
+Set `min_fill_correlation = -1.0` in config to disable the waveform gate entirely (structure gate still applies).
+
+**4. Boundary extension retries**
+
+If the waveform gate fails, the tool may adjust gap boundaries on A and re-run structure + waveform checks. Post-end and pre-start extension share `gap_end_extend_max_ms` (default `500`) and `gap_end_extend_step_ms` (default `20`). Order: try **extend gap end** first, then **extend gap start** (shift earlier).
+
+| Retry | Enabled by | Candidate (summary) |
+|-------|------------|---------------------|
+| **Post-end** | `gap_end_extend_on_post_seam_fail` (default on); `--no-gap-end-extend` | Post failed; pre passes threshold, **or** post failed narrowly vs pre, **or** post collapsed but pre is ≥ 0.10 stronger |
+| **Pre-start** | `gap_start_extend_on_pre_seam_fail` (default on); `--no-gap-start-extend` | Pre failed; post already passes threshold |
+
+**5. Skip reasons in the report**
+
+| Status | Meaning |
+|--------|---------|
+| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform gate failed after retries |
+| `skipped: boundary alignment failed` | Structure match could not bracket the gap on B |
+| `skipped: structure below threshold` | Active/silent pattern scores too low |
+| `unfillable` | No B coverage at mapped position (overlap, track mismatch, outside query region) |
+
+Verbose mode (`-v`) adds per-gap patch lines on stderr and slide/pre/post detail in the gap table.
+
+**Example — drift + conservative waveform gate:**
+
+```powershell
+clip-sync-repair recording_with_gaps.mkv reference.mkv `
+  --mux repaired.mp4 `
+  --fill-offset interpolated `
+  --no-structure-trust `
+  -v
+```
+
+**CLI vs config-only**
+
+| CLI flag | Config key |
+|----------|------------|
+| `--no-structure-trust` | `disable_structure_trust = true` |
+| `--min-fill-correlation` | `min_fill_correlation` |
+| `--max-fill-align-adjust-secs` | `max_fill_align_adjustment_secs` |
+| `--border-standoff-secs` | `border_standoff_secs` |
+| `--fill-offset` | `fill_offset_mode` |
+| `--no-gap-end-extend` | `gap_end_extend_on_post_seam_fail = false` |
+| `--no-gap-start-extend` | `gap_start_extend_on_pre_seam_fail = false` |
+| `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` |
+| `--gap-end-extend-max-ms` / `--gap-end-extend-step-ms` | `gap_end_extend_max_ms` / `gap_end_extend_step_ms` |
+
+Config-only (no CLI): `short_gap_mean_correlation_secs`, `fill_border_search_secs`, `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `strong_structure_trust`, `partial_structure_waveform_soften`, `fill_align_margin_secs`, `min_border_discovery_secs`, normalization settings — see repair config example below.
 
 ---
 
@@ -320,7 +395,17 @@ min_fill_correlation = 0.35
 disable_structure_trust = false   # or --no-structure-trust on CLI
 fill_align_margin_secs = 1.0
 max_fill_align_adjustment_secs = 0.5
+fill_border_search_secs = 30.0
+min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35
+short_gap_mean_correlation_secs = 2.0
+fill_length_slack_secs = 5.0
+fill_seam_search_secs = 0.25
+gap_signature_context_secs = 3.0
+gap_signature_bin_ms = 50
+min_structure_match_score = 0.55
+strong_structure_trust = 0.90
+partial_structure_waveform_soften = 0.85
 fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
 gap_end_extend_on_post_seam_fail = true
 gap_start_extend_on_pre_seam_fail = true
@@ -437,6 +522,7 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 ## Documentation
 
 - [docs/development.md](docs/development.md) — features, build, full test suite
+- [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes
 - [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy
 - [docs/corpus-validation.md](docs/corpus-validation.md) — test tiers, CI commands, known offsets
