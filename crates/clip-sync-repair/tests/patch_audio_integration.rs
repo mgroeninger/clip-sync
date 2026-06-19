@@ -191,8 +191,10 @@ fn patch_request(
         absolute_silence_rms: 0.0,
         fill_offset_mode: clip_sync_repair::domain::FillOffsetMode::Recommended,
         gap_end_extend_on_post_seam_fail: true,
+        gap_start_extend_on_pre_seam_fail: true,
         gap_end_extend_max_ms: 500,
         gap_end_extend_step_ms: 20,
+        short_gap_one_strong_seam_fallback: true,
     }
 }
 

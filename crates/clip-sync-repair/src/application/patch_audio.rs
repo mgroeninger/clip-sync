@@ -8,7 +8,7 @@ use clip_sync::{
 };
 
 use crate::application::patch_region::{
-    evaluate_seam_gate, try_extend_gap_end_for_post_seam, SeamGateFailure, SeamGateOutcome,
+    evaluate_seam_gate, retry_waveform_seam_extensions, SeamGateFailure, SeamGateOutcome,
     SeamGateParams,
 };
 use crate::application::error::RepairError;
@@ -76,10 +76,14 @@ pub struct PatchAudioRequest {
     pub fill_offset_mode: crate::domain::FillOffsetMode,
     /// When waveform post-seam correlation fails, try extending the gap end on A in small steps.
     pub gap_end_extend_on_post_seam_fail: bool,
+    /// When waveform pre-seam correlation fails, try extending the gap start on A in small steps.
+    pub gap_start_extend_on_pre_seam_fail: bool,
     /// Maximum gap-end extension when retrying a failed post seam (milliseconds).
     pub gap_end_extend_max_ms: u64,
     /// Step size for gap-end extension retries (milliseconds).
     pub gap_end_extend_step_ms: u64,
+    /// For short gaps, allow patch when mean(pre, post) fails but either seam meets the threshold.
+    pub short_gap_one_strong_seam_fallback: bool,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -477,8 +481,10 @@ fn prepare_region_patch(
     let absolute_silence_rms = request.absolute_silence_rms;
     let fill_offset_mode = request.fill_offset_mode;
     let gap_end_extend_on_post_seam_fail = request.gap_end_extend_on_post_seam_fail;
+    let gap_start_extend_on_pre_seam_fail = request.gap_start_extend_on_pre_seam_fail;
     let gap_end_extend_max_ms = request.gap_end_extend_max_ms;
     let gap_end_extend_step_ms = request.gap_end_extend_step_ms;
+    let short_gap_one_strong_seam_fallback = request.short_gap_one_strong_seam_fallback;
 
     debug_assert!(
         region.b_start_secs >= 0.0,
@@ -535,7 +541,7 @@ fn prepare_region_patch(
     let seam_gate_frames =
         seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = if gap_end_extend_on_post_seam_fail {
+    let extend_slack_secs = if gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail {
         gap_end_extend_max_ms as f64 / 1000.0
     } else {
         0.0
@@ -544,7 +550,8 @@ fn prepare_region_patch(
     let b_extract_start_secs = (refined_b_start_secs
         - gap_signature_context_secs
         - search_radius_secs
-        - margin_secs)
+        - margin_secs
+        - extend_slack_secs)
         .max(0.0);
     let length_slack_secs = fill_length_slack_secs.max(margin_secs);
     let b_extract_end_secs = refined_b_end_secs
@@ -613,21 +620,24 @@ fn prepare_region_patch(
         partial_structure_waveform_soften,
         min_fill_correlation,
         short_gap_mean_correlation_secs,
+        short_gap_one_strong_seam_fallback,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
         Ok(outcome) => outcome,
         Err(fail) => match fail {
             SeamGateFailure::WaveformBelowThreshold { .. }
-                if gap_end_extend_on_post_seam_fail =>
+                if gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail =>
             {
-                match try_extend_gap_end_for_post_seam(
+                match retry_waveform_seam_extensions(
                     &mut refined,
                     gap_offset_secs,
                     &seam_params,
                     fail,
                     max_extend_frames,
                     step_frames.max(1),
+                    gap_end_extend_on_post_seam_fail,
+                    gap_start_extend_on_pre_seam_fail,
                 ) {
                     Ok(outcome) => outcome,
                     Err(retry_fail) => {

@@ -9,7 +9,8 @@ use clip_sync::{
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
 use crate::domain::cross_check::{
-    b_has_energy_in_range, check_gap_offset_agreement_in_overlap, SilenceInterval,
+    b_has_energy_in_range, check_gap_offset_agreement_in_overlap,
+    mutual_silence_intervals_from_gaps, SilenceInterval,
 };
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::policies;
@@ -193,13 +194,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         }
 
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
-        let a_intervals: Vec<SilenceInterval> = gaps
-            .iter()
-            .map(|g| SilenceInterval {
-                start_secs: g.video_a_start_secs,
-                end_secs: g.video_a_end_secs,
-            })
-            .collect();
+        // Use co-occurring quiet on both timelines; exclude A-only dropouts (b_has_energy).
+        let a_intervals = mutual_silence_intervals_from_gaps(&gaps);
         let gap_offset_agreement = if request.scan_both {
             alignment.recommended_offset_secs.and_then(|offset| {
                 check_gap_offset_agreement_in_overlap(
@@ -866,6 +862,30 @@ mod tests {
         assert!(report.gaps[0].is_fillable());
         assert!(!report.gaps[1].is_fillable());
         assert!((report.gaps[0].duration_secs() - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn scan_both_skips_cross_check_when_only_a_dropouts() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!(report.gaps[0].b_has_energy);
+        assert!(
+            report.gap_offset_agreement.is_none(),
+            "A-only silences must not produce cross-check"
+        );
     }
 
     #[test]

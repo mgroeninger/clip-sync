@@ -104,6 +104,14 @@ pub struct Args {
     #[arg(long)]
     pub no_gap_end_extend: bool,
 
+    /// Disable pre-seam gap-start extension retries when waveform correlation fails at the head.
+    #[arg(long)]
+    pub no_gap_start_extend: bool,
+
+    /// Disable short-gap fallback that patches when either seam passes (after mean rule fails).
+    #[arg(long)]
+    pub no_short_gap_one_strong_seam: bool,
+
     /// Maximum gap-end extension when retrying a failed post seam (ms) [default: 500].
     #[arg(long, value_name = "MS")]
     pub gap_end_extend_max_ms: Option<u64>,

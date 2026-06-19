@@ -175,6 +175,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
 | `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended` or `interpolated` (drift between start/end clips) |
 | `--no-gap-end-extend` | — | Disable post-seam gap-end extension retries |
+| `--no-gap-start-extend` | — | Disable pre-seam gap-start extension retries |
+| `--no-short-gap-one-strong-seam` | — | Disable short-gap patch when either seam passes (after mean fails) |
 | `--gap-end-extend-max-ms <MS>` | `500` | Maximum gap-end extension when retrying a failed post seam |
 | `--gap-end-extend-step-ms <MS>` | `20` | Step size for gap-end extension retries |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
@@ -195,7 +197,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
-**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--no-structure-trust`, `--min-fill-correlation`, `--max-fill-align-adjust-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`) can be set on the CLI or in `[repair]` in a config file. Other patch settings (structure signature size, fill search radius, normalization window, etc.) are config-only — see the example below.
+**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--no-structure-trust`, `--min-fill-correlation`, `--max-fill-align-adjust-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`, `--no-short-gap-one-strong-seam`) can be set on the CLI or in `[repair]` in a config file. Other patch settings (structure signature size, fill search radius, normalization window, etc.) are config-only — see the example below.
 
 **Write output:** `--wav` writes lossless 16-bit PCM (no re-encode). `--mux` copies video from A and re-encodes the patched audio track (default `audio_codec = "aac"`). Mux bitrate is chosen from compressed bytes counted during patch decode — default `mux_audio_bitrate = "match_min"` uses the lower of A and B measured rates so output is not upsampled above either source. Use `"default"` to omit `-b:a` and let ffmpeg pick (~128 kb/s stereo); use `"256k"` (or `match_a`) to override.
 
@@ -321,8 +323,10 @@ max_fill_align_adjustment_secs = 0.5
 border_standoff_secs = 0.35
 fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
 gap_end_extend_on_post_seam_fail = true
+gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500
 gap_end_extend_step_ms = 20
+short_gap_one_strong_seam_fallback = true
 crossfade_ms = 10
 normalize_fill = true
 normalize_window_secs = 5.0

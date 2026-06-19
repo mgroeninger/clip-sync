@@ -130,8 +130,14 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,
+                    gap_start_extend_on_pre_seam_fail: config
+                        .repair
+                        .gap_start_extend_on_pre_seam_fail,
                     gap_end_extend_max_ms: config.repair.gap_end_extend_max_ms,
                     gap_end_extend_step_ms: config.repair.gap_end_extend_step_ms,
+                    short_gap_one_strong_seam_fallback: config
+                        .repair
+                        .short_gap_one_strong_seam_fallback,
                 };
 
                 let write_request = RepairWriteRequest {
@@ -267,6 +273,12 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;
     }
+    if args.no_gap_start_extend {
+        config.repair.gap_start_extend_on_pre_seam_fail = false;
+    }
+    if args.no_short_gap_one_strong_seam {
+        config.repair.short_gap_one_strong_seam_fallback = false;
+    }
     if let Some(ms) = args.gap_end_extend_max_ms {
         config.repair.gap_end_extend_max_ms = ms;
     }
@@ -377,6 +389,8 @@ mod cli_override_tests {
             "--fill-offset",
             "interpolated",
             "--no-gap-end-extend",
+            "--no-gap-start-extend",
+            "--no-short-gap-one-strong-seam",
             "--gap-end-extend-max-ms",
             "300",
             "--gap-end-extend-step-ms",
@@ -391,6 +405,8 @@ mod cli_override_tests {
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!(!config.repair.gap_end_extend_on_post_seam_fail);
+        assert!(!config.repair.gap_start_extend_on_pre_seam_fail);
+        assert!(!config.repair.short_gap_one_strong_seam_fallback);
         assert_eq!(config.repair.gap_end_extend_max_ms, 300);
         assert_eq!(config.repair.gap_end_extend_step_ms, 10);
     }

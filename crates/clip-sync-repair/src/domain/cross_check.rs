@@ -1,6 +1,6 @@
 use clip_sync::TimelineOverlap;
 
-use crate::domain::gap::GapOffsetAgreement;
+use crate::domain::gap::{Gap, GapOffsetAgreement};
 use crate::domain::gap::interval_fully_within_window;
 
 /// A silence interval on a single file's native timeline.
@@ -32,6 +32,20 @@ pub fn b_has_energy_in_range(b_intervals: &[SilenceInterval], start: f64, end: f
         covered_up_to = covered_up_to.max(interval.end_secs);
     }
     covered_up_to < end
+}
+
+/// Silence on A that is also silent on B at the mapped alignment offset (`!b_has_energy`).
+///
+/// Excludes A-side dropouts (repair targets) so cross-check uses co-occurring quiet on both
+/// timelines, not holes that only exist on the defective recording.
+pub fn mutual_silence_intervals_from_gaps(gaps: &[Gap]) -> Vec<SilenceInterval> {
+    gaps.iter()
+        .filter(|gap| !gap.b_has_energy)
+        .map(|gap| SilenceInterval {
+            start_secs: gap.video_a_start_secs,
+            end_secs: gap.video_a_end_secs,
+        })
+        .collect()
 }
 
 /// Keep only intervals fully contained in the alignment overlap on each native timeline.
@@ -162,6 +176,60 @@ mod tests {
 
     fn interval(start: f64, end: f64) -> SilenceInterval {
         SilenceInterval { start_secs: start, end_secs: end }
+    }
+
+    use crate::domain::gap::Gap;
+
+    #[test]
+    fn mutual_silence_intervals_exclude_a_only_dropouts() {
+        let gaps = [
+            Gap {
+                video_a_start_secs: 10.0,
+                video_a_end_secs: 20.0,
+                video_b_start_secs: Some(3.0),
+                video_b_end_secs: Some(13.0),
+                b_has_energy: true,
+            },
+            Gap {
+                video_a_start_secs: 30.0,
+                video_a_end_secs: 40.0,
+                video_b_start_secs: Some(23.0),
+                video_b_end_secs: Some(33.0),
+                b_has_energy: false,
+            },
+        ];
+        let intervals = mutual_silence_intervals_from_gaps(&gaps);
+        assert_eq!(intervals.len(), 1);
+        assert!((intervals[0].start_secs - 30.0).abs() < f64::EPSILON);
+        assert!((intervals[0].end_secs - 40.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cross_check_ignores_a_only_dropouts_when_spurious_shift_would_win() {
+        // Dropout on A would spuriously align with unrelated B quiet at Δ≈341; mutual quiet agrees at −7.
+        let a_with_dropout = [
+            interval(10.0, 30.0),
+            interval(100.0, 110.0),
+        ];
+        let a_mutual_only = [interval(100.0, 110.0)];
+        let b_spurious = [interval(93.0, 103.0), interval(351.0, 371.0)];
+        let b_mutual = [interval(93.0, 103.0)];
+
+        let spurious = silence_based_offset(&a_with_dropout, &b_spurious).expect("offset");
+        assert!(
+            (spurious - 341.0).abs() < 1.0,
+            "unfiltered A dropouts should pick spurious Δ, got {spurious}"
+        );
+
+        let filtered = silence_based_offset(&a_mutual_only, &b_mutual).expect("offset");
+        assert!(
+            (filtered - (-7.0)).abs() < 1e-6,
+            "mutual quiet only should recover true Δ, got {filtered}"
+        );
+
+        let agreement =
+            check_gap_offset_agreement(&a_mutual_only, &b_mutual, -7.0, 0.5).expect("agreement");
+        assert!(agreement.agrees);
     }
 
     #[test]

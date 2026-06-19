@@ -1,7 +1,7 @@
 pub mod cross_check;
 pub mod fill_offset;
 pub mod gap;
-pub mod gap_end_extend;
+pub mod gap_seam_extend;
 pub mod gap_fill;
 pub mod gap_structure;
 pub mod patch_result;

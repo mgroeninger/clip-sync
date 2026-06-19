@@ -132,12 +132,18 @@ pub struct RepairConfig {
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
+    /// When waveform pre-seam correlation fails, try extending the gap start on A.
+    #[serde(default = "default_true")]
+    pub gap_start_extend_on_pre_seam_fail: bool,
     /// Maximum gap-end extension when retrying a failed post seam (ms).
     #[serde(default = "default_gap_end_extend_max_ms")]
     pub gap_end_extend_max_ms: u64,
     /// Step size for gap-end extension retries (ms).
     #[serde(default = "default_gap_end_extend_step_ms")]
     pub gap_end_extend_step_ms: u64,
+    /// For short gaps, allow patch when either seam meets the threshold (after mean fails).
+    #[serde(default = "default_true")]
+    pub short_gap_one_strong_seam_fallback: bool,
 }
 
 fn default_min_gap_ms() -> u64 {
@@ -257,8 +263,10 @@ impl Default for RepairConfig {
             limit_fill_to_mapped_region: default_true(),
             fill_offset_mode: crate::domain::FillOffsetMode::default(),
             gap_end_extend_on_post_seam_fail: true,
+            gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
             gap_end_extend_step_ms: default_gap_end_extend_step_ms(),
+            short_gap_one_strong_seam_fallback: true,
         }
     }
 }
@@ -462,18 +470,20 @@ impl RepairConfig {
                 reason: "must be non-negative".into(),
             });
         }
-        if self.gap_end_extend_max_ms == 0 && self.gap_end_extend_on_post_seam_fail {
+        if self.gap_end_extend_max_ms == 0
+            && (self.gap_end_extend_on_post_seam_fail || self.gap_start_extend_on_pre_seam_fail)
+        {
             return Err(ConfigError::InvalidValue {
                 field: "gap_end_extend_max_ms".into(),
-                reason: "must be greater than zero when gap_end_extend_on_post_seam_fail is enabled"
-                    .into(),
+                reason: "must be greater than zero when gap seam extension is enabled".into(),
             });
         }
-        if self.gap_end_extend_on_post_seam_fail && self.gap_end_extend_step_ms == 0 {
+        if self.gap_end_extend_step_ms == 0
+            && (self.gap_end_extend_on_post_seam_fail || self.gap_start_extend_on_pre_seam_fail)
+        {
             return Err(ConfigError::InvalidValue {
                 field: "gap_end_extend_step_ms".into(),
-                reason: "must be greater than zero when gap_end_extend_on_post_seam_fail is enabled"
-                    .into(),
+                reason: "must be greater than zero when gap seam extension is enabled".into(),
             });
         }
         #[cfg(not(feature = "ffmpeg-mux"))]

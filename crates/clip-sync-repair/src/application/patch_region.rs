@@ -1,8 +1,11 @@
-//! Structure match + seam gate for one A gap bracket (supports end extension retries).
+//! Structure match + seam gate for one A gap bracket (supports boundary extension retries).
 
 use clip_sync::MultiChannelPcm;
 
-use crate::domain::gap_end_extend::post_seam_extension_candidate;
+use crate::domain::gap_seam_extend::{
+    post_seam_extension_candidate, pre_seam_extension_candidate,
+    short_gap_one_strong_seam_passes,
+};
 use crate::domain::gap_structure::{self, StructureMatchParams};
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
 
@@ -42,6 +45,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub partial_structure_waveform_soften: f64,
     pub min_fill_correlation: f32,
     pub short_gap_mean_correlation_secs: f64,
+    pub short_gap_one_strong_seam_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -188,6 +192,7 @@ pub(crate) fn evaluate_seam_gate(
                 effective_min_corr,
                 gap_secs,
                 params.short_gap_mean_correlation_secs,
+                params.short_gap_one_strong_seam_fallback,
             ) {
                 return Err(SeamGateFailure::WaveformBelowThreshold {
                     pre: pre_corr,
@@ -265,6 +270,109 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
     Err(last_fail)
 }
 
+/// Shift `refined.start_frame` earlier in steps when the pre seam failed waveform correlation.
+pub(crate) fn try_extend_gap_start_for_pre_seam(
+    refined: &mut RefinedGapFrames,
+    gap_offset_secs: f64,
+    params: &SeamGateParams<'_>,
+    initial_fail: SeamGateFailure,
+    max_extend_frames: usize,
+    step_frames: usize,
+) -> Result<SeamGateOutcome, SeamGateFailure> {
+    let SeamGateFailure::WaveformBelowThreshold { pre, post, min } = initial_fail else {
+        return Err(initial_fail);
+    };
+
+    if !pre_seam_extension_candidate(pre, post, min) {
+        return Err(initial_fail);
+    }
+
+    let original_start = refined.start_frame;
+    let min_start = original_start.saturating_sub(max_extend_frames);
+    if step_frames == 0 || original_start <= min_start {
+        return Err(initial_fail);
+    }
+
+    let mut try_start = original_start;
+    let mut last_fail = initial_fail;
+    while try_start >= step_frames && try_start - step_frames >= min_start {
+        try_start -= step_frames;
+        refined.start_frame = try_start;
+        let refined_b_start_secs = try_start as f64 / params.sample_rate as f64 + gap_offset_secs;
+        let try_params = SeamGateParams {
+            refined_b_start_secs,
+            ..*params
+        };
+        match evaluate_seam_gate(*refined, &try_params) {
+            Ok(outcome) => {
+                tracing::debug!(
+                    extended_frames = refined.end_frame - refined.start_frame,
+                    pre = outcome.report_pre,
+                    post = outcome.report_post,
+                    "gap start extended for pre-seam alignment"
+                );
+                return Ok(outcome);
+            }
+            Err(fail @ SeamGateFailure::WaveformBelowThreshold { .. }) => {
+                last_fail = fail;
+            }
+            Err(other) => {
+                refined.start_frame = original_start;
+                return Err(other);
+            }
+        }
+    }
+
+    refined.start_frame = original_start;
+    Err(last_fail)
+}
+
+/// Retry waveform gate failures by extending the gap end, then the gap start.
+pub(crate) fn retry_waveform_seam_extensions(
+    refined: &mut RefinedGapFrames,
+    gap_offset_secs: f64,
+    params: &SeamGateParams<'_>,
+    initial_fail: SeamGateFailure,
+    max_extend_frames: usize,
+    step_frames: usize,
+    gap_end_extend_on_post_seam_fail: bool,
+    gap_start_extend_on_pre_seam_fail: bool,
+) -> Result<SeamGateOutcome, SeamGateFailure> {
+    let SeamGateFailure::WaveformBelowThreshold { .. } = initial_fail else {
+        return Err(initial_fail);
+    };
+
+    let step = step_frames.max(1);
+    let mut last_fail = initial_fail;
+
+    if gap_end_extend_on_post_seam_fail {
+        match try_extend_gap_end_for_post_seam(
+            refined,
+            gap_offset_secs,
+            params,
+            last_fail,
+            max_extend_frames,
+            step,
+        ) {
+            Ok(outcome) => return Ok(outcome),
+            Err(fail) => last_fail = fail,
+        }
+    }
+
+    if gap_start_extend_on_pre_seam_fail {
+        return try_extend_gap_start_for_pre_seam(
+            refined,
+            gap_offset_secs,
+            params,
+            last_fail,
+            max_extend_frames,
+            step,
+        );
+    }
+
+    Err(last_fail)
+}
+
 fn structure_passes_gate(
     pre_score: f64,
     post_score: f64,
@@ -286,12 +394,76 @@ fn seams_pass_correlation_gate(
     min_fill_correlation: f32,
     gap_secs: f64,
     short_gap_mean_correlation_secs: f64,
+    short_gap_one_strong_seam_fallback: bool,
 ) -> bool {
     let pre = alignment.pre_correlation as f32;
     let post = alignment.post_correlation as f32;
     if gap_secs <= short_gap_mean_correlation_secs {
-        (pre + post) / 2.0 >= min_fill_correlation
+        if (pre + post) / 2.0 >= min_fill_correlation {
+            return true;
+        }
+        if short_gap_one_strong_seam_fallback {
+            return short_gap_one_strong_seam_passes(pre, post, min_fill_correlation);
+        }
+        false
     } else {
         pre >= min_fill_correlation && post >= min_fill_correlation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::policies::FillAlignment;
+
+    #[test]
+    fn short_gap_passes_on_one_strong_seam_when_mean_fails() {
+        let alignment = FillAlignment {
+            start_frame: 0,
+            fill_frames: 48_000,
+            pre_correlation: -0.01,
+            post_correlation: 0.17,
+        };
+        assert!(seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            true,
+        ));
+    }
+
+    #[test]
+    fn short_gap_still_fails_when_both_seams_weak_and_fallback_on() {
+        let alignment = FillAlignment {
+            start_frame: 0,
+            fill_frames: 48_000,
+            pre_correlation: 0.06,
+            post_correlation: -0.13,
+        };
+        assert!(!seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            true,
+        ));
+    }
+
+    #[test]
+    fn short_gap_one_strong_fallback_can_be_disabled() {
+        let alignment = FillAlignment {
+            start_frame: 0,
+            fill_frames: 48_000,
+            pre_correlation: -0.01,
+            post_correlation: 0.17,
+        };
+        assert!(!seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            false,
+        ));
     }
 }
