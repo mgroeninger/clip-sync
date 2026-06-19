@@ -47,6 +47,16 @@ pub struct Args {
     #[arg(long, value_name = "MS")]
     pub scan_block_ms: Option<u64>,
 
+    /// Override: consecutive non-silent time to absorb before closing a silence run (ms)
+    /// [default: 500].
+    #[arg(long, value_name = "MS")]
+    pub silence_hold_ms: Option<u64>,
+
+    /// Override: absolute RMS floor for silence detection (0–32767 scale; 0 disables)
+    /// [default: 33].
+    #[arg(long, value_name = "N")]
+    pub absolute_silence_rms: Option<f32>,
+
     /// Enable bidirectional silence scan (scan B's timeline too) [default: enabled].
     #[arg(long, overrides_with = "no_scan_both")]
     pub scan_both: bool,
@@ -66,6 +76,24 @@ pub struct Args {
     /// Disable loudness normalization of fill segments [default: normalization enabled].
     #[arg(long)]
     pub no_normalize: bool,
+
+    /// Always run the waveform seam gate; do not skip it when structure scores are high.
+    #[arg(long)]
+    pub no_structure_trust: bool,
+
+    /// Override: minimum Pearson correlation at gap seams when the waveform gate runs
+    /// [default: 0.35].
+    #[arg(long, value_name = "N")]
+    pub min_fill_correlation: Option<f32>,
+
+    /// Override: maximum B fill slide during structure match (seconds) [default: 0.5].
+    #[arg(long, value_name = "SECS")]
+    pub max_fill_align_adjust_secs: Option<f64>,
+
+    /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
+    /// [default: 0.35].
+    #[arg(long, value_name = "SECS")]
+    pub border_standoff_secs: Option<f64>,
 
     /// Crossfade duration at gap boundaries (ms) [default: 10].
     #[arg(long, value_name = "MS")]
@@ -202,6 +230,11 @@ mod tests {
             &format!("[default: {}]", defaults.repair.silence_peak_fraction),
             &format!("[default: {}]", defaults.repair.decode_chunk_secs),
             &format!("[default: {}]", defaults.repair.scan_block_ms),
+            &format!("[default: {}]", defaults.repair.silence_hold_ms),
+            &format!("[default: {}]", defaults.repair.absolute_silence_rms as u32),
+            &format!("[default: {}]", defaults.repair.min_fill_correlation),
+            &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
+            &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
             "[default: 2]",
             "[default: 60]",

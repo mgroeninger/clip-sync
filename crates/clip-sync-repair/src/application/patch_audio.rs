@@ -62,6 +62,8 @@ pub struct PatchAudioRequest {
     pub min_structure_match_score: f32,
     /// Both structure seam scores must meet this to skip the waveform Pearson gate.
     pub strong_structure_trust: f64,
+    /// When true, always run the waveform Pearson seam gate.
+    pub disable_structure_trust: bool,
     /// In the waveform gate path, soften Pearson threshold when structure scores meet this.
     pub partial_structure_waveform_soften: f64,
     /// Peak-amplitude floor for per-frame silence checks during gap refinement (matches scan).
@@ -399,6 +401,7 @@ fn prepare_region_patch(
     let gap_signature_bin_ms = request.gap_signature_bin_ms;
     let min_structure_match_score = request.min_structure_match_score;
     let strong_structure_trust = request.strong_structure_trust;
+    let disable_structure_trust = request.disable_structure_trust;
     let partial_structure_waveform_soften = request.partial_structure_waveform_soften;
     let min_fill_correlation = request.min_fill_correlation;
     let normalize_fill = request.normalize_fill;
@@ -584,7 +587,8 @@ fn prepare_region_patch(
         );
     }
 
-    let structure_trusted = structure_pre >= strong_structure_trust
+    let structure_trusted = !disable_structure_trust
+        && structure_pre >= strong_structure_trust
         && structure_post >= strong_structure_trust;
 
     let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {

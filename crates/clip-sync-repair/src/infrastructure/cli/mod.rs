@@ -121,6 +121,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     gap_signature_bin_ms: config.repair.gap_signature_bin_ms,
                     min_structure_match_score: config.repair.min_structure_match_score,
                     strong_structure_trust: config.repair.strong_structure_trust,
+                    disable_structure_trust: config.repair.disable_structure_trust,
                     partial_structure_waveform_soften: config
                         .repair
                         .partial_structure_waveform_soften,
@@ -219,6 +220,12 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(ms) = args.scan_block_ms {
         config.repair.scan_block_ms = ms;
     }
+    if let Some(ms) = args.silence_hold_ms {
+        config.repair.silence_hold_ms = ms;
+    }
+    if let Some(rms) = args.absolute_silence_rms {
+        config.repair.absolute_silence_rms = rms;
+    }
     if args.scan_both {
         config.repair.scan_both = true;
     } else if args.no_scan_both {
@@ -235,6 +242,18 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if args.no_normalize {
         config.repair.normalize_fill = false;
+    }
+    if args.no_structure_trust {
+        config.repair.disable_structure_trust = true;
+    }
+    if let Some(corr) = args.min_fill_correlation {
+        config.repair.min_fill_correlation = corr;
+    }
+    if let Some(secs) = args.max_fill_align_adjust_secs {
+        config.repair.max_fill_align_adjustment_secs = secs;
+    }
+    if let Some(secs) = args.border_standoff_secs {
+        config.repair.border_standoff_secs = secs;
     }
     if let Some(ms) = args.crossfade_ms {
         config.repair.crossfade_ms = ms;
@@ -301,5 +320,48 @@ mod cli_override_tests {
         assert_eq!(config.align.alignment.mode, AlignmentMode::QueryReference);
         assert!((config.align.alignment.query_search_stride_secs - 45.0).abs() < f64::EPSILON);
         assert!(!config.repair.limit_fill_to_mapped_region);
+    }
+
+    #[test]
+    fn no_structure_trust_cli_overrides_config() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--no-structure-trust",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(config.repair.disable_structure_trust);
+    }
+
+    #[test]
+    fn patch_and_scan_cli_overrides_config() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--silence-hold-ms",
+            "400",
+            "--absolute-silence-rms",
+            "25",
+            "--min-fill-correlation",
+            "0.45",
+            "--max-fill-align-adjust-secs",
+            "0.25",
+            "--border-standoff-secs",
+            "0.5",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.silence_hold_ms, 400);
+        assert!((config.repair.absolute_silence_rms - 25.0).abs() < f32::EPSILON);
+        assert!((config.repair.min_fill_correlation - 0.45).abs() < f32::EPSILON);
+        assert!((config.repair.max_fill_align_adjustment_secs - 0.25).abs() < f64::EPSILON);
+        assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
     }
 }

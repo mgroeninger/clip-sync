@@ -162,11 +162,17 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--silence-fraction <F>` | `0.01` | Silence threshold as a fraction of peak amplitude |
 | `--decode-chunk-secs <SECS>` | `10` | Decode chunk size for sequential scan (alias: `--scan-window-secs`) |
 | `--scan-block-ms <MS>` | `250` | Analysis block size for silence detection |
+| `--silence-hold-ms <MS>` | `500` | Non-silent time to absorb before closing a silence run (`hold = hold_ms / block_ms`) |
+| `--absolute-silence-rms <N>` | `33` | Absolute RMS floor for silence (0–32767 scale; `0` disables) |
 | `--scan-both` | on | Scan B's timeline for silence (bidirectional agreement) |
 | `--no-scan-both` | — | Disable bidirectional silence scan |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
+| `--no-structure-trust` | — | Always run the waveform seam gate (do not skip when structure scores are high) |
+| `--min-fill-correlation <N>` | `0.35` | Minimum Pearson correlation at gap seams when the waveform gate runs |
+| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Maximum B fill slide during structure match |
+| `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
 | `-v, --verbose` | — | Verbose progress on stderr plus detailed gap-patch lines in the human report |
 | `-q, --quiet` | — | Suppress progress on stderr (errors still print) |
@@ -184,6 +190,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `-V, --version` | | |
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
+
+**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--no-structure-trust`, `--min-fill-correlation`, `--max-fill-align-adjust-secs`, `--border-standoff-secs`) can be set on the CLI or in `[repair]` in a config file. Other patch settings (structure signature size, fill search radius, normalization window, etc.) are config-only — see the example below.
 
 **Write output:** `--wav` writes lossless 16-bit PCM (no re-encode). `--mux` copies video from A and re-encodes the patched audio track (default `audio_codec = "aac"`). Mux bitrate is chosen from compressed bytes counted during patch decode — default `mux_audio_bitrate = "match_min"` uses the lower of A and B measured rates so output is not upsampled above either source. Use `"default"` to omit `-b:a` and let ffmpeg pick (~128 kb/s stereo); use `"256k"` (or `match_a`) to override.
 
@@ -303,8 +311,10 @@ absolute_silence_rms = 33.0
 scan_both = true
 gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
+disable_structure_trust = false   # or --no-structure-trust on CLI
 fill_align_margin_secs = 1.0
 max_fill_align_adjustment_secs = 0.5
+border_standoff_secs = 0.35
 crossfade_ms = 10
 normalize_fill = true
 normalize_window_secs = 5.0

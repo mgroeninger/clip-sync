@@ -193,6 +193,7 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 gap_signature_bin_ms: 50,
                 min_structure_match_score: 0.55,
                 strong_structure_trust: 0.90,
+                disable_structure_trust: false,
                 partial_structure_waveform_soften: 0.85,
                 absolute_silence_rms: 0.0,
             },

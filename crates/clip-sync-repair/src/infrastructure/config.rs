@@ -97,6 +97,10 @@ pub struct RepairConfig {
     /// Both structure seam scores must meet this to skip the waveform Pearson gate.
     #[serde(default = "default_strong_structure_trust")]
     pub strong_structure_trust: f64,
+    /// When true, always run the waveform Pearson seam gate even when structure scores meet
+    /// `strong_structure_trust`.
+    #[serde(default)]
+    pub disable_structure_trust: bool,
     /// In the waveform gate path, soften Pearson threshold when structure scores meet this.
     #[serde(default = "default_partial_structure_waveform_soften")]
     pub partial_structure_waveform_soften: f64,
@@ -224,6 +228,7 @@ impl Default for RepairConfig {
             gap_signature_bin_ms: default_gap_signature_bin_ms(),
             min_structure_match_score: default_min_structure_match_score(),
             strong_structure_trust: default_strong_structure_trust(),
+            disable_structure_trust: false,
             partial_structure_waveform_soften: default_partial_structure_waveform_soften(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
