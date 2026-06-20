@@ -21,7 +21,7 @@ use crate::domain::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
     policies::{self, RefinedGapFrames},
-    Gap, GapReport,
+    FillOffsetMode, Gap, GapReport,
 };
 
 pub struct PatchAudioResult {
@@ -220,8 +220,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let gap_num = index as u64 + 1;
             self.progress.progress("patch-gap", gap_num, region_count);
             self.progress.phase_verbose(&format!(
-                "  gap {gap_num}/{region_count}: A [{:.1}s – {:.1}s]",
-                region.a_start_secs, region.a_end_secs
+                "  gap {gap_num}/{region_count}: A {}",
+                format_time_range(region.a_start_secs, region.a_end_secs)
             ));
 
             let (patch, outcome) = prepare_region_patch(
@@ -311,6 +311,117 @@ enum RegionPatchOutcome {
 
 fn gap_key(start_secs: f64, end_secs: f64) -> (u64, u64) {
     (start_secs.to_bits(), end_secs.to_bits())
+}
+
+fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
+    match mode {
+        FillOffsetMode::Recommended => "recommended",
+        FillOffsetMode::Interpolated => "interpolated",
+    }
+}
+
+/// Verbose stderr lines: per-gap A/B timeline used for structure search and fill.
+pub(crate) fn format_gap_fill_plan_lines(
+    scan_a_start_secs: f64,
+    scan_a_end_secs: f64,
+    refined_a_start_secs: f64,
+    refined_a_end_secs: f64,
+    gap_offset_secs: f64,
+    fill_offset_mode: FillOffsetMode,
+    mapped_b_start_secs: f64,
+    mapped_b_end_secs: f64,
+    b_search_start_secs: f64,
+    b_search_end_secs: f64,
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "           fill offset {:+.3}s ({})",
+        gap_offset_secs,
+        fill_offset_mode_label(fill_offset_mode),
+    )];
+    if (refined_a_start_secs - scan_a_start_secs).abs() > 0.001
+        || (refined_a_end_secs - scan_a_end_secs).abs() > 0.001
+    {
+        lines.push(format!(
+            "           A gap (refined): {}",
+            format_time_range(refined_a_start_secs, refined_a_end_secs)
+        ));
+    }
+    lines.push(format!(
+        "           B gap (mapped): {}",
+        format_time_range(mapped_b_start_secs, mapped_b_end_secs)
+    ));
+    lines.push(format!(
+        "           B search window: {}",
+        format_time_range(b_search_start_secs, b_search_end_secs)
+    ));
+    lines
+}
+
+pub(crate) fn format_gap_fill_result_line(
+    b_search_start_secs: f64,
+    sample_rate: u32,
+    channels: usize,
+    fill_start_sample: usize,
+    fill_end_sample: usize,
+    align_adjustment_secs: f64,
+) -> String {
+    let ch = channels.max(1);
+    let to_secs = |sample: usize| sample as f64 / ch as f64 / f64::from(sample_rate);
+    let fill_start = b_search_start_secs + to_secs(fill_start_sample);
+    let fill_end = b_search_start_secs + to_secs(fill_end_sample);
+    format!(
+        "           B fill source: {} (structure slide {:+.3}s)",
+        format_time_range(fill_start, fill_end),
+        align_adjustment_secs
+    )
+}
+
+fn log_gap_fill_plan_verbose(
+    progress: &dyn ProgressReporter,
+    scan_a_start_secs: f64,
+    scan_a_end_secs: f64,
+    refined_a_start_secs: f64,
+    refined_a_end_secs: f64,
+    gap_offset_secs: f64,
+    fill_offset_mode: FillOffsetMode,
+    mapped_b_start_secs: f64,
+    mapped_b_end_secs: f64,
+    b_search_start_secs: f64,
+    b_search_end_secs: f64,
+) {
+    for line in format_gap_fill_plan_lines(
+        scan_a_start_secs,
+        scan_a_end_secs,
+        refined_a_start_secs,
+        refined_a_end_secs,
+        gap_offset_secs,
+        fill_offset_mode,
+        mapped_b_start_secs,
+        mapped_b_end_secs,
+        b_search_start_secs,
+        b_search_end_secs,
+    ) {
+        progress.phase_verbose(&line);
+    }
+}
+
+fn log_gap_fill_result_verbose(
+    progress: &dyn ProgressReporter,
+    b_search_start_secs: f64,
+    sample_rate: u32,
+    channels: usize,
+    fill_start_sample: usize,
+    fill_end_sample: usize,
+    align_adjustment_secs: f64,
+) {
+    progress.phase_verbose(&format_gap_fill_result_line(
+        b_search_start_secs,
+        sample_rate,
+        channels,
+        fill_start_sample,
+        fill_end_sample,
+        align_adjustment_secs,
+    ));
 }
 
 /// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
@@ -530,7 +641,9 @@ fn prepare_region_patch(
     );
 
     let refined_a_start_secs = refined.start_frame as f64 / sample_rate as f64;
+    let refined_a_end_secs = refined.end_frame as f64 / sample_rate as f64;
     let refined_b_start_secs = refined_a_start_secs + gap_offset_secs;
+    let refined_b_end_secs = refined_a_end_secs + gap_offset_secs;
     let a_start_secs = refined_a_start_secs;
 
     if fill_offset_mode != crate::domain::FillOffsetMode::Recommended {
@@ -542,33 +655,16 @@ fn prepare_region_patch(
         );
     }
 
-    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
-    if gap_frames == 0 {
-        return (
-            None,
-            RegionPatchOutcome::Skipped(GapPatchSkipReason::ZeroLengthGap),
-        );
-    }
-
     let context_frames =
         (gap_signature_context_secs * sample_rate as f64).round() as usize;
     let bin_frames =
         ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
-    let correlate_frames = correlate_frames_for_gap(
-        normalize_window_secs,
-        min_border_discovery_secs,
-        gap_frames,
-        sample_rate,
-    );
-    let seam_gate_frames =
-        seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
     let search_radius_secs = border_search_secs.max(margin_secs);
     let extend_slack_secs = if gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail {
         gap_end_extend_max_ms as f64 / 1000.0
     } else {
         0.0
     };
-    let refined_b_end_secs = refined.end_frame as f64 / sample_rate as f64 + gap_offset_secs;
     let b_extract_start_secs = (refined_b_start_secs
         - gap_signature_context_secs
         - search_radius_secs
@@ -582,6 +678,37 @@ fn prepare_region_patch(
         + length_slack_secs
         + margin_secs
         + extend_slack_secs;
+
+    log_gap_fill_plan_verbose(
+        progress,
+        region.a_start_secs,
+        region.a_end_secs,
+        refined_a_start_secs,
+        refined_a_end_secs,
+        gap_offset_secs,
+        fill_offset_mode,
+        refined_b_start_secs,
+        refined_b_end_secs,
+        b_extract_start_secs,
+        b_extract_end_secs,
+    );
+
+    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    if gap_frames == 0 {
+        return (
+            None,
+            RegionPatchOutcome::Skipped(GapPatchSkipReason::ZeroLengthGap),
+        );
+    }
+
+    let correlate_frames = correlate_frames_for_gap(
+        normalize_window_secs,
+        min_border_discovery_secs,
+        gap_frames,
+        sample_rate,
+    );
+    let seam_gate_frames =
+        seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
     let b_samples = match slice_b_segment(
         b_samples_full,
         channels,
@@ -755,6 +882,16 @@ fn prepare_region_patch(
 
     let align_adjustment_secs =
         (alignment.start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
+
+    log_gap_fill_result_verbose(
+        progress,
+        b_extract_start_secs,
+        sample_rate,
+        channels,
+        fill_start_sample,
+        b_fill_end_sample,
+        align_adjustment_secs,
+    );
 
     (
         Some(RegionPatch {
@@ -939,8 +1076,10 @@ fn splice_into_a(
 
 #[cfg(test)]
 mod tests {
-    use super::fit_fill_to_gap_frames;
-    use crate::domain::Gap;
+    use super::{
+        fit_fill_to_gap_frames, format_gap_fill_plan_lines, format_gap_fill_result_line,
+    };
+    use crate::domain::{FillOffsetMode, Gap};
 
     #[test]
     fn fit_fill_trims_tail_without_resampling() {
@@ -963,6 +1102,34 @@ mod tests {
         let samples = vec![1000i16, 1000, 2000, 2000];
         let fitted = fit_fill_to_gap_frames(&samples, 2, 4);
         assert_eq!(fitted, vec![1000, 1000, 2000, 2000, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn format_gap_fill_plan_lines_shows_mapped_and_search_windows() {
+        let lines = format_gap_fill_plan_lines(
+            0.0,
+            3.0,
+            0.1,
+            2.9,
+            61.199,
+            FillOffsetMode::Interpolated,
+            61.299,
+            64.099,
+            50.0,
+            80.0,
+        );
+        assert!(lines.iter().any(|l| l.contains("fill offset +61.199s (interpolated)")));
+        assert!(lines.iter().any(|l| l.contains("A gap (refined):")));
+        assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));
+        assert!(lines.iter().any(|l| l.contains("B search window:")));
+    }
+
+    #[test]
+    fn format_gap_fill_result_line_converts_sample_offsets_to_timeline() {
+        let line = format_gap_fill_result_line(50.0, 48_000, 6, 48_000 * 6, 96_000 * 6, -0.02);
+        assert!(line.contains("B fill source:"));
+        assert!(line.contains("structure slide -0.020s"));
+        assert!(line.contains("0:51"));
     }
 
     #[test]
