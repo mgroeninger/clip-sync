@@ -134,6 +134,12 @@ pub struct RepairConfig {
     /// Gap-fill placement after structure match: `gate` (legacy thresholds) or `fit` (waveform slide search).
     #[serde(default)]
     pub fill_mode: crate::domain::FillMode,
+    /// Unified fit: weight on structure combined score (Phase B; fit mode only).
+    #[serde(default = "default_fill_fit_structure_weight")]
+    pub fill_fit_structure_weight: f64,
+    /// Unified fit: weight on `min(pre, post)` waveform Pearson (Phase B; fit mode only).
+    #[serde(default = "default_fill_fit_waveform_weight")]
+    pub fill_fit_waveform_weight: f64,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -232,6 +238,12 @@ fn default_gap_end_extend_max_ms() -> u64 {
 fn default_gap_end_extend_step_ms() -> u64 {
     20
 }
+fn default_fill_fit_structure_weight() -> f64 {
+    0.35
+}
+fn default_fill_fit_waveform_weight() -> f64 {
+    0.65
+}
 
 impl Default for RepairConfig {
     fn default() -> Self {
@@ -268,6 +280,8 @@ impl Default for RepairConfig {
             limit_fill_to_mapped_region: default_true(),
             fill_offset_mode: crate::domain::FillOffsetMode::default(),
             fill_mode: crate::domain::FillMode::default(),
+            fill_fit_structure_weight: default_fill_fit_structure_weight(),
+            fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),

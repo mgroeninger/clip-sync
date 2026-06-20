@@ -1,10 +1,476 @@
-//! Waveform seam search for fit-mode gap fill (Phase A).
+//! Waveform seam search and unified structure+waveform fit (Phase A/B).
 
+use crate::domain::gap_structure::{
+    self, combined_structure_score, prefer_end, prefer_start, score_post_match, score_pre_match,
+    search_coarse_step, snap_structure_fill_to_gap, ActivityTimeline, GapContextSignature,
+    StructureMatchParams,
+};
 use crate::domain::policies::{
     fill_seam_correlations, FillAlignment, SeamPlacement, SeamTemplates,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
+const LATE_START_PENALTY: f64 = 0.08;
+
+/// Weights for unified fit scoring (Phase B).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UnifiedFitWeights {
+    pub structure_weight: f64,
+    pub waveform_weight: f64,
+}
+
+impl Default for UnifiedFitWeights {
+    fn default() -> Self {
+        Self {
+            structure_weight: 0.35,
+            waveform_weight: 0.65,
+        }
+    }
+}
+
+impl UnifiedFitWeights {
+    pub fn normalized(self) -> Self {
+        let sum = self.structure_weight + self.waveform_weight;
+        if sum <= 0.0 {
+            return Self::default();
+        }
+        Self {
+            structure_weight: self.structure_weight / sum,
+            waveform_weight: self.waveform_weight / sum,
+        }
+    }
+}
+
+/// Waveform templates for unified scoring at each structure candidate.
+pub struct WaveformSeamContext<'a> {
+    pub templates: &'a SeamTemplates<'a>,
+    pub gap_frames: usize,
+    pub pre_window: usize,
+    pub post_window: usize,
+    pub b_total_frames: usize,
+}
+
+/// Combined objective for one B fill bracket candidate.
+pub fn unified_fit_score(
+    structure_pre: f64,
+    structure_post: f64,
+    waveform_min: f64,
+    start: usize,
+    end: usize,
+    nominal_start: usize,
+    nominal_end: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+) -> f64 {
+    if !structure_pre.is_finite() || !structure_post.is_finite() || !waveform_min.is_finite() {
+        return f64::NEG_INFINITY;
+    }
+    let weights = weights.normalized();
+    let structure_combined = combined_structure_score(
+        structure_pre,
+        structure_post,
+        start,
+        end,
+        nominal_start,
+        nominal_end,
+        params,
+    );
+    let mut score =
+        weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
+    if start > nominal_start {
+        let late_frac = (start - nominal_start) as f64 / params.gap_frames.max(1) as f64;
+        score -= LATE_START_PENALTY * late_frac;
+    }
+    score
+}
+
+fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> f64 {
+    if !placement_in_bounds(
+        start,
+        ctx.gap_frames,
+        ctx.pre_window,
+        ctx.post_window,
+        ctx.b_total_frames,
+    ) {
+        return f64::NEG_INFINITY;
+    }
+    let (pre, post) = fill_seam_correlations(
+        ctx.templates,
+        SeamPlacement {
+            start,
+            gap_frames: ctx.gap_frames,
+            pre_window: ctx.pre_window,
+            post_window: ctx.post_window,
+        },
+    );
+    pre.min(post)
+}
+
+/// Result of unified structure+waveform search (Phase B).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnifiedFillMatch {
+    pub alignment: FillAlignment,
+    pub structure_pre: f64,
+    pub structure_post: f64,
+}
+
+/// Locate a B fill bracket by jointly ranking structure and waveform seam scores.
+pub fn match_gap_fill_unified_in_b(
+    signature: &GapContextSignature,
+    b_samples: &[i16],
+    channels: usize,
+    waveform: &WaveformSeamContext<'_>,
+    nominal_fill_start: usize,
+    nominal_fill_end: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+) -> Option<UnifiedFillMatch> {
+    if signature.pre_bins.is_empty()
+        || signature.post_bins.is_empty()
+        || params.gap_frames == 0
+        || params.bin_frames == 0
+    {
+        return None;
+    }
+
+    let channels = channels.max(1);
+    let total_frames = b_samples.len() / channels;
+    let pre_span = signature.pre_bins.len() * params.bin_frames;
+    let post_span = signature.post_bins.len() * params.bin_frames;
+
+    if pre_span == 0 || post_span == 0 {
+        return None;
+    }
+
+    let timeline = ActivityTimeline::build(
+        b_samples,
+        channels,
+        total_frames,
+        params.bin_frames,
+        params.silence_peak_fraction,
+        params.absolute_silence_rms,
+    );
+
+    let (mut best_start, _) = unified_search_best_fill_start(
+        signature,
+        &timeline,
+        waveform,
+        nominal_fill_start,
+        nominal_fill_end,
+        pre_span,
+        post_span,
+        total_frames,
+        params,
+        weights,
+    )?;
+
+    let (mut best_end, _) = unified_search_best_fill_end(
+        signature,
+        &timeline,
+        waveform,
+        best_start,
+        nominal_fill_end,
+        post_span,
+        total_frames,
+        params,
+        weights,
+    )?;
+
+    let matched_fill_len = best_end.saturating_sub(best_start);
+    let polished_start = unified_fine_polish_start(
+        signature,
+        &timeline,
+        waveform,
+        best_start,
+        best_end,
+        nominal_fill_start,
+        nominal_fill_end,
+        params,
+        weights,
+    );
+    best_start = polished_start;
+    best_end = best_start + matched_fill_len;
+
+    let (wave_pre, wave_post) = waveform_seams_at_start(waveform, best_start);
+
+    let fill_frames = best_end.saturating_sub(best_start);
+    if fill_frames == 0 {
+        return None;
+    }
+
+    let mut alignment = FillAlignment {
+        start_frame: best_start,
+        fill_frames,
+        pre_correlation: wave_pre,
+        post_correlation: wave_post,
+    };
+    snap_structure_fill_to_gap(&mut alignment, signature, &timeline, params);
+
+    let structure_pre = score_pre_match(signature, &timeline, alignment.start_frame, params);
+    let structure_post = score_post_match(
+        signature,
+        &timeline,
+        alignment.start_frame + alignment.fill_frames,
+        params,
+    );
+
+    Some(UnifiedFillMatch {
+        alignment,
+        structure_pre,
+        structure_post,
+    })
+}
+
+fn waveform_seams_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> (f64, f64) {
+    if !placement_in_bounds(
+        start,
+        ctx.gap_frames,
+        ctx.pre_window,
+        ctx.post_window,
+        ctx.b_total_frames,
+    ) {
+        return (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    }
+    fill_seam_correlations(
+        ctx.templates,
+        SeamPlacement {
+            start,
+            gap_frames: ctx.gap_frames,
+            pre_window: ctx.pre_window,
+            post_window: ctx.post_window,
+        },
+    )
+}
+
+fn unified_search_best_fill_start(
+    signature: &GapContextSignature,
+    timeline: &ActivityTimeline,
+    waveform: &WaveformSeamContext<'_>,
+    nominal_fill_start: usize,
+    nominal_fill_end: usize,
+    pre_span: usize,
+    post_span: usize,
+    total_frames: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+) -> Option<(usize, f64)> {
+    let search_min = nominal_fill_start.saturating_sub(params.search_radius_frames);
+    let search_max = (nominal_fill_start + params.search_radius_frames).min(total_frames);
+    let span = search_max.saturating_sub(search_min);
+    let coarse_step = search_coarse_step(params.bin_frames, span);
+
+    let mut best_start = nominal_fill_start;
+    let mut best_score = f64::NEG_INFINITY;
+
+    let consider = |start: usize, best_start: &mut usize, best_score: &mut f64| {
+        if start < pre_span || start > search_max {
+            return;
+        }
+        let candidate_end = (start + params.gap_frames).min(total_frames);
+        if candidate_end + post_span > total_frames {
+            return;
+        }
+        let pre_score = score_pre_match(signature, timeline, start, params);
+        let post_score = score_post_match(signature, timeline, candidate_end, params);
+        let wave_min = waveform_min_at_start(waveform, start);
+        let score = unified_fit_score(
+            pre_score,
+            post_score,
+            wave_min,
+            start,
+            candidate_end,
+            nominal_fill_start,
+            nominal_fill_end,
+            params,
+            weights,
+        );
+        let better = score > *best_score + SCORE_TIE_EPSILON
+            || (score >= *best_score - SCORE_TIE_EPSILON
+                && prefer_start(start, *best_start, nominal_fill_start));
+        if better {
+            *best_score = score;
+            *best_start = start;
+        }
+    };
+
+    if nominal_fill_start >= pre_span {
+        consider(nominal_fill_start, &mut best_start, &mut best_score);
+    }
+
+    let mut start = search_min;
+    while start <= search_max {
+        consider(start, &mut best_start, &mut best_score);
+        start = start.saturating_add(coarse_step);
+    }
+
+    if !best_score.is_finite() {
+        return None;
+    }
+
+    let refine_min = best_start.saturating_sub(coarse_step).max(search_min);
+    let refine_max = (best_start + coarse_step).min(search_max);
+    for start in refine_min..=refine_max {
+        consider(start, &mut best_start, &mut best_score);
+    }
+
+    Some((best_start, best_score))
+}
+
+fn unified_search_best_fill_end(
+    signature: &GapContextSignature,
+    timeline: &ActivityTimeline,
+    waveform: &WaveformSeamContext<'_>,
+    fill_start: usize,
+    nominal_fill_end: usize,
+    post_span: usize,
+    total_frames: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+) -> Option<(usize, f64)> {
+    let end_min = fill_start
+        .saturating_add(params.gap_frames)
+        .saturating_sub(params.fill_length_slack_frames);
+    let end_max = (fill_start + params.gap_frames + params.fill_length_slack_frames)
+        .min(total_frames);
+    if end_min > end_max || end_min + post_span > total_frames {
+        return None;
+    }
+
+    let span = end_max.saturating_sub(end_min);
+    let coarse_step = search_coarse_step(params.bin_frames, span);
+
+    let mut best_end = nominal_fill_end.clamp(end_min, end_max);
+    let mut best_score = f64::NEG_INFINITY;
+
+    let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
+        if end < end_min || end > end_max || end + post_span > total_frames {
+            return;
+        }
+        let fill_len = end.saturating_sub(fill_start);
+        let min_fill = (params.gap_frames / 4)
+            .max(params.bin_frames)
+            .max(1);
+        let max_fill = params.gap_frames.saturating_add(params.fill_length_slack_frames);
+        if fill_len < min_fill || fill_len > max_fill {
+            return;
+        }
+        let pre_score = score_pre_match(signature, timeline, fill_start, params);
+        let post_score = score_post_match(signature, timeline, end, params);
+        let wave_min = waveform_min_at_start(waveform, fill_start);
+        let score = unified_fit_score(
+            pre_score,
+            post_score,
+            wave_min,
+            fill_start,
+            end,
+            fill_start,
+            nominal_fill_end,
+            params,
+            weights,
+        );
+        let better = score > *best_score + SCORE_TIE_EPSILON
+            || (score >= *best_score - SCORE_TIE_EPSILON
+                && prefer_end(end, *best_end, nominal_fill_end));
+        if better {
+            *best_score = score;
+            *best_end = end;
+        }
+    };
+
+    consider(best_end, &mut best_end, &mut best_score);
+
+    let mut end = end_min;
+    while end <= end_max {
+        consider(end, &mut best_end, &mut best_score);
+        end = end.saturating_add(coarse_step);
+    }
+
+    if !best_score.is_finite() {
+        return None;
+    }
+
+    let refine_min = best_end.saturating_sub(coarse_step).max(end_min);
+    let refine_max = (best_end + coarse_step).min(end_max);
+    for end in refine_min..=refine_max {
+        consider(end, &mut best_end, &mut best_score);
+    }
+
+    Some((best_end, best_score))
+}
+
+fn unified_fine_polish_start(
+    signature: &GapContextSignature,
+    timeline: &ActivityTimeline,
+    waveform: &WaveformSeamContext<'_>,
+    start: usize,
+    end: usize,
+    nominal_start: usize,
+    nominal_end: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+) -> usize {
+    if params.max_fine_adjustment_frames == 0 {
+        return start;
+    }
+
+    let fill_len = end.saturating_sub(start).max(1);
+    let mut best_start = start;
+    let mut best_score = f64::NEG_INFINITY;
+
+    for delta in -(params.max_fine_adjustment_frames as i64)
+        ..=(params.max_fine_adjustment_frames as i64)
+    {
+        let candidate = start as i64 + delta;
+        if candidate < 0 {
+            continue;
+        }
+        let candidate = candidate as usize;
+        let candidate_end = candidate + fill_len;
+        let pre_score = score_pre_match(signature, timeline, candidate, params);
+        let post_score = score_post_match(signature, timeline, candidate_end, params);
+        let wave_min = waveform_min_at_start(waveform, candidate);
+        let score = unified_fit_score(
+            pre_score,
+            post_score,
+            wave_min,
+            candidate,
+            candidate_end,
+            nominal_start,
+            nominal_end,
+            params,
+            weights,
+        );
+        let better = score > best_score + SCORE_TIE_EPSILON
+            || (score >= best_score - SCORE_TIE_EPSILON
+                && prefer_start(candidate, best_start, nominal_start));
+        if better {
+            best_score = score;
+            best_start = candidate;
+        }
+    }
+
+    best_start
+}
+
+/// Structure-only match for regression comparison in tests.
+pub fn match_gap_structure_only_in_b(
+    signature: &GapContextSignature,
+    b_samples: &[i16],
+    channels: usize,
+    nominal_fill_start: usize,
+    nominal_fill_end: usize,
+    params: &StructureMatchParams,
+) -> Option<FillAlignment> {
+    gap_structure::match_gap_structure_in_b(
+        signature,
+        b_samples,
+        channels,
+        nominal_fill_start,
+        nominal_fill_end,
+        params,
+    )
+}
+
 
 /// Frame step for waveform slide search (finer when the radius is small).
 pub fn waveform_search_step(max_adjustment_frames: usize) -> usize {
@@ -226,5 +692,63 @@ mod tests {
     fn waveform_search_step_is_one_for_small_radius() {
         assert_eq!(waveform_search_step(100), 1);
         assert!(waveform_search_step(10_000) > 1);
+    }
+
+    #[test]
+    fn unified_fit_weights_normalize_to_unit_sum() {
+        let w = UnifiedFitWeights {
+            structure_weight: 1.0,
+            waveform_weight: 1.0,
+        }
+        .normalized();
+        assert!((w.structure_weight - 0.5).abs() < 1e-9);
+        assert!((w.waveform_weight - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unified_fit_score_favors_waveform_when_structure_differs_slightly() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights {
+            structure_weight: 0.2,
+            waveform_weight: 0.8,
+        };
+        let nominal_start = 200usize;
+        let nominal_end = 240usize;
+        let score_wrong = unified_fit_score(
+            0.92,
+            0.92,
+            0.05,
+            nominal_start,
+            nominal_end,
+            nominal_start,
+            nominal_end,
+            &params,
+            weights,
+        );
+        let score_true = unified_fit_score(
+            0.88,
+            0.88,
+            0.96,
+            100,
+            140,
+            nominal_start,
+            nominal_end,
+            &params,
+            weights,
+        );
+        assert!(
+            score_true > score_wrong,
+            "waveform-heavy score should prefer true cycle (true={score_true}, wrong={score_wrong})"
+        );
     }
 }

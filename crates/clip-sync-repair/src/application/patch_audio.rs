@@ -90,6 +90,10 @@ pub struct PatchAudioRequest {
     pub short_gap_one_strong_seam_fallback: bool,
     /// Gap-fill placement after structure match (`gate` legacy vs `fit` waveform search).
     pub fill_mode: crate::domain::FillMode,
+    /// Unified fit structure weight (fit mode only).
+    pub fill_fit_structure_weight: f64,
+    /// Unified fit waveform weight (fit mode only).
+    pub fill_fit_waveform_weight: f64,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -782,6 +786,8 @@ fn prepare_region_patch(
         short_gap_mean_correlation_secs,
         short_gap_one_strong_seam_fallback,
         fill_mode: request.fill_mode,
+        fill_fit_structure_weight: request.fill_fit_structure_weight,
+        fill_fit_waveform_weight: request.fill_fit_waveform_weight,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {

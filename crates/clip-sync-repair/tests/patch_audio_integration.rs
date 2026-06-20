@@ -277,6 +277,8 @@ fn patch_request_with_options(
         gap_end_extend_step_ms: 20,
         short_gap_one_strong_seam_fallback: options.short_gap_one_strong_seam_fallback,
         fill_mode: options.fill_mode,
+        fill_fit_structure_weight: 0.35,
+        fill_fit_waveform_weight: 0.65,
     }
 }
 

@@ -128,6 +128,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     absolute_silence_rms: config.repair.absolute_silence_rms,
                     fill_offset_mode: config.repair.fill_offset_mode,
                     fill_mode: config.repair.fill_mode,
+                    fill_fit_structure_weight: config.repair.fill_fit_structure_weight,
+                    fill_fit_waveform_weight: config.repair.fill_fit_waveform_weight,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,

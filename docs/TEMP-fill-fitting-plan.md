@@ -110,17 +110,12 @@ refine_gap_frames (+ optional joint A-boundary search in Phase C)
 
 ### Implementation
 
-- [ ] Extend `gap_structure.rs` search helpers:
-  - Plumb optional `SeamTemplates` + waveform callback into `search_best_fill_start` / `fine_polish_structure_start` **or** run unified search in new `match_gap_fill_in_b()` that wraps structure timeline + waveform Pearson.
-  - Per candidate `start`: compute `structure_pre/post`, `waveform_pre/post` at `start` and `start + gap_frames`.
-  - `combined = α·structure_combined + β·min(wave_pre, wave_post) − γ·nominal_bias − δ·length_mismatch` (reuse existing `combined_structure_score` / `NOMINAL_BIAS` patterns).
-- [ ] Defaults: `α = 0.35`, `β = 0.65`, `γ` from existing late-start penalty, `δ` from `LENGTH_MISMATCH_PENALTY` — tune on corpus; expose in config as optional advanced keys (`fill_fit_structure_weight`, `fill_fit_waveform_weight`) or keep internal until stable.
-- [ ] Remove redundant waveform-only pass in `evaluate_seam_gate` when `fill_mode == Fit` (search already includes waveform).
-- [ ] Structure floor: reject candidates where `structure_combined < min_structure_match_score` before entering ranking; final winner must also satisfy `min(wave_pre, wave_post) >= min_fill_correlation` (or warn tier in Phase C).
-- [ ] Performance: waveform Pearson at each coarse step is O(window × candidates); cap candidates via existing `search_coarse_step`; optional cache mono B once.
-- [ ] Tests:
-  - Fixture where structure alone picks wrong bin (repetitive ambience); unified pick matches waveform ground truth.
-  - Regression: `fill_mode = gate` uses old two-stage behavior.
+- [x] Extend structure search with unified waveform scoring in `match_gap_fill_unified_in_b` (`gap_fill_fit.rs`); reuse `gap_structure` scoring helpers.
+- [x] Per candidate: `combined = α·structure_combined + β·min(wave_pre, wave_post)` with late-start penalty; defaults `α = 0.35`, `β = 0.65`.
+- [x] Config: `fill_fit_structure_weight`, `fill_fit_waveform_weight` on `[repair]` (no CLI yet).
+- [x] Remove redundant waveform-only pass in `evaluate_seam_gate` when `fill_mode == Fit` (unified search includes waveform).
+- [x] Structure floor + `min(wave_pre, wave_post) >= min_fill_correlation` on winner unchanged.
+- [x] Tests: `unified_fit_score_favors_waveform_when_structure_differs_slightly`; gate regression via existing `patch_audio_integration` (`fill_mode = Gate`).
 
 ### Acceptance
 
@@ -223,7 +218,7 @@ Existing keys retain meaning: `min_fill_correlation`, `min_structure_match_score
 ## Rollout
 
 1. **Phase A** — shipped; default `fit` (2026-06-20).
-2. **Phase B** — unified search only in `fit` mode.
+2. **Phase B** — unified search only in `fit` mode (shipped 2026-06-20).
 3. **Phase C** — marginal warn tier.
 4. **Phase D** — repeat penalty + dual anchor.
 5. Archive this doc; update `PLAN.md` repair section; add `BACKLOG.md` row.

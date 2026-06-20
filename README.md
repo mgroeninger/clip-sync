@@ -250,7 +250,7 @@ This step finds *where* to splice B; it is **not** turned off by `--no-structure
 
 | Mode | Behavior |
 |------|----------|
-| `fit` (default) | After structure match, slide the B fill start within `--max-fill-align-adjust-secs` to maximize `min(pre, post)` waveform correlation; patch only when that best score meets `min_fill_correlation`. Structure trust is disabled. |
+| `fit` (default) | Joint structure+waveform search over the B haystack (`fill_fit_structure_weight` / `fill_fit_waveform_weight`); patch when the best combined candidate meets structure and waveform floors. |
 | `gate` | Score waveform Pearson at the structure winner; threshold gates, structure-trust skip, and short-gap shortcuts apply. CLI: `--fill-mode gate`. |
 
 **CLI compatibility with `--fill-mode fit`** (default since Phase A)
@@ -476,6 +476,8 @@ strong_structure_trust = 0.90              # gate only: skip waveform when both 
 partial_structure_waveform_soften = 0.85   # gate only: soften waveform floor
 fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
+fill_fit_structure_weight = 0.35   # fit only: unified search
+fill_fit_waveform_weight = 0.65    # fit only: unified search
 gap_end_extend_on_post_seam_fail = true
 gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500

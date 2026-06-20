@@ -29,13 +29,13 @@ const LENGTH_MISMATCH_PENALTY: f64 = 0.12;
 const NOMINAL_BIAS_PER_BIN: f64 = 0.02;
 
 /// Precomputed active/silent bins for an entire B haystack.
-struct ActivityTimeline {
+pub(crate) struct ActivityTimeline {
     bins: Vec<bool>,
     bin_frames: usize,
 }
 
 impl ActivityTimeline {
-    fn build(
+    pub(crate) fn build(
         samples: &[i16],
         channels: usize,
         total_frames: usize,
@@ -197,7 +197,7 @@ pub fn match_gap_structure_in_b(
     Some(alignment)
 }
 
-fn snap_structure_fill_to_gap(
+pub(crate) fn snap_structure_fill_to_gap(
     alignment: &mut FillAlignment,
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
@@ -276,7 +276,7 @@ fn fine_polish_structure_start(
     best_start
 }
 
-fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize {
+pub(crate) fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize {
     let bin_frames = bin_frames.max(1);
     let span_steps = (span_frames / bin_frames).max(1);
     (span_steps / 2_000).max(1) * bin_frames
@@ -429,7 +429,7 @@ fn search_best_fill_end(
     Some((best_end, best_post))
 }
 
-fn combined_structure_score(
+pub(crate) fn combined_structure_score(
     pre_score: f64,
     post_score: f64,
     start: usize,
@@ -447,7 +447,7 @@ fn combined_structure_score(
     pre_score + post_score - len_penalty - nominal_bias
 }
 
-fn prefer_start(candidate: usize, current: usize, nominal: usize) -> bool {
+pub(crate) fn prefer_start(candidate: usize, current: usize, nominal: usize) -> bool {
     let dc = candidate.abs_diff(nominal);
     let db = current.abs_diff(nominal);
     if dc != db {
@@ -457,11 +457,11 @@ fn prefer_start(candidate: usize, current: usize, nominal: usize) -> bool {
     }
 }
 
-fn prefer_end(candidate: usize, current: usize, nominal: usize) -> bool {
+pub(crate) fn prefer_end(candidate: usize, current: usize, nominal: usize) -> bool {
     prefer_start(candidate, current, nominal)
 }
 
-fn score_pre_match(
+pub(crate) fn score_pre_match(
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
     fill_start: usize,
@@ -477,7 +477,7 @@ fn score_pre_match(
     bin_similarity(&signature.pre_bins, b_bins)
 }
 
-fn score_post_match(
+pub(crate) fn score_post_match(
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
     fill_end: usize,

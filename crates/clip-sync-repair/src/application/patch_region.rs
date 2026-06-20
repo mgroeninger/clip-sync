@@ -3,7 +3,10 @@
 use clip_sync::MultiChannelPcm;
 
 use crate::domain::fill_mode::FillMode;
-use crate::domain::gap_fill_fit::{fit_mode_waveform_floor_passes, search_best_waveform_placement};
+use crate::domain::gap_fill_fit::{
+    fit_mode_waveform_floor_passes, match_gap_fill_unified_in_b, UnifiedFitWeights,
+    WaveformSeamContext,
+};
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
     short_gap_one_strong_seam_passes,
@@ -50,6 +53,8 @@ pub(crate) struct SeamGateParams<'a> {
     pub short_gap_mean_correlation_secs: f64,
     pub short_gap_one_strong_seam_fallback: bool,
     pub fill_mode: FillMode,
+    pub fill_fit_structure_weight: f64,
+    pub fill_fit_waveform_weight: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -120,19 +125,64 @@ pub(crate) fn evaluate_seam_gate(
         &structure_params,
     );
 
-    let mut alignment = gap_structure::match_gap_structure_in_b(
-        &signature,
-        params.b_samples,
-        params.channels,
-        offset_nominal_start,
-        gap_end_in_haystack,
-        &structure_params,
-    )
-    .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
+    let (mut alignment, structure_start_frame, structure_pre, structure_post) =
+        if params.fill_mode == FillMode::Fit {
+            let waveform_gate_frames = params
+                .seam_gate_frames
+                .min(a_pre_border.len().max(1));
+            let post_gate_frames = params.seam_gate_frames.min(a_post_border.len()).max(1);
+            let templates = policies::SeamTemplates {
+                a_pre: &a_pre_border,
+                a_post: &a_post_border,
+                a_pre_ch: &a_pre_ch,
+                a_post_ch: &a_post_ch,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+            };
+            let waveform = WaveformSeamContext {
+                templates: &templates,
+                gap_frames,
+                pre_window: waveform_gate_frames,
+                post_window: post_gate_frames,
+                b_total_frames: b_mono.len(),
+            };
+            let weights = UnifiedFitWeights {
+                structure_weight: params.fill_fit_structure_weight,
+                waveform_weight: params.fill_fit_waveform_weight,
+            };
+            let unified = match_gap_fill_unified_in_b(
+                &signature,
+                params.b_samples,
+                params.channels,
+                &waveform,
+                offset_nominal_start,
+                gap_end_in_haystack,
+                &structure_params,
+                weights,
+            )
+            .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
+            (
+                unified.alignment,
+                unified.alignment.start_frame,
+                unified.structure_pre,
+                unified.structure_post,
+            )
+        } else {
+            let alignment = gap_structure::match_gap_structure_in_b(
+                &signature,
+                params.b_samples,
+                params.channels,
+                offset_nominal_start,
+                gap_end_in_haystack,
+                &structure_params,
+            )
+            .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
+            let structure_start = alignment.start_frame;
+            let structure_pre = alignment.pre_correlation;
+            let structure_post = alignment.post_correlation;
+            (alignment, structure_start, structure_pre, structure_post)
+        };
 
-    let structure_start_frame = alignment.start_frame;
-    let structure_pre = alignment.pre_correlation;
-    let structure_post = alignment.post_correlation;
     if !structure_passes_gate(
         structure_pre,
         structure_post,
@@ -169,15 +219,6 @@ pub(crate) fn evaluate_seam_gate(
 
         match params.fill_mode {
             FillMode::Fit => {
-                alignment = search_best_waveform_placement(
-                    &templates,
-                    &alignment,
-                    gap_frames,
-                    params.max_adjustment_frames,
-                    waveform_gate_frames,
-                    post_gate_frames,
-                    b_mono.len(),
-                );
                 let pre_corr = alignment.pre_correlation;
                 let post_corr = alignment.post_correlation;
                 if !fit_mode_waveform_floor_passes(pre_corr, post_corr, params.min_fill_correlation)

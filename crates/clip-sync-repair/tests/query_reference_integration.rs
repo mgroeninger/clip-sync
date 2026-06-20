@@ -203,6 +203,8 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 gap_end_extend_step_ms: 20,
                 short_gap_one_strong_seam_fallback: true,
                 fill_mode: clip_sync_repair::domain::FillMode::Gate,
+                fill_fit_structure_weight: 0.35,
+                fill_fit_waveform_weight: 0.65,
             },
             10,
         )
