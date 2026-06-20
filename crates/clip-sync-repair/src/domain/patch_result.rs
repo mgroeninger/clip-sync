@@ -40,7 +40,10 @@ pub enum GapPatchStatus {
         /// Seam score used for the patch decision (structure or waveform Pearson).
         pre_correlation: f64,
         post_correlation: f64,
+        /// Total B slide from mapped nominal (structure + waveform).
         align_adjustment_secs: f64,
+        /// Additional slide from waveform search after structure match.
+        waveform_adjustment_secs: f64,
         /// `true` when placement was accepted from structure match without a waveform gate.
         structure_trusted: bool,
     },

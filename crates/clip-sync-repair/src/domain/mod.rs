@@ -1,6 +1,8 @@
 pub mod cross_check;
 pub mod diagnostics;
+pub mod fill_mode;
 pub mod fill_offset;
+pub mod gap_fill_fit;
 pub mod gap;
 pub mod gap_seam_extend;
 pub mod gap_fill;
@@ -9,6 +11,7 @@ pub mod patch_result;
 pub mod policies;
 pub mod track_match;
 
+pub use fill_mode::FillMode;
 pub use fill_offset::{FillOffsetMode, fill_offset_secs};
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};

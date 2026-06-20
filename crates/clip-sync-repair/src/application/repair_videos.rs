@@ -368,6 +368,7 @@ mod tests {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
+                    waveform_adjustment_secs: 0.0,
                     structure_trusted: false,
                 },
             }]
@@ -479,6 +480,7 @@ mod tests {
                 pre_correlation: 1.0,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
+                waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
             },
         }]);

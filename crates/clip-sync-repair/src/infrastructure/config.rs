@@ -131,6 +131,9 @@ pub struct RepairConfig {
     /// How to map each gap on A to B during patch (`recommended` or drift-interpolated).
     #[serde(default)]
     pub fill_offset_mode: crate::domain::FillOffsetMode,
+    /// Gap-fill placement after structure match: `gate` (legacy thresholds) or `fit` (waveform slide search).
+    #[serde(default)]
+    pub fill_mode: crate::domain::FillMode,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -264,6 +267,7 @@ impl Default for RepairConfig {
             dry_run: default_true(),
             limit_fill_to_mapped_region: default_true(),
             fill_offset_mode: crate::domain::FillOffsetMode::default(),
+            fill_mode: crate::domain::FillMode::default(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),

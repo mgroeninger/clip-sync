@@ -127,6 +127,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .partial_structure_waveform_soften,
                     absolute_silence_rms: config.repair.absolute_silence_rms,
                     fill_offset_mode: config.repair.fill_offset_mode,
+                    fill_mode: config.repair.fill_mode,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,
@@ -270,6 +271,9 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if let Some(mode) = args.fill_offset {
         config.repair.fill_offset_mode = mode;
+    }
+    if let Some(mode) = args.fill_mode {
+        config.repair.fill_mode = mode;
     }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;

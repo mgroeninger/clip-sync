@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 
 use clip_sync::LogLevel;
 
-use crate::domain::FillOffsetMode;
+use crate::domain::{FillMode, FillOffsetMode};
 use crate::infrastructure::config::OutputFormat;
 
 #[derive(Parser, Debug)]
@@ -82,6 +82,7 @@ pub struct Args {
     /// structure scores are high), disable partial-structure threshold soften, and require
     /// both pre/post waveform seams to pass (no short-gap mean or one-strong-seam shortcuts).
     /// Does not disable structure matching on B or gap boundary extension retries.
+    /// [fill-mode: gate only]
     #[arg(long)]
     pub no_structure_trust: bool,
 
@@ -103,6 +104,11 @@ pub struct Args {
     #[arg(long, value_enum, value_name = "MODE")]
     pub fill_offset: Option<FillOffsetMode>,
 
+    /// Gap-fill placement: `gate` (legacy threshold checks) or `fit` (waveform slide search)
+    /// [default: fit].
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub fill_mode: Option<FillMode>,
+
     /// Disable post-seam gap-end extension retries when waveform correlation fails at the tail.
     #[arg(long)]
     pub no_gap_end_extend: bool,
@@ -112,6 +118,7 @@ pub struct Args {
     pub no_gap_start_extend: bool,
 
     /// Disable short-gap fallback that patches when either seam passes (after mean rule fails).
+    /// [fill-mode: gate only]
     #[arg(long)]
     pub no_short_gap_one_strong_seam: bool,
 
@@ -282,6 +289,8 @@ mod tests {
             &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
             &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
+            "[default: fit]",
+            "[fill-mode: gate only]",
             "[default: 2]",
             "[default: 60]",
             "[default: info]",

@@ -88,6 +88,8 @@ pub struct PatchAudioRequest {
     pub gap_end_extend_step_ms: u64,
     /// For short gaps, allow patch when mean(pre, post) fails but either seam meets the threshold.
     pub short_gap_one_strong_seam_fallback: bool,
+    /// Gap-fill placement after structure match (`gate` legacy vs `fit` waveform search).
+    pub fill_mode: crate::domain::FillMode,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -304,6 +306,7 @@ enum RegionPatchOutcome {
         pre_correlation: f64,
         post_correlation: f64,
         align_adjustment_secs: f64,
+        waveform_adjustment_secs: f64,
         structure_trusted: bool,
     },
     Skipped(GapPatchSkipReason),
@@ -363,16 +366,20 @@ pub(crate) fn format_gap_fill_result_line(
     channels: usize,
     fill_start_sample: usize,
     fill_end_sample: usize,
-    align_adjustment_secs: f64,
+    structure_slide_secs: f64,
+    waveform_slide_secs: f64,
 ) -> String {
     let ch = channels.max(1);
     let to_secs = |sample: usize| sample as f64 / ch as f64 / f64::from(sample_rate);
     let fill_start = b_search_start_secs + to_secs(fill_start_sample);
     let fill_end = b_search_start_secs + to_secs(fill_end_sample);
+    let mut slide = format!("structure slide {:+.3}s", structure_slide_secs);
+    if waveform_slide_secs.abs() > 0.000_5 {
+        slide.push_str(&format!(", waveform slide {:+.3}s", waveform_slide_secs));
+    }
     format!(
-        "           B fill source: {} (structure slide {:+.3}s)",
+        "           B fill source: {} ({slide})",
         format_time_range(fill_start, fill_end),
-        align_adjustment_secs
     )
 }
 
@@ -412,7 +419,8 @@ fn log_gap_fill_result_verbose(
     channels: usize,
     fill_start_sample: usize,
     fill_end_sample: usize,
-    align_adjustment_secs: f64,
+    structure_slide_secs: f64,
+    waveform_slide_secs: f64,
 ) {
     progress.phase_verbose(&format_gap_fill_result_line(
         b_search_start_secs,
@@ -420,7 +428,8 @@ fn log_gap_fill_result_verbose(
         channels,
         fill_start_sample,
         fill_end_sample,
-        align_adjustment_secs,
+        structure_slide_secs,
+        waveform_slide_secs,
     ));
 }
 
@@ -478,11 +487,13 @@ fn outcomes_in_report_order(
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
+                waveform_adjustment_secs,
                 structure_trusted,
             } => GapPatchStatus::Patched {
                 pre_correlation: *pre_correlation,
                 post_correlation: *post_correlation,
                 align_adjustment_secs: *align_adjustment_secs,
+                waveform_adjustment_secs: *waveform_adjustment_secs,
                 structure_trusted: *structure_trusted,
             },
             RegionPatchOutcome::Skipped(reason) => GapPatchStatus::Skipped {
@@ -770,6 +781,7 @@ fn prepare_region_patch(
         min_fill_correlation,
         short_gap_mean_correlation_secs,
         short_gap_one_strong_seam_fallback,
+        fill_mode: request.fill_mode,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
@@ -819,12 +831,18 @@ fn prepare_region_patch(
         report_pre,
         report_post,
         structure_trusted: patched_structure_trusted,
+        structure_start_frame,
         gap_frames,
-        ..
     } = gate_outcome;
 
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+
+    let structure_slide_secs = (structure_start_frame as f64 - offset_nominal_start as f64)
+        / sample_rate as f64;
+    let waveform_slide_secs =
+        (alignment.start_frame as f64 - structure_start_frame as f64) / sample_rate as f64;
+    let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
 
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
@@ -880,9 +898,6 @@ fn prepare_region_patch(
         1.0f32
     };
 
-    let align_adjustment_secs =
-        (alignment.start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
-
     log_gap_fill_result_verbose(
         progress,
         b_extract_start_secs,
@@ -890,7 +905,8 @@ fn prepare_region_patch(
         channels,
         fill_start_sample,
         b_fill_end_sample,
-        align_adjustment_secs,
+        structure_slide_secs,
+        waveform_slide_secs,
     );
 
     (
@@ -905,6 +921,7 @@ fn prepare_region_patch(
             pre_correlation: report_pre,
             post_correlation: report_post,
             align_adjustment_secs,
+            waveform_adjustment_secs: waveform_slide_secs,
             structure_trusted: patched_structure_trusted,
         },
     )
@@ -1126,9 +1143,12 @@ mod tests {
 
     #[test]
     fn format_gap_fill_result_line_converts_sample_offsets_to_timeline() {
-        let line = format_gap_fill_result_line(50.0, 48_000, 6, 48_000 * 6, 96_000 * 6, -0.02);
+        let line = format_gap_fill_result_line(
+            50.0, 48_000, 6, 48_000 * 6, 96_000 * 6, -0.02, 0.01,
+        );
         assert!(line.contains("B fill source:"));
         assert!(line.contains("structure slide -0.020s"));
+        assert!(line.contains("waveform slide +0.010s"));
         assert!(line.contains("0:51"));
     }
 

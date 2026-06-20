@@ -411,6 +411,16 @@ fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -
     }
 }
 
+fn format_patch_slide_suffix(align_adjustment_secs: f64, waveform_adjustment_secs: f64) -> String {
+    if waveform_adjustment_secs.abs() > 0.000_5 {
+        format!(
+            "slide={align_adjustment_secs:+.3}s (wf {waveform_adjustment_secs:+.3}s)"
+        )
+    } else {
+        format!("slide={align_adjustment_secs:+.3}s")
+    }
+}
+
 fn format_unified_gap_status(
     gap: &crate::domain::Gap,
     report: &GapReport,
@@ -426,16 +436,18 @@ fn format_unified_gap_status(
             pre_correlation,
             post_correlation,
             align_adjustment_secs,
+            waveform_adjustment_secs,
             structure_trusted,
         } => {
+            let slide = format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
             if show_diagnostics {
                 if *structure_trusted {
                     format!(
-                        "patched (struct pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                        "patched (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 } else {
                     format!(
-                        "patched (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                        "patched (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 }
             } else if *structure_trusted {
@@ -553,15 +565,18 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
+                waveform_adjustment_secs,
                 structure_trusted,
             } => {
+                let slide =
+                    format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
                 if *structure_trusted {
                     format!(
-                        "patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                        "patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 } else {
                     format!(
-                        "patched  (pre={pre_correlation:.2} post={post_correlation:.2} slide={align_adjustment_secs:+.3}s)"
+                        "patched  (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 }
             }
@@ -762,6 +777,7 @@ mod tests {
                     pre_correlation: 0.91,
                     post_correlation: 0.88,
                     align_adjustment_secs: 0.02,
+                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                 },
             },
@@ -901,6 +917,7 @@ mod tests {
                 pre_correlation: 0.91,
                 post_correlation: 0.88,
                 align_adjustment_secs: 0.02,
+                waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
             },
         }]);
@@ -932,6 +949,7 @@ mod tests {
                     pre_correlation: 0.92,
                     post_correlation: 0.90,
                     align_adjustment_secs: 0.01,
+                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                 },
             },
@@ -1164,6 +1182,7 @@ mod tests {
                 pre_correlation: 0.98,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
+                waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
             },
         }]);
@@ -1187,6 +1206,7 @@ mod tests {
                 pre_correlation: 0.92,
                 post_correlation: 0.90,
                 align_adjustment_secs: 0.01,
+                waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
             },
         }]);
@@ -1281,6 +1301,7 @@ mod tests {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
+                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                 },
             },
@@ -1342,6 +1363,7 @@ mod tests {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
+                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                 },
             },

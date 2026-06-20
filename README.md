@@ -178,6 +178,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--max-fill-align-adjust-secs <SECS>` | `0.5` | Maximum B fill slide during structure match |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
 | `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended` or `interpolated` (drift between start/end clips) |
+| `--fill-mode <MODE>` | `gate` | Gap-fill placement: `gate` (legacy) or `fit` (waveform slide search) |
 | `--no-gap-end-extend` | — | Disable post-seam gap-end extension retries |
 | `--no-gap-start-extend` | — | Disable pre-seam gap-start extension retries |
 | `--no-short-gap-one-strong-seam` | — | Disable short-gap patch when either seam passes (after mean fails) |
@@ -245,14 +246,48 @@ Active/silent signatures around the gap locate the matching dropout on B. Both s
 
 This step finds *where* to splice B; it is **not** turned off by `--no-structure-trust`.
 
-**3. Waveform seam gate** (optional shortcut by default)
+**3. Waveform seam placement (`fill_mode`)**
+
+| Mode | Behavior |
+|------|----------|
+| `gate` (default) | Score waveform Pearson at the structure winner; threshold gates, structure-trust skip, and short-gap shortcuts apply. |
+| `fit` | After structure match, slide the B fill start within `--max-fill-align-adjust-secs` to maximize `min(pre, post)` waveform correlation; patch only when that best score meets `min_fill_correlation`. Structure trust is disabled. CLI: `--fill-mode fit`. |
+
+**CLI compatibility with `--fill-mode fit`**
+
+All flags are accepted with `fit`; none are rejected. Gate-only options have no effect on waveform placement because `fit` always runs the slide search and requires `min(pre, post) ≥ min_fill_correlation` on the best candidate.
+
+| Flag / config | With `--fill-mode fit` |
+|---------------|------------------------|
+| `--no-structure-trust` | **No extra effect** — `fit` already disables structure-trust waveform skip and soften. |
+| `--no-short-gap-one-strong-seam` | **No effect** — one-strong-seam is a `gate` shortcut only. |
+| `strong_structure_trust`, `partial_structure_waveform_soften` (config) | **No effect on waveform** — structure match still runs; waveform is never skipped for trust. |
+| `--min-fill-correlation` | **Active** — floor on the best slide (`min(pre, post)`). |
+| `--max-fill-align-adjust-secs` | **Active** — structure fine polish **and** waveform slide radius. |
+| `--fill-offset interpolated` | **Active** — per-gap B map before local slide search. |
+| `--border-standoff-secs`, `--no-gap-end-extend`, `--no-gap-start-extend`, `--gap-end-extend-*`, `--crossfade-ms`, `--no-normalize` | **Active** — unchanged. |
+| Align / scan flags (`--clip-length`, `--num-clips`, high-rate, query-reference, etc.) | **Active** — feed alignment and gap scan; orthogonal to `fit`. |
+
+**Example — drift + fit (e.g. long pairs with ~1 s clip drift):**
+
+```powershell
+clip-sync-repair "source.mp4" "recording.mkv" `
+  --mux repaired.mp4 `
+  --fill-mode fit `
+  --fill-offset interpolated `
+  --min-fill-correlation 0.35 `
+  --max-fill-align-adjust-secs 1.0 `
+  -v
+```
+
+**4. Waveform seam gate** (when `fill_mode = gate`, optional shortcut by default)
 
 Two layers — do not confuse them:
 
 | Layer | What it checks | `--no-structure-trust` effect |
 |-------|----------------|----------------------------------|
 | **Structure match** (step 2) | Active/silent pattern on B | Unchanged — still required |
-| **Waveform Pearson** (step 3) | Real audio at pre/post borders after alignment | Always runs; never skipped |
+| **Waveform Pearson** (step 4) | Real audio at pre/post borders after alignment | Always runs in `fit` mode; in `gate` mode may be skipped when structure-trusted |
 
 **Default (structure trust on):** when structure pre **and** post both meet `strong_structure_trust` (default `0.90`), the waveform gate is **skipped** and the gap is patched as `structure_trusted`. When structure is weaker but still passes step 2, the waveform gate runs; scores ≥ `partial_structure_waveform_soften` (default `0.85`) soften the threshold to `min(min_fill_correlation, 0.12)`.
 
@@ -268,7 +303,7 @@ Other seam knobs are separate: `--no-gap-end-extend`, `--no-short-gap-one-strong
 
 Set `min_fill_correlation = -1.0` in config to disable the waveform gate entirely (structure gate still applies).
 
-**4. Boundary extension retries**
+**5. Boundary extension retries**
 
 If the waveform gate fails, the tool may adjust gap boundaries on A and re-run structure + waveform checks. Post-end and pre-start extension share `gap_end_extend_max_ms` (default `500`) and `gap_end_extend_step_ms` (default `20`). Order: try **extend gap end** first, then **extend gap start** (shift earlier).
 
@@ -277,7 +312,7 @@ If the waveform gate fails, the tool may adjust gap boundaries on A and re-run s
 | **Post-end** | `gap_end_extend_on_post_seam_fail` (default on); `--no-gap-end-extend` | Post failed; pre passes threshold, **or** post failed narrowly vs pre, **or** post collapsed but pre is ≥ 0.10 stronger |
 | **Pre-start** | `gap_start_extend_on_pre_seam_fail` (default on); `--no-gap-start-extend` | Pre failed; post already passes threshold |
 
-**5. Skip reasons in the report**
+**6. Skip reasons in the report**
 
 | Status | Meaning |
 |--------|---------|
@@ -310,6 +345,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--max-fill-align-adjust-secs` | `max_fill_align_adjustment_secs` |
 | `--border-standoff-secs` | `border_standoff_secs` |
 | `--fill-offset` | `fill_offset_mode` |
+| `--fill-mode` | `fill_mode` |
 | `--no-gap-end-extend` | `gap_end_extend_on_post_seam_fail = false` |
 | `--no-gap-start-extend` | `gap_start_extend_on_pre_seam_fail = false` |
 | `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` |
@@ -435,6 +471,7 @@ min_structure_match_score = 0.55
 strong_structure_trust = 0.90
 partial_structure_waveform_soften = 0.85
 fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
+fill_mode = "gate"                 # or "fit"; CLI: --fill-mode
 gap_end_extend_on_post_seam_fail = true
 gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500

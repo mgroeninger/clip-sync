@@ -2,6 +2,8 @@
 
 use clip_sync::MultiChannelPcm;
 
+use crate::domain::fill_mode::FillMode;
+use crate::domain::gap_fill_fit::{fit_mode_waveform_floor_passes, search_best_waveform_placement};
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
     short_gap_one_strong_seam_passes,
@@ -18,6 +20,7 @@ pub(crate) struct SeamGateOutcome {
     pub report_pre: f64,
     pub report_post: f64,
     pub structure_trusted: bool,
+    pub structure_start_frame: usize,
     pub gap_frames: usize,
 }
 
@@ -46,6 +49,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub min_fill_correlation: f32,
     pub short_gap_mean_correlation_secs: f64,
     pub short_gap_one_strong_seam_fallback: bool,
+    pub fill_mode: FillMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -126,6 +130,7 @@ pub(crate) fn evaluate_seam_gate(
     )
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 
+    let structure_start_frame = alignment.start_frame;
     let structure_pre = alignment.pre_correlation;
     let structure_post = alignment.post_correlation;
     if !structure_passes_gate(
@@ -141,75 +146,100 @@ pub(crate) fn evaluate_seam_gate(
         });
     }
 
-    let structure_trusted = !params.disable_structure_trust
+    let structure_trusted = params.fill_mode == FillMode::Gate
+        && !params.disable_structure_trust
         && structure_pre >= params.strong_structure_trust
         && structure_post >= params.strong_structure_trust;
 
-    let (report_pre, report_post, patched_structure_trusted) =
-        if structure_trusted {
-            (
-                structure_pre,
-                structure_post,
-                true,
-            )
-        } else {
-            let waveform_gate_frames = params
-                .seam_gate_frames
-                .min(a_pre_border.len().max(1));
-            let post_gate_frames = params.seam_gate_frames.min(a_post_border.len()).max(1);
-            let (pre_corr, post_corr) = policies::fill_seam_correlations(
-                &policies::SeamTemplates {
-                    a_pre: &a_pre_border,
-                    a_post: &a_post_border,
-                    a_pre_ch: &a_pre_ch,
-                    a_post_ch: &a_post_ch,
-                    b_mono: &b_mono,
-                    b_ch: &b_ch,
-                },
-                policies::SeamPlacement {
-                    start: alignment.start_frame,
-                    gap_frames,
-                    pre_window: waveform_gate_frames,
-                    post_window: post_gate_frames,
-                },
-            );
-
-            let soften_waveform_gate = !params.disable_structure_trust
-                && structure_pre >= params.partial_structure_waveform_soften
-                && structure_post >= params.partial_structure_waveform_soften;
-            let effective_min_corr = if soften_waveform_gate {
-                params
-                    .min_fill_correlation
-                    .min(PARTIAL_WAVEFORM_MIN_CORRELATION)
-            } else {
-                params.min_fill_correlation
-            };
-
-            alignment.pre_correlation = pre_corr;
-            alignment.post_correlation = post_corr;
-
-            if !seams_pass_correlation_gate(
-                &alignment,
-                effective_min_corr,
-                gap_secs,
-                params.short_gap_mean_correlation_secs,
-                params.short_gap_one_strong_seam_fallback,
-                params.disable_structure_trust,
-            ) {
-                return Err(SeamGateFailure::WaveformBelowThreshold {
-                    pre: pre_corr,
-                    post: post_corr,
-                    min: effective_min_corr,
-                });
-            }
-            (pre_corr, post_corr, false)
+    let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
+        (structure_pre, structure_post, true)
+    } else {
+        let waveform_gate_frames = params
+            .seam_gate_frames
+            .min(a_pre_border.len().max(1));
+        let post_gate_frames = params.seam_gate_frames.min(a_post_border.len()).max(1);
+        let templates = policies::SeamTemplates {
+            a_pre: &a_pre_border,
+            a_post: &a_post_border,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
         };
+
+        match params.fill_mode {
+            FillMode::Fit => {
+                alignment = search_best_waveform_placement(
+                    &templates,
+                    &alignment,
+                    gap_frames,
+                    params.max_adjustment_frames,
+                    waveform_gate_frames,
+                    post_gate_frames,
+                    b_mono.len(),
+                );
+                let pre_corr = alignment.pre_correlation;
+                let post_corr = alignment.post_correlation;
+                if !fit_mode_waveform_floor_passes(pre_corr, post_corr, params.min_fill_correlation)
+                {
+                    return Err(SeamGateFailure::WaveformBelowThreshold {
+                        pre: pre_corr,
+                        post: post_corr,
+                        min: params.min_fill_correlation,
+                    });
+                }
+                (pre_corr, post_corr, false)
+            }
+            FillMode::Gate => {
+                let (pre_corr, post_corr) = policies::fill_seam_correlations(
+                    &templates,
+                    policies::SeamPlacement {
+                        start: alignment.start_frame,
+                        gap_frames,
+                        pre_window: waveform_gate_frames,
+                        post_window: post_gate_frames,
+                    },
+                );
+
+                let soften_waveform_gate = !params.disable_structure_trust
+                    && structure_pre >= params.partial_structure_waveform_soften
+                    && structure_post >= params.partial_structure_waveform_soften;
+                let effective_min_corr = if soften_waveform_gate {
+                    params
+                        .min_fill_correlation
+                        .min(PARTIAL_WAVEFORM_MIN_CORRELATION)
+                } else {
+                    params.min_fill_correlation
+                };
+
+                alignment.pre_correlation = pre_corr;
+                alignment.post_correlation = post_corr;
+
+                if !seams_pass_correlation_gate(
+                    &alignment,
+                    effective_min_corr,
+                    gap_secs,
+                    params.short_gap_mean_correlation_secs,
+                    params.short_gap_one_strong_seam_fallback,
+                    params.disable_structure_trust,
+                ) {
+                    return Err(SeamGateFailure::WaveformBelowThreshold {
+                        pre: pre_corr,
+                        post: post_corr,
+                        min: effective_min_corr,
+                    });
+                }
+                (pre_corr, post_corr, false)
+            }
+        }
+    };
 
     Ok(SeamGateOutcome {
         alignment,
         report_pre,
         report_post,
         structure_trusted: patched_structure_trusted,
+        structure_start_frame,
         gap_frames,
     })
 }
@@ -425,6 +455,24 @@ fn seams_pass_correlation_gate(
 mod tests {
     use super::*;
     use crate::domain::policies::FillAlignment;
+
+    #[test]
+    fn fit_mode_rejects_asymmetric_seams_that_gate_one_strong_would_pass() {
+        assert!(!fit_mode_waveform_floor_passes(0.998, -0.90, 0.12));
+        assert!(seams_pass_correlation_gate(
+            &FillAlignment {
+                start_frame: 0,
+                fill_frames: 48_000,
+                pre_correlation: 0.998,
+                post_correlation: -0.90,
+            },
+            0.12,
+            1.0,
+            2.0,
+            true,
+            false,
+        ));
+    }
 
     #[test]
     fn short_gap_passes_on_one_strong_seam_when_mean_fails() {

@@ -207,6 +207,7 @@ struct PatchTestOptions {
     short_gap_mean_correlation_secs: f64,
     max_fill_align_adjustment_secs: f64,
     partial_structure_waveform_soften: f64,
+    fill_mode: clip_sync_repair::domain::FillMode,
 }
 
 impl Default for PatchTestOptions {
@@ -221,6 +222,7 @@ impl Default for PatchTestOptions {
             short_gap_mean_correlation_secs: 2.0,
             max_fill_align_adjustment_secs: 1.0,
             partial_structure_waveform_soften: 0.85,
+            fill_mode: clip_sync_repair::domain::FillMode::Gate,
         }
     }
 }
@@ -274,6 +276,7 @@ fn patch_request_with_options(
         gap_end_extend_max_ms: 500,
         gap_end_extend_step_ms: 20,
         short_gap_one_strong_seam_fallback: options.short_gap_one_strong_seam_fallback,
+        fill_mode: options.fill_mode,
     }
 }
 
