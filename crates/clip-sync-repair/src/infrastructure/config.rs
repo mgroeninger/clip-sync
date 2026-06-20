@@ -646,6 +646,12 @@ dry_run = true
     }
 
     #[test]
+    fn repair_app_config_defaults_fill_mode_to_fit() {
+        let config = RepairAppConfig::default();
+        assert_eq!(config.repair.fill_mode, crate::domain::FillMode::Fit);
+    }
+
+    #[test]
     fn repair_app_config_enables_high_rate_refinement_by_default() {
         let config = RepairAppConfig::default();
         assert!(config.align.alignment.refine_offset_high_rate);

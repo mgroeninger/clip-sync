@@ -1,6 +1,6 @@
 # Temporary plan: gap fill — gate → fit transition
 
-> **Status:** Draft (2026-06-20). Motivated by repair runs where many gaps skip at `boundary correlation below threshold` while structure match finds a plausible B bracket, and by audible **repeat at gap seams** when one-strong-seam / structure-trust shortcuts pass a misaligned fill.
+> **Status:** Draft (2026-06-20). Phase A shipped; default `fill_mode` is **`fit`** (2026-06-20).
 >
 > Archive to `docs/archive/fill-fitting-plan.md` when all four phases ship (or split into shipped + backlog if Phase D defers).
 
@@ -58,7 +58,7 @@ refine_gap_frames (+ optional joint A-boundary search in Phase C)
 
 | Topic | Decision |
 |-------|----------|
-| **Mode switch** | Add `fill_mode: Gate \| Fit` on `[repair]` (default **`fit`** after Phase A ships; **`gate`** preserves legacy). CLI: `--fill-mode gate\|fit`. |
+| **Mode switch** | Add `fill_mode: Gate \| Fit` on `[repair]` (default **`fit`**). CLI: `--fill-mode gate\|fit` for legacy. |
 | **Objective (default)** | **Phase A:** maximize `min(pre, post)` waveform Pearson over slide grid. **Phase B:** `α·structure_combined + β·min(pre,post) − γ·\|slide\| − δ·length_penalty`. |
 | **Search radius** | Reuse `max_fill_align_adjustment_secs` → frames for waveform slide; structure keeps `fill_border_search_secs` coarse radius. |
 | **Floors** | Keep `min_structure_match_score` and `min_fill_correlation` as **minimum acceptable best score**, not per-fixed-point checks. |
@@ -85,7 +85,7 @@ refine_gap_frames (+ optional joint A-boundary search in Phase C)
   - After structure match + structure floor check, call waveform search **unless** `fill_mode == Gate` and structure_trusted (legacy path).
   - In `fit` mode: always run waveform search; set `structure_trusted = false` on output (waveform always informed decision).
 - [x] `RegionPatchOutcome` / verbose: expose `waveform_slide_secs` separately from structure slide (`align_adjustment_secs` today mixes structure polish — split fields in `Patched` or add `waveform_adjustment_secs`).
-- [x] Config + CLI: `fill_mode` enum (default `gate` in Phase A PR; flip to `fit` when stable).
+- [x] Config + CLI: `fill_mode` enum (default `fit`).
 - [x] Tests:
   - Unit: synthetic B haystack where true offset is +3 frames from structure nominal; search finds it.
   - Unit: gate mode still skips when only structure passes (regression).
@@ -194,7 +194,7 @@ refine_gap_frames (+ optional joint A-boundary search in Phase C)
 
 | Key | Phase | Default | Notes |
 |-----|-------|---------|-------|
-| `fill_mode` | A | `gate` → `fit` | `gate` = legacy |
+| `fill_mode` | A | `fit` (default); `gate` = legacy | |
 | `fill_marginal_margin` | C | `0.08` | Warn-patch band below `min_fill_correlation` |
 | `fill_absolute_floor` | C | `0.12` | Hard skip below this |
 | `fill_fit_structure_weight` | B | `0.35` | Optional expose |
@@ -222,10 +222,10 @@ Existing keys retain meaning: `min_fill_correlation`, `min_structure_match_score
 
 ## Rollout
 
-1. **Phase A** — ship behind `fill_mode` default `gate`; dogfood `fit` internally.
-2. **Phase B** — enable unified search only in `fit` mode.
-3. **Phase C** — flip default to `fit`; keep `--fill-mode gate` one release.
-4. **Phase D** — tune repeat penalty on corpus; document listen checklist.
+1. **Phase A** — shipped; default `fit` (2026-06-20).
+2. **Phase B** — unified search only in `fit` mode.
+3. **Phase C** — marginal warn tier.
+4. **Phase D** — repeat penalty + dual anchor.
 5. Archive this doc; update `PLAN.md` repair section; add `BACKLOG.md` row.
 
 ---

@@ -6,9 +6,10 @@ alignment corpus in `tests/corpus/`.
 Silence is detected on **native multichannel PCM** (all channels must be quiet
 per block — ffmpeg `silencedetect` default, `mono=0`).
 
-**Patch seam behavior** (fill offset, structure trust, gap extension, one-strong-seam
-fallback) is covered by `tests/patch_audio_integration.rs` and unit tests in
-`gap_seam_extend.rs` / `patch_region.rs` — not this corpus.
+**Patch seam behavior** (`fill_mode` fit vs gate, fill offset, structure trust, gap extension,
+one-strong-seam fallback) is covered by `tests/patch_audio_integration.rs` (integration
+tests default to `fill_mode = gate` where gate shortcuts are under test) and unit tests in
+`gap_seam_extend.rs` / `patch_region.rs` / `gap_fill_fit.rs` — not this corpus.
 
 ## Tiers
 

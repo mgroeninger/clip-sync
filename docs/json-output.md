@@ -237,7 +237,9 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool}}`
+
+`structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false` and `waveform_adjustment_secs` records the slide from the structure match position.
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`
 - `{"not_planned": {"reason": <GapFillSkipReason>}}`
 

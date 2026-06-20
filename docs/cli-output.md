@@ -43,7 +43,7 @@ Controlled by `[logging].progress` in TOML (`auto` \| `verbose` \| `quiet`) and 
 | Binary | Set by | Effect on stdout |
 |--------|--------|------------------|
 | `clip-sync` | `-v` → `[output].show_diagnostics = true` | Per-clip window lines, decode-skip counts, repetition lines, high-rate peak, offset-verification skip reason, parallel recheck offset on inconclusive verify |
-| `clip-sync-repair` | `-v` → `show_diagnostics` argument to `format_human` | Detailed gap patch status (struct pre/post, slide); high-rate peak; offset-verification skip reason |
+| `clip-sync-repair` | `-v` → `show_diagnostics` argument to `format_human` | Detailed gap patch status (`pre→post` or `struct` under gate, slide/wf); high-rate peak; offset-verification skip reason |
 
 Both binaries wire `-v` to `ProgressMode::Verbose` **and** enable stdout diagnostics as above.
 
@@ -270,7 +270,8 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 - **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows follow timeline order (gap #1, #2, …).
 
 - **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`).
-- **Default patch detail:** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.
+- **Default patch detail (`fill_mode = fit`, default):** `patched (pre→post)` from waveform seam scores after slide search; `structure_trusted` is always false in JSON.
+- **Default patch detail (`fill_mode = gate`):** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.
 - **Verbose patch detail:** includes slide adjustment and full pre/post labels.
 - **Footer:** `Output: <path>` when WAV or mux file was written.
 - **Optional stderr capstone** (not required for compliance): `Wrote <path> (N gaps patched, offset …)` after mux.
@@ -286,31 +287,39 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
 
 1. Map gap on A to B (`fill_offset_mode`: `recommended` or `interpolated` drift).
 2. Refine gap edges on A; **structure-match** dropout pattern on B (`min_structure_match_score`) — always runs.
-3. **Waveform Pearson** at pre/post borders — see structure trust below.
+3. **Waveform placement** (`fill_mode`, default `fit`): slide search for best `min(pre, post)` Pearson, or (`gate`) score once at structure winner — see below.
 4. On waveform failure, retry with gap-end extension then gap-start extension (when enabled).
 
-**Structure trust vs waveform gate**
+**`fill_mode = fit` (default)**
 
-Patching uses two independent checks. `--no-structure-trust` affects only the waveform layer.
+- After structure match, search B start within `max_fill_align_adjustment_secs` for the offset that maximizes `min(pre, post)` waveform Pearson.
+- Patch when that best score ≥ `min_fill_correlation`.
+- Structure trust is not used (`structure_trusted` is always false).
+- CLI flags **`--no-structure-trust`** and **`--no-short-gap-one-strong-seam`** have **no effect** (gate-only).
+- Config `strong_structure_trust`, `partial_structure_waveform_soften`, and `short_gap_one_strong_seam_fallback` do not change waveform placement under `fit`.
 
-| Check | Purpose | `--no-structure-trust` |
+**Structure trust vs waveform gate (`fill_mode = gate` only)**
+
+Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two independent checks. `--no-structure-trust` affects only the waveform layer.
+
+| Check | Purpose | `--no-structure-trust` (gate only) |
 |-------|---------|------------------------|
 | Structure match (step 2) | Locate dropout on B via active/silent signature | **Unchanged** |
 | Waveform Pearson (step 3) | Verify real audio matches at gap seams | **Always runs** |
 
-**Default (`disable_structure_trust = false`):**
+**Default (`disable_structure_trust = false`, gate only):**
 
 - Structure pre **and** post ≥ `strong_structure_trust` (0.90) → **skip** waveform gate; status `patched (struct …)`.
 - Structure 0.85–0.90 → waveform runs with threshold softened to `min(min_fill_correlation, 0.12)`.
 - Otherwise → waveform at full `min_fill_correlation`.
 
-**With `--no-structure-trust` (`disable_structure_trust = true`):**
+**With `--no-structure-trust` (`disable_structure_trust = true`, gate only):**
 
 - Waveform gate **never** skipped; partial soften **off**.
 - **Both** pre and post waveform seams must pass — short-gap mean and one-strong-seam shortcuts disabled.
 - Does **not** disable structure match, gap extension, or border standoff.
 
-**Waveform gate (when it runs, structure trust on):** pass if mean(pre, post) ≥ threshold for short gaps (≤ `short_gap_mean_correlation_secs`); else if `short_gap_one_strong_seam_fallback`, pass when either seam ≥ threshold. Longer gaps require both seams individually. Partial structure soften caps threshold at `0.12` when structure scores ≥ `partial_structure_waveform_soften`.
+**Waveform gate (gate mode, when it runs, structure trust on):** pass if mean(pre, post) ≥ threshold for short gaps (≤ `short_gap_mean_correlation_secs`); else if `short_gap_one_strong_seam_fallback`, pass when either seam ≥ threshold. Longer gaps require both seams individually. Partial structure soften caps threshold at `0.12` when structure scores ≥ `partial_structure_waveform_soften`.
 
 **Boundary extension retries** (shared `gap_end_extend_max_ms` / `gap_end_extend_step_ms`):
 
@@ -323,14 +332,14 @@ Patching uses two independent checks. `--no-structure-trust` affects only the wa
 
 | Pattern | `GapPatchSkipReason` |
 |---------|----------------------|
-| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform gate failed after retries |
+| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform floor failed after retries (`fit` or `gate`) |
 | `skipped: boundary alignment failed` | Structure bracket failed on B |
 | `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
 | `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |
 
 **stderr (`tracing::warn`):** `gap N/M (range): waveform seam correlation below threshold` (and similar) when a fill is skipped; `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).
 
-**Verbose stdout patch lines:** `patched (struct pre→post)` when structure-trusted; `patched (pre→post slide=+Xs)` otherwise; skipped rows show full skip reason in the status column.
+**Verbose stdout patch lines:** under `fit`, `patched (pre=… post=… slide=…)` with optional `(wf …)` when waveform slide ≠ 0; under `gate`, `patched (struct pre→post)` when structure-trusted; skipped rows show full skip reason in the status column.
 
 ---
 
