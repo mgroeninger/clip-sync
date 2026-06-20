@@ -69,6 +69,46 @@ impl TimelineSkewTracker {
 /// Fail extract after this many consecutive packet decode errors.
 pub(crate) const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 64;
 
+/// Reopen-and-reseek retries when an interior window decodes most of a clip but falls short
+/// (timestamp/sample boundary mismatch after a successful seek).
+pub(crate) const MAX_INTERIOR_PARTIAL_DECODE_RETRIES: u32 = 1;
+
+/// Outcome of comparing decoded sample/frame count to the clip window target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShortfallDisposition {
+    Pad { shortfall: usize },
+    HardFail { near_track_end: bool },
+}
+
+/// Classify decode shortfall relative to tolerance and tail-clip padding rules.
+pub(crate) fn shortfall_disposition(
+    decoded: usize,
+    target: usize,
+    allow_tail_padding: bool,
+    window_end_secs: f64,
+    track_duration_secs: Option<f64>,
+    sample_rate: u32,
+) -> ShortfallDisposition {
+    debug_assert!(decoded < target);
+    let shortfall = target - decoded;
+    let limit = decode_shortfall_limit(sample_rate, target, allow_tail_padding);
+    if shortfall > limit
+        && !tail_partial_clip_acceptable(
+            decoded,
+            target,
+            allow_tail_padding,
+            window_end_secs,
+            track_duration_secs,
+        )
+    {
+        let near_track_end = track_duration_secs
+            .map(|duration| window_end_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS)
+            .unwrap_or(false);
+        return ShortfallDisposition::HardFail { near_track_end };
+    }
+    ShortfallDisposition::Pad { shortfall }
+}
+
 /// Minimum fraction of a tail clip that must decode before we pad the remainder (fingerprinting).
 const TAIL_CLIP_MIN_DECODE_PERCENT: usize = 95;
 
@@ -1166,5 +1206,37 @@ mod tail_clip_tests {
             6180.0,
             Some(6180.0),
         ));
+    }
+
+    #[test]
+    fn interior_partial_shortfall_is_hard_fail_not_near_track_end() {
+        // Observed on MKV interior clip 2/4: ~99.78% of a 15m window, ~2.1s short at 48kHz.
+        let disposition = super::shortfall_disposition(
+            45_978_881,
+            46_079_999,
+            false,
+            4304.625,
+            Some(10_200.0),
+            48_000,
+        );
+        assert_eq!(
+            disposition,
+            super::ShortfallDisposition::HardFail {
+                near_track_end: false
+            }
+        );
+    }
+
+    #[test]
+    fn tail_shortfall_within_eof_cap_pads() {
+        let disposition = super::shortfall_disposition(
+            46_000_000,
+            46_079_999,
+            true,
+            6180.0,
+            Some(6180.0),
+            48_000,
+        );
+        assert!(matches!(disposition, super::ShortfallDisposition::Pad { .. }));
     }
 }

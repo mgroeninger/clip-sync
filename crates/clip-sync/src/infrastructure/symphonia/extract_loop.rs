@@ -17,9 +17,10 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     append_frames_in_window, append_interleaved_frames_in_window, decode_shortfall_limit,
-    media_duration_to_frames, seek_with_recovery, seek_to_window_start, tail_partial_clip_acceptable,
-    timestamp_to_sample, timestamp_to_std_duration, window_sample_bounds, InterleavedCollectContext,
-    WindowCollectContext, MAX_CONSECUTIVE_DECODE_ERRORS,
+    media_duration_to_frames, seek_with_recovery, seek_to_window_start, shortfall_disposition,
+    timestamp_to_sample, timestamp_to_std_duration, window_sample_bounds,
+    InterleavedCollectContext, ShortfallDisposition, WindowCollectContext,
+    MAX_CONSECUTIVE_DECODE_ERRORS, MAX_INTERIOR_PARTIAL_DECODE_RETRIES,
 };
 use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoState};
 
@@ -234,6 +235,18 @@ fn decode_packet_or_skip<'dec>(
 // Shared driver
 // ---------------------------------------------------------------------------
 
+/// Seek to window start, or scan sequentially from file start when a prior seek produced no audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtractSeekMode {
+    WindowStart,
+    SequentialFromStart,
+}
+
+/// Non-zero start windows: initial seek, optional sequential fallback (empty output), optional
+/// reopen+seek after a hard interior shortfall.
+const MAX_EXTRACT_ATTEMPTS_NONZERO_START: usize =
+    2 + MAX_INTERIOR_PARTIAL_DECODE_RETRIES as usize;
+
 /// Shared seek/retry/decode/progress driver. Steps 1–10 of the duplication map are owned here;
 /// per-mode differences (buffer, target unit, finalize order) are delegated to `sink`.
 pub(super) fn run_extract_decode_loop<S: ExtractSink>(
@@ -255,44 +268,36 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
     let track_id = track.index;
     ensure_track_decoder(path, state, track)?;
 
-    let cached = state.decoders.get(&track_id).expect("decoder cached");
-    let time_base = cached.time_base;
-    let sample_rate_hint = state
-        .format
-        .tracks()
-        .iter()
-        .find(|candidate| candidate.id == track_id)
-        .and_then(|media_track| match &media_track.codec_params {
-            Some(CodecParameters::Audio(codec_params)) => codec_params
-                .sample_rate
-                .filter(|rate| *rate > 0)
-                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
-            _ => None,
-        })
-        .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0));
+    let sample_rate_hint = track_sample_rate_hint(state, track);
+    let max_attempts = if window.start.is_zero() {
+        1
+    } else {
+        MAX_EXTRACT_ATTEMPTS_NONZERO_START
+    };
 
-    let max_attempts = if window.start.is_zero() { 1 } else { 2 };
-    let mut allow_tail_padding = false;
-    let mut decode_error_skips = 0_u32;
-    let mut compressed_bytes = 0_u64;
+    let mut seek_mode = ExtractSeekMode::WindowStart;
+    let mut partial_shortfall_retries = 0_u32;
+    let mut time_base = decoder_time_base(state, track_id);
 
     for attempt in 0..max_attempts {
-        compressed_bytes = 0;
         if attempt > 0 {
             debug!(
                 path = %path.display(),
                 track = track.index,
                 window_start_secs = window.start.as_secs_f64(),
-                "seek-based extract produced no audio; retrying via sequential scan from start"
+                seek_mode = ?seek_mode,
+                "reopening io state for extract retry"
             );
-            // Reopen state before the sequential-from-zero fallback: the reader that just
-            // produced no audio may be in a confused state and shouldn't be reused.
             *state = MediaIoState::open(path)?;
             ensure_track_decoder(path, state, track)?;
+            time_base = decoder_time_base(state, track_id);
         }
 
-        let seek_start = if attempt == 0 { window.start } else { Duration::ZERO };
-        if attempt == 0 {
+        let seek_start = match seek_mode {
+            ExtractSeekMode::WindowStart => window.start,
+            ExtractSeekMode::SequentialFromStart => Duration::ZERO,
+        };
+        if seek_mode == ExtractSeekMode::WindowStart {
             seek_with_recovery(path, state, track, seek_start)?;
         } else {
             seek_to_window_start(path, state.format.as_mut(), track_id, seek_start, track.duration)?;
@@ -309,8 +314,9 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
 
         let mut last_reported = 0_u64;
         let mut finished = false;
-        allow_tail_padding = false;
-        decode_error_skips = 0_u32;
+        let mut allow_tail_padding = false;
+        let mut decode_error_skips = 0_u32;
+        let mut compressed_bytes = 0_u64;
         let mut consecutive_decode_errors = 0_u32;
 
         loop {
@@ -402,23 +408,104 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
             }
         }
 
-        if sink.has_output() {
-            break;
+        if !sink.has_output() {
+            if attempt + 1 < max_attempts && seek_mode == ExtractSeekMode::WindowStart {
+                debug!(
+                    path = %path.display(),
+                    track = track.index,
+                    window_start_secs = window.start.as_secs_f64(),
+                    "seek-based extract produced no audio; retrying via sequential scan from start"
+                );
+                seek_mode = ExtractSeekMode::SequentialFromStart;
+                continue;
+            }
+        } else if let Some(rate) = sink.resolved_rate() {
+            let decoded = sink.collected_units();
+            let target = sink.target_units().unwrap_or(0);
+            if decoded < target {
+                let window_end_secs = window.end.as_secs_f64();
+                let track_duration_secs = track.duration.map(|d| d.as_secs_f64());
+                if matches!(
+                    shortfall_disposition(
+                        decoded,
+                        target,
+                        allow_tail_padding,
+                        window_end_secs,
+                        track_duration_secs,
+                        rate,
+                    ),
+                    ShortfallDisposition::HardFail {
+                        near_track_end: false
+                    }
+                ) && partial_shortfall_retries < MAX_INTERIOR_PARTIAL_DECODE_RETRIES
+                    && attempt + 1 < max_attempts
+                {
+                    partial_shortfall_retries += 1;
+                    debug!(
+                        path = %path.display(),
+                        track = track.index,
+                        decoded,
+                        target,
+                        window_start_secs = window.start.as_secs_f64(),
+                        window_end_secs,
+                        retry = partial_shortfall_retries,
+                        "partial interior decode; reopening and retrying seek"
+                    );
+                    seek_mode = ExtractSeekMode::WindowStart;
+                    continue;
+                }
+            }
         }
+
+        return sink.finalize(
+            &ExtractFinalizeContext {
+                path,
+                track,
+                window,
+                progress,
+                label,
+                compressed_bytes,
+            },
+            allow_tail_padding,
+            decode_error_skips,
+        );
     }
 
-    sink.finalize(
-        &ExtractFinalizeContext {
-            path,
-            track,
-            window,
-            progress,
-            label,
-            compressed_bytes,
-        },
-        allow_tail_padding,
-        decode_error_skips,
-    )
+    Err(fail_media(
+        path,
+        "extract",
+        Some(track.index),
+        decode_failed(
+            track.index,
+            format!(
+                "extract exhausted {} attempts for window [{:.3}s–{:.3}s)",
+                max_attempts,
+                window.start.as_secs_f64(),
+                window.end.as_secs_f64()
+            ),
+        ),
+    ))
+}
+
+fn track_sample_rate_hint(state: &MediaIoState, track: &AudioTrack) -> Option<u32> {
+    let track_id = track.index;
+    state
+        .format
+        .tracks()
+        .iter()
+        .find(|candidate| candidate.id == track_id)
+        .and_then(|media_track| match &media_track.codec_params {
+            Some(CodecParameters::Audio(codec_params)) => codec_params
+                .sample_rate
+                .filter(|rate| *rate > 0)
+                .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0)),
+            _ => None,
+        })
+        .or_else(|| Some(track.sample_rate).filter(|rate| *rate > 0))
+}
+
+fn decoder_time_base(state: &MediaIoState, track_id: u32) -> Option<TimeBase> {
+    state.decoders.get(&track_id).and_then(|cached| cached.time_base)
 }
 
 // ---------------------------------------------------------------------------
@@ -600,65 +687,66 @@ impl ExtractSink for MonoExtractSink {
         }
 
         if self.mono_samples.len() < target {
-            let shortfall = target - self.mono_samples.len();
-            let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
+            let decoded = self.mono_samples.len();
             let window_end_secs = window.end.as_secs_f64();
             let track_duration_secs = track.duration.map(|d| d.as_secs_f64());
-            if shortfall > limit
-                && !tail_partial_clip_acceptable(
-                    self.mono_samples.len(),
-                    target,
-                    allow_tail_padding,
-                    window_end_secs,
-                    track_duration_secs,
-                )
-            {
-                let error = decode_failed(
-                    track.index,
-                    format!(
-                        "partial clip decoded: got {} of {} samples for window [{:.3}s–{:.3}s)",
-                        self.mono_samples.len(),
-                        target,
-                        window.start.as_secs_f64(),
-                        window_end_secs
-                    ),
-                );
-                return Err(if allow_tail_padding {
-                    warn_partial_decode(
-                        path,
-                        "extract",
-                        Some(track.index),
-                        error,
-                        window_end_secs,
-                        track_duration_secs,
-                    )
-                } else {
-                    fail_media(path, "extract", Some(track.index), error)
-                });
+            match shortfall_disposition(
+                decoded,
+                target,
+                allow_tail_padding,
+                window_end_secs,
+                track_duration_secs,
+                rate,
+            ) {
+                ShortfallDisposition::HardFail { .. } => {
+                    let error = decode_failed(
+                        track.index,
+                        format!(
+                            "partial clip decoded: got {} of {} samples for window [{:.3}s–{:.3}s)",
+                            decoded,
+                            target,
+                            window.start.as_secs_f64(),
+                            window_end_secs
+                        ),
+                    );
+                    return Err(if allow_tail_padding {
+                        warn_partial_decode(
+                            path,
+                            "extract",
+                            Some(track.index),
+                            error,
+                            window_end_secs,
+                            track_duration_secs,
+                        )
+                    } else {
+                        fail_media(path, "extract", Some(track.index), error)
+                    });
+                }
+                ShortfallDisposition::Pad { shortfall } => {
+                    if shortfall > decode_shortfall_limit(rate, target, allow_tail_padding) {
+                        warn!(
+                            path = %path.display(),
+                            track = track.index,
+                            shortfall,
+                            target,
+                            decoded,
+                            window_end_secs,
+                            "near-track-end partial clip; padding remainder with silence"
+                        );
+                    } else {
+                        debug!(
+                            path = %path.display(),
+                            track = track.index,
+                            shortfall,
+                            target,
+                            allow_tail_padding,
+                            limit = decode_shortfall_limit(rate, target, allow_tail_padding),
+                            "padding end-of-window decode gap with silence"
+                        );
+                    }
+                    self.mono_samples.resize(target, 0);
+                }
             }
-
-            if shortfall > limit {
-                warn!(
-                    path = %path.display(),
-                    track = track.index,
-                    shortfall,
-                    target,
-                    decoded = self.mono_samples.len(),
-                    window_end_secs,
-                    "near-track-end partial clip; padding remainder with silence"
-                );
-            } else {
-                debug!(
-                    path = %path.display(),
-                    track = track.index,
-                    shortfall,
-                    target,
-                    allow_tail_padding,
-                    limit,
-                    "padding end-of-window decode gap with silence"
-                );
-            }
-            self.mono_samples.resize(target, 0);
         }
 
         if decode_error_skips > 0 {
@@ -892,65 +980,65 @@ impl ExtractSink for InterleavedExtractSink {
         }
 
         if decoded_frame_count < target {
-            let shortfall = target - decoded_frame_count;
-            let limit = decode_shortfall_limit(rate, target, allow_tail_padding);
             let window_end_secs = window.end.as_secs_f64();
             let track_duration_secs = track.duration.map(|d| d.as_secs_f64());
-            if shortfall > limit
-                && !tail_partial_clip_acceptable(
-                    decoded_frame_count,
-                    target,
-                    allow_tail_padding,
-                    window_end_secs,
-                    track_duration_secs,
-                )
-            {
-                let error = decode_failed(
-                    track.index,
-                    format!(
-                        "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
-                        decoded_frame_count,
-                        target,
-                        window.start.as_secs_f64(),
-                        window_end_secs
-                    ),
-                );
-                return Err(if allow_tail_padding {
-                    warn_partial_decode(
-                        path,
-                        "extract",
-                        Some(track.index),
-                        error,
-                        window_end_secs,
-                        track_duration_secs,
-                    )
-                } else {
-                    fail_media(path, "extract", Some(track.index), error)
-                });
+            match shortfall_disposition(
+                decoded_frame_count,
+                target,
+                allow_tail_padding,
+                window_end_secs,
+                track_duration_secs,
+                rate,
+            ) {
+                ShortfallDisposition::HardFail { .. } => {
+                    let error = decode_failed(
+                        track.index,
+                        format!(
+                            "partial clip decoded: got {} of {} frames for window [{:.3}s–{:.3}s)",
+                            decoded_frame_count,
+                            target,
+                            window.start.as_secs_f64(),
+                            window_end_secs
+                        ),
+                    );
+                    return Err(if allow_tail_padding {
+                        warn_partial_decode(
+                            path,
+                            "extract",
+                            Some(track.index),
+                            error,
+                            window_end_secs,
+                            track_duration_secs,
+                        )
+                    } else {
+                        fail_media(path, "extract", Some(track.index), error)
+                    });
+                }
+                ShortfallDisposition::Pad { shortfall } => {
+                    if shortfall > decode_shortfall_limit(rate, target, allow_tail_padding) {
+                        warn!(
+                            path = %path.display(),
+                            track = track.index,
+                            shortfall,
+                            target,
+                            decoded = decoded_frame_count,
+                            window_end_secs,
+                            "near-track-end partial clip; padding remainder with silence"
+                        );
+                    } else {
+                        debug!(
+                            path = %path.display(),
+                            track = track.index,
+                            shortfall,
+                            target,
+                            allow_tail_padding,
+                            limit = decode_shortfall_limit(rate, target, allow_tail_padding),
+                            "padding end-of-window interleaved decode gap with silence"
+                        );
+                    }
+                    self.out.resize(target.saturating_mul(ch), 0);
+                }
             }
-
-            if shortfall > limit {
-                warn!(
-                    path = %path.display(),
-                    track = track.index,
-                    shortfall,
-                    target,
-                    decoded = decoded_frame_count,
-                    window_end_secs,
-                    "near-track-end partial clip; padding remainder with silence"
-                );
-            } else {
-                debug!(
-                    path = %path.display(),
-                    track = track.index,
-                    shortfall,
-                    target,
-                    allow_tail_padding,
-                    limit,
-                    "padding end-of-window interleaved decode gap with silence"
-                );
-            }
-            self.out.resize(target.saturating_mul(ch), 0);
         }
 
         if decode_error_skips > 0 {
