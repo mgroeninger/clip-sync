@@ -78,7 +78,10 @@ pub struct Args {
     #[arg(long)]
     pub no_normalize: bool,
 
-    /// Always run the waveform seam gate; do not skip it when structure scores are high.
+    /// Stricter seam checks: always run the waveform Pearson gate (never skip it when
+    /// structure scores are high), disable partial-structure threshold soften, and require
+    /// both pre/post waveform seams to pass (no short-gap mean or one-strong-seam shortcuts).
+    /// Does not disable structure matching on B or gap boundary extension retries.
     #[arg(long)]
     pub no_structure_trust: bool,
 

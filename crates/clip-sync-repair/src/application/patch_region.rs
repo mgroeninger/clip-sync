@@ -174,7 +174,8 @@ pub(crate) fn evaluate_seam_gate(
                 },
             );
 
-            let soften_waveform_gate = structure_pre >= params.partial_structure_waveform_soften
+            let soften_waveform_gate = !params.disable_structure_trust
+                && structure_pre >= params.partial_structure_waveform_soften
                 && structure_post >= params.partial_structure_waveform_soften;
             let effective_min_corr = if soften_waveform_gate {
                 params
@@ -193,6 +194,7 @@ pub(crate) fn evaluate_seam_gate(
                 gap_secs,
                 params.short_gap_mean_correlation_secs,
                 params.short_gap_one_strong_seam_fallback,
+                params.disable_structure_trust,
             ) {
                 return Err(SeamGateFailure::WaveformBelowThreshold {
                     pre: pre_corr,
@@ -399,9 +401,13 @@ fn seams_pass_correlation_gate(
     gap_secs: f64,
     short_gap_mean_correlation_secs: f64,
     short_gap_one_strong_seam_fallback: bool,
+    require_both_seams: bool,
 ) -> bool {
     let pre = alignment.pre_correlation as f32;
     let post = alignment.post_correlation as f32;
+    if require_both_seams {
+        return pre >= min_fill_correlation && post >= min_fill_correlation;
+    }
     if gap_secs <= short_gap_mean_correlation_secs {
         if (pre + post) / 2.0 >= min_fill_correlation {
             return true;
@@ -434,6 +440,7 @@ mod tests {
             1.0,
             2.0,
             true,
+            false,
         ));
     }
 
@@ -451,6 +458,7 @@ mod tests {
             1.0,
             2.0,
             true,
+            false,
         ));
     }
 
@@ -468,12 +476,40 @@ mod tests {
             1.0,
             2.0,
             false,
+            false,
         ));
         assert!(seams_pass_correlation_gate(
             &alignment,
             0.12,
             1.0,
             2.0,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn strict_waveform_gate_rejects_weak_post_even_when_mean_passes() {
+        let alignment = FillAlignment {
+            start_frame: 0,
+            fill_frames: 48_000,
+            pre_correlation: 0.25,
+            post_correlation: 0.08,
+        };
+        assert!(seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            false,
+            false,
+        ));
+        assert!(!seams_pass_correlation_gate(
+            &alignment,
+            0.12,
+            1.0,
+            2.0,
+            false,
             true,
         ));
     }

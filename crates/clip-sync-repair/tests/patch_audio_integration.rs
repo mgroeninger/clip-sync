@@ -199,6 +199,7 @@ fn default_gap() -> Gap {
 #[derive(Clone)]
 struct PatchTestOptions {
     disable_structure_trust: bool,
+    strong_structure_trust: f64,
     fill_offset_mode: FillOffsetMode,
     short_gap_one_strong_seam_fallback: bool,
     gap_end_extend_on_post_seam_fail: bool,
@@ -212,6 +213,7 @@ impl Default for PatchTestOptions {
     fn default() -> Self {
         Self {
             disable_structure_trust: false,
+            strong_structure_trust: 0.90,
             fill_offset_mode: FillOffsetMode::Recommended,
             short_gap_one_strong_seam_fallback: true,
             gap_end_extend_on_post_seam_fail: true,
@@ -262,7 +264,7 @@ fn patch_request_with_options(
         gap_signature_context_secs: 3.0,
         gap_signature_bin_ms: 50,
         min_structure_match_score: 0.55,
-        strong_structure_trust: 0.90,
+        strong_structure_trust: options.strong_structure_trust,
         disable_structure_trust: options.disable_structure_trust,
         partial_structure_waveform_soften: options.partial_structure_waveform_soften,
         absolute_silence_rms: 0.0,
@@ -902,10 +904,30 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         skipped.summary.gaps
     );
 
-    let relaxed = PatchTestOptions {
+    // One-strong-seam fallback is disabled when `--no-structure-trust` is on (require both seams).
+    let no_trust_with_fallback = PatchTestOptions {
         gap_end_extend_on_post_seam_fail: false,
         gap_start_extend_on_pre_seam_fail: false,
         disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
+    let still_skipped = run_patch(
+        patch_request_with_options(report.clone(), false, 2.0, 0.12, no_trust_with_fallback),
+        10,
+    );
+    assert_eq!(
+        still_skipped.summary.patched_count, 0,
+        "one-strong-seam fallback must not apply with disable_structure_trust, got {:?}",
+        still_skipped.summary.gaps
+    );
+
+    let relaxed = PatchTestOptions {
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: false,
+        // Above fixture structure scores (~1.0) so the waveform gate runs and one-strong-seam applies.
+        strong_structure_trust: 1.01,
         partial_structure_waveform_soften: 1.0,
         ..Default::default()
     };

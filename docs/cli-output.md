@@ -274,11 +274,32 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
 **Per-gap pipeline (write mode):**
 
 1. Map gap on A to B (`fill_offset_mode`: `recommended` or `interpolated` drift).
-2. Refine gap edges on A; structure-match dropout pattern on B.
-3. Unless `disable_structure_trust` and both structure scores ≥ `strong_structure_trust`, run waveform Pearson gate at pre/post borders.
+2. Refine gap edges on A; **structure-match** dropout pattern on B (`min_structure_match_score`) — always runs.
+3. **Waveform Pearson** at pre/post borders — see structure trust below.
 4. On waveform failure, retry with gap-end extension then gap-start extension (when enabled).
 
-**Waveform gate (short gaps ≤ `short_gap_mean_correlation_secs`):** pass if mean(pre, post) ≥ threshold; else if `short_gap_one_strong_seam_fallback`, pass when either seam ≥ threshold. Longer gaps require both seams individually. Partial structure soften caps threshold at `0.12` when structure scores ≥ `partial_structure_waveform_soften`.
+**Structure trust vs waveform gate**
+
+Patching uses two independent checks. `--no-structure-trust` affects only the waveform layer.
+
+| Check | Purpose | `--no-structure-trust` |
+|-------|---------|------------------------|
+| Structure match (step 2) | Locate dropout on B via active/silent signature | **Unchanged** |
+| Waveform Pearson (step 3) | Verify real audio matches at gap seams | **Always runs** |
+
+**Default (`disable_structure_trust = false`):**
+
+- Structure pre **and** post ≥ `strong_structure_trust` (0.90) → **skip** waveform gate; status `patched (struct …)`.
+- Structure 0.85–0.90 → waveform runs with threshold softened to `min(min_fill_correlation, 0.12)`.
+- Otherwise → waveform at full `min_fill_correlation`.
+
+**With `--no-structure-trust` (`disable_structure_trust = true`):**
+
+- Waveform gate **never** skipped; partial soften **off**.
+- **Both** pre and post waveform seams must pass — short-gap mean and one-strong-seam shortcuts disabled.
+- Does **not** disable structure match, gap extension, or border standoff.
+
+**Waveform gate (when it runs, structure trust on):** pass if mean(pre, post) ≥ threshold for short gaps (≤ `short_gap_mean_correlation_secs`); else if `short_gap_one_strong_seam_fallback`, pass when either seam ≥ threshold. Longer gaps require both seams individually. Partial structure soften caps threshold at `0.12` when structure scores ≥ `partial_structure_waveform_soften`.
 
 **Boundary extension retries** (shared `gap_end_extend_max_ms` / `gap_end_extend_step_ms`):
 

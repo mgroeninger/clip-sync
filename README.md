@@ -169,7 +169,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
-| `--no-structure-trust` | — | Always run the waveform seam gate (do not skip when structure scores are high) |
+| `--no-structure-trust` | — | Stricter seams: always run waveform Pearson gate; no structure skip/soften; both seams must pass (see § Structure trust) |
 | `--min-fill-correlation <N>` | `0.35` | Minimum Pearson correlation at gap seams when the waveform gate runs |
 | `--max-fill-align-adjust-secs <SECS>` | `0.5` | Maximum B fill slide during structure match |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
@@ -233,21 +233,32 @@ When write mode runs (`--wav` / `--mux`), each fillable gap goes through structu
 | `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (start clip when clip offsets disagree). |
 | `interpolated` | Linearly interpolates between start-clip and end-clip offsets by each gap's position on A. Use when alignment drift is significant (`end − start` offset differs by more than ~50 ms). CLI: `--fill-offset interpolated`. |
 
-**2. Structure match**
+**2. Structure match** (always runs)
 
 Active/silent signatures around the gap locate the matching dropout on B. Both structure seam scores must pass `min_structure_match_score` (default `0.55`). Short gaps (≤ `short_gap_mean_correlation_secs`, default `2.0` s) may pass on **mean** structure score instead of both individually.
 
-**3. Waveform seam gate**
+This step finds *where* to splice B; it is **not** turned off by `--no-structure-trust`.
 
-Unless structure scores meet `strong_structure_trust` (default `0.90`) on **both** seams — and `disable_structure_trust` is false — Pearson correlation is measured at the pre- and post-gap borders after fine alignment.
+**3. Waveform seam gate** (optional shortcut by default)
 
-| Rule | Applies when |
+Two layers — do not confuse them:
+
+| Layer | What it checks | `--no-structure-trust` effect |
+|-------|----------------|----------------------------------|
+| **Structure match** (step 2) | Active/silent pattern on B | Unchanged — still required |
+| **Waveform Pearson** (step 3) | Real audio at pre/post borders after alignment | Always runs; never skipped |
+
+**Default (structure trust on):** when structure pre **and** post both meet `strong_structure_trust` (default `0.90`), the waveform gate is **skipped** and the gap is patched as `structure_trusted`. When structure is weaker but still passes step 2, the waveform gate runs; scores ≥ `partial_structure_waveform_soften` (default `0.85`) soften the threshold to `min(min_fill_correlation, 0.12)`.
+
+**With `--no-structure-trust`:** waveform Pearson always runs at your full `min_fill_correlation` (no skip, no soften). Short-gap **mean** and **one-strong-seam** shortcuts are also disabled — **both** pre and post waveform seams must pass individually.
+
+Other seam knobs are separate: `--no-gap-end-extend`, `--no-short-gap-one-strong-seam`, `short_gap_mean_correlation_secs`, etc.
+
+| Waveform rule | Applies when |
 |------|----------------|
-| Both seams ≥ `min_fill_correlation` | Gap longer than `short_gap_mean_correlation_secs` |
-| Mean(pre, post) ≥ threshold | Short gap (default ≤ 2 s) |
+| Both seams ≥ `min_fill_correlation` | Long gaps, or any gap with `--no-structure-trust` |
+| Mean(pre, post) ≥ threshold | Short gap only (default ≤ 2 s), structure trust on |
 | **One strong seam** (either ≥ threshold) | Short gap, after mean fails; on by default (`short_gap_one_strong_seam_fallback`) |
-
-When structure scores meet `partial_structure_waveform_soften` (default `0.85`), the waveform threshold is softened to `min(min_fill_correlation, 0.12)`. Pass `--no-structure-trust` to always run the waveform gate and never skip it via high structure scores.
 
 Set `min_fill_correlation = -1.0` in config to disable the waveform gate entirely (structure gate still applies).
 
@@ -271,13 +282,16 @@ If the waveform gate fails, the tool may adjust gap boundaries on A and re-run s
 
 Verbose mode (`-v`) adds per-gap patch lines on stderr and slide/pre/post detail in the gap table.
 
-**Example — drift + conservative waveform gate:**
+**Example — drift + strict waveform gate:**
 
 ```powershell
 clip-sync-repair recording_with_gaps.mkv reference.mkv `
   --mux repaired.mp4 `
   --fill-offset interpolated `
   --no-structure-trust `
+  --min-fill-correlation 0.5 `
+  --no-gap-end-extend `
+  --no-short-gap-one-strong-seam `
   -v
 ```
 
@@ -394,7 +408,7 @@ absolute_silence_rms = 33.0
 scan_both = true
 gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
-disable_structure_trust = false   # or --no-structure-trust on CLI
+disable_structure_trust = false   # true or --no-structure-trust: always waveform gate, both seams required
 fill_align_margin_secs = 1.0
 max_fill_align_adjustment_secs = 0.5
 fill_border_search_secs = 30.0
