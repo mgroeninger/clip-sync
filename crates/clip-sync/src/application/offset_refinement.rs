@@ -73,39 +73,12 @@ fn should_discover_offset(
         .is_none_or(|score| score < DISCOVER_SKIP_IF_COARSE_SCORE)
 }
 
+/// Fast Pearson scan over a downsampled ±`radius_secs` window (discover gate / widen probe).
 fn best_correlation_near_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     offset_secs: f64,
     radius_secs: f64,
-) -> Option<f64> {
-    if radius_secs <= 0.0 {
-        return correlation_at_offset(left, right, offset_secs);
-    }
-
-    let rate = f64::from(left.sample_rate);
-    let center = (offset_secs * rate).round() as i64;
-    let radius = (radius_secs * rate).round() as i64;
-    let mut best = f64::NEG_INFINITY;
-    for delta in -radius..=radius {
-        if let Some(score) =
-            correlation_at_offset(left, right, (center + delta) as f64 / rate)
-        {
-            best = best.max(score);
-        }
-    }
-
-    if best.is_finite() {
-        Some(best)
-    } else {
-        None
-    }
-}
-
-fn correlation_at_offset(
-    left: &MonoPcmClip,
-    right: &MonoPcmClip,
-    offset_secs: f64,
 ) -> Option<f64> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 {
         return None;
@@ -120,13 +93,56 @@ fn correlation_at_offset(
         return None;
     }
 
-    let right_start = (left_start as f64 + offset_secs * f64::from(rate))
+    let max_start = right
+        .samples
+        .len()
+        .saturating_sub(template_samples);
+    let predicted_right = (left_start as f64 + offset_secs * f64::from(rate))
         .round()
-        .clamp(0.0, right.samples.len().saturating_sub(template_samples) as f64) as usize;
+        .clamp(0.0, max_start as f64) as usize;
+
+    if radius_secs <= 0.0 {
+        let template = samples_to_f64(&left.samples[left_start..left_start + template_samples]);
+        let segment =
+            samples_to_f64(&right.samples[predicted_right..predicted_right + template_samples]);
+        return Some(normalized_correlation(&template, &segment));
+    }
+
+    let search_samples = (radius_secs * f64::from(rate)).round() as usize;
+    let min_right = predicted_right.saturating_sub(search_samples);
+    let max_right = (predicted_right + search_samples).min(max_start);
+    let hay_end = (max_right + template_samples).min(right.samples.len());
 
     let template = samples_to_f64(&left.samples[left_start..left_start + template_samples]);
-    let segment = samples_to_f64(&right.samples[right_start..right_start + template_samples]);
-    Some(normalized_correlation(&template, &segment))
+    let haystack = samples_to_f64(&right.samples[min_right..hay_end]);
+    let downsample = choose_downsample(template_samples, haystack.len());
+    let template_ds = downsample_f64(&template, downsample);
+    let haystack_ds = downsample_f64(&haystack, downsample);
+    if haystack_ds.len() < template_ds.len() || template_ds.is_empty() {
+        return None;
+    }
+
+    let max_lag_ds = haystack_ds
+        .len()
+        .saturating_sub(template_ds.len())
+        .min((max_right - min_right) / downsample);
+
+    let mut best = f64::NEG_INFINITY;
+    let mut lag = 0usize;
+    while lag <= max_lag_ds {
+        let score = normalized_correlation(
+            &template_ds,
+            &haystack_ds[lag..lag + template_ds.len()],
+        );
+        best = best.max(score);
+        lag += 1;
+    }
+
+    if best.is_finite() {
+        Some(best)
+    } else {
+        None
+    }
 }
 
 /// Refine a coarse Chromaprint offset using PCM cross-correlation.
@@ -146,7 +162,7 @@ pub fn refine_offset_estimate(
 
     let mut estimate = if should_discover_offset(left, right, coarse.offset_secs) {
         if let Some((discovered_offset, score)) =
-            pcm_discover_offset(left, right, coarse.offset_secs)
+            pcm_discover_offset(left, right, coarse.offset_secs, correlator)
         {
             ClipMatchEstimate {
                 offset_secs: discovered_offset,
@@ -188,7 +204,7 @@ pub fn refine_offset_around_prior(
     }
 
     let mut estimate = if let Some((discovered_offset, score)) =
-        pcm_search_near_offset(left, right, prior.offset_secs, search_radius_secs)
+        pcm_search_near_offset(left, right, prior.offset_secs, search_radius_secs, correlator)
     {
         ClipMatchEstimate {
             offset_secs: discovered_offset,
@@ -220,6 +236,7 @@ fn pcm_search_near_offset(
     right: &MonoPcmClip,
     center_offset_secs: f64,
     search_radius_secs: f64,
+    correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 || search_radius_secs <= 0.0
     {
@@ -257,14 +274,13 @@ fn pcm_search_near_offset(
     let max_lag = (max_right_sample / downsample)
         .min(right_ds.len().saturating_sub(template_ds.len()));
 
-    let mut coarse_peaks: Vec<(usize, f64)> = Vec::new();
-    let mut lag = min_lag;
-    while lag <= max_lag {
-        let score =
-            normalized_correlation(&template_ds, &right_ds[lag..lag + template_ds.len()]);
-        coarse_peaks.push((lag, score));
-        lag += 1;
-    }
+    let coarse_scores = correlator.slide_template_scores(&template_ds, &right_ds);
+    let mut coarse_peaks: Vec<(usize, f64)> = coarse_scores
+        .iter()
+        .enumerate()
+        .filter(|(lag, _)| *lag >= min_lag && *lag <= max_lag)
+        .map(|(lag, score)| (lag, *score))
+        .collect();
 
     coarse_peaks.sort_by(|(lag_a, score_a), (lag_b, score_b)| {
         score_b
@@ -287,6 +303,20 @@ fn pcm_search_near_offset(
     candidates.dedup();
 
     let refine_radius = downsample.saturating_mul(DISCOVER_FULL_REFINE_RADIUS_FACTOR).max(1);
+    let refine_region_start = candidates
+        .iter()
+        .map(|candidate| candidate.saturating_sub(refine_radius).max(min_right_sample))
+        .min()
+        .unwrap_or(min_right_sample);
+    let refine_region_end = candidates
+        .iter()
+        .map(|candidate| (candidate + refine_radius).min(search_end) + template_samples)
+        .max()
+        .unwrap_or(refine_region_start + template_samples)
+        .min(right.samples.len());
+    let refine_region = samples_to_f64(&right.samples[refine_region_start..refine_region_end]);
+    let full_scores = correlator.slide_template_scores(&template, &refine_region);
+
     let mut best_sample = predicted_right_sample.min(max_start);
     let mut best_full_score = f64::NEG_INFINITY;
     let mut best_distance = f64::INFINITY;
@@ -296,23 +326,22 @@ fn pcm_search_near_offset(
             .saturating_sub(refine_radius)
             .max(min_right_sample);
         let refine_max = (candidate + refine_radius).min(search_end);
-        let mut right_start = refine_min;
-        while right_start <= refine_max {
-            let segment =
-                samples_to_f64(&right.samples[right_start..right_start + template_samples]);
-            let score = normalized_correlation(&template, &segment);
+        for (i, score) in full_scores.iter().enumerate() {
+            let right_start = refine_region_start + i;
+            if right_start < refine_min || right_start > refine_max {
+                continue;
+            }
             let offset_secs =
                 right_start as f64 / f64::from(rate) - left_start as f64 / f64::from(rate);
             let distance = (offset_secs - center_offset_secs).abs();
-            let better = score > best_full_score + DISCOVER_SCORE_TIE_EPSILON
-                || (score >= best_full_score - DISCOVER_SCORE_TIE_EPSILON
+            let better = *score > best_full_score + DISCOVER_SCORE_TIE_EPSILON
+                || (*score >= best_full_score - DISCOVER_SCORE_TIE_EPSILON
                     && distance < best_distance);
             if better {
-                best_full_score = score;
+                best_full_score = *score;
                 best_sample = right_start;
                 best_distance = distance;
             }
-            right_start += 1;
         }
     }
 
@@ -362,6 +391,7 @@ fn pcm_discover_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     coarse_offset_secs: f64,
+    correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 {
         return None;
@@ -381,7 +411,7 @@ fn pcm_discover_offset(
     );
     let widen = coarse_corr.is_none_or(|score| score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW);
     let search_secs = discover_search_radius_secs(left, coarse_offset_secs, widen);
-    pcm_search_near_offset(left, right, coarse_offset_secs, search_secs)
+    pcm_search_near_offset(left, right, coarse_offset_secs, search_secs, correlator)
 }
 
 fn max_refine_adjustment_secs(_left: &MonoPcmClip) -> f64 {
@@ -464,7 +494,7 @@ pub fn pcm_cross_correlate_lag(
     }
 
     let (lag_samples, peak_magnitude) = correlator.cross_correlate_lag(&left_f64, &right_f64)?;
-    let adjustment = -(lag_samples as f64) / f64::from(target_rate);
+    let adjustment = -lag_samples / f64::from(target_rate);
     Some((adjustment, peak_magnitude))
 }
 
@@ -769,6 +799,45 @@ mod tests {
     }
 
     #[test]
+    fn discover_gate_finds_plausible_correlation_near_true_offset() {
+        let sample_rate = 11_025;
+        let (left, right) = {
+            let count = sample_rate as usize * 60;
+            let delay = sample_rate as usize * 15;
+            let left: Vec<i16> = (0..count)
+                .map(|i| {
+                    let t = i as f32 / sample_rate as f32;
+                    let freq = 300.0 + 400.0 * t;
+                    ((TAU as f32 * freq * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
+                })
+                .collect();
+            let mut right = vec![0i16; count];
+            right[delay..].copy_from_slice(&left[..count - delay]);
+            (
+                MonoPcmClip {
+                    sample_rate,
+                    samples: left,
+                    decode_error_skips: 0,
+                    decoded_sample_count: None,
+                },
+                MonoPcmClip {
+                    sample_rate,
+                    samples: right,
+                    decode_error_skips: 0,
+                    decoded_sample_count: None,
+                },
+            )
+        };
+
+        let near = best_correlation_near_offset(&left, &right, 15.0, DISCOVER_COARSE_NEIGHBORHOOD_SECS)
+            .expect("score");
+        let far = best_correlation_near_offset(&left, &right, 45.0, DISCOVER_COARSE_NEIGHBORHOOD_SECS)
+            .expect("score");
+        assert!(near > far, "near={near}, far={far}");
+        assert!(near > DISCOVER_WIDEN_IF_COARSE_CORR_BELOW, "near={near}");
+    }
+
+    #[test]
     fn pcm_lag_fixes_three_second_leader_at_11k() {
         let sample_rate = 11_025;
         let (left, right) = delayed_pair(sample_rate, 60, 3);
@@ -878,7 +947,7 @@ mod tests {
         let (left, right) = prepare_pair(&left, &right);
 
         let (offset, score) =
-            pcm_discover_offset(&left, &right, 16.0).expect("discovered offset");
+            pcm_discover_offset(&left, &right, 16.0, &FftCorrelator).expect("discovered offset");
         assert!(score >= MIN_DISCOVER_CORRELATION, "score={score}");
         assert!(
             (offset - 30.0).abs() < 1.5,
@@ -894,7 +963,7 @@ mod tests {
         let (left, right) = prepare_pair(&left, &right);
 
         let (offset, score) =
-            pcm_discover_offset(&left, &right, 15.0).expect("discovered offset");
+            pcm_discover_offset(&left, &right, 15.0, &FftCorrelator).expect("discovered offset");
         assert!(score >= MIN_DISCOVER_CORRELATION, "score={score}");
         assert!(
             (offset - 15.0).abs() < 1.0,
@@ -1045,7 +1114,7 @@ mod tests {
     fn diagnose_wav_leader_60s_full() {
         let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
         let refined = refine_offset_estimate(&left_p, &right_p, coarse, &RubatoResampler, &FftCorrelator);
-        let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs);
+        let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs, &FftCorrelator);
         let lag_adj = pcm_lag_adjustment_secs(
             &left_p,
             &right_p,

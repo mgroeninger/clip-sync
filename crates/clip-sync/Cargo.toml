@@ -18,7 +18,9 @@ test-utils = ["dep:hound", "dep:tempfile"]
 [dependencies]
 rusty-chromaprint = "0.3"
 rubato = "0.16"
+rustfft = "6.4"
 cross_correlate = "0.3"
+num-complex = "0.4"
 serde = { version = "1", features = ["derive"] }
 symphonia = { version = "0.6", features = ["default", "isomp4", "aac", "mp3", "mkv", "flac"] }
 fdk-aac = { version = "0.8", optional = true }

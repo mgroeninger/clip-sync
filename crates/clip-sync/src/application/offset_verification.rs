@@ -1104,11 +1104,11 @@ mod tests {
     }
 
     struct SequencePcmCorrelator {
-        responses: std::sync::Mutex<Vec<(isize, f64)>>,
+        responses: std::sync::Mutex<Vec<(f64, f64)>>,
     }
 
     impl SequencePcmCorrelator {
-        fn new(responses: Vec<(isize, f64)>) -> Self {
+        fn new(responses: Vec<(f64, f64)>) -> Self {
             Self {
                 responses: std::sync::Mutex::new(responses),
             }
@@ -1116,12 +1116,20 @@ mod tests {
     }
 
     impl crate::application::ports::PcmCorrelator for SequencePcmCorrelator {
-        fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(isize, f64)> {
+        fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(f64, f64)> {
             let mut guard = self.responses.lock().ok()?;
             if guard.is_empty() {
                 return None;
             }
             Some(guard.remove(0))
+        }
+
+        fn segment_similarity(&self, _a: &[f64], _b: &[f64]) -> f64 {
+            0.0
+        }
+
+        fn slide_template_scores(&self, _template: &[f64], _signal: &[f64]) -> Vec<f64> {
+            Vec::new()
         }
     }
 
@@ -1152,8 +1160,8 @@ mod tests {
         let progress = FakeProgressReporter;
         // Window T=0: weak peak, ~0 s adjustment; window T=max: strong peak, ~+3 s.
         let correlator = SequencePcmCorrelator::new(vec![
-            (0, 1.0),
-            (-(SAMPLE_RATE as isize * OFFSET_SECS as isize), 50.0),
+            (0.0, 1.0),
+            (-f64::from(SAMPLE_RATE) * f64::from(OFFSET_SECS), 50.0),
         ]);
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
         let extent = MediaExtent::from_declared(duration);

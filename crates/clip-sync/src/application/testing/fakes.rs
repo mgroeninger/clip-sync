@@ -27,7 +27,7 @@ impl ProgressReporter for FakeProgressReporter {
 /// PCM refinement path (e.g., `refine_offset_with_pcm: false`). For tests that actually
 /// validate PCM lag correction, inject `&FftCorrelator` instead.
 pub struct FakePcmCorrelator {
-    result: Option<(isize, f64)>,
+    result: Option<(f64, f64)>,
 }
 
 impl FakePcmCorrelator {
@@ -44,8 +44,16 @@ impl Default for FakePcmCorrelator {
 }
 
 impl PcmCorrelator for FakePcmCorrelator {
-    fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(isize, f64)> {
+    fn cross_correlate_lag(&self, _a: &[f64], _b: &[f64]) -> Option<(f64, f64)> {
         self.result
+    }
+
+    fn segment_similarity(&self, _a: &[f64], _b: &[f64]) -> f64 {
+        0.0
+    }
+
+    fn slide_template_scores(&self, _template: &[f64], _signal: &[f64]) -> Vec<f64> {
+        Vec::new()
     }
 }
 
