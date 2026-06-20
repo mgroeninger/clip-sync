@@ -13,6 +13,7 @@ use crate::domain::cross_check::{
     mutual_silence_intervals_from_gaps, SilenceInterval,
 };
 use crate::domain::gap::{Gap, GapReport};
+use crate::domain::gap_fill::format_scan_fillable_followup;
 use crate::domain::policies;
 use crate::domain::track_match::{assess_track_compatibility, TrackDescriptor};
 
@@ -228,11 +229,12 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
-        progress.phase(&format_scan_summary(&request, gaps.len()));
-
         let overlap = alignment.start_overlap.map(Into::into);
         let alignment = clip_sync::AlignmentReport::from(&alignment);
-        Ok(GapReport {
+        let gap_count = gaps.len();
+        progress.phase(&format_scan_summary(&request, gap_count));
+
+        let report = GapReport {
             video_a: request.video_a,
             video_b: request.video_b,
             track_compatibility,
@@ -245,7 +247,12 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             silence_peak_fraction: request.silence_peak_fraction,
             limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
             audio_timeline_skew,
-        })
+        };
+        if let Some(line) = format_scan_fillable_followup(&report) {
+            progress.phase(&line);
+        }
+
+        Ok(report)
     }
 
     /// Sequential sample-bucket silence scan on a session's native timeline.

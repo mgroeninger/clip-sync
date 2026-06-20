@@ -16,7 +16,7 @@ use crate::application::error::RepairError;
 use crate::domain::{
     fill_offset::fill_offset_secs,
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
-    gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan},
+    gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
@@ -213,9 +213,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
         let region_count = plan.regions.len() as u64;
 
-        self.progress.phase(&format!(
-            "Aligning {region_count} fill region(s) (structure match + splice)..."
-        ));
+        self.progress
+            .phase(&format_align_fill_regions_phase(&plan));
 
         for (index, region) in plan.regions.iter().enumerate() {
             let gap_num = index as u64 + 1;

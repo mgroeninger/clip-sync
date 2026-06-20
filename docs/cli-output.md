@@ -80,8 +80,8 @@ trait ProgressReporter {
 | Startup | `clip-sync: aligning <A> with <B>` | `clip-sync-repair: aligning <A> with <B>` |
 | Fingerprint align | — | `Aligning audio fingerprints (video A)...` then `(video B)...` (per-video scopes; one 100% bar each) |
 | Match | `Searching for match...` | (via shared align path) |
-| Scan | — | `Scanning video A for gaps...`; after scan, one summary line: `Gap scan: N silent run(s) ≥…ms — block …ms, silence …% peak, hold …ms, decode …s chunks, scan-both on/off` |
-| Patch | — | `Aligning N fill region(s)...` (or `Repairing N gap(s)...` — see gaps below) |
+| Scan | — | `Scanning video A for gaps...`; after scan: `Gap scan: N silent run(s) ≥…ms — …`; when some gaps are not repairable, `Gap fill: R of N repairable (M skipped — …)` |
+| Patch | — | When the fill plan omits gaps: `Skipping M gap(s) at fill plan (…); aligning R fill region(s) (structure match + splice)...`; otherwise `Aligning R fill region(s) (structure match + splice)...` |
 | Splice | — | `Splicing N fill(s) into timeline...` (when N > 0) |
 | Mux | — | `Muxing → <output>` or `Muxing video with patched audio...` (when `--mux`) |
 

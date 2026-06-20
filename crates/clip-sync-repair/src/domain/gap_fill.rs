@@ -106,6 +106,74 @@ pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan
     GapFillPlan { regions, skipped }
 }
 
+/// Second stderr line after gap scan when some detected gaps are not repairable.
+pub(crate) fn format_scan_fillable_followup(report: &GapReport) -> Option<String> {
+    let found = report.gaps.len();
+    let repairable = report.repairable_count();
+    let omitted = found.saturating_sub(repairable);
+    if omitted == 0 {
+        return None;
+    }
+
+    let unfillable = report.gaps.iter().filter(|g| !g.is_fillable()).count();
+    let outside = report
+        .gaps
+        .iter()
+        .filter(|g| {
+            g.is_fillable()
+                && report.limit_fill_to_mapped_region
+                && report.gap_outside_reference_coverage(g)
+        })
+        .count();
+    let blocked = omitted.saturating_sub(unfillable + outside);
+
+    let mut detail = Vec::new();
+    if unfillable > 0 {
+        detail.push(format!("{unfillable} unfillable"));
+    }
+    if outside > 0 {
+        detail.push(format!("{outside} outside mapped region"));
+    }
+    if blocked > 0 {
+        detail.push(format!("{blocked} blocked by track layout"));
+    }
+
+    Some(format!(
+        "Gap fill: {repairable} of {found} repairable ({omitted} skipped — {})",
+        detail.join(", ")
+    ))
+}
+
+/// Patch-stage phase line: note plan-time skips before structure match / splice.
+pub(crate) fn format_align_fill_regions_phase(plan: &GapFillPlan) -> String {
+    let region_count = plan.regions.len();
+    if plan.skipped.is_empty() {
+        return format!(
+            "Aligning {region_count} fill region(s) (structure match + splice)..."
+        );
+    }
+
+    let skipped = plan.skipped.len();
+    let unfillable = plan
+        .skipped
+        .iter()
+        .filter(|entry| entry.reason == GapFillSkipReason::NotFillable)
+        .count();
+    let mut detail = Vec::new();
+    if unfillable > 0 {
+        detail.push(format!("{unfillable} unfillable"));
+    }
+    let other = skipped - unfillable;
+    if other > 0 {
+        detail.push(format!("{other} not planned"));
+    }
+
+    format!(
+        "Skipping {skipped} gap(s) at fill plan ({detail}); aligning {region_count} fill region(s) (structure match + splice)...",
+        detail = detail.join(", ")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -328,5 +396,53 @@ mod tests {
         report.limit_fill_to_mapped_region = false;
         let plan_all = build_gap_fill_plan(&report, 0);
         assert_eq!(plan_all.regions.len(), 2);
+    }
+
+    #[test]
+    fn format_scan_fillable_followup_omitted_gaps() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(3.0, 6.0),
+                Gap {
+                    video_a_start_secs: 10.0,
+                    video_a_end_secs: 13.0,
+                    video_b_start_secs: None,
+                    video_b_end_secs: None,
+                    b_has_energy: false,
+                },
+            ],
+        );
+        let line = super::format_scan_fillable_followup(&report).expect("follow-up line");
+        assert!(line.contains("1 of 2 repairable"));
+        assert!(line.contains("1 skipped"));
+        assert!(line.contains("1 unfillable"));
+    }
+
+    #[test]
+    fn format_scan_fillable_followup_all_repairable_is_none() {
+        let report = base_report(Some(stereo_identical()), vec![fillable_gap(1.0, 2.0)]);
+        assert!(super::format_scan_fillable_followup(&report).is_none());
+    }
+
+    #[test]
+    fn format_align_fill_regions_phase_notes_skipped_unfillable() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(3.0, 6.0),
+                Gap {
+                    video_a_start_secs: 10.0,
+                    video_a_end_secs: 13.0,
+                    video_b_start_secs: None,
+                    video_b_end_secs: None,
+                    b_has_energy: false,
+                },
+            ],
+        );
+        let plan = build_gap_fill_plan(&report, 0);
+        let line = super::format_align_fill_regions_phase(&plan);
+        assert!(line.contains("Skipping 1 gap(s) at fill plan (1 unfillable)"));
+        assert!(line.contains("aligning 1 fill region(s)"));
     }
 }
