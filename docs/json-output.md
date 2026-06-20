@@ -29,7 +29,7 @@ Top-level object: **AlignmentReport**.
 | `clips` | array of [ClipMatch](#clipmatch) | always | One entry per extracted clip pair, in window order |
 | `start_aligned` | bool | always | Start clip matched above the confidence threshold |
 | `end_aligned` | bool \| null | always | `null` when only one clip was extracted (no separate end window) |
-| `recommended_offset_secs` | number \| null | always | Best single offset (seconds to add to video A's timeline to align with B); `null` when no clip aligned or offsets disagree under `require_consistent_offsets` |
+| `recommended_offset_secs` | number \| null | always | Best single offset (seconds to add to video A's timeline to align with B); `null` when no clip aligned or offsets disagree under `require_consistent_offsets`. With two clips, may be confidence-weighted fusion when both offsets are near their median even if `offsets_consistent` is false. After dual-anchor high-rate refinement, recomputed from updated per-clip offsets when `high_rate_recommended_refusion` is on (default). |
 | `offsets_consistent` | bool | always | All aligned clip pairs report the same offset within tolerance (0.5 s) |
 | `offset_drift_secs` | number | **absent when unavailable** | End-clip offset minus start-clip offset; only when both clips aligned |
 | `start_overlap` | [TimelineOverlap](#timelineoverlap) \| null | always | Shared timeline region implied by the start clip match; `null` when not aligned |
@@ -105,13 +105,32 @@ Present only when `alignment_mode_used` is `"queryreference"`. Describes where t
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `segment_start_secs` | number | always | Hold-out segment start (A timeline) |
+| `segment_start_secs` | number | always | Start-anchor hold-out segment start (A timeline) |
 | `segment_length_secs` | number | always | Segment length |
-| `adjustment_secs` | number | always | Correction applied to the recommended offset |
-| `correlation_peak` | number | always | FFT cross-correlation peak value |
-| `applied` | bool | always | Correction was applied |
+| `adjustment_secs` | number | always | Start-anchor native-rate correction (seconds) |
+| `correlation_peak` | number | always | FFT cross-correlation peak at start anchor |
+| `applied` | bool | always | At least one anchor correction was applied |
 | `skipped` | bool | always | Refinement did not run |
 | `skip_reason` | string | **absent when not skipped** | Why refinement was skipped |
+| `end_anchor` | [HighRateAnchorRefinement](#highrateanchorrefinement) | **absent on single-hold-out runs** | End-window native-rate refinement when `num_clips ≥ 2` |
+| `refined_drift_secs` | number | **absent when unavailable** | End − start clip offset after high-rate updates |
+
+When dual-anchor high-rate runs and `high_rate_recommended_refusion` is enabled (default), `recommended_offset_secs` is recomputed from the updated clip offsets (fusion / preference), not `prior_recommended + adjustment_secs`.
+
+### HighRateAnchorRefinement
+
+Present on `high_rate_refinement.end_anchor` for symmetric multi-clip runs.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `segment_start_secs` | number | always | Hold-out segment start on A timeline |
+| `segment_length_secs` | number | always | Segment length |
+| `offset_before_secs` | number | always | End-clip offset before this anchor correction |
+| `adjustment_secs` | number | always | Native-rate correction applied to end clip |
+| `correlation_peak` | number | always | FFT cross-correlation peak |
+| `applied` | bool | always | Correction was applied |
+| `skipped` | bool | always | This anchor did not run |
+| `skip_reason` | string | **absent when not skipped** | Why this anchor was skipped |
 
 ### OffsetVerification
 

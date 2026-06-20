@@ -226,6 +226,15 @@ pub struct AlignmentConfig {
     /// PCM search radius (seconds) when refining the end clip around the start offset.
     #[serde(default = "default_end_clip_refine_radius_secs")]
     pub end_clip_refine_radius_secs: f64,
+    /// When start and end Chromaprint offsets disagree, PCM-search the end window around the
+    /// high-confidence start offset instead of keeping the independent end estimate.
+    #[serde(default = "default_true")]
+    pub constrain_end_clip_to_start_offset: bool,
+    /// After dual-anchor high-rate refinement, recompute `recommended_offset_secs` from updated
+    /// per-clip offsets (confidence-weighted fusion / preference) instead of applying only the
+    /// start-anchor adjustment to the prior recommendation.
+    #[serde(default = "default_true")]
+    pub high_rate_recommended_refusion: bool,
     /// Place the end alignment window at decodable audio extent, not container duration.
     #[serde(default = "default_true")]
     pub clamp_end_clip_to_decodable_extent: bool,
@@ -388,6 +397,8 @@ impl Default for AlignmentConfig {
             high_rate_refine_max_adjustment_secs: default_high_rate_refine_max_adjustment_secs(),
             refine_end_clip_around_start_offset: true,
             end_clip_refine_radius_secs: default_end_clip_refine_radius_secs(),
+            constrain_end_clip_to_start_offset: true,
+            high_rate_recommended_refusion: true,
             clamp_end_clip_to_decodable_extent: true,
             end_clip_tail_inset_secs: default_end_clip_tail_inset_secs(),
             skip_unreliable_end_clip: true,
@@ -415,6 +426,13 @@ mod tests {
             AlignmentConfig::default().end_clip_anchor,
             crate::domain::policies::EndClipAnchor::SharedTimeline
         );
+    }
+
+    #[test]
+    fn default_alignment_enables_end_constrain_and_high_rate_refusion() {
+        let alignment = AlignmentConfig::default();
+        assert!(alignment.constrain_end_clip_to_start_offset);
+        assert!(alignment.high_rate_recommended_refusion);
     }
 
     #[test]

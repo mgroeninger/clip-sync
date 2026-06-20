@@ -28,6 +28,7 @@ use crate::domain::{
     ClipWindow, DomainError, EndClipAnchor, MediaExtent, MediaSource, MonoPcmClip,
     OFFSET_AGREEMENT_TOLERANCE_SECS,
     PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
+    alignment::clip_with_label,
 };
 use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
 use crate::infrastructure::logging::ExtractionProgressScope;
@@ -696,6 +697,19 @@ where
                         prior
                     };
                     (true, refined)
+                } else if config.alignment.constrain_end_clip_to_start_offset
+                    && config.alignment.refine_offset_with_pcm
+                    && prior.confidence >= config.alignment.min_match_score
+                {
+                    let refined = refine_offset_around_prior(
+                        &clip_a,
+                        &clip_b,
+                        prior,
+                        config.alignment.end_clip_refine_radius_secs,
+                        self.resampler,
+                        self.correlator,
+                    );
+                    (true, refined)
                 } else {
                     (false, independent)
                 }
@@ -980,24 +994,17 @@ fn log_alignment_summary(
         Some(offset) => progress.phase_verbose(&format!(
             "Recommended offset: {:+.3}s ({})",
             offset,
-            if result.offsets_consistent {
-                "clip offsets agree"
-            } else if result.start_aligned {
-                "clip offsets disagree; using start clip"
-            } else {
-                "clip offsets disagree; using configured preference"
-            }
+            recommended_offset_source_label(result)
         )),
         None => progress.phase_verbose("Recommended offset: none (no confident clip matches)"),
     }
 
     if let Some(refine) = &result.high_rate_refinement {
-        if refine.applied {
-            progress.phase_verbose(&format!(
-                "High-rate refinement: {:+.3}s adjustment",
-                refine.adjustment_secs
-            ));
-        } else if refine.skipped {
+        let refine_report = crate::application::report::HighRateRefinementReport::from(refine);
+        for line in crate::application::report::format_high_rate_refinement_lines(&refine_report, false) {
+            progress.phase_verbose(&line);
+        }
+        if refine.skipped {
             progress.phase_verbose("High-rate refinement skipped");
         }
     }
@@ -1057,6 +1064,32 @@ fn log_alignment_summary(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
+    }
+}
+
+fn recommended_offset_source_label(result: &AlignmentResult) -> &'static str {
+    if result.offsets_consistent {
+        return "clip offsets agree";
+    }
+    if !result.start_aligned {
+        return "clip offsets disagree; using configured preference";
+    }
+    let (Some(start), Some(end)) = (
+        clip_with_label(&result.clips, ClipLabel::Start).and_then(|c| c.offset_secs),
+        clip_with_label(&result.clips, ClipLabel::End).and_then(|c| c.offset_secs),
+    ) else {
+        return "clip offsets disagree; using start clip";
+    };
+    if (start - end).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS {
+        return "clip offsets disagree; using start clip";
+    }
+    let median = (start + end) / 2.0;
+    if (start - median).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
+        && (end - median).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
+    {
+        "clip offsets disagree; confidence-weighted fusion"
+    } else {
+        "clip offsets disagree; using start clip"
     }
 }
 
@@ -1820,14 +1853,57 @@ mod tests {
             &progress,
         );
 
+        let mut config = two_clip_config();
+        config.alignment.constrain_end_clip_to_start_offset = false;
+
         let response = use_case
-            .execute(request(two_clip_config()))
+            .execute(request(config))
             .expect("execute should succeed");
 
         assert!(!response.result.offsets_consistent);
         assert_eq!(response.result.clips[0].offset_secs, Some(10.0));
         assert_eq!(response.result.clips[1].offset_secs, Some(20.0));
         assert_eq!(response.result.recommended_offset_secs, None);
+    }
+
+    #[test]
+    fn execute_constrains_end_to_start_prior_when_chromaprint_disagrees() {
+        let reader = matched_reader();
+        let fingerprinter = FakeFingerprinter::new();
+        let aligner = FakeAligner::with_estimates(vec![
+            ClipMatchEstimate {
+                offset_secs: 10.0,
+                confidence: 0.9,
+            },
+            ClipMatchEstimate {
+                offset_secs: 20.0,
+                confidence: 0.9,
+            },
+        ]);
+        let progress = FakeProgressReporter;
+        let correlator = FakePcmCorrelator::new();
+        let use_case = AlignVideos::new(
+            &reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &correlator,
+            &progress,
+        );
+
+        let mut config = two_clip_config();
+        config.alignment.refine_offset_with_pcm = true;
+        config.alignment.constrain_end_clip_to_start_offset = true;
+        config.alignment.require_consistent_offsets = false;
+
+        let response = use_case
+            .execute(request(config))
+            .expect("execute should succeed");
+
+        assert!(response.result.offsets_consistent);
+        assert_eq!(response.result.clips[0].offset_secs, Some(10.0));
+        assert_eq!(response.result.clips[1].offset_secs, Some(10.0));
+        assert_eq!(response.result.recommended_offset_secs, Some(10.0));
     }
 
     #[test]

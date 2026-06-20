@@ -476,6 +476,18 @@ pub fn format_high_rate_refinement_lines(
             }
             return vec![line];
         }
+        if let Some(end) = &refine.end_anchor {
+            if end.applied {
+                let mut line = format!(
+                    "High-rate: start {:+0.3}s, end {:+0.3}s refinement applied",
+                    adjustment_secs, end.adjustment_secs
+                );
+                if let Some(drift) = refine.refined_drift_secs {
+                    line.push_str(&format!("; refined drift {:+0.3}s", drift));
+                }
+                return vec![line];
+            }
+        }
         let mut line = format!("High-rate: {:+0.3}s refinement applied", adjustment_secs);
         if refine.end_anchor.as_ref().is_some_and(|a| a.applied) {
             if let Some(drift) = refine.refined_drift_secs {
@@ -621,7 +633,8 @@ mod tests {
         minimal_alignment_result, start_clip_match,
     };
     use crate::domain::{
-        build_query_alignment_result, MediaExtent, QueryLocalization, ReferenceLocalizationOutcome,
+        build_query_alignment_result, refresh_recommended_offset, AlignmentResult, MediaExtent,
+        QueryLocalization, ReferenceLocalizationOutcome,
     };
 
     fn domain_clip(label: ClipLabel, repetition: Option<ClipRepetitionReport>) -> ClipMatch {
@@ -962,5 +975,71 @@ mod tests {
         let lines = format_high_rate_refinement_lines(&refine, true);
         assert!(lines[0].contains("end anchor +0.280s"));
         assert!(lines[0].contains("refined drift +0.629s"));
+
+        let lines = format_high_rate_refinement_lines(&refine, false);
+        assert_eq!(
+            lines,
+            vec!["High-rate: start +0.325s, end +0.280s refinement applied; refined drift +0.629s"]
+        );
+    }
+
+    #[test]
+    fn refresh_recommended_offset_recomputes_fusion_after_dual_anchor_updates() {
+        use crate::domain::ClipMatch;
+
+        let mut result = AlignmentResult {
+            clips: vec![
+                ClipMatch {
+                    label: ClipLabel::Start,
+                    window_start_secs: 0.0,
+                    window_end_secs: 900.0,
+                    aligned: true,
+                    offset_secs: Some(61.198),
+                    confidence: 0.97,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+                ClipMatch {
+                    label: ClipLabel::End,
+                    window_start_secs: 9000.0,
+                    window_end_secs: 9900.0,
+                    aligned: true,
+                    offset_secs: Some(60.210),
+                    confidence: 0.96,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+            ],
+            start_aligned: true,
+            end_aligned: Some(true),
+            recommended_offset_secs: Some(60.708),
+            offsets_consistent: false,
+            offset_drift_secs: Some(-0.988),
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+            offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
+            end_clip_anchor: None,
+        };
+
+        refresh_recommended_offset(
+            &mut result,
+            true,
+            false,
+            Duration::from_secs(10_000),
+            Duration::from_secs(10_000),
+        );
+
+        let fused = result.recommended_offset_secs.unwrap();
+        assert!((fused - 60.706).abs() < 0.01, "fused={fused}");
+        assert!(!result.offsets_consistent);
     }
 }

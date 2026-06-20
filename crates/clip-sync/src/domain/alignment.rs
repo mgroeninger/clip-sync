@@ -489,6 +489,30 @@ pub fn refresh_alignment_drift_summary(result: &mut AlignmentResult) {
     result.offset_drift_secs = compute_offset_drift(&result.clips);
 }
 
+/// Recompute drift, recommended offset, and start overlap after per-clip offsets change.
+pub fn refresh_recommended_offset(
+    result: &mut AlignmentResult,
+    prefer_start_clip: bool,
+    require_consistent_offsets: bool,
+    duration_a: Duration,
+    duration_b: Duration,
+) {
+    refresh_alignment_drift_summary(result);
+    let aligned_offsets: Vec<f64> = result
+        .clips
+        .iter()
+        .filter_map(|clip| clip.offset_secs)
+        .collect();
+    result.recommended_offset_secs = choose_recommended_offset(
+        &result.clips,
+        &aligned_offsets,
+        result.offsets_consistent,
+        prefer_start_clip,
+        require_consistent_offsets,
+    );
+    refresh_start_overlap(result, duration_a, duration_b);
+}
+
 /// Timeline overlap implied by one aligned clip and its offset estimate.
 pub fn compute_clip_timeline_overlap(
     clip: &ClipMatch,

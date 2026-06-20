@@ -11,7 +11,7 @@ use crate::domain::{
     alignment::clip_with_label,
     anchor_holdout_candidates, holdout_b_window_for_offset, holdout_extract_sufficient,
     holdout_pick_duration, holdout_window_feasible, refresh_alignment_drift_summary,
-    refresh_start_overlap,
+    refresh_recommended_offset, refresh_start_overlap,
     resolve_holdout_candidates, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipWindow,
     HighRateAnchorRefinement, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
@@ -73,6 +73,7 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     if dual_anchor_eligible(result, input.discovery_windows) {
         apply_dual_anchor_high_rate_refinement(
             input,
+            alignment,
             result,
             progress,
             recommended_offset_secs,
@@ -154,6 +155,7 @@ fn dual_anchor_eligible(result: &AlignmentResult, discovery_windows: &[ClipWindo
 
 fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
     input: &mut HighRateRefinementInput<'_, MS>,
+    alignment: &AlignmentConfig,
     result: &mut AlignmentResult,
     progress: &dyn ProgressReporter,
     recommended_offset_secs: f64,
@@ -195,6 +197,17 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
 
     if start_anchor.applied {
         apply_anchor_adjustment(result, ClipLabel::Start, start_anchor.adjustment_secs);
+    }
+
+    if alignment.high_rate_recommended_refusion {
+        refresh_recommended_offset(
+            result,
+            alignment.prefer_start_clip,
+            alignment.require_consistent_offsets,
+            input.extent_a.effective(),
+            input.extent_b.effective(),
+        );
+    } else if start_anchor.applied {
         result.recommended_offset_secs =
             Some(recommended_offset_secs + start_anchor.adjustment_secs);
         refresh_start_overlap(
@@ -202,9 +215,11 @@ fn apply_dual_anchor_high_rate_refinement<MS: MediaSession>(
             input.extent_a.effective(),
             input.extent_b.effective(),
         );
+        refresh_alignment_drift_summary(result);
+    } else {
+        refresh_alignment_drift_summary(result);
     }
 
-    refresh_alignment_drift_summary(result);
     let refined_drift_secs = result.offset_drift_secs;
 
     let report = HighRateRefinement {

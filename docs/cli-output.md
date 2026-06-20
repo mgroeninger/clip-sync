@@ -95,8 +95,8 @@ Examples (both tools where applicable):
 - `Selected track N (Hz, channels, decodable)`
 - `Clip plan for video A/B: …`
 - `Extracting clip i/n …` (with `%` when verbose)
-- Per-clip offset: `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)`
-- Mid-run alignment summary: `Recommended offset: …`, overlap windows, drift
+- Per-clip offset: `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)`; end clip may show `(refined ±5s around start)` when PCM constrained or agreed refine ran
+- Mid-run alignment summary: `Recommended offset: …` with source label (`clip offsets agree`, `confidence-weighted fusion`, `using start clip`, …), overlap windows, drift
 - `High-rate offset refinement...`
 - Per-gap patch: `gap i/n: A [t0 – t1]`
 - Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 256k (A 256 kbps, B 384 kbps, policy match_min)` — `phase_verbose` only
@@ -142,9 +142,20 @@ Shared helpers live in `clip_sync::application::report` (`format_high_rate_refin
 
 | Mode | Line |
 |------|------|
-| Applied, default | `High-rate: +0.010s refinement applied` (signed `{:+0.3}s`; no raw correlation peak) |
-| Applied, verbose | `High-rate: +0.010s refinement applied (peak …)` |
+| Applied, single hold-out | `High-rate: +0.010s refinement applied` (signed `{:+0.3}s`; no raw correlation peak) |
+| Applied, dual-anchor (default) | `High-rate: start +0.039s, end +0.012s refinement applied; refined drift +0.001s` when both anchors apply |
+| Applied, verbose | `High-rate: +0.010s refinement applied (peak …)`; dual-anchor adds end peak and refined drift |
 | Skipped | verbose only: `High-rate: skipped (reason)` |
+
+Dual-anchor runs refine start and end discovery windows at native rate. With `high_rate_recommended_refusion` (default), `recommended_offset_secs` is recomputed from the updated clip offsets afterward. Disable refusion to keep legacy behavior (`prior_recommended + start_anchor_adjustment` only).
+
+### Multi-clip offset merge (symmetric)
+
+| Stage | Behavior |
+|-------|----------|
+| End clip, Chromaprint agrees with start (≤ 0.5 s) | `refine_offset_around_prior` on end window |
+| End clip, Chromaprint disagrees, start confidence ≥ `min_match_score` | **Constrained end PCM** (default): same PCM search around start offset within `end_clip_refine_radius_secs` (5 s). Disable: `constrain_end_clip_to_start_offset = false` or `--no-constrain-end-clip-to-start-offset` |
+| `recommended_offset_secs` | Confidence-weighted fusion when both aligned offsets are within 0.5 s of their median; else `prefer_start_clip` / end preference. Human label: `confidence-weighted fusion` vs `using start clip` |
 
 ### Offset verification (stdout)
 

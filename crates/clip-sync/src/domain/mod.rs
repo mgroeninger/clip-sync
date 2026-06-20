@@ -24,7 +24,7 @@ pub use alignment::{
     OffsetVerification,
     OFFSET_AGREEMENT_TOLERANCE_SECS,
     RepetitionFinding, build_alignment_result, compute_clip_timeline_overlap,
-    refresh_alignment_drift_summary, refresh_start_overlap,
+    refresh_alignment_drift_summary, refresh_recommended_offset, refresh_start_overlap,
     periodic_ambiguity_period, periodic_recheck_period_multiple,
     display_repeat_period,
     set_offset_ambiguous_mod_from_start_clip,

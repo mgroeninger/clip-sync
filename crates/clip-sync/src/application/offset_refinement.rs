@@ -808,7 +808,7 @@ mod tests {
                 .map(|i| {
                     let t = i as f32 / sample_rate as f32;
                     let freq = 300.0 + 400.0 * t;
-                    ((TAU as f32 * freq * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
+                    ((TAU * freq * t).sin() * (i16::MAX as f32 * 0.5)).round() as i16
                 })
                 .collect();
             let mut right = vec![0i16; count];

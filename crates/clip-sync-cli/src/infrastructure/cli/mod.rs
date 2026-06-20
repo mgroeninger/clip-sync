@@ -76,6 +76,16 @@ fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     } else if cli.no_refine_offset_high_rate {
         config.align.alignment.refine_offset_high_rate = false;
     }
+    if cli.constrain_end_clip_to_start_offset {
+        config.align.alignment.constrain_end_clip_to_start_offset = true;
+    } else if cli.no_constrain_end_clip_to_start_offset {
+        config.align.alignment.constrain_end_clip_to_start_offset = false;
+    }
+    if cli.high_rate_recommended_refusion {
+        config.align.alignment.high_rate_recommended_refusion = true;
+    } else if cli.no_high_rate_recommended_refusion {
+        config.align.alignment.high_rate_recommended_refusion = false;
+    }
     if cli.check_clip_repetition {
         config.align.validation.check_clip_repetition = true;
     }

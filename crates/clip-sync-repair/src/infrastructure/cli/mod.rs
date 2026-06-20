@@ -314,6 +314,16 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     } else if args.no_refine_offset_high_rate {
         config.align.alignment.refine_offset_high_rate = false;
     }
+    if args.constrain_end_clip_to_start_offset {
+        config.align.alignment.constrain_end_clip_to_start_offset = true;
+    } else if args.no_constrain_end_clip_to_start_offset {
+        config.align.alignment.constrain_end_clip_to_start_offset = false;
+    }
+    if args.high_rate_recommended_refusion {
+        config.align.alignment.high_rate_recommended_refusion = true;
+    } else if args.no_high_rate_recommended_refusion {
+        config.align.alignment.high_rate_recommended_refusion = false;
+    }
     if args.query_reference {
         config.align.alignment.mode = AlignmentMode::QueryReference;
     } else if args.symmetric_align {

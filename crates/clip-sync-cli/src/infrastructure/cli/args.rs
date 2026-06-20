@@ -67,6 +67,24 @@ pub struct Cli {
     #[arg(long, overrides_with = "refine_offset_high_rate")]
     pub no_refine_offset_high_rate: bool,
 
+    /// When start/end Chromaprint offsets disagree, PCM-search the end clip around the
+    /// high-confidence start offset [default: enabled].
+    #[arg(long, overrides_with = "no_constrain_end_clip_to_start_offset")]
+    pub constrain_end_clip_to_start_offset: bool,
+
+    /// Keep independent end-clip Chromaprint when it disagrees with start (overrides config).
+    #[arg(long, overrides_with = "constrain_end_clip_to_start_offset")]
+    pub no_constrain_end_clip_to_start_offset: bool,
+
+    /// After dual-anchor high-rate refinement, recompute recommended offset from updated
+    /// clip offsets [default: enabled].
+    #[arg(long, overrides_with = "no_high_rate_recommended_refusion")]
+    pub high_rate_recommended_refusion: bool,
+
+    /// Apply only the start-anchor high-rate tweak to recommended offset (legacy behavior).
+    #[arg(long, overrides_with = "high_rate_recommended_refusion")]
+    pub no_high_rate_recommended_refusion: bool,
+
     /// Check each clip for internal audio repetition (e.g. loops, rebroadcasts).
     /// Diagnostic only: never changes the exit code or recommended offset.
     #[arg(long)]

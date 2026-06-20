@@ -19,8 +19,8 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     extract_interleaved_with_state, extract_mono_with_state, scan_interleaved_buckets_with_state,
-    scan_mono_buckets_with_state,
-    scan_track_decodable_extent, TimelineSkewTracker,
+    scan_mono_buckets_with_state, InterleavedBucketScan, scan_track_decodable_extent,
+    TimelineSkewTracker,
 };
 use crate::infrastructure::symphonia::probe::{open_format_reader, probe_media_reusable};
 
@@ -186,12 +186,14 @@ impl MediaSession for SymphoniaMediaSession {
         ensure_regular_file(&self.path)?;
         let mut tracker = TimelineSkewTracker::default();
         scan_interleaved_buckets_with_state(
-            &self.path,
-            Self::open_io_state(&mut self.io, &self.path)?,
-            track,
-            bucket_secs,
-            progress,
-            label,
+            InterleavedBucketScan {
+                path: &self.path,
+                state: Self::open_io_state(&mut self.io, &self.path)?,
+                track,
+                bucket_secs,
+                progress,
+                label,
+            },
             on_bucket,
             &mut tracker,
         )?;

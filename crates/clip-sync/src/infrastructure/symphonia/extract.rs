@@ -66,6 +66,16 @@ impl TimelineSkewTracker {
     }
 }
 
+/// Inputs for [`scan_interleaved_buckets_with_state`].
+pub(crate) struct InterleavedBucketScan<'a> {
+    pub path: &'a Path,
+    pub state: &'a mut MediaIoState,
+    pub track: &'a AudioTrack,
+    pub bucket_secs: f64,
+    pub progress: &'a dyn ProgressReporter,
+    pub label: &'a str,
+}
+
 /// Fail extract after this many consecutive packet decode errors.
 pub(crate) const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 64;
 
@@ -431,15 +441,19 @@ pub(crate) fn scan_mono_buckets_with_state(
 /// Buckets are defined by **decoded frame count** (`bucket_secs * sample_rate`); each bucket holds
 /// `frames * channels` interleaved samples. Used by gap scans for multichannel silence detection.
 pub(crate) fn scan_interleaved_buckets_with_state(
-    path: &Path,
-    state: &mut MediaIoState,
-    track: &AudioTrack,
-    bucket_secs: f64,
-    progress: &dyn ProgressReporter,
-    label: &str,
+    scan: InterleavedBucketScan<'_>,
     on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
     timeline_skew: &mut TimelineSkewTracker,
 ) -> Result<(), MediaError> {
+    let InterleavedBucketScan {
+        path,
+        state,
+        track,
+        bucket_secs,
+        progress,
+        label,
+    } = scan;
+
     if bucket_secs <= 0.0 {
         return Err(fail_media(
             path,

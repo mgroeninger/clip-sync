@@ -71,6 +71,8 @@ clip-sync [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
 | `--refine-offset-high-rate` | — | Apply native-rate FFT refinement after fingerprint match |
 | `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
+| `--no-constrain-end-clip-to-start-offset` | — | When start/end Chromaprint disagree, keep independent end estimate (default: PCM-search end around start when start confidence is high) |
+| `--no-high-rate-recommended-refusion` | — | After dual-anchor high-rate, apply only start-anchor tweak to recommended offset (default: re-fuse from updated clip offsets) |
 | `--check-clip-repetition` | — | Diagnostic: detect internal clip repetition |
 | `--verify-offset` | — | Diagnostic: hold-out verification |
 | `--query-reference` | — | Force query-reference localization |
@@ -140,6 +142,8 @@ Alignment report
   Recommended offset: +12.340s (clip offsets agree)
 ```
 
+With `num_clips ≥ 2`, start and end windows are aligned independently. When Chromaprint agrees within **0.5 s**, the end clip is PCM-refined around the start offset. When they disagree but start confidence is high, **constrained end PCM** (default) still searches the end window around the start offset instead of trusting the independent end Chromaprint estimate. The headline `recommended_offset_secs` uses confidence-weighted fusion when both offsets sit near their median (even if drift exceeds 0.5 s), or start preference otherwise — see [docs/cli-output.md](docs/cli-output.md). After dual-anchor high-rate refinement, recommended offset is **re-fused** from the updated per-clip values (disable with `no_high_rate_recommended_refusion`).
+
 ### Repair — `clip-sync-repair` (in development)
 
 Detect silent gaps in `VIDEO_A` and report whether `VIDEO_B` has audio that could fill them:
@@ -188,6 +192,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-try-all-tracks` | — | Disable try-all-tracks (overrides config) |
 | `--refine-offset-high-rate` | — | Apply native-rate FFT refinement (on by default in repair config) |
 | `--no-refine-offset-high-rate` | — | Disable high-rate refinement (overrides config) |
+| `--no-constrain-end-clip-to-start-offset` | — | Keep independent end Chromaprint when it disagrees with start (default: constrain end PCM to start offset) |
+| `--no-high-rate-recommended-refusion` | — | Legacy high-rate behavior: start-anchor tweak only on recommended offset |
 | `--query-reference` | — | Force query-reference alignment |
 | `--symmetric-align` | — | Force symmetric multi-clip alignment |
 | `--query-stride <SECS>` | — | Coarse search stride in query-reference mode |
@@ -230,7 +236,7 @@ When write mode runs (`--wav` / `--mux`), each fillable gap goes through structu
 
 | Mode | Behavior |
 |------|----------|
-| `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (start clip when clip offsets disagree). |
+| `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (fusion or start preference when clip offsets disagree — not always the raw start-clip offset). |
 | `interpolated` | Linearly interpolates between start-clip and end-clip offsets by each gap's position on A. Use when alignment drift is significant (`end − start` offset differs by more than ~50 ms). CLI: `--fill-offset interpolated`. |
 
 **2. Structure match** (always runs)
@@ -369,6 +375,9 @@ min_match_score = 0.3
 refine_offset_with_pcm = true
 refine_offset_high_rate = false
 high_rate_refine_secs = 3
+high_rate_recommended_refusion = true       # re-fuse recommended after dual-anchor high-rate
+constrain_end_clip_to_start_offset = true   # PCM-search end around start when Chromaprint disagree
+end_clip_refine_radius_secs = 5.0
 try_all_tracks = false
 
 [output]
@@ -391,6 +400,9 @@ num_clips = 2              # repair default is 2 (analyzer default is 1)
 [alignment]
 refine_offset_with_pcm = true
 refine_offset_high_rate = true    # repair default; set false to disable
+high_rate_recommended_refusion = true
+constrain_end_clip_to_start_offset = true
+end_clip_refine_radius_secs = 5.0
 require_consistent_offsets = false
 try_all_tracks = false
 
