@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview).
+**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Planned:** [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md) (offset map from successful patches).
 
 ---
 
@@ -15,6 +15,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | What does extension do in **fit**? | **Proactive joint grid** over gap start/end (when flags are on), each cell runs unified B placement. |
 | What does extension do in **gate**? | **Reactive retries** after waveform failure: extend end, then extend start, re-score. |
 | Why is repair slow? | Often the **fit slow path**: baseline not **High** → ~13×13 boundary grid × unified search with large `fill_border_search_secs`. |
+| Patch anchors? | **Not shipped yet** — planned `anchored_retry` uses easy-gap `slide=` to re-map hard gaps; works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors-planned). |
 
 ---
 
@@ -69,6 +70,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `strong_structure_trust`, `partial_structure_waveform_soften` | **No effect on waveform** | Structure-trust skip / soften |
 | `short_gap_one_strong_seam_fallback` | **No effect** | Short-gap shortcut |
 | `--fill-offset` | **Active** | **Active** |
+| `fill_offset_mode = anchored_retry` (planned) | **Active** — two-pass offset map | **Active** |
 | `--border-standoff-secs` | **Active** | **Active** |
 | `--no-gap-end-extend` | Disables **joint grid** end axis (baseline only on that axis) | Disables post-seam **retry** loop |
 | `--no-gap-start-extend` | Disables **joint grid** start axis | Disables pre-seam **retry** loop |
@@ -123,6 +125,34 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 - Pearson at the structure winner’s seams.
 - May be **skipped** when both structure scores ≥ `strong_structure_trust` (default 0.90).
 - Short gaps may pass on **mean** or **one strong seam** when enabled.
+
+---
+
+## Patch anchors (planned)
+
+**Status:** draft — [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md). Not in the binary yet.
+
+Some runs patch several gaps cleanly (`slide=+0.35s` in verbose) while others fail seam search because the **nominal B map** from alignment is off by hundreds of ms at that point on A — the true dropout sits near the edge of `fill_border_search_secs`, not because `fit` or `gate` chose wrong.
+
+**Patch anchors** reuse what easy gaps already measure: each successful patch records `align_adjustment_secs` (structure + waveform slide vs the mapped nominal). Planned flow:
+
+```text
+Pass 1: patch all gaps (today’s behavior; collect outcomes before splice)
+    → build anchor table from high-confidence successes
+Pass 2 (anchored_retry): retry failed gaps with improved gap_offset_secs
+    → interpolate local Δ from nearby anchors (+ clip start/end when available)
+    → re-run the same fill_mode (fit or gate) with a centered haystack
+```
+
+**Orthogonal to `fill_mode`:** anchors only change step 1 (`fill_offset_mode` / `gap_offset_secs`). Structure match, unified fit, marginal tier, gate trust, and extension behavior are unchanged.
+
+| Topic | `fit` | `gate` |
+|-------|-------|--------|
+| Uses improved offset? | Yes | Yes |
+| Planned anchor sources | `confidence: High` only (exclude Marginal) | Exclude `structure_trusted` (waveform not measured) |
+| Today’s drift knob | `--fill-offset interpolated` (2 clip anchors) | same |
+
+Until this ships, drift-heavy pairs should try **`--fill-offset interpolated`** first. When anchors land, config will add `fill_offset_mode = "anchored_retry"` (name TBD).
 
 ---
 

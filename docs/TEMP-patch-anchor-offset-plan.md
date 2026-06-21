@@ -17,11 +17,13 @@
 | Area | Path | Current state | First phase touched |
 |------|------|---------------|---------------------|
 | Offset map | `domain/fill_offset.rs` | `Recommended` \| `Interpolated` from `AlignmentReport` only | 1 |
-| Per-gap loop | `application/patch_audio.rs` | Independent `prepare_region_patch`; `gap_offset_secs` once per gap | 1, 2 |
-| Slide measurement | `application/patch_audio.rs` | `align_adjustment_secs = structure_slide + waveform_slide` | 1 |
-| Outcomes | `domain/patch_result.rs` | `Patched { align_adjustment_secs, waveform_adjustment_secs, confidence, … }` | 1 |
+| Per-gap loop | `application/patch_audio.rs` | Collect all `prepare_region_patch` results, **then** splice (pristine `a_pcm` for every gap in pass 1) | 1, 2 |
+| Slide measurement | `application/patch_audio.rs` | `align_adjustment_secs = structure_slide + waveform_slide`; verbose splits both | 1 |
+| Outcomes | `domain/patch_result.rs` | `Patched { align_adjustment_secs, waveform_adjustment_secs, confidence, structure_trusted, … }` | 1 |
+| Fill mode | `domain/fill_mode.rs`, `docs/gap-fill-modes.md` | Default **`fit`** (unified search + marginal tier); `gate` legacy | — (orthogonal) |
+| Unified fit | `domain/gap_fill_fit.rs`, `patch_region.rs` | `match_gap_fill_unified_in_b_with_timeline`; `fill_repeat_penalty_weight` default **0.4** | — |
 | Fill plan | `domain/gap_fill.rs` | Regions in scan order; no patch-order policy | 2 |
-| Config / CLI | `infrastructure/config.rs`, `cli/args.rs` | `fill_offset_mode`, `fill_border_search_secs` | 1 |
+| Config / CLI | `infrastructure/config.rs`, `cli/args.rs` | `fill_offset_mode`, `fill_border_search_secs` (default **10 s**), `fill_mode`, `fill_repeat_penalty_weight` | 1 |
 | Cross-check | `domain/cross_check.rs` | `gap_offset_agreement` (scan-time A/B silence) — orthogonal | — |
 
 ### What a successful patch already tells us
@@ -48,6 +50,27 @@ align → scan → fill plan
 
 **Perpendicular to `fill_mode` (`fit` / `gate`):** both call `fill_offset_secs` at the start of `prepare_region_patch`. This plan only improves the **offset map layer** (same axis as `--fill-offset interpolated`).
 
+### Fit vs gate (both supported)
+
+Anchors change **`gap_offset_secs` only** — before structure match and waveform placement. Everything after that runs unchanged for the active `fill_mode`.
+
+| Stage | `fit` (default) | `gate` |
+|-------|-----------------|--------|
+| Offset map | `fill_offset_secs` → improved by anchors | same |
+| Structure + waveform | Unified search; `confidence` High / Marginal / skip | Structure winner → waveform gate; structure-trust skip |
+| `align_adjustment_secs` | Still structure + waveform slide vs nominal | same |
+| Pass 2 retry | Re-runs full `prepare_region_patch` (fit grid or gate retries) with new offset | same |
+
+**Anchor eligibility differs by mode:**
+
+| Rule | `fit` | `gate` |
+|------|-------|--------|
+| `confidence: High` | Required (Marginal excluded) | N/A — always `High` in JSON today |
+| `structure_trusted` | Always `false` — ignore | Exclude when `fill_anchor_exclude_structure_trusted` (no waveform measured) |
+| `min(pre, post)` floor | Waveform Pearson at winner | Waveform Pearson, or structure scores when trusted |
+
+Pass 1 should use the user's configured `fill_mode` for both anchor collection and failure characterization. Pass 2 only changes offset resolution; it does not switch modes.
+
 ---
 
 ## Decisions
@@ -59,8 +82,8 @@ align → scan → fill plan
 | **Interpolation** | Piecewise linear in `a_anchor_secs` between patch anchors; merge with clip start/end anchors from alignment when `Interpolated` would apply. Extrapolate: clamp to nearest anchor pair (no wild extrapolation beyond first/last anchor). |
 | **Mode switch** | Extend `FillOffsetMode`: add `Anchored` (use patch anchors when present, else same as `Interpolated` or `Recommended`). Two-pass variant: `AnchoredRetry` — pass 1 independent, pass 2 retry failures only. Default stays `Recommended` until Phase 3. |
 | **Pass strategy (v1)** | **Two-pass** default for `AnchoredRetry`: avoids order dependency and wrong early anchor poisoning. Single-pass sequential deferred to Phase 4 optional. |
-| **Retry scope** | Pass 2: only `Skipped` with `CorrelationBelowThreshold` or `BoundaryAlignmentFailed` (not `BExtractFailed`, `ZeroLengthGap`). Optionally include marginal pass-1 successes for re-centering — defer. |
-| **Search prior (optional)** | Phase 3: soft penalty in `unified_fit_score` for B candidates far from anchor-predicted offset — only when anchor confidence weight high. Not required for v1. |
+| **Retry scope** | Pass 2: only `Skipped` with `CorrelationBelowThreshold` (structure **or** waveform below floor in fit/gate) or `BoundaryAlignmentFailed` (`StructureAlignmentFailed`). Not `BExtractFailed`, `ZeroLengthGap`, `AlignedSegmentOutOfRange`. Optionally include marginal pass-1 successes for re-centering — defer. |
+| **Search prior (optional)** | Phase 4: soft penalty in `unified_fit_score` for B candidates far from anchor-predicted offset — **fit mode only**; coordinate with `fill_repeat_penalty_weight`. Not required for v1. |
 | **Decode cost** | Pass 2 reuses in-memory `a_pcm` + `b_samples_full` from pass 1 (already decoded once). Re-run `prepare_region_patch` only for retry gaps — no extra full-file decode. |
 | **Reporting** | Verbose: `offset anchor: +0.35s from gap #3`; JSON: optional `patch_anchors_used` on summary (Phase 3). |
 
@@ -104,6 +127,7 @@ align → scan → fill plan
 - [ ] `prepare_region_patch`: accept optional `PatchAnchorTable` override for offset resolution (or pass resolved `gap_offset_secs` directly).
 - [ ] Integration tests:
   - Drift fixture: pass 1 skips hard gap; pass 2 patches with anchors from easy gaps.
+  - Run fixture under **`fill_mode = Fit`** (default) and **`gate`** — offset layer identical; gate-only anchor eligibility path.
   - Regression: `Recommended` / `Interpolated` unchanged (single pass, no table).
   - No retry when all pass-1 succeed.
 
@@ -136,7 +160,7 @@ align → scan → fill plan
 | `fill_anchor_min_correlation` | 2 | same as `min_fill_correlation` | Floor for anchor eligibility |
 | `fill_anchor_exclude_structure_trusted` | 2 | `true` | Gate-mode patches without waveform |
 | `fill_anchor_max_adjustment_frac` | 2 | `0.9` | Fraction of `fill_border_search_secs`; reject edge-clamped slides |
-| `fill_border_search_secs` | — | `30.0` | Unchanged; anchors center this window |
+| `fill_border_search_secs` | — | `10.0` | Primary B slide radius in **fit**; structure search radius in **gate**. README examples often use `30.0`. Anchors center this window. |
 | `min_fill_correlation` | — | `0.35` | Used for anchor gate |
 
 CLI: `--fill-offset anchored-retry` (clap value enum extension).
@@ -183,8 +207,9 @@ CLI: `--fill-offset anchored-retry` (clap value enum extension).
 
 | Plan | Interaction |
 |------|-------------|
-| [TEMP-fill-fitting-plan.md](TEMP-fill-fitting-plan.md) | Orthogonal (fit/gate); both benefit from better nominal map |
+| [archive/fill-fitting-plan.md](archive/fill-fitting-plan.md) | Shipped (fit default, repeat penalty 0.4); orthogonal — both modes benefit from better nominal map |
 | [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) | Complementary — energy finds edges inside window; anchors center window |
+| [gap-fill-modes.md](gap-fill-modes.md) | Document `anchored_retry` alongside `--fill-offset`; clarify fit vs gate anchor eligibility |
 | `fill_offset interpolated` | Clip anchors remain endpoints; patch anchors add interior points |
 | `BACKLOG` weighted drift warning | Unchanged; alignment-time signal vs patch-time empirical |
 
