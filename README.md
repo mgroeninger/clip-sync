@@ -241,6 +241,8 @@ When write mode runs (`--wav` / `--mux`), each fillable gap goes through structu
 |------|----------|
 | `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (fusion or start preference when clip offsets disagree — not always the raw start-clip offset). |
 | `interpolated` | Linearly interpolates between start-clip and end-clip offsets by each gap's position on A. Use when alignment drift is significant (`end − start` offset differs by more than ~50 ms). CLI: `--fill-offset interpolated`. |
+| `anchored_retry` | **Two-pass:** pass 1 patches all gaps with clip-based offset (same as `interpolated` when start/end clips exist); pass 2 retries seam failures using offset anchors from high-confidence pass-1 successes. Use on drift-heavy long-form pairs when `interpolated` still leaves hard gaps near the search-window edge. CLI: `--fill-offset anchored-retry`. Orthogonal to `fill_mode` (`fit` / `gate`). See [gap-fill-modes.md](docs/gap-fill-modes.md) § Patch anchors. |
+| `anchored` | Config/CLI value reserved for future single-pass sequential mode. Today behaves like clip offset only (no live anchor table). Prefer **`anchored_retry`**. |
 
 **2. Structure match** (always runs)
 
@@ -267,12 +269,23 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--min-fill-correlation` | **Active** — `min(pre, post)` floor; **High** vs **Marginal** tier (`fill_marginal_margin`). |
 | `--max-fill-align-adjust-secs` | Config only for fit B search — use **`fill_border_search_secs`** for slide radius. |
 | `--fill-offset interpolated` | **Active** — per-gap B map before local search. |
+| `--fill-offset anchored-retry` | **Active** — two-pass offset map; pass 2 retries failures using patch anchors. |
 | `--fill-fit-structure-weight`, `--fill-fit-waveform-weight` | **Active** — unified scorer weights. |
 | `--border-standoff-secs` | **Active** |
 | `--no-gap-end-extend`, `--no-gap-start-extend` | **Active** — disable **joint grid** (not gate mode). See [gap-fill-modes.md](docs/gap-fill-modes.md). |
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | **Active** — grid span/step in fit; retry span/step in gate. |
 | `--crossfade-ms`, `--no-normalize` | **Active** |
 | Align / scan flags (`--clip-length`, `--num-clips`, high-rate, query-reference, etc.) | **Active** — feed alignment and gap scan; orthogonal to `fit`. |
+
+**Example — drift + anchored retry** (when `interpolated` still skips hard gaps):
+
+```powershell
+clip-sync-repair recording_with_gaps.mp4 reference.mkv `
+  --mux repaired.mp4 `
+  --fill-offset anchored-retry `
+  --min-fill-correlation 0.35 `
+  -v
+```
 
 **Example — drift + fit (e.g. long pairs with ~1 s clip drift):**
 
@@ -367,7 +380,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` (gate only) |
 | `--gap-end-extend-max-ms` / `--gap-end-extend-step-ms` | `gap_end_extend_max_ms` / `gap_end_extend_step_ms` |
 
-Config-only (no CLI): `short_gap_mean_correlation_secs`, **`fill_border_search_secs`** (main B slide radius in fit), `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `fill_align_margin_secs`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
+Config-only (no CLI): `short_gap_mean_correlation_secs`, **`fill_border_search_secs`** (main B slide radius in fit), `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `fill_align_margin_secs`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, **`fill_anchor_min_correlation`**, **`fill_anchor_exclude_structure_trusted`**, **`fill_anchor_max_adjustment_frac`** (anchored-retry only), normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
 
 ---
 
@@ -486,7 +499,10 @@ gap_signature_bin_ms = 50
 min_structure_match_score = 0.55
 strong_structure_trust = 0.90              # gate only: skip waveform when both ≥ this
 partial_structure_waveform_soften = 0.85   # gate only: soften waveform floor
-fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
+fill_offset_mode = "recommended"   # recommended | interpolated | anchored_retry; CLI: --fill-offset
+fill_anchor_min_correlation = 0.35           # anchored_retry: min(pre, post) for anchor eligibility
+fill_anchor_exclude_structure_trusted = true # anchored_retry: gate patches without waveform
+fill_anchor_max_adjustment_frac = 0.9        # anchored_retry: max |slide| / fill_border_search_secs
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
 fill_fit_structure_weight = 0.35   # fit only: unified search
 fill_fit_waveform_weight = 0.65    # fit only: unified search

@@ -1,6 +1,6 @@
 //! Empirical offset anchors from successful gap patches.
 
-use clip_sync::AlignmentReport;
+use clip_sync::{AlignmentReport, ClipLabelReport};
 
 use crate::domain::fill_offset::clip_anchor_points;
 use crate::domain::gap_fill_fit::FillConfidence;
@@ -148,6 +148,125 @@ fn interpolate_piecewise_linear(points: &[(f64, f64)], t: f64) -> f64 {
     points[last].1
 }
 
+/// Source of one point on the piecewise offset curve (verbose output).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnchorPointSource {
+    StartClip,
+    EndClip,
+    PatchGap(usize),
+}
+
+/// Verbose line: which anchors produced the pass-2 offset (`-v` stderr).
+pub fn format_anchored_offset_verbose_line(
+    gap_offset_secs: f64,
+    alignment: &AlignmentReport,
+    gap_time_on_a_secs: f64,
+    patch_anchors: &PatchAnchorTable,
+) -> String {
+    let (left, right) = anchor_bracket_sources(alignment, gap_time_on_a_secs, patch_anchors);
+    let source_desc = format_anchor_bracket(left, right);
+    format!(
+        "           offset anchor: {:+.3}s {source_desc}",
+        gap_offset_secs
+    )
+}
+
+/// Summary after pass 1 when building the anchor table (`-v` stderr).
+pub fn format_patch_anchor_table_summary(table: &PatchAnchorTable) -> String {
+    if table.anchors.is_empty() {
+        return String::new();
+    }
+    let gaps: Vec<String> = table
+        .anchors
+        .iter()
+        .map(|a| format!("gap #{}", a.source_gap_index + 1))
+        .collect();
+    format!(
+        "  anchored: {} offset anchor(s) from {}",
+        table.anchors.len(),
+        gaps.join(", ")
+    )
+}
+
+fn anchor_bracket_sources(
+    alignment: &AlignmentReport,
+    gap_time_on_a_secs: f64,
+    patch_anchors: &PatchAnchorTable,
+) -> (AnchorPointSource, AnchorPointSource) {
+    let points = tagged_anchor_points(alignment, patch_anchors);
+    if points.is_empty() {
+        return (AnchorPointSource::StartClip, AnchorPointSource::StartClip);
+    }
+    if points.len() == 1 {
+        return (points[0].1, points[0].1);
+    }
+    if gap_time_on_a_secs <= points[0].0 {
+        return (points[0].1, points[0].1);
+    }
+    let last = points.len() - 1;
+    if gap_time_on_a_secs >= points[last].0 {
+        return (points[last].1, points[last].1);
+    }
+    for window in points.windows(2) {
+        if gap_time_on_a_secs >= window[0].0 && gap_time_on_a_secs <= window[1].0 {
+            return (window[0].1, window[1].1);
+        }
+    }
+    (points[last].1, points[last].1)
+}
+
+fn tagged_anchor_points(
+    alignment: &AlignmentReport,
+    patch_anchors: &PatchAnchorTable,
+) -> Vec<(f64, AnchorPointSource)> {
+    let mut points = Vec::new();
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabelReport::Start) {
+        points.push((anchor, AnchorPointSource::StartClip));
+    }
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabelReport::End) {
+        points.push((anchor, AnchorPointSource::EndClip));
+    }
+    for anchor in &patch_anchors.anchors {
+        points.push((
+            anchor.a_secs,
+            AnchorPointSource::PatchGap(anchor.source_gap_index),
+        ));
+    }
+    points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    points.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
+    points
+}
+
+fn clip_endpoint(alignment: &AlignmentReport, label: ClipLabelReport) -> Option<(f64, f64)> {
+    let clip = alignment
+        .clips
+        .iter()
+        .find(|clip| clip.label == label && clip.aligned)?;
+    let offset = clip.offset_secs?;
+    let anchor = (clip.window_start_secs + clip.window_end_secs) / 2.0;
+    Some((anchor, offset))
+}
+
+fn format_anchor_bracket(left: AnchorPointSource, right: AnchorPointSource) -> String {
+    if left == right {
+        format!("from {}", format_anchor_source(left))
+    } else {
+        format!(
+            "between {} and {}",
+            format_anchor_source(left),
+            format_anchor_source(right)
+        )
+    }
+}
+
+fn format_anchor_source(source: AnchorPointSource) -> String {
+    match source {
+        AnchorPointSource::StartClip => "start clip".to_string(),
+        AnchorPointSource::EndClip => "end clip".to_string(),
+        AnchorPointSource::PatchGap(index) => format!("gap #{}", index + 1),
+    }
+}
+
 /// Whether a skipped gap may be retried in pass 2 of `anchored_retry`.
 pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
     matches!(
@@ -290,5 +409,37 @@ mod tests {
         let table = PatchAnchorTable::from_candidates(&[candidate(0, 50.0, 0.0, 1.0)], &policy());
         let late = interpolate_anchored_offset_secs(&alignment, 72.0, &table).unwrap();
         assert!(late > 1.0 && late < 2.0, "late={late}");
+    }
+
+    #[test]
+    fn verbose_line_single_patch_anchor() {
+        let alignment = patch_only_alignment();
+        let table = PatchAnchorTable::from_candidates(&[candidate(2, 30.0, 0.0, 0.35)], &policy());
+        let line = format_anchored_offset_verbose_line(0.35, &alignment, 30.0, &table);
+        assert!(line.contains("offset anchor: +0.350s"));
+        assert!(line.contains("from gap #3"));
+    }
+
+    #[test]
+    fn verbose_line_interpolates_between_gaps() {
+        let alignment = patch_only_alignment();
+        let table = PatchAnchorTable::from_candidates(
+            &[candidate(0, 10.0, 0.0, 0.0), candidate(1, 30.0, 0.0, 2.0)],
+            &policy(),
+        );
+        let line = format_anchored_offset_verbose_line(1.0, &alignment, 20.0, &table);
+        assert!(line.contains("between gap #1 and gap #2"));
+    }
+
+    #[test]
+    fn table_summary_lists_source_gaps() {
+        let table = PatchAnchorTable::from_candidates(
+            &[candidate(0, 10.0, 0.0, 0.0), candidate(2, 30.0, 0.0, 0.5)],
+            &policy(),
+        );
+        let summary = format_patch_anchor_table_summary(&table);
+        assert!(summary.contains("2 offset anchor(s)"));
+        assert!(summary.contains("gap #1"));
+        assert!(summary.contains("gap #3"));
     }
 }

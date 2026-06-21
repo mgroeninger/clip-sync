@@ -70,7 +70,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `strong_structure_trust`, `partial_structure_waveform_soften` | **No effect on waveform** | Structure-trust skip / soften |
 | `short_gap_one_strong_seam_fallback` | **No effect** | Short-gap shortcut |
 | `--fill-offset` | **Active** | **Active** |
-| `fill_offset_mode = anchored_retry` (planned) | **Active** — two-pass offset map | **Active** |
+| `fill_offset_mode = anchored_retry` | **Active** — two-pass offset map | **Active** |
 | `--border-standoff-secs` | **Active** | **Active** |
 | `--no-gap-end-extend` | Disables **joint grid** end axis (baseline only on that axis) | Disables post-seam **retry** loop |
 | `--no-gap-start-extend` | Disables **joint grid** start axis | Disables pre-seam **retry** loop |
@@ -134,25 +134,38 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 
 Some runs patch several gaps cleanly (`slide=+0.35s` in verbose) while others fail seam search because the **nominal B map** from alignment is off by hundreds of ms at that point on A — the true dropout sits near the edge of `fill_border_search_secs`, not because `fit` or `gate` chose wrong.
 
-**Patch anchors** reuse what easy gaps already measure: each successful patch records `align_adjustment_secs` (structure + waveform slide vs the mapped nominal). Planned flow:
+**Patch anchors** reuse what easy gaps already measure: each successful patch records `align_adjustment_secs` (structure + waveform slide vs the mapped nominal). Flow:
 
 ```text
-Pass 1: patch all gaps (today’s behavior; collect outcomes before splice)
+Pass 1: patch all gaps (clip-based offset; collect outcomes before splice)
     → build anchor table from high-confidence successes
 Pass 2 (anchored_retry): retry failed gaps with improved gap_offset_secs
     → interpolate local Δ from nearby anchors (+ clip start/end when available)
     → re-run the same fill_mode (fit or gate) with a centered haystack
 ```
 
+Single-pass `anchored` (easy-first sequential) is **deferred** — use `anchored_retry` today.
+
 **Orthogonal to `fill_mode`:** anchors only change step 1 (`fill_offset_mode` / `gap_offset_secs`). Structure match, unified fit, marginal tier, gate trust, and extension behavior are unchanged.
 
 | Topic | `fit` | `gate` |
 |-------|-------|--------|
 | Uses improved offset? | Yes | Yes |
-| Planned anchor sources | `confidence: High` only (exclude Marginal) | Exclude `structure_trusted` (waveform not measured) |
-| Today’s drift knob | `--fill-offset interpolated` (2 clip anchors) | same |
+| Anchor sources | `confidence: High` only (exclude Marginal) | Exclude `structure_trusted` when `fill_anchor_exclude_structure_trusted` (default true) |
+| Drift without anchors | `--fill-offset interpolated` (2 clip anchors) | same |
+| Drift with patch anchors | `--fill-offset anchored-retry` | same |
 
-Until this ships, drift-heavy pairs should try **`--fill-offset interpolated`** first. For empirical anchors from easy gaps, use **`fill_offset_mode = "anchored_retry"`** or `--fill-offset anchored-retry`.
+Try **`--fill-offset interpolated`** first on drift-heavy pairs. When hard gaps still fail near the search-window edge, add **`--fill-offset anchored-retry`** (or `fill_offset_mode = "anchored_retry"` in config).
+
+### Anchor eligibility (config)
+
+| Key | Default | Notes |
+|-----|---------|--------|
+| `fill_anchor_min_correlation` | same as `min_fill_correlation` (`0.35`) | `min(pre, post)` floor for a pass-1 patch to become an anchor |
+| `fill_anchor_exclude_structure_trusted` | `true` | Gate-mode patches that skipped waveform measurement |
+| `fill_anchor_max_adjustment_frac` | `0.9` | Reject anchors whose `\|align_adjustment\|` exceeds this fraction of `fill_border_search_secs` (edge-clamped slides) |
+
+Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on pass-2 retries, `offset anchor: +Xs from gap #…` or `between gap #… and gap #…`. See [cli-output.md](cli-output.md).
 
 ---
 
@@ -209,6 +222,16 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
 ```
 
 (`--fill-mode fit` is default; add tighter `fill_border_search_secs` in config if patch phase is slow.)
+
+**Drift + anchored retry** (when interpolated still skips gaps):
+
+```powershell
+clip-sync-repair recording_with_gaps.mp4 reference.mkv `
+  --mux repaired.mp4 `
+  --fill-offset anchored-retry `
+  --min-fill-correlation 0.35 `
+  -v
+```
 
 ---
 

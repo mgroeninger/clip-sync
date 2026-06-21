@@ -1,6 +1,6 @@
 # Temporary plan: patch-anchor offset map
 
-> **Status:** Draft (2026-06-20). **Phases 1–2 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, config knobs. Phase 0 drift fixture + Phase 3 docs tuning remain open.
+> **Status:** Draft (2026-06-20). **Phases 1–3 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, config knobs, docs, verbose anchor logging. Phase 0 drift fixture remains open. Single-pass `anchored` deferred.
 >
 > Motivated by runs where **some** gaps patch cleanly (`slide=+0.35s`, high seam scores) while **others** fail seam search — often because the nominal B map from alignment is hundreds of ms off at that point on A, pushing the true dropout to the edge of `fill_border_search_secs`. Successful patches already measure local residual offset (`align_adjustment_secs`) but do not feed later gaps.
 >
@@ -87,7 +87,7 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 | **Retry scope** | Pass 2: only `Skipped` with `CorrelationBelowThreshold` (structure **or** waveform below floor in fit/gate) or `BoundaryAlignmentFailed` (`StructureAlignmentFailed`). Not `BExtractFailed`, `ZeroLengthGap`, `AlignedSegmentOutOfRange`. Optionally include marginal pass-1 successes for re-centering — defer. |
 | **Search prior (optional)** | Phase 4: soft penalty in `unified_fit_score` for B candidates far from anchor-predicted offset — **fit mode only**; coordinate with `fill_repeat_penalty_weight`. Not required for v1. |
 | **Decode cost** | Pass 2 reuses in-memory `a_pcm` + `b_samples_full` from pass 1 (already decoded once). Re-run `prepare_region_patch` only for retry gaps — no extra full-file decode. |
-| **Reporting** | Verbose: `offset anchor: +0.35s from gap #3`; JSON: optional `patch_anchors_used` on summary (Phase 3). |
+| **Reporting** | Verbose: `offset anchor: +0.35s from gap #3` (shipped); JSON: optional `patch_anchors_used` on summary (Phase 4). |
 
 ---
 
@@ -137,12 +137,11 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 
 **Intent:** One-pass mode for users who prefer simplicity; tune eligibility; document.
 
-- [ ] `Anchored` without retry: **easy-first** sort regions by heuristic (short gap length, high `b_has_energy`, distance from file start) then sequential update of anchor table — or document as “two-pass only” and defer single-pass.
-  - *Recommendation:* ship **two-pass only** in v1; add single-pass sequential only if requested.
-- [ ] Tune anchor eligibility from corpus (marginal exclusion, structure_trusted rule).
-- [ ] README § `fill_offset_mode` table; `docs/gap-fill-modes.md` cross-link.
-- [ ] Verbose lines for anchor source gap index.
-- [ ] Default policy: keep `Recommended`; document `anchored-retry` for drift-heavy pairs.
+- [x] `Anchored` without retry: **deferred** — document two-pass only; `anchored` config value reserved (clip fallback until single-pass ships).
+- [x] Anchor eligibility documented (`fill_anchor_*` keys; marginal + structure_trusted rules unchanged from Phase 2 defaults).
+- [x] README § `fill_offset_mode` table; `docs/gap-fill-modes.md` cross-link.
+- [x] Verbose lines for anchor source gap index (`format_patch_anchor_table_summary`, `format_anchored_offset_verbose_line`).
+- [x] Default policy: keep `Recommended`; document `anchored-retry` for drift-heavy pairs.
 
 ### Phase 4 — Optional enhancements (defer)
 
@@ -229,8 +228,8 @@ CLI: `--fill-offset anchored-retry` (clap value enum extension).
 
 ## Open questions
 
-1. **`anchored` vs `anchored_retry`:** One enum value with `patch_passes = 1 \| 2`, or two modes?
-2. **Include clip anchors always** in piecewise curve when patch anchors exist, or patch-only interior + clip endpoints?
-3. **Retry marginal pass-1** patches in pass 2 with anchored offset for higher seam scores?
-4. **Expose anchor table in JSON** in Phase 2 or defer to Phase 4?
-5. **Sort pass-1 easy-first** even in two-pass (better anchors before pass-1 failures) — worth the plan reorder?
+1. **`anchored` vs `anchored_retry`:** **Resolved** — two enum values; only `anchored_retry` wired in `PatchAudio`.
+2. **Include clip anchors always** in piecewise curve when patch anchors exist, or patch-only interior + clip endpoints? **Resolved** — merge clip endpoints + patch anchors (see `interpolate_anchored_offset_secs`).
+3. **Retry marginal pass-1** patches in pass 2 with anchored offset for higher seam scores? Open (Phase 4).
+4. **Expose anchor table in JSON** in Phase 2 or defer to Phase 4? **Deferred** to Phase 4.
+5. **Sort pass-1 easy-first** even in two-pass (better anchors before pass-1 failures) — worth the plan reorder? Open (low priority; collect-then-splice makes pass-1 order irrelevant today).

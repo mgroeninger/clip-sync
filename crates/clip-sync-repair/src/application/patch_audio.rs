@@ -20,6 +20,7 @@ use crate::domain::{
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
     patch_anchor::{
+        format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
         is_retryable_patch_skip, PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
     },
     patch_result::{
@@ -427,6 +428,9 @@ fn run_anchored_retry_pass(
 ) {
     let candidates = build_patch_anchor_candidates(request, regions, region_results);
     let table = PatchAnchorTable::from_candidates(&candidates, &patch_anchor_policy(request));
+    if !table.is_empty() {
+        progress.phase_verbose(&format_patch_anchor_table_summary(&table));
+    }
     if table.is_empty() {
         return;
     }
@@ -805,6 +809,17 @@ fn prepare_region_patch(
         anchored_retry_pass,
     )
     .unwrap_or(region.b_start_secs - region.a_start_secs);
+
+    if anchored_retry_pass == AnchoredRetryPass::Second {
+        if let Some(table) = patch_anchors.filter(|t| !t.is_empty()) {
+            progress.phase_verbose(&format_anchored_offset_verbose_line(
+                gap_offset_secs,
+                &request.report.alignment,
+                gap_time_on_a,
+                table,
+            ));
+        }
+    }
 
     let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
