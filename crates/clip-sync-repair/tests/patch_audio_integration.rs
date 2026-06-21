@@ -356,6 +356,7 @@ fn patch_request_with_options(
         fill_fit_waveform_weight: options.fill_fit_waveform_weight,
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
+        fill_repeat_penalty_weight: 0.0,
     }
 }
 
@@ -1473,5 +1474,54 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
     assert!(
         gap_rms > 100.0,
         "late gap should be filled with interpolated offset, rms={gap_rms}"
+    );
+}
+
+/// Production-like fit defaults (10 s border search, full extension grid). Too slow for default CI.
+#[test]
+#[ignore = "run locally: cargo test -p clip-sync-repair patch_audio_fit_production_defaults -- --ignored"]
+fn patch_audio_fit_production_defaults_smoke() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_gap(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE))
+    };
+
+    let options = PatchTestOptions {
+        fill_mode: FillMode::Fit,
+        fill_border_search_secs: 10.0,
+        short_gap_one_strong_seam_fallback: false,
+        ..Default::default()
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, options),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "production-like fit config should patch clean fixture: {:?}",
+        patched.summary.gaps
     );
 }

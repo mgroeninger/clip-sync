@@ -146,6 +146,9 @@ pub struct RepairConfig {
     /// Fit mode: hard skip when `min(pre, post)` is below this (Phase C).
     #[serde(default = "default_fill_absolute_floor")]
     pub fill_absolute_floor: f32,
+    /// Fit mode: penalize high A-border vs B-fill repeat correlation when seams are weak (Phase D; 0 = off).
+    #[serde(default)]
+    pub fill_repeat_penalty_weight: f64,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -197,7 +200,7 @@ fn default_max_fill_align_adjustment_secs() -> f64 {
     0.5
 }
 fn default_fill_border_search_secs() -> f64 {
-    30.0
+    10.0
 }
 fn default_min_border_discovery_secs() -> f64 {
     2.0
@@ -296,6 +299,7 @@ impl Default for RepairConfig {
             fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
+            fill_repeat_penalty_weight: 0.0,
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
@@ -533,6 +537,12 @@ impl RepairConfig {
                 reason: "must be match_min, match_a, default, or a rate like 256k".into(),
             });
         }
+        if self.fill_repeat_penalty_weight < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_repeat_penalty_weight".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
         Ok(())
     }
 }
@@ -729,6 +739,19 @@ dry_run = true
             ..RepairConfig::default()
         };
         config.validate().expect("disable gate should be valid");
+    }
+
+    #[test]
+    fn rejects_negative_fill_repeat_penalty_weight() {
+        let config = RepairConfig {
+            fill_repeat_penalty_weight: -0.01,
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("negative weight");
+        assert!(
+            format!("{err:?}").contains("fill_repeat_penalty_weight"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

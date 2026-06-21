@@ -8,11 +8,15 @@ use crate::domain::gap_structure::{
     StructureMatchParams,
 };
 use crate::domain::policies::{
-    fill_seam_correlations, FillAlignment, SeamPlacement, SeamTemplates,
+    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved,
+    FillAlignment, SeamPlacement, SeamTemplates,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
 const LATE_START_PENALTY: f64 = 0.08;
+const REPEAT_CORR_THRESHOLD: f64 = 0.55;
+const REPEAT_SEAM_WEAK: f64 = 0.45;
+const REPEAT_SUM_CEILING: f64 = 1.1;
 
 /// Default hard skip floor for fit-mode waveform tiering (Phase C).
 pub const DEFAULT_FILL_ABSOLUTE_FLOOR: f32 = 0.12;
@@ -114,6 +118,9 @@ pub struct WaveformSeamContext<'a> {
     pub pre_window: usize,
     pub post_window: usize,
     pub b_total_frames: usize,
+    /// Repeat-at-seam penalty (Phase D); `penalty_weight == 0` disables.
+    pub repeat_window_frames: usize,
+    pub repeat_penalty_weight: f64,
 }
 
 /// Combined objective for one B fill bracket candidate.
@@ -146,6 +153,65 @@ pub fn unified_fit_score(
     if start > nominal_start {
         let late_frac = (start - nominal_start) as f64 / params.gap_frames.max(1) as f64;
         score -= LATE_START_PENALTY * late_frac;
+    }
+    score
+}
+
+fn repeat_penalty_at_placement(
+    ctx: &WaveformSeamContext<'_>,
+    start: usize,
+    wave_min: f64,
+) -> f64 {
+    if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
+        return 0.0;
+    }
+    let (repeat_pre, repeat_post) = fill_repeat_correlations(
+        ctx.templates,
+        SeamPlacement {
+            start,
+            gap_frames: ctx.gap_frames,
+            pre_window: ctx.pre_window,
+            post_window: ctx.post_window,
+        },
+        ctx.repeat_window_frames,
+    );
+    let repeat_max = repeat_pre.max(repeat_post);
+    let repeat_sum = repeat_pre + repeat_post;
+    if wave_min < REPEAT_SEAM_WEAK && repeat_max > REPEAT_CORR_THRESHOLD {
+        repeat_max
+    } else if repeat_sum > REPEAT_SUM_CEILING && wave_min < REPEAT_SEAM_WEAK {
+        repeat_sum * 0.5
+    } else {
+        0.0
+    }
+}
+
+fn unified_fit_score_with_repeat(
+    structure_pre: f64,
+    structure_post: f64,
+    wave_min: f64,
+    start: usize,
+    end: usize,
+    nominal_start: usize,
+    nominal_end: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+    waveform: &WaveformSeamContext<'_>,
+) -> f64 {
+    let mut score = unified_fit_score(
+        structure_pre,
+        structure_post,
+        wave_min,
+        start,
+        end,
+        nominal_start,
+        nominal_end,
+        params,
+        weights,
+    );
+    if score.is_finite() {
+        score -= waveform.repeat_penalty_weight
+            * repeat_penalty_at_placement(waveform, start, wave_min);
     }
     score
 }
@@ -191,6 +257,31 @@ pub fn match_gap_fill_unified_in_b(
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
 ) -> Option<UnifiedFillMatch> {
+    match_gap_fill_unified_in_b_with_timeline(
+        signature,
+        b_samples,
+        channels,
+        waveform,
+        nominal_fill_start,
+        nominal_fill_end,
+        params,
+        weights,
+        None,
+    )
+}
+
+/// Like [`match_gap_fill_unified_in_b`] but reuses a pre-built activity timeline (joint grid perf).
+pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
+    signature: &GapContextSignature,
+    b_samples: &[i16],
+    channels: usize,
+    waveform: &WaveformSeamContext<'_>,
+    nominal_fill_start: usize,
+    nominal_fill_end: usize,
+    params: &StructureMatchParams,
+    weights: UnifiedFitWeights,
+    prebuilt_timeline: Option<&ActivityTimeline>,
+) -> Option<UnifiedFillMatch> {
     if signature.pre_bins.is_empty()
         || signature.post_bins.is_empty()
         || params.gap_frames == 0
@@ -208,14 +299,20 @@ pub fn match_gap_fill_unified_in_b(
         return None;
     }
 
-    let timeline = ActivityTimeline::build(
-        b_samples,
-        channels,
-        total_frames,
-        params.bin_frames,
-        params.silence_peak_fraction,
-        params.absolute_silence_rms,
-    );
+    let timeline_owned;
+    let timeline = if let Some(timeline) = prebuilt_timeline {
+        timeline
+    } else {
+        timeline_owned = ActivityTimeline::build(
+            b_samples,
+            channels,
+            total_frames,
+            params.bin_frames,
+            params.silence_peak_fraction,
+            params.absolute_silence_rms,
+        );
+        &timeline_owned
+    };
 
     let (mut best_start, _) = unified_search_best_fill_start(
         signature,
@@ -339,7 +436,7 @@ fn unified_search_best_fill_start(
         let pre_score = score_pre_match(signature, timeline, start, params);
         let post_score = score_post_match(signature, timeline, candidate_end, params);
         let wave_min = waveform_min_at_start(waveform, start);
-        let score = unified_fit_score(
+        let score = unified_fit_score_with_repeat(
             pre_score,
             post_score,
             wave_min,
@@ -349,6 +446,7 @@ fn unified_search_best_fill_start(
             nominal_fill_end,
             params,
             weights,
+            waveform,
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
             || (score >= *best_score - SCORE_TIE_EPSILON
@@ -423,7 +521,7 @@ fn unified_search_best_fill_end(
         let pre_score = score_pre_match(signature, timeline, fill_start, params);
         let post_score = score_post_match(signature, timeline, end, params);
         let wave_min = waveform_min_at_start(waveform, fill_start);
-        let score = unified_fit_score(
+        let score = unified_fit_score_with_repeat(
             pre_score,
             post_score,
             wave_min,
@@ -433,6 +531,7 @@ fn unified_search_best_fill_end(
             nominal_fill_end,
             params,
             weights,
+            waveform,
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
             || (score >= *best_score - SCORE_TIE_EPSILON
@@ -495,7 +594,7 @@ fn unified_fine_polish_start(
         let pre_score = score_pre_match(signature, timeline, candidate, params);
         let post_score = score_post_match(signature, timeline, candidate_end, params);
         let wave_min = waveform_min_at_start(waveform, candidate);
-        let score = unified_fit_score(
+        let score = unified_fit_score_with_repeat(
             pre_score,
             post_score,
             wave_min,
@@ -505,6 +604,7 @@ fn unified_fine_polish_start(
             nominal_end,
             params,
             weights,
+            waveform,
         );
         let better = score > best_score + SCORE_TIE_EPSILON
             || (score >= best_score - SCORE_TIE_EPSILON
@@ -535,6 +635,112 @@ pub fn match_gap_structure_only_in_b(
         nominal_fill_end,
         params,
     )
+}
+
+
+fn fill_anchor_seams(
+    fill_interleaved: &[i16],
+    channels: usize,
+    a_pre: &[f64],
+    a_post: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    pre_window: usize,
+    post_window: usize,
+) -> (f64, f64) {
+    fill_splice_seam_correlations_interleaved(
+        fill_interleaved,
+        channels,
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        pre_window,
+        post_window,
+    )
+}
+
+fn fill_anchor_better(
+    head: (f64, f64),
+    tail: (f64, f64),
+) -> bool {
+    let (pre_h, post_h) = head;
+    let (pre_t, post_t) = tail;
+    let min_h = pre_h.min(post_h);
+    let min_t = pre_t.min(post_t);
+    min_h > min_t + SCORE_TIE_EPSILON
+        || (min_h >= min_t - SCORE_TIE_EPSILON && post_h > post_t + SCORE_TIE_EPSILON)
+}
+
+/// Fit a B bracket to A gap length (trim tail / pad tail).
+pub fn fit_fill_to_gap_frames(samples: &[i16], channels: usize, target_frames: usize) -> Vec<i16> {
+    let channels = channels.max(1);
+    let source_frames = samples.len() / channels;
+    if source_frames == target_frames {
+        return samples.to_vec();
+    }
+    if source_frames == 0 {
+        return vec![0i16; target_frames * channels];
+    }
+
+    if source_frames > target_frames {
+        return samples[..target_frames * channels].to_vec();
+    }
+
+    let mut out = vec![0i16; target_frames * channels];
+    out[..samples.len()].copy_from_slice(samples);
+    out
+}
+
+/// When B bracket exceeds A gap length, pick trim-head vs trim-tail by waveform seam score (fit mode).
+pub fn pick_fill_length_anchor(
+    fill_interleaved: &[i16],
+    channels: usize,
+    gap_frames: usize,
+    a_pre: &[f64],
+    a_post: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    pre_window: usize,
+    post_window: usize,
+) -> Vec<i16> {
+    let channels = channels.max(1);
+    let source_frames = fill_interleaved.len() / channels;
+    if source_frames <= gap_frames {
+        return fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames);
+    }
+
+    let trim_tail = fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames);
+    let skip_frames = source_frames - gap_frames;
+    let skip_samples = skip_frames * channels;
+    let trim_head = fill_interleaved[skip_samples..].to_vec();
+
+    let seams_tail = fill_anchor_seams(
+        &trim_tail,
+        channels,
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        pre_window,
+        post_window,
+    );
+    let seams_head = fill_anchor_seams(
+        &trim_head,
+        channels,
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        pre_window,
+        post_window,
+    );
+
+    if fill_anchor_better(seams_head, seams_tail) {
+        trim_head
+    } else {
+        trim_tail
+    }
 }
 
 
@@ -840,6 +1046,221 @@ mod tests {
         assert!(
             score_true > score_wrong,
             "waveform-heavy score should prefer true cycle (true={score_true}, wrong={score_wrong})"
+        );
+    }
+
+    #[test]
+    fn repeat_penalty_downranks_duplicate_fill_when_seams_weak() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights::default();
+        let a_pre: Vec<f64> = (0..16).map(|i| (i as f64 * 0.1).sin()).collect();
+        let a_post: Vec<f64> = (0..16).map(|i| (i as f64 * 0.2).cos()).collect();
+        let mut b_mono = vec![0.0f64; 200];
+        for i in 0..16 {
+            b_mono[100 + i] = a_pre[i];
+            b_mono[140 + i] = a_post[i];
+        }
+        let b_ch = vec![b_mono.clone()];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[a_pre.clone()],
+            a_post_ch: &[a_post.clone()],
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames: 40,
+            pre_window: 16,
+            post_window: 16,
+            b_total_frames: b_mono.len(),
+            repeat_window_frames: 16,
+            repeat_penalty_weight: 1.0,
+        };
+        let base = unified_fit_score_with_repeat(
+            0.9,
+            0.9,
+            0.2,
+            100,
+            140,
+            100,
+            140,
+            &params,
+            weights,
+            &waveform,
+        );
+        let no_penalty = WaveformSeamContext {
+            repeat_penalty_weight: 0.0,
+            ..waveform
+        };
+        let without = unified_fit_score_with_repeat(
+            0.9,
+            0.9,
+            0.2,
+            100,
+            140,
+            100,
+            140,
+            &params,
+            weights,
+            &no_penalty,
+        );
+        assert!(
+            without > base,
+            "repeat penalty should lower score when fill duplicates borders (with={without}, base={base})"
+        );
+    }
+
+    #[test]
+    fn pick_fill_length_anchor_prefers_better_seam_end() {
+        let channels = 1usize;
+        let gap_frames = 4usize;
+        let pre_w = 2usize;
+        let post_w = 2usize;
+        let a_pre = vec![0.1, -0.1];
+        let a_post = vec![0.6, -0.4];
+        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
+        let post: Vec<i16> = a_post.iter().map(|&v| to_i16(v)).collect();
+        let fill = vec![0i16, 0, 0, 0, post[0], post[1]];
+        let picked = pick_fill_length_anchor(
+            &fill,
+            channels,
+            gap_frames,
+            &a_pre,
+            &a_post,
+            &[],
+            &[],
+            pre_w,
+            post_w,
+        );
+        assert_eq!(picked, vec![0, 0, post[0], post[1]]);
+    }
+
+    #[test]
+    fn pick_fill_length_anchor_uses_min_seam_not_one_strong_side() {
+        let channels = 1usize;
+        let gap_frames = 4usize;
+        let pre_w = 2usize;
+        let post_w = 2usize;
+        let a_pre: Vec<f64> = (0..pre_w)
+            .map(|i| (i as f64 * 0.8).sin())
+            .collect();
+        let a_post: Vec<f64> = (0..post_w)
+            .map(|i| ((i + 4) as f64 * 0.5).cos())
+            .collect();
+        let a_pre_ch = vec![a_pre.clone()];
+        let a_post_ch = vec![a_post.clone()];
+        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
+        let pre: Vec<i16> = a_pre.iter().map(|&v| to_i16(v)).collect();
+        let post: Vec<i16> = a_post.iter().map(|&v| to_i16(v)).collect();
+        let junk = vec![0i16, 0, 0, 0];
+        let mut fill = pre;
+        fill.extend(&junk);
+        fill.extend(&post);
+        // Tail: strong pre, weak post → low min. Head: weak pre, strong post → higher min.
+        let picked = pick_fill_length_anchor(
+            &fill,
+            channels,
+            gap_frames,
+            &a_pre,
+            &a_post,
+            &a_pre_ch,
+            &a_post_ch,
+            pre_w,
+            post_w,
+        );
+        assert_eq!(picked, vec![0, 0, post[0], post[1]]);
+    }
+
+    #[test]
+    fn fill_anchor_better_prefers_higher_min_seam() {
+        assert!(fill_anchor_better((0.5, 0.9), (0.4, 0.95)));
+        assert!(!fill_anchor_better((0.4, 0.95), (0.5, 0.9)));
+        assert!(fill_anchor_better((0.3, 0.8), (0.3, 0.5)));
+    }
+
+    #[test]
+    fn unified_search_penalty_downranks_repeat_cycle() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights::default();
+        let a_pre: Vec<f64> = (0..16).map(|i| (i as f64 * 0.1).sin()).collect();
+        let a_post: Vec<f64> = (0..16).map(|i| (i as f64 * 0.2).cos()).collect();
+        let mut b_mono = vec![0.0f64; 200];
+        for i in 0..16 {
+            b_mono[100 + i] = a_pre[i];
+        }
+        let b_ch = vec![b_mono.clone()];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[a_pre.clone()],
+            a_post_ch: &[a_post.clone()],
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform_penalized = WaveformSeamContext {
+            templates: &templates,
+            gap_frames: 40,
+            pre_window: 16,
+            post_window: 16,
+            b_total_frames: b_mono.len(),
+            repeat_window_frames: 16,
+            repeat_penalty_weight: 1.0,
+        };
+        let waveform_off = WaveformSeamContext {
+            repeat_penalty_weight: 0.0,
+            ..waveform_penalized
+        };
+        let nominal_start = 100usize;
+        let nominal_end = 140usize;
+        let with_penalty = unified_fit_score_with_repeat(
+            0.9,
+            0.9,
+            0.2,
+            nominal_start,
+            nominal_end,
+            nominal_start,
+            nominal_end,
+            &params,
+            weights,
+            &waveform_penalized,
+        );
+        let without_penalty = unified_fit_score_with_repeat(
+            0.9,
+            0.9,
+            0.2,
+            nominal_start,
+            nominal_end,
+            nominal_start,
+            nominal_end,
+            &params,
+            weights,
+            &waveform_off,
+        );
+        assert!(
+            without_penalty > with_penalty,
+            "repeat penalty should lower score (with={with_penalty}, without={without_penalty})"
         );
     }
 }

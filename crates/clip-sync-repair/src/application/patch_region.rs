@@ -5,14 +5,14 @@ use clip_sync::MultiChannelPcm;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::{
     boundary_search_step_frames, classify_fill_waveform_confidence, fit_candidate_ranking_score,
-    match_gap_fill_unified_in_b, FillConfidence, UnifiedFitWeights,
+    match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFitWeights,
     WaveformSeamContext,
 };
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
     short_gap_one_strong_seam_passes,
 };
-use crate::domain::gap_structure::{self, StructureMatchParams};
+use crate::domain::gap_structure::{self, ActivityTimeline, StructureMatchParams};
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
 
 /// Pearson floor used when partial structure trust softens the waveform gate.
@@ -62,6 +62,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub fill_fit_waveform_weight: f64,
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
+    pub fill_repeat_penalty_weight: f64,
     pub max_extend_frames: usize,
     pub step_frames: usize,
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -99,14 +100,44 @@ struct FitJointCandidate {
     boundary_move: usize,
 }
 
+/// Reused B haystack mono, channels, and activity timeline for joint-grid candidates.
+struct FitHaystackCache {
+    b_mono: Vec<f64>,
+    b_ch: Vec<Vec<f64>>,
+    timeline: ActivityTimeline,
+}
+
+impl FitHaystackCache {
+    fn build(params: &SeamGateParams<'_>) -> Self {
+        let channels = params.channels.max(1);
+        let total_frames = params.b_samples.len() / channels;
+        let b_mono = policies::interleaved_to_mono(params.b_samples, channels);
+        let b_ch = policies::interleaved_to_channels(params.b_samples, channels);
+        let timeline = ActivityTimeline::build(
+            params.b_samples,
+            channels,
+            total_frames,
+            params.bin_frames.max(1),
+            params.silence_peak_fraction,
+            params.absolute_silence_rms,
+        );
+        Self {
+            b_mono,
+            b_ch,
+            timeline,
+        }
+    }
+}
+
 fn record_fit_joint_candidate(
     best: &mut Option<FitJointCandidate>,
     best_below_floor: &mut Option<SeamGateFailure>,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
 ) {
-    match evaluate_seam_gate_fit_candidate(refined, baseline, params) {
+    match evaluate_seam_gate_fit_candidate(refined, baseline, params, cache) {
         Ok((outcome, ranking_score)) => {
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
@@ -160,8 +191,9 @@ fn evaluate_seam_gate_fit_joint(
 
     let mut best: Option<FitJointCandidate> = None;
     let mut best_below_floor: Option<SeamGateFailure> = None;
+    let cache = FitHaystackCache::build(params);
 
-    record_fit_joint_candidate(&mut best, &mut best_below_floor, baseline, baseline, params);
+    record_fit_joint_candidate(&mut best, &mut best_below_floor, baseline, baseline, params, &cache);
     let baseline_high = best
         .as_ref()
         .is_some_and(|c| c.outcome.confidence == FillConfidence::High);
@@ -185,7 +217,14 @@ fn evaluate_seam_gate_fit_joint(
                     },
                     baseline,
                     params,
+                    &cache,
                 );
+                if best
+                    .as_ref()
+                    .is_some_and(|c| c.outcome.confidence == FillConfidence::High)
+                {
+                    return Ok(best.expect("high joint candidate").outcome);
+                }
             }
             if try_end >= end_max {
                 break;
@@ -217,13 +256,13 @@ fn evaluate_seam_gate_fit_candidate(
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
 ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
         return Err(SeamGateFailure::StructureAlignmentFailed);
     }
 
-    let gap_secs = gap_frames as f64 / params.sample_rate as f64;
     let border_spec = GapBorderSpec {
         gap_start_frame: refined.start_frame,
         gap_end_frame: refined.end_frame,
@@ -239,9 +278,8 @@ fn evaluate_seam_gate_fit_candidate(
         params.channels,
         &border_spec,
     );
-    let b_mono = policies::interleaved_to_mono(params.b_samples, params.channels);
-    let b_ch = policies::interleaved_to_channels(params.b_samples, params.channels);
 
+    let gap_secs = gap_frames as f64 / params.sample_rate as f64;
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
         / params.sample_rate as f64;
     let end_delta_secs = (refined.end_frame as i64 - baseline.end_frame as i64) as f64
@@ -284,21 +322,23 @@ fn evaluate_seam_gate_fit_candidate(
         a_post: &a_post_border,
         a_pre_ch: &a_pre_ch,
         a_post_ch: &a_post_ch,
-        b_mono: &b_mono,
-        b_ch: &b_ch,
+        b_mono: &cache.b_mono,
+        b_ch: &cache.b_ch,
     };
     let waveform = WaveformSeamContext {
         templates: &templates,
         gap_frames,
         pre_window: waveform_gate_frames,
         post_window: post_gate_frames,
-        b_total_frames: b_mono.len(),
+        b_total_frames: cache.b_mono.len(),
+        repeat_window_frames: params.border_frames.max(1),
+        repeat_penalty_weight: params.fill_repeat_penalty_weight,
     };
     let weights = UnifiedFitWeights {
         structure_weight: params.fill_fit_structure_weight,
         waveform_weight: params.fill_fit_waveform_weight,
     };
-    let unified = match_gap_fill_unified_in_b(
+    let unified = match_gap_fill_unified_in_b_with_timeline(
         &signature,
         params.b_samples,
         params.channels,
@@ -307,6 +347,7 @@ fn evaluate_seam_gate_fit_candidate(
         gap_end_in_haystack,
         &structure_params,
         weights,
+        Some(&cache.timeline),
     )
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 

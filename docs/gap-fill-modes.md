@@ -115,7 +115,7 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 - Scores B candidates with  
   `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)`  
   (defaults **0.35 / 0.65**).
-- B slide radius: **`fill_border_search_secs`** (default **30 s**), not `--max-fill-align-adjust-secs`.
+- B slide radius: **`fill_border_search_secs`** (default **10 s**), not `--max-fill-align-adjust-secs`.
 - Haystack extract also uses context, margin, length slack, and extension slack — see config example in README.
 
 ### Gate waveform gate
@@ -142,7 +142,7 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 ```toml
 [repair]
 fill_mode = "fit"
-fill_border_search_secs = 5.0      # default 30 — largest lever
+fill_border_search_secs = 5.0      # default 10 — largest lever
 gap_end_extend_max_ms = 200        # default 500
 gap_end_extend_step_ms = 40
 # optional: disable grid entirely
@@ -187,7 +187,8 @@ clip-sync-repair "source.mp4" "recording.mkv" `
 | Key | Default | Notes |
 |-----|---------|--------|
 | `fill_mode` | `"fit"` | `"gate"` for legacy |
-| `fill_border_search_secs` | `30.0` | B slide radius (unified search) |
+| `fill_border_search_secs` | `10.0` | B slide radius (unified search) |
+| `fill_repeat_penalty_weight` | `0.0` | Phase D: penalize repeat-at-seam when seams weak (0 = off). Repeat window = `border_frames` (`normalize_window_secs`), not crossfade length — keep crossfade ≤ border window. |
 | `fill_fit_structure_weight` | `0.35` | Unified scorer |
 | `fill_fit_waveform_weight` | `0.65` | Unified scorer |
 | `fill_marginal_margin` | `0.08` | Warn band below `min_fill_correlation` |

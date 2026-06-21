@@ -570,6 +570,192 @@ pub struct SeamPlacement {
     pub post_window: usize,
 }
 
+/// Pearson correlation of A border templates with B fill interior (repeat-at-seam detector).
+pub fn fill_repeat_correlations(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
+    repeat_window_frames: usize,
+) -> (f64, f64) {
+    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamPlacement { start, gap_frames, .. } = placement;
+    let repeat_window = repeat_window_frames.max(1);
+
+    let repeat_pre = if !a_pre.is_empty()
+        && start + repeat_window <= b_mono.len()
+        && repeat_window <= a_pre.len()
+    {
+        seam_pearson(
+            &a_pre[a_pre.len().saturating_sub(repeat_window)..],
+            &b_mono[start..start + repeat_window],
+        )
+    } else {
+        0.0
+    };
+
+    let tail_start = start + gap_frames.saturating_sub(repeat_window);
+    let repeat_post = if !a_post.is_empty()
+        && tail_start + repeat_window <= b_mono.len()
+        && repeat_window <= a_post.len()
+    {
+        seam_pearson(
+            &a_post[..repeat_window.min(a_post.len())],
+            &b_mono[tail_start..tail_start + repeat_window],
+        )
+    } else {
+        0.0
+    };
+
+    if b_ch.len() <= 1 {
+        return (repeat_pre, repeat_post);
+    }
+
+    let ch_pre = if start + repeat_window <= b_mono.len() {
+        a_pre_ch
+            .iter()
+            .zip(b_ch.iter())
+            .filter_map(|(a_ch, b_ch)| {
+                if repeat_window <= a_ch.len() && start + repeat_window <= b_ch.len() {
+                    Some(seam_pearson(
+                        &a_ch[a_ch.len().saturating_sub(repeat_window)..],
+                        &b_ch[start..start + repeat_window],
+                    ))
+                } else {
+                    None
+                }
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    } else {
+        f64::NEG_INFINITY
+    };
+
+    let ch_post = if tail_start + repeat_window <= b_mono.len() {
+        a_post_ch
+            .iter()
+            .zip(b_ch.iter())
+            .filter_map(|(a_ch, b_ch)| {
+                if repeat_window <= a_ch.len() && tail_start + repeat_window <= b_ch.len() {
+                    Some(seam_pearson(
+                        &a_ch[..repeat_window.min(a_ch.len())],
+                        &b_ch[tail_start..tail_start + repeat_window],
+                    ))
+                } else {
+                    None
+                }
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    } else {
+        f64::NEG_INFINITY
+    };
+
+    (
+        best_channel_correlation(&[repeat_pre, ch_pre]),
+        best_channel_correlation(&[repeat_post, ch_post]),
+    )
+}
+
+/// Seam scores for a standalone fill chunk (A borders vs fill head/tail at splice).
+pub fn fill_splice_seam_correlations(
+    fill_mono: &[f64],
+    a_pre: &[f64],
+    a_post: &[f64],
+    pre_window: usize,
+    post_window: usize,
+) -> (f64, f64) {
+    let pre = if pre_window > 0
+        && !a_pre.is_empty()
+        && fill_mono.len() >= pre_window
+        && pre_window <= a_pre.len()
+    {
+        seam_pearson(
+            &a_pre[a_pre.len().saturating_sub(pre_window)..],
+            &fill_mono[..pre_window],
+        )
+    } else {
+        0.0
+    };
+    let post = if post_window > 0
+        && !a_post.is_empty()
+        && fill_mono.len() >= post_window
+        && post_window <= a_post.len()
+    {
+        seam_pearson(
+            &a_post[..post_window.min(a_post.len())],
+            &fill_mono[fill_mono.len() - post_window..],
+        )
+    } else {
+        0.0
+    };
+    (pre, post)
+}
+
+/// Like [`fill_splice_seam_correlations`] but scores each channel when stereo borders are present.
+pub fn fill_splice_seam_correlations_interleaved(
+    fill_interleaved: &[i16],
+    channels: usize,
+    a_pre: &[f64],
+    a_post: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    pre_window: usize,
+    post_window: usize,
+) -> (f64, f64) {
+    let channels = channels.max(1);
+    let fill_mono = interleaved_to_mono(fill_interleaved, channels);
+    let use_channels = channels > 1
+        && a_pre_ch.len() == channels
+        && a_post_ch.len() == channels
+        && a_pre_ch.iter().any(|ch| !ch.is_empty());
+    if !use_channels {
+        return fill_splice_seam_correlations(&fill_mono, a_pre, a_post, pre_window, post_window);
+    }
+
+    let gap_frames = fill_mono.len();
+    let mut pre_scores = Vec::with_capacity(channels);
+    let mut post_scores = Vec::with_capacity(channels);
+    for ch in 0..channels {
+        let ch_fill: Vec<f64> = fill_interleaved
+            .iter()
+            .skip(ch)
+            .step_by(channels)
+            .map(|&s| f64::from(s))
+            .collect();
+        if ch_fill.len() != gap_frames {
+            continue;
+        }
+        if pre_window > 0
+            && a_pre_ch[ch].len() >= pre_window
+            && ch_fill.len() >= pre_window
+        {
+            pre_scores.push(seam_pearson(
+                &a_pre_ch[ch][a_pre_ch[ch].len().saturating_sub(pre_window)..],
+                &ch_fill[..pre_window],
+            ));
+        }
+        if post_window > 0
+            && a_post_ch[ch].len() >= post_window
+            && ch_fill.len() >= post_window
+        {
+            post_scores.push(seam_pearson(
+                &a_post_ch[ch][..post_window.min(a_post_ch[ch].len())],
+                &ch_fill[ch_fill.len() - post_window..],
+            ));
+        }
+    }
+
+    let mono = fill_splice_seam_correlations(&fill_mono, a_pre, a_post, pre_window, post_window);
+    let pre = if pre_scores.is_empty() {
+        mono.0
+    } else {
+        best_channel_correlation(&pre_scores)
+    };
+    let post = if post_scores.is_empty() {
+        mono.1
+    } else {
+        best_channel_correlation(&post_scores)
+    };
+    (pre, post)
+}
+
 /// Pearson correlation at gap seams; uses best front L/R channel when `channels > 1`.
 pub fn fill_seam_correlations(
     templates: &SeamTemplates<'_>,

@@ -16,11 +16,13 @@ use crate::application::error::RepairError;
 use crate::domain::{
     fill_offset::fill_offset_secs,
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
+    fill_mode::FillMode,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
+    gap_fill_fit::{fit_fill_to_gap_frames, pick_fill_length_anchor},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
-    policies::{self, RefinedGapFrames},
+    policies::{self, GapBorderSpec, RefinedGapFrames},
     FillOffsetMode, Gap, GapReport,
 };
 
@@ -98,6 +100,8 @@ pub struct PatchAudioRequest {
     pub fill_marginal_margin: f32,
     /// Fit mode hard waveform skip floor (Phase C).
     pub fill_absolute_floor: f32,
+    /// Fit mode repeat-at-seam penalty weight (Phase D; 0 = off).
+    pub fill_repeat_penalty_weight: f64,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -800,6 +804,7 @@ fn prepare_region_patch(
         fill_fit_waveform_weight: request.fill_fit_waveform_weight,
         fill_marginal_margin: request.fill_marginal_margin,
         fill_absolute_floor: request.fill_absolute_floor,
+        fill_repeat_penalty_weight: request.fill_repeat_penalty_weight,
         max_extend_frames,
         step_frames,
         gap_end_extend_on_post_seam_fail,
@@ -919,10 +924,41 @@ fn prepare_region_patch(
             a_start_secs,
             b_fill_frames = source_frames,
             a_gap_frames = gap_frames,
-            "B fill longer than A gap; trimming tail (pre-border anchor)"
+            "B fill longer than A gap; choosing trim anchor (fit) or trimming tail (gate)"
         );
     }
-    let b_fill = fit_fill_to_gap_frames(&b_fill_raw, channels, gap_frames);
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames,
+        border_standoff_frames,
+        silence_peak_fraction,
+        absolute_rms_floor: absolute_silence_rms,
+    };
+    let (a_pre_border, a_post_border) =
+        policies::border_templates_for_gap(&a_pcm.samples, channels, &border_spec);
+    let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
+        &a_pcm.samples,
+        channels,
+        &border_spec,
+    );
+    let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
+    let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
+    let b_fill = if request.fill_mode == FillMode::Fit {
+        pick_fill_length_anchor(
+            &b_fill_raw,
+            channels,
+            gap_frames,
+            &a_pre_border,
+            &a_post_border,
+            &a_pre_ch,
+            &a_post_ch,
+            pre_gate_frames,
+            post_gate_frames,
+        )
+    } else {
+        fit_fill_to_gap_frames(&b_fill_raw, channels, gap_frames)
+    };
 
     let gain = if normalize_fill {
         let border_rms = compute_a_border_rms(
@@ -968,29 +1004,6 @@ fn prepare_region_patch(
             gap_end_adjust_frames,
         },
     )
-}
-
-/// Fit a B fill bracket to A's gap length without resampling (preserves pitch).
-///
-/// Longer fills are trimmed from the tail (start is pre-border anchored).
-/// Shorter fills are zero-padded at the tail only when B has no more contiguous audio.
-fn fit_fill_to_gap_frames(samples: &[i16], channels: usize, target_frames: usize) -> Vec<i16> {
-    let channels = channels.max(1);
-    let source_frames = samples.len() / channels;
-    if source_frames == target_frames {
-        return samples.to_vec();
-    }
-    if source_frames == 0 {
-        return vec![0i16; target_frames * channels];
-    }
-
-    if source_frames > target_frames {
-        return samples[..target_frames * channels].to_vec();
-    }
-
-    let mut out = vec![0i16; target_frames * channels];
-    out[..samples.len()].copy_from_slice(samples);
-    out
 }
 
 fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
@@ -1136,9 +1149,8 @@ fn splice_into_a(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        fit_fill_to_gap_frames, format_gap_fill_plan_lines, format_gap_fill_result_line,
-    };
+    use super::{format_gap_fill_plan_lines, format_gap_fill_result_line};
+    use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
     use crate::domain::{FillOffsetMode, Gap};
 
     #[test]

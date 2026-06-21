@@ -174,6 +174,49 @@ Included in `cargo test -p clip-sync corpus_generated -- --ignored`. Fields: `al
 
 ---
 
+## Gap fill / repair patch (`fill_mode = fit`)
+
+Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-06-20). Exercises **patch** after alignment — not gap scan or offset discovery.
+
+| Layer | Tier | Generator / fixture | Asserts |
+|-------|------|---------------------|---------|
+| `patch_audio_integration` | **committed** (CI) | Stereo sine + gap WAVs (`write_stereo_sine_with_gap`) | Patch count, skip reasons, fit marginal tier, gate regression, extension |
+| `patch_audio_integration` | **ignored** | Same fixtures, production-like fit config (`fill_border_search_secs = 10`, full extension grid) | `patch_audio_fit_production_defaults_smoke` — run before release |
+| `query_reference_integration` | **committed** | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
+| `gap_corpus` | external / manual | `CLIP_SYNC_GAP_CORPUS` real media | Listen + skip/marginal counts (see gap corpus README) |
+
+**CI command:**
+
+```powershell
+cargo test -p clip-sync-repair patch_audio_integration
+cargo test -p clip-sync-repair patch_audio_fit_production_defaults -- --ignored
+```
+
+**Patch summary fields to track** (JSON / `PatchSummary`): `patched_count`, `skipped_count`, `patched_marginal_count`, per-gap `confidence`, `gap_*_adjust_frames`.
+
+### Manual acceptance (external pair or `CLIP_SYNC_GAP_CORPUS`)
+
+Automated CI covers synthetic fixtures only (`patch_audio_integration`). This checklist is for **operator sign-off** after changing fit search, performance defaults, or `fill_repeat_penalty_weight` on **long-form or real media** (e.g. `CLIP_SYNC_GAP_CORPUS` — see [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md)). Record date, config path, and media identifiers when complete.
+
+| Check | Pass? | Notes |
+|-------|-------|-------|
+| Full repair (align + scan + patch) completes in acceptable wall time | | Note `fill_border_search_secs` and extension flags |
+| Patch rate ≥ prior gate baseline (or fewer skips with same listen quality) | | Compare `patched_count` / `skipped_count` |
+| No new audible repeat-at-seam vs last good build | | A/B listen on patched gaps |
+| `-v`: marginal gaps show `! patched` and plausible structure/waveform slides | | |
+| `patched_marginal_count` recorded if &gt; 0 | | |
+
+**Suggested command** (adjust paths and config):
+
+```powershell
+clip-sync-repair --config repair.toml -v scan-gaps <video_a> <video_b>
+clip-sync-repair --config repair.toml -v patch-audio <video_a> <video_b>
+```
+
+Optional: set `fill_repeat_penalty_weight` in repair config after listen pass (start at `0`; increase only with evidence).
+
+---
+
 ## Follow-up
 
 Tracked in [BACKLOG.md](../BACKLOG.md):
