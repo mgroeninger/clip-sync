@@ -164,8 +164,19 @@ Try **`--fill-offset interpolated`** first on drift-heavy pairs. When hard gaps 
 | `fill_anchor_min_correlation` | same as `min_fill_correlation` (`0.35`) | `min(pre, post)` floor for a pass-1 patch to become an anchor |
 | `fill_anchor_exclude_structure_trusted` | `true` | Gate-mode patches that skipped waveform measurement |
 | `fill_anchor_max_adjustment_frac` | `0.9` | Reject anchors whose `\|align_adjustment\|` exceeds this fraction of `fill_border_search_secs` (edge-clamped slides) |
+| `fill_anchor_search_prior_weight` | `0.0` | Fit mode + patch anchors: soft penalty in unified search for candidates far from anchor-predicted B start (0 = off) |
 
-Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on pass-2 retries, `offset anchor: +Xs from gap #…` or `between gap #… and gap #…`. See [cli-output.md](cli-output.md).
+Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on pass-2 retries, `offset anchor: +Xs from gap #…` or `between gap #… and gap #…`. JSON: `patch.patch_anchors_used` when `anchored_retry` built anchors. See [cli-output.md](cli-output.md).
+
+### Structure signatures (`gap_signature_mode`)
+
+| Mode | Behavior |
+|------|----------|
+| `bool` (default) | Legacy active/silent bins (`gap_signature_bin_ms`) |
+| `energy` | Gated log-RMS envelope + Pearson match (fit path) |
+| `auto` | Energy when pre/post halves have signal; else bool |
+
+Gate legacy path always uses bool structure. Config-only in v1 (no CLI flag yet).
 
 ---
 

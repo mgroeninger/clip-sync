@@ -1,6 +1,6 @@
 # Temporary plan: patch-anchor offset map
 
-> **Status:** Draft (2026-06-20). **Phases 1–3 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, config knobs, docs, verbose anchor logging. Phase 0 drift fixture remains open. Single-pass `anchored` deferred.
+> **Status:** Draft (2026-06-20). **Phases 1–4 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, weighted anchors, JSON export, optional search prior. Phase 0 drift fixture remains open. Single-pass `anchored` deferred.
 >
 > Motivated by runs where **some** gaps patch cleanly (`slide=+0.35s`, high seam scores) while **others** fail seam search — often because the nominal B map from alignment is hundreds of ms off at that point on A, pushing the true dropout to the edge of `fill_border_search_secs`. Successful patches already measure local residual offset (`align_adjustment_secs`) but do not feed later gaps.
 >

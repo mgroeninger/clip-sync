@@ -503,6 +503,8 @@ fill_offset_mode = "recommended"   # recommended | interpolated | anchored_retry
 fill_anchor_min_correlation = 0.35           # anchored_retry: min(pre, post) for anchor eligibility
 fill_anchor_exclude_structure_trusted = true # anchored_retry: gate patches without waveform
 fill_anchor_max_adjustment_frac = 0.9        # anchored_retry: max |slide| / fill_border_search_secs
+fill_anchor_search_prior_weight = 0.0        # fit + anchors: unified-search prior (0 = off)
+gap_signature_mode = "bool"                  # bool | energy | auto (fit path structure tier)
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
 fill_fit_structure_weight = 0.35   # fit only: unified search
 fill_fit_waveform_weight = 0.65    # fit only: unified search
