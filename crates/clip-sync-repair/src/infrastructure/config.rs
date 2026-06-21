@@ -149,6 +149,15 @@ pub struct RepairConfig {
     /// Fit mode: penalize high A-border vs B-fill repeat correlation when seams are weak (Phase D).
     #[serde(default = "default_fill_repeat_penalty_weight")]
     pub fill_repeat_penalty_weight: f64,
+    /// Minimum `min(pre, post)` for a pass-1 patch to become an offset anchor (`anchored_retry`).
+    #[serde(default = "default_fill_anchor_min_correlation")]
+    pub fill_anchor_min_correlation: f32,
+    /// Exclude structure-trusted gate patches (no waveform) from the anchor table.
+    #[serde(default = "default_true")]
+    pub fill_anchor_exclude_structure_trusted: bool,
+    /// Reject anchors whose `|align_adjustment|` exceeds this fraction of `fill_border_search_secs`.
+    #[serde(default = "default_fill_anchor_max_adjustment_frac")]
+    pub fill_anchor_max_adjustment_frac: f64,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -262,6 +271,12 @@ fn default_fill_absolute_floor() -> f32 {
 fn default_fill_repeat_penalty_weight() -> f64 {
     0.4
 }
+fn default_fill_anchor_min_correlation() -> f32 {
+    default_min_fill_correlation()
+}
+fn default_fill_anchor_max_adjustment_frac() -> f64 {
+    0.9
+}
 
 impl Default for RepairConfig {
     fn default() -> Self {
@@ -303,6 +318,9 @@ impl Default for RepairConfig {
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
             fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
+            fill_anchor_min_correlation: default_fill_anchor_min_correlation(),
+            fill_anchor_exclude_structure_trusted: true,
+            fill_anchor_max_adjustment_frac: default_fill_anchor_max_adjustment_frac(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
@@ -538,6 +556,14 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "repair.output.mux_audio_bitrate".into(),
                 reason: "must be match_min, match_a, default, or a rate like 256k".into(),
+            });
+        }
+        if self.fill_anchor_max_adjustment_frac <= 0.0
+            || self.fill_anchor_max_adjustment_frac > 1.0
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_anchor_max_adjustment_frac".into(),
+                reason: "must be in (0, 1]".into(),
             });
         }
         if self.fill_repeat_penalty_weight < 0.0 {

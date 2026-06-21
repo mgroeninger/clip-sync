@@ -1,0 +1,294 @@
+//! Empirical offset anchors from successful gap patches.
+
+use clip_sync::AlignmentReport;
+
+use crate::domain::fill_offset::clip_anchor_points;
+use crate::domain::gap_fill_fit::FillConfidence;
+use crate::domain::GapPatchSkipReason;
+
+/// One measured A→B offset at a patched gap midpoint on A's timeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PatchOffsetAnchor {
+    pub a_secs: f64,
+    pub offset_secs: f64,
+    pub source_gap_index: usize,
+}
+
+/// Policy for which pass-1 patches become anchors.
+#[derive(Debug, Clone, Copy)]
+pub struct PatchAnchorPolicy {
+    pub min_correlation: f32,
+    pub exclude_structure_trusted: bool,
+    pub max_adjustment_frac: f64,
+    pub border_search_secs: f64,
+}
+
+impl PatchAnchorPolicy {
+    pub fn max_adjustment_secs(self) -> f64 {
+        self.border_search_secs * self.max_adjustment_frac
+    }
+}
+
+/// Sorted patch anchors built from a completed pass.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PatchAnchorTable {
+    pub anchors: Vec<PatchOffsetAnchor>,
+}
+
+/// Input for one gap from a patch pass (application layer).
+#[derive(Debug, Clone, Copy)]
+pub struct PatchAnchorCandidate {
+    pub gap_index: usize,
+    pub a_start_secs: f64,
+    pub a_end_secs: f64,
+    pub base_gap_offset_secs: f64,
+    pub align_adjustment_secs: f64,
+    pub pre_correlation: f64,
+    pub post_correlation: f64,
+    pub structure_trusted: bool,
+    pub confidence: FillConfidence,
+}
+
+impl PatchAnchorTable {
+    pub fn from_candidates(
+        candidates: &[PatchAnchorCandidate],
+        policy: &PatchAnchorPolicy,
+    ) -> Self {
+        let max_slide = policy.max_adjustment_secs();
+        let mut anchors = Vec::new();
+        for candidate in candidates {
+            if !anchor_eligible(candidate, policy, max_slide) {
+                continue;
+            }
+            let a_secs = (candidate.a_start_secs + candidate.a_end_secs) / 2.0;
+            anchors.push(PatchOffsetAnchor {
+                a_secs,
+                offset_secs: candidate.base_gap_offset_secs + candidate.align_adjustment_secs,
+                source_gap_index: candidate.gap_index,
+            });
+        }
+        anchors.sort_by(|a, b| {
+            a.a_secs
+                .partial_cmp(&b.a_secs)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Self { anchors }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+}
+
+fn anchor_eligible(
+    candidate: &PatchAnchorCandidate,
+    policy: &PatchAnchorPolicy,
+    max_slide: f64,
+) -> bool {
+    if candidate.confidence != FillConfidence::High {
+        return false;
+    }
+    if policy.exclude_structure_trusted && candidate.structure_trusted {
+        return false;
+    }
+    let min_score = candidate.pre_correlation.min(candidate.post_correlation);
+    if min_score < f64::from(policy.min_correlation) {
+        return false;
+    }
+    if candidate.align_adjustment_secs.abs() > max_slide {
+        return false;
+    }
+    true
+}
+
+/// Interpolate offset at `gap_time_on_a_secs` from patch + clip anchors.
+pub fn interpolate_anchored_offset_secs(
+    alignment: &AlignmentReport,
+    gap_time_on_a_secs: f64,
+    patch_anchors: &PatchAnchorTable,
+) -> Option<f64> {
+    let mut points = clip_anchor_points(alignment);
+    for anchor in &patch_anchors.anchors {
+        points.push((anchor.a_secs, anchor.offset_secs));
+    }
+    if points.is_empty() {
+        return None;
+    }
+    points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    dedupe_anchor_points(&mut points);
+    Some(interpolate_piecewise_linear(&points, gap_time_on_a_secs))
+}
+
+fn dedupe_anchor_points(points: &mut Vec<(f64, f64)>) {
+    points.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
+}
+
+fn interpolate_piecewise_linear(points: &[(f64, f64)], t: f64) -> f64 {
+    if points.len() == 1 {
+        return points[0].1;
+    }
+    if t <= points[0].0 {
+        return points[0].1;
+    }
+    let last = points.len() - 1;
+    if t >= points[last].0 {
+        return points[last].1;
+    }
+    for window in points.windows(2) {
+        let (t0, o0) = window[0];
+        let (t1, o1) = window[1];
+        if t >= t0 && t <= t1 {
+            if (t1 - t0).abs() < f64::EPSILON {
+                return o0;
+            }
+            let frac = (t - t0) / (t1 - t0);
+            return o0 + frac * (o1 - o0);
+        }
+    }
+    points[last].1
+}
+
+/// Whether a skipped gap may be retried in pass 2 of `anchored_retry`.
+pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
+    matches!(
+        reason,
+        GapPatchSkipReason::BoundaryAlignmentFailed
+            | GapPatchSkipReason::CorrelationBelowThreshold { .. }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use clip_sync::{AlignmentReport, AlignmentResult, ClipLabel, ClipMatch};
+
+    use super::*;
+
+    fn patch_only_alignment() -> AlignmentReport {
+        AlignmentReport::from(&AlignmentResult {
+            clips: vec![],
+            start_aligned: false,
+            end_aligned: None,
+            recommended_offset_secs: Some(0.0),
+            offsets_consistent: true,
+            offset_drift_secs: None,
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+            offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
+            end_clip_anchor: None,
+        })
+    }
+
+    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> AlignmentReport {
+        AlignmentReport::from(&AlignmentResult {
+            clips: vec![
+                ClipMatch {
+                    label: ClipLabel::Start,
+                    window_start_secs: 0.0,
+                    window_end_secs: 50.0,
+                    aligned: true,
+                    offset_secs: Some(start_offset),
+                    confidence: 0.95,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+                ClipMatch {
+                    label: ClipLabel::End,
+                    window_start_secs: 50.0,
+                    window_end_secs: 100.0,
+                    aligned: true,
+                    offset_secs: Some(end_offset),
+                    confidence: 0.95,
+                    video_a_decode_skips: 0,
+                    video_b_decode_skips: 0,
+                    repetition: None,
+                    video_b_window_start_secs: None,
+                    video_b_window_end_secs: None,
+                },
+            ],
+            start_aligned: true,
+            end_aligned: Some(true),
+            recommended_offset_secs: Some(start_offset),
+            offsets_consistent: false,
+            offset_drift_secs: Some(end_offset - start_offset),
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+            offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
+            end_clip_anchor: None,
+        })
+    }
+
+    fn candidate(gap_index: usize, a_mid: f64, base: f64, slide: f64) -> PatchAnchorCandidate {
+        PatchAnchorCandidate {
+            gap_index,
+            a_start_secs: a_mid - 0.5,
+            a_end_secs: a_mid + 0.5,
+            base_gap_offset_secs: base,
+            align_adjustment_secs: slide,
+            pre_correlation: 0.9,
+            post_correlation: 0.9,
+            structure_trusted: false,
+            confidence: FillConfidence::High,
+        }
+    }
+
+    fn policy() -> PatchAnchorPolicy {
+        PatchAnchorPolicy {
+            min_correlation: 0.35,
+            exclude_structure_trusted: true,
+            max_adjustment_frac: 0.9,
+            border_search_secs: 10.0,
+        }
+    }
+
+    #[test]
+    fn table_excludes_marginal_and_structure_trusted() {
+        let mut marginal = candidate(0, 10.0, 0.0, 0.0);
+        marginal.confidence = FillConfidence::Marginal;
+        let mut trusted = candidate(1, 20.0, 0.0, 0.0);
+        trusted.structure_trusted = true;
+        let table = PatchAnchorTable::from_candidates(
+            &[marginal, trusted, candidate(2, 30.0, 0.0, 0.5)],
+            &policy(),
+        );
+        assert_eq!(table.anchors.len(), 1);
+        assert!((table.anchors[0].offset_secs - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn interpolate_between_two_patch_anchors() {
+        let alignment = patch_only_alignment();
+        let table = PatchAnchorTable::from_candidates(
+            &[candidate(0, 10.0, 0.0, 0.0), candidate(1, 30.0, 0.0, 2.0)],
+            &policy(),
+        );
+        let mid = interpolate_anchored_offset_secs(&alignment, 20.0, &table).unwrap();
+        assert!((mid - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn extrapolation_clamps_to_endpoints() {
+        let alignment = patch_only_alignment();
+        let table = PatchAnchorTable::from_candidates(&[candidate(0, 50.0, 0.0, 1.0)], &policy());
+        let before = interpolate_anchored_offset_secs(&alignment, 5.0, &table).unwrap();
+        let after = interpolate_anchored_offset_secs(&alignment, 95.0, &table).unwrap();
+        assert!((before - 1.0).abs() < 1e-9);
+        assert!((after - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn merges_clip_endpoints_with_patch_anchors() {
+        let alignment = two_clip_alignment(0.0, 2.0);
+        let table = PatchAnchorTable::from_candidates(&[candidate(0, 50.0, 0.0, 1.0)], &policy());
+        let late = interpolate_anchored_offset_secs(&alignment, 72.0, &table).unwrap();
+        assert!(late > 1.0 && late < 2.0, "late={late}");
+    }
+}

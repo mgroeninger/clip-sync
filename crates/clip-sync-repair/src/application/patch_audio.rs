@@ -14,16 +14,19 @@ use crate::application::patch_region::{
 };
 use crate::application::error::RepairError;
 use crate::domain::{
-    fill_offset::fill_offset_secs,
+    fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     fill_mode::FillMode,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
+    patch_anchor::{
+        is_retryable_patch_skip, PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
+    },
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
-    FillOffsetMode, Gap, GapReport,
+    Gap, GapReport,
 };
 
 pub struct PatchAudioResult {
@@ -102,6 +105,12 @@ pub struct PatchAudioRequest {
     pub fill_absolute_floor: f32,
     /// Fit mode repeat-at-seam penalty weight (Phase D; 0 = off).
     pub fill_repeat_penalty_weight: f64,
+    /// Minimum seam score for a pass-1 patch to become an offset anchor.
+    pub fill_anchor_min_correlation: f32,
+    /// Exclude structure-trusted gate patches from the anchor table.
+    pub fill_anchor_exclude_structure_trusted: bool,
+    /// Max `|align_adjustment|` as a fraction of `fill_border_search_secs` for anchors.
+    pub fill_anchor_max_adjustment_frac: f64,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -242,11 +251,26 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 region,
                 &request,
                 &region_ctx,
+                AnchoredRetryPass::First,
+                None,
             );
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
                 patches.push(patch);
             }
+        }
+
+        if request.fill_offset_mode == FillOffsetMode::AnchoredRetry {
+            run_anchored_retry_pass(
+                self.progress,
+                &mut patches,
+                &mut region_results,
+                &plan.regions,
+                &request,
+                &region_ctx,
+                &b_samples_full,
+                &a_pcm,
+            );
         }
 
         // Step 9: Apply patches to A samples.
@@ -332,6 +356,125 @@ fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     match mode {
         FillOffsetMode::Recommended => "recommended",
         FillOffsetMode::Interpolated => "interpolated",
+        FillOffsetMode::Anchored => "anchored",
+        FillOffsetMode::AnchoredRetry => "anchored_retry",
+    }
+}
+
+fn patch_anchor_policy(request: &PatchAudioRequest) -> PatchAnchorPolicy {
+    PatchAnchorPolicy {
+        min_correlation: request.fill_anchor_min_correlation,
+        exclude_structure_trusted: request.fill_anchor_exclude_structure_trusted,
+        max_adjustment_frac: request.fill_anchor_max_adjustment_frac,
+        border_search_secs: request.fill_border_search_secs,
+    }
+}
+
+fn build_patch_anchor_candidates(
+    request: &PatchAudioRequest,
+    regions: &[FillRegion],
+    region_results: &[(f64, f64, RegionPatchOutcome)],
+) -> Vec<PatchAnchorCandidate> {
+    regions
+        .iter()
+        .zip(region_results.iter())
+        .enumerate()
+        .filter_map(|(gap_index, (region, (_, _, outcome)))| {
+            let RegionPatchOutcome::Patched {
+                pre_correlation,
+                post_correlation,
+                align_adjustment_secs,
+                structure_trusted,
+                confidence,
+                ..
+            } = outcome
+            else {
+                return None;
+            };
+            let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
+            let base_gap_offset_secs = resolve_gap_offset_secs(
+                &request.report.alignment,
+                request.fill_offset_mode,
+                gap_time_on_a,
+                None,
+                AnchoredRetryPass::First,
+            )
+            .unwrap_or(region.b_start_secs - region.a_start_secs);
+            Some(PatchAnchorCandidate {
+                gap_index,
+                a_start_secs: region.a_start_secs,
+                a_end_secs: region.a_end_secs,
+                base_gap_offset_secs,
+                align_adjustment_secs: *align_adjustment_secs,
+                pre_correlation: *pre_correlation,
+                post_correlation: *post_correlation,
+                structure_trusted: *structure_trusted,
+                confidence: *confidence,
+            })
+        })
+        .collect()
+}
+
+fn run_anchored_retry_pass(
+    progress: &dyn ProgressReporter,
+    patches: &mut Vec<RegionPatch>,
+    region_results: &mut [(f64, f64, RegionPatchOutcome)],
+    regions: &[FillRegion],
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
+    b_samples_full: &[i16],
+    a_pcm: &MultiChannelPcm,
+) {
+    let candidates = build_patch_anchor_candidates(request, regions, region_results);
+    let table = PatchAnchorTable::from_candidates(&candidates, &patch_anchor_policy(request));
+    if table.is_empty() {
+        return;
+    }
+
+    let retry_indices: Vec<usize> = region_results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, _, outcome))| {
+            if let RegionPatchOutcome::Skipped(reason) = outcome {
+                is_retryable_patch_skip(reason).then_some(index)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if retry_indices.is_empty() {
+        return;
+    }
+
+    progress.phase_verbose(&format!(
+        "  anchored retry: {} gap(s) using {} offset anchor(s)",
+        retry_indices.len(),
+        table.anchors.len()
+    ));
+
+    for index in retry_indices {
+        let region = &regions[index];
+        let gap_num = index + 1;
+        progress.phase_verbose(&format!(
+            "  anchored retry gap {gap_num}: A {}",
+            format_time_range(region.a_start_secs, region.a_end_secs)
+        ));
+        let (patch, outcome) = prepare_region_patch(
+            progress,
+            b_samples_full,
+            a_pcm,
+            region,
+            request,
+            ctx,
+            AnchoredRetryPass::Second,
+            Some(&table),
+        );
+        if matches!(outcome, RegionPatchOutcome::Patched { .. }) {
+            region_results[index].2 = outcome;
+            if let Some(patch) = patch {
+                patches.push(patch);
+            }
+        }
     }
 }
 
@@ -613,6 +756,8 @@ fn prepare_region_patch(
     region: &FillRegion,
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
+    anchored_retry_pass: AnchoredRetryPass,
+    patch_anchors: Option<&PatchAnchorTable>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
     let &RegionPatchContext {
         channels,
@@ -652,8 +797,14 @@ fn prepare_region_patch(
     );
 
     let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
-    let gap_offset_secs = fill_offset_secs(&request.report.alignment, fill_offset_mode, gap_time_on_a)
-        .unwrap_or(region.b_start_secs - region.a_start_secs);
+    let gap_offset_secs = resolve_gap_offset_secs(
+        &request.report.alignment,
+        fill_offset_mode,
+        gap_time_on_a,
+        patch_anchors,
+        anchored_retry_pass,
+    )
+    .unwrap_or(region.b_start_secs - region.a_start_secs);
 
     let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
@@ -673,7 +824,11 @@ fn prepare_region_patch(
     let refined_b_end_secs = refined_a_end_secs + gap_offset_secs;
     let a_start_secs = refined_a_start_secs;
 
-    if fill_offset_mode != crate::domain::FillOffsetMode::Recommended {
+    if !matches!(
+        fill_offset_mode,
+        FillOffsetMode::Recommended
+            | FillOffsetMode::AnchoredRetry if anchored_retry_pass == AnchoredRetryPass::First
+    ) {
         tracing::debug!(
             a_start_secs,
             gap_offset_secs,

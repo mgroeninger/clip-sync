@@ -2,6 +2,8 @@
 
 use clip_sync::{AlignmentReport, ClipLabelReport};
 
+use crate::domain::patch_anchor::{interpolate_anchored_offset_secs, PatchAnchorTable};
+
 /// How patch maps each gap on A to B's timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,6 +13,18 @@ pub enum FillOffsetMode {
     Recommended,
     /// Linearly interpolate between start-clip and end-clip offsets by position on A.
     Interpolated,
+    /// Interpolate from patch anchors (+ clip endpoints). Requires a [`PatchAnchorTable`].
+    Anchored,
+    /// Pass 1: clip-based offset; pass 2: retry failures with [`FillOffsetMode::Anchored`].
+    AnchoredRetry,
+}
+
+/// Which pass of [`FillOffsetMode::AnchoredRetry`] is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchoredRetryPass {
+    #[default]
+    First,
+    Second,
 }
 
 /// Minimum |end − start| clip offset drift before interpolation differs from a single offset.
@@ -22,14 +36,65 @@ pub fn fill_offset_secs(
     mode: FillOffsetMode,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
+    resolve_gap_offset_secs(alignment, mode, gap_time_on_a_secs, None, AnchoredRetryPass::First)
+}
+
+/// Resolve per-gap B offset, optionally using patch anchors from a prior pass.
+pub fn resolve_gap_offset_secs(
+    alignment: &AlignmentReport,
+    mode: FillOffsetMode,
+    gap_time_on_a_secs: f64,
+    patch_anchors: Option<&PatchAnchorTable>,
+    anchored_retry_pass: AnchoredRetryPass,
+) -> Option<f64> {
     match mode {
         FillOffsetMode::Recommended => alignment.recommended_offset_secs,
-        FillOffsetMode::Interpolated => interpolated_offset_secs(alignment, gap_time_on_a_secs)
-            .or(alignment.recommended_offset_secs),
+        FillOffsetMode::Interpolated => clip_only_offset_secs(alignment, gap_time_on_a_secs),
+        FillOffsetMode::Anchored => anchored_offset_secs(alignment, gap_time_on_a_secs, patch_anchors),
+        FillOffsetMode::AnchoredRetry => match anchored_retry_pass {
+            AnchoredRetryPass::First => clip_only_offset_secs(alignment, gap_time_on_a_secs),
+            AnchoredRetryPass::Second => {
+                anchored_offset_secs(alignment, gap_time_on_a_secs, patch_anchors)
+            }
+        },
     }
 }
 
-fn interpolated_offset_secs(
+fn clip_only_offset_secs(
+    alignment: &AlignmentReport,
+    gap_time_on_a_secs: f64,
+) -> Option<f64> {
+    interpolated_offset_secs(alignment, gap_time_on_a_secs)
+        .or(alignment.recommended_offset_secs)
+}
+
+fn anchored_offset_secs(
+    alignment: &AlignmentReport,
+    gap_time_on_a_secs: f64,
+    patch_anchors: Option<&PatchAnchorTable>,
+) -> Option<f64> {
+    if let Some(table) = patch_anchors.filter(|t| !t.is_empty()) {
+        if let Some(offset) = interpolate_anchored_offset_secs(alignment, gap_time_on_a_secs, table)
+        {
+            return Some(offset);
+        }
+    }
+    clip_only_offset_secs(alignment, gap_time_on_a_secs)
+}
+
+/// Clip start/end anchors for piecewise offset curves (`(a_mid_secs, offset_secs)`).
+pub(crate) fn clip_anchor_points(alignment: &AlignmentReport) -> Vec<(f64, f64)> {
+    let mut points = Vec::new();
+    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipLabelReport::Start) {
+        points.push((anchor, offset));
+    }
+    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipLabelReport::End) {
+        points.push((anchor, offset));
+    }
+    points
+}
+
+pub(crate) fn interpolated_offset_secs(
     alignment: &AlignmentReport,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
@@ -67,6 +132,8 @@ fn clip_offset_and_anchor(
 #[cfg(test)]
 mod tests {
     use clip_sync::{AlignmentReport, AlignmentResult, ClipLabel, ClipLabelReport, ClipMatch};
+
+    use crate::domain::patch_anchor::{PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable};
 
     use super::*;
 
@@ -158,5 +225,68 @@ mod tests {
         alignment.recommended_offset_secs = Some(-3.0);
         let offset = fill_offset_secs(&alignment, FillOffsetMode::Interpolated, 100.0).unwrap();
         assert!((offset - (-3.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn anchored_retry_first_pass_matches_clip_only() {
+        let alignment = two_clip_alignment(0.0, 1.0);
+        let clip = resolve_gap_offset_secs(
+            &alignment,
+            FillOffsetMode::AnchoredRetry,
+            75.0,
+            None,
+            AnchoredRetryPass::First,
+        )
+        .unwrap();
+        let interpolated = fill_offset_secs(&alignment, FillOffsetMode::Interpolated, 75.0).unwrap();
+        assert!((clip - interpolated).abs() < 1e-9);
+    }
+
+    #[test]
+    fn anchored_uses_patch_table() {
+        let alignment = AlignmentReport::from(&AlignmentResult {
+            clips: vec![],
+            start_aligned: false,
+            end_aligned: None,
+            recommended_offset_secs: Some(0.0),
+            offsets_consistent: true,
+            offset_drift_secs: None,
+            start_overlap: None,
+            high_rate_refinement: None,
+            offset_verification: None,
+            offset_ambiguous_mod_secs: None,
+            alignment_mode_used: None,
+            query_localization: None,
+            end_clip_anchor: None,
+        });
+        let policy = PatchAnchorPolicy {
+            min_correlation: 0.35,
+            exclude_structure_trusted: true,
+            max_adjustment_frac: 0.9,
+            border_search_secs: 30.0,
+        };
+        let table = PatchAnchorTable::from_candidates(
+            &[PatchAnchorCandidate {
+                gap_index: 0,
+                a_start_secs: 9.5,
+                a_end_secs: 10.5,
+                base_gap_offset_secs: 0.0,
+                align_adjustment_secs: 1.5,
+                pre_correlation: 0.9,
+                post_correlation: 0.9,
+                structure_trusted: false,
+                confidence: crate::domain::FillConfidence::High,
+            }],
+            &policy,
+        );
+        let offset = resolve_gap_offset_secs(
+            &alignment,
+            FillOffsetMode::Anchored,
+            50.0,
+            Some(&table),
+            AnchoredRetryPass::First,
+        )
+        .unwrap();
+        assert!((offset - 1.5).abs() < 1e-9);
     }
 }

@@ -133,6 +133,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     fill_marginal_margin: config.repair.fill_marginal_margin,
                     fill_absolute_floor: config.repair.fill_absolute_floor,
                     fill_repeat_penalty_weight: config.repair.fill_repeat_penalty_weight,
+                    fill_anchor_min_correlation: config.repair.fill_anchor_min_correlation,
+                    fill_anchor_exclude_structure_trusted: config
+                        .repair
+                        .fill_anchor_exclude_structure_trusted,
+                    fill_anchor_max_adjustment_frac: config.repair.fill_anchor_max_adjustment_frac,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,

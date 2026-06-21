@@ -359,6 +359,9 @@ fn patch_request_with_options(
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
         fill_repeat_penalty_weight: options.fill_repeat_penalty_weight,
+        fill_anchor_min_correlation: min_fill_correlation,
+        fill_anchor_exclude_structure_trusted: true,
+        fill_anchor_max_adjustment_frac: 0.9,
     }
 }
 
@@ -1509,6 +1512,37 @@ fn patch_audio_fit_default_repeat_penalty_patches_clean_fixture() {
             ..
         } => {}
         other => panic!("expected high-confidence patch with default repeat penalty, got {other:?}"),
+    }
+}
+
+#[test]
+fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(
+            fixture.path_a,
+            fixture.path_b,
+            stereo_identical_compat(SAMPLE_RATE),
+        )
+    };
+
+    let opts = PatchTestOptions {
+        fill_offset_mode: FillOffsetMode::AnchoredRetry,
+        ..fast_fit_patch_options()
+    };
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, opts),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            confidence: FillConfidence::High,
+            ..
+        } => {}
+        other => panic!("expected anchored_retry to patch clean gap, got {other:?}"),
     }
 }
 
