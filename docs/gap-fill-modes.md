@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Planned:** [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md) (offset map from successful patches).
+**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 
@@ -15,7 +15,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | What does extension do in **fit**? | **Proactive joint grid** over gap start/end (when flags are on), each cell runs unified B placement. |
 | What does extension do in **gate**? | **Reactive retries** after waveform failure: extend end, then extend start, re-score. |
 | Why is repair slow? | Often the **fit slow path**: baseline not **High** → ~13×13 boundary grid × unified search with large `fill_border_search_secs`. |
-| Patch anchors? | **Not shipped yet** — planned `anchored_retry` uses easy-gap `slide=` to re-map hard gaps; works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors-planned). |
+| Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
 
 ---
 
@@ -128,9 +128,9 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 
 ---
 
-## Patch anchors (planned)
+## Patch anchors
 
-**Status:** draft — [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md). Not in the binary yet.
+**Status:** `anchored_retry` shipped (2026-06-20). See [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md).
 
 Some runs patch several gaps cleanly (`slide=+0.35s` in verbose) while others fail seam search because the **nominal B map** from alignment is off by hundreds of ms at that point on A — the true dropout sits near the edge of `fill_border_search_secs`, not because `fit` or `gate` chose wrong.
 
@@ -152,7 +152,7 @@ Pass 2 (anchored_retry): retry failed gaps with improved gap_offset_secs
 | Planned anchor sources | `confidence: High` only (exclude Marginal) | Exclude `structure_trusted` (waveform not measured) |
 | Today’s drift knob | `--fill-offset interpolated` (2 clip anchors) | same |
 
-Until this ships, drift-heavy pairs should try **`--fill-offset interpolated`** first. When anchors land, config will add `fill_offset_mode = "anchored_retry"` (name TBD).
+Until this ships, drift-heavy pairs should try **`--fill-offset interpolated`** first. For empirical anchors from easy gaps, use **`fill_offset_mode = "anchored_retry"`** or `--fill-offset anchored-retry`.
 
 ---
 
@@ -201,7 +201,7 @@ clip-sync-repair a.mkv b.mkv --mux out.mp4 `
 **Drift + fit** (common long-form example):
 
 ```powershell
-clip-sync-repair "source.mp4" "recording.mkv" `
+clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   --mux repaired.mp4 `
   --fill-offset interpolated `
   --min-fill-correlation 0.35 `

@@ -73,7 +73,7 @@ B extract geometry already includes signature context on both sides (`patch_audi
   - **Same pause pattern, different levels:** A and B share active/silent bool pattern but B dropout offset by N bins; energy differs in pre-gap loudness ramp.
   - **Multiple pauses:** Two similar pauses within `fill_border_search_secs`; only one aligns with A’s pre-gap energy contour.
   - **Flat envelope:** Steady speech/drone — energy and bool should agree; document `auto` fallback to bool.
-- [ ] Record baseline: run existing `patch_audio_integration` with verbose; note structure pre/post on licensed-media–like pair if available (manual checklist row in plan appendix).
+- [ ] Record baseline: run existing `patch_audio_integration` with verbose; note structure pre/post on a drift-heavy long-form pair if available (manual checklist row in plan appendix).
 - [ ] Define acceptance deltas: energy mode locates correct offset in synthetic cases where bool picks wrong candidate.
 
 ### Phase 1 — Energy bins + timeline
@@ -148,7 +148,7 @@ Existing keys unchanged: `fill_mode`, `fill_fit_*_weight`, `min_fill_correlation
 | Lib | `match_gap_fill_unified_in_b` energy path; `structure_fine_polish_frames` unchanged |
 | Integration | `patch_audio_integration.rs` — duplicate critical cases under `gap_signature_mode = energy` |
 | Regression | Full integration suite with `bool` (CI default in `repair.toml` until Phase 3) |
-| Manual | licensed-media–like pair: `-v` compare structure pre/post, skip count vs bool baseline |
+| Manual | Drift-heavy long-form pair: `-v` compare structure pre/post, skip count vs bool baseline |
 
 **CI:** Run patch integration with `gap_signature_mode = bool` through Phase 2; add parallel `energy` job or matrix row in Phase 2.
 

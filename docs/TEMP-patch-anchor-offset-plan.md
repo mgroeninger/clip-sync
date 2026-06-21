@@ -1,6 +1,8 @@
 # Temporary plan: patch-anchor offset map
 
-> **Status:** Draft (2026-06-20). Motivated by runs where **some** gaps patch cleanly (`slide=+0.35s`, high seam scores) while **others** fail seam search — often because the nominal B map from alignment is hundreds of ms off at that point on A, pushing the true dropout to the edge of `fill_border_search_secs`. Successful patches already measure local residual offset (`align_adjustment_secs`) but do not feed later gaps.
+> **Status:** Draft (2026-06-20). **Phases 1–2 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, config knobs. Phase 0 drift fixture + Phase 3 docs tuning remain open.
+>
+> Motivated by runs where **some** gaps patch cleanly (`slide=+0.35s`, high seam scores) while **others** fail seam search — often because the nominal B map from alignment is hundreds of ms off at that point on A, pushing the true dropout to the edge of `fill_border_search_secs`. Successful patches already measure local residual offset (`align_adjustment_secs`) but do not feed later gaps.
 >
 > Archive to `docs/archive/patch-anchor-offset-plan.md` when shipped.
 
@@ -95,7 +97,7 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 
 **Intent:** Quantify how often failures correlate with large `|align_adjustment|` on nearby successes.
 
-- [ ] Manual / script checklist on licensed-media–like pair: list patched `slide=` per gap vs skipped gap times; note if skipped gaps sit between patches with consistent slide.
+- [ ] Manual / script checklist on a drift-heavy long-form pair: list patched `slide=` per gap vs skipped gap times; note if skipped gaps sit between patches with consistent slide.
 - [ ] Synthetic integration fixture: global offset −3 s, **local drift** +0.5 s mid-file (B timeline stretched vs A); 3 easy gaps patch with +0.5 s slide, 4th fails with `recommended` but would pass with anchored offset.
 - [ ] Document baseline skip count with `recommended`, `interpolated`, and theoretical anchored (manual offset injection in test).
 
@@ -176,7 +178,7 @@ CLI: `--fill-offset anchored-retry` (clap value enum extension).
 | Integration | Drift fixture two-pass retry |
 | Integration | Pass-1 success unchanged when mode `recommended` |
 | Integration | No pass 2 when zero eligible anchors |
-| Manual | licensed media: compare skip count `recommended` vs `anchored-retry` |
+| Manual | Long-form drift pair: compare skip count `recommended` vs `anchored-retry` |
 
 ---
 

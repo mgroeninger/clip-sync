@@ -277,7 +277,7 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 **Example — drift + fit (e.g. long pairs with ~1 s clip drift):**
 
 ```powershell
-clip-sync-repair "source.mp4" "recording.mkv" `
+clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   --mux repaired.mp4 `
   --fill-offset interpolated `
   --min-fill-correlation 0.35 `
