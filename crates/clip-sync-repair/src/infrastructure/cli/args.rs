@@ -92,8 +92,18 @@ pub struct Args {
     pub min_fill_correlation: Option<f32>,
 
     /// Override: maximum B fill slide during structure match (seconds) [default: 0.5].
+    /// Under `fill_mode = fit`, structure search uses `fill_border_search_secs`; this key is
+    /// reserved for future waveform-slide tuning (not the fine-polish loop).
     #[arg(long, value_name = "SECS")]
     pub max_fill_align_adjust_secs: Option<f64>,
+
+    /// Unified fit scorer: structure term weight (`fill_mode = fit` only) [default: 0.35].
+    #[arg(long, value_name = "N")]
+    pub fill_fit_structure_weight: Option<f64>,
+
+    /// Unified fit scorer: waveform term weight (`fill_mode = fit` only) [default: 0.65].
+    #[arg(long, value_name = "N")]
+    pub fill_fit_waveform_weight: Option<f64>,
 
     /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
     /// [default: 0.35].
@@ -287,6 +297,8 @@ mod tests {
             &format!("[default: {}]", defaults.repair.absolute_silence_rms as u32),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
             &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
+            &format!("[default: {}]", defaults.repair.fill_fit_structure_weight),
+            &format!("[default: {}]", defaults.repair.fill_fit_waveform_weight),
             &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
             "[default: fit]",

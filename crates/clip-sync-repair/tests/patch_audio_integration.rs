@@ -8,6 +8,8 @@ use clip_sync::{
 };
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 use clip_sync_repair::domain::policies;
+use clip_sync_repair::domain::FillConfidence;
+use clip_sync_repair::domain::FillMode;
 use clip_sync_repair::domain::GapPatchSkipReason;
 use clip_sync_repair::domain::GapPatchStatus;
 use clip_sync_repair::domain::FillOffsetMode;
@@ -120,6 +122,44 @@ fn write_stereo_sine_with_inverted_region(
     writer.finalize().expect("finalize wav");
 }
 
+/// Blend sine samples toward inverted in `[distort_start_secs, distort_end_secs)`.
+/// `mix_inverted = 0` matches A; `1` fully inverts (Pearson ≈ −1).
+fn write_stereo_sine_with_seam_distortion(
+    path: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    distort_start_secs: f64,
+    distort_end_secs: f64,
+    freq: f32,
+    amplitude: f32,
+    mix_inverted: f32,
+) {
+    let spec = WavSpec {
+        channels: CHANNELS,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    let total_frames = u64::from(sample_rate) * u64::from(total_secs);
+    let distort_start = (distort_start_secs * sample_rate as f64) as u64;
+    let distort_end = (distort_end_secs * sample_rate as f64) as u64;
+    let mix = mix_inverted.clamp(0.0, 1.0);
+
+    for frame in 0..total_frames {
+        let s = sine_sample(sample_rate, frame, freq, amplitude);
+        let sample = if frame >= distort_start && frame < distort_end {
+            let blended = s as f32 * (1.0 - 2.0 * mix);
+            blended.round() as i16
+        } else {
+            s
+        };
+        writer.write_sample(sample).expect("write L");
+        writer.write_sample(sample).expect("write R");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
 fn rms_region(samples: &[i16], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
     let start = (start_secs * sample_rate as f64) as usize * channels as usize;
     let end = (end_secs * sample_rate as f64) as usize * channels as usize;
@@ -207,7 +247,17 @@ struct PatchTestOptions {
     short_gap_mean_correlation_secs: f64,
     max_fill_align_adjustment_secs: f64,
     partial_structure_waveform_soften: f64,
-    fill_mode: clip_sync_repair::domain::FillMode,
+    fill_mode: FillMode,
+    fill_marginal_margin: f32,
+    fill_absolute_floor: f32,
+    fill_fit_structure_weight: f64,
+    fill_fit_waveform_weight: f64,
+    fill_border_search_secs: f64,
+    fill_align_margin_secs: f64,
+    gap_signature_context_secs: f64,
+    fill_length_slack_secs: f64,
+    gap_end_extend_max_ms: u64,
+    gap_end_extend_step_ms: u64,
 }
 
 impl Default for PatchTestOptions {
@@ -222,8 +272,33 @@ impl Default for PatchTestOptions {
             short_gap_mean_correlation_secs: 2.0,
             max_fill_align_adjustment_secs: 1.0,
             partial_structure_waveform_soften: 0.85,
-            fill_mode: clip_sync_repair::domain::FillMode::Gate,
+            fill_mode: FillMode::Gate,
+            fill_marginal_margin: 0.08,
+            fill_absolute_floor: 0.12,
+            fill_fit_structure_weight: 0.35,
+            fill_fit_waveform_weight: 0.65,
+            fill_border_search_secs: 30.0,
+            fill_align_margin_secs: 1.0,
+            gap_signature_context_secs: 3.0,
+            fill_length_slack_secs: 5.0,
+            gap_end_extend_max_ms: 500,
+            gap_end_extend_step_ms: 20,
         }
+    }
+}
+
+/// Tight haystack + small extension grid so fit-mode integration stays fast.
+fn fast_fit_patch_options() -> PatchTestOptions {
+    PatchTestOptions {
+        fill_mode: FillMode::Fit,
+        fill_border_search_secs: 0.0,
+        fill_align_margin_secs: 0.1,
+        gap_signature_context_secs: 1.0,
+        fill_length_slack_secs: 0.0,
+        gap_end_extend_max_ms: 40,
+        gap_end_extend_step_ms: 40,
+        short_gap_one_strong_seam_fallback: false,
+        ..Default::default()
     }
 }
 
@@ -255,15 +330,15 @@ fn patch_request_with_options(
         normalize_window_secs,
         max_fill_gain_db: 12.0,
         min_fill_correlation,
-        fill_align_margin_secs: 1.0,
+        fill_align_margin_secs: options.fill_align_margin_secs,
         max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
-        fill_border_search_secs: 30.0,
+        fill_border_search_secs: options.fill_border_search_secs,
         min_border_discovery_secs: 2.0,
         border_standoff_secs: 0.0,
         short_gap_mean_correlation_secs: options.short_gap_mean_correlation_secs,
-        fill_length_slack_secs: 5.0,
+        fill_length_slack_secs: options.fill_length_slack_secs,
         fill_seam_search_secs: 0.25,
-        gap_signature_context_secs: 3.0,
+        gap_signature_context_secs: options.gap_signature_context_secs,
         gap_signature_bin_ms: 50,
         min_structure_match_score: 0.55,
         strong_structure_trust: options.strong_structure_trust,
@@ -273,14 +348,14 @@ fn patch_request_with_options(
         fill_offset_mode: options.fill_offset_mode,
         gap_end_extend_on_post_seam_fail: options.gap_end_extend_on_post_seam_fail,
         gap_start_extend_on_pre_seam_fail: options.gap_start_extend_on_pre_seam_fail,
-        gap_end_extend_max_ms: 500,
-        gap_end_extend_step_ms: 20,
+        gap_end_extend_max_ms: options.gap_end_extend_max_ms,
+        gap_end_extend_step_ms: options.gap_end_extend_step_ms,
         short_gap_one_strong_seam_fallback: options.short_gap_one_strong_seam_fallback,
         fill_mode: options.fill_mode,
-        fill_fit_structure_weight: 0.35,
-        fill_fit_waveform_weight: 0.65,
-        fill_marginal_margin: 0.08,
-        fill_absolute_floor: 0.12,
+        fill_fit_structure_weight: options.fill_fit_structure_weight,
+        fill_fit_waveform_weight: options.fill_fit_waveform_weight,
+        fill_marginal_margin: options.fill_marginal_margin,
+        fill_absolute_floor: options.fill_absolute_floor,
     }
 }
 
@@ -1062,6 +1137,236 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         gap_rms > 100.0,
         "extended gap should be filled, rms={gap_rms}"
     );
+}
+
+#[test]
+fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
+    const EARLY_GAP_END: f64 = 5.85;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    // Post seam at the early gap end sits inside this inverted band; extending the gap end
+    // moves the seam onto clean B audio (B slide is capped by fast_fit_patch_options).
+    write_stereo_sine_with_inverted_region(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        EARLY_GAP_END - 0.05,
+        GAP_END + 0.10,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = Gap {
+        video_a_start_secs: GAP_START,
+        video_a_end_secs: EARLY_GAP_END,
+        video_b_start_secs: Some(GAP_START),
+        video_b_end_secs: Some(EARLY_GAP_END),
+        b_has_energy: true,
+    };
+
+    let report = make_report(
+        path_a.clone(),
+        path_b.clone(),
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![gap],
+        ..report
+    };
+
+    let mut no_extend = fast_fit_patch_options();
+    no_extend.gap_end_extend_on_post_seam_fail = false;
+    no_extend.gap_start_extend_on_pre_seam_fail = false;
+
+    let skipped = run_patch(
+        patch_request_with_options(report.clone(), false, 5.0, 0.35, no_extend),
+        10,
+    );
+    assert_eq!(
+        skipped.summary.patched_count, 0,
+        "without boundary search the weak post seam should skip, got {:?}",
+        skipped.summary.gaps
+    );
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, fast_fit_patch_options()),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "fit joint boundary search should recover weak post seam, got {:?}",
+        patched.summary.gaps
+    );
+
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            gap_end_adjust_frames,
+            ..
+        } => {
+            assert!(
+                *gap_end_adjust_frames > 0,
+                "expected gap end extension via joint search, got {gap_end_adjust_frames}"
+            );
+        }
+        other => panic!("expected patched gap, got {other:?}"),
+    }
+
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    assert!(
+        gap_rms > 100.0,
+        "extended gap should be filled, rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    // Distort B's post-gap border (the waveform post template window starts at gap end).
+    write_stereo_sine_with_seam_distortion(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_END,
+        GAP_END + 0.25,
+        440.0,
+        16_000.0,
+        0.49,
+    );
+
+    let report = make_report(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..report
+    };
+
+    let mut marginal_opts = fast_fit_patch_options();
+    marginal_opts.gap_end_extend_on_post_seam_fail = false;
+    marginal_opts.gap_start_extend_on_pre_seam_fail = false;
+
+    // Threshold just above measured post seam (~0.99) so the patch lands in the warn tier.
+    const MARGINAL_THRESHOLD: f32 = 0.999;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, MARGINAL_THRESHOLD, marginal_opts),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "marginal seam scores should still patch, got {:?}",
+        patched.summary.gaps
+    );
+    assert_eq!(
+        patched.summary.patched_marginal_count, 1,
+        "expected one marginal patch, got {:?}",
+        patched.summary
+    );
+
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            confidence: FillConfidence::Marginal,
+            structure_trusted: false,
+            ..
+        } => {
+            let min_score = pre_correlation.min(*post_correlation);
+            assert!(
+                min_score < f64::from(MARGINAL_THRESHOLD)
+                    && min_score >= f64::from(MARGINAL_THRESHOLD - 0.08),
+                "expected marginal band scores, got pre={pre_correlation} post={post_correlation}"
+            );
+        }
+        other => panic!("expected marginal patched gap, got {other:?}"),
+    }
+
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    assert!(
+        gap_rms > 100.0,
+        "marginal patch should still splice audio, rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_fit_mode_high_confidence_on_clean_fixture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_gap(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+
+    let report = make_report(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..report
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, fast_fit_patch_options()),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    assert_eq!(patched.summary.patched_marginal_count, 0);
+
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
+            ..
+        } => {
+            assert_eq!(*gap_start_adjust_frames, 0);
+            assert_eq!(*gap_end_adjust_frames, 0);
+        }
+        other => panic!("expected high-confidence patched gap, got {other:?}"),
+    }
 }
 
 #[test]

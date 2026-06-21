@@ -279,6 +279,12 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(mode) = args.fill_mode {
         config.repair.fill_mode = mode;
     }
+    if let Some(w) = args.fill_fit_structure_weight {
+        config.repair.fill_fit_structure_weight = w;
+    }
+    if let Some(w) = args.fill_fit_waveform_weight {
+        config.repair.fill_fit_waveform_weight = w;
+    }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;
     }
@@ -407,6 +413,10 @@ mod cli_override_tests {
             "0.5",
             "--fill-offset",
             "interpolated",
+            "--fill-fit-structure-weight",
+            "0.4",
+            "--fill-fit-waveform-weight",
+            "0.6",
             "--no-gap-end-extend",
             "--no-gap-start-extend",
             "--no-short-gap-one-strong-seam",
@@ -423,6 +433,8 @@ mod cli_override_tests {
         assert!((config.repair.max_fill_align_adjustment_secs - 0.25).abs() < f64::EPSILON);
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
+        assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);
+        assert!((config.repair.fill_fit_waveform_weight - 0.6).abs() < f64::EPSILON);
         assert!(!config.repair.gap_end_extend_on_post_seam_fail);
         assert!(!config.repair.gap_start_extend_on_pre_seam_fail);
         assert!(!config.repair.short_gap_one_strong_seam_fallback);
