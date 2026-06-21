@@ -1,6 +1,6 @@
 # Temporary plan: patch-anchor offset map
 
-> **Status:** Draft (2026-06-20). **Phases 1–4 shipped** (2026-06-20): domain types, `anchored_retry` two-pass, weighted anchors, JSON export, optional search prior. Phase 0 drift fixture remains open. Single-pass `anchored` deferred.
+> **Status:** Draft (2026-06-21). **Phases 1–4 shipped** in `clip-sync-repair`: domain types, `anchored_retry` two-pass, weighted anchors, JSON export, optional search prior. **Phase 0** drift characterization fixture still open. Single-pass `anchored` deferred (enum + resolver only; not wired in `PatchAudio`).
 >
 > Motivated by runs where **some** gaps patch cleanly (`slide=+0.35s`, high seam scores) while **others** fail seam search — often because the nominal B map from alignment is hundreds of ms off at that point on A, pushing the true dropout to the edge of `fill_border_search_secs`. Successful patches already measure local residual offset (`align_adjustment_secs`) but do not feed later gaps.
 >
@@ -18,14 +18,14 @@
 
 | Area | Path | Current state | First phase touched |
 |------|------|---------------|---------------------|
-| Offset map | `domain/fill_offset.rs` | `Recommended` \| `Interpolated` from `AlignmentReport` only | 1 |
-| Per-gap loop | `application/patch_audio.rs` | Collect all `prepare_region_patch` results, **then** splice (pristine `a_pcm` for every gap in pass 1) | 1, 2 |
+| Offset map | `domain/fill_offset.rs`, `domain/patch_anchor.rs` | `Recommended` \| `Interpolated` \| `Anchored` \| `AnchoredRetry`; resolver + anchor table | 1–2 |
+| Per-gap loop | `application/patch_audio.rs` | Pass 1 collect-then-splice; `anchored_retry` pass 2 retries failures on pristine `a_pcm` | 2 |
 | Slide measurement | `application/patch_audio.rs` | `align_adjustment_secs = structure_slide + waveform_slide`; verbose splits both | 1 |
 | Outcomes | `domain/patch_result.rs` | `Patched { align_adjustment_secs, waveform_adjustment_secs, confidence, structure_trusted, … }` | 1 |
 | Fill mode | `domain/fill_mode.rs`, `docs/gap-fill-modes.md` | Default **`fit`** (unified search + marginal tier); `gate` legacy | — (orthogonal) |
 | Unified fit | `domain/gap_fill_fit.rs`, `patch_region.rs` | `match_gap_fill_unified_in_b_with_timeline`; `fill_repeat_penalty_weight` default **0.4** | — |
 | Fill plan | `domain/gap_fill.rs` | Regions in scan order; no patch-order policy | 2 |
-| Config / CLI | `infrastructure/config.rs`, `cli/args.rs` | `fill_offset_mode`, `fill_border_search_secs` (default **10 s**), `fill_mode`, `fill_repeat_penalty_weight` | 1 |
+| Config / CLI | `infrastructure/config.rs`, `cli/args.rs` | `fill_offset_mode`, `fill_anchor_*`, `fill_border_search_secs` (default **10 s**), `fill_mode`, `fill_repeat_penalty_weight` | 2, 4 |
 | Cross-check | `domain/cross_check.rs` | `gap_offset_agreement` (scan-time A/B silence) — orthogonal | — |
 
 ### What a successful patch already tells us
@@ -87,7 +87,7 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 | **Retry scope** | Pass 2: only `Skipped` with `CorrelationBelowThreshold` (structure **or** waveform below floor in fit/gate) or `BoundaryAlignmentFailed` (`StructureAlignmentFailed`). Not `BExtractFailed`, `ZeroLengthGap`, `AlignedSegmentOutOfRange`. Optionally include marginal pass-1 successes for re-centering — defer. |
 | **Search prior (optional)** | Phase 4: soft penalty in `unified_fit_score` for B candidates far from anchor-predicted offset — **fit mode only**; coordinate with `fill_repeat_penalty_weight`. Not required for v1. |
 | **Decode cost** | Pass 2 reuses in-memory `a_pcm` + `b_samples_full` from pass 1 (already decoded once). Re-run `prepare_region_patch` only for retry gaps — no extra full-file decode. |
-| **Reporting** | Verbose: `offset anchor: +0.35s from gap #3` (shipped); JSON: optional `patch_anchors_used` on summary (Phase 4). |
+| **Reporting** | Verbose: `anchored: N offset anchor(s) from gap #…` (pass 1); `offset anchor: +0.35s from gap #3` (pass 2). JSON: `patch.patch_anchors_used` when `anchored_retry` built a non-empty table. |
 
 ---
 
@@ -101,54 +101,57 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 - [ ] Synthetic integration fixture: global offset −3 s, **local drift** +0.5 s mid-file (B timeline stretched vs A); 3 easy gaps patch with +0.5 s slide, 4th fails with `recommended` but would pass with anchored offset.
 - [ ] Document baseline skip count with `recommended`, `interpolated`, and theoretical anchored (manual offset injection in test).
 
+**Code today:** `patch_audio_integration.rs` has `make_drift_alignment` and `patch_audio_interpolated_offset_maps_late_gap_with_drift` (interpolated only). No anchored-retry drift fixture yet.
+
 ### Phase 1 — Anchor types + offset resolver
 
-**Intent:** Domain types and pure functions; no behavior change in production path.
+**Intent:** Domain types and pure functions; resolver usable from tests before `PatchAudio` wiring.
 
-- [ ] `domain/patch_anchor.rs` (new):
+- [x] `domain/patch_anchor.rs`:
   - `PatchOffsetAnchor { a_secs, offset_secs, weight, source_gap_index }`
-  - `PatchAnchorTable::from_outcomes(...)` — filter eligibility rules
-  - `resolve_fill_offset_secs(alignment, mode, gap_time, clip_anchors, patch_anchors) -> Option<f64>`
-- [ ] Extend `FillOffsetMode` with `Anchored` (and reserve `AnchoredRetry` for Phase 2).
-- [ ] `Anchored` resolution order:
-  1. If ≥1 patch anchor: interpolate among patch anchors (+ clip anchors as endpoints if available)
-  2. Else if clip drift: `interpolated_offset_secs`
-  3. Else `recommended_offset_secs`
-- [ ] Unit tests: two patch anchors + query between; extrapolation clamp; empty table → fallback; weighting ignored in v1 (equal weight).
+  - `PatchAnchorCandidate` + `PatchAnchorTable::from_candidates(...)` — eligibility via `PatchAnchorPolicy`
+  - `interpolate_anchored_offset_secs(alignment, gap_time, patch_anchors) -> Option<f64>`
+- [x] `domain/fill_offset.rs`: `resolve_gap_offset_secs(alignment, mode, gap_time, patch_anchors, anchored_retry_pass) -> Option<f64>`; `fill_offset_secs` unchanged for callers without anchors.
+- [x] Extend `FillOffsetMode` with `Anchored` and `AnchoredRetry` (`AnchoredRetryPass` for pass 1 vs 2).
+- [x] `Anchored` / pass-2 `AnchoredRetry` resolution order (`anchored_offset_secs`):
+  1. If ≥1 patch anchor: weighted piecewise interpolation among patch anchors (+ clip anchors as endpoints when present)
+  2. Else clip drift: `interpolated_offset_secs` (or `recommended_offset_secs` fallback)
+- [x] Unit tests (`patch_anchor.rs`, `fill_offset.rs`): two patch anchors + query between; extrapolation clamp; empty table → clip/recommended fallback; marginal + `structure_trusted` excluded; clip endpoints merged with patch anchors; verbose formatting.
 
 ### Phase 2 — Two-pass patch in `PatchAudio`
 
-**Intent:** Pass 1 = current behavior; build anchor table; pass 2 retry failures with `Anchored` offset.
+**Intent:** Pass 1 = current behavior; build anchor table; pass 2 retry failures with anchored offset.
 
-- [ ] `PatchAudio::execute`:
-  - Pass 1: existing loop; collect `(region, outcome, anchor_candidate?)` per gap.
-  - Build `PatchAnchorTable` from pass-1 outcomes.
-  - If `fill_offset_mode == AnchoredRetry` && table non-empty && pass-1 had retryable skips: pass 2 loop over failed regions only with `resolve_fill_offset_secs(..., Anchored, ...)`.
-  - Pass 2 success replaces pass-1 outcome in `region_results`; pass-2 failure keeps pass-1 skip.
-- [ ] Wire `fill_offset_mode` through config, CLI (`--fill-offset anchored-retry`), `PatchAudioRequest`.
-- [ ] `prepare_region_patch`: accept optional `PatchAnchorTable` override for offset resolution (or pass resolved `gap_offset_secs` directly).
-- [ ] Integration tests:
-  - Drift fixture: pass 1 skips hard gap; pass 2 patches with anchors from easy gaps.
-  - Run fixture under **`fill_mode = Fit`** (default) and **`gate`** — offset layer identical; gate-only anchor eligibility path.
-  - Regression: `Recommended` / `Interpolated` unchanged (single pass, no table).
-  - No retry when all pass-1 succeed.
+- [x] `PatchAudio::execute` (`patch_audio.rs`):
+  - Pass 1: existing loop; `region_results` per gap (`AnchoredRetryPass::First`, no anchor table).
+  - Build `PatchAnchorTable` from pass-1 patched gaps via `build_patch_anchor_candidates` + `from_candidates`.
+  - If `fill_offset_mode == AnchoredRetry` && table non-empty: `run_anchored_retry_pass` over retryable skips only (`is_retryable_patch_skip`: `CorrelationBelowThreshold`, `BoundaryAlignmentFailed`).
+  - Pass 2 success replaces pass-1 outcome and appends splice patch; pass-2 failure keeps pass-1 skip.
+- [x] Wire `fill_offset_mode` through `config.rs`, CLI (`--fill-offset anchored-retry`), `PatchAudioRequest`; `fill_anchor_*` policy keys.
+- [x] `prepare_region_patch`: `anchored_retry_pass` + optional `patch_anchors` → `resolve_gap_offset_secs`.
+- [ ] Integration tests (partial):
+  - [x] Smoke: `patch_audio_anchored_retry_passes_on_clean_single_gap` (fit, single gap, no pass-2 needed).
+  - [ ] Drift fixture: pass 1 skips hard gap; pass 2 patches with anchors from easy gaps (Phase 0 fixture).
+  - [ ] Run drift fixture under **`fill_mode = gate`** — anchor eligibility (`structure_trusted` exclusion) distinct from fit.
+  - [x] Regression: `Recommended` / `Interpolated` paths unchanged (existing integration tests; no second pass).
+  - [ ] Explicit test: no pass-2 retries when all pass-1 succeed or table empty (behavior covered by unit tests only).
 
 ### Phase 3 — `Anchored` single-pass + docs
 
 **Intent:** One-pass mode for users who prefer simplicity; tune eligibility; document.
 
-- [x] `Anchored` without retry: **deferred** — document two-pass only; `anchored` config value reserved (clip fallback until single-pass ships).
-- [x] Anchor eligibility documented (`fill_anchor_*` keys; marginal + structure_trusted rules unchanged from Phase 2 defaults).
+- [x] `Anchored` without retry: **deferred** — `anchored` enum + resolver only; `PatchAudio` does not build a live anchor table in pass 1. Document two-pass (`anchored_retry`) as the supported path.
+- [x] Anchor eligibility documented (`fill_anchor_*` keys in README, `gap-fill-modes.md`; marginal + `structure_trusted` rules in `anchor_eligible`).
 - [x] README § `fill_offset_mode` table; `docs/gap-fill-modes.md` cross-link.
 - [x] Verbose lines for anchor source gap index (`format_patch_anchor_table_summary`, `format_anchored_offset_verbose_line`).
-- [x] Default policy: keep `Recommended`; document `anchored-retry` for drift-heavy pairs.
+- [x] Default policy: `Recommended`; document `anchored-retry` for drift-heavy pairs.
 
-### Phase 4 — Optional enhancements (defer)
+### Phase 4 — Optional enhancements
 
-- [x] Soft search prior in `unified_fit_score` from anchor prediction (`fill_anchor_search_prior_weight`, fit + pass 2).
-- [x] Weight anchors by `min(pre, post)` (piecewise weighted interpolation).
-- [x] Combine with [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) — complementary layers (anchors center haystack; energy discriminates inside); no code coupling required.
-- [x] Export anchors in JSON (`patch_anchors_used` on `PatchSummary`).
+- [x] Soft search prior in unified fit (`AnchorSearchPrior`, `fill_anchor_search_prior_weight`): fit mode only; active on `anchored_retry` pass 2 (and would apply for single-pass `anchored` when wired).
+- [x] Weight anchors by `min(pre, post)` (`PatchAnchorTable::from_candidates` + `interpolate_piecewise_weighted`).
+- [x] Complementary to [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) — no code coupling.
+- [x] Export anchors in JSON (`patch.patch_anchors_used` on `PatchSummary` via `with_patch_anchors`).
 - [ ] `BACKLOG` segment-wise alignment: patch anchors may reduce urgency but do not replace global refine.
 
 ---
@@ -157,38 +160,41 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 
 | Key | Phase | Default | Notes |
 |-----|-------|---------|-------|
-| `fill_offset_mode` | 2 | `recommended` | Add `anchored`, `anchored_retry` |
-| `fill_anchor_min_correlation` | 2 | same as `min_fill_correlation` | Floor for anchor eligibility |
-| `fill_anchor_exclude_structure_trusted` | 2 | `true` | Gate-mode patches without waveform |
+| `fill_offset_mode` | 2 | `recommended` | `recommended`, `interpolated`, `anchored` (reserved), `anchored_retry` (wired) |
+| `fill_anchor_min_correlation` | 2 | same as `min_fill_correlation` (`0.35`) | Floor for anchor eligibility |
+| `fill_anchor_exclude_structure_trusted` | 2 | `true` | Gate-mode patches without waveform; CLI invert: `--fill-anchor-include-structure-trusted` |
 | `fill_anchor_max_adjustment_frac` | 2 | `0.9` | Fraction of `fill_border_search_secs`; reject edge-clamped slides |
+| `fill_anchor_search_prior_weight` | 4 | `0.0` | Fit mode: soft penalty vs anchor-predicted B start (pass 2 of `anchored_retry`) |
 | `fill_border_search_secs` | — | `10.0` | Primary B slide radius in **fit**; structure search radius in **gate**. README examples often use `30.0`. Anchors center this window. |
-| `min_fill_correlation` | — | `0.35` | Used for anchor gate |
+| `min_fill_correlation` | — | `0.35` | Patch seam floor; default for `fill_anchor_min_correlation` |
 
-CLI: `--fill-offset anchored-retry` (clap value enum extension).
+CLI: `--fill-offset anchored-retry`; `--fill-anchor-min-correlation`, `--fill-anchor-max-adjustment-frac`, `--fill-anchor-search-prior-weight`.
 
 ---
 
 ## Testing strategy
 
-| Layer | What |
-|-------|------|
-| Unit | `PatchAnchorTable` build filter; interpolation; extrapolation clamp; fallback chain |
-| Unit | `resolve_fill_offset_secs` with 0, 1, 2, N anchors |
-| Integration | Drift fixture two-pass retry |
-| Integration | Pass-1 success unchanged when mode `recommended` |
-| Integration | No pass 2 when zero eligible anchors |
-| Manual | Long-form drift pair: compare skip count `recommended` vs `anchored-retry` |
+| Layer | What | Status |
+|-------|------|--------|
+| Unit | `PatchAnchorTable::from_candidates` filter; weighted interpolation; extrapolation clamp; fallback chain | Shipped (`patch_anchor.rs`) |
+| Unit | `resolve_gap_offset_secs` / `anchored_retry` pass 1 vs 2 | Shipped (`fill_offset.rs`) |
+| Integration | Drift fixture two-pass retry | **Open** (Phase 0) |
+| Integration | Pass-1 success unchanged when mode `recommended` / `interpolated` | Covered by existing patch tests |
+| Integration | `anchored_retry` smoke (clean single gap) | Shipped (`patch_audio_anchored_retry_passes_on_clean_single_gap`) |
+| Integration | No pass 2 when zero eligible anchors / all pass-1 succeed | **Open** (unit-level only today) |
+| Integration | `fill_mode = gate` anchor eligibility | **Open** |
+| Manual | Long-form drift pair: compare skip count `recommended` vs `anchored-retry` | **Open** (Phase 0) |
 
 ---
 
 ## Rollout
 
-1. **Phase 0** — drift fixture + manual notes.
-2. **Phase 1** — domain types + resolver (no wiring).
-3. **Phase 2** — two-pass `PatchAudio` + integration tests.
-4. **Phase 3** — docs + eligibility tuning.
-5. **Phase 4** — optional prior / weights.
-6. Archive; update `PLAN.md` repair § offset map; `BACKLOG.md` row.
+1. **Phase 0** — drift fixture + manual notes. **Remaining.**
+2. **Phase 1** — domain types + resolver. **Done.**
+3. **Phase 2** — two-pass `PatchAudio` + wiring. **Done** (integration drift/gate tests still open).
+4. **Phase 3** — docs + eligibility tuning. **Done** (single-pass `anchored` deferred).
+5. **Phase 4** — search prior / weights / JSON export. **Done.**
+6. Archive to `docs/archive/`; update `PLAN.md` repair § offset map; trim `BACKLOG.md` row when Phase 0 closes.
 
 ---
 
@@ -220,8 +226,9 @@ CLI: `--fill-offset anchored-retry` (clap value enum extension).
 
 - [README.md](../README.md) § Per-gap B timeline (`fill_offset_mode`)
 - [docs/gap-fill-modes.md](gap-fill-modes.md) — fit vs gate (orthogonal)
-- `domain/fill_offset.rs` — current offset modes
-- `application/patch_audio.rs` — `align_adjustment_secs`, per-gap loop
+- `domain/fill_offset.rs` — offset modes + `resolve_gap_offset_secs`
+- `domain/patch_anchor.rs` — anchor table, interpolation, verbose formatting
+- `application/patch_audio.rs` — two-pass `anchored_retry`, `align_adjustment_secs`
 - `domain/patch_result.rs` — `GapPatchStatus::Patched`
 
 ---
@@ -231,5 +238,5 @@ CLI: `--fill-offset anchored-retry` (clap value enum extension).
 1. **`anchored` vs `anchored_retry`:** **Resolved** — two enum values; only `anchored_retry` wired in `PatchAudio`.
 2. **Include clip anchors always** in piecewise curve when patch anchors exist, or patch-only interior + clip endpoints? **Resolved** — merge clip endpoints + patch anchors (see `interpolate_anchored_offset_secs`).
 3. **Retry marginal pass-1** patches in pass 2 with anchored offset for higher seam scores? Open (Phase 4).
-4. **Expose anchor table in JSON** in Phase 2 or defer to Phase 4? **Deferred** to Phase 4.
+4. **Expose anchor table in JSON** in Phase 2 or defer to Phase 4? **Resolved** — `patch.patch_anchors_used` on `PatchSummary` (Phase 4).
 5. **Sort pass-1 easy-first** even in two-pass (better anchors before pass-1 failures) — worth the plan reorder? Open (low priority; collect-then-splice makes pass-1 order irrelevant today).

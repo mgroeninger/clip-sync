@@ -284,6 +284,21 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(mode) = args.fill_offset {
         config.repair.fill_offset_mode = mode;
     }
+    if let Some(mode) = args.gap_signature_mode {
+        config.repair.gap_signature_mode = mode;
+    }
+    if let Some(corr) = args.fill_anchor_min_correlation {
+        config.repair.fill_anchor_min_correlation = corr;
+    }
+    if args.fill_anchor_include_structure_trusted {
+        config.repair.fill_anchor_exclude_structure_trusted = false;
+    }
+    if let Some(frac) = args.fill_anchor_max_adjustment_frac {
+        config.repair.fill_anchor_max_adjustment_frac = frac;
+    }
+    if let Some(w) = args.fill_anchor_search_prior_weight {
+        config.repair.fill_anchor_search_prior_weight = w;
+    }
     if let Some(mode) = args.fill_mode {
         config.repair.fill_mode = mode;
     }
@@ -454,5 +469,38 @@ mod cli_override_tests {
         assert!(!config.repair.short_gap_one_strong_seam_fallback);
         assert_eq!(config.repair.gap_end_extend_max_ms, 300);
         assert_eq!(config.repair.gap_end_extend_step_ms, 10);
+    }
+
+    #[test]
+    fn anchor_and_signature_cli_overrides_config() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fill-offset",
+            "anchored-retry",
+            "--gap-signature-mode",
+            "energy",
+            "--fill-anchor-min-correlation",
+            "0.4",
+            "--fill-anchor-include-structure-trusted",
+            "--fill-anchor-max-adjustment-frac",
+            "0.8",
+            "--fill-anchor-search-prior-weight",
+            "0.15",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::AnchoredRetry);
+        assert_eq!(
+            config.repair.gap_signature_mode,
+            crate::domain::GapSignatureMode::Energy
+        );
+        assert!((config.repair.fill_anchor_min_correlation - 0.4).abs() < f32::EPSILON);
+        assert!(!config.repair.fill_anchor_exclude_structure_trusted);
+        assert!((config.repair.fill_anchor_max_adjustment_frac - 0.8).abs() < f64::EPSILON);
+        assert!((config.repair.fill_anchor_search_prior_weight - 0.15).abs() < f64::EPSILON);
     }
 }

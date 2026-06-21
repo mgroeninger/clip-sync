@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 
 use clip_sync::LogLevel;
 
-use crate::domain::{FillMode, FillOffsetMode};
+use crate::domain::{FillMode, FillOffsetMode, GapSignatureMode};
 use crate::infrastructure::config::OutputFormat;
 
 #[derive(Parser, Debug)]
@@ -115,9 +115,35 @@ pub struct Args {
     #[arg(long, value_name = "SECS")]
     pub border_standoff_secs: Option<f64>,
 
-    /// Per-gap B mapping: `recommended` (single offset) or `interpolated` (drift between clips).
+    /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
+    /// `anchored` (anchor interpolation; not wired in patch yet), `anchored-retry` (two-pass retry).
     #[arg(long, value_enum, value_name = "MODE")]
     pub fill_offset: Option<FillOffsetMode>,
+
+    /// Structure signature for gap fill search (`fill_mode = fit` only) [default: bool]:
+    /// `bool` (active/silent bins), `energy` (envelope Pearson), `auto` (energy when bool is empty).
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub gap_signature_mode: Option<GapSignatureMode>,
+
+    /// Minimum `min(pre, post)` for a pass-1 patch to become an offset anchor
+    /// (`fill_offset = anchored-retry`) [default: 0.35].
+    #[arg(long, value_name = "N")]
+    pub fill_anchor_min_correlation: Option<f32>,
+
+    /// Include structure-trusted gate patches (no waveform) in the anchor table
+    /// (`fill_offset = anchored-retry`). Default excludes them.
+    #[arg(long)]
+    pub fill_anchor_include_structure_trusted: bool,
+
+    /// Reject anchors whose fine slide exceeds this fraction of `fill_border_search_secs`
+    /// (`fill_offset = anchored-retry`) [default: 0.9].
+    #[arg(long, value_name = "N")]
+    pub fill_anchor_max_adjustment_frac: Option<f64>,
+
+    /// Fit mode: penalize unified-search candidates far from patch-anchor prediction
+    /// (`fill_offset = anchored-retry`; 0 = off) [default: 0].
+    #[arg(long, value_name = "N")]
+    pub fill_anchor_search_prior_weight: Option<f64>,
 
     /// Gap-fill placement: `gate` (legacy threshold checks) or `fit` (waveform slide search)
     /// [default: fit].
@@ -307,6 +333,16 @@ mod tests {
             &format!("[default: {}]", defaults.repair.fill_repeat_penalty_weight),
             &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
+            &format!("[default: {}]", defaults.repair.fill_anchor_min_correlation),
+            &format!("[default: {}]", defaults.repair.fill_anchor_max_adjustment_frac),
+            &format!("[default: {}]", defaults.repair.fill_anchor_search_prior_weight),
+            "[default: bool]",
+            "anchored-retry",
+            "gap-signature-mode",
+            "fill-anchor-min-correlation",
+            "fill-anchor-include-structure-trusted",
+            "fill-anchor-max-adjustment-frac",
+            "fill-anchor-search-prior-weight",
             "[default: fit]",
             "[fill-mode: gate only]",
             "[default: 2]",

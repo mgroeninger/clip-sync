@@ -13,9 +13,9 @@ pub enum FillOffsetMode {
     Recommended,
     /// Linearly interpolate between start-clip and end-clip offsets by position on A.
     Interpolated,
-    /// Interpolate from patch anchors (+ clip endpoints). Requires a [`PatchAnchorTable`].
+    /// Interpolate from patch anchors plus clip endpoints (single-pass; not wired in patch yet).
     Anchored,
-    /// Pass 1: clip-based offset; pass 2: retry failures with [`FillOffsetMode::Anchored`].
+    /// Pass 1: clip-based offset; pass 2: retry seam failures using anchors from pass-1 successes.
     AnchoredRetry,
 }
 

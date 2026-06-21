@@ -12,12 +12,15 @@ use crate::domain::gap_structure::{
 };
 
 /// Which structure representation to use for gap fill search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapSignatureMode {
+    /// Active/silent bins around the gap (`fill_mode = fit` structure tier).
     #[default]
     Bool,
+    /// RMS energy envelope Pearson match (fit path).
     Energy,
+    /// Use energy when the bool signature is empty; otherwise bool.
     Auto,
 }
 
