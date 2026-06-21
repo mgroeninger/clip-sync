@@ -160,6 +160,68 @@ fn write_stereo_sine_with_seam_distortion(
     writer.finalize().expect("finalize wav");
 }
 
+/// Write a stereo WAV with multiple silent gaps (each `(start_secs, end_secs)` on this file's timeline).
+fn write_stereo_sine_with_gaps(
+    path: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    gaps: &[(f64, f64)],
+    freq: f32,
+    amplitude: f32,
+) {
+    let spec = WavSpec {
+        channels: CHANNELS,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    let total_frames = u64::from(sample_rate) * u64::from(total_secs);
+
+    for frame in 0..total_frames {
+        let t = frame as f64 / sample_rate as f64;
+        let silent = gaps
+            .iter()
+            .any(|&(start, end)| t >= start && t < end);
+        let s = if silent {
+            0i16
+        } else {
+            sine_sample(sample_rate, frame, freq, amplitude)
+        };
+        writer.write_sample(s).expect("write L");
+        writer.write_sample(s).expect("write R");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
+fn make_gap_on_a(a_start: f64, a_end: f64, report_b_offset: f64) -> Gap {
+    Gap {
+        video_a_start_secs: a_start,
+        video_a_end_secs: a_end,
+        video_b_start_secs: Some(a_start + report_b_offset),
+        video_b_end_secs: Some(a_end + report_b_offset),
+        b_has_energy: true,
+    }
+}
+
+/// Fit-mode options for anchored-retry drift fixtures: small haystack so pass 1 can fail
+/// when clip interpolation undershoots local B shift, while nearby easy gaps still patch.
+fn anchored_retry_drift_patch_options() -> PatchTestOptions {
+    PatchTestOptions {
+        fill_mode: FillMode::Fit,
+        fill_offset_mode: FillOffsetMode::AnchoredRetry,
+        fill_border_search_secs: 0.35,
+        fill_align_margin_secs: 0.1,
+        gap_signature_context_secs: 1.0,
+        fill_length_slack_secs: 0.0,
+        gap_end_extend_max_ms: 40,
+        gap_end_extend_step_ms: 40,
+        short_gap_one_strong_seam_fallback: false,
+        short_gap_mean_correlation_secs: 0.5,
+        ..Default::default()
+    }
+}
+
 fn rms_region(samples: &[i16], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
     let start = (start_secs * sample_rate as f64) as usize * channels as usize;
     let end = (end_secs * sample_rate as f64) as usize * channels as usize;
@@ -1548,7 +1610,215 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
     }
 }
 
-/// Production-like fit defaults (10 s border search, full extension grid). Too slow for default CI.
+#[test]
+fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
+    const TIMELINE_SECS: u32 = 120;
+    const START_OFFSET: f64 = 0.0;
+    const END_OFFSET: f64 = 1.0;
+    // Local B shift in the late region exceeds what pass-1 clip interpolation predicts.
+    const EASY_B_SHIFT: f64 = 0.35;
+    const HARD_B_SHIFT: f64 = 1.0;
+
+    let easy_gaps = [(72.0, 75.0), (78.0, 81.0)];
+    let hard_gap = (90.0, 93.0);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+
+    let a_gaps: Vec<(f64, f64)> = easy_gaps
+        .iter()
+        .copied()
+        .chain(std::iter::once(hard_gap))
+        .collect();
+    write_stereo_sine_with_gaps(
+        &path_a,
+        SAMPLE_RATE,
+        TIMELINE_SECS,
+        &a_gaps,
+        440.0,
+        16_000.0,
+    );
+
+    let mut b_gaps: Vec<(f64, f64)> = easy_gaps
+        .iter()
+        .map(|&(start, end)| (start + EASY_B_SHIFT, end + EASY_B_SHIFT))
+        .collect();
+    b_gaps.push((hard_gap.0 + HARD_B_SHIFT, hard_gap.1 + HARD_B_SHIFT));
+    write_stereo_sine_with_gaps(
+        &path_b,
+        SAMPLE_RATE,
+        TIMELINE_SECS,
+        &b_gaps,
+        440.0,
+        16_000.0,
+    );
+
+    let gaps: Vec<Gap> = easy_gaps
+        .iter()
+        .map(|&(start, end)| make_gap_on_a(start, end, START_OFFSET))
+        .chain(std::iter::once(make_gap_on_a(hard_gap.0, hard_gap.1, START_OFFSET)))
+        .collect();
+
+    let alignment = make_drift_alignment(
+        START_OFFSET,
+        END_OFFSET,
+        f64::from(TIMELINE_SECS),
+    );
+    let report = make_report_with_alignment(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+        alignment,
+        gaps,
+    );
+
+    let opts = anchored_retry_drift_patch_options();
+
+    let interpolated_only = run_patch(
+        patch_request_with_options(
+            report.clone(),
+            false,
+            5.0,
+            0.35,
+            PatchTestOptions {
+                fill_offset_mode: FillOffsetMode::Interpolated,
+                fill_mode: FillMode::Fit,
+                fill_border_search_secs: opts.fill_border_search_secs,
+                fill_align_margin_secs: opts.fill_align_margin_secs,
+                gap_signature_context_secs: opts.gap_signature_context_secs,
+                fill_length_slack_secs: opts.fill_length_slack_secs,
+                gap_end_extend_max_ms: opts.gap_end_extend_max_ms,
+                gap_end_extend_step_ms: opts.gap_end_extend_step_ms,
+                short_gap_one_strong_seam_fallback: false,
+                short_gap_mean_correlation_secs: opts.short_gap_mean_correlation_secs,
+                ..Default::default()
+            },
+        ),
+        10,
+    );
+    assert_eq!(
+        interpolated_only.summary.patched_count, 2,
+        "easy gaps should patch under interpolated offset, got {:?}",
+        interpolated_only.summary.gaps
+    );
+    match &interpolated_only.summary.gaps[2].status {
+        GapPatchStatus::Skipped { reason, .. } => {
+            assert!(
+                matches!(
+                    reason,
+                    GapPatchSkipReason::CorrelationBelowThreshold { .. }
+                        | GapPatchSkipReason::BoundaryAlignmentFailed
+                ),
+                "hard gap should fail pass-1 offset with tight search, got {reason:?}"
+            );
+        }
+        other => panic!("expected hard gap to skip on interpolated-only pass, got {other:?}"),
+    }
+
+    let anchored = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, opts),
+        10,
+    );
+    assert_eq!(
+        anchored.summary.patched_count, 3,
+        "anchored_retry pass 2 should recover hard gap, got {:?}",
+        anchored.summary.gaps
+    );
+    let anchors = anchored
+        .summary
+        .patch_anchors_used
+        .as_ref()
+        .expect("expected pass-1 anchors to be exported");
+    assert!(
+        anchors.len() >= 2,
+        "expected anchors from easy gaps, got {anchors:?}"
+    );
+
+    match &anchored.summary.gaps[2].status {
+        GapPatchStatus::Patched {
+            confidence: FillConfidence::High,
+            ..
+        } => {}
+        other => panic!("expected hard gap patched on pass 2, got {other:?}"),
+    }
+
+    let pcm = expect_pcm(&anchored);
+    let gap_rms = rms_region(
+        &pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        hard_gap.0,
+        hard_gap.1,
+    );
+    assert!(
+        gap_rms > 100.0,
+        "hard gap should be filled after anchored retry, rms={gap_rms}"
+    );
+}
+
+#[test]
+fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(
+            fixture.path_a,
+            fixture.path_b,
+            stereo_identical_compat(SAMPLE_RATE),
+        )
+    };
+
+    // Marginal tier is excluded from the anchor table.
+    let mut opts = anchored_retry_drift_patch_options();
+    opts.fill_offset_mode = FillOffsetMode::AnchoredRetry;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.999, opts),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    assert_eq!(patched.summary.patched_marginal_count, 1);
+    assert!(
+        patched.summary.patch_anchors_used.is_none(),
+        "marginal pass-1 patch must not build anchors or run pass 2"
+    );
+}
+
+#[test]
+fn patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(
+            fixture.path_a,
+            fixture.path_b,
+            stereo_identical_compat(SAMPLE_RATE),
+        )
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, anchored_retry_drift_patch_options()),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            confidence: FillConfidence::High,
+            ..
+        } => {}
+        other => panic!("expected high-confidence pass-1 patch, got {other:?}"),
+    }
+    let anchors = patched
+        .summary
+        .patch_anchors_used
+        .as_ref()
+        .expect("high-confidence pass-1 success should export anchors");
+    assert_eq!(anchors.len(), 1);
+}
+
 #[test]
 #[ignore = "run locally: cargo test -p clip-sync-repair patch_audio_fit_production_defaults -- --ignored"]
 fn patch_audio_fit_production_defaults_smoke() {
