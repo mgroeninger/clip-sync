@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-17.
+Last updated: 2026-06-20.
 
 **How this doc works**
 
@@ -18,6 +18,8 @@ Last updated: 2026-06-17.
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
+| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (upgrade from bool bins) |
+| [TEMP-fill-fitting-plan.md](docs/TEMP-fill-fitting-plan.md) | Gap fill gate → fit (Phases A–C shipped; Phase D open) |
 
 **Recently shipped:** [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17) — `SharedTimeline` paired clip planning, symmetric pipeline wiring, `end_clip_anchor` reporting.
 

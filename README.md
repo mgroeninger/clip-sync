@@ -174,16 +174,18 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
 | `--no-structure-trust` | — | Stricter seams (gate only): always run waveform Pearson; no structure skip/soften; both seams required |
-| `--min-fill-correlation <N>` | `0.35` | Minimum Pearson correlation at gap seams when the waveform gate runs |
-| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Maximum B fill slide during structure match |
+| `--min-fill-correlation <N>` | `0.35` | Waveform seam floor (`min(pre, post)` in fit; gate threshold when waveform runs) |
+| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Legacy structure polish window; **fit** B slide uses `fill_border_search_secs` (config) |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
 | `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended` or `interpolated` (drift between start/end clips) |
-| `--fill-mode <MODE>` | `fit` | Gap-fill placement: `fit` (waveform slide search) or `gate` (legacy) |
-| `--no-gap-end-extend` | — | Disable post-seam gap-end extension retries |
-| `--no-gap-start-extend` | — | Disable pre-seam gap-start extension retries |
-| `--no-short-gap-one-strong-seam` | — | Disable short-gap one-strong-seam fallback (gate only) |
-| `--gap-end-extend-max-ms <MS>` | `500` | Max boundary extension for seam retries (post-end and pre-start) |
-| `--gap-end-extend-step-ms <MS>` | `20` | Step size for seam extension retries |
+| `--fill-mode <MODE>` | `fit` | `fit` (unified search + tiering) or `gate` (legacy Pearson gate). See [docs/gap-fill-modes.md](docs/gap-fill-modes.md) |
+| `--fill-fit-structure-weight <N>` | `0.35` | Fit only: unified scorer structure term |
+| `--fill-fit-waveform-weight <N>` | `0.65` | Fit only: unified scorer waveform term |
+| `--no-gap-end-extend` | — | **Fit:** disable joint grid on gap end. **Gate:** disable post-seam extension retries. Does **not** switch to gate mode |
+| `--no-gap-start-extend` | — | **Fit:** disable joint grid on gap start. **Gate:** disable pre-seam extension retries |
+| `--no-short-gap-one-strong-seam` | — | Disable short-gap one-strong-seam fallback (**gate only**) |
+| `--gap-end-extend-max-ms <MS>` | `500` | Max A-boundary shift: fit = joint grid span; gate = retry span |
+| `--gap-end-extend-step-ms <MS>` | `20` | Step for boundary search (fit grid) or retries (gate) |
 | `--crossfade-ms <MS>` | `10` | Crossfade duration at gap boundaries |
 | `-v, --verbose` | — | Verbose progress on stderr plus detailed gap-patch lines in the human report |
 | `-q, --quiet` | — | Suppress progress on stderr (errors still print) |
@@ -231,7 +233,7 @@ Progress stages (`Aligning audio fingerprints…`, `Scanning video A for gaps…
 
 #### Gap patching pipeline
 
-When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, optional waveform seam checks, and boundary retries before splice. See also [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
+When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, waveform placement (`fill_mode`), and optional A-boundary extension before splice. **Flag interactions and performance:** [docs/gap-fill-modes.md](docs/gap-fill-modes.md). Report layout: [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
 
 **1. Per-gap B timeline (`fill_offset_mode`)**
 
@@ -250,8 +252,8 @@ This step finds *where* to splice B; it is **not** turned off by `--no-structure
 
 | Mode | Behavior |
 |------|----------|
-| `fit` (default) | Joint structure+waveform search over the B haystack (`fill_fit_structure_weight` / `fill_fit_waveform_weight`); patch when the best combined candidate meets structure and waveform floors. |
-| `gate` | Score waveform Pearson at the structure winner; threshold gates, structure-trust skip, and short-gap shortcuts apply. CLI: `--fill-mode gate`. |
+| `fit` (default) | Unified structure+waveform search on B; tier **High** / **Marginal** / skip. Optional **joint A-boundary grid** when extension flags are on. |
+| `gate` | Score waveform Pearson at the structure winner; structure-trust skip and short-gap shortcuts apply. CLI: `--fill-mode gate`. |
 
 **CLI compatibility with `--fill-mode fit`** (default since Phase A)
 
@@ -262,10 +264,14 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--no-structure-trust` | **No extra effect** — `fit` already disables structure-trust waveform skip and soften. Use with `--fill-mode gate` only. |
 | `--no-short-gap-one-strong-seam` | **No effect** — one-strong-seam is a `gate` shortcut only (`--fill-mode gate`). |
 | `strong_structure_trust`, `partial_structure_waveform_soften` (config) | **No effect on waveform** — structure match still runs; waveform is never skipped for trust. |
-| `--min-fill-correlation` | **Active** — floor on the best slide (`min(pre, post)`). |
-| `--max-fill-align-adjust-secs` | **Active** — structure fine polish **and** waveform slide radius. |
-| `--fill-offset interpolated` | **Active** — per-gap B map before local slide search. |
-| `--border-standoff-secs`, `--no-gap-end-extend`, `--no-gap-start-extend`, `--gap-end-extend-*`, `--crossfade-ms`, `--no-normalize` | **Active** — unchanged. |
+| `--min-fill-correlation` | **Active** — `min(pre, post)` floor; **High** vs **Marginal** tier (`fill_marginal_margin`). |
+| `--max-fill-align-adjust-secs` | Config only for fit B search — use **`fill_border_search_secs`** for slide radius. |
+| `--fill-offset interpolated` | **Active** — per-gap B map before local search. |
+| `--fill-fit-structure-weight`, `--fill-fit-waveform-weight` | **Active** — unified scorer weights. |
+| `--border-standoff-secs` | **Active** |
+| `--no-gap-end-extend`, `--no-gap-start-extend` | **Active** — disable **joint grid** (not gate mode). See [gap-fill-modes.md](docs/gap-fill-modes.md). |
+| `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | **Active** — grid span/step in fit; retry span/step in gate. |
+| `--crossfade-ms`, `--no-normalize` | **Active** |
 | Align / scan flags (`--clip-length`, `--num-clips`, high-rate, query-reference, etc.) | **Active** — feed alignment and gap scan; orthogonal to `fit`. |
 
 **Example — drift + fit (e.g. long pairs with ~1 s clip drift):**
@@ -304,14 +310,18 @@ Other seam knobs are separate: `--no-gap-end-extend`, `--no-short-gap-one-strong
 
 Set `min_fill_correlation = -1.0` in config to disable the waveform gate entirely (structure gate still applies).
 
-**5. Boundary extension retries**
+**5. A-boundary extension (`gap_end_extend_*`)**
 
-If waveform placement fails (`fit` slide search below threshold, or `gate` check after retries), the tool may adjust gap boundaries on A and re-run structure + waveform checks. Post-end and pre-start extension share `gap_end_extend_max_ms` (default `500`) and `gap_end_extend_step_ms` (default `20`). Order: try **extend gap end** first, then **extend gap start** (shift earlier).
+Extension flags control **A gap edge movement** during patch planning. They do **not** switch `fit` ↔ `gate` — use `--fill-mode gate` for legacy behavior. Full matrix: [docs/gap-fill-modes.md](docs/gap-fill-modes.md).
 
-| Retry | Enabled by | Candidate (summary) |
-|-------|------------|---------------------|
-| **Post-end** | `gap_end_extend_on_post_seam_fail` (default on); `--no-gap-end-extend` | Post failed; pre passes threshold, **or** post failed narrowly vs pre, **or** post collapsed but pre is ≥ 0.10 stronger |
-| **Pre-start** | `gap_start_extend_on_pre_seam_fail` (default on); `--no-gap-start-extend` | Pre failed; post already passes threshold |
+**`fill_mode = fit` (default):** when `gap_end_extend_on_post_seam_fail` / `gap_start_extend_on_pre_seam_fail` are on (defaults), and the baseline bracket is not **High**, run a **joint grid** over earlier start × later end within `gap_end_extend_max_ms` / `gap_end_extend_step_ms` (~12 steps per axis). Each cell re-runs unified B placement. `--no-gap-end-extend` / `--no-gap-start-extend` disable that grid (baseline only).
+
+**`fill_mode = gate`:** on waveform failure only, **sequential retries** — extend gap end, then shift gap start earlier — using the same ms limits. Order and candidate rules differ from fit; see [docs/cli-output.md](docs/cli-output.md).
+
+| Setting | CLI off switch |
+|---------|----------------|
+| Post-end | `gap_end_extend_on_post_seam_fail` (default on); `--no-gap-end-extend` |
+| Pre-start | `gap_start_extend_on_pre_seam_fail` (default on); `--no-gap-start-extend` |
 
 **6. Skip reasons in the report**
 
@@ -350,12 +360,14 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--border-standoff-secs` | `border_standoff_secs` |
 | `--fill-offset` | `fill_offset_mode` |
 | `--fill-mode` | `fill_mode` |
+| `--fill-fit-structure-weight` | `fill_fit_structure_weight` |
+| `--fill-fit-waveform-weight` | `fill_fit_waveform_weight` |
 | `--no-gap-end-extend` | `gap_end_extend_on_post_seam_fail = false` |
 | `--no-gap-start-extend` | `gap_start_extend_on_pre_seam_fail = false` |
 | `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` (gate only) |
 | `--gap-end-extend-max-ms` / `--gap-end-extend-step-ms` | `gap_end_extend_max_ms` / `gap_end_extend_step_ms` |
 
-Config-only (no CLI): `short_gap_mean_correlation_secs`, `fill_border_search_secs`, `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `fill_align_margin_secs`, `min_border_discovery_secs`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
+Config-only (no CLI): `short_gap_mean_correlation_secs`, **`fill_border_search_secs`** (main B slide radius in fit), `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `fill_align_margin_secs`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
 
 ---
 
@@ -463,7 +475,7 @@ min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only: true or --no-structure-trust
 fill_align_margin_secs = 1.0
 max_fill_align_adjustment_secs = 0.5
-fill_border_search_secs = 30.0
+fill_border_search_secs = 30.0     # fit: B slide radius (lower for faster patch)
 min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35
 short_gap_mean_correlation_secs = 2.0
@@ -476,6 +488,7 @@ strong_structure_trust = 0.90              # gate only: skip waveform when both 
 partial_structure_waveform_soften = 0.85   # gate only: soften waveform floor
 fill_offset_mode = "recommended"   # or "interpolated"; CLI: --fill-offset
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
+fill_fit_structure_weight = 0.35   # fit only: unified search
 fill_fit_waveform_weight = 0.65    # fit only: unified search
 fill_marginal_margin = 0.08          # fit only: warn-patch band
 fill_absolute_floor = 0.12           # fit only: hard skip floor
@@ -593,6 +606,7 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 
 ## Documentation
 
+- [docs/gap-fill-modes.md](docs/gap-fill-modes.md) — **`fit` vs `gate`**, flag matrix, extension semantics, performance recipes
 - [docs/development.md](docs/development.md) — features, build, full test suite
 - [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes, timeline/duration warnings, mux failures
 - [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
