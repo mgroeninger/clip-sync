@@ -105,6 +105,11 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub fill_fit_waveform_weight: Option<f64>,
 
+    /// Unified fit scorer: repeat-at-border penalty when waveform seams are weak (`fill_mode = fit` only)
+    /// [default: 0.4].
+    #[arg(long, value_name = "N")]
+    pub fill_repeat_penalty_weight: Option<f64>,
+
     /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
     /// [default: 0.35].
     #[arg(long, value_name = "SECS")]
@@ -299,6 +304,7 @@ mod tests {
             &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
             &format!("[default: {}]", defaults.repair.fill_fit_structure_weight),
             &format!("[default: {}]", defaults.repair.fill_fit_waveform_weight),
+            &format!("[default: {}]", defaults.repair.fill_repeat_penalty_weight),
             &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
             "[default: fit]",

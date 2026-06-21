@@ -146,8 +146,8 @@ pub struct RepairConfig {
     /// Fit mode: hard skip when `min(pre, post)` is below this (Phase C).
     #[serde(default = "default_fill_absolute_floor")]
     pub fill_absolute_floor: f32,
-    /// Fit mode: penalize high A-border vs B-fill repeat correlation when seams are weak (Phase D; 0 = off).
-    #[serde(default)]
+    /// Fit mode: penalize high A-border vs B-fill repeat correlation when seams are weak (Phase D).
+    #[serde(default = "default_fill_repeat_penalty_weight")]
     pub fill_repeat_penalty_weight: f64,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
@@ -259,6 +259,9 @@ fn default_fill_marginal_margin() -> f32 {
 fn default_fill_absolute_floor() -> f32 {
     crate::domain::gap_fill_fit::DEFAULT_FILL_ABSOLUTE_FLOOR
 }
+fn default_fill_repeat_penalty_weight() -> f64 {
+    0.4
+}
 
 impl Default for RepairConfig {
     fn default() -> Self {
@@ -299,7 +302,7 @@ impl Default for RepairConfig {
             fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
-            fill_repeat_penalty_weight: 0.0,
+            fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
@@ -687,6 +690,12 @@ dry_run = true
     fn repair_app_config_defaults_fill_mode_to_fit() {
         let config = RepairAppConfig::default();
         assert_eq!(config.repair.fill_mode, crate::domain::FillMode::Fit);
+    }
+
+    #[test]
+    fn repair_app_config_defaults_repeat_penalty_weight() {
+        let config = RepairAppConfig::default();
+        assert!((config.repair.fill_repeat_penalty_weight - 0.4).abs() < f64::EPSILON);
     }
 
     #[test]

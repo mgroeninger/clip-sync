@@ -20,7 +20,7 @@ Last updated: 2026-06-20.
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
 | [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (upgrade from bool bins) |
 | [TEMP-patch-anchor-offset-plan.md](docs/TEMP-patch-anchor-offset-plan.md) | Use successful patch slides as local offset anchors for hard gaps |
-| [TEMP-fill-fitting-plan.md](docs/TEMP-fill-fitting-plan.md) | Gap fill gate → fit (Phases A–C shipped; Phase D open) |
+| [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
 
 **Recently shipped:** [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17) — `SharedTimeline` paired clip planning, symmetric pipeline wiring, `end_clip_anchor` reporting.
 

@@ -18,7 +18,7 @@ use crate::domain::{
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     fill_mode::FillMode,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
-    gap_fill_fit::{fit_fill_to_gap_frames, pick_fill_length_anchor},
+    gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
@@ -905,21 +905,14 @@ fn prepare_region_patch(
         );
     }
 
-    let mut b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
+    let b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
     let source_frames = b_fill_raw.len() / channels;
-    if source_frames < gap_frames {
-        let extend_from = b_fill_end_sample;
-        let need_samples = (gap_frames - source_frames) * channels;
-        let extend_to = (extend_from + need_samples).min(b_samples.len());
-        if extend_from < extend_to {
-            b_fill_raw.extend_from_slice(&b_samples[extend_from..extend_to]);
-            tracing::debug!(
-                a_start_secs,
-                extended_frames = (extend_to - extend_from) / channels,
-                "B bracket shorter than A gap; extended from contiguous B audio"
-            );
-        }
-    } else if source_frames > gap_frames {
+    let b_extension = if b_fill_end_sample < b_samples.len() {
+        &b_samples[b_fill_end_sample..]
+    } else {
+        &[][..]
+    };
+    if source_frames > gap_frames {
         tracing::debug!(
             a_start_secs,
             b_fill_frames = source_frames,
@@ -944,9 +937,11 @@ fn prepare_region_patch(
     );
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
+    let repeat_window_frames = border_frames.max(1);
     let b_fill = if request.fill_mode == FillMode::Fit {
-        pick_fill_length_anchor(
+        fit_fill_length_for_gap(
             &b_fill_raw,
+            b_extension,
             channels,
             gap_frames,
             &a_pre_border,
@@ -955,9 +950,23 @@ fn prepare_region_patch(
             &a_post_ch,
             pre_gate_frames,
             post_gate_frames,
+            repeat_window_frames,
         )
     } else {
-        fit_fill_to_gap_frames(&b_fill_raw, channels, gap_frames)
+        let mut gate_fill = b_fill_raw;
+        if source_frames < gap_frames {
+            let need_samples = (gap_frames - source_frames) * channels;
+            let extend_to = need_samples.min(b_extension.len());
+            if extend_to > 0 {
+                gate_fill.extend_from_slice(&b_extension[..extend_to]);
+                tracing::debug!(
+                    a_start_secs,
+                    extended_frames = extend_to / channels,
+                    "B bracket shorter than A gap; extended from contiguous B audio (gate)"
+                );
+            }
+        }
+        fit_fill_to_gap_frames(&gate_fill, channels, gap_frames)
     };
 
     let gain = if normalize_fill {

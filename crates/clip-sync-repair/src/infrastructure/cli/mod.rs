@@ -286,6 +286,9 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(w) = args.fill_fit_waveform_weight {
         config.repair.fill_fit_waveform_weight = w;
     }
+    if let Some(w) = args.fill_repeat_penalty_weight {
+        config.repair.fill_repeat_penalty_weight = w;
+    }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;
     }
@@ -418,6 +421,8 @@ mod cli_override_tests {
             "0.4",
             "--fill-fit-waveform-weight",
             "0.6",
+            "--fill-repeat-penalty-weight",
+            "0.25",
             "--no-gap-end-extend",
             "--no-gap-start-extend",
             "--no-short-gap-one-strong-seam",
@@ -436,6 +441,7 @@ mod cli_override_tests {
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);
         assert!((config.repair.fill_fit_waveform_weight - 0.6).abs() < f64::EPSILON);
+        assert!((config.repair.fill_repeat_penalty_weight - 0.25).abs() < f64::EPSILON);
         assert!(!config.repair.gap_end_extend_on_post_seam_fail);
         assert!(!config.repair.gap_start_extend_on_pre_seam_fail);
         assert!(!config.repair.short_gap_one_strong_seam_fallback);

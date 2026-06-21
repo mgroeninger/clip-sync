@@ -188,7 +188,7 @@ clip-sync-repair "source.mp4" "recording.mkv" `
 |-----|---------|--------|
 | `fill_mode` | `"fit"` | `"gate"` for legacy |
 | `fill_border_search_secs` | `10.0` | B slide radius (unified search) |
-| `fill_repeat_penalty_weight` | `0.0` | Phase D: penalize repeat-at-seam when seams weak (0 = off). Repeat window = `border_frames` (`normalize_window_secs`), not crossfade length — keep crossfade ≤ border window. |
+| `fill_repeat_penalty_weight` | `0.4` | Phase D: penalize repeat-at-seam when seams weak (0 = off). Repeat window = `border_frames` (`normalize_window_secs`), not crossfade length — keep crossfade ≤ border window. |
 | `fill_fit_structure_weight` | `0.35` | Unified scorer |
 | `fill_fit_waveform_weight` | `0.65` | Unified scorer |
 | `fill_marginal_margin` | `0.08` | Warn band below `min_fill_correlation` |
@@ -196,6 +196,8 @@ clip-sync-repair "source.mp4" "recording.mkv" `
 | `gap_end_extend_max_ms` | `500` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | Grid/retry step |
 | `max_fill_align_adjustment_secs` | `0.5` | Legacy; see matrix above |
+
+**Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 
 CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight` override fit weights when exposed in your build.
 

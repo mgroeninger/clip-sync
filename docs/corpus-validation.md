@@ -213,7 +213,7 @@ clip-sync-repair --config repair.toml -v scan-gaps <video_a> <video_b>
 clip-sync-repair --config repair.toml -v patch-audio <video_a> <video_b>
 ```
 
-Optional: set `fill_repeat_penalty_weight` in repair config after listen pass (start at `0`; increase only with evidence).
+Optional: tune `fill_repeat_penalty_weight` in repair config after listen pass (default **0.4**; set to `0` to disable; increase only with evidence).
 
 ---
 

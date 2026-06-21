@@ -8,8 +8,8 @@ use crate::domain::gap_structure::{
     StructureMatchParams,
 };
 use crate::domain::policies::{
-    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved,
-    FillAlignment, SeamPlacement, SeamTemplates,
+    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved, interleaved_to_mono, FillAlignment, SeamPlacement,
+    SeamTemplates,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -692,6 +692,180 @@ pub fn fit_fill_to_gap_frames(samples: &[i16], channels: usize, target_frames: u
     out
 }
 
+fn placement_repeat_post(
+    fill_interleaved: &[i16],
+    channels: usize,
+    a_post: &[f64],
+    a_post_ch: &[Vec<f64>],
+    repeat_window_frames: usize,
+) -> f64 {
+    let channels = channels.max(1);
+    let b_mono = interleaved_to_mono(fill_interleaved, channels);
+    let gap_frames = b_mono.len();
+    if gap_frames == 0 {
+        return 0.0;
+    }
+    let b_ch: Vec<Vec<f64>> = if channels > 1 && !a_post_ch.is_empty() {
+        (0..channels)
+            .map(|ch| {
+                fill_interleaved
+                    .iter()
+                    .skip(ch)
+                    .step_by(channels)
+                    .map(|&s| f64::from(s))
+                    .collect()
+            })
+            .collect()
+    } else {
+        vec![b_mono.clone()]
+    };
+    let (_, repeat_post) = fill_repeat_correlations(
+        &SeamTemplates {
+            a_pre: &[],
+            a_post,
+            a_pre_ch: &[],
+            a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        },
+        SeamPlacement {
+            start: 0,
+            gap_frames,
+            pre_window: 0,
+            post_window: 0,
+        },
+        repeat_window_frames,
+    );
+    repeat_post
+}
+
+/// Greedily extend a short B bracket into contiguous B audio while `min(pre, post)` does not
+/// fall and repeat-at-post stays bounded; zero-pad any remaining frames.
+pub fn score_extend_short_fill_to_gap_frames(
+    fill_interleaved: &[i16],
+    extension_interleaved: &[i16],
+    channels: usize,
+    gap_frames: usize,
+    a_pre: &[f64],
+    a_post: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    pre_window: usize,
+    post_window: usize,
+    repeat_window_frames: usize,
+) -> Vec<i16> {
+    let channels = channels.max(1);
+    let source_frames = fill_interleaved.len() / channels;
+    debug_assert!(source_frames < gap_frames);
+
+    let ext_frames = extension_interleaved.len() / channels;
+    let mut out = fill_interleaved.to_vec();
+    let score_at_length = |samples: &[i16]| {
+        let padded = fit_fill_to_gap_frames(samples, channels, gap_frames);
+        let (pre, post) = fill_anchor_seams(
+            &padded,
+            channels,
+            a_pre,
+            a_post,
+            a_pre_ch,
+            a_post_ch,
+            pre_window,
+            post_window,
+        );
+        (pre.min(post), padded)
+    };
+    let (mut best_min, _) = score_at_length(&out);
+    let mut current_frames = source_frames;
+    let mut prev_repeat = placement_repeat_post(
+        &out,
+        channels,
+        a_post,
+        a_post_ch,
+        repeat_window_frames,
+    );
+
+    while current_frames < gap_frames {
+        let ext_frame = current_frames - source_frames;
+        if ext_frame >= ext_frames {
+            break;
+        }
+        let frame_start = ext_frame * channels;
+        let mut trial = out.clone();
+        trial.extend_from_slice(&extension_interleaved[frame_start..frame_start + channels]);
+
+        let (min_score, _) = score_at_length(&trial);
+        let next_repeat = placement_repeat_post(
+            &trial,
+            channels,
+            a_post,
+            a_post_ch,
+            repeat_window_frames,
+        );
+
+        let score_ok = min_score >= best_min - SCORE_TIE_EPSILON;
+        let repeat_ok = next_repeat <= REPEAT_CORR_THRESHOLD
+            && next_repeat <= prev_repeat + SCORE_TIE_EPSILON;
+
+        if score_ok && repeat_ok {
+            out = trial;
+            best_min = min_score;
+            prev_repeat = next_repeat;
+            current_frames += 1;
+        } else {
+            break;
+        }
+    }
+
+    fit_fill_to_gap_frames(&out, channels, gap_frames)
+}
+
+/// Fit-mode length adjust: score-based extend when short, dual-anchor trim when long.
+pub fn fit_fill_length_for_gap(
+    fill_interleaved: &[i16],
+    extension_interleaved: &[i16],
+    channels: usize,
+    gap_frames: usize,
+    a_pre: &[f64],
+    a_post: &[f64],
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+    pre_window: usize,
+    post_window: usize,
+    repeat_window_frames: usize,
+) -> Vec<i16> {
+    let channels = channels.max(1);
+    let source_frames = fill_interleaved.len() / channels;
+    if source_frames > gap_frames {
+        pick_fill_length_anchor(
+            fill_interleaved,
+            channels,
+            gap_frames,
+            a_pre,
+            a_post,
+            a_pre_ch,
+            a_post_ch,
+            pre_window,
+            post_window,
+        )
+    } else if source_frames < gap_frames {
+        score_extend_short_fill_to_gap_frames(
+            fill_interleaved,
+            extension_interleaved,
+            channels,
+            gap_frames,
+            a_pre,
+            a_post,
+            a_pre_ch,
+            a_post_ch,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+        )
+    } else {
+        fill_interleaved.to_vec()
+    }
+}
+
 /// When B bracket exceeds A gap length, pick trim-head vs trim-tail by waveform seam score (fit mode).
 pub fn pick_fill_length_anchor(
     fill_interleaved: &[i16],
@@ -1181,6 +1355,101 @@ mod tests {
             post_w,
         );
         assert_eq!(picked, vec![0, 0, post[0], post[1]]);
+    }
+
+    #[test]
+    fn score_extend_stops_before_extension_degrades_post_seam() {
+        let channels = 1usize;
+        let gap_frames = 5usize;
+        let pre_w = 2usize;
+        let post_w = 2usize;
+        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
+        let a_pre = vec![0.9, -0.9];
+        let a_post = vec![0.8, 0.7];
+        let fill = vec![to_i16(0.9), to_i16(-0.9)];
+        let extension = vec![
+            to_i16(0.75),
+            to_i16(0.8),
+            to_i16(-1.0),
+            to_i16(-1.0),
+        ];
+
+        let blind = {
+            let mut raw = fill.clone();
+            raw.extend(&extension[..3]);
+            fit_fill_to_gap_frames(&raw, channels, gap_frames)
+        };
+        let scored = score_extend_short_fill_to_gap_frames(
+            &fill,
+            &extension,
+            channels,
+            gap_frames,
+            &a_pre,
+            &a_post,
+            &[a_pre.clone()],
+            &[a_post.clone()],
+            pre_w,
+            post_w,
+            pre_w,
+        );
+
+        let extension_frames_used = |samples: &[i16]| {
+            let mut end = samples.len();
+            while end > fill.len() && samples[end - 1] == 0 {
+                end -= 1;
+            }
+            (end - fill.len()) / channels
+        };
+
+        assert!(
+            extension_frames_used(&scored) < extension_frames_used(&blind),
+            "score extend should take less contiguous B audio than blind extend before padding"
+        );
+        assert_eq!(scored.len(), gap_frames * channels);
+    }
+
+    #[test]
+    fn fit_fill_length_for_gap_delegates_short_bracket_to_score_extend() {
+        let channels = 1usize;
+        let gap_frames = 5usize;
+        let window = 2usize;
+        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
+        let a_pre = vec![0.9, -0.9];
+        let a_post = vec![0.8, 0.7];
+        let fill = vec![to_i16(0.9), to_i16(-0.9)];
+        let extension = vec![
+            to_i16(0.75),
+            to_i16(0.8),
+            to_i16(-1.0),
+            to_i16(-1.0),
+        ];
+        let via_api = fit_fill_length_for_gap(
+            &fill,
+            &extension,
+            channels,
+            gap_frames,
+            &a_pre,
+            &a_post,
+            &[a_pre.clone()],
+            &[a_post.clone()],
+            window,
+            window,
+            window,
+        );
+        let direct = score_extend_short_fill_to_gap_frames(
+            &fill,
+            &extension,
+            channels,
+            gap_frames,
+            &a_pre,
+            &a_post,
+            &[a_pre.clone()],
+            &[a_post.clone()],
+            window,
+            window,
+            window,
+        );
+        assert_eq!(via_api, direct);
     }
 
     #[test]

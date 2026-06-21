@@ -258,6 +258,7 @@ struct PatchTestOptions {
     fill_length_slack_secs: f64,
     gap_end_extend_max_ms: u64,
     gap_end_extend_step_ms: u64,
+    fill_repeat_penalty_weight: f64,
 }
 
 impl Default for PatchTestOptions {
@@ -283,6 +284,7 @@ impl Default for PatchTestOptions {
             fill_length_slack_secs: 5.0,
             gap_end_extend_max_ms: 500,
             gap_end_extend_step_ms: 20,
+            fill_repeat_penalty_weight: 0.4,
         }
     }
 }
@@ -356,7 +358,7 @@ fn patch_request_with_options(
         fill_fit_waveform_weight: options.fill_fit_waveform_weight,
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
-        fill_repeat_penalty_weight: 0.0,
+        fill_repeat_penalty_weight: options.fill_repeat_penalty_weight,
     }
 }
 
@@ -1475,6 +1477,39 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         gap_rms > 100.0,
         "late gap should be filled with interpolated offset, rms={gap_rms}"
     );
+}
+
+#[test]
+fn patch_audio_fit_default_repeat_penalty_patches_clean_fixture() {
+    let opts = fast_fit_patch_options();
+    assert!(
+        (opts.fill_repeat_penalty_weight - 0.4).abs() < 1e-9,
+        "fit integration should exercise shipped repeat-penalty default"
+    );
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(
+            fixture.path_a,
+            fixture.path_b,
+            stereo_identical_compat(SAMPLE_RATE),
+        )
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, opts),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            confidence: FillConfidence::High,
+            ..
+        } => {}
+        other => panic!("expected high-confidence patch with default repeat penalty, got {other:?}"),
+    }
 }
 
 /// Production-like fit defaults (10 s border search, full extension grid). Too slow for default CI.
