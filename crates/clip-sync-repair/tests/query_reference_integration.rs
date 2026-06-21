@@ -205,6 +205,8 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 fill_mode: clip_sync_repair::domain::FillMode::Gate,
                 fill_fit_structure_weight: 0.35,
                 fill_fit_waveform_weight: 0.65,
+                fill_marginal_margin: 0.08,
+                fill_absolute_floor: 0.12,
             },
             10,
         )

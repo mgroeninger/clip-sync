@@ -392,9 +392,16 @@ fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Op
 fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -> String {
     let found = report.gaps.len();
     if let Some(summary) = patch {
+        let marginal_note = if summary.patched_marginal_count > 0 {
+            format!(" ({} marginal)", summary.patched_marginal_count)
+        } else {
+            String::new()
+        };
         return format!(
-            "Gaps in video A ({found} found, {} repaired, {} skipped, {} unfillable):\n",
-            summary.patched_count, summary.skipped_count, summary.not_planned_count,
+            "Gaps in video A ({found} found, {} repaired{marginal_note}, {} skipped, {} unfillable):\n",
+            summary.patched_count,
+            summary.skipped_count,
+            summary.not_planned_count,
         );
     }
 
@@ -438,22 +445,29 @@ fn format_unified_gap_status(
             align_adjustment_secs,
             waveform_adjustment_secs,
             structure_trusted,
+            confidence,
+            ..
         } => {
             let slide = format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
+            let marginal = if *confidence == crate::domain::FillConfidence::Marginal {
+                "! "
+            } else {
+                ""
+            };
             if show_diagnostics {
                 if *structure_trusted {
                     format!(
-                        "patched (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+                        "{marginal}patched (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 } else {
                     format!(
-                        "patched (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+                        "{marginal}patched (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 }
             } else if *structure_trusted {
-                format!("patched (struct {pre_correlation:.2}→{post_correlation:.2})")
+                format!("{marginal}patched (struct {pre_correlation:.2}→{post_correlation:.2})")
             } else {
-                format!("patched ({pre_correlation:.2}→{post_correlation:.2})")
+                format!("{marginal}patched ({pre_correlation:.2}→{post_correlation:.2})")
             }
         }
         GapPatchStatus::Skipped { reason } => {
@@ -567,16 +581,23 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 align_adjustment_secs,
                 waveform_adjustment_secs,
                 structure_trusted,
+                confidence,
+                ..
             } => {
                 let slide =
                     format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
+                let marginal = if *confidence == crate::domain::FillConfidence::Marginal {
+                    "! "
+                } else {
+                    ""
+                };
                 if *structure_trusted {
                     format!(
-                        "patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+                        "{marginal}patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 } else {
                     format!(
-                        "patched  (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+                        "{marginal}patched  (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
                     )
                 }
             }
@@ -779,6 +800,9 @@ mod tests {
                     align_adjustment_secs: 0.02,
                     waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
                 },
             },
             GapPatchOutcome {
@@ -919,6 +943,9 @@ mod tests {
                 align_adjustment_secs: 0.02,
                 waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
+                confidence: crate::domain::FillConfidence::High,
+                gap_start_adjust_frames: 0,
+                gap_end_adjust_frames: 0,
             },
         }]);
         let payload = RepairJsonOutput {
@@ -951,6 +978,9 @@ mod tests {
                     align_adjustment_secs: 0.01,
                     waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
                 },
             },
             GapPatchOutcome {
@@ -1184,6 +1214,9 @@ mod tests {
                 align_adjustment_secs: 0.0,
                 waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
+                confidence: crate::domain::FillConfidence::High,
+                gap_start_adjust_frames: 0,
+                gap_end_adjust_frames: 0,
             },
         }]);
 
@@ -1208,6 +1241,9 @@ mod tests {
                 align_adjustment_secs: 0.01,
                 waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
+                confidence: crate::domain::FillConfidence::High,
+                gap_start_adjust_frames: 0,
+                gap_end_adjust_frames: 0,
             },
         }]);
 
@@ -1303,6 +1339,9 @@ mod tests {
                     align_adjustment_secs: 0.0,
                     waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
                 },
             },
             GapPatchOutcome {
@@ -1365,6 +1404,9 @@ mod tests {
                     align_adjustment_secs: 0.0,
                     waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
                 },
             },
             GapPatchOutcome {

@@ -130,6 +130,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                     fill_mode: config.repair.fill_mode,
                     fill_fit_structure_weight: config.repair.fill_fit_structure_weight,
                     fill_fit_waveform_weight: config.repair.fill_fit_waveform_weight,
+                    fill_marginal_margin: config.repair.fill_marginal_margin,
+                    fill_absolute_floor: config.repair.fill_absolute_floor,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,

@@ -1,4 +1,6 @@
-//! Waveform seam search and unified structure+waveform fit (Phase A/B).
+//! Waveform seam search and unified structure+waveform fit (Phase A/B/C).
+
+use serde::Serialize;
 
 use crate::domain::gap_structure::{
     self, combined_structure_score, prefer_end, prefer_start, score_post_match, score_pre_match,
@@ -11,6 +13,70 @@ use crate::domain::policies::{
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
 const LATE_START_PENALTY: f64 = 0.08;
+
+/// Default hard skip floor for fit-mode waveform tiering (Phase C).
+pub const DEFAULT_FILL_ABSOLUTE_FLOOR: f32 = 0.12;
+/// Default band below `min_fill_correlation` for marginal patches (Phase C).
+pub const DEFAULT_FILL_MARGINAL_MARGIN: f32 = 0.08;
+
+/// Patch confidence from waveform seam scores (fit mode tiering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FillConfidence {
+    High,
+    Marginal,
+}
+
+/// Hard skip floor honoring a lowered `min_fill_correlation` (e.g. gate disabled in tests).
+pub fn effective_fill_absolute_floor(min_fill_correlation: f32, absolute_floor: f32) -> f32 {
+    absolute_floor.min(min_fill_correlation)
+}
+
+/// Classify waveform seam scores into patch confidence tiers (fit mode).
+///
+/// Returns `Err` when `min(pre, post)` is below the effective absolute floor.
+pub fn classify_fill_waveform_confidence(
+    pre: f64,
+    post: f64,
+    min_fill_correlation: f32,
+    marginal_margin: f32,
+    absolute_floor: f32,
+) -> Result<FillConfidence, f64> {
+    let min_score = pre.min(post);
+    let hard_floor = f64::from(effective_fill_absolute_floor(
+        min_fill_correlation,
+        absolute_floor,
+    ));
+    if min_score < hard_floor {
+        return Err(min_score);
+    }
+    if fit_mode_waveform_floor_passes(pre, post, min_fill_correlation) {
+        return Ok(FillConfidence::High);
+    }
+    let marginal_floor = f64::from(min_fill_correlation - marginal_margin);
+    if min_score >= marginal_floor {
+        return Ok(FillConfidence::Marginal);
+    }
+    Err(min_score)
+}
+
+/// Penalty subtracted from ranking score per frame of A-boundary movement (Phase C).
+pub const BOUNDARY_MOVE_PENALTY_PER_FRAME: f64 = 0.000_2;
+
+/// Cap grid steps per axis in joint A-boundary search (Phase C performance).
+const MAX_BOUNDARY_GRID_STEPS: usize = 12;
+
+pub fn boundary_search_step_frames(max_extend_frames: usize, step_frames: usize) -> usize {
+    let step = step_frames.max(1);
+    if max_extend_frames <= step.saturating_mul(MAX_BOUNDARY_GRID_STEPS) {
+        return step;
+    }
+    (max_extend_frames / MAX_BOUNDARY_GRID_STEPS).max(step)
+}
+
+pub fn fit_candidate_ranking_score(min_waveform: f64, boundary_move_frames: usize) -> f64 {
+    min_waveform - BOUNDARY_MOVE_PENALTY_PER_FRAME * boundary_move_frames as f64
+}
 
 /// Weights for unified fit scoring (Phase B).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -686,6 +752,31 @@ mod tests {
     fn fit_mode_floor_uses_min_of_seams() {
         assert!(fit_mode_waveform_floor_passes(0.5, 0.4, 0.35));
         assert!(!fit_mode_waveform_floor_passes(0.5, 0.2, 0.35));
+    }
+
+    #[test]
+    fn classify_fill_waveform_confidence_tiers() {
+        use super::FillConfidence;
+
+        assert_eq!(
+            classify_fill_waveform_confidence(0.5, 0.4, 0.35, 0.08, 0.12).unwrap(),
+            FillConfidence::High
+        );
+        assert_eq!(
+            classify_fill_waveform_confidence(0.30, 0.28, 0.35, 0.08, 0.12).unwrap(),
+            FillConfidence::Marginal
+        );
+        assert!(classify_fill_waveform_confidence(0.10, 0.15, 0.35, 0.08, 0.12).is_err());
+        // Gate disabled: hard floor follows min_fill_correlation.
+        assert_eq!(
+            classify_fill_waveform_confidence(0.05, 0.04, -1.0, 0.08, 0.12).unwrap(),
+            FillConfidence::High
+        );
+    }
+
+    #[test]
+    fn fit_candidate_ranking_prefers_less_boundary_move_at_equal_waveform() {
+        assert!(fit_candidate_ranking_score(0.5, 0) > fit_candidate_ranking_score(0.5, 100));
     }
 
     #[test]

@@ -140,6 +140,12 @@ pub struct RepairConfig {
     /// Unified fit: weight on `min(pre, post)` waveform Pearson (Phase B; fit mode only).
     #[serde(default = "default_fill_fit_waveform_weight")]
     pub fill_fit_waveform_weight: f64,
+    /// Fit mode: patch band below `min_fill_correlation` with a marginal warning (Phase C).
+    #[serde(default = "default_fill_marginal_margin")]
+    pub fill_marginal_margin: f32,
+    /// Fit mode: hard skip when `min(pre, post)` is below this (Phase C).
+    #[serde(default = "default_fill_absolute_floor")]
+    pub fill_absolute_floor: f32,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -244,6 +250,12 @@ fn default_fill_fit_structure_weight() -> f64 {
 fn default_fill_fit_waveform_weight() -> f64 {
     0.65
 }
+fn default_fill_marginal_margin() -> f32 {
+    crate::domain::gap_fill_fit::DEFAULT_FILL_MARGINAL_MARGIN
+}
+fn default_fill_absolute_floor() -> f32 {
+    crate::domain::gap_fill_fit::DEFAULT_FILL_ABSOLUTE_FLOOR
+}
 
 impl Default for RepairConfig {
     fn default() -> Self {
@@ -282,6 +294,8 @@ impl Default for RepairConfig {
             fill_mode: crate::domain::FillMode::default(),
             fill_fit_structure_weight: default_fill_fit_structure_weight(),
             fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
+            fill_marginal_margin: default_fill_marginal_margin(),
+            fill_absolute_floor: default_fill_absolute_floor(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),

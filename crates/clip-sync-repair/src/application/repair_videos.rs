@@ -370,6 +370,9 @@ mod tests {
                     align_adjustment_secs: 0.0,
                     waveform_adjustment_secs: 0.0,
                     structure_trusted: false,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
                 },
             }]
         } else {
@@ -482,6 +485,9 @@ mod tests {
                 align_adjustment_secs: 0.0,
                 waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
+                confidence: crate::domain::FillConfidence::High,
+                gap_start_adjust_frames: 0,
+                gap_end_adjust_frames: 0,
             },
         }]);
         assert!(patched.has_patches());

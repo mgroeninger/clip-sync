@@ -94,6 +94,10 @@ pub struct PatchAudioRequest {
     pub fill_fit_structure_weight: f64,
     /// Unified fit waveform weight (fit mode only).
     pub fill_fit_waveform_weight: f64,
+    /// Fit mode marginal patch band below `min_fill_correlation` (Phase C).
+    pub fill_marginal_margin: f32,
+    /// Fit mode hard waveform skip floor (Phase C).
+    pub fill_absolute_floor: f32,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -200,14 +204,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         let channels = a_pcm.channels as usize;
         let sample_rate = a_pcm.sample_rate;
-        let max_adjustment_frames =
-            (request.max_fill_align_adjustment_secs * sample_rate as f64).round() as usize;
         let max_refine_frames =
             (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
         let region_ctx = RegionPatchContext {
             channels,
             sample_rate,
-            max_adjustment_frames,
             max_refine_frames,
             global_a_rms,
             silence_peak_fraction: request.report.silence_peak_fraction,
@@ -312,6 +313,9 @@ enum RegionPatchOutcome {
         align_adjustment_secs: f64,
         waveform_adjustment_secs: f64,
         structure_trusted: bool,
+        confidence: crate::domain::FillConfidence,
+        gap_start_adjust_frames: i64,
+        gap_end_adjust_frames: i64,
     },
     Skipped(GapPatchSkipReason),
 }
@@ -493,12 +497,18 @@ fn outcomes_in_report_order(
                 align_adjustment_secs,
                 waveform_adjustment_secs,
                 structure_trusted,
+                confidence,
+                gap_start_adjust_frames,
+                gap_end_adjust_frames,
             } => GapPatchStatus::Patched {
                 pre_correlation: *pre_correlation,
                 post_correlation: *post_correlation,
                 align_adjustment_secs: *align_adjustment_secs,
                 waveform_adjustment_secs: *waveform_adjustment_secs,
                 structure_trusted: *structure_trusted,
+                confidence: *confidence,
+                gap_start_adjust_frames: *gap_start_adjust_frames,
+                gap_end_adjust_frames: *gap_end_adjust_frames,
             },
             RegionPatchOutcome::Skipped(reason) => GapPatchStatus::Skipped {
                 reason: reason.clone(),
@@ -528,7 +538,6 @@ fn outcomes_in_report_order(
 struct RegionPatchContext {
     channels: usize,
     sample_rate: u32,
-    max_adjustment_frames: usize,
     max_refine_frames: usize,
     global_a_rms: f32,
     /// From the scan report (matches the thresholds the gaps were detected with).
@@ -604,7 +613,6 @@ fn prepare_region_patch(
     let &RegionPatchContext {
         channels,
         sample_rate,
-        max_adjustment_frames,
         max_refine_frames,
         global_a_rms,
         silence_peak_fraction,
@@ -675,7 +683,10 @@ fn prepare_region_patch(
     let bin_frames =
         ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = if gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail {
+    let extend_slack_secs = if request.fill_mode == crate::domain::FillMode::Fit
+        || gap_end_extend_on_post_seam_fail
+        || gap_start_extend_on_pre_seam_fail
+    {
         gap_end_extend_max_ms as f64 / 1000.0
     } else {
         0.0
@@ -775,7 +786,6 @@ fn prepare_region_patch(
         border_standoff_frames,
         search_radius_frames,
         fill_length_slack_frames,
-        max_adjustment_frames,
         silence_peak_fraction,
         absolute_silence_rms,
         min_structure_match_score,
@@ -788,58 +798,82 @@ fn prepare_region_patch(
         fill_mode: request.fill_mode,
         fill_fit_structure_weight: request.fill_fit_structure_weight,
         fill_fit_waveform_weight: request.fill_fit_waveform_weight,
+        fill_marginal_margin: request.fill_marginal_margin,
+        fill_absolute_floor: request.fill_absolute_floor,
+        max_extend_frames,
+        step_frames,
+        gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
         Ok(outcome) => outcome,
-        Err(fail) => match fail {
-            SeamGateFailure::WaveformBelowThreshold { .. }
-                if gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail =>
-            {
-                match retry_waveform_seam_extensions(
-                    &mut refined,
-                    gap_offset_secs,
-                    &seam_params,
-                    fail,
-                    SeamExtensionRetry {
-                        max_extend_frames,
-                        step_frames: step_frames.max(1),
-                        gap_end_extend_on_post_seam_fail,
-                        gap_start_extend_on_pre_seam_fail,
-                    },
-                ) {
-                    Ok(outcome) => outcome,
-                    Err(retry_fail) => {
-                        return seam_failure_outcome(
-                            progress,
-                            request,
-                            region,
-                            retry_fail,
-                            min_structure_match_score,
-                        );
+        Err(fail)
+            if request.fill_mode == crate::domain::FillMode::Gate
+                && (gap_end_extend_on_post_seam_fail || gap_start_extend_on_pre_seam_fail) =>
+        {
+            match fail {
+                SeamGateFailure::WaveformBelowThreshold { .. } => {
+                    match retry_waveform_seam_extensions(
+                        &mut refined,
+                        gap_offset_secs,
+                        &seam_params,
+                        fail,
+                        SeamExtensionRetry {
+                            max_extend_frames,
+                            step_frames: step_frames.max(1),
+                            gap_end_extend_on_post_seam_fail,
+                            gap_start_extend_on_pre_seam_fail,
+                        },
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(retry_fail) => {
+                            return seam_failure_outcome(
+                                progress,
+                                request,
+                                region,
+                                retry_fail,
+                                min_structure_match_score,
+                            );
+                        }
                     }
                 }
+                other => {
+                    return seam_failure_outcome(
+                        progress,
+                        request,
+                        region,
+                        other,
+                        min_structure_match_score,
+                    );
+                }
             }
-            other => {
-                return seam_failure_outcome(
-                    progress,
-                    request,
-                    region,
-                    other,
-                    min_structure_match_score,
-                );
-            }
-        },
+        }
+        Err(other) => {
+            return seam_failure_outcome(
+                progress,
+                request,
+                region,
+                other,
+                min_structure_match_score,
+            );
+        }
     };
 
     let SeamGateOutcome {
+        refined,
         alignment,
         report_pre,
         report_post,
         structure_trusted: patched_structure_trusted,
         structure_start_frame,
         gap_frames,
+        confidence,
+        gap_start_adjust_frames,
+        gap_end_adjust_frames,
     } = gate_outcome;
+
+    let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
 
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
@@ -929,6 +963,9 @@ fn prepare_region_patch(
             align_adjustment_secs,
             waveform_adjustment_secs: waveform_slide_secs,
             structure_trusted: patched_structure_trusted,
+            confidence,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
         },
     )
 }

@@ -282,6 +282,14 @@ pub(crate) fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize
     (span_steps / 2_000).max(1) * bin_frames
 }
 
+/// Sample-level polish radius after coarse bin search — not the waveform slide window.
+///
+/// `max_fill_align_adjustment_secs` controls B waveform placement elsewhere; using that
+/// value here caused multi-second exhaustive loops per fit candidate.
+pub(crate) fn structure_fine_polish_frames(bin_frames: usize) -> usize {
+    bin_frames.max(1).min(128)
+}
+
 fn search_best_fill_start(
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
@@ -553,6 +561,12 @@ mod tests {
         for ch in 0..channels {
             samples[frame * channels + ch] = amp;
         }
+    }
+
+    #[test]
+    fn structure_fine_polish_frames_capped_independent_of_waveform_slide() {
+        assert_eq!(structure_fine_polish_frames(3), 3);
+        assert_eq!(structure_fine_polish_frames(2_400), 128);
     }
 
     #[test]

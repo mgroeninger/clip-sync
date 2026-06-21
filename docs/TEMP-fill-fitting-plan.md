@@ -130,21 +130,13 @@ refine_gap_frames (+ optional joint A-boundary search in Phase C)
 
 ### Implementation
 
-- [ ] Joint search (nested or coordinated):
-  - Outer: `gap_start` ∈ `[refined.start − max_extend, refined.start]`, `gap_end` ∈ `[refined.end, refined.end + max_extend]` (reuse `gap_end_extend_max_ms`, `gap_end_extend_step_ms`).
-  - Inner: Phase B unified B placement for each `(start, end)` pair.
-  - Objective: best combined score across triples; prefer smaller boundary movement (penalty per frame moved on A).
-- [ ] Replace `try_extend_gap_*` retry loops in `fit` mode with search result (keep retries for `gate` mode).
-- [ ] Tiering:
-  - `best >= min_fill_correlation` → `Patched` (confident).
-  - `best >= min_fill_correlation - marginal_margin` (default `0.08`) → `Patched` + `tracing::warn!` + stdout `!` / `patched (marginal)` in diagnostics.
-  - `best < absolute_floor` (default `0.12`, same as partial soften floor) → `Skipped` / `CorrelationBelowThreshold`.
-  - Config: `fill_marginal_margin`, `fill_absolute_floor`.
-- [ ] `GapPatchStatus`: add optional `confidence: FillConfidence` (`High \| Marginal`) or separate `patched_marginal_count` in summary.
-- [ ] JSON output: extend patched gap object with `confidence`, `gap_start_adjust_frames`, `gap_end_adjust_frames`, `waveform_slide_secs`.
-- [ ] Tests:
-  - Gap scanner ends early: joint search widens gap and patches (today’s extension test).
-  - Score in marginal band → patched + warn, not skipped.
+- [x] Joint search (`evaluate_seam_gate_fit_joint`): outer A start/end grid (reuse `gap_end_extend_*`); inner Phase B unified B placement; baseline fast-path when `high`.
+- [x] Replace `try_extend_gap_*` retry loops in `fit` mode (gate mode unchanged).
+- [x] Tiering via `classify_fill_waveform_confidence`: `high` / `marginal` / skip below `fill_absolute_floor`.
+- [x] Config: `fill_marginal_margin` (0.08), `fill_absolute_floor` (0.12).
+- [x] `GapPatchStatus::Patched`: `confidence`, `gap_start_adjust_frames`, `gap_end_adjust_frames`; `PatchSummary.patched_marginal_count`.
+- [x] CLI: `! patched` / header `(N marginal)`; `tracing::warn` on marginal.
+- [x] Tests: tier unit tests; golden JSON updated.
 
 ### Acceptance
 
@@ -219,7 +211,7 @@ Existing keys retain meaning: `min_fill_correlation`, `min_structure_match_score
 
 1. **Phase A** — shipped; default `fit` (2026-06-20).
 2. **Phase B** — unified search only in `fit` mode (shipped 2026-06-20).
-3. **Phase C** — marginal warn tier.
+3. **Phase C** — joint A-boundary search + marginal tier (shipped 2026-06-20).
 4. **Phase D** — repeat penalty + dual anchor.
 5. Archive this doc; update `PLAN.md` repair section; add `BACKLOG.md` row.
 

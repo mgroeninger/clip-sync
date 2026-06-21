@@ -287,16 +287,19 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
 
 1. Map gap on A to B (`fill_offset_mode`: `recommended` or `interpolated` drift).
 2. Refine gap edges on A; **structure-match** dropout pattern on B (`min_structure_match_score`) — always runs.
-3. **Waveform placement** (`fill_mode`, default `fit`): unified structure+waveform search over the B haystack, or (`gate`) score once at structure winner — see below.
-4. On waveform failure, retry with gap-end extension then gap-start extension (when enabled).
+3. **Waveform placement** (`fill_mode`, default `fit`): joint A-boundary search + unified B placement, or (`gate`) score once at structure winner — see below.
+4. On waveform failure under **`gate`**, retry with gap-end extension then gap-start extension (when enabled). Under **`fit`**, boundary search is proactive (step 3).
 
 **`fill_mode = fit` (default)**
 
-- Scores each structure candidate (coarse start/end search + fine polish) with `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)` (defaults 0.35 / 0.65).
-- Patch when the winning candidate meets `min_structure_match_score` and `min(pre, post) ≥ min_fill_correlation`.
+- **Joint A-boundary search** (when `gap_end_extend_on_post_seam_fail` / `gap_start_extend_on_pre_seam_fail`): shift gap start earlier and/or end later within `gap_end_extend_max_ms` / `gap_end_extend_step_ms`; for each `(start, end)` run unified B placement (Phase B).
+- **Tiering** on `min(pre, post)` at the winning candidate:
+  - `≥ min_fill_correlation` → `patched` (confident)
+  - `≥ min_fill_correlation - fill_marginal_margin` (default 0.08) → `! patched` (marginal) + stderr warn
+  - `< fill_absolute_floor` (default 0.12) → skip
+- Unified scorer: `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)` (defaults 0.35 / 0.65).
 - Structure trust is not used (`structure_trusted` is always false).
 - CLI flags **`--no-structure-trust`** and **`--no-short-gap-one-strong-seam`** have **no effect** (gate-only).
-- Config `strong_structure_trust`, `partial_structure_waveform_soften`, and `short_gap_one_strong_seam_fallback` do not change waveform placement under `fit`.
 
 **Structure trust vs waveform gate (`fill_mode = gate` only)**
 

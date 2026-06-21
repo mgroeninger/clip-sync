@@ -222,6 +222,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
 | `patched_count` | integer | always | Gaps spliced |
+| `patched_marginal_count` | integer | always | Patches in warn tier (`confidence: marginal`) |
 | `skipped_count` | integer | always | Planned but skipped during splice |
 | `not_planned_count` | integer | always | Excluded at plan time |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
@@ -237,9 +238,9 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number}}`
 
-`structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false` and `waveform_adjustment_secs` records the slide from the structure match position.
+`structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`
 - `{"not_planned": {"reason": <GapFillSkipReason>}}`
 

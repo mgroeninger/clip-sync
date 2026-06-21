@@ -13,6 +13,7 @@ pub mod track_match;
 
 pub use fill_mode::FillMode;
 pub use fill_offset::{FillOffsetMode, fill_offset_secs};
+pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};

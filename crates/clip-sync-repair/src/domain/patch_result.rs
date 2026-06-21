@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::domain::gap_fill_fit::FillConfidence;
+
 /// Why a detected gap was not included in the fill plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +48,15 @@ pub enum GapPatchStatus {
         waveform_adjustment_secs: f64,
         /// `true` when placement was accepted from structure match without a waveform gate.
         structure_trusted: bool,
+        /// Fit-mode waveform tier (`high` confident, `marginal` warn-patch band).
+        #[serde(default = "default_fill_confidence_high")]
+        confidence: FillConfidence,
+        /// Frames the winning A gap start was shifted from the pre-search refined edge.
+        #[serde(default)]
+        gap_start_adjust_frames: i64,
+        /// Frames the winning A gap end was extended from the pre-search refined edge.
+        #[serde(default)]
+        gap_end_adjust_frames: i64,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -55,10 +66,16 @@ pub enum GapPatchStatus {
     },
 }
 
+#[allow(dead_code)]
+fn default_fill_confidence_high() -> FillConfidence {
+    FillConfidence::High
+}
+
 /// User-visible summary of a `PatchAudio` run (no PCM payload).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PatchSummary {
     pub patched_count: usize,
+    pub patched_marginal_count: usize,
     pub skipped_count: usize,
     pub not_planned_count: usize,
     pub gaps: Vec<GapPatchOutcome>,
@@ -72,17 +89,24 @@ impl PatchSummary {
 
     pub fn from_outcomes(gaps: Vec<GapPatchOutcome>) -> Self {
         let mut patched_count = 0usize;
+        let mut patched_marginal_count = 0usize;
         let mut skipped_count = 0usize;
         let mut not_planned_count = 0usize;
         for gap in &gaps {
             match gap.status {
-                GapPatchStatus::Patched { .. } => patched_count += 1,
+                GapPatchStatus::Patched { confidence, .. } => {
+                    patched_count += 1;
+                    if confidence == FillConfidence::Marginal {
+                        patched_marginal_count += 1;
+                    }
+                }
                 GapPatchStatus::Skipped { .. } => skipped_count += 1,
                 GapPatchStatus::NotPlanned { .. } => not_planned_count += 1,
             }
         }
         Self {
             patched_count,
+            patched_marginal_count,
             skipped_count,
             not_planned_count,
             gaps,
