@@ -145,10 +145,10 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
 
 ### Phase 4 — Optional enhancements (defer)
 
-- [ ] Soft search prior in `unified_fit_score` from anchor prediction.
-- [ ] Weight anchors by `min(pre, post)` or inverse gap length.
-- [ ] Combine with [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) — better structure + better nominal map.
-- [ ] Export anchors in JSON for debugging / external tools.
+- [x] Soft search prior in `unified_fit_score` from anchor prediction (`fill_anchor_search_prior_weight`, fit + pass 2).
+- [x] Weight anchors by `min(pre, post)` (piecewise weighted interpolation).
+- [x] Combine with [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) — complementary layers (anchors center haystack; energy discriminates inside); no code coupling required.
+- [x] Export anchors in JSON (`patch_anchors_used` on `PatchSummary`).
 - [ ] `BACKLOG` segment-wise alignment: patch anchors may reduce urgency but do not replace global refine.
 
 ---

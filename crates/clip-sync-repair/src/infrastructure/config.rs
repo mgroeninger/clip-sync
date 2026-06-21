@@ -158,6 +158,12 @@ pub struct RepairConfig {
     /// Reject anchors whose `|align_adjustment|` exceeds this fraction of `fill_border_search_secs`.
     #[serde(default = "default_fill_anchor_max_adjustment_frac")]
     pub fill_anchor_max_adjustment_frac: f64,
+    /// Fit mode: penalize unified-search candidates far from patch-anchor prediction (0 = off).
+    #[serde(default)]
+    pub fill_anchor_search_prior_weight: f64,
+    /// Structure signature for gap fill search (`bool`, `energy`, or `auto`).
+    #[serde(default)]
+    pub gap_signature_mode: crate::domain::GapSignatureMode,
     /// When waveform post-seam correlation fails, try extending the gap end on A.
     #[serde(default = "default_true")]
     pub gap_end_extend_on_post_seam_fail: bool,
@@ -321,6 +327,8 @@ impl Default for RepairConfig {
             fill_anchor_min_correlation: default_fill_anchor_min_correlation(),
             fill_anchor_exclude_structure_trusted: true,
             fill_anchor_max_adjustment_frac: default_fill_anchor_max_adjustment_frac(),
+            fill_anchor_search_prior_weight: 0.0,
+            gap_signature_mode: crate::domain::GapSignatureMode::default(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
@@ -556,6 +564,12 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "repair.output.mux_audio_bitrate".into(),
                 reason: "must be match_min, match_a, default, or a rate like 256k".into(),
+            });
+        }
+        if self.fill_anchor_search_prior_weight < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_anchor_search_prior_weight".into(),
+                reason: "must be >= 0".into(),
             });
         }
         if self.fill_anchor_max_adjustment_frac <= 0.0

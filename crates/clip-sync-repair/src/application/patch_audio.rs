@@ -21,7 +21,8 @@ use crate::domain::{
     gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
     patch_anchor::{
         format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
-        is_retryable_patch_skip, PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
+        interpolate_anchored_offset_secs, is_retryable_patch_skip, AnchorSearchPrior,
+        PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
     },
     patch_result::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
@@ -112,6 +113,10 @@ pub struct PatchAudioRequest {
     pub fill_anchor_exclude_structure_trusted: bool,
     /// Max `|align_adjustment|` as a fraction of `fill_border_search_secs` for anchors.
     pub fill_anchor_max_adjustment_frac: f64,
+    /// Fit mode: soft penalty in unified search for B candidates far from anchor-predicted start (0 = off).
+    pub fill_anchor_search_prior_weight: f64,
+    /// Structure signature representation for gap fill search.
+    pub gap_signature_mode: crate::domain::GapSignatureMode,
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -261,18 +266,32 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
-        if request.fill_offset_mode == FillOffsetMode::AnchoredRetry {
-            run_anchored_retry_pass(
-                self.progress,
-                &mut patches,
-                &mut region_results,
-                &plan.regions,
-                &request,
-                &region_ctx,
-                &b_samples_full,
-                &a_pcm,
-            );
-        }
+        let patch_anchors_used = if request.fill_offset_mode == FillOffsetMode::AnchoredRetry {
+            let candidates =
+                build_patch_anchor_candidates(&request, &plan.regions, &region_results);
+            let table =
+                PatchAnchorTable::from_candidates(&candidates, &patch_anchor_policy(&request));
+            if table.is_empty() {
+                None
+            } else {
+                self.progress
+                    .phase_verbose(&format_patch_anchor_table_summary(&table));
+                run_anchored_retry_pass(
+                    self.progress,
+                    &mut patches,
+                    &mut region_results,
+                    &plan.regions,
+                    &request,
+                    &region_ctx,
+                    &b_samples_full,
+                    &a_pcm,
+                    &table,
+                );
+                Some(table.to_reports())
+            }
+        } else {
+            None
+        };
 
         // Step 9: Apply patches to A samples.
         let patch_count = patches.len() as u64;
@@ -302,11 +321,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             );
         }
 
-        let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+        let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
             &plan,
             &region_results,
         ));
+        if let Some(anchors) = patch_anchors_used {
+            summary = summary.with_patch_anchors(anchors);
+        }
 
         let container_secs = duration_a.as_secs_f64();
         let pcm_secs = a_pcm.frames() as f64 / f64::from(a_pcm.sample_rate);
@@ -371,6 +393,42 @@ fn patch_anchor_policy(request: &PatchAudioRequest) -> PatchAnchorPolicy {
     }
 }
 
+fn anchor_search_prior_for_gap(
+    request: &PatchAudioRequest,
+    patch_anchors: Option<&PatchAnchorTable>,
+    anchored_retry_pass: AnchoredRetryPass,
+    gap_time_on_a: f64,
+    a_start_secs: f64,
+    _gap_offset_secs: f64,
+    b_extract_start_secs: f64,
+    search_radius_frames: usize,
+    sample_rate: u32,
+) -> Option<AnchorSearchPrior> {
+    if request.fill_mode != FillMode::Fit || request.fill_anchor_search_prior_weight <= 0.0 {
+        return None;
+    }
+    let table = patch_anchors.filter(|t| !t.is_empty())?;
+    if anchored_retry_pass != AnchoredRetryPass::Second
+        && request.fill_offset_mode != FillOffsetMode::Anchored
+    {
+        return None;
+    }
+    let predicted_offset = interpolate_anchored_offset_secs(
+        &request.report.alignment,
+        gap_time_on_a,
+        table,
+    )?;
+    let predicted_b_start = a_start_secs + predicted_offset;
+    let predicted_start_frame = ((predicted_b_start - b_extract_start_secs) * sample_rate as f64)
+        .round()
+        .max(0.0) as usize;
+    Some(AnchorSearchPrior {
+        predicted_start_frame,
+        weight: request.fill_anchor_search_prior_weight,
+        search_radius_frames,
+    })
+}
+
 fn build_patch_anchor_candidates(
     request: &PatchAudioRequest,
     regions: &[FillRegion],
@@ -425,16 +483,8 @@ fn run_anchored_retry_pass(
     ctx: &RegionPatchContext,
     b_samples_full: &[i16],
     a_pcm: &MultiChannelPcm,
+    table: &PatchAnchorTable,
 ) {
-    let candidates = build_patch_anchor_candidates(request, regions, region_results);
-    let table = PatchAnchorTable::from_candidates(&candidates, &patch_anchor_policy(request));
-    if !table.is_empty() {
-        progress.phase_verbose(&format_patch_anchor_table_summary(&table));
-    }
-    if table.is_empty() {
-        return;
-    }
-
     let retry_indices: Vec<usize> = region_results
         .iter()
         .enumerate()
@@ -979,6 +1029,18 @@ fn prepare_region_patch(
         step_frames,
         gap_end_extend_on_post_seam_fail,
         gap_start_extend_on_pre_seam_fail,
+        anchor_search_prior: anchor_search_prior_for_gap(
+            request,
+            patch_anchors,
+            anchored_retry_pass,
+            gap_time_on_a,
+            region.a_start_secs,
+            gap_offset_secs,
+            b_extract_start_secs,
+            search_radius_frames,
+            sample_rate,
+        ),
+        gap_signature_mode: request.gap_signature_mode,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {

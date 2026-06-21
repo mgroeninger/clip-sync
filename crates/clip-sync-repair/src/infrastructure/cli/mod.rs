@@ -138,6 +138,8 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .repair
                         .fill_anchor_exclude_structure_trusted,
                     fill_anchor_max_adjustment_frac: config.repair.fill_anchor_max_adjustment_frac,
+                    fill_anchor_search_prior_weight: config.repair.fill_anchor_search_prior_weight,
+                    gap_signature_mode: config.repair.gap_signature_mode,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
                         .gap_end_extend_on_post_seam_fail,

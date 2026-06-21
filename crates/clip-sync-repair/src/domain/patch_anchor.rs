@@ -1,18 +1,24 @@
 //! Empirical offset anchors from successful gap patches.
 
 use clip_sync::{AlignmentReport, ClipLabelReport};
+use serde::Serialize;
 
 use crate::domain::fill_offset::clip_anchor_points;
 use crate::domain::gap_fill_fit::FillConfidence;
 use crate::domain::GapPatchSkipReason;
 
 /// One measured A→B offset at a patched gap midpoint on A's timeline.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct PatchOffsetAnchor {
     pub a_secs: f64,
     pub offset_secs: f64,
     pub source_gap_index: usize,
+    /// Interpolation weight from `min(pre, post)` seam scores at anchor time.
+    pub weight: f64,
 }
+
+/// JSON-facing anchor row (exported on repair summary).
+pub type PatchAnchorReport = PatchOffsetAnchor;
 
 /// Policy for which pass-1 patches become anchors.
 #[derive(Debug, Clone, Copy)]
@@ -61,10 +67,15 @@ impl PatchAnchorTable {
                 continue;
             }
             let a_secs = (candidate.a_start_secs + candidate.a_end_secs) / 2.0;
+            let weight = candidate
+                .pre_correlation
+                .min(candidate.post_correlation)
+                .max(0.0);
             anchors.push(PatchOffsetAnchor {
                 a_secs,
                 offset_secs: candidate.base_gap_offset_secs + candidate.align_adjustment_secs,
                 source_gap_index: candidate.gap_index,
+                weight,
             });
         }
         anchors.sort_by(|a, b| {
@@ -77,6 +88,10 @@ impl PatchAnchorTable {
 
     pub fn is_empty(&self) -> bool {
         self.anchors.is_empty()
+    }
+
+    pub fn to_reports(&self) -> Vec<PatchAnchorReport> {
+        self.anchors.to_vec()
     }
 }
 
@@ -107,23 +122,67 @@ pub fn interpolate_anchored_offset_secs(
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> Option<f64> {
-    let mut points = clip_anchor_points(alignment);
-    for anchor in &patch_anchors.anchors {
-        points.push((anchor.a_secs, anchor.offset_secs));
-    }
+    let points = weighted_anchor_points(alignment, patch_anchors);
     if points.is_empty() {
         return None;
     }
+    Some(interpolate_piecewise_weighted(&points, gap_time_on_a_secs))
+}
+
+fn weighted_anchor_points(
+    alignment: &AlignmentReport,
+    patch_anchors: &PatchAnchorTable,
+) -> Vec<(f64, f64, f64)> {
+    let mut points = Vec::new();
+    for (anchor, offset) in clip_anchor_points(alignment) {
+        points.push((anchor, offset, 1.0));
+    }
+    for anchor in &patch_anchors.anchors {
+        points.push((anchor.a_secs, anchor.offset_secs, anchor.weight.max(1e-9)));
+    }
     points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    dedupe_anchor_points(&mut points);
-    Some(interpolate_piecewise_linear(&points, gap_time_on_a_secs))
+    dedupe_weighted_points(&mut points);
+    points
 }
 
-fn dedupe_anchor_points(points: &mut Vec<(f64, f64)>) {
-    points.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
+fn dedupe_weighted_points(points: &mut Vec<(f64, f64, f64)>) {
+    if points.is_empty() {
+        return;
+    }
+    let mut merged: Vec<(f64, f64, f64)> = Vec::with_capacity(points.len());
+    for (t, o, w) in points.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            if (last.0 - t).abs() < 1e-9 {
+                if w > last.2 {
+                    *last = (t, o, w);
+                }
+                continue;
+            }
+        }
+        merged.push((t, o, w));
+    }
+    *points = merged;
 }
 
-fn interpolate_piecewise_linear(points: &[(f64, f64)], t: f64) -> f64 {
+/// Soft prior for unified fit: penalize B candidates far from anchor-predicted start.
+#[derive(Debug, Clone, Copy)]
+pub struct AnchorSearchPrior {
+    pub predicted_start_frame: usize,
+    pub weight: f64,
+    pub search_radius_frames: usize,
+}
+
+impl AnchorSearchPrior {
+    pub fn penalty_at_start(self, start: usize) -> f64 {
+        if self.weight <= 0.0 || self.search_radius_frames == 0 {
+            return 0.0;
+        }
+        let dist = start.abs_diff(self.predicted_start_frame) as f64;
+        self.weight * dist / self.search_radius_frames as f64
+    }
+}
+
+fn interpolate_piecewise_weighted(points: &[(f64, f64, f64)], t: f64) -> f64 {
     if points.len() == 1 {
         return points[0].1;
     }
@@ -135,14 +194,20 @@ fn interpolate_piecewise_linear(points: &[(f64, f64)], t: f64) -> f64 {
         return points[last].1;
     }
     for window in points.windows(2) {
-        let (t0, o0) = window[0];
-        let (t1, o1) = window[1];
+        let (t0, o0, w0) = window[0];
+        let (t1, o1, w1) = window[1];
         if t >= t0 && t <= t1 {
             if (t1 - t0).abs() < f64::EPSILON {
                 return o0;
             }
             let frac = (t - t0) / (t1 - t0);
-            return o0 + frac * (o1 - o0);
+            let w_left = w0 * (1.0 - frac);
+            let w_right = w1 * frac;
+            let denom = w_left + w_right;
+            if denom < f64::EPSILON {
+                return o0 + frac * (o1 - o0);
+            }
+            return (w_left * o0 + w_right * o1) / denom;
         }
     }
     points[last].1
@@ -380,6 +445,20 @@ mod tests {
         );
         assert_eq!(table.anchors.len(), 1);
         assert!((table.anchors[0].offset_secs - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn weighted_anchor_prefers_higher_seam_score() {
+        let alignment = patch_only_alignment();
+        let mut weak = candidate(0, 10.0, 0.0, 0.0);
+        weak.pre_correlation = 0.4;
+        weak.post_correlation = 0.4;
+        let mut strong = candidate(1, 30.0, 0.0, 2.0);
+        strong.pre_correlation = 0.95;
+        strong.post_correlation = 0.95;
+        let table = PatchAnchorTable::from_candidates(&[weak, strong], &policy());
+        let mid = interpolate_anchored_offset_secs(&alignment, 20.0, &table).unwrap();
+        assert!(mid > 1.3, "weighted mid should lean toward strong anchor, got {mid}");
     }
 
     #[test]

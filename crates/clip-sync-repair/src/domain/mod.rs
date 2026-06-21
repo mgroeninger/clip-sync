@@ -6,6 +6,8 @@ pub mod gap_fill_fit;
 pub mod gap;
 pub mod gap_seam_extend;
 pub mod gap_fill;
+pub mod gap_energy;
+pub mod gap_signature;
 pub mod gap_structure;
 pub mod patch_anchor;
 pub mod patch_result;
@@ -15,9 +17,10 @@ pub mod track_match;
 pub use fill_mode::FillMode;
 pub use fill_offset::{AnchoredRetryPass, FillOffsetMode, fill_offset_secs, resolve_gap_offset_secs};
 pub use patch_anchor::{
-    is_retryable_patch_skip, PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
-    PatchOffsetAnchor,
+    is_retryable_patch_skip, AnchorSearchPrior, PatchAnchorCandidate, PatchAnchorPolicy,
+    PatchAnchorReport, PatchAnchorTable, PatchOffsetAnchor,
 };
+pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};

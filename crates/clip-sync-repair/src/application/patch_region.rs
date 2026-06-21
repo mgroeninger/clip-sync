@@ -8,11 +8,16 @@ use crate::domain::gap_fill_fit::{
     match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFitWeights,
     WaveformSeamContext,
 };
+use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
     short_gap_one_strong_seam_passes,
 };
-use crate::domain::gap_structure::{self, ActivityTimeline, StructureMatchParams};
+use crate::domain::gap_structure::{self, StructureMatchParams};
+use crate::domain::gap_signature::{
+    build_gap_signature, GapSignature, GapSignatureMode, StructureTimeline,
+};
+use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
 
 /// Pearson floor used when partial structure trust softens the waveform gate.
@@ -67,6 +72,8 @@ pub(crate) struct SeamGateParams<'a> {
     pub step_frames: usize,
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
+    pub anchor_search_prior: Option<AnchorSearchPrior>,
+    pub gap_signature_mode: GapSignatureMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -100,31 +107,45 @@ struct FitJointCandidate {
     boundary_move: usize,
 }
 
-/// Reused B haystack mono, channels, and activity timeline for joint-grid candidates.
+/// Reused B haystack mono, channels, and structure timelines for joint-grid candidates.
 struct FitHaystackCache {
     b_mono: Vec<f64>,
     b_ch: Vec<Vec<f64>>,
-    timeline: ActivityTimeline,
+    bool_timeline: gap_structure::ActivityTimeline,
+    energy_timeline: EnergyTimeline,
 }
 
 impl FitHaystackCache {
     fn build(params: &SeamGateParams<'_>) -> Self {
         let channels = params.channels.max(1);
         let total_frames = params.b_samples.len() / channels;
-        let b_mono = policies::interleaved_to_mono(params.b_samples, channels);
-        let b_ch = policies::interleaved_to_channels(params.b_samples, channels);
-        let timeline = ActivityTimeline::build(
-            params.b_samples,
-            channels,
-            total_frames,
-            params.bin_frames.max(1),
-            params.silence_peak_fraction,
-            params.absolute_silence_rms,
-        );
+        let bin_frames = params.bin_frames.max(1);
         Self {
-            b_mono,
-            b_ch,
-            timeline,
+            b_mono: policies::interleaved_to_mono(params.b_samples, channels),
+            b_ch: policies::interleaved_to_channels(params.b_samples, channels),
+            bool_timeline: gap_structure::ActivityTimeline::build(
+                params.b_samples,
+                channels,
+                total_frames,
+                bin_frames,
+                params.silence_peak_fraction,
+                params.absolute_silence_rms,
+            ),
+            energy_timeline: EnergyTimeline::build(
+                params.b_samples,
+                channels,
+                total_frames,
+                bin_frames,
+                params.silence_peak_fraction,
+                params.absolute_silence_rms,
+            ),
+        }
+    }
+
+    fn structure_timeline<'a>(&'a self, signature: &GapSignature) -> StructureTimeline<'a> {
+        match signature {
+            GapSignature::Bool(_) => StructureTimeline::Bool(&self.bool_timeline),
+            GapSignature::Energy(_) => StructureTimeline::Energy(&self.energy_timeline),
         }
     }
 }
@@ -304,13 +325,14 @@ fn evaluate_seam_gate_fit_candidate(
         absolute_silence_rms: params.absolute_silence_rms,
     };
 
-    let signature = gap_structure::build_gap_context_signature(
+    let signature = build_gap_signature(
         &params.a_pcm.samples,
         params.channels,
         refined.start_frame,
         refined.end_frame,
         params.context_frames,
         &structure_params,
+        params.gap_signature_mode,
     );
 
     let waveform_gate_frames = params
@@ -338,6 +360,7 @@ fn evaluate_seam_gate_fit_candidate(
         structure_weight: params.fill_fit_structure_weight,
         waveform_weight: params.fill_fit_waveform_weight,
     };
+    let structure_timeline = cache.structure_timeline(&signature);
     let unified = match_gap_fill_unified_in_b_with_timeline(
         &signature,
         params.b_samples,
@@ -347,7 +370,8 @@ fn evaluate_seam_gate_fit_candidate(
         gap_end_in_haystack,
         &structure_params,
         weights,
-        Some(&cache.timeline),
+        &structure_timeline,
+        params.anchor_search_prior,
     )
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 

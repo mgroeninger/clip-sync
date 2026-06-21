@@ -79,6 +79,9 @@ pub struct PatchSummary {
     pub skipped_count: usize,
     pub not_planned_count: usize,
     pub gaps: Vec<GapPatchOutcome>,
+    /// Offset anchors built from pass-1 successes (`anchored_retry`); omitted when empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_anchors_used: Option<Vec<crate::domain::patch_anchor::PatchAnchorReport>>,
 }
 
 impl PatchSummary {
@@ -110,6 +113,16 @@ impl PatchSummary {
             skipped_count,
             not_planned_count,
             gaps,
+            patch_anchors_used: None,
         }
+    }
+
+    pub fn with_patch_anchors(mut self, anchors: Vec<crate::domain::patch_anchor::PatchAnchorReport>) -> Self {
+        if anchors.is_empty() {
+            self.patch_anchors_used = None;
+        } else {
+            self.patch_anchors_used = Some(anchors);
+        }
+        self
     }
 }

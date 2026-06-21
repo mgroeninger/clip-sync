@@ -211,6 +211,8 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 fill_anchor_min_correlation: 0.35,
                 fill_anchor_exclude_structure_trusted: true,
                 fill_anchor_max_adjustment_frac: 0.9,
+                fill_anchor_search_prior_weight: 0.0,
+                gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
             },
             10,
         )

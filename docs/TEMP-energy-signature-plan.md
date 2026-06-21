@@ -1,6 +1,6 @@
 # Temporary plan: energy-envelope gap structure matching
 
-> **Status:** Draft (2026-06-20). Motivated by gap-fill placement that still depends on **1-bit** active/silent structure bins (`gap_signature_bin_ms` @ 50 ms, `gap_signature_context_secs` @ 3 s) while waveform refinement pushes finer PCM loops for precision. A **gated loudness envelope** over a longer context should discriminate dropout edges more cheaply than sliding full PCM, then hand off to the existing waveform seam tier.
+> **Status:** Draft (2026-06-20). **Phases 0–2 shipped** (2026-06-20): energy bins, `GapSignature` enum, `gap_signature_mode` config (`bool` default), fit-path search + `auto` fallback. Phase 3 tuning/default flip remains open.
 >
 > Archive to `docs/archive/energy-signature-plan.md` when shipped.
 
