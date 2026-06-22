@@ -182,7 +182,7 @@ CLI: `--fill-offset anchored-retry`; `--fill-anchor-min-correlation`, `--fill-an
 | Integration | Pass-1 success unchanged when mode `recommended` / `interpolated` | Covered by existing patch tests |
 | Integration | `anchored_retry` smoke (clean single gap) | Shipped |
 | Integration | No pass 2 when zero eligible anchors / all pass-1 succeed | Shipped (`skips_pass2_when_no_anchors`, `skips_pass2_when_all_gaps_patch_in_pass1`) |
-| Integration | `fill_mode = gate` anchor eligibility | **Open** |
+| Integration | `fill_mode = gate` anchor eligibility | Shipped (`patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode`) |
 | Manual | Long-form drift pair: compare skip count `recommended` vs `anchored-retry` | **Open** (Phase 0) |
 
 ---

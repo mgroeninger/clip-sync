@@ -225,6 +225,172 @@ fn anchored_retry_drift_patch_options() -> PatchTestOptions {
     }
 }
 
+/// Gate-mode drift options: fit-sized haystack; `strong_structure_trust` above 1.0 forces
+/// waveform gate (anchors) instead of structure-trust skips; extension helps pass 2 on hard tail.
+fn anchored_retry_drift_gate_patch_options() -> PatchTestOptions {
+    let mut opts = anchored_retry_drift_patch_options();
+    opts.fill_mode = FillMode::Gate;
+    opts.strong_structure_trust = 1.01;
+    opts.partial_structure_waveform_soften = 0.85;
+    opts.fill_absolute_floor = 0.12;
+    opts.gap_end_extend_on_post_seam_fail = true;
+    opts.gap_start_extend_on_pre_seam_fail = true;
+    opts.short_gap_one_strong_seam_fallback = true;
+    opts
+}
+
+const DRIFT_ANCHOR_TIMELINE_SECS: u32 = 60;
+const DRIFT_ANCHOR_START_OFFSET: f64 = 0.0;
+const DRIFT_ANCHOR_END_OFFSET: f64 = 1.0;
+const DRIFT_ANCHOR_MIN_CORRELATION: f32 = 0.78;
+
+struct DriftAnchorRetryFixture {
+    _temp: tempfile::TempDir,
+    report: GapReport,
+    hard_gap_span: (f64, f64),
+}
+
+fn build_drift_anchor_retry_fixture() -> DriftAnchorRetryFixture {
+    build_drift_anchor_retry_fixture_with_hard_shift(1.42)
+}
+
+/// Same drift timeline as the fit anchored-retry test.
+fn build_gate_anchor_retry_fixture() -> DriftAnchorRetryFixture {
+    build_drift_anchor_retry_fixture()
+}
+
+fn build_drift_anchor_retry_fixture_with_hard_shift(hard_b_shift: f64) -> DriftAnchorRetryFixture {
+    const EASY_B_SHIFT: f64 = 0.35;
+    const MEDIUM_B_SHIFT: f64 = 0.76;
+    const NEAR_B_SHIFT: f64 = 1.05;
+    const BRIDGE_B_SHIFT: f64 = 1.35;
+
+    let gap_specs: [((f64, f64), f64); 5] = [
+        ((36.0, 39.0), EASY_B_SHIFT),
+        ((44.0, 46.0), MEDIUM_B_SHIFT),
+        ((47.0, 49.0), NEAR_B_SHIFT),
+        ((50.0, 52.0), BRIDGE_B_SHIFT),
+        ((53.0, 56.0), hard_b_shift),
+    ];
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+
+    let a_gaps: Vec<(f64, f64)> = gap_specs.iter().map(|&(span, _)| span).collect();
+    write_stereo_sine_with_gaps(
+        &path_a,
+        SAMPLE_RATE,
+        DRIFT_ANCHOR_TIMELINE_SECS,
+        &a_gaps,
+        440.0,
+        16_000.0,
+    );
+
+    let b_gaps: Vec<(f64, f64)> = gap_specs
+        .iter()
+        .map(|&((start, end), shift)| (start + shift, end + shift))
+        .collect();
+    write_stereo_sine_with_gaps(
+        &path_b,
+        SAMPLE_RATE,
+        DRIFT_ANCHOR_TIMELINE_SECS,
+        &b_gaps,
+        440.0,
+        16_000.0,
+    );
+
+    let gaps: Vec<Gap> = gap_specs
+        .iter()
+        .map(|&((start, end), _)| make_gap_on_a(start, end, DRIFT_ANCHOR_START_OFFSET))
+        .collect();
+
+    let alignment = make_drift_alignment(
+        DRIFT_ANCHOR_START_OFFSET,
+        DRIFT_ANCHOR_END_OFFSET,
+        f64::from(DRIFT_ANCHOR_TIMELINE_SECS),
+    );
+    let report = make_report_with_alignment(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+        alignment,
+        gaps,
+    );
+
+    DriftAnchorRetryFixture {
+        _temp: temp,
+        hard_gap_span: gap_specs[4].0,
+        report,
+    }
+}
+
+fn assert_hard_gap_skipped_interpolated_only(summary: &clip_sync_repair::domain::PatchSummary) {
+    let hard_index = summary.gaps.len() - 1;
+    match &summary.gaps[hard_index].status {
+        GapPatchStatus::Skipped { reason, .. } => {
+            assert!(
+                matches!(
+                    reason,
+                    GapPatchSkipReason::CorrelationBelowThreshold { .. }
+                        | GapPatchSkipReason::BoundaryAlignmentFailed
+                ),
+                "hard gap should fail when true B shift exceeds search window, got {reason:?}"
+            );
+        }
+        other => panic!("expected hard gap to skip on interpolated-only pass, got {other:?}"),
+    }
+}
+
+fn assert_fit_interpolated_only_patches_bridge_gaps(summary: &clip_sync_repair::domain::PatchSummary) {
+    assert_eq!(
+        summary.patched_count, 4,
+        "fit bridge gaps should patch under interpolated offset, hard gap should not, got {:?}",
+        summary.gaps
+    );
+    assert_hard_gap_skipped_interpolated_only(summary);
+}
+
+fn assert_patch_anchors_exclude_structure_trusted(
+    summary: &clip_sync_repair::domain::PatchSummary,
+) {
+    let trusted_indices: Vec<usize> = summary
+        .gaps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, outcome)| match &outcome.status {
+            GapPatchStatus::Patched {
+                structure_trusted: true,
+                ..
+            } => Some(index),
+            _ => None,
+        })
+        .collect();
+
+    let anchors = match summary.patch_anchors_used.as_ref() {
+        Some(anchors) => anchors,
+        None => return,
+    };
+
+    for anchor in anchors {
+        assert!(
+            !trusted_indices.contains(&anchor.source_gap_index),
+            "structure-trusted gap #{} must not become an anchor, trusted={trusted_indices:?}, anchors={anchors:?}",
+            anchor.source_gap_index + 1,
+        );
+        match &summary.gaps[anchor.source_gap_index].status {
+            GapPatchStatus::Patched {
+                structure_trusted: false,
+                ..
+            } => {}
+            other => panic!(
+                "anchor source gap #{} should be a waveform-measured patch, got {other:?}",
+                anchor.source_gap_index + 1,
+            ),
+        }
+    }
+}
+
 fn rms_region(samples: &[i16], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
     let start = (start_secs * sample_rate as f64) as usize * channels as usize;
     let end = (end_secs * sample_rate as f64) as usize * channels as usize;
@@ -1615,69 +1781,7 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
 
 #[test]
 fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
-    const TIMELINE_SECS: u32 = 60;
-    const START_OFFSET: f64 = 0.0;
-    const END_OFFSET: f64 = 1.0;
-    const EASY_B_SHIFT: f64 = 0.35;
-    const MEDIUM_B_SHIFT: f64 = 0.76;
-    const NEAR_B_SHIFT: f64 = 1.05;
-    const BRIDGE_B_SHIFT: f64 = 1.35;
-    const HARD_B_SHIFT: f64 = 1.42;
-    const DRIFT_MIN_CORRELATION: f32 = 0.78;
-
-    let gap_specs: [((f64, f64), f64); 5] = [
-        ((36.0, 39.0), EASY_B_SHIFT),
-        ((44.0, 46.0), MEDIUM_B_SHIFT),
-        ((47.0, 49.0), NEAR_B_SHIFT),
-        ((50.0, 52.0), BRIDGE_B_SHIFT),
-        ((53.0, 56.0), HARD_B_SHIFT),
-    ];
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path_a = temp.path().join("a.wav");
-    let path_b = temp.path().join("b.wav");
-
-    let a_gaps: Vec<(f64, f64)> = gap_specs.iter().map(|&(span, _)| span).collect();
-    write_stereo_sine_with_gaps(
-        &path_a,
-        SAMPLE_RATE,
-        TIMELINE_SECS,
-        &a_gaps,
-        440.0,
-        16_000.0,
-    );
-
-    let b_gaps: Vec<(f64, f64)> = gap_specs
-        .iter()
-        .map(|&((start, end), shift)| (start + shift, end + shift))
-        .collect();
-    write_stereo_sine_with_gaps(
-        &path_b,
-        SAMPLE_RATE,
-        TIMELINE_SECS,
-        &b_gaps,
-        440.0,
-        16_000.0,
-    );
-
-    let gaps: Vec<Gap> = gap_specs
-        .iter()
-        .map(|&((start, end), _)| make_gap_on_a(start, end, START_OFFSET))
-        .collect();
-
-    let alignment = make_drift_alignment(
-        START_OFFSET,
-        END_OFFSET,
-        f64::from(TIMELINE_SECS),
-    );
-    let report = make_report_with_alignment(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-        alignment,
-        gaps,
-    );
-
+    let fixture = build_drift_anchor_retry_fixture();
     let opts = anchored_retry_drift_patch_options();
     let interpolated_opts = PatchTestOptions {
         fill_offset_mode: FillOffsetMode::Interpolated,
@@ -1697,30 +1801,25 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     };
 
     let interpolated_only = run_patch(
-        patch_request_with_options(report.clone(), false, 5.0, DRIFT_MIN_CORRELATION, interpolated_opts),
+        patch_request_with_options(
+            fixture.report.clone(),
+            false,
+            5.0,
+            DRIFT_ANCHOR_MIN_CORRELATION,
+            interpolated_opts,
+        ),
         10,
     );
-    assert_eq!(
-        interpolated_only.summary.patched_count, 4,
-        "bridge gaps should patch under interpolated offset, hard gap should not, got {:?}",
-        interpolated_only.summary.gaps
-    );
-    match &interpolated_only.summary.gaps[4].status {
-        GapPatchStatus::Skipped { reason, .. } => {
-            assert!(
-                matches!(
-                    reason,
-                    GapPatchSkipReason::CorrelationBelowThreshold { .. }
-                        | GapPatchSkipReason::BoundaryAlignmentFailed
-                ),
-                "hard gap should fail when true B shift exceeds search window, got {reason:?}"
-            );
-        }
-        other => panic!("expected hard gap to skip on interpolated-only pass, got {other:?}"),
-    }
+    assert_fit_interpolated_only_patches_bridge_gaps(&interpolated_only.summary);
 
     let anchored = run_patch(
-        patch_request_with_options(report, false, 5.0, DRIFT_MIN_CORRELATION, opts),
+        patch_request_with_options(
+            fixture.report,
+            false,
+            5.0,
+            DRIFT_ANCHOR_MIN_CORRELATION,
+            opts,
+        ),
         10,
     );
     assert_eq!(
@@ -1747,18 +1846,139 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     }
 
     let pcm = expect_pcm(&anchored);
-    let hard_gap = gap_specs[4].0;
     let gap_rms = rms_region(
         &pcm.samples,
         SAMPLE_RATE,
         CHANNELS,
-        hard_gap.0,
-        hard_gap.1,
+        fixture.hard_gap_span.0,
+        fixture.hard_gap_span.1,
     );
     assert!(
         gap_rms > 100.0,
         "hard gap should be filled after anchored retry, rms={gap_rms}"
     );
+}
+
+#[test]
+fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
+    let fixture = build_gate_anchor_retry_fixture();
+    let opts = anchored_retry_drift_gate_patch_options();
+    let interpolated_opts = PatchTestOptions {
+        fill_offset_mode: FillOffsetMode::Interpolated,
+        fill_mode: FillMode::Gate,
+        fill_border_search_secs: 0.32,
+        fill_align_margin_secs: opts.fill_align_margin_secs,
+        gap_signature_context_secs: opts.gap_signature_context_secs,
+        fill_length_slack_secs: opts.fill_length_slack_secs,
+        gap_end_extend_max_ms: 0,
+        gap_end_extend_step_ms: opts.gap_end_extend_step_ms,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        short_gap_one_strong_seam_fallback: false,
+        short_gap_mean_correlation_secs: opts.short_gap_mean_correlation_secs,
+        // Force strict waveform gate so partial soften cannot pass the hard tail on clip offset alone.
+        partial_structure_waveform_soften: 2.0,
+        disable_structure_trust: true,
+        ..Default::default()
+    };
+
+    let interpolated_only = run_patch(
+        patch_request_with_options(
+            fixture.report.clone(),
+            false,
+            5.0,
+            0.35,
+            interpolated_opts,
+        ),
+        10,
+    );
+    assert!(
+        interpolated_only.summary.patched_count >= 1,
+        "expected at least one interior gap to patch under interpolated clip offset: {:?}",
+        interpolated_only.summary.gaps
+    );
+    assert!(
+        interpolated_only.summary.patched_count < fixture.report.gaps.len(),
+        "interpolated-only should leave at least one gap unpatched: {:?}",
+        interpolated_only.summary.gaps
+    );
+    assert_hard_gap_skipped_interpolated_only(&interpolated_only.summary);
+
+    let anchored = run_patch(
+        patch_request_with_options(
+            fixture.report.clone(),
+            false,
+            5.0,
+            0.35,
+            opts.clone(),
+        ),
+        10,
+    );
+    assert!(
+        anchored.summary.patched_count > interpolated_only.summary.patched_count,
+        "gate + anchored_retry should patch more gaps than interpolated-only: interpolated={:?}, anchored={:?}",
+        interpolated_only.summary.gaps,
+        anchored.summary.gaps
+    );
+
+    let anchors = anchored
+        .summary
+        .patch_anchors_used
+        .as_ref()
+        .expect("expected pass-1 anchors from interior gaps");
+    assert!(
+        !anchors.is_empty(),
+        "expected pass-1 waveform anchors from interior gaps, got {anchors:?}"
+    );
+
+    match &anchored.summary.gaps[4].status {
+        GapPatchStatus::Patched {
+            structure_trusted: false,
+            ..
+        } => {}
+        other => panic!("expected hard gap patched via gate anchored retry, got {other:?}"),
+    }
+
+    let pcm = expect_pcm(&anchored);
+    let gap_rms = rms_region(
+        &pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        fixture.hard_gap_span.0,
+        fixture.hard_gap_span.1,
+    );
+    assert!(
+        gap_rms > 100.0,
+        "hard gap should be filled after gate anchored retry, rms={gap_rms}"
+    );
+
+    // Default structure trust: easy interior gaps structure-trust; they must not become anchors.
+    let mut exclusion_opts = anchored_retry_drift_gate_patch_options();
+    exclusion_opts.strong_structure_trust = 0.90;
+    let exclusion = run_patch(
+        patch_request_with_options(
+            fixture.report,
+            false,
+            5.0,
+            0.35,
+            exclusion_opts,
+        ),
+        10,
+    );
+    assert!(
+        exclusion.summary.gaps.iter().any(|outcome| {
+            matches!(
+                outcome.status,
+                GapPatchStatus::Patched {
+                    structure_trusted: true,
+                    ..
+                }
+            )
+        }),
+        "expected structure-trusted interior patch under default gate trust, got {:?}",
+        exclusion.summary.gaps
+    );
+    assert_patch_anchors_exclude_structure_trusted(&exclusion.summary);
 }
 
 #[test]
