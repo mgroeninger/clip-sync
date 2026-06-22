@@ -13,7 +13,7 @@ use crate::domain::gap_structure::{
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved, interleaved_to_mono, FillAlignment, SeamPlacement,
-    SeamTemplates,
+    SeamTemplates, SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -680,6 +680,7 @@ fn fill_anchor_seams(
     a_post_ch: &[Vec<f64>],
     pre_window: usize,
     post_window: usize,
+    seam_ctx: SpliceSeamContext<'_>,
 ) -> (f64, f64) {
     fill_splice_seam_correlations_interleaved(
         fill_interleaved,
@@ -690,6 +691,7 @@ fn fill_anchor_seams(
         a_post_ch,
         pre_window,
         post_window,
+        seam_ctx,
     )
 }
 
@@ -786,6 +788,7 @@ pub fn score_extend_short_fill_to_gap_frames(
     pre_window: usize,
     post_window: usize,
     repeat_window_frames: usize,
+    seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
@@ -804,6 +807,7 @@ pub fn score_extend_short_fill_to_gap_frames(
             a_post_ch,
             pre_window,
             post_window,
+            seam_ctx,
         );
         (pre.min(post), padded)
     };
@@ -865,6 +869,7 @@ pub fn fit_fill_length_for_gap(
     pre_window: usize,
     post_window: usize,
     repeat_window_frames: usize,
+    seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
@@ -879,6 +884,7 @@ pub fn fit_fill_length_for_gap(
             a_post_ch,
             pre_window,
             post_window,
+            seam_ctx,
         )
     } else if source_frames < gap_frames {
         score_extend_short_fill_to_gap_frames(
@@ -893,6 +899,7 @@ pub fn fit_fill_length_for_gap(
             pre_window,
             post_window,
             repeat_window_frames,
+            seam_ctx,
         )
     } else {
         fill_interleaved.to_vec()
@@ -910,6 +917,7 @@ pub fn pick_fill_length_anchor(
     a_post_ch: &[Vec<f64>],
     pre_window: usize,
     post_window: usize,
+    seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
@@ -931,6 +939,7 @@ pub fn pick_fill_length_anchor(
         a_post_ch,
         pre_window,
         post_window,
+        seam_ctx,
     );
     let seams_head = fill_anchor_seams(
         &trim_head,
@@ -941,6 +950,7 @@ pub fn pick_fill_length_anchor(
         a_post_ch,
         pre_window,
         post_window,
+        seam_ctx,
     );
 
     if fill_anchor_better(seams_head, seams_tail) {
@@ -1071,6 +1081,17 @@ fn placement_in_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_seam_ctx<'a>(a_samples: &'a [i16]) -> SpliceSeamContext<'a> {
+        SpliceSeamContext {
+            seam_cf: 0,
+            gap_start_frame: 0,
+            gap_end_frame: 0,
+            a_samples,
+            channels: 1,
+        }
+    }
+
     use crate::domain::policies::{interleaved_to_channels, interleaved_to_mono};
 
     fn sine_frame(frame: usize, rate: u32) -> i16 {
@@ -1342,6 +1363,7 @@ mod tests {
         let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
         let post: Vec<i16> = a_post.iter().map(|&v| to_i16(v)).collect();
         let fill = vec![0i16, 0, 0, 0, post[0], post[1]];
+        let seam_ctx = no_seam_ctx(&[]);
         let picked = pick_fill_length_anchor(
             &fill,
             channels,
@@ -1352,6 +1374,7 @@ mod tests {
             &[],
             pre_w,
             post_w,
+            seam_ctx,
         );
         assert_eq!(picked, vec![0, 0, post[0], post[1]]);
     }
@@ -1377,6 +1400,7 @@ mod tests {
         let mut fill = pre;
         fill.extend(&junk);
         fill.extend(&post);
+        let seam_ctx = no_seam_ctx(&[]);
         // Tail: strong pre, weak post → low min. Head: weak pre, strong post → higher min.
         let picked = pick_fill_length_anchor(
             &fill,
@@ -1388,6 +1412,7 @@ mod tests {
             &a_post_ch,
             pre_w,
             post_w,
+            seam_ctx,
         );
         assert_eq!(picked, vec![0, 0, post[0], post[1]]);
     }
@@ -1426,6 +1451,7 @@ mod tests {
             pre_w,
             post_w,
             pre_w,
+            no_seam_ctx(&[]),
         );
 
         let extension_frames_used = |samples: &[i16]| {
@@ -1470,6 +1496,7 @@ mod tests {
             window,
             window,
             window,
+            no_seam_ctx(&[]),
         );
         let direct = score_extend_short_fill_to_gap_frames(
             &fill,
@@ -1483,6 +1510,7 @@ mod tests {
             window,
             window,
             window,
+            no_seam_ctx(&[]),
         );
         assert_eq!(via_api, direct);
     }

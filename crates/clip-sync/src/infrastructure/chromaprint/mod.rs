@@ -6,3 +6,4 @@ pub(crate) mod repetition;
 
 pub use aligner::ChromaprintAligner;
 pub use fingerprinter::ChromaprintFingerprinter;
+pub use repetition::ChromaprintClipRepetitionDetector;

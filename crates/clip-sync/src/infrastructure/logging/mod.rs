@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::error::AppError;
 
-pub mod extraction_progress;
 pub mod progress;
 
-pub use extraction_progress::{ExtractionProgressScope, FINGERPRINT_ALIGN_STAGE};
+pub use crate::application::extraction_progress::FINGERPRINT_ALIGN_STAGE;
 pub use progress::StderrProgressReporter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

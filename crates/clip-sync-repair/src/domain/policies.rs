@@ -669,39 +669,157 @@ pub fn fill_repeat_correlations(
     )
 }
 
-/// Seam scores for a standalone fill chunk (A borders vs fill head/tail at splice).
+/// Effective crossfade length at gap seams (shared by splice and splice-aware scoring).
+pub fn effective_seam_crossfade_frames(
+    crossfade_frames: usize,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    total_a_frames: usize,
+) -> usize {
+    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    let pre_available = gap_start_frame;
+    let post_available = total_a_frames.saturating_sub(gap_end_frame);
+    crossfade_frames
+        .min(gap_frames / 2)
+        .min(pre_available)
+        .min(post_available)
+}
+
+/// A-side gap bounds for splice-aware seam scoring on decoded PCM.
+#[derive(Clone, Copy)]
+pub struct SpliceSeamContext<'a> {
+    pub seam_cf: usize,
+    pub gap_start_frame: usize,
+    pub gap_end_frame: usize,
+    pub a_samples: &'a [i16],
+    pub channels: usize,
+}
+
+fn mono_timeline_frames_f64(
+    samples: &[i16],
+    channels: usize,
+    start_frame: usize,
+    end_frame: usize,
+) -> Vec<f64> {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    let start = start_frame.min(total_frames);
+    let end = end_frame.min(total_frames);
+    if start >= end {
+        return Vec::new();
+    }
+    samples[start * channels..end * channels]
+        .iter()
+        .step_by(channels)
+        .map(|&s| f64::from(s))
+        .collect()
+}
+
+/// Seam scores for a fitted fill chunk aligned with [`apply_seam_crossfade`] placement.
+///
+/// When `ctx.seam_cf > 0`, scores the A PCM windows that are actually crossfaded at splice time.
 pub fn fill_splice_seam_correlations(
     fill_mono: &[f64],
     a_pre: &[f64],
     a_post: &[f64],
     pre_window: usize,
     post_window: usize,
+    ctx: SpliceSeamContext<'_>,
 ) -> (f64, f64) {
-    let pre = if pre_window > 0
-        && !a_pre.is_empty()
-        && fill_mono.len() >= pre_window
-        && pre_window <= a_pre.len()
-    {
-        seam_pearson(
-            &a_pre[a_pre.len().saturating_sub(pre_window)..],
-            &fill_mono[..pre_window],
-        )
-    } else {
-        0.0
-    };
-    let post = if post_window > 0
-        && !a_post.is_empty()
-        && fill_mono.len() >= post_window
-        && post_window <= a_post.len()
-    {
-        seam_pearson(
-            &a_post[..post_window.min(a_post.len())],
-            &fill_mono[fill_mono.len() - post_window..],
-        )
-    } else {
-        0.0
-    };
-    (pre, post)
+    (
+        score_splice_pre_seam(fill_mono, a_pre, pre_window, ctx),
+        score_splice_post_seam(fill_mono, a_post, post_window, ctx),
+    )
+}
+
+fn score_splice_pre_seam(
+    fill_mono: &[f64],
+    a_pre: &[f64],
+    pre_window: usize,
+    ctx: SpliceSeamContext<'_>,
+) -> f64 {
+    if pre_window == 0 || fill_mono.is_empty() {
+        return 0.0;
+    }
+    if ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+        let w = pre_window
+            .min(ctx.seam_cf)
+            .min(ctx.gap_start_frame)
+            .min(fill_mono.len());
+        if w > 0 {
+            let b = &fill_mono[ctx.seam_cf - w..ctx.seam_cf];
+            let a = mono_timeline_frames_f64(
+                ctx.a_samples,
+                ctx.channels,
+                ctx.gap_start_frame - w,
+                ctx.gap_start_frame,
+            );
+            if a.len() == b.len() {
+                return seam_pearson(&a, b);
+            }
+        }
+    }
+    score_splice_pre_seam_border(fill_mono, a_pre, pre_window)
+}
+
+fn score_splice_pre_seam_border(fill_mono: &[f64], a_pre: &[f64], pre_window: usize) -> f64 {
+    if a_pre.is_empty() {
+        return 0.0;
+    }
+    let w = pre_window.min(fill_mono.len()).min(a_pre.len());
+    if w == 0 {
+        return 0.0;
+    }
+    seam_pearson(
+        &a_pre[a_pre.len() - w..],
+        &fill_mono[..w],
+    )
+}
+
+fn score_splice_post_seam(
+    fill_mono: &[f64],
+    a_post: &[f64],
+    post_window: usize,
+    ctx: SpliceSeamContext<'_>,
+) -> f64 {
+    if post_window == 0 || fill_mono.is_empty() {
+        return 0.0;
+    }
+    let len = fill_mono.len();
+    let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
+    if ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+        let w = post_window
+            .min(ctx.seam_cf)
+            .min(total_frames.saturating_sub(ctx.gap_end_frame))
+            .min(len.saturating_sub(len.saturating_sub(ctx.seam_cf)));
+        if w > 0 {
+            let b_start = len.saturating_sub(ctx.seam_cf);
+            let b_end = (b_start + w).min(len);
+            let b = &fill_mono[b_start..b_end];
+            let a = mono_timeline_frames_f64(
+                ctx.a_samples,
+                ctx.channels,
+                ctx.gap_end_frame,
+                ctx.gap_end_frame + b.len(),
+            );
+            if a.len() == b.len() {
+                return seam_pearson(&a, b);
+            }
+        }
+    }
+    score_splice_post_seam_border(fill_mono, a_post, post_window)
+}
+
+fn score_splice_post_seam_border(fill_mono: &[f64], a_post: &[f64], post_window: usize) -> f64 {
+    if a_post.is_empty() {
+        return 0.0;
+    }
+    let len = fill_mono.len();
+    let w = post_window.min(len).min(a_post.len());
+    if w == 0 {
+        return 0.0;
+    }
+    seam_pearson(&a_post[..w], &fill_mono[len - w..])
 }
 
 /// Like [`fill_splice_seam_correlations`] but scores each channel when stereo borders are present.
@@ -714,6 +832,7 @@ pub fn fill_splice_seam_correlations_interleaved(
     a_post_ch: &[Vec<f64>],
     pre_window: usize,
     post_window: usize,
+    ctx: SpliceSeamContext<'_>,
 ) -> (f64, f64) {
     let channels = channels.max(1);
     let fill_mono = interleaved_to_mono(fill_interleaved, channels);
@@ -722,7 +841,14 @@ pub fn fill_splice_seam_correlations_interleaved(
         && a_post_ch.len() == channels
         && a_pre_ch.iter().any(|ch| !ch.is_empty());
     if !use_channels {
-        return fill_splice_seam_correlations(&fill_mono, a_pre, a_post, pre_window, post_window);
+        return fill_splice_seam_correlations(
+            &fill_mono,
+            a_pre,
+            a_post,
+            pre_window,
+            post_window,
+            ctx,
+        );
     }
 
     let gap_frames = fill_mono.len();
@@ -738,27 +864,36 @@ pub fn fill_splice_seam_correlations_interleaved(
         if ch_fill.len() != gap_frames {
             continue;
         }
-        if pre_window > 0
-            && a_pre_ch[ch].len() >= pre_window
-            && ch_fill.len() >= pre_window
-        {
-            pre_scores.push(seam_pearson(
-                &a_pre_ch[ch][a_pre_ch[ch].len().saturating_sub(pre_window)..],
-                &ch_fill[..pre_window],
-            ));
+        let pre = score_splice_pre_seam_channel(
+            &ch_fill,
+            &a_pre_ch[ch],
+            pre_window,
+            ctx,
+            ch,
+        );
+        if pre.is_finite() && pre > f64::NEG_INFINITY {
+            pre_scores.push(pre);
         }
-        if post_window > 0
-            && a_post_ch[ch].len() >= post_window
-            && ch_fill.len() >= post_window
-        {
-            post_scores.push(seam_pearson(
-                &a_post_ch[ch][..post_window.min(a_post_ch[ch].len())],
-                &ch_fill[ch_fill.len() - post_window..],
-            ));
+        let post = score_splice_post_seam_channel(
+            &ch_fill,
+            &a_post_ch[ch],
+            post_window,
+            ctx,
+            ch,
+        );
+        if post.is_finite() && post > f64::NEG_INFINITY {
+            post_scores.push(post);
         }
     }
 
-    let mono = fill_splice_seam_correlations(&fill_mono, a_pre, a_post, pre_window, post_window);
+    let mono = fill_splice_seam_correlations(
+        &fill_mono,
+        a_pre,
+        a_post,
+        pre_window,
+        post_window,
+        ctx,
+    );
     let pre = if pre_scores.is_empty() {
         mono.0
     } else {
@@ -770,6 +905,93 @@ pub fn fill_splice_seam_correlations_interleaved(
         best_channel_correlation(&post_scores)
     };
     (pre, post)
+}
+
+fn interleaved_channel_timeline_f64(
+    samples: &[i16],
+    channels: usize,
+    channel: usize,
+    start_frame: usize,
+    end_frame: usize,
+) -> Vec<f64> {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    let start = start_frame.min(total_frames);
+    let end = end_frame.min(total_frames);
+    if start >= end {
+        return Vec::new();
+    }
+    (start..end)
+        .map(|frame| f64::from(samples[frame * channels + channel]))
+        .collect()
+}
+
+fn score_splice_pre_seam_channel(
+    fill_mono: &[f64],
+    a_pre: &[f64],
+    pre_window: usize,
+    ctx: SpliceSeamContext<'_>,
+    channel: usize,
+) -> f64 {
+    if pre_window == 0 || fill_mono.is_empty() {
+        return 0.0;
+    }
+    if ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+        let w = pre_window
+            .min(ctx.seam_cf)
+            .min(ctx.gap_start_frame)
+            .min(fill_mono.len());
+        if w > 0 {
+            let b = &fill_mono[ctx.seam_cf - w..ctx.seam_cf];
+            let a = interleaved_channel_timeline_f64(
+                ctx.a_samples,
+                ctx.channels,
+                channel,
+                ctx.gap_start_frame - w,
+                ctx.gap_start_frame,
+            );
+            if a.len() == b.len() {
+                return seam_pearson(&a, b);
+            }
+        }
+    }
+    score_splice_pre_seam_border(fill_mono, a_pre, pre_window)
+}
+
+fn score_splice_post_seam_channel(
+    fill_mono: &[f64],
+    a_post: &[f64],
+    post_window: usize,
+    ctx: SpliceSeamContext<'_>,
+    channel: usize,
+) -> f64 {
+    if post_window == 0 || fill_mono.is_empty() {
+        return 0.0;
+    }
+    let len = fill_mono.len();
+    let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
+    if ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+        let w = post_window
+            .min(ctx.seam_cf)
+            .min(total_frames.saturating_sub(ctx.gap_end_frame))
+            .min(len.saturating_sub(len.saturating_sub(ctx.seam_cf)));
+        if w > 0 {
+            let b_start = len.saturating_sub(ctx.seam_cf);
+            let b_end = (b_start + w).min(len);
+            let b = &fill_mono[b_start..b_end];
+            let a = interleaved_channel_timeline_f64(
+                ctx.a_samples,
+                ctx.channels,
+                channel,
+                ctx.gap_end_frame,
+                ctx.gap_end_frame + b.len(),
+            );
+            if a.len() == b.len() {
+                return seam_pearson(&a, b);
+            }
+        }
+    }
+    score_splice_post_seam_border(fill_mono, a_post, post_window)
 }
 
 /// Pearson correlation at gap seams; uses best front L/R channel when `channels > 1`.
@@ -923,12 +1145,12 @@ pub fn apply_seam_crossfade(
         return;
     }
 
-    let pre_available = gap_start_frame;
-    let post_available = total_frames.saturating_sub(gap_end_frame);
-    let cf = crossfade_frames
-        .min(gap_frames / 2)
-        .min(pre_available)
-        .min(post_available);
+    let cf = effective_seam_crossfade_frames(
+        crossfade_frames,
+        gap_start_frame,
+        gap_end_frame,
+        total_frames,
+    );
 
     if cf == 0 {
         for frame in gap_start_frame..gap_end_frame {
@@ -978,58 +1200,6 @@ pub fn apply_seam_crossfade(
             let gap_idx = (gap_end_frame - cf + i) * channels + ch;
             a_samples[gap_idx] = blended;
             a_samples[post_idx] = blended;
-        }
-    }
-}
-
-/// Equal-power crossfade: blend `fill` into `into` at both seams.
-///
-/// The effective crossfade length is `crossfade_frames.min(total_frames / 2)`.
-/// - Fade-in (first `cf` frames): a_w = cos(t*π/2), b_w = sin(t*π/2)
-/// - Middle: pure fill
-/// - Fade-out (last `cf` frames): a_w = sin(t*π/2), b_w = cos(t*π/2)
-///
-/// Samples are written into `into` — `into` contains A's original samples and is replaced.
-pub fn apply_crossfade(into: &mut [i16], fill: &[i16], channels: usize, crossfade_frames: usize) {
-    let channels = channels.max(1);
-    let total_frames = into.len() / channels;
-    let cf = crossfade_frames.min(total_frames / 2);
-
-    for frame in 0..total_frames {
-        if cf == 0 || (frame >= cf && frame < total_frames - cf) {
-            // Middle: pure fill
-            for ch in 0..channels {
-                let idx = frame * channels + ch;
-                if idx < fill.len() {
-                    into[idx] = fill[idx];
-                }
-            }
-        } else if frame < cf {
-            // Fade-in: blend from A into fill
-            let t = frame as f32 / cf as f32;
-            let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
-            let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
-            for ch in 0..channels {
-                let idx = frame * channels + ch;
-                let a_val = into[idx] as f32;
-                let b_val = if idx < fill.len() { fill[idx] as f32 } else { 0.0 };
-                into[idx] = (a_w * a_val + b_w * b_val)
-                    .round()
-                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-            }
-        } else {
-            // Fade-out: blend from fill back into A
-            let t = (frame - (total_frames - cf)) as f32 / cf as f32;
-            let a_w = (t * std::f32::consts::FRAC_PI_2).sin();
-            let b_w = (t * std::f32::consts::FRAC_PI_2).cos();
-            for ch in 0..channels {
-                let idx = frame * channels + ch;
-                let a_val = into[idx] as f32;
-                let b_val = if idx < fill.len() { fill[idx] as f32 } else { 0.0 };
-                into[idx] = (a_w * a_val + b_w * b_val)
-                    .round()
-                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-            }
         }
     }
 }
@@ -1236,27 +1406,51 @@ mod tests {
     }
 
     #[test]
-    fn apply_crossfade_middle_is_pure_fill() {
-        // 10 mono frames, fill = all 1000, A = all 0, cf=2
-        let fill = vec![1000i16; 10];
-        let mut into = vec![0i16; 10];
-        apply_crossfade(&mut into, &fill, 1, 2);
-        // Middle frames [2..8) should be pure fill = 1000
-        for (i, &frame) in into.iter().enumerate().take(8).skip(2) {
-            assert_eq!(frame, 1000, "frame {i} should be 1000 (pure fill)");
-        }
-    }
+    fn fill_splice_seam_correlations_uses_crossfade_offset() {
+        let pre_window = 2usize;
+        let post_window = 2usize;
+        let cf = 2usize;
+        let gap_start = 4usize;
+        let gap_end = 6usize;
+        // A: ramp into gap; B fill matches the pre/post windows at splice time.
+        let a_samples: Vec<i16> = vec![100, 200, 300, 400, 0, 0, 500, 600, 0, 0];
+        let fill = vec![300.0, 400.0, 0.0, 0.0, 500.0, 600.0];
+        let a_pre = vec![1.0, 0.5];
+        let a_post = vec![0.8, -0.6];
+        let ctx = SpliceSeamContext {
+            seam_cf: cf,
+            gap_start_frame: gap_start,
+            gap_end_frame: gap_end,
+            a_samples: &a_samples,
+            channels: 1,
+        };
 
-    #[test]
-    fn apply_crossfade_is_continuous() {
-        // A=0, B=1000, cf=4, n=10 mono frames
-        let fill = vec![1000i16; 10];
-        let mut into = vec![0i16; 10];
-        apply_crossfade(&mut into, &fill, 1, 4);
-        for i in 1..into.len() {
-            let diff = (into[i] as i32 - into[i - 1] as i32).abs();
-            assert!(diff <= 500, "jump of {diff} between frame {} and {} (values {} {})", i-1, i, into[i-1], into[i]);
-        }
+        let (pre_cf, post_cf) = fill_splice_seam_correlations(
+            &fill,
+            &a_pre,
+            &a_post,
+            pre_window,
+            post_window,
+            ctx,
+        );
+        let (pre_no_cf, post_no_cf) = fill_splice_seam_correlations(
+            &fill,
+            &a_pre,
+            &a_post,
+            pre_window,
+            post_window,
+            SpliceSeamContext {
+                seam_cf: 0,
+                gap_start_frame: gap_start,
+                gap_end_frame: gap_end,
+                a_samples: &a_samples,
+                channels: 1,
+            },
+        );
+
+        assert!(pre_cf > pre_no_cf + 0.5, "pre should score bleed tail on A timeline");
+        assert!(post_cf > post_no_cf + 0.5, "post should score fade head on A timeline");
+        assert!(pre_cf > 0.9 && post_cf > 0.9);
     }
 
     #[test]

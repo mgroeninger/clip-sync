@@ -1,4 +1,5 @@
 pub mod error;
+pub mod mux_bitrate;
 pub mod patch_audio;
 pub mod patch_region;
 pub mod ports;

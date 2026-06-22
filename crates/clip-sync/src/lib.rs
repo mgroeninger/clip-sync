@@ -12,7 +12,8 @@ pub use application::default_pipeline::align_with_defaults;
 pub use application::{AlignVideos, AlignVideosRequest, AlignVideosResponse, AppError, ConfigError};
 pub use application::error::{AlignmentError, FingerprintError, MediaError};
 pub use application::ports::{
-    Aligner, Fingerprinter, MediaReader, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
+    Aligner, ClipRepetitionDetector, Fingerprinter, MediaReader, MediaSession, PcmCorrelator,
+    ProgressReporter, Resampler,
 };
 pub use application::report::{
     format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,

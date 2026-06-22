@@ -1,11 +1,13 @@
 //! Per-gap B timeline offset from alignment clip pair (recommended vs interpolated drift).
 
+use std::str::FromStr;
+
 use clip_sync::{AlignmentReport, ClipLabelReport};
 
 use crate::domain::patch_anchor::{interpolate_anchored_offset_secs, PatchAnchorTable};
 
 /// How patch maps each gap on A to B's timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FillOffsetMode {
     /// Use `recommended_offset_secs` for every gap (scan + patch).
@@ -25,6 +27,22 @@ pub enum AnchoredRetryPass {
     #[default]
     First,
     Second,
+}
+
+impl FromStr for FillOffsetMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "recommended" => Ok(FillOffsetMode::Recommended),
+            "interpolated" => Ok(FillOffsetMode::Interpolated),
+            "anchored" => Ok(FillOffsetMode::Anchored),
+            "anchored-retry" | "anchored_retry" => Ok(FillOffsetMode::AnchoredRetry),
+            _ => Err(format!(
+                "invalid fill offset mode: {s} (expected recommended, interpolated, anchored, or anchored-retry)"
+            )),
+        }
+    }
 }
 
 /// Minimum |end − start| clip offset drift before interpolation differs from a single offset.

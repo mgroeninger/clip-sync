@@ -6,7 +6,8 @@ use crate::application::config::{ClipConfig, ValidationConfig};
 use crate::application::error::debug_media_error;
 use crate::application::offset_refinement::pcm_cross_correlate_lag;
 use crate::application::ports::{
-    Aligner, Fingerprinter, MediaSession, PcmCorrelator, ProgressReporter, Resampler,
+    Aligner, ClipRepetitionDetector, Fingerprinter, MediaSession, PcmCorrelator, ProgressReporter,
+    Resampler,
 };
 use crate::domain::{
     holdout_b_window_for_offset, holdout_extract_sufficient, holdout_pick_duration,
@@ -16,8 +17,6 @@ use crate::domain::{
     should_downgrade_repetition_confidence, AlignmentResult, AudioTrack, ClipWindow, MediaExtent,
     OffsetVerification, PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
-use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
-
 pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub session_a: &'a mut MS,
     pub session_b: &'a mut MS,
@@ -42,6 +41,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
     result: &mut AlignmentResult,
     fingerprinter: &FP,
     aligner: &AL,
+    repetition_detector: &dyn ClipRepetitionDetector,
     progress: &dyn ProgressReporter,
 ) where
     MS: MediaSession,
@@ -83,6 +83,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
         result,
         clip_length,
         fingerprinter,
+        repetition_detector,
         progress,
     );
 
@@ -243,14 +244,14 @@ pub fn apply_offset_verification<MS, FP, AL>(
         if validation.check_clip_repetition {
             let preset = clip_config.chromaprint_preset;
             let min_conf = validation.min_repetition_confidence;
-            let rep_a = detect_clip_repetition(
+            let rep_a = repetition_detector.detect_clip_repetition(
                 &fp_a,
                 prepared_a.duration_secs(),
                 preset,
                 min_conf,
                 source_duration_a,
             );
-            let rep_b = detect_clip_repetition(
+            let rep_b = repetition_detector.detect_clip_repetition(
                 &fp_b,
                 prepared_b.duration_secs(),
                 preset,
@@ -399,6 +400,7 @@ fn resolve_parallel_periodic_recheck<MS, FP>(
     result: &mut AlignmentResult,
     clip_length: Duration,
     fingerprinter: &FP,
+    repetition_detector: &dyn ClipRepetitionDetector,
     progress: &dyn ProgressReporter,
 ) -> (Option<f64>, Option<f64>)
 where
@@ -414,6 +416,7 @@ where
             validation,
             clip_length,
             fingerprinter,
+            repetition_detector,
             progress,
             &mut period_secs,
         )
@@ -511,6 +514,7 @@ fn run_parallel_offset_recheck<MS, FP>(
     validation: &ValidationConfig,
     clip_length: Duration,
     fingerprinter: &FP,
+    repetition_detector: &dyn ClipRepetitionDetector,
     progress: &dyn ProgressReporter,
     period_secs: &mut Option<f64>,
 ) -> Option<f64>
@@ -632,14 +636,14 @@ where
             let preset = clip_config.chromaprint_preset;
             let min_conf = validation.min_repetition_confidence;
             let repetition_report = crate::domain::ClipRepetitionReport {
-                a: detect_clip_repetition(
+                a: repetition_detector.detect_clip_repetition(
                     &fp_a,
                     prepared_a.duration_secs(),
                     preset,
                     min_conf,
                     raw_a.duration_secs(),
                 ),
-                b: detect_clip_repetition(
+                b: repetition_detector.detect_clip_repetition(
                     &fp_b,
                     prepared_b.duration_secs(),
                     preset,
@@ -732,6 +736,7 @@ mod tests {
         FakeAligner, FakeFingerprinter, FakeMediaSession, FakePcmCorrelator, FakeProgressReporter,
     };
     use crate::domain::{AudioTrack, ClipLabel, ClipMatchEstimate, ClipWindow, MonoPcmClip};
+    use crate::infrastructure::chromaprint::ChromaprintClipRepetitionDetector;
 
     const SAMPLE_RATE: u32 = 11_025;
     const TOTAL_SECS: u32 = 120;
@@ -866,6 +871,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         result
@@ -1027,6 +1033,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1185,6 +1192,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1259,6 +1267,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1384,6 +1393,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1429,6 +1439,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1477,6 +1488,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1529,6 +1541,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1577,6 +1590,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1617,6 +1631,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1662,6 +1677,7 @@ mod tests {
             &mut result,
             &fingerprinter,
             &aligner,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 

@@ -11,7 +11,8 @@ use crate::application::offset_verification::{apply_offset_verification, OffsetV
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
 use crate::application::ports::{
-    Aligner, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter, Resampler,
+    Aligner, ClipRepetitionDetector, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter,
+    Resampler,
 };
 use crate::domain::{
     build_alignment_result, build_query_alignment_result, clip_windows_paired,
@@ -30,8 +31,7 @@ use crate::domain::{
     PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
     alignment::clip_with_label,
 };
-use crate::infrastructure::chromaprint::repetition::detect_clip_repetition;
-use crate::infrastructure::logging::ExtractionProgressScope;
+use crate::application::extraction_progress::ExtractionProgressScope;
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
@@ -49,6 +49,7 @@ pub struct AlignVideos<'a, MR, FP, AL> {
     aligner: &'a AL,
     resampler: &'a dyn Resampler,
     correlator: &'a dyn PcmCorrelator,
+    repetition_detector: &'a dyn ClipRepetitionDetector,
     progress: &'a dyn ProgressReporter,
 }
 
@@ -64,6 +65,7 @@ where
         aligner: &'a AL,
         resampler: &'a dyn Resampler,
         correlator: &'a dyn PcmCorrelator,
+        repetition_detector: &'a dyn ClipRepetitionDetector,
         progress: &'a dyn ProgressReporter,
     ) -> Self {
         Self {
@@ -72,6 +74,7 @@ where
             aligner,
             resampler,
             correlator,
+            repetition_detector,
             progress,
         }
     }
@@ -151,6 +154,7 @@ where
             &mut result,
             self.fingerprinter,
             self.aligner,
+            self.repetition_detector,
             self.progress,
         );
 
@@ -645,14 +649,14 @@ where
                 let (fp_a, fp_b) = &fingerprints;
                 let preset = config.clip.chromaprint_preset;
                 let min_conf = config.validation.min_repetition_confidence;
-                let rep_a = detect_clip_repetition(
+                let rep_a = self.repetition_detector.detect_clip_repetition(
                     fp_a,
                     clip_a.duration_secs(),
                     preset,
                     min_conf,
                     source_duration_a,
                 );
-                let rep_b = detect_clip_repetition(
+                let rep_b = self.repetition_detector.detect_clip_repetition(
                     fp_b,
                     clip_b.duration_secs(),
                     preset,
@@ -1182,6 +1186,7 @@ mod tests {
     use crate::infrastructure::chromaprint::repetition::{
         test_reset_repetition_detect_calls, test_repetition_detect_calls,
     };
+    use crate::infrastructure::chromaprint::ChromaprintClipRepetitionDetector;
     use crate::infrastructure::correlation::FftCorrelator;
     use crate::infrastructure::resample::RubatoResampler;
 
@@ -1304,6 +1309,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         use_case
@@ -1356,6 +1362,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1394,6 +1401,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1422,6 +1430,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1454,6 +1463,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1486,6 +1496,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1530,6 +1541,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1590,6 +1602,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1614,6 +1627,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1639,6 +1653,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1677,6 +1692,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1703,6 +1719,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1744,6 +1761,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1776,6 +1794,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1816,6 +1835,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1850,6 +1870,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1888,6 +1909,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1946,6 +1968,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2025,6 +2048,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2165,6 +2189,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2217,6 +2242,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2276,6 +2302,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2335,6 +2362,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2422,6 +2450,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &correlator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2485,6 +2514,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2580,6 +2610,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2668,6 +2699,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2757,6 +2789,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -2849,6 +2882,7 @@ mod tests {
             &aligner,
             &RubatoResampler,
             &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         use_case

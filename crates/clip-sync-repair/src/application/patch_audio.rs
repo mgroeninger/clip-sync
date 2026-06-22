@@ -19,7 +19,7 @@ use crate::domain::{
     fill_mode::FillMode,
     gap_fill_fit::FillConfidence,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
-    gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
+    gap_fill_fit::{classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames},
     patch_anchor::{
         format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
         interpolate_anchored_offset_secs, is_retryable_patch_skip, AnchorSearchPrior,
@@ -1346,6 +1346,19 @@ fn prepare_region_patch(
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
     let repeat_window_frames = border_frames.max(1);
+    let seam_cf = policies::effective_seam_crossfade_frames(
+        (region.crossfade_secs * sample_rate as f64) as usize,
+        refined.start_frame,
+        refined.end_frame,
+        a_pcm.frames(),
+    );
+    let seam_ctx = policies::SpliceSeamContext {
+        seam_cf,
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        a_samples: &a_pcm.samples,
+        channels,
+    };
     let b_fill = if request.fill_mode == FillMode::Fit {
         fit_fill_length_for_gap(
             &b_fill_raw,
@@ -1359,6 +1372,7 @@ fn prepare_region_patch(
             pre_gate_frames,
             post_gate_frames,
             repeat_window_frames,
+            seam_ctx,
         )
     } else {
         let mut gate_fill = b_fill_raw;
@@ -1402,6 +1416,45 @@ fn prepare_region_patch(
         waveform_slide_secs,
     );
 
+    let (final_pre, final_post, final_confidence) = if patched_structure_trusted {
+        (report_pre, report_post, confidence)
+    } else if request.fill_mode == FillMode::Fit {
+        let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
+            &b_fill,
+            channels,
+            &a_pre_border,
+            &a_post_border,
+            &a_pre_ch,
+            &a_post_ch,
+            pre_gate_frames,
+            post_gate_frames,
+            seam_ctx,
+        );
+        let gate_min = report_pre.min(report_post);
+        let splice_min = splice_pre.min(splice_post);
+        let use_splice = splice_min >= gate_min;
+        let (pre, post) = if use_splice {
+            (splice_pre, splice_post)
+        } else {
+            (report_pre, report_post)
+        };
+        let splice_confidence = if use_splice {
+            classify_fill_waveform_confidence(
+                splice_pre,
+                splice_post,
+                min_fill_correlation,
+                request.fill_marginal_margin,
+                request.fill_absolute_floor,
+            )
+            .unwrap_or(confidence)
+        } else {
+            confidence
+        };
+        (pre, post, splice_confidence)
+    } else {
+        (report_pre, report_post, confidence)
+    };
+
     (
         Some(RegionPatch {
             b_samples: b_fill,
@@ -1411,12 +1464,12 @@ fn prepare_region_patch(
             crossfade_secs: region.crossfade_secs,
         }),
         RegionPatchOutcome::Patched {
-            pre_correlation: report_pre,
-            post_correlation: report_post,
+            pre_correlation: final_pre,
+            post_correlation: final_post,
             align_adjustment_secs,
             waveform_adjustment_secs: waveform_slide_secs,
             structure_trusted: patched_structure_trusted,
-            confidence,
+            confidence: final_confidence,
             gap_start_adjust_frames,
             gap_end_adjust_frames,
         },

@@ -1,9 +1,10 @@
+use crate::application::config::ChromaprintPreset;
 use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use std::time::Duration;
 
 use crate::domain::{
     AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, InterleavedScanBucket,
-    MediaSource, MonoPcmClip, MonoScanBucket, MultiChannelPcm,
+    MediaSource, MonoPcmClip, MonoScanBucket, MultiChannelPcm, RepetitionFinding,
 };
 
 pub trait ProgressReporter {
@@ -157,4 +158,16 @@ pub trait Aligner {
         left: &Fingerprint,
         right: &Fingerprint,
     ) -> Result<ClipMatchEstimate, AlignmentError>;
+}
+
+/// Detects internal repetition within a single prepared clip fingerprint.
+pub trait ClipRepetitionDetector {
+    fn detect_clip_repetition(
+        &self,
+        fingerprint: &Fingerprint,
+        prepared_duration_secs: f64,
+        preset: ChromaprintPreset,
+        min_confidence: f32,
+        source_duration_secs: f64,
+    ) -> Option<RepetitionFinding>;
 }

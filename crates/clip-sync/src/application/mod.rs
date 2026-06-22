@@ -2,6 +2,7 @@ pub mod align_videos;
 pub mod config;
 pub mod default_pipeline;
 pub mod error;
+pub mod extraction_progress;
 pub mod high_rate_refinement;
 pub mod locate_query;
 #[cfg(test)]

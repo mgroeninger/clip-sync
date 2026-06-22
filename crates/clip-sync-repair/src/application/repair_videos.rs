@@ -8,7 +8,7 @@ use crate::application::ports::PatchedAudioWriter;
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::ports::{MediaMuxer, MuxOptions};
 #[cfg(feature = "ffmpeg-mux")]
-use crate::infrastructure::mux_bitrate::{
+use crate::application::mux_bitrate::{
     format_mux_bitrate_policy, format_optional_bitrate_kbps, resolve_mux_audio_bitrate,
     MuxAudioBitratePolicy,
 };
@@ -216,7 +216,7 @@ mod tests {
     use crate::domain::patch_result::{GapPatchOutcome, GapPatchStatus, PatchSummary};
 
     #[cfg(feature = "ffmpeg-mux")]
-    use crate::infrastructure::mux_bitrate::MuxAudioBitratePolicy;
+    use crate::application::mux_bitrate::MuxAudioBitratePolicy;
 
     use super::*;
 

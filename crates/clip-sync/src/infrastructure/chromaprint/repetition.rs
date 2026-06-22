@@ -1,4 +1,5 @@
 use crate::application::config::ChromaprintPreset;
+use crate::application::ports::ClipRepetitionDetector;
 use crate::domain::{Fingerprint, RepetitionFinding};
 use crate::infrastructure::chromaprint::config::configuration_for_preset;
 
@@ -150,6 +151,28 @@ fn is_short_lag_after_tail_trim(
     let short_lag =
         best_lag <= MIN_LAG_ITEMS.saturating_add(SHORT_LAG_AFTER_TRIM_ITEM_MARGIN);
     tail_trimmed && short_lag
+}
+
+/// Production adapter for [`ClipRepetitionDetector`].
+pub struct ChromaprintClipRepetitionDetector;
+
+impl ClipRepetitionDetector for ChromaprintClipRepetitionDetector {
+    fn detect_clip_repetition(
+        &self,
+        fingerprint: &Fingerprint,
+        prepared_duration_secs: f64,
+        preset: ChromaprintPreset,
+        min_confidence: f32,
+        source_duration_secs: f64,
+    ) -> Option<RepetitionFinding> {
+        detect_clip_repetition(
+            fingerprint,
+            prepared_duration_secs,
+            preset,
+            min_confidence,
+            source_duration_secs,
+        )
+    }
 }
 
 #[cfg(test)]

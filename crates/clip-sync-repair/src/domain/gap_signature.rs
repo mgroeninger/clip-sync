@@ -1,5 +1,7 @@
 //! Gap context signatures: bool structure vs energy envelope.
 
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::gap_energy::{
@@ -12,7 +14,7 @@ use crate::domain::gap_structure::{
 };
 
 /// Which structure representation to use for gap fill search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapSignatureMode {
     /// Active/silent bins around the gap (`fill_mode = fit` structure tier).
@@ -22,6 +24,21 @@ pub enum GapSignatureMode {
     Energy,
     /// Use energy when the bool signature is empty; otherwise bool.
     Auto,
+}
+
+impl FromStr for GapSignatureMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "bool" => Ok(GapSignatureMode::Bool),
+            "energy" => Ok(GapSignatureMode::Energy),
+            "auto" => Ok(GapSignatureMode::Auto),
+            _ => Err(format!(
+                "invalid gap signature mode: {s} (expected bool, energy, or auto)"
+            )),
+        }
+    }
 }
 
 /// Active/silent bool bins or gated energy envelope around a gap.

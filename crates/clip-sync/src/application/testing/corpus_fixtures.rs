@@ -926,7 +926,9 @@ pub fn run_wrong_offset_verification_probe(
     use crate::application::ports::{MediaReader, MediaSession};
     use crate::application::testing::fakes::FakeProgressReporter;
     use crate::domain::{AlignmentResult, ClipLabel, ClipWindow, MediaExtent, MediaSource};
-    use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+    use crate::infrastructure::chromaprint::{
+        ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
+    };
     use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
     let media_reader = SymphoniaMediaReader;
@@ -1005,6 +1007,7 @@ pub fn run_wrong_offset_verification_probe(
         &mut result,
         &fingerprinter,
         &aligner,
+        &ChromaprintClipRepetitionDetector,
         &progress,
     );
 
@@ -1018,7 +1021,9 @@ mod tests {
     use super::*;
     use crate::application::config::ChromaprintPreset;
     use crate::application::testing::fakes::FakeProgressReporter;
-    use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+    use crate::infrastructure::chromaprint::{
+        ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
+    };
     use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
     #[test]
@@ -1079,6 +1084,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
 
@@ -1195,6 +1201,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
@@ -1286,7 +1293,9 @@ mod tests {
     fn corpus_looped_discovery_alias_sets_ambiguity_flag() {
         use crate::application::config::ChromaprintPreset;
         use crate::application::testing::fakes::FakeProgressReporter;
-        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::chromaprint::{
+        ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
+    };
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
         let manifest = load_manifest();
@@ -1312,6 +1321,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case_with_config(
@@ -1368,6 +1378,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
@@ -1406,6 +1417,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
@@ -1475,6 +1487,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
@@ -1510,6 +1523,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
@@ -1546,6 +1560,7 @@ mod tests {
             &aligner,
             &crate::infrastructure::resample::RubatoResampler,
             &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
             &progress,
         );
         let result = run_corpus_case(
