@@ -9,7 +9,7 @@ Last updated: 2026-06-22.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Hexagonal layer purity](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups); [AC-3 backend](#active-plans).
+**Next:** [Energy signature Phase 3](docs/TEMP-energy-signature-plan.md); optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
 
 ---
 
@@ -33,10 +33,10 @@ From architecture audit (2026-06-22). Dependency rule: **domain ← application 
 |---|----------|------|--------|-----------|
 | H1 | High | Mux bitrate policy in repair `infrastructure/` | **Shipped** | `application/mux_bitrate.rs`; infra keeps ffmpeg subprocess only |
 | H2 | High | `clap::ValueEnum` on repair domain enums | **Shipped** | `FromStr` on `FillMode`, `FillOffsetMode`, `GapSignatureMode`; CLI `value_parser!` |
-| M1 | Medium | `GapReport` embeds lib report DTOs | **Shipped** | `GapReport.alignment` is `clip_sync::AlignmentResult`; top-level `overlap` removed (use `alignment.start_overlap`); `GapScanJson` in infra maps to `AlignmentReport` + `TimelineOverlapReport` for JSON/human output |
+| M1 | Medium | `GapReport` embeds lib report DTOs | **Shipped** (verified 2026-06-22) | `GapReport.alignment` is `clip_sync::AlignmentResult`; top-level `overlap` removed (use `alignment.start_overlap`); `GapScanJson` in infra maps to `AlignmentReport` + `TimelineOverlapReport` for JSON/human output |
 | M2 | Medium | Lib application → infrastructure leaks | **Shipped** | `ExtractionProgressScope` → `application/`; `ClipRepetitionDetector` port + `ChromaprintClipRepetitionDetector` adapter |
-| L1 | Low | `run_align` typed on `AppConfig` | Open | CLI use case should take `AlignConfig` + paths; infra maps `AppConfig` at composition root |
-| L2 | Low | Composition root in `infrastructure/cli` | Open | Optional: move adapter wiring from `infrastructure/cli/mod.rs` toward `main` / `composition.rs` |
+| L1 | Low | `run_align` typed on `AppConfig` | **Shipped** | `run_align` takes `&AlignConfig` + paths; `infrastructure/cli` maps `AppConfig` at composition root |
+| L2 | Low | Composition root in `infrastructure/cli` | **Shipped** | `composition.rs` in each binary crate wires adapters; `run_repair` orchestrates scan/patch; CLI modules are args/overrides/output only |
 
 **Refs:** [PLAN.md](PLAN.md) § Hexagonal architecture; [layer-purity-plan](docs/archive/layer-purity-plan.md) (lib DSP ports, shipped 2026-06-11)
 
