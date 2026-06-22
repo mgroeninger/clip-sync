@@ -69,12 +69,88 @@ B extract geometry already includes signature context on both sides (`patch_audi
 
 **Intent:** Prove bool structure fails and energy wins on controlled synthetic gaps before changing production defaults.
 
-- [ ] Add unit fixtures in `gap_structure` tests (or `tests/patch_audio_integration.rs`):
-  - **Same pause pattern, different levels:** A and B share active/silent bool pattern but B dropout offset by N bins; energy differs in pre-gap loudness ramp.
-  - **Multiple pauses:** Two similar pauses within `fill_border_search_secs`; only one aligns with A’s pre-gap energy contour.
-  - **Flat envelope:** Steady speech/drone — energy and bool should agree; document `auto` fallback to bool.
-- [ ] Record baseline: run existing `patch_audio_integration` with verbose; note structure pre/post on a drift-heavy long-form pair if available (manual checklist row in plan appendix).
-- [ ] Define acceptance deltas: energy mode locates correct offset in synthetic cases where bool picks wrong candidate.
+- [ ] Implement the three **fixture geometries** below (shared module or `gap_energy.rs` / `gap_fill_fit.rs` tests + `patch_audio_integration.rs`).
+- [ ] Meet all **automated acceptance** rows in [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteria).
+- [ ] Record baseline (manual): run existing `patch_audio_integration` with verbose; note structure pre/post on a drift-heavy long-form pair if available — see [Manual baseline](#manual-baseline-optional).
+
+### Phase 0/2 acceptance criteria
+
+Automated Phase 0/2 is **done** when every row in the tables below passes in CI. Fixtures are **synthetic only** (pure-Rust `i16` timelines or in-test WAV writers — no committed external media).
+
+#### Shared test constraints
+
+| Constraint | Value | Why |
+|------------|-------|-----|
+| `fill_mode` | `fit` | Energy signature is wired on the fit seam gate only (`patch_region.rs`); gate legacy path stays bool. |
+| `gap_signature_bin_ms` | `50` | Match production default; 20 ms bins in unit tests when timeline is short. |
+| `absolute_silence_rms` | `0.0` | Synthetic gaps are exact zeros unless noted. |
+| `silence_peak_fraction` | `0.01` | Match scan / repair defaults. |
+| `min_structure_match_score` | `0.55` | Production default until Phase 3 retune. |
+| Extension grid | off in fast fixtures | `gap_*_extend_on_*_seam_fail = false`, small `gap_end_extend_max_ms` — keeps CI fast; optional slow fixture with extension on. |
+| Waveform design | ramps / level steps on A | Pure sine at two decoys can let **waveform** decide; structure discrimination must not be masked by identical Pearson seams. |
+
+**Tolerance:** `start_frame` within **±1 `bin_frames`** of ground truth unless a test documents intentional slack.
+
+#### Fixture geometries
+
+| ID | Scenario | A (around gap) | B haystack | Nominal B map | Decoy |
+|----|----------|----------------|------------|---------------|-------|
+| **F1** | Same pause pattern, different levels | Linear amp ramp → silence (gap) → steady post level | Same ramp at **true** offset; **shifted** copy at `+Δ` frames (`Δ` ≥ 2 bins, ≤ `search_radius`) | Points at **decoy** (shifted dropout) | Bool-active/silent **pattern** matches at both sites; energy contour matches only at true site |
+| **F2** | Multiple pauses | Single gap with distinctive pre-gap contour (e.g. ramp into silence) | Two pauses within `fill_border_search_secs`: **pause₁** (ramp into silence), **pause₂** (hard cut); similar duration (~300–800 ms) | Points at **pause₂** | **pause₁** is true alignment; bool scores within **ε = 0.08** of each other at both pauses; energy `structure_pre` at pause₁ exceeds pause₂ by **≥ 0.15** |
+| **F3** | Flat envelope | Gap in steady non-silent level (drone / constant amp, not digital zero) | Steady level throughout context | Nominal map at gap | N/A — `auto` should not use energy |
+
+Reference implementation sketch for **F1**: `gap_energy.rs` test `energy_finds_offset_when_bool_pattern_ambiguous` (scoring only); extend to full search + bool comparison.
+
+#### Automated acceptance — unit / lib (`gap_energy.rs`, `gap_signature.rs`, `gap_fill_fit.rs`)
+
+| ID | Fixture | Mode | Assertion |
+|----|---------|------|-----------|
+| U1 | F1 | `energy` | `score_pre_energy_match` at true offset **>** at decoy offset (strict inequality). |
+| U2 | F1 | `bool` | `score_pre_match` at true vs decoy: **\|Δ score\| ≤ 0.08`** (tie or decoy wins — bool ambiguous). |
+| U3 | F1 | `energy` | `match_gap_fill_unified_in_b`: `alignment.start_frame` within ±1 bin of **true** offset. |
+| U4 | F1 | `bool` | `match_gap_fill_unified_in_b`: `start_frame` at **decoy** **or** `\|start − true\| > \|start_energy − true\|` (energy strictly closer). |
+| U5 | F2 | `energy` | Unified search: `start_frame` within ±1 bin of **pause₁**. |
+| U6 | F2 | `bool` | Unified search: `start_frame` at **pause₂** (nominal) **or** bool `structure_pre` within ε at both pauses. |
+| U7 | F3 | `auto` | `build_gap_signature(...)` → `GapSignature::Bool(_)`. |
+| U8 | F3 | `energy` vs `bool` | At nominal map, unified `structure_pre` and `structure_post` differ by **≤ 0.08** between modes. |
+
+#### Automated acceptance — integration (`tests/patch_audio_integration.rs`)
+
+Use `fast_fit_patch_options()`-style haystack (`fill_border_search_secs` ≈ 0.3–1.0 s, `gap_signature_context_secs` ≈ 1.0 s, extensions off). Add `gap_signature_mode` to `PatchTestOptions` (today hard-coded `Bool`).
+
+| ID | Fixture | Request | Assertion |
+|----|---------|---------|-----------|
+| I1 | F1 | `gap_signature_mode = energy`, `fill_mode = fit` | Gap **patched** (`patched_count ≥ 1`); fill slide **\|structure_slide\| ≤ 1 bin** in frames at 48 kHz equivalent (or within one `bin_frames` of truth). |
+| I2 | F1 | same geometry, `gap_signature_mode = bool` | Gap **skipped** **or** structure slide farther from truth than I1 by **≥ 1 bin**. |
+| I3 | F2 | `energy` | Patched at **pause₁** (slide within ±1 bin of truth vs nominal pause₂). |
+| I4 | F3 | `auto` | Same patch outcome as explicit `bool` (both patched or both skipped; same skip reason if skipped). |
+| I5 | — | all existing tests, default `bool` | No regressions; suite green. |
+
+#### Phase 2-only acceptance
+
+| ID | Item | Assertion |
+|----|------|-----------|
+| P2-1 | Verbose fill plan | `-v` gap plan line includes `signature_mode=energy` or `signature_mode=bool` matching resolved signature (`GapSignature::mode_label()`). |
+| P2-2 | Port | I1–I4 use the same geometries as U1–U8 (shared fixture helpers). |
+| P2-3 | Regression | I5; optional CI matrix row `gap_signature_mode = energy` running I1–I4 only. |
+
+#### Manual baseline (optional)
+
+Not required for Phase 0/2 **done**; supports Phase 3 tuning.
+
+| Field | Record |
+|-------|--------|
+| Pair | Long-form A/B with clip offset drift (operator-owned or `CLIP_SYNC_GAP_CORPUS` external tier). |
+| Config | `fill_mode = fit`, `gap_signature_mode = bool` then `energy`, same other knobs. |
+| Metrics | Per gap: skip vs patch, `struct pre` / `struct post` (verbose), `structure_slide`, wall time. |
+| Delta | Note cases where energy patches and bool skips (candidate for F1/F2-like synthetic follow-up). |
+
+#### Fixture pitfalls (test authors)
+
+- **Identical sine seams** at decoy and truth → waveform tier dominates; use ramps or level steps on A borders.
+- **Decoy outside `search_radius`** → neither mode can win; keep decoy inside `fill_border_search_secs` + margin.
+- **Gate mode** → energy not exercised; F1–F3 integration tests must use **fit**.
+- **All-silence F3** → only exercises silence; include **steady non-zero** drone for realistic `auto` fallback.
 
 ### Phase 1 — Energy bins + timeline
 
@@ -98,10 +174,8 @@ B extract geometry already includes signature context on both sides (`patch_audi
 - [ ] `match_gap_structure_in_b` / `match_gap_fill_unified_in_b`: accept `GapSignature`; build `EnergyTimeline` when needed.
 - [ ] `evaluate_seam_gate` (`patch_region.rs`): call `build_gap_signature` instead of `build_gap_context_signature`.
 - [ ] Implement `auto`: if either half’s gated max ≈ 0, build bool signature instead (log at debug).
-- [ ] Integration tests under `gap_signature_mode = energy` and `auto`:
-  - Port Phase 0 synthetic cases through `prepare_region_patch` or `match_gap_fill_unified_in_b`.
-  - Regression: all existing `patch_audio_integration` tests still pass with `bool`.
-- [ ] Verbose diagnostics: log `signature_mode=energy|bool` on gap fill plan lines (`patch_audio.rs` / `format_gap_fill_plan_lines`).
+- [ ] Integration tests: meet **I1–I5** and **P2-1–P2-3** in [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteria).
+- [ ] Verbose diagnostics: log `signature_mode=energy|bool` on gap fill plan lines (`patch_audio.rs` / `format_gap_fill_plan_lines`) — **P2-1**.
 
 ### Phase 3 — Context tuning + default flip
 
@@ -141,16 +215,17 @@ Existing keys unchanged: `fill_mode`, `fill_fit_*_weight`, `min_fill_correlation
 
 ## Testing strategy
 
+Executable oracles: [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteria) (**U1–U8**, **I1–I5**, **P2-1–P2-3**).
+
 | Layer | What |
 |-------|------|
-| Unit | `energy_bins` gate + RMS; `energy_similarity`; `auto` flat → bool; enum dispatch |
-| Unit | `gap_structure` search finds offset with energy where bool fails (Phase 0 fixtures) |
-| Lib | `match_gap_fill_unified_in_b` energy path; `structure_fine_polish_frames` unchanged |
-| Integration | `patch_audio_integration.rs` — duplicate critical cases under `gap_signature_mode = energy` |
-| Regression | Full integration suite with `bool` (CI default in `repair.toml` until Phase 3) |
-| Manual | Drift-heavy long-form pair: `-v` compare structure pre/post, skip count vs bool baseline |
+| Unit | `energy_bins` gate + RMS; `energy_similarity`; **U7** (`auto` flat → bool) |
+| Lib | **U1–U6**, **U8** — `match_gap_fill_unified_in_b` energy vs bool on **F1–F3** |
+| Integration | **I1–I4** — full `PatchAudio` on **F1–F3** under `energy` / `bool` / `auto` |
+| Regression | **I5** — full suite with `bool` (CI default in `repair.toml` until Phase 3) |
+| Manual | [Manual baseline](#manual-baseline-optional) — drift-heavy pair for Phase 3 notes |
 
-**CI:** Run patch integration with `gap_signature_mode = bool` through Phase 2; add parallel `energy` job or matrix row in Phase 2.
+**CI:** **I5** on every PR; optional job running **I1–I4** with `gap_signature_mode = energy` (**P2-3**).
 
 ---
 

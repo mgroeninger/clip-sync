@@ -9,7 +9,7 @@ Last updated: 2026-06-22.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Repair R6](#repair-r6-follow-ups); [AC-3 backend](#active-plans).
+**Next:** [Hexagonal layer purity](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups); [AC-3 backend](#active-plans).
 
 ---
 
@@ -24,6 +24,23 @@ Last updated: 2026-06-22.
 **Recently shipped:** [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade. Prior: [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17).
 
 ## Open work
+
+### Hexagonal layer purity
+
+From architecture audit (2026-06-22). Dependency rule: **domain ← application ← infrastructure**; domain/application must not depend on `clap`, Symphonia, Chromaprint, or misplaced infra helpers.
+
+| # | Priority | Item | Status | Direction |
+|---|----------|------|--------|-----------|
+| H1 | High | Mux bitrate policy in repair `infrastructure/` | **Shipped** | `application/mux_bitrate.rs`; infra keeps ffmpeg subprocess only |
+| H2 | High | `clap::ValueEnum` on repair domain enums | **Shipped** | `FromStr` on `FillMode`, `FillOffsetMode`, `GapSignatureMode`; CLI `value_parser!` |
+| M1 | Medium | `GapReport` embeds lib report DTOs | Open | Store `clip_sync::AlignmentResult` (domain) or repair-local summary; map to `AlignmentReport` only in infra output |
+| M2 | Medium | Lib application → infrastructure leaks | **Shipped** | `ExtractionProgressScope` → `application/`; `ClipRepetitionDetector` port + `ChromaprintClipRepetitionDetector` adapter |
+| L1 | Low | `run_align` typed on `AppConfig` | Open | CLI use case should take `AlignConfig` + paths; infra maps `AppConfig` at composition root |
+| L2 | Low | Composition root in `infrastructure/cli` | Open | Optional: move adapter wiring from `infrastructure/cli/mod.rs` toward `main` / `composition.rs` |
+
+**Refs:** [PLAN.md](PLAN.md) § Hexagonal architecture; [layer-purity-plan](docs/archive/layer-purity-plan.md) (lib DSP ports, shipped 2026-06-11)
+
+---
 
 ### Repair R6 follow-ups
 
