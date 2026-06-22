@@ -1,6 +1,6 @@
 # Temporary plan: energy-envelope gap structure matching
 
-> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (`bool` default), fit-path search + `auto` flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 tuning/default flip remains open.
+> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (**`auto` default**), fit-path search + flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 corpus tuning / docs remain open.
 >
 > Archive to `docs/archive/energy-signature-plan.md` when Phase 3 ships.
 
@@ -52,7 +52,7 @@ B extract geometry already includes signature context on both sides (`patch_audi
 | **Similarity** | Replace `bin_similarity` for energy mode with **Pearson** on aligned bin vectors (or dot product after L2 norm — equivalent). Keep `bin_similarity` for bool fallback. |
 | **Timeline** | `EnergyTimeline` parallel to `ActivityTimeline`: precompute `Vec<f32>` bins once per B haystack; `bins_for_frames` slice helper mirrors bool path. |
 | **Signature type** | Extend `GapContextSignature` with `pre_energy: Vec<f32>`, `post_energy: Vec<f32>` **or** enum `GapSignature { Bool(...), Energy(...) }` — prefer enum to avoid dual truth. |
-| **Mode switch** | `gap_signature_mode: bool \| energy \| auto` on `[repair]`. **`auto`**: use energy when **both** pre/post halves have contour (peak-normalized envelope range **> 5%**); else bool (silence, steady drone, or other flat envelopes). Default **`energy`** after Phase 3 tuning; **`bool`** during Phase 1–2 for regression safety. |
+| **Mode switch** | `gap_signature_mode: bool \| energy \| auto` on `[repair]`. **`auto`** (default): use energy when **both** pre/post halves have contour (peak-normalized envelope range **> 5%**); else bool (silence, steady drone, or other flat envelopes). |
 | **Context length** | Single `gap_signature_context_secs` for both modes. Document recommended 3 s (fast) vs 10–30 s (ambiguous / long gaps). No separate “extended context” knob in v1 — users raise one field. |
 | **Search geometry** | Reuse `search_best_fill_start/end`, `fine_polish_structure_start`, `search_coarse_step`, `structure_fine_polish_frames` — only scoring function changes. |
 | **Unified fit** | Energy pre/post scores feed `structure_pre` / `structure_post` in `unified_fit_score`; weights unchanged (`fill_fit_structure_weight` / `fill_fit_waveform_weight`). |
@@ -140,7 +140,7 @@ Shared helper `assert_energy_integration_patch(fixture, report, options, test_id
 | I2 | F1 | same geometry, `gap_signature_mode = bool` | **Domain:** bool `start_frame` at decoy **or** farther from truth than energy unified match. | ✅ |
 | I3 | F2 | `energy` | `assert_energy_integration_patch(…, Some(0.0))` — A/B aligned at pause₁; slide **0** (not pause₂ nominal offset). | ✅ |
 | I4 | F3 | `auto` | `build_gap_signature(Auto)` → `Bool`; domain `unified_match(auto)` same `start_frame` as `bool`. (Full patch outcome equivalence deferred — drone fixture rarely patches through full pipeline.) | ✅ |
-| I5 | — | all existing tests, default `bool` | No regressions; suite green (27 passed, 1 ignored smoke). | ✅ |
+| I5 | — | all existing tests, default `auto` | No regressions; suite green (27 passed, 1 ignored smoke). | ✅ |
 
 #### Domain oracle vs patch path
 
@@ -192,7 +192,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 | Field | Record |
 |-------|--------|
 | Pair | Long-form A/B with clip offset drift (operator-owned or `CLIP_SYNC_GAP_CORPUS` external tier). |
-| Config | `fill_mode = fit`, `gap_signature_mode = bool` then `energy`, same other knobs. |
+| Config | `fill_mode = fit`, `gap_signature_mode = auto` then `energy` or `bool`, same other knobs. |
 | Metrics | Per gap: skip vs patch, `struct pre` / `struct post` (verbose), `structure_slide`, wall time. |
 | Delta | Note cases where energy patches and bool skips (candidate for F1/F2-like synthetic follow-up). |
 
@@ -209,18 +209,18 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 ### Phase 1 — Energy bins + timeline
 
-**Intent:** Build representation and timeline; no change to patch outcomes yet (behind `gap_signature_mode = bool` default).
+**Intent:** Build representation and timeline; no change to patch outcomes until mode is switched from default `auto`.
 
 - [x] `domain/gap_energy.rs`: `energy_bins`, `EnergyTimeline`, `build_gap_energy_signature`, `energy_similarity` (Pearson).
 - [x] `GapSignature` enum + `build_gap_signature` dispatcher (`domain/gap_signature.rs`).
 - [x] `score_pre_match` / `score_post_match` dispatch on signature variant.
-- [x] Config: `gap_signature_mode` enum, default `bool`; validation in `config.rs`.
+- [x] Config: `gap_signature_mode` enum, default `auto`; validation in `config.rs`.
 - [x] Wire `gap_signature_mode` through `PatchAudioRequest` → `SeamGateParams`.
 - [x] Unit tests: energy_bins gate behavior; similarity; signature dispatch.
 
 ### Phase 2 — Search integration + `auto` fallback
 
-**Intent:** Energy mode participates in structure search and unified fit; bool remains default.
+**Intent:** Energy mode participates in structure search and unified fit; `auto` is default.
 
 - [x] `match_gap_structure_in_b` / `match_gap_fill_unified_in_b`: accept `GapSignature`; build `EnergyTimeline` when needed.
 - [x] `evaluate_seam_gate` (`patch_region.rs`): call `build_gap_signature`.
@@ -234,7 +234,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 - [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}.
 - [ ] Adjust `min_structure_match_score` default if energy score distribution shifts (document old vs new).
-- [ ] Default `gap_signature_mode` → `energy` (keep `bool` for tests via fixture TOML).
+- [x] Default `gap_signature_mode` → `auto`.
 - [ ] README § Gap patching — new subsection “Structure signatures” (energy vs bool, context length).
 - [ ] `docs/cli-output.md` — verbose `signature_mode` if exposed.
 - [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps.
@@ -252,7 +252,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 | Key | Phase | Default | Notes |
 |-----|-------|---------|-------|
-| `gap_signature_mode` | 1 | `bool` → `energy` (Phase 3) | `bool` \| `energy` \| `auto` |
+| `gap_signature_mode` | 1 | `auto` | `bool` \| `energy` \| `auto` |
 | `gap_signature_context_secs` | — | `3.0` | Existing; document 10–30 s for hard gaps |
 | `gap_signature_bin_ms` | — | `50` | Existing; 20–50 ms reasonable for energy |
 | `silence_peak_fraction` | — | (scan) | Reused as envelope gate |
@@ -274,7 +274,7 @@ Executable oracles: [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteri
 | Unit | `energy_bins` gate + RMS; `energy_similarity`; **U7** (`auto` flat → bool) |
 | Lib | **U1–U6**, **U8**, **U5b**/**U5c** — `match_gap_fill_unified_in_b` energy vs bool on **F1–F3** (+ integration domain) |
 | Integration | **I1–I4** — full `PatchAudio` on **F1–F3** under `energy` / `bool` / `auto` |
-| Regression | **I5** — full suite with `bool` (CI default in `repair.toml` until Phase 3) |
+| Regression | **I5** — full suite with production defaults (`auto`) |
 | Manual | [Manual baseline](#manual-baseline-optional) — drift-heavy pair for Phase 3 notes |
 
 **CI:** **I5** on every PR; optional job running **I1–I4** with `gap_signature_mode = energy` (**P2-3**).
@@ -284,7 +284,7 @@ Executable oracles: [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteri
 ## Rollout
 
 1. **Phase 0** — synthetic fixtures + baseline notes.
-2. **Phase 1** — energy types behind config; default `bool`; no behavior change.
+2. **Phase 1** — energy types behind config; default `auto`.
 3. **Phase 2** — energy search wired; integration tests; `auto` fallback.
 4. **Phase 3** — tune, default `energy`, docs.
 5. **Phase 4** — optimizations only if profiling demands.

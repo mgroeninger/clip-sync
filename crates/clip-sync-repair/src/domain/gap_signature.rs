@@ -18,11 +18,11 @@ use crate::domain::gap_structure::{
 #[serde(rename_all = "snake_case")]
 pub enum GapSignatureMode {
     /// Active/silent bins around the gap (`fill_mode = fit` structure tier).
-    #[default]
     Bool,
     /// RMS energy envelope Pearson match (fit path).
     Energy,
-    /// Use energy when the bool signature is empty; otherwise bool.
+    /// Energy when pre/post envelope has contour; otherwise bool (flat / near-silence).
+    #[default]
     Auto,
 }
 

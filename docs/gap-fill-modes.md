@@ -178,11 +178,11 @@ Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on p
 
 | Mode | Behavior |
 |------|----------|
-| `bool` (default) | Legacy active/silent bins (`gap_signature_bin_ms`) |
-| `energy` | Gated log-RMS envelope + Pearson match (fit path) |
-| `auto` | Energy when pre/post halves have signal; else bool |
+| `auto` (default) | Energy when pre/post envelope has contour; else bool |
+| `bool` | Legacy active/silent bins (`gap_signature_bin_ms`) |
+| `energy` | Always gated log-RMS envelope + Pearson match (fit path) |
 
-Gate legacy path always uses bool structure. Config-only in v1 (no CLI flag yet).
+Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
 ---
 

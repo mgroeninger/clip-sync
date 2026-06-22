@@ -37,6 +37,7 @@ fill_length_slack_secs = 5.0
 fill_seam_search_secs = 0.25
 gap_signature_context_secs = 3.0
 gap_signature_bin_ms = 50
+gap_signature_mode = "auto"
 min_structure_match_score = 0.55
 strong_structure_trust = 0.90              # gate only
 partial_structure_waveform_soften = 0.85   # gate only

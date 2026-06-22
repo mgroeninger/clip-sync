@@ -842,6 +842,15 @@ dry_run = true
     }
 
     #[test]
+    fn repair_app_config_defaults_gap_signature_mode_to_auto() {
+        let config = RepairAppConfig::default();
+        assert_eq!(
+            config.repair.gap_signature_mode,
+            crate::domain::GapSignatureMode::Auto
+        );
+    }
+
+    #[test]
     fn repair_app_config_defaults_repeat_penalty_weight() {
         let config = RepairAppConfig::default();
         assert!((config.repair.fill_repeat_penalty_weight - 0.4).abs() < f64::EPSILON);

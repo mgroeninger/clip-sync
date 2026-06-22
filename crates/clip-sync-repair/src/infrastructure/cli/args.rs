@@ -139,8 +139,8 @@ pub struct Args {
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]
     pub fill_offset: Option<FillOffsetMode>,
 
-    /// Structure signature for gap fill search (`fill_mode = fit` only) [default: bool]:
-    /// `bool` (active/silent bins), `energy` (envelope Pearson), `auto` (energy when bool is empty).
+    /// Structure signature for gap fill search (`fill_mode = fit` only) [default: auto]:
+    /// `bool` (active/silent bins), `energy` (envelope Pearson), `auto` (energy when envelope has contour).
     #[arg(long, value_parser = clap::value_parser!(GapSignatureMode), value_name = "MODE")]
     pub gap_signature_mode: Option<GapSignatureMode>,
 
@@ -383,7 +383,7 @@ mod tests {
             &format!("[default: {}]", defaults.repair.fill_anchor_min_correlation),
             &format!("[default: {}]", defaults.repair.fill_anchor_max_adjustment_frac),
             &format!("[default: {}]", defaults.repair.fill_anchor_search_prior_weight),
-            "[default: bool]",
+            "[default: auto]",
             "anchored-retry",
             "gap-signature-mode",
             "fill-anchor-min-correlation",

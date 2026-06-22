@@ -380,6 +380,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--fill-border-search-secs` | `fill_border_search_secs` |
 | `--fill-align-margin-secs` | `fill_align_margin_secs` |
 | `--gap-signature-context-secs` | `gap_signature_context_secs` |
+| `--gap-signature-mode` | `gap_signature_mode` |
 | `--fill-length-slack-secs` | `fill_length_slack_secs` |
 | `--fill-offset` | `fill_offset_mode` |
 | `--fill-mode` | `fill_mode` |
@@ -515,7 +516,7 @@ fill_anchor_exclude_structure_trusted = true # anchored_retry: gate patches with
 fill_anchor_max_adjustment_frac = 0.9        # anchored_retry: max |slide| / fill_border_search_secs
 fill_anchor_search_prior_weight = 0.0        # fit + anchors: unified-search prior (0 = off)
 fill_anchor_retry_marginal = false           # anchored_retry pass 2: re-run fit marginal pass-1 gaps; keep pass 2 only when High
-gap_signature_mode = "bool"                  # bool | energy | auto (fit path structure tier)
+gap_signature_mode = "auto"                  # auto (default) | bool | energy (fit path structure tier)
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
 fill_fit_structure_weight = 0.35   # fit only: unified search
 fill_fit_waveform_weight = 0.65    # fit only: unified search

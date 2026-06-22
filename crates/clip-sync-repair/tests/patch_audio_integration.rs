@@ -549,7 +549,7 @@ impl Default for PatchTestOptions {
             fill_anchor_retry_marginal: false,
             min_structure_match_score: 0.55,
             min_border_discovery_secs: 2.0,
-            gap_signature_mode: GapSignatureMode::Bool,
+            gap_signature_mode: GapSignatureMode::Auto,
             profile: RepairProfile::Default,
             fit_boundary_search: FitBoundarySearch::BaselineOnly,
         }
