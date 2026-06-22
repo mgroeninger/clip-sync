@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use clip_sync::{
-    format_time_range, select_best_track, select_track_for_reference, ClipLabel, ClipWindow,
+    format_time_range_verbose, select_best_track, select_track_for_reference, ClipLabel, ClipWindow,
     DomainError, MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter,
     resample_interleaved,
 };
@@ -291,7 +291,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             self.progress.progress("patch-gap", gap_num, region_count);
             self.progress.phase_verbose(&format!(
                 "  gap {gap_num}/{region_count}: A {}",
-                format_time_range(region.a_start_secs, region.a_end_secs)
+                format_time_range_verbose(region.a_start_secs, region.a_end_secs)
             ));
 
             let gap_span = tracing::info_span!(
@@ -698,7 +698,7 @@ fn run_anchored_retry_pass(
         };
         progress.phase_verbose(&format!(
             "  anchored {retry_label} gap {gap_num}: A {}",
-            format_time_range(region.a_start_secs, region.a_end_secs)
+            format_time_range_verbose(region.a_start_secs, region.a_end_secs)
         ));
         let gap_span = tracing::info_span!(
             "patch_gap",
@@ -778,16 +778,16 @@ pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<Strin
     {
         lines.push(format!(
             "           A gap (refined): {}",
-            format_time_range(plan.refined_a_start_secs, plan.refined_a_end_secs)
+            format_time_range_verbose(plan.refined_a_start_secs, plan.refined_a_end_secs)
         ));
     }
     lines.push(format!(
         "           B gap (mapped): {}",
-        format_time_range(plan.mapped_b_start_secs, plan.mapped_b_end_secs)
+        format_time_range_verbose(plan.mapped_b_start_secs, plan.mapped_b_end_secs)
     ));
     lines.push(format!(
         "           B search window: {}",
-        format_time_range(plan.b_search_start_secs, plan.b_search_end_secs)
+        format_time_range_verbose(plan.b_search_start_secs, plan.b_search_end_secs)
     ));
     lines.push(format!(
         "           signature_mode={}",
@@ -812,7 +812,7 @@ pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
     }
     format!(
         "           B fill source: {} ({slide})",
-        format_time_range(fill_start, fill_end),
+        format_time_range_verbose(fill_start, fill_end),
     )
 }
 
@@ -834,7 +834,7 @@ pub(crate) fn format_skip_gap_fill_log(
     reason: &str,
 ) -> String {
     let total = gaps.len();
-    let range = format_time_range(a_start_secs, a_end_secs);
+    let range = format_time_range_verbose(a_start_secs, a_end_secs);
     if let Some(index) = gaps.iter().position(|gap| {
         gap_key(gap.video_a_start_secs, gap.video_a_end_secs) == gap_key(a_start_secs, a_end_secs)
     }) {
@@ -1793,8 +1793,9 @@ mod tests {
         });
         assert!(lines.iter().any(|l| l.contains("fill offset +61.199s (interpolated)")));
         assert!(lines.iter().any(|l| l.contains("A gap (refined):")));
+        assert!(lines.iter().any(|l| l.contains("0:00.100 – 0:02.900")));
         assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));
-        assert!(lines.iter().any(|l| l.contains("B search window:")));
+        assert!(lines.iter().any(|l| l.contains("0:50 – 1:20")));
         assert!(lines.iter().any(|l| l.contains("signature_mode=energy")));
     }
 
@@ -1812,7 +1813,7 @@ mod tests {
         assert!(line.contains("B fill source:"));
         assert!(line.contains("structure slide -0.020s"));
         assert!(line.contains("waveform slide +0.010s"));
-        assert!(line.contains("0:51"));
+        assert!(line.contains("0:51.000 – 0:52.000"));
     }
 
     #[test]

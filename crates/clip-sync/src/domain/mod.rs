@@ -35,7 +35,10 @@ pub use audio_track::AudioTrack;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
-pub use human_format::{format_time_range, format_timestamp};
+pub use human_format::{
+    format_time_range, format_time_range_verbose, format_timestamp, format_timestamp_verbose,
+    VERBOSE_SUBSECOND_SPAN_SECS,
+};
 pub use alignment::TimelineOverlap;
 pub use media_source::MediaSource;
 pub use mono_pcm_clip::{MonoPcmClip, MonoScanBucket};

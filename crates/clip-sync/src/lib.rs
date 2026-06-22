@@ -27,7 +27,8 @@ pub use application::report::{
 // --- domain (selected types) ---
 pub use domain::{
     build_query_alignment_result, compute_mapped_region, format_time_range,
-    format_timestamp, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipMatch,
+    format_time_range_verbose, format_timestamp, format_timestamp_verbose,
+    AlignmentModeUsed, AlignmentResult, AudioTrack, ClipMatch, VERBOSE_SUBSECOND_SPAN_SECS,
     ClipMatchEstimate, ClipRepetitionReport, ClipWindow, ClipLabel, DomainError, Fingerprint,
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome,
