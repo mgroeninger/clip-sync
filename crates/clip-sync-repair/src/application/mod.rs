@@ -4,6 +4,7 @@ pub mod patch_audio;
 pub mod patch_region;
 pub mod ports;
 pub mod repair_videos;
+pub mod run_repair;
 pub mod scan_gaps;
 #[cfg(test)]
 pub mod testing;

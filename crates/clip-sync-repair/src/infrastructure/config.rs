@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
 
 use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
+use crate::application::patch_audio::PatchRequestSettings;
 
 /// Default clip count for repair alignment (start + end windows on long media).
 pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
@@ -398,6 +399,50 @@ impl RepairConfig {
             return 0;
         }
         (self.silence_hold_ms as f64 / self.scan_block_ms as f64).ceil() as u32
+    }
+
+    pub fn patch_settings(&self) -> PatchRequestSettings {
+        PatchRequestSettings {
+            normalize_fill: self.normalize_fill,
+            normalize_window_secs: self.normalize_window_secs,
+            max_fill_gain_db: self.max_fill_gain_db,
+            min_fill_correlation: self.min_fill_correlation,
+            fill_align_margin_secs: self.fill_align_margin_secs,
+            max_fill_align_adjustment_secs: self.max_fill_align_adjustment_secs,
+            fill_border_search_secs: self.fill_border_search_secs,
+            min_border_discovery_secs: self.min_border_discovery_secs,
+            border_standoff_secs: self.border_standoff_secs,
+            short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
+            fill_length_slack_secs: self.fill_length_slack_secs,
+            fill_seam_search_secs: self.fill_seam_search_secs,
+            gap_signature_context_secs: self.gap_signature_context_secs,
+            gap_signature_bin_ms: self.gap_signature_bin_ms,
+            min_structure_match_score: self.min_structure_match_score,
+            strong_structure_trust: self.strong_structure_trust,
+            disable_structure_trust: self.disable_structure_trust,
+            partial_structure_waveform_soften: self.partial_structure_waveform_soften,
+            absolute_silence_rms: self.absolute_silence_rms,
+            fill_offset_mode: self.fill_offset_mode,
+            gap_end_extend_on_post_seam_fail: self.gap_end_extend_on_post_seam_fail,
+            gap_start_extend_on_pre_seam_fail: self.gap_start_extend_on_pre_seam_fail,
+            gap_end_extend_max_ms: self.gap_end_extend_max_ms,
+            gap_end_extend_step_ms: self.gap_end_extend_step_ms,
+            short_gap_one_strong_seam_fallback: self.short_gap_one_strong_seam_fallback,
+            fill_mode: self.fill_mode,
+            fill_fit_structure_weight: self.fill_fit_structure_weight,
+            fill_fit_waveform_weight: self.fill_fit_waveform_weight,
+            fill_fit_nominal_bias_scale: 1.0,
+            fill_fit_late_start_penalty_scale: 1.0,
+            fill_marginal_margin: self.fill_marginal_margin,
+            fill_absolute_floor: self.fill_absolute_floor,
+            fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
+            fill_anchor_min_correlation: self.fill_anchor_min_correlation,
+            fill_anchor_exclude_structure_trusted: self.fill_anchor_exclude_structure_trusted,
+            fill_anchor_max_adjustment_frac: self.fill_anchor_max_adjustment_frac,
+            fill_anchor_search_prior_weight: self.fill_anchor_search_prior_weight,
+            fill_anchor_retry_marginal: self.fill_anchor_retry_marginal,
+            gap_signature_mode: self.gap_signature_mode,
+        }
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {

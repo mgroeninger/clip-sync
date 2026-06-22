@@ -1,49 +1,14 @@
-use std::process::ExitCode;
+use clip_sync::{AlignmentMode, ProgressMode};
 
-use clap::Parser;
-
-use clip_sync::{AppError, AlignmentMode, ProgressMode, ProgressReporter, init_tracing, StderrProgressReporter};
-
-use crate::application::run_align::run_align;
-use crate::infrastructure::config::{AppConfig, load_app_config};
+use crate::infrastructure::config::AppConfig;
 
 pub mod args;
 pub mod exit_code;
 pub mod output;
 
-use args::Cli;
+use self::args::Cli;
 
-pub fn run() -> ExitCode {
-    match run_inner() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            tracing::debug!(error = %error, "clip-sync failed");
-            eprintln!("{error}");
-            exit_code::exit_code_for(&error)
-        }
-    }
-}
-
-fn run_inner() -> Result<(), AppError> {
-    let cli = Cli::parse();
-    let mut config = load_app_config(cli.config.as_deref())?;
-    apply_cli_overrides(&mut config, &cli);
-    config.validate()?;
-
-    init_tracing(&config.logging)?;
-
-    let progress = StderrProgressReporter::new(config.logging.progress);
-    progress.phase(&format!(
-        "clip-sync: aligning {} with {}",
-        cli.video_a.display(),
-        cli.video_b.display()
-    ));
-    let result = run_align(&config.align, cli.video_a, cli.video_b, &progress)?;
-
-    output::print_success(&config.output, &result)
-}
-
-fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
+pub fn apply_cli_overrides(config: &mut AppConfig, cli: &Cli) {
     if let Some(duration) = cli.clip_length {
         config.align.clip.clip_length = duration;
     }
