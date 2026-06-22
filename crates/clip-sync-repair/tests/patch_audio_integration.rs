@@ -7,13 +7,12 @@ use clip_sync::{
     AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
 };
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
+use clip_sync_repair::domain::{
+    FillMode, FillOffsetMode, GapSignatureMode, FitBoundarySearch, RepairProfile,
+};
 use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::FillConfidence;
-use clip_sync_repair::domain::FillMode;
-use clip_sync_repair::domain::GapPatchSkipReason;
-use clip_sync_repair::domain::GapPatchStatus;
-use clip_sync_repair::domain::FillOffsetMode;
-use clip_sync_repair::domain::GapSignatureMode;
+use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
@@ -517,6 +516,8 @@ struct PatchTestOptions {
     min_structure_match_score: f32,
     min_border_discovery_secs: f64,
     gap_signature_mode: GapSignatureMode,
+    profile: RepairProfile,
+    fit_boundary_search: FitBoundarySearch,
 }
 
 impl Default for PatchTestOptions {
@@ -549,6 +550,8 @@ impl Default for PatchTestOptions {
             min_structure_match_score: 0.55,
             min_border_discovery_secs: 2.0,
             gap_signature_mode: GapSignatureMode::Bool,
+            profile: RepairProfile::Default,
+            fit_boundary_search: FitBoundarySearch::BaselineOnly,
         }
     }
 }
@@ -564,6 +567,7 @@ fn fast_fit_patch_options() -> PatchTestOptions {
         gap_end_extend_max_ms: 40,
         gap_end_extend_step_ms: 40,
         short_gap_one_strong_seam_fallback: false,
+        fit_boundary_search: FitBoundarySearch::FullGrid,
         ..Default::default()
     }
 }
@@ -721,6 +725,8 @@ fn patch_request_with_options(
         fill_anchor_search_prior_weight: 0.0,
         fill_anchor_retry_marginal: options.fill_anchor_retry_marginal,
         gap_signature_mode: options.gap_signature_mode,
+        profile: options.profile,
+        fit_boundary_search: options.fit_boundary_search,
     }
 }
 

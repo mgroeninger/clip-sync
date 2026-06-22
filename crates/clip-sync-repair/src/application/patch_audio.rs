@@ -17,6 +17,7 @@ use crate::domain::{
     fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     fill_mode::FillMode,
+    format_repair_profile_verbose,
     gap_fill_fit::FillConfidence,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames},
@@ -126,6 +127,10 @@ pub struct PatchAudioRequest {
     pub fill_anchor_retry_marginal: bool,
     /// Structure signature representation for gap fill search.
     pub gap_signature_mode: crate::domain::GapSignatureMode,
+    /// Effective repair profile for verbose logging.
+    pub profile: crate::domain::RepairProfile,
+    /// Fit mode boundary search policy.
+    pub fit_boundary_search: crate::domain::FitBoundarySearch,
 }
 
 /// Patch parameters without the scan report — filled in after gap scan.
@@ -170,6 +175,8 @@ pub struct PatchRequestSettings {
     pub fill_anchor_search_prior_weight: f64,
     pub fill_anchor_retry_marginal: bool,
     pub gap_signature_mode: crate::domain::GapSignatureMode,
+    pub profile: crate::domain::RepairProfile,
+    pub fit_boundary_search: crate::domain::FitBoundarySearch,
 }
 
 impl PatchRequestSettings {
@@ -215,6 +222,8 @@ impl PatchRequestSettings {
             fill_anchor_search_prior_weight: self.fill_anchor_search_prior_weight,
             fill_anchor_retry_marginal: self.fill_anchor_retry_marginal,
             gap_signature_mode: self.gap_signature_mode,
+            profile: self.profile,
+            fit_boundary_search: self.fit_boundary_search,
         }
     }
 }
@@ -276,6 +285,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             fill_offset_mode = ?request.fill_offset_mode,
         )
         .entered();
+
+        self.progress.phase_verbose(&format_repair_profile_verbose(
+            request.profile,
+            request.fit_boundary_search,
+            request.fill_border_search_secs,
+        ));
 
         // Step 2: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
@@ -855,6 +870,7 @@ pub(crate) struct GapFillResultLog {
     pub fill_end_sample: usize,
     pub structure_slide_secs: f64,
     pub waveform_slide_secs: f64,
+    pub fit_used_boundary_grid: bool,
 }
 
 /// Verbose stderr lines: per-gap A/B timeline used for structure search and fill.
@@ -901,8 +917,13 @@ pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
             result.waveform_slide_secs
         ));
     }
+    let fit_path = if result.fit_used_boundary_grid {
+        "boundary grid"
+    } else {
+        "baseline only"
+    };
     format!(
-        "           B fill source: {} ({slide})",
+        "           B fill source: {} ({slide}; fit path: {fit_path})",
         format_time_range_verbose(fill_start, fill_end),
     )
 }
@@ -1350,6 +1371,7 @@ fn prepare_region_patch(
             sample_rate,
         ),
         gap_signature_mode: request.gap_signature_mode,
+        fit_boundary_search: request.fit_boundary_search,
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
@@ -1417,6 +1439,7 @@ fn prepare_region_patch(
         confidence,
         gap_start_adjust_frames,
         gap_end_adjust_frames,
+        fit_used_boundary_grid,
     } = gate_outcome;
 
     let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
@@ -1551,6 +1574,7 @@ fn prepare_region_patch(
             fill_end_sample: b_fill_end_sample,
             structure_slide_secs,
             waveform_slide_secs,
+            fit_used_boundary_grid,
         },
     );
 
@@ -1900,6 +1924,7 @@ mod tests {
             fill_end_sample: 96_000 * 6,
             structure_slide_secs: -0.02,
             waveform_slide_secs: 0.01,
+            fit_used_boundary_grid: false,
         });
         assert!(line.contains("B fill source:"));
         assert!(line.contains("structure slide -0.020s"));

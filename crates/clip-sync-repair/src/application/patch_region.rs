@@ -3,6 +3,7 @@
 use clip_sync::MultiChannelPcm;
 
 use crate::domain::fill_mode::FillMode;
+use crate::domain::repair_profile::FitBoundarySearch;
 use crate::domain::gap_fill_fit::{
     boundary_search_step_frames, classify_fill_waveform_confidence, fit_candidate_ranking_score,
     match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFillSearchInput,
@@ -37,6 +38,8 @@ pub(crate) struct SeamGateOutcome {
     pub confidence: FillConfidence,
     pub gap_start_adjust_frames: i64,
     pub gap_end_adjust_frames: i64,
+    /// True when fit mode ran the joint A-boundary grid (not baseline-only short path).
+    pub fit_used_boundary_grid: bool,
 }
 
 pub(crate) struct SeamGateParams<'a> {
@@ -77,6 +80,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub gap_start_extend_on_pre_seam_fail: bool,
     pub anchor_search_prior: Option<AnchorSearchPrior>,
     pub gap_signature_mode: GapSignatureMode,
+    pub fit_boundary_search: FitBoundarySearch,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -225,6 +229,21 @@ fn evaluate_seam_gate_fit_joint(
         return Ok(best.expect("baseline high").outcome);
     }
 
+    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
+        if let Some(candidate) = &best {
+            if candidate.outcome.confidence == FillConfidence::Marginal {
+                tracing::warn!(
+                    pre = candidate.outcome.report_pre,
+                    post = candidate.outcome.report_post,
+                    min = params.min_fill_correlation,
+                    "marginal waveform seam patch (below min_fill_correlation)"
+                );
+            }
+            return Ok(candidate.outcome.clone());
+        }
+        return Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed));
+    }
+
     let mut try_start = baseline.start_frame;
     while try_start >= start_min {
         let mut try_end = baseline.end_frame;
@@ -261,7 +280,7 @@ fn evaluate_seam_gate_fit_joint(
         try_start = try_start.saturating_sub(step).max(start_min);
     }
 
-    if let Some(candidate) = best {
+    if let Some(mut candidate) = best {
         if candidate.outcome.confidence == FillConfidence::Marginal {
             tracing::warn!(
                 pre = candidate.outcome.report_pre,
@@ -270,6 +289,7 @@ fn evaluate_seam_gate_fit_joint(
                 "marginal waveform seam patch (below min_fill_correlation)"
             );
         }
+        candidate.outcome.fit_used_boundary_grid = true;
         return Ok(candidate.outcome);
     }
 
@@ -433,6 +453,7 @@ fn evaluate_seam_gate_fit_candidate(
             confidence,
             gap_start_adjust_frames: refined.start_frame as i64 - baseline.start_frame as i64,
             gap_end_adjust_frames: refined.end_frame as i64 - baseline.end_frame as i64,
+            fit_used_boundary_grid: false,
         },
         ranking_score,
     ))
@@ -590,6 +611,7 @@ fn evaluate_seam_gate_legacy(
         confidence: FillConfidence::High,
         gap_start_adjust_frames: 0,
         gap_end_adjust_frames: 0,
+        fit_used_boundary_grid: false,
     })
 }
 

@@ -216,6 +216,8 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 fill_anchor_search_prior_weight: 0.0,
                 fill_anchor_retry_marginal: false,
                 gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
+                profile: clip_sync_repair::domain::RepairProfile::Default,
+                fit_boundary_search: clip_sync_repair::domain::FitBoundarySearch::BaselineOnly,
             },
             10,
         )

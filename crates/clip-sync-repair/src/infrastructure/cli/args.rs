@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 
 use clip_sync::LogLevel;
 
-use crate::domain::{FillMode, FillOffsetMode, GapSignatureMode};
+use crate::domain::{FillMode, FillOffsetMode, GapSignatureMode, RepairProfile};
 use crate::infrastructure::config::OutputFormat;
 
 #[derive(Parser, Debug)]
@@ -173,6 +173,18 @@ pub struct Args {
     /// [default: fit].
     #[arg(long, value_parser = clap::value_parser!(FillMode), value_name = "MODE")]
     pub fill_mode: Option<FillMode>,
+
+    /// Draft repair profile: smaller haystack, no extension, baseline-only fit path.
+    #[arg(long, overrides_with = "full")]
+    pub quick: bool,
+
+    /// Quality repair profile: full boundary grid and extension retries.
+    #[arg(long, overrides_with = "quick")]
+    pub full: bool,
+
+    /// Explicit repair profile (`default`, `quick`, `full`).
+    #[arg(long, value_parser = clap::value_parser!(RepairProfile), value_name = "NAME")]
+    pub profile: Option<RepairProfile>,
 
     /// Disable post-seam gap-end extension retries when waveform correlation fails at the tail.
     #[arg(long)]

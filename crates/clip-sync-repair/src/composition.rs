@@ -42,6 +42,11 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
 
     let mut config = crate::infrastructure::config::load_repair_app_config(args.config.as_deref())
         .map_err(RepairError::Align)?;
+    if args.quick && args.full {
+        return Err(RepairError::Config(
+            "cannot use --quick and --full together".into(),
+        ));
+    }
     cli::apply_cli_overrides(&mut config, &args);
     validate_config(&config)?;
 

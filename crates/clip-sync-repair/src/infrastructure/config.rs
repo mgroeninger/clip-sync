@@ -6,6 +6,9 @@ use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
 
 use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
 use crate::application::patch_audio::PatchRequestSettings;
+use crate::domain::{
+    FitBoundarySearch, RepairProfile, RepairProfileBundle, RepairProfileFieldMask,
+};
 
 /// Default clip count for repair alignment (start + end windows on long media).
 pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
@@ -183,6 +186,12 @@ pub struct RepairConfig {
     /// For short gaps, allow patch when either seam meets the threshold (after mean fails).
     #[serde(default = "default_true")]
     pub short_gap_one_strong_seam_fallback: bool,
+    /// Repair speed/quality preset (`default`, `quick`, `full`).
+    #[serde(default)]
+    pub profile: RepairProfile,
+    /// Fit mode: skip boundary grid on marginal baseline (`baseline_only`) or run full grid.
+    #[serde(default)]
+    pub fit_boundary_search: FitBoundarySearch,
 }
 
 fn default_min_gap_ms() -> u64 {
@@ -288,6 +297,36 @@ fn default_fill_anchor_max_adjustment_frac() -> f64 {
     0.9
 }
 
+fn apply_profile_bundle_fields(
+    repair: &mut RepairConfig,
+    bundle: RepairProfileBundle,
+    mask: RepairProfileFieldMask,
+) {
+    if !mask.fill_border_search_secs {
+        repair.fill_border_search_secs = bundle.fill_border_search_secs;
+    }
+    if !mask.gap_end_extend_on_post_seam_fail {
+        repair.gap_end_extend_on_post_seam_fail = bundle.gap_end_extend_on_post_seam_fail;
+    }
+    if !mask.gap_start_extend_on_pre_seam_fail {
+        repair.gap_start_extend_on_pre_seam_fail = bundle.gap_start_extend_on_pre_seam_fail;
+    }
+    if !mask.fit_boundary_search {
+        repair.fit_boundary_search = bundle.fit_boundary_search;
+    }
+}
+
+pub(crate) fn repair_profile_field_mask_from_toml(repair_table: &toml::Table) -> RepairProfileFieldMask {
+    RepairProfileFieldMask {
+        fill_border_search_secs: repair_table.contains_key("fill_border_search_secs"),
+        gap_end_extend_on_post_seam_fail: repair_table
+            .contains_key("gap_end_extend_on_post_seam_fail"),
+        gap_start_extend_on_pre_seam_fail: repair_table
+            .contains_key("gap_start_extend_on_pre_seam_fail"),
+        fit_boundary_search: repair_table.contains_key("fit_boundary_search"),
+    }
+}
+
 impl Default for RepairConfig {
     fn default() -> Self {
         Self {
@@ -339,6 +378,8 @@ impl Default for RepairConfig {
             gap_end_extend_max_ms: default_gap_end_extend_max_ms(),
             gap_end_extend_step_ms: default_gap_end_extend_step_ms(),
             short_gap_one_strong_seam_fallback: true,
+            profile: RepairProfile::default(),
+            fit_boundary_search: FitBoundarySearch::default(),
         }
     }
 }
@@ -401,6 +442,12 @@ impl RepairConfig {
         (self.silence_hold_ms as f64 / self.scan_block_ms as f64).ceil() as u32
     }
 
+    /// Apply profile bundle fields unless masked as explicitly set (TOML keys or CLI overrides).
+    pub fn apply_profile_bundle(&mut self, mask: RepairProfileFieldMask) {
+        let bundle = self.profile.bundle();
+        apply_profile_bundle_fields(self, bundle, mask);
+    }
+
     pub fn patch_settings(&self) -> PatchRequestSettings {
         PatchRequestSettings {
             normalize_fill: self.normalize_fill,
@@ -442,6 +489,8 @@ impl RepairConfig {
             fill_anchor_search_prior_weight: self.fill_anchor_search_prior_weight,
             fill_anchor_retry_marginal: self.fill_anchor_retry_marginal,
             gap_signature_mode: self.gap_signature_mode,
+            profile: self.profile,
+            fit_boundary_search: self.fit_boundary_search,
         }
     }
 
@@ -704,6 +753,17 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
         config.align.alignment.refine_offset_high_rate = true;
     }
 
+    if let Some(repair_table) = toml::from_str::<toml::Table>(&text)
+        .ok()
+        .and_then(|t| t.get("repair").and_then(toml::Value::as_table).cloned())
+    {
+        let profile_explicit = repair_table.contains_key("profile");
+        let mask = repair_profile_field_mask_from_toml(&repair_table);
+        if profile_explicit || config.repair.profile != RepairProfile::Default {
+            config.repair.apply_profile_bundle(mask);
+        }
+    }
+
     Ok(config)
 }
 
@@ -850,6 +910,45 @@ dry_run = true
             format!("{err:?}").contains("fill_repeat_penalty_weight"),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn load_config_applies_quick_profile_bundle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+profile = "quick"
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert_eq!(config.repair.profile, RepairProfile::Quick);
+        assert!((config.repair.fill_border_search_secs - 5.0).abs() < f64::EPSILON);
+        assert!(!config.repair.gap_end_extend_on_post_seam_fail);
+    }
+
+    #[test]
+    fn load_config_profile_respects_explicit_border_override() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+profile = "quick"
+fill_border_search_secs = 8.0
+"#,
+        )
+        .expect("write config");
+
+        let config = load_repair_app_config(Some(&path)).expect("load config");
+        assert!((config.repair.fill_border_search_secs - 8.0).abs() < f64::EPSILON);
     }
 
     #[test]

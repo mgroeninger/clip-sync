@@ -12,6 +12,7 @@ pub mod gap_structure;
 pub mod patch_anchor;
 pub mod patch_result;
 pub mod policies;
+pub mod repair_profile;
 pub mod track_match;
 
 pub use fill_mode::FillMode;
@@ -22,6 +23,10 @@ pub use patch_anchor::{
 };
 pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};
+pub use repair_profile::{
+    format_repair_profile_verbose, FitBoundarySearch, RepairProfile, RepairProfileBundle,
+    RepairProfileFieldMask,
+};
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};
