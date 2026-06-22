@@ -22,13 +22,16 @@ fn f1_integration_energy_scores_are_finite() {
 #[test]
 fn f2_integration_energy_scores_are_finite() {
     let f = build_f2_integration(48_000, 2);
+    let true_pre = f.energy_pre_at(f.true_fill_start);
     assert!(
-        f.energy_pre_at(f.true_fill_start).is_finite(),
-        "true pre energy"
+        true_pre.is_finite(),
+        "true pre energy at pause₁ should be finite (got {true_pre})"
     );
+    // pause₂ pre on B is flat sustained level before the hard cut — Pearson may return −∞.
+    let nominal_pre = f.energy_pre_at(f.nominal_fill_start);
     assert!(
-        f.energy_pre_at(f.nominal_fill_start).is_finite(),
-        "nominal pre energy"
+        true_pre > nominal_pre,
+        "pause₁ pre energy should exceed pause₂: {true_pre} vs {nominal_pre}"
     );
 }
 
