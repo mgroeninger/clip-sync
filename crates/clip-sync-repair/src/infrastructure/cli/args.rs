@@ -136,12 +136,12 @@ pub struct Args {
 
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// `anchored` (anchor interpolation; not wired in patch yet), `anchored-retry` (two-pass retry).
-    #[arg(long, value_enum, value_name = "MODE")]
+    #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]
     pub fill_offset: Option<FillOffsetMode>,
 
     /// Structure signature for gap fill search (`fill_mode = fit` only) [default: bool]:
     /// `bool` (active/silent bins), `energy` (envelope Pearson), `auto` (energy when bool is empty).
-    #[arg(long, value_enum, value_name = "MODE")]
+    #[arg(long, value_parser = clap::value_parser!(GapSignatureMode), value_name = "MODE")]
     pub gap_signature_mode: Option<GapSignatureMode>,
 
     /// Minimum `min(pre, post)` for a pass-1 patch to become an offset anchor
@@ -171,7 +171,7 @@ pub struct Args {
 
     /// Gap-fill placement: `gate` (legacy threshold checks) or `fit` (waveform slide search)
     /// [default: fit].
-    #[arg(long, value_enum, value_name = "MODE")]
+    #[arg(long, value_parser = clap::value_parser!(FillMode), value_name = "MODE")]
     pub fill_mode: Option<FillMode>,
 
     /// Disable post-seam gap-end extension retries when waveform correlation fails at the tail.

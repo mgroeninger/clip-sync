@@ -25,7 +25,7 @@ use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 #[cfg(feature = "ffmpeg-mux")]
 use crate::infrastructure::ffmpeg_mux::FfmpegMediaMuxer;
 #[cfg(feature = "ffmpeg-mux")]
-use crate::infrastructure::mux_bitrate::parse_mux_audio_bitrate_policy;
+use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
 
 use self::args::Args;
 use self::exit_code::exit_code_for;

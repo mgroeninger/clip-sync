@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
 
-use crate::infrastructure::mux_bitrate::parse_mux_audio_bitrate_policy;
+use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
 
 /// Default clip count for repair alignment (start + end windows on long media).
 pub const REPAIR_DEFAULT_NUM_CLIPS: u32 = 2;
