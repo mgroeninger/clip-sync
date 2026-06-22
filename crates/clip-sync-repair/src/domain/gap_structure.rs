@@ -258,6 +258,7 @@ fn fine_polish_structure_start(
             nominal_start,
             nominal_end,
             params,
+            1.0,
         );
         if candidate > nominal_start {
             let late_frac =
@@ -445,11 +446,13 @@ pub(crate) fn combined_structure_score(
     nominal_start: usize,
     nominal_end: usize,
     params: &StructureMatchParams,
+    nominal_bias_scale: f64,
 ) -> f64 {
     let fill_len = end.saturating_sub(start);
     let len_penalty = LENGTH_MISMATCH_PENALTY
         * fill_len.abs_diff(params.gap_frames) as f64 / params.gap_frames.max(1) as f64;
     let nominal_bias = NOMINAL_BIAS_PER_BIN
+        * nominal_bias_scale
         * (start.abs_diff(nominal_start) + end.abs_diff(nominal_end)) as f64
             / params.bin_frames.max(1) as f64;
     pre_score + post_score - len_penalty - nominal_bias

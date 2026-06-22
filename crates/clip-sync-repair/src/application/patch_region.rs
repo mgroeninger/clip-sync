@@ -65,6 +65,8 @@ pub(crate) struct SeamGateParams<'a> {
     pub fill_mode: FillMode,
     pub fill_fit_structure_weight: f64,
     pub fill_fit_waveform_weight: f64,
+    pub fill_fit_nominal_bias_scale: f64,
+    pub fill_fit_late_start_penalty_scale: f64,
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
     pub fill_repeat_penalty_weight: f64,
@@ -359,6 +361,9 @@ fn evaluate_seam_gate_fit_candidate(
     let weights = UnifiedFitWeights {
         structure_weight: params.fill_fit_structure_weight,
         waveform_weight: params.fill_fit_waveform_weight,
+        nominal_bias_scale: params.fill_fit_nominal_bias_scale,
+        late_start_penalty_scale: params.fill_fit_late_start_penalty_scale,
+        ..Default::default()
     };
     let structure_timeline = cache.structure_timeline(&signature);
     let unified = match_gap_fill_unified_in_b_with_timeline(

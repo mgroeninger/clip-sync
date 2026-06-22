@@ -756,6 +756,8 @@ fn patch_audio_request_from_repair(
         fill_mode: repair.fill_mode,
         fill_fit_structure_weight: repair.fill_fit_structure_weight,
         fill_fit_waveform_weight: repair.fill_fit_waveform_weight,
+        fill_fit_nominal_bias_scale: 1.0,
+        fill_fit_late_start_penalty_scale: 1.0,
         fill_marginal_margin: repair.fill_marginal_margin,
         fill_absolute_floor: repair.fill_absolute_floor,
         fill_repeat_penalty_weight: repair.fill_repeat_penalty_weight,

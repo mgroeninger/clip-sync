@@ -91,6 +91,10 @@ pub fn fit_candidate_ranking_score(min_waveform: f64, boundary_move_frames: usiz
 pub struct UnifiedFitWeights {
     pub structure_weight: f64,
     pub waveform_weight: f64,
+    /// Scales distance-from-nominal penalty inside the structure tier.
+    pub nominal_bias_scale: f64,
+    /// Scales the late-start penalty when `start > nominal_start`.
+    pub late_start_penalty_scale: f64,
 }
 
 impl Default for UnifiedFitWeights {
@@ -98,6 +102,8 @@ impl Default for UnifiedFitWeights {
         Self {
             structure_weight: 0.35,
             waveform_weight: 0.65,
+            nominal_bias_scale: 1.0,
+            late_start_penalty_scale: 1.0,
         }
     }
 }
@@ -111,6 +117,8 @@ impl UnifiedFitWeights {
         Self {
             structure_weight: self.structure_weight / sum,
             waveform_weight: self.waveform_weight / sum,
+            nominal_bias_scale: self.nominal_bias_scale,
+            late_start_penalty_scale: self.late_start_penalty_scale,
         }
     }
 }
@@ -139,10 +147,13 @@ pub fn unified_fit_score(
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
 ) -> f64 {
-    if !structure_pre.is_finite() || !structure_post.is_finite() || !waveform_min.is_finite() {
+    if !structure_pre.is_finite() || !structure_post.is_finite() {
         return f64::NEG_INFINITY;
     }
     let weights = weights.normalized();
+    if weights.waveform_weight > 0.0 && !waveform_min.is_finite() {
+        return f64::NEG_INFINITY;
+    }
     let structure_combined = combined_structure_score(
         structure_pre,
         structure_post,
@@ -151,12 +162,13 @@ pub fn unified_fit_score(
         nominal_start,
         nominal_end,
         params,
+        weights.nominal_bias_scale,
     );
     let mut score =
         weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
     if start > nominal_start {
         let late_frac = (start - nominal_start) as f64 / params.gap_frames.max(1) as f64;
-        score -= LATE_START_PENALTY * late_frac;
+        score -= LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
     }
     score
 }
@@ -224,7 +236,7 @@ fn unified_fit_score_with_repeat(
     score
 }
 
-fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> f64 {
+pub(crate) fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> f64 {
     if !placement_in_bounds(
         start,
         ctx.gap_frames,
@@ -1224,6 +1236,7 @@ mod tests {
         let w = UnifiedFitWeights {
             structure_weight: 1.0,
             waveform_weight: 1.0,
+            ..Default::default()
         }
         .normalized();
         assert!((w.structure_weight - 0.5).abs() < 1e-9);
@@ -1246,6 +1259,7 @@ mod tests {
         let weights = UnifiedFitWeights {
             structure_weight: 0.2,
             waveform_weight: 0.8,
+            ..Default::default()
         };
         let nominal_start = 200usize;
         let nominal_end = 240usize;

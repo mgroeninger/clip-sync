@@ -20,6 +20,8 @@ use crate::domain::{
     gap_fill_fit::FillConfidence,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames},
+    gap_signature::build_gap_signature,
+    gap_structure::StructureMatchParams,
     patch_anchor::{
         format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
         interpolate_anchored_offset_secs, is_retryable_patch_skip, AnchorSearchPrior,
@@ -102,6 +104,10 @@ pub struct PatchAudioRequest {
     pub fill_fit_structure_weight: f64,
     /// Unified fit waveform weight (fit mode only).
     pub fill_fit_waveform_weight: f64,
+    /// Scales distance-from-nominal penalty in unified fit structure scoring (1.0 = default).
+    pub fill_fit_nominal_bias_scale: f64,
+    /// Scales late-start penalty when structure search starts after the nominal map (1.0 = default).
+    pub fill_fit_late_start_penalty_scale: f64,
     /// Fit mode marginal patch band below `min_fill_correlation` (Phase C).
     pub fill_marginal_margin: f32,
     /// Fit mode hard waveform skip floor (Phase C).
@@ -720,6 +726,7 @@ pub(crate) fn format_gap_fill_plan_lines(
     mapped_b_end_secs: f64,
     b_search_start_secs: f64,
     b_search_end_secs: f64,
+    signature_mode_label: &str,
 ) -> Vec<String> {
     let mut lines = vec![format!(
         "           fill offset {:+.3}s ({})",
@@ -742,6 +749,7 @@ pub(crate) fn format_gap_fill_plan_lines(
         "           B search window: {}",
         format_time_range(b_search_start_secs, b_search_end_secs)
     ));
+    lines.push(format!("           signature_mode={signature_mode_label}"));
     lines
 }
 
@@ -780,6 +788,7 @@ fn log_gap_fill_plan_verbose(
     mapped_b_end_secs: f64,
     b_search_start_secs: f64,
     b_search_end_secs: f64,
+    signature_mode_label: &str,
 ) {
     for line in format_gap_fill_plan_lines(
         scan_a_start_secs,
@@ -792,6 +801,7 @@ fn log_gap_fill_plan_verbose(
         mapped_b_end_secs,
         b_search_start_secs,
         b_search_end_secs,
+        signature_mode_label,
     ) {
         progress.phase_verbose(&line);
     }
@@ -1105,6 +1115,31 @@ fn prepare_region_patch(
         + margin_secs
         + extend_slack_secs;
 
+    let gap_frames_preview = refined.end_frame.saturating_sub(refined.start_frame);
+    let signature_mode_label = if request.fill_mode == FillMode::Fit && gap_frames_preview > 0 {
+        let structure_params = StructureMatchParams {
+            gap_frames: gap_frames_preview,
+            bin_frames: bin_frames.max(1),
+            search_radius_frames: 0,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction,
+            absolute_silence_rms,
+        };
+        build_gap_signature(
+            &a_pcm.samples,
+            channels,
+            refined.start_frame,
+            refined.end_frame,
+            context_frames,
+            &structure_params,
+            request.gap_signature_mode,
+        )
+        .mode_label()
+    } else {
+        "bool"
+    };
+
     log_gap_fill_plan_verbose(
         progress,
         region.a_start_secs,
@@ -1117,6 +1152,7 @@ fn prepare_region_patch(
         refined_b_end_secs,
         b_extract_start_secs,
         b_extract_end_secs,
+        signature_mode_label,
     );
 
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
@@ -1198,6 +1234,8 @@ fn prepare_region_patch(
         fill_mode: request.fill_mode,
         fill_fit_structure_weight: request.fill_fit_structure_weight,
         fill_fit_waveform_weight: request.fill_fit_waveform_weight,
+        fill_fit_nominal_bias_scale: request.fill_fit_nominal_bias_scale,
+        fill_fit_late_start_penalty_scale: request.fill_fit_late_start_penalty_scale,
         fill_marginal_margin: request.fill_marginal_margin,
         fill_absolute_floor: request.fill_absolute_floor,
         fill_repeat_penalty_weight: request.fill_repeat_penalty_weight,
@@ -1740,11 +1778,13 @@ mod tests {
             64.099,
             50.0,
             80.0,
+            "energy",
         );
         assert!(lines.iter().any(|l| l.contains("fill offset +61.199s (interpolated)")));
         assert!(lines.iter().any(|l| l.contains("A gap (refined):")));
         assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));
         assert!(lines.iter().any(|l| l.contains("B search window:")));
+        assert!(lines.iter().any(|l| l.contains("signature_mode=energy")));
     }
 
     #[test]

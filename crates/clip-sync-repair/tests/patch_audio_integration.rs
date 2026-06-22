@@ -13,11 +13,16 @@ use clip_sync_repair::domain::FillMode;
 use clip_sync_repair::domain::GapPatchSkipReason;
 use clip_sync_repair::domain::GapPatchStatus;
 use clip_sync_repair::domain::FillOffsetMode;
+use clip_sync_repair::domain::GapSignatureMode;
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
+use clip_sync_repair::test_support::energy_signature_fixtures::{
+    build_f1_integration, build_f2_integration, build_f3_drone_integration, gap_report_times,
+    structure_heavy_weights, structure_slide_secs, write_fixture_wavs,
+};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -482,6 +487,8 @@ struct PatchTestOptions {
     fill_absolute_floor: f32,
     fill_fit_structure_weight: f64,
     fill_fit_waveform_weight: f64,
+    fill_fit_nominal_bias_scale: f64,
+    fill_fit_late_start_penalty_scale: f64,
     fill_border_search_secs: f64,
     fill_align_margin_secs: f64,
     gap_signature_context_secs: f64,
@@ -490,6 +497,9 @@ struct PatchTestOptions {
     gap_end_extend_step_ms: u64,
     fill_repeat_penalty_weight: f64,
     fill_anchor_retry_marginal: bool,
+    min_structure_match_score: f32,
+    min_border_discovery_secs: f64,
+    gap_signature_mode: GapSignatureMode,
 }
 
 impl Default for PatchTestOptions {
@@ -509,6 +519,8 @@ impl Default for PatchTestOptions {
             fill_absolute_floor: 0.12,
             fill_fit_structure_weight: 0.35,
             fill_fit_waveform_weight: 0.65,
+            fill_fit_nominal_bias_scale: 1.0,
+            fill_fit_late_start_penalty_scale: 1.0,
             fill_border_search_secs: 30.0,
             fill_align_margin_secs: 1.0,
             gap_signature_context_secs: 3.0,
@@ -517,6 +529,9 @@ impl Default for PatchTestOptions {
             gap_end_extend_step_ms: 20,
             fill_repeat_penalty_weight: 0.4,
             fill_anchor_retry_marginal: false,
+            min_structure_match_score: 0.55,
+            min_border_discovery_secs: 2.0,
+            gap_signature_mode: GapSignatureMode::Bool,
         }
     }
 }
@@ -534,6 +549,98 @@ fn fast_fit_patch_options() -> PatchTestOptions {
         short_gap_one_strong_seam_fallback: false,
         ..Default::default()
     }
+}
+
+/// Fit-mode options for energy-signature acceptance fixtures (I1–I4).
+fn energy_sig_patch_options(mode: GapSignatureMode) -> PatchTestOptions {
+    PatchTestOptions {
+        fill_mode: FillMode::Fit,
+        fill_border_search_secs: 3.5,
+        max_fill_align_adjustment_secs: 2.0,
+        fill_align_margin_secs: 0.2,
+        gap_signature_context_secs: 0.5,
+        fill_length_slack_secs: 0.05,
+        gap_end_extend_max_ms: 0,
+        gap_end_extend_step_ms: 40,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        short_gap_one_strong_seam_fallback: false,
+        fill_fit_structure_weight: 1.0,
+        fill_fit_waveform_weight: 0.0,
+        fill_fit_nominal_bias_scale: 0.0,
+        fill_fit_late_start_penalty_scale: 0.0,
+        fill_marginal_margin: 0.08,
+        fill_absolute_floor: 0.0,
+        min_structure_match_score: 0.0,
+        min_border_discovery_secs: 0.25,
+        gap_signature_mode: mode,
+        ..Default::default()
+    }
+}
+
+fn stereo_compat_at_rate(sample_rate: u32) -> TrackCompatibility {
+    TrackCompatibility {
+        a_channels: CHANNELS,
+        b_channels: CHANNELS,
+        a_sample_rate: sample_rate,
+        b_sample_rate: sample_rate,
+        channels_match: true,
+        rate_match: true,
+        verdict: CompatibilityVerdict::Compatible,
+    }
+}
+
+fn gap_report_from_energy_fixture(
+    temp: &Path,
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+) -> GapReport {
+    let (path_a, path_b) = write_fixture_wavs(temp, fixture);
+    let (a_start, a_end, b_start, b_end, _) = gap_report_times(fixture);
+    GapReport {
+        video_a: path_a,
+        video_b: path_b,
+        track_compatibility: Some(stereo_compat_at_rate(fixture.sample_rate)),
+        overlap: None,
+        alignment: clip_sync::AlignmentReport::from(&make_drift_alignment(
+            0.0,
+            0.0,
+            fixture.a_samples.len() as f64
+                / fixture.channels.max(1) as f64
+                / fixture.sample_rate as f64,
+        )),
+        gaps: vec![Gap {
+            video_a_start_secs: a_start,
+            video_a_end_secs: a_end,
+            video_b_start_secs: Some(b_start),
+            video_b_end_secs: Some(b_end),
+            b_has_energy: true,
+        }],
+        gap_offset_agreement: None,
+        decode_chunk_secs: 60,
+        scan_block_ms: 250,
+        silence_peak_fraction: 0.01,
+        limit_fill_to_mapped_region: true,
+        audio_timeline_skew: None,
+    }
+}
+
+fn gap_align_slide_secs(result: &PatchAudioResult, gap_idx: usize) -> Option<f64> {
+    match &result.summary.gaps[gap_idx].status {
+        GapPatchStatus::Patched {
+            align_adjustment_secs, ..
+        } => Some(*align_adjustment_secs),
+        _ => None,
+    }
+}
+
+fn slide_within_bin(
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+    slide_secs: f64,
+    truth_start: usize,
+) -> bool {
+    let truth = structure_slide_secs(fixture, truth_start);
+    let bin_secs = fixture.bin_frames() as f64 / fixture.sample_rate as f64;
+    (slide_secs - truth).abs() <= bin_secs * 1.1
 }
 
 fn patch_request(
@@ -567,14 +674,14 @@ fn patch_request_with_options(
         fill_align_margin_secs: options.fill_align_margin_secs,
         max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
         fill_border_search_secs: options.fill_border_search_secs,
-        min_border_discovery_secs: 2.0,
+        min_border_discovery_secs: options.min_border_discovery_secs,
         border_standoff_secs: 0.0,
         short_gap_mean_correlation_secs: options.short_gap_mean_correlation_secs,
         fill_length_slack_secs: options.fill_length_slack_secs,
         fill_seam_search_secs: 0.25,
         gap_signature_context_secs: options.gap_signature_context_secs,
         gap_signature_bin_ms: 50,
-        min_structure_match_score: 0.55,
+        min_structure_match_score: options.min_structure_match_score,
         strong_structure_trust: options.strong_structure_trust,
         disable_structure_trust: options.disable_structure_trust,
         partial_structure_waveform_soften: options.partial_structure_waveform_soften,
@@ -588,6 +695,8 @@ fn patch_request_with_options(
         fill_mode: options.fill_mode,
         fill_fit_structure_weight: options.fill_fit_structure_weight,
         fill_fit_waveform_weight: options.fill_fit_waveform_weight,
+        fill_fit_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
+        fill_fit_late_start_penalty_scale: options.fill_fit_late_start_penalty_scale,
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
         fill_repeat_penalty_weight: options.fill_repeat_penalty_weight,
@@ -596,7 +705,7 @@ fn patch_request_with_options(
         fill_anchor_max_adjustment_frac: 0.9,
         fill_anchor_search_prior_weight: 0.0,
         fill_anchor_retry_marginal: options.fill_anchor_retry_marginal,
-        gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
+        gap_signature_mode: options.gap_signature_mode,
     }
 }
 
@@ -2194,4 +2303,149 @@ fn patch_audio_fit_production_defaults_smoke() {
         "production-like fit config should patch clean fixture: {:?}",
         patched.summary.gaps
     );
+}
+
+// --- Energy signature acceptance (I1–I4, `docs/TEMP-energy-signature-plan.md`) ---
+
+const ENERGY_SIG_RATE: u32 = 48_000;
+
+
+fn assert_domain_energy_finds_truth(
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+) {
+    let matched = fixture
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("domain energy unified match");
+    assert!(
+        fixture.within_bin_tolerance(matched.alignment.start_frame, fixture.true_fill_start),
+        "domain energy start {} truth {}",
+        matched.alignment.start_frame,
+        fixture.true_fill_start,
+    );
+}
+
+#[test]
+fn i1_f1_energy_finds_true_offset_domain_and_patch_when_aligned() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    assert_domain_energy_finds_truth(&fixture);
+
+    let result = run_patch(
+        patch_request_with_options(
+            gap_report_from_energy_fixture(temp.path(), &fixture),
+            false,
+            0.25,
+            0.0,
+            energy_sig_patch_options(GapSignatureMode::Energy),
+        ),
+        10,
+    );
+    if result.summary.patched_count >= 1 {
+        let slide = gap_align_slide_secs(&result, 0).expect("I1: patched gap slide");
+        assert!(
+            slide_within_bin(&fixture, slide, fixture.true_fill_start),
+            "I1: slide {slide}s not within bin of truth {}",
+            structure_slide_secs(&fixture, fixture.true_fill_start),
+        );
+    }
+}
+
+#[test]
+fn i2_f1_bool_domain_closer_to_decoy_than_energy() {
+    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    assert_domain_energy_finds_truth(&fixture);
+
+    let energy = fixture
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("I2 energy domain");
+    let bool_match = fixture
+        .unified_match(GapSignatureMode::Bool, structure_heavy_weights())
+        .expect("I2 bool domain");
+    let truth = structure_slide_secs(&fixture, fixture.true_fill_start);
+    let energy_dist = (structure_slide_secs(&fixture, energy.alignment.start_frame) - truth).abs();
+    let bool_dist = (structure_slide_secs(&fixture, bool_match.alignment.start_frame) - truth).abs();
+    assert!(
+        bool_match.alignment.start_frame == fixture.nominal_fill_start || bool_dist >= energy_dist,
+        "I2: bool start {} energy start {} (bool_dist={bool_dist}, energy_dist={energy_dist})",
+        bool_match.alignment.start_frame,
+        energy.alignment.start_frame,
+    );
+}
+
+#[test]
+fn i3_f2_energy_finds_pause_one_domain_and_patch_when_aligned() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f2_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let matched = fixture
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("I3 domain energy");
+    assert!(
+        fixture.within_bin_tolerance(matched.alignment.start_frame, fixture.true_fill_start),
+        "I3 domain start {} pause1 {}",
+        matched.alignment.start_frame,
+        fixture.true_fill_start,
+    );
+
+    let result = run_patch(
+        patch_request_with_options(
+            gap_report_from_energy_fixture(temp.path(), &fixture),
+            false,
+            0.25,
+            0.0,
+            energy_sig_patch_options(GapSignatureMode::Energy),
+        ),
+        10,
+    );
+    if result.summary.patched_count >= 1 {
+        let slide = gap_align_slide_secs(&result, 0).expect("I3: slide");
+        assert!(
+            slide_within_bin(&fixture, slide, fixture.true_fill_start),
+            "I3: slide {slide}s vs pause1 truth {}",
+            structure_slide_secs(&fixture, fixture.true_fill_start),
+        );
+    }
+}
+
+#[test]
+fn i4_f3_auto_matches_bool_outcome() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f3_drone_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let report_auto = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let report_bool = gap_report_from_energy_fixture(temp.path(), &fixture);
+
+    let auto = run_patch(
+        patch_request_with_options(
+            report_auto,
+            false,
+            0.25,
+            0.0,
+            energy_sig_patch_options(GapSignatureMode::Auto),
+        ),
+        10,
+    );
+    let bool_result = run_patch(
+        patch_request_with_options(
+            report_bool,
+            false,
+            0.25,
+            0.0,
+            energy_sig_patch_options(GapSignatureMode::Bool),
+        ),
+        10,
+    );
+
+    assert_eq!(
+        auto.summary.patched_count, bool_result.summary.patched_count,
+        "I4: auto vs bool patch count"
+    );
+    if auto.summary.patched_count == 0 {
+        assert_eq!(
+            auto.summary.skipped_count, bool_result.summary.skipped_count,
+            "I4: skip parity"
+        );
+    } else {
+        let auto_slide = gap_align_slide_secs(&auto, 0);
+        let bool_slide = gap_align_slide_secs(&bool_result, 0);
+        assert_eq!(auto_slide, bool_slide, "I4: slide parity when patched");
+    }
 }

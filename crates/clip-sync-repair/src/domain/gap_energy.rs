@@ -37,7 +37,7 @@ pub fn energy_bins(
             ) {
                 continue;
             }
-            let mono = samples[frame * channels..(frame + 1) * channels]
+            let mono = samples[f * channels..(f + 1) * channels]
                 .iter()
                 .map(|&s| f64::from(s))
                 .sum::<f64>()
