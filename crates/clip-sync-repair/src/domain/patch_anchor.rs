@@ -1,6 +1,6 @@
 //! Empirical offset anchors from successful gap patches.
 
-use clip_sync::{AlignmentReport, ClipLabelReport};
+use clip_sync::{AlignmentResult, ClipLabel};
 use serde::Serialize;
 
 use crate::domain::fill_offset::clip_anchor_points;
@@ -118,7 +118,7 @@ fn anchor_eligible(
 
 /// Interpolate offset at `gap_time_on_a_secs` from patch + clip anchors.
 pub fn interpolate_anchored_offset_secs(
-    alignment: &AlignmentReport,
+    alignment: &AlignmentResult,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> Option<f64> {
@@ -130,7 +130,7 @@ pub fn interpolate_anchored_offset_secs(
 }
 
 fn weighted_anchor_points(
-    alignment: &AlignmentReport,
+    alignment: &AlignmentResult,
     patch_anchors: &PatchAnchorTable,
 ) -> Vec<(f64, f64, f64)> {
     let mut points = Vec::new();
@@ -224,7 +224,7 @@ enum AnchorPointSource {
 /// Verbose line: which anchors produced the pass-2 offset (`-v` stderr).
 pub fn format_anchored_offset_verbose_line(
     gap_offset_secs: f64,
-    alignment: &AlignmentReport,
+    alignment: &AlignmentResult,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> String {
@@ -254,7 +254,7 @@ pub fn format_patch_anchor_table_summary(table: &PatchAnchorTable) -> String {
 }
 
 fn anchor_bracket_sources(
-    alignment: &AlignmentReport,
+    alignment: &AlignmentResult,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> (AnchorPointSource, AnchorPointSource) {
@@ -281,14 +281,14 @@ fn anchor_bracket_sources(
 }
 
 fn tagged_anchor_points(
-    alignment: &AlignmentReport,
+    alignment: &AlignmentResult,
     patch_anchors: &PatchAnchorTable,
 ) -> Vec<(f64, AnchorPointSource)> {
     let mut points = Vec::new();
-    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabelReport::Start) {
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabel::Start) {
         points.push((anchor, AnchorPointSource::StartClip));
     }
-    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabelReport::End) {
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabel::End) {
         points.push((anchor, AnchorPointSource::EndClip));
     }
     for anchor in &patch_anchors.anchors {
@@ -302,7 +302,7 @@ fn tagged_anchor_points(
     points
 }
 
-fn clip_endpoint(alignment: &AlignmentReport, label: ClipLabelReport) -> Option<(f64, f64)> {
+fn clip_endpoint(alignment: &AlignmentResult, label: ClipLabel) -> Option<(f64, f64)> {
     let clip = alignment
         .clips
         .iter()
@@ -343,12 +343,12 @@ pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use clip_sync::{AlignmentReport, AlignmentResult, ClipLabel, ClipMatch};
+    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
 
     use super::*;
 
-    fn patch_only_alignment() -> AlignmentReport {
-        AlignmentReport::from(&AlignmentResult {
+    fn patch_only_alignment() -> AlignmentResult {
+        AlignmentResult {
             clips: vec![],
             start_aligned: false,
             end_aligned: None,
@@ -362,11 +362,11 @@ mod tests {
             alignment_mode_used: None,
             query_localization: None,
             end_clip_anchor: None,
-        })
+        }
     }
 
-    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> AlignmentReport {
-        AlignmentReport::from(&AlignmentResult {
+    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> AlignmentResult {
+        AlignmentResult {
             clips: vec![
                 ClipMatch {
                     label: ClipLabel::Start,
@@ -407,7 +407,7 @@ mod tests {
             alignment_mode_used: None,
             query_localization: None,
             end_clip_anchor: None,
-        })
+        }
     }
 
     fn candidate(gap_index: usize, a_mid: f64, base: f64, slide: f64) -> PatchAnchorCandidate {

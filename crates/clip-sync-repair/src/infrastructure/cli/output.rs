@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clip_sync::{
     format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
     format_query_localization_lines, format_symmetric_clip_window_line, format_time_range,
-    format_timestamp, ClipLabelReport,
+    format_timestamp, AlignmentReport, ClipLabelReport,
 };
 use serde::Serialize;
 
@@ -12,7 +12,7 @@ use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
     CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
-    GapPatchStatus, GapReport, PatchSummary,
+    GapPatchStatus, GapReport, PatchSummary, TrackCompatibility,
     diagnostics::collect_repair_warnings,
 };
 use crate::infrastructure::config::OutputFormat;
@@ -41,13 +41,14 @@ fn format_human(
     output_written: Option<&Path>,
 ) -> String {
     let mut out = String::new();
+    let align = AlignmentReport::from(&report.alignment);
     let query_mode = report.alignment.query_localization.is_some();
 
     if query_mode {
-        if let Some(loc) = &report.alignment.query_localization {
+        if let Some(loc) = &align.query_localization {
             for line in format_query_localization_lines(
                 loc,
-                report.alignment.recommended_offset_secs,
+                align.recommended_offset_secs,
                 show_diagnostics,
             ) {
                 out.push_str(&line);
@@ -55,13 +56,11 @@ fn format_human(
             }
         }
     } else {
-        let offset = report
-            .alignment
+        let offset = align
             .recommended_offset_secs
             .map(|o| format!("{o:+.3}s"))
             .unwrap_or_else(|| "n/a (alignment failed)".into());
-        let confidence = report
-            .alignment
+        let confidence = align
             .clips
             .first()
             .map(|c| format!("{:.2}", c.confidence))
@@ -69,8 +68,8 @@ fn format_human(
 
         out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
 
-        if report.alignment.clips.len() > 1 {
-            for clip in &report.alignment.clips {
+        if align.clips.len() > 1 {
+            for clip in &align.clips {
                 let label = clip_label_name(clip.label);
                 if let Some(clip_offset) = clip.offset_secs {
                     out.push_str(&format!(
@@ -83,10 +82,10 @@ fn format_human(
     }
 
     if !query_mode {
-        if let Some(drift) = report.alignment.offset_drift_secs {
-            if !report.alignment.offsets_consistent {
+        if let Some(drift) = align.offset_drift_secs {
+            if !align.offsets_consistent {
                 out.push_str(&format!("Drift:     end − start = {drift:+.3}s\n"));
-                if report.alignment.recommended_offset_secs.is_some() {
+                if align.recommended_offset_secs.is_some() {
                     out.push_str(
                         "           using start-clip offset for fill (clip offsets disagree)\n",
                     );
@@ -94,11 +93,10 @@ fn format_human(
             }
         }
         if show_diagnostics {
-            if let Some(anchor) = report.alignment.end_clip_anchor {
+            if let Some(anchor) = align.end_clip_anchor {
                 out.push_str(&format!("{}\n", format_end_clip_anchor_line(anchor)));
             }
-            if let Some(end) = report
-                .alignment
+            if let Some(end) = align
                 .clips
                 .iter()
                 .find(|clip| clip.label == ClipLabelReport::End)
@@ -126,7 +124,7 @@ fn format_human(
     }
 
     if !query_mode {
-        if let Some(overlap) = &report.overlap {
+        if let Some(overlap) = &align.start_overlap {
             out.push_str(&format!(
                 "Overlap:   A [{:.2}s – {:.2}s]   B [{:.2}s – {:.2}s]   ({:.1}s shared)\n",
                 overlap.video_a_start_secs,
@@ -138,14 +136,14 @@ fn format_human(
         }
     }
 
-    if let Some(refine) = &report.alignment.high_rate_refinement {
+    if let Some(refine) = &align.high_rate_refinement {
         for line in format_high_rate_refinement_lines(refine, show_diagnostics) {
             out.push_str(&line);
             out.push('\n');
         }
     }
 
-    if let Some(verify) = &report.alignment.offset_verification {
+    if let Some(verify) = &align.offset_verification {
         for line in format_offset_verification_lines(verify, show_diagnostics) {
             out.push_str(&line);
             out.push('\n');
@@ -172,7 +170,11 @@ fn format_human(
     }
 
     let repair_warnings = collect_repair_warnings(
-        report.overlap.as_ref().map(|o| o.video_a_start_secs),
+        report
+            .alignment
+            .start_overlap
+            .as_ref()
+            .map(|o| o.video_a_start_secs),
         query_mode,
         report.audio_timeline_skew,
         patch_result.and_then(|r| r.pcm_container_skew),
@@ -514,10 +516,59 @@ fn print_json(report: &GapReport) -> Result<(), RepairError> {
 }
 
 #[derive(Serialize)]
+struct GapScanJson {
+    video_a: PathBuf,
+    video_b: PathBuf,
+    track_compatibility: Option<TrackCompatibility>,
+    overlap: Option<clip_sync::TimelineOverlapReport>,
+    alignment: AlignmentReport,
+    gaps: Vec<Gap>,
+    gap_offset_agreement: Option<crate::domain::gap::GapOffsetAgreement>,
+    #[serde(alias = "scan_window_secs")]
+    decode_chunk_secs: u64,
+    scan_block_ms: u64,
+    silence_peak_fraction: f32,
+    limit_fill_to_mapped_region: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
+}
+
+impl From<&GapReport> for GapScanJson {
+    fn from(report: &GapReport) -> Self {
+        Self {
+            video_a: report.video_a.clone(),
+            video_b: report.video_b.clone(),
+            track_compatibility: report.track_compatibility.clone(),
+            overlap: report.alignment.start_overlap.map(Into::into),
+            alignment: AlignmentReport::from(&report.alignment),
+            gaps: report.gaps.clone(),
+            gap_offset_agreement: report.gap_offset_agreement.clone(),
+            decode_chunk_secs: report.decode_chunk_secs,
+            scan_block_ms: report.scan_block_ms,
+            silence_peak_fraction: report.silence_peak_fraction,
+            limit_fill_to_mapped_region: report.limit_fill_to_mapped_region,
+            audio_timeline_skew: report.audio_timeline_skew,
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct RepairJsonOutput<'a> {
-    scan: &'a GapReport,
+    scan: GapScanJson,
     #[serde(skip_serializing_if = "Option::is_none")]
     patch: Option<&'a PatchSummary>,
+}
+
+pub fn format_repair_json_output(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+) -> Result<String, RepairError> {
+    let payload = RepairJsonOutput {
+        scan: GapScanJson::from(report),
+        patch,
+    };
+    serde_json::to_string_pretty(&payload)
+        .map_err(|e| RepairError::Config(format!("JSON serialization failed: {e}")))
 }
 
 pub fn print_repair_output(
@@ -538,16 +589,6 @@ pub fn print_repair_output(
         }
         OutputFormat::Json => print_json_with_patch(report, patch),
     }
-}
-
-/// JSON repair report for stdout (`--format json`). Golden-tested in this module's tests.
-pub fn format_repair_json_output(
-    report: &GapReport,
-    patch: Option<&PatchSummary>,
-) -> Result<String, RepairError> {
-    let payload = RepairJsonOutput { scan: report, patch };
-    serde_json::to_string_pretty(&payload)
-        .map_err(|e| RepairError::Config(format!("JSON serialization failed: {e}")))
 }
 
 fn print_json_with_patch(
@@ -657,7 +698,7 @@ mod tests {
         GapPatchStatus, PatchSummary, TrackCompatibility,
     };
     use clip_sync::{
-        AlignmentReport, AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport,
+        AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport,
         HighRateRefinement, OffsetVerification, RepetitionFinding, TimelineOverlap,
     };
 
@@ -686,8 +727,7 @@ mod tests {
                 rate_match: true,
                 verdict: CompatibilityVerdict::Identical,
             }),
-            overlap: Some(overlap.into()),
-            alignment: AlignmentReport::from(&AlignmentResult {
+            alignment: AlignmentResult {
                 clips: vec![
                     ClipMatch {
                         label: ClipLabel::Start,
@@ -758,7 +798,7 @@ mod tests {
                 alignment_mode_used: None,
                 query_localization: None,
                 end_clip_anchor: Some(clip_sync::EndClipAnchor::SharedTimeline),
-            }),
+            },
             gaps: vec![
                 Gap {
                     video_a_start_secs: 45.0,
@@ -846,8 +886,7 @@ mod tests {
                 rate_match: false,
                 verdict: CompatibilityVerdict::Compatible,
             }),
-            overlap: Some(overlap.into()),
-            alignment: AlignmentReport::from(&AlignmentResult {
+            alignment: AlignmentResult {
                 clips: vec![ClipMatch {
                     label: ClipLabel::Start,
                     window_start_secs: 0.0,
@@ -873,7 +912,7 @@ mod tests {
                 alignment_mode_used: None,
                 query_localization: None,
                 end_clip_anchor: None,
-            }),
+            },
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
                 video_a_end_secs: 60.0,
@@ -920,7 +959,7 @@ mod tests {
     #[test]
     fn json_report_is_valid_json() {
         let report = minimal_report();
-        let json = serde_json::to_string(&report).expect("serialize");
+        let json = serde_json::to_string(&super::GapScanJson::from(&report)).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert!(value["gaps"].is_array());
         assert_eq!(value["gaps"][0]["b_has_energy"], true);
@@ -949,7 +988,7 @@ mod tests {
             },
         }]);
         let payload = RepairJsonOutput {
-            scan: &report,
+            scan: super::GapScanJson::from(&report),
             patch: Some(&summary),
         };
         let json = serde_json::to_string(&payload).expect("serialize");
@@ -1015,8 +1054,7 @@ mod tests {
             video_a: PathBuf::from("a.mp4"),
             video_b: PathBuf::from("b.mp4"),
             track_compatibility: None,
-            overlap: None,
-            alignment: AlignmentReport::from(&AlignmentResult {
+            alignment: AlignmentResult {
                 clips: vec![ClipMatch {
                     label: ClipLabel::Start,
                     window_start_secs: 0.0,
@@ -1042,7 +1080,7 @@ mod tests {
                 alignment_mode_used: None,
                 query_localization: None,
                 end_clip_anchor: None,
-            }),
+            },
             gaps: vec![Gap {
                 video_a_start_secs: 0.0,
                 video_a_end_secs: 60.0,
@@ -1062,7 +1100,7 @@ mod tests {
     #[test]
     fn human_report_shows_drift_when_clips_disagree() {
         let mut report = minimal_report();
-        report.alignment.clips = [
+        report.alignment.clips = vec![
             ClipMatch {
                 label: ClipLabel::Start,
                 window_start_secs: 0.0,
@@ -1089,10 +1127,7 @@ mod tests {
                 video_b_window_start_secs: None,
                 video_b_window_end_secs: None,
             },
-        ]
-        .iter()
-        .map(Into::into)
-        .collect();
+        ];
         report.alignment.end_aligned = Some(true);
         report.alignment.offsets_consistent = false;
         report.alignment.offset_drift_secs = Some(-0.244);
@@ -1154,7 +1189,7 @@ mod tests {
     #[test]
     fn json_failed_alignment_null_b_timeline_fields() {
         let report = failed_alignment_report();
-        let json = serde_json::to_string(&report).expect("serialize");
+        let json = serde_json::to_string(&super::GapScanJson::from(&report)).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(value["alignment"]["recommended_offset_secs"], serde_json::Value::Null);
         assert_eq!(value["gaps"][0]["video_b_start_secs"], serde_json::Value::Null);
@@ -1286,7 +1321,7 @@ mod tests {
                 b_has_energy: true,
             },
         ];
-        report.alignment.clips = [
+        report.alignment.clips = vec![
             ClipMatch {
                 label: ClipLabel::Start,
                 window_start_secs: 0.0,
@@ -1313,15 +1348,12 @@ mod tests {
                 video_b_window_start_secs: None,
                 video_b_window_end_secs: None,
             },
-        ]
-        .iter()
-        .map(Into::into)
-        .collect();
+        ];
         report.alignment.end_aligned = Some(true);
         report.alignment.offsets_consistent = false;
         report.alignment.offset_drift_secs = Some(235.966);
         report.alignment.recommended_offset_secs = Some(-4.853);
-        report.alignment.end_clip_anchor = Some(clip_sync::EndClipAnchorReport::SharedTimeline);
+        report.alignment.end_clip_anchor = Some(clip_sync::EndClipAnchor::SharedTimeline);
         report.gap_offset_agreement = Some(GapOffsetAgreement {
             silence_based_offset_secs: 246.0,
             alignment_offset_secs: -4.853,
@@ -1438,7 +1470,7 @@ mod tests {
         use clip_sync::AudioTimelineSkew;
 
         let mut report = minimal_report();
-        report.overlap = Some(clip_sync::TimelineOverlapReport {
+        report.alignment.start_overlap = Some(TimelineOverlap {
             video_a_start_secs: 4.97,
             video_a_end_secs: 900.0,
             video_b_start_secs: 0.0,

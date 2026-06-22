@@ -33,7 +33,7 @@ From architecture audit (2026-06-22). Dependency rule: **domain ← application 
 |---|----------|------|--------|-----------|
 | H1 | High | Mux bitrate policy in repair `infrastructure/` | **Shipped** | `application/mux_bitrate.rs`; infra keeps ffmpeg subprocess only |
 | H2 | High | `clap::ValueEnum` on repair domain enums | **Shipped** | `FromStr` on `FillMode`, `FillOffsetMode`, `GapSignatureMode`; CLI `value_parser!` |
-| M1 | Medium | `GapReport` embeds lib report DTOs | Open | Store `clip_sync::AlignmentResult` (domain) or repair-local summary; map to `AlignmentReport` only in infra output |
+| M1 | Medium | `GapReport` embeds lib report DTOs | **Shipped** | `GapReport.alignment` is `clip_sync::AlignmentResult`; top-level `overlap` removed (use `alignment.start_overlap`); `GapScanJson` in infra maps to `AlignmentReport` + `TimelineOverlapReport` for JSON/human output |
 | M2 | Medium | Lib application → infrastructure leaks | **Shipped** | `ExtractionProgressScope` → `application/`; `ClipRepetitionDetector` port + `ChromaprintClipRepetitionDetector` adapter |
 | L1 | Low | `run_align` typed on `AppConfig` | Open | CLI use case should take `AlignConfig` + paths; infra maps `AppConfig` at composition root |
 | L2 | Low | Composition root in `infrastructure/cli` | Open | Optional: move adapter wiring from `infrastructure/cli/mod.rs` toward `main` / `composition.rs` |

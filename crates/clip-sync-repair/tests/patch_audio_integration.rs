@@ -617,14 +617,13 @@ fn gap_report_from_energy_fixture(
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(stereo_compat_at_rate(fixture.sample_rate)),
-        overlap: None,
-        alignment: clip_sync::AlignmentReport::from(&make_drift_alignment(
+        alignment: make_drift_alignment(
             0.0,
             0.0,
             fixture.a_samples.len() as f64
                 / fixture.channels.max(1) as f64
                 / fixture.sample_rate as f64,
-        )),
+        ),
         gaps: vec![Gap {
             video_a_start_secs: a_start,
             video_a_end_secs: a_end,
@@ -790,8 +789,7 @@ fn make_report_with_alignment(
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
-        overlap: None,
-        alignment: clip_sync::AlignmentReport::from(&alignment),
+        alignment,
         gaps,
         gap_offset_agreement: None,
         decode_chunk_secs: 60,
@@ -807,8 +805,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
-        overlap: None,
-        alignment: clip_sync::AlignmentReport::from(&make_alignment(0.0)),
+        alignment: make_alignment(0.0),
         gaps: vec![default_gap()],
         gap_offset_agreement: None,
         decode_chunk_secs: 60,

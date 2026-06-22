@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clip_sync::testing::fakes::FakeProgressReporter;
-use clip_sync::{AlignConfig, AlignmentModeUsedReport, ClipConfig, SymphoniaMediaReader};
+use clip_sync::{AlignConfig, AlignmentModeUsed, ClipConfig, SymphoniaMediaReader};
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, ScanGaps, ScanGapsRequest};
 use clip_sync_repair::domain::{build_gap_fill_plan, GapFillSkipReason, GapPatchStatus};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
@@ -237,7 +237,7 @@ fn repair_auto_no_clip_count_mismatch_error() {
 
     assert_eq!(
         report.alignment.alignment_mode_used,
-        Some(AlignmentModeUsedReport::QueryReference)
+        Some(AlignmentModeUsed::QueryReference)
     );
     assert!(report.alignment.query_localization.is_some());
     let loc = report
@@ -293,7 +293,7 @@ fn repair_query_gap_inside_region_fillable() {
         "inside gap [{}, {}] should lie within mapped region {:?}",
         inside_gap.video_a_start_secs,
         inside_gap.video_a_end_secs,
-        report.overlap
+        report.alignment.start_overlap
     );
 
     let plan = build_gap_fill_plan(&report, 10);
@@ -333,7 +333,7 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
 
     assert_eq!(
         report.alignment.alignment_mode_used,
-        Some(AlignmentModeUsedReport::QueryReference)
+        Some(AlignmentModeUsed::QueryReference)
     );
     let offset = report
         .alignment

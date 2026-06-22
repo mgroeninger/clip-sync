@@ -179,7 +179,7 @@ mod tests {
     use std::path::PathBuf;
 
     use clip_sync::{
-        AlignmentReport, AlignmentResult, ClipLabel, ClipMatch, TimelineOverlapReport,
+        AlignmentModeUsed, AlignmentResult, ClipLabel, ClipMatch, TimelineOverlap,
     };
 
     use crate::domain::{
@@ -259,8 +259,7 @@ mod tests {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
             track_compatibility: compat,
-            overlap: None,
-            alignment: AlignmentReport::from(&make_alignment(Some(0.0))),
+            alignment: make_alignment(Some(0.0)),
             gaps,
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
@@ -329,7 +328,7 @@ mod tests {
                 fillable_gap(5979.0, 6180.0),
             ],
         );
-        report.overlap = Some(TimelineOverlapReport {
+        report.alignment.start_overlap = Some(TimelineOverlap {
             video_a_start_secs: 0.0,
             video_a_end_secs: 10.0,
             video_b_start_secs: 0.0,
@@ -344,8 +343,7 @@ mod tests {
     #[test]
     fn build_gap_fill_plan_skips_gaps_outside_query_mapped_region() {
         use clip_sync::{
-            AlignmentModeUsedReport, MediaExtent, QueryLocalization, QueryLocalizationReport,
-            ReferenceLocalizationOutcome,
+            MediaExtent, QueryLocalization, ReferenceLocalizationOutcome,
         };
         use std::time::Duration;
 
@@ -357,7 +355,7 @@ mod tests {
             Some(stereo_identical()),
             vec![fillable_gap(1.0, 4.0), fillable_gap(5979.0, 6180.0)],
         );
-        report.overlap = Some(TimelineOverlapReport {
+        report.alignment.start_overlap = Some(TimelineOverlap {
             video_a_start_secs: 0.0,
             video_a_end_secs: 10.0,
             video_b_start_secs: 0.0,
@@ -379,8 +377,8 @@ mod tests {
             extent(6000.0),
             extent(10.0),
         );
-        report.alignment.alignment_mode_used = Some(AlignmentModeUsedReport::QueryReference);
-        report.alignment.query_localization = Some(QueryLocalizationReport::from(&loc));
+        report.alignment.alignment_mode_used = Some(AlignmentModeUsed::QueryReference);
+        report.alignment.query_localization = Some(loc);
         assert_eq!(report.repairable_count(), 1);
 
         let plan = build_gap_fill_plan(&report, 0);

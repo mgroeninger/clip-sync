@@ -229,8 +229,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
-        let overlap = alignment.start_overlap.map(Into::into);
-        let alignment = clip_sync::AlignmentReport::from(&alignment);
         let gap_count = gaps.len();
         progress.phase(&format_scan_summary(&request, gap_count));
 
@@ -238,7 +236,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             video_a: request.video_a,
             video_b: request.video_b,
             track_compatibility,
-            overlap,
             alignment,
             gaps,
             gap_offset_agreement,
@@ -820,7 +817,7 @@ mod tests {
         assert!(report.gaps[0].video_b_end_secs.is_none());
         assert!(!report.gaps[0].is_fillable());
         assert!(report.track_compatibility.is_none());
-        assert!(report.overlap.is_none());
+        assert!(report.alignment.start_overlap.is_none());
     }
 
     #[test]
@@ -866,8 +863,7 @@ mod tests {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
             track_compatibility: None,
-            overlap: None,
-            alignment: clip_sync::AlignmentReport::from(&aligned_result(Some(0.0))),
+            alignment: aligned_result(Some(0.0)),
             gaps: vec![
                 Gap {
                     video_a_start_secs: 0.0,

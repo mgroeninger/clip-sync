@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use clip_sync::{AlignmentReport, TimelineOverlapReport};
+use clip_sync::AlignmentResult;
 
 use crate::domain::track_match::TrackCompatibility;
 
@@ -54,21 +54,18 @@ pub fn interval_fully_within_window(
 }
 
 /// Full gap scan report produced by `ScanGaps`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct GapReport {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
     /// Audio track comparison (channels/rate). `None` when B could not be opened or has no
     /// decodable track — the scan still reports A's gaps.
     pub track_compatibility: Option<TrackCompatibility>,
-    /// Shared timeline region from the alignment start clip. `None` when alignment failed.
-    pub overlap: Option<TimelineOverlapReport>,
-    pub alignment: AlignmentReport,
+    pub alignment: AlignmentResult,
     pub gaps: Vec<Gap>,
     /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
     /// Decode chunk size used during sequential scan (seconds).
-    #[serde(alias = "scan_window_secs")]
     pub decode_chunk_secs: u64,
     /// Analysis block size used for silence-run detection (milliseconds).
     pub scan_block_ms: u64,
@@ -76,7 +73,6 @@ pub struct GapReport {
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
     /// Maximum |PTS − sample-clock| observed during gap scan on video A, when measurable.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
 }
 
@@ -117,7 +113,7 @@ impl GapReport {
         if self.alignment.query_localization.is_none() {
             return false;
         }
-        let Some(overlap) = &self.overlap else {
+        let Some(overlap) = &self.alignment.start_overlap else {
             return false;
         };
         !interval_fully_within_window(
