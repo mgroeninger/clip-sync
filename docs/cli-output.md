@@ -98,7 +98,8 @@ Examples (both tools where applicable):
 - Per-clip offset: `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)`; end clip may show `(refined ±5s around start)` when PCM constrained or agreed refine ran
 - Mid-run alignment summary: `Recommended offset: …` with source label (`clip offsets agree`, `confidence-weighted fusion`, `using start clip`, …), overlap windows, drift
 - `High-rate offset refinement...`
-- Per-gap patch: `gap i/n: A t0 – t1`; indented fill timeline (`fill offset`, optional `offset anchor` on `anchored_retry` pass 2, `A gap (refined)` when edges moved, `B gap (mapped)`, `B search window`; on success `B fill source` with `structure slide` and `waveform slide` when non-zero in fit mode)
+- Per-gap patch: `gap i/n: A t0 – t1`; indented fill timeline (`fill offset`, optional `offset anchor` on `anchored_retry` pass 2, `A gap (refined)` when edges moved, `B gap (mapped)`, `B search window`; on success `B fill source` with `structure slide` and `waveform slide` when non-zero in fit mode, plus `fit path: baseline only` or `boundary grid`)
+- Patch phase header: `repair profile: … (fit_boundary_search=…, fill_border_search_secs=…)`; optional `repair note: …` when stored flags are inactive for this run (e.g. extension knobs under `baseline_only`, gate-only flags under `fit`)
 - `anchored_retry` pass 1 capstone: `anchored: N offset anchor(s) from gap #i, …` (when at least one eligible anchor)
 - Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 256k (A 256 kbps, B 384 kbps, policy match_min)` — `phase_verbose` only
 

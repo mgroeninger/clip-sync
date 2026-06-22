@@ -24,8 +24,9 @@ pub use patch_anchor::{
 pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};
 pub use repair_profile::{
-    format_repair_profile_verbose, FitBoundarySearch, RepairProfile, RepairProfileBundle,
-    RepairProfileFieldMask,
+    boundary_grid_may_run, format_repair_profile_verbose, gap_extension_slack_secs,
+    inactive_repair_flag_notes, FitBoundarySearch, RepairPatchConfigView, RepairProfile,
+    RepairProfileBundle, RepairProfileFieldMask,
 };
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};

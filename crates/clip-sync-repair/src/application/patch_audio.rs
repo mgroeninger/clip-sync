@@ -18,6 +18,8 @@ use crate::domain::{
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     fill_mode::FillMode,
     format_repair_profile_verbose,
+    gap_extension_slack_secs,
+    inactive_repair_flag_notes,
     gap_fill_fit::FillConfidence,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames},
@@ -32,6 +34,7 @@ use crate::domain::{
         GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
+    RepairPatchConfigView,
     Gap, GapReport,
 };
 
@@ -291,6 +294,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             request.fit_boundary_search,
             request.fill_border_search_secs,
         ));
+        let patch_config_view = repair_patch_config_view(&request);
+        for note in inactive_repair_flag_notes(patch_config_view) {
+            self.progress
+                .phase_verbose(&format!("repair note: {note}"));
+        }
 
         // Step 2: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
@@ -1209,14 +1217,7 @@ fn prepare_region_patch(
     let bin_frames =
         ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = if request.fill_mode == crate::domain::FillMode::Fit
-        || gap_end_extend_on_post_seam_fail
-        || gap_start_extend_on_pre_seam_fail
-    {
-        gap_end_extend_max_ms as f64 / 1000.0
-    } else {
-        0.0
-    };
+    let extend_slack_secs = gap_extension_slack_secs(repair_patch_config_view(request));
     let b_extract_start_secs = (refined_b_start_secs
         - gap_signature_context_secs
         - search_radius_secs
@@ -1638,6 +1639,21 @@ fn prepare_region_patch(
             gap_end_adjust_frames,
         },
     )
+}
+
+fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
+    RepairPatchConfigView {
+        fill_mode: request.fill_mode,
+        fit_boundary_search: request.fit_boundary_search,
+        gap_end_extend_on_post_seam_fail: request.gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail: request.gap_start_extend_on_pre_seam_fail,
+        gap_end_extend_max_ms: request.gap_end_extend_max_ms,
+        disable_structure_trust: request.disable_structure_trust,
+        short_gap_one_strong_seam_fallback: request.short_gap_one_strong_seam_fallback,
+        fill_anchor_search_prior_weight: request.fill_anchor_search_prior_weight,
+        fill_anchor_retry_marginal: request.fill_anchor_retry_marginal,
+        fill_offset_mode: request.fill_offset_mode,
+    }
 }
 
 fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {

@@ -186,11 +186,15 @@ pub struct Args {
     #[arg(long, value_parser = clap::value_parser!(RepairProfile), value_name = "NAME")]
     pub profile: Option<RepairProfile>,
 
-    /// Disable post-seam gap-end extension retries when waveform correlation fails at the tail.
+    /// Disable post-seam gap-end extension.
+    /// Fit + full grid: disables joint grid end axis. Fit + baseline_only: no effect until --full.
+    /// Gate: disables post-seam retry loop.
     #[arg(long)]
     pub no_gap_end_extend: bool,
 
-    /// Disable pre-seam gap-start extension retries when waveform correlation fails at the head.
+    /// Disable pre-seam gap-start extension.
+    /// Fit + full grid: disables joint grid start axis. Fit + baseline_only: no effect until --full.
+    /// Gate: disables pre-seam retry loop.
     #[arg(long)]
     pub no_gap_start_extend: bool,
 
@@ -199,11 +203,14 @@ pub struct Args {
     #[arg(long)]
     pub no_short_gap_one_strong_seam: bool,
 
-    /// Maximum gap-end extension when retrying a failed post seam (ms) [default: 500].
+    /// Maximum A-boundary shift for extension (ms) [default: 500].
+    /// Fit + full grid: grid span and B haystack slack. Gate: retry span and haystack slack.
+    /// Inert under fit + baseline_only (default profile); `-v` logs when inactive.
     #[arg(long, value_name = "MS")]
     pub gap_end_extend_max_ms: Option<u64>,
 
-    /// Step size for gap-end extension retries (ms) [default: 20].
+    /// Step size for A-boundary extension (ms) [default: 20].
+    /// Fit + full grid: grid step. Gate: retry step. Inert under fit + baseline_only.
     #[arg(long, value_name = "MS")]
     pub gap_end_extend_step_ms: Option<u64>,
 

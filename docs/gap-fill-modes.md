@@ -14,7 +14,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | Does `--no-gap-end-extend` restore **gate**? | **No.** It only disables A-boundary extension. Use **`--fill-mode gate`** for legacy gating. |
 | What does extension do in **fit**? | **Proactive joint grid** over gap start/end (when flags are on), each cell runs unified B placement. |
 | What does extension do in **gate**? | **Reactive retries** after waveform failure: extend end, then extend start, re-score. |
-| Why is repair slow? | Often the **fit slow path**: baseline not **High** → ~13×13 boundary grid × unified search with large `fill_border_search_secs`. |
+| Why is repair slow? | **`--full`** or `fit_boundary_search = full_grid`: baseline not **High** → boundary grid. **Default** accepts marginal baseline and skips the grid. |
 | Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
 
 ---
@@ -101,6 +101,8 @@ When `gap_end_extend_on_post_seam_fail` and/or `gap_start_extend_on_pre_seam_fai
 - Winning cell sets `gap_start_adjust_frames` / `gap_end_adjust_frames` in JSON.
 
 With **`--no-gap-end-extend --no-gap-start-extend`**: only the **baseline** bracket is evaluated (no grid). Still **fit** placement and tiering.
+
+Under **`fit_boundary_search = baseline_only`** (default profile, no `--full`): extension flags and `gap_end_extend_max_ms` do **not** run the grid or add B haystack slack; `-v` emits a `repair note:` when those settings are stored but inactive. Use **`--full`** to enable the grid and haystack slack.
 
 ### Gate: sequential retries
 

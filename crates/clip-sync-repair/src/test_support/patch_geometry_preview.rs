@@ -6,6 +6,7 @@ use crate::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, Fil
 use crate::domain::gap_fill_fit::{match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights};
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::gap_structure::{self, StructureMatchParams};
+use crate::domain::repair_profile::gap_extension_slack_secs;
 use crate::domain::policies::{
     self, border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
     interleaved_to_mono, GapBorderSpec, RefinedGapFrames, SeamTemplates,
@@ -25,6 +26,9 @@ pub struct PatchGeometryParams {
     pub gap_signature_context_secs: f64,
     pub fill_length_slack_secs: f64,
     pub gap_end_extend_max_ms: u64,
+    pub gap_end_extend_on_post_seam_fail: bool,
+    pub gap_start_extend_on_pre_seam_fail: bool,
+    pub fit_boundary_search: crate::domain::FitBoundarySearch,
     pub fill_offset_mode: FillOffsetMode,
     pub fill_mode_fit: bool,
     pub gap_signature_bin_ms: u32,
@@ -271,11 +275,22 @@ pub fn preview_patch_geometry(
     let margin_secs = params.fill_align_margin_secs;
     let border_search_secs = params.fill_border_search_secs;
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = if params.fill_mode_fit {
-        params.gap_end_extend_max_ms as f64 / 1000.0
-    } else {
-        0.0
-    };
+    let extend_slack_secs = gap_extension_slack_secs(crate::domain::RepairPatchConfigView {
+        fill_mode: if params.fill_mode_fit {
+            crate::domain::FillMode::Fit
+        } else {
+            crate::domain::FillMode::Gate
+        },
+        fit_boundary_search: params.fit_boundary_search,
+        gap_end_extend_on_post_seam_fail: params.gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail: params.gap_start_extend_on_pre_seam_fail,
+        gap_end_extend_max_ms: params.gap_end_extend_max_ms,
+        disable_structure_trust: false,
+        short_gap_one_strong_seam_fallback: true,
+        fill_anchor_search_prior_weight: 0.0,
+        fill_anchor_retry_marginal: false,
+        fill_offset_mode: params.fill_offset_mode,
+    });
     let b_extract_start_secs = (refined_b_start_secs
         - params.gap_signature_context_secs
         - search_radius_secs

@@ -4,6 +4,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::fill_mode::FillMode;
+use crate::domain::FillOffsetMode;
+
 /// Named repair preset: bundles haystack size, extension flags, and fit boundary search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -152,9 +155,158 @@ pub fn format_repair_profile_verbose(
     )
 }
 
+/// Subset of patch config used to explain flags that are stored but inactive.
+#[derive(Debug, Clone, Copy)]
+pub struct RepairPatchConfigView {
+    pub fill_mode: FillMode,
+    pub fit_boundary_search: FitBoundarySearch,
+    pub gap_end_extend_on_post_seam_fail: bool,
+    pub gap_start_extend_on_pre_seam_fail: bool,
+    pub gap_end_extend_max_ms: u64,
+    pub disable_structure_trust: bool,
+    pub short_gap_one_strong_seam_fallback: bool,
+    pub fill_anchor_search_prior_weight: f64,
+    pub fill_anchor_retry_marginal: bool,
+    pub fill_offset_mode: FillOffsetMode,
+}
+
+/// Whether fit mode may run the joint A-boundary grid (extension axes).
+pub fn boundary_grid_may_run(view: RepairPatchConfigView) -> bool {
+    view.fill_mode == FillMode::Fit
+        && view.fit_boundary_search == FitBoundarySearch::FullGrid
+        && (view.gap_end_extend_on_post_seam_fail || view.gap_start_extend_on_pre_seam_fail)
+}
+
+/// Extra B extract padding when A-boundary extension can shift the mapped bracket.
+pub fn gap_extension_slack_secs(view: RepairPatchConfigView) -> f64 {
+    if view.gap_end_extend_max_ms == 0 {
+        return 0.0;
+    }
+    let extension_enabled = view.gap_end_extend_on_post_seam_fail
+        || view.gap_start_extend_on_pre_seam_fail;
+    if !extension_enabled {
+        return 0.0;
+    }
+    match view.fill_mode {
+        FillMode::Fit => {
+            if view.fit_boundary_search == FitBoundarySearch::FullGrid {
+                view.gap_end_extend_max_ms as f64 / 1000.0
+            } else {
+                0.0
+            }
+        }
+        FillMode::Gate => view.gap_end_extend_max_ms as f64 / 1000.0,
+    }
+}
+
+/// Human-readable notes for `-v` when stored flags do not affect this run.
+pub fn inactive_repair_flag_notes(view: RepairPatchConfigView) -> Vec<String> {
+    let mut notes = Vec::new();
+
+    if view.fill_mode == FillMode::Fit {
+        if view.disable_structure_trust {
+            notes.push(
+                "no-structure-trust: no effect with fill_mode=fit (use --fill-mode gate)".into(),
+            );
+        }
+        if !view.short_gap_one_strong_seam_fallback {
+            notes.push(
+                "no-short-gap-one-strong-seam: no effect with fill_mode=fit".into(),
+            );
+        }
+
+        let grid_may_run = boundary_grid_may_run(view);
+        let extension_any = view.gap_end_extend_on_post_seam_fail
+            || view.gap_start_extend_on_pre_seam_fail;
+
+        if !grid_may_run {
+            if extension_any || view.gap_end_extend_max_ms > 0 {
+                notes.push(
+                    "gap_end/start_extend_*: boundary grid and haystack slack inactive \
+                     (fit_boundary_search=baseline_only); use --full or fit_boundary_search=full_grid"
+                        .into(),
+                );
+            }
+        } else if !extension_any {
+            notes.push(
+                "boundary grid: disabled (--no-gap-end-extend / --no-gap-start-extend); \
+                 only baseline bracket evaluated under --full"
+                    .into(),
+            );
+        }
+
+        if view.fill_anchor_retry_marginal
+            && view.fill_offset_mode != FillOffsetMode::AnchoredRetry
+        {
+            notes.push(
+                "fill-anchor-retry-marginal: only applies with --fill-offset anchored-retry"
+                    .into(),
+            );
+        }
+        if view.fill_anchor_search_prior_weight > 0.0
+            && view.fill_offset_mode != FillOffsetMode::AnchoredRetry
+        {
+            notes.push(
+                "fill-anchor-search-prior-weight: only applies with --fill-offset anchored-retry"
+                    .into(),
+            );
+        }
+    }
+
+    notes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_view() -> RepairPatchConfigView {
+        RepairPatchConfigView {
+            fill_mode: FillMode::Fit,
+            fit_boundary_search: FitBoundarySearch::BaselineOnly,
+            gap_end_extend_on_post_seam_fail: true,
+            gap_start_extend_on_pre_seam_fail: true,
+            gap_end_extend_max_ms: 500,
+            disable_structure_trust: false,
+            short_gap_one_strong_seam_fallback: true,
+            fill_anchor_search_prior_weight: 0.0,
+            fill_anchor_retry_marginal: false,
+            fill_offset_mode: FillOffsetMode::Recommended,
+        }
+    }
+
+    #[test]
+    fn extension_slack_zero_under_baseline_only_fit() {
+        assert!((gap_extension_slack_secs(default_view()) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn extension_slack_applies_under_full_grid_fit() {
+        let mut view = default_view();
+        view.fit_boundary_search = FitBoundarySearch::FullGrid;
+        assert!((gap_extension_slack_secs(view) - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn extension_slack_applies_under_gate_retries() {
+        let mut view = default_view();
+        view.fill_mode = FillMode::Gate;
+        assert!((gap_extension_slack_secs(view) - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn inactive_notes_warn_extension_latent_under_baseline_only() {
+        let notes = inactive_repair_flag_notes(default_view());
+        assert!(notes.iter().any(|n| n.contains("baseline_only")));
+    }
+
+    #[test]
+    fn inactive_notes_gate_only_flags_under_fit() {
+        let mut view = default_view();
+        view.disable_structure_trust = true;
+        let notes = inactive_repair_flag_notes(view);
+        assert!(notes.iter().any(|n| n.contains("no-structure-trust")));
+    }
 
     #[test]
     fn profile_bundle_quick_sets_border_five_and_no_extension() {
