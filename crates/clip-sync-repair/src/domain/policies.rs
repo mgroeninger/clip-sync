@@ -298,6 +298,8 @@ pub fn is_silent_frame(
 
 /// Tighten a reported gap against A's decoded PCM.
 ///
+/// - Retracts `start` through leading silence before the reported boundary (scanner block
+///   quantization can start the run slightly late).
 /// - Advances `start` past leading non-silent frames (scanner started the run too early).
 /// - Extends `end` through trailing silence (scanner closed the run too early).
 pub fn refine_gap_frames(
@@ -320,12 +322,26 @@ pub fn refine_gap_frames(
         };
     }
 
+    let mut budget = max_refine_frames;
+    while start > 0
+        && budget > 0
+        && is_silent_frame(
+            samples,
+            channels,
+            start - 1,
+            silence_peak_fraction,
+            absolute_rms_floor,
+        )
+    {
+        start -= 1;
+        budget -= 1;
+    }
+
     // Peel at most `max_refine_frames` of leading non-silent audio before the reported gap.
     // Cap at `start_frame + max_refine` so a noisy dropout interior cannot push `start` all the
     // way to `end_frame` (block-quantized gaps are typically misaligned by <250 ms).
     let max_start = (start_frame + max_refine_frames).min(end_frame);
     let confirm_frames = (max_refine_frames / 15).clamp(4, 4096);
-    let mut budget = max_refine_frames;
     while start + confirm_frames <= max_start && budget > 0 {
         if silent_run(
             samples,
@@ -887,8 +903,9 @@ fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
 
 /// Splice `b_fill` into `a_samples` at the gap, crossfading against A's real border audio.
 ///
-/// Equal-power crossfades at both seams: pre-gap tail with fill head, fill tail with post-gap
-/// head. Each seam writes the same blended samples on both sides of the boundary.
+/// Pre-seam: equal-power crossfade bleeds the fill head into the last `cf` pre-gap frames only;
+/// the gap interior starts at full `b_fill[cf]` so there is no silence ramp inside the dropout.
+/// Post-seam: blends fill tail with post-gap head across the boundary (same value on both sides).
 ///
 /// `gap_start_frame` / `gap_end_frame` are frame indices (not interleaved sample indices).
 pub fn apply_seam_crossfade(
@@ -924,24 +941,22 @@ pub fn apply_seam_crossfade(
         return;
     }
 
-    // Fade-in: blend pre-gap tail with fill head across the gap/pre seam.
+    // Pre-seam: crossfade fill head into pre-gap tail only (gap starts at full b_fill[cf]).
     for i in 0..cf {
         let t = i as f32 / cf as f32;
         let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
         let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
+        let pre_frame = gap_start_frame - cf + i;
         for ch in 0..channels {
-            let b_val = b_fill[i * channels + ch] as f32;
-            let pre_idx = (gap_start_frame - cf + i) * channels + ch;
+            let pre_idx = pre_frame * channels + ch;
             let a_val = a_samples[pre_idx] as f32;
-            let blended = blend_samples(a_val, b_val, a_w, b_w);
-            let gap_idx = (gap_start_frame + i) * channels + ch;
-            a_samples[pre_idx] = blended;
-            a_samples[gap_idx] = blended;
+            let b_val = b_fill[i * channels + ch] as f32;
+            a_samples[pre_idx] = blend_samples(a_val, b_val, a_w, b_w);
         }
     }
 
-    // Middle: pure fill (offset by `cf` frames consumed in the fade-in).
-    for frame in (gap_start_frame + cf)..(gap_end_frame - cf) {
+    // Gap interior: pure fill (first `cf` B frames were consumed in the pre-seam bleed).
+    for frame in gap_start_frame..(gap_end_frame - cf) {
         for ch in 0..channels {
             let a_idx = frame * channels + ch;
             let b_idx = (frame - gap_start_frame + cf) * channels + ch;
@@ -1245,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_seam_crossfade_blends_pre_gap_tail_with_fill_head() {
+    fn apply_seam_crossfade_bleeds_fill_head_into_pre_gap_tail() {
         // Layout: [pre-border loud][gap silent][post-border loud]
         let cf = 4usize;
         let gap_start = 10usize;
@@ -1273,10 +1288,15 @@ mod tests {
             8_000,
             "crossfade should start from pure pre-gap audio"
         );
-        assert_eq!(a[gap_start + cf], 4_000, "middle should be pure fill");
+        assert_eq!(
+            a[gap_start],
+            4_000,
+            "gap should start at full fill level, not a silence ramp"
+        );
+        assert_eq!(a[gap_start + 1], 4_000, "gap interior should be pure fill");
         assert!(
-            a[gap_start + cf - 1] > 3_000,
-            "gap head should reach mostly fill before the middle"
+            a[gap_start - 1] > 3_000,
+            "pre-gap tail should bleed into fill before the gap boundary"
         );
     }
 
@@ -1298,17 +1318,33 @@ mod tests {
         let b_fill = vec![4_000i16; gap_frames];
         apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
 
-        for i in (gap_start - cf + 1)..(gap_start + cf) {
-            let diff = (a[i] as i32 - a[i - 1] as i32).abs();
-            assert!(
-                diff <= 4_500,
-                "jump of {diff} between frame {} and {} (values {} {})",
-                i - 1,
-                i,
-                a[i - 1],
-                a[i]
-            );
+        let diff = (a[gap_start] as i32 - a[gap_start - 1] as i32).abs();
+        assert!(
+            diff <= 4_500,
+            "jump of {diff} across pre seam ({} -> {})",
+            a[gap_start - 1],
+            a[gap_start]
+        );
+    }
+
+    #[test]
+    fn refine_gap_frames_retracts_through_leading_silence_before_reported_start() {
+        let channels = 2usize;
+        // [loud 5][silent 10][loud 5] — reported gap starts two frames late.
+        let mut samples = Vec::new();
+        for _ in 0..5 {
+            samples.extend([8_000i16, 8_000i16]);
         }
+        for _ in 0..10 {
+            samples.extend([0i16, 0i16]);
+        }
+        for _ in 0..5 {
+            samples.extend([8_000i16, 8_000i16]);
+        }
+
+        let refined = refine_gap_frames(&samples, channels, 7, 14, 0.01, 0.0, 10);
+        assert_eq!(refined.start_frame, 5);
+        assert_eq!(refined.end_frame, 15);
     }
 
     #[test]
