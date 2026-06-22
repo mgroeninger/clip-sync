@@ -7,6 +7,19 @@ use crate::test_support::energy_signature_fixtures::{
 };
 
 #[test]
+fn f1_integration_energy_scores_are_finite() {
+    let f = build_f1_integration(48_000, 2);
+    assert!(
+        f.energy_pre_at(f.true_fill_start).is_finite(),
+        "true pre energy"
+    );
+    assert!(
+        f.energy_pre_at(f.nominal_fill_start).is_finite(),
+        "nominal pre energy"
+    );
+}
+
+#[test]
 fn integration_f1_unified_match_finds_offset() {
     let f = build_f1_integration(48_000, 2);
     let matched = f

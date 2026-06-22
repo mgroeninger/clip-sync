@@ -122,7 +122,7 @@ Use `energy_sig_patch_options()` for I1–I4 (`fill_mode = fit`, `fill_border_se
 
 | ID | Fixture | Request | Assertion | Status |
 |----|---------|---------|-----------|--------|
-| I1 | F1 | `gap_signature_mode = energy`, `fill_mode = fit` | **Domain oracle:** `unified_match(energy)` within ±1 bin of truth. **Patch (optional):** when `patched_count ≥ 1`, structure slide within ±1 bin — see [Domain oracle vs patch path](#domain-oracle-vs-patch-path). | ✅ |
+| I1 | F1 | `gap_signature_mode = energy`, `fill_mode = fit` | **Domain** + **haystack** oracles within ±1 bin; **patch** `patched_count ≥ 1` and slide within ±1 bin. | ✅ |
 | I2 | F1 | same geometry, `gap_signature_mode = bool` | **Domain:** bool `start_frame` at decoy **or** farther from truth than energy unified match. | ✅ |
 | I3 | F2 | `energy` | **Domain:** unified match at pause₁. **Patch (optional):** slide within ±1 bin when patched. | ✅ |
 | I4 | F3 | `auto` | `build_gap_signature(Auto)` → `Bool`; domain `unified_match(auto)` same `start_frame` as `bool`. (Full patch outcome equivalence deferred — drone fixture rarely patches through full pipeline.) | ✅ |
@@ -151,6 +151,8 @@ cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture
 ```
 
 Helper: `test_support/patch_geometry_preview.rs` (`preview_patch_geometry`, `unified_match_on_haystack`).
+
+**F1 integration alignment:** `build_f1_integration` keeps scan-reported `gap_start`/`gap_end` for the domain oracle; `gap_report_times` applies `refine_gap_frames` for patch reports. A non-silent guard sample at `silence_start - 1` prevents refine from walking into the quiet ramp tail (which would desync energy signatures). I1 asserts domain + haystack oracles and `patched_count >= 1`.
 
 
 | ID | Item | Assertion | Status |

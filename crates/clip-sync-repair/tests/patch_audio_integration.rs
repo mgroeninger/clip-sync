@@ -2353,6 +2353,36 @@ fn assert_domain_energy_finds_truth(
     );
 }
 
+fn assert_haystack_energy_finds_truth(
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+    report: &GapReport,
+    options: &PatchTestOptions,
+) {
+    let (a_start, a_end, b_start, b_end, _) = gap_report_times(fixture);
+    let preview = preview_patch_geometry(
+        fixture,
+        &report.alignment,
+        a_start,
+        a_end,
+        b_start,
+        b_end,
+        &energy_sig_geometry_params(options),
+    );
+    let matched = preview
+        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("haystack oracle should match patch geometry");
+    let extract_start =
+        (preview.b_extract_start_secs * fixture.sample_rate as f64).round() as usize;
+    let full_b_start = matched.alignment.start_frame.saturating_add(extract_start);
+    assert!(
+        fixture.within_bin_tolerance(full_b_start, fixture.true_fill_start),
+        "haystack start {} (full B {}) truth {}",
+        matched.alignment.start_frame,
+        full_b_start,
+        fixture.true_fill_start,
+    );
+}
+
 fn energy_sig_geometry_params(options: &PatchTestOptions) -> PatchGeometryParams {
     PatchGeometryParams {
         fill_border_search_secs: options.fill_border_search_secs,
@@ -2438,26 +2468,26 @@ fn i1_f1_patch_diagnostic() {
 fn i1_f1_energy_finds_true_offset_domain_and_patch_when_aligned() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
     assert_domain_energy_finds_truth(&fixture);
+    assert_haystack_energy_finds_truth(&fixture, &report, &options);
 
     let result = run_patch(
-        patch_request_with_options(
-            gap_report_from_energy_fixture(temp.path(), &fixture),
-            false,
-            0.25,
-            0.0,
-            energy_sig_patch_options(GapSignatureMode::Energy),
-        ),
+        patch_request_with_options(report, false, 0.25, 0.0, options),
         10,
     );
-    if result.summary.patched_count >= 1 {
-        let slide = gap_align_slide_secs(&result, 0).expect("I1: patched gap slide");
-        assert!(
-            slide_within_bin(&fixture, slide, fixture.true_fill_start),
-            "I1: slide {slide}s not within bin of truth {}",
-            structure_slide_secs(&fixture, fixture.true_fill_start),
-        );
-    }
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "I1: expected patch, got {:?}",
+        result.summary.gaps
+    );
+    let slide = gap_align_slide_secs(&result, 0).expect("I1: patched gap slide");
+    assert!(
+        slide_within_bin(&fixture, slide, fixture.true_fill_start),
+        "I1: slide {slide}s not within bin of truth {}",
+        structure_slide_secs(&fixture, fixture.true_fill_start),
+    );
 }
 
 #[test]
@@ -2475,10 +2505,13 @@ fn i2_f1_bool_domain_closer_to_decoy_than_energy() {
     let energy_dist = (structure_slide_secs(&fixture, energy.alignment.start_frame) - truth).abs();
     let bool_dist = (structure_slide_secs(&fixture, bool_match.alignment.start_frame) - truth).abs();
     assert!(
-        bool_match.alignment.start_frame == fixture.nominal_fill_start || bool_dist >= energy_dist,
-        "I2: bool start {} energy start {} (bool_dist={bool_dist}, energy_dist={energy_dist})",
+        bool_match.alignment.start_frame == fixture.b_decoy_fill_start()
+            || bool_match.alignment.start_frame == fixture.nominal_fill_start
+            || bool_dist >= energy_dist,
+        "I2: bool start {} energy start {} decoy {} (bool_dist={bool_dist}, energy_dist={energy_dist})",
         bool_match.alignment.start_frame,
         energy.alignment.start_frame,
+        fixture.b_decoy_fill_start(),
     );
 }
 

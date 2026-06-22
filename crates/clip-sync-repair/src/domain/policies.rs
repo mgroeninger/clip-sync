@@ -586,6 +586,31 @@ pub struct SeamPlacement {
     pub post_window: usize,
 }
 
+/// Cap repeat-correlation window length for short gaps and seam-adjacent scoring.
+///
+/// Without this, `repeat_window_frames` from border discovery (often 2 s via
+/// `min_border_discovery_secs`) exceeds short gap brackets and `a_post.len()`,
+/// disabling `repeat_post` entirely, or comparing `a_post` against fill plus
+/// haystack past the bracket end.
+pub(crate) fn effective_repeat_window_frames(
+    repeat_window_frames: usize,
+    gap_frames: usize,
+    border_len: usize,
+    seam_window: usize,
+) -> usize {
+    let mut w = repeat_window_frames.max(1);
+    if gap_frames > 0 {
+        w = w.min(gap_frames);
+    }
+    if border_len > 0 {
+        w = w.min(border_len);
+    }
+    if seam_window > 0 {
+        w = w.min(seam_window);
+    }
+    w.max(1)
+}
+
 /// Pearson correlation of A border templates with B fill interior (repeat-at-seam detector).
 pub fn fill_repeat_correlations(
     templates: &SeamTemplates<'_>,
@@ -593,29 +618,46 @@ pub fn fill_repeat_correlations(
     repeat_window_frames: usize,
 ) -> (f64, f64) {
     let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
-    let SeamPlacement { start, gap_frames, .. } = placement;
-    let repeat_window = repeat_window_frames.max(1);
+    let SeamPlacement {
+        start,
+        gap_frames,
+        pre_window,
+        post_window,
+    } = placement;
+
+    let pre_repeat_window = effective_repeat_window_frames(
+        repeat_window_frames,
+        gap_frames,
+        a_pre.len(),
+        pre_window,
+    );
+    let post_repeat_window = effective_repeat_window_frames(
+        repeat_window_frames,
+        gap_frames,
+        a_post.len(),
+        post_window,
+    );
 
     let repeat_pre = if !a_pre.is_empty()
-        && start + repeat_window <= b_mono.len()
-        && repeat_window <= a_pre.len()
+        && start + pre_repeat_window <= b_mono.len()
+        && pre_repeat_window <= a_pre.len()
     {
         seam_pearson(
-            &a_pre[a_pre.len().saturating_sub(repeat_window)..],
-            &b_mono[start..start + repeat_window],
+            &a_pre[a_pre.len().saturating_sub(pre_repeat_window)..],
+            &b_mono[start..start + pre_repeat_window],
         )
     } else {
         0.0
     };
 
-    let tail_start = start + gap_frames.saturating_sub(repeat_window);
+    let tail_start = start + gap_frames.saturating_sub(post_repeat_window);
     let repeat_post = if !a_post.is_empty()
-        && tail_start + repeat_window <= b_mono.len()
-        && repeat_window <= a_post.len()
+        && tail_start + post_repeat_window <= b_mono.len()
+        && post_repeat_window <= a_post.len()
     {
         seam_pearson(
-            &a_post[..repeat_window.min(a_post.len())],
-            &b_mono[tail_start..tail_start + repeat_window],
+            &a_post[..post_repeat_window],
+            &b_mono[tail_start..tail_start + post_repeat_window],
         )
     } else {
         0.0
@@ -625,15 +667,22 @@ pub fn fill_repeat_correlations(
         return (repeat_pre, repeat_post);
     }
 
-    let ch_pre = if start + repeat_window <= b_mono.len() {
+    let ch_pre = if start + pre_repeat_window <= b_mono.len() {
         a_pre_ch
             .iter()
             .zip(b_ch.iter())
             .filter_map(|(a_ch, b_ch)| {
-                if repeat_window <= a_ch.len() && start + repeat_window <= b_ch.len() {
+                let border_len = a_ch.len();
+                let w = effective_repeat_window_frames(
+                    repeat_window_frames,
+                    gap_frames,
+                    border_len,
+                    pre_window,
+                );
+                if w <= border_len && start + w <= b_ch.len() {
                     Some(seam_pearson(
-                        &a_ch[a_ch.len().saturating_sub(repeat_window)..],
-                        &b_ch[start..start + repeat_window],
+                        &a_ch[border_len.saturating_sub(w)..],
+                        &b_ch[start..start + w],
                     ))
                 } else {
                     None
@@ -644,15 +693,23 @@ pub fn fill_repeat_correlations(
         f64::NEG_INFINITY
     };
 
-    let ch_post = if tail_start + repeat_window <= b_mono.len() {
+    let ch_post = if tail_start + post_repeat_window <= b_mono.len() {
         a_post_ch
             .iter()
             .zip(b_ch.iter())
             .filter_map(|(a_ch, b_ch)| {
-                if repeat_window <= a_ch.len() && tail_start + repeat_window <= b_ch.len() {
+                let border_len = a_ch.len();
+                let w = effective_repeat_window_frames(
+                    repeat_window_frames,
+                    gap_frames,
+                    border_len,
+                    post_window,
+                );
+                let tail = start + gap_frames.saturating_sub(w);
+                if w <= border_len && tail + w <= b_ch.len() {
                     Some(seam_pearson(
-                        &a_ch[..repeat_window.min(a_ch.len())],
-                        &b_ch[tail_start..tail_start + repeat_window],
+                        &a_ch[..w],
+                        &b_ch[tail..tail + w],
                     ))
                 } else {
                     None
@@ -1659,5 +1716,93 @@ mod tests {
         assert!(pre.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
         assert_eq!(post.len(), 5);
         assert!(post.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
+    }
+
+    #[test]
+    fn effective_repeat_window_caps_to_gap_and_seam_on_short_brackets() {
+        assert_eq!(
+            effective_repeat_window_frames(96_000, 48_000, 79_200, 12_000),
+            12_000
+        );
+        assert_eq!(effective_repeat_window_frames(96_000, 48_000, 79_200, 0), 48_000);
+        // Previously `repeat_window > a_post.len()` disabled repeat_post entirely.
+        assert_eq!(effective_repeat_window_frames(96_000, 48_000, 12_000, 12_000), 12_000);
+    }
+
+    #[test]
+    fn fill_repeat_post_detects_speech_onset_in_fill_tail_on_one_second_gap() {
+        let gap_frames = 48_000usize;
+        let seam_window = 12_000usize;
+        let border_frames = 96_000usize;
+        let a_post: Vec<f64> = (0..seam_window)
+            .map(|i| (i as f64 * 0.12).sin())
+            .collect();
+        let mut fill = vec![0.02f64; gap_frames];
+        fill[gap_frames - seam_window..].copy_from_slice(&a_post);
+        let templates = SeamTemplates {
+            a_pre: &[],
+            a_post: &a_post,
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &fill,
+            b_ch: &[fill.clone()],
+        };
+        let placement = SeamPlacement {
+            start: 0,
+            gap_frames,
+            pre_window: 0,
+            post_window: seam_window,
+        };
+        let (_, repeat_speech) =
+            fill_repeat_correlations(&templates, placement, border_frames);
+        assert!(
+            repeat_speech > 0.55,
+            "speech copied into fill tail should register repeat_post, got {repeat_speech}"
+        );
+
+        let music_fill = vec![0.02f64; gap_frames];
+        let templates_music = SeamTemplates {
+            b_mono: &music_fill,
+            b_ch: &[music_fill.clone()],
+            ..templates
+        };
+        let (_, repeat_music) =
+            fill_repeat_correlations(&templates_music, placement, border_frames);
+        assert!(
+            repeat_speech > repeat_music + 0.4,
+            "music-only fill should score lower repeat_post (speech={repeat_speech}, music={repeat_music})"
+        );
+    }
+
+    #[test]
+    fn fill_repeat_post_stays_inside_fill_not_haystack_past_bracket() {
+        let gap_frames = 48_000usize;
+        let seam_window = 12_000usize;
+        let border_frames = 96_000usize;
+        let a_post: Vec<f64> = (0..seam_window)
+            .map(|i| (i as f64 * 0.15).cos())
+            .collect();
+        let mut haystack = vec![0.02f64; gap_frames + seam_window];
+        haystack[gap_frames..].copy_from_slice(&a_post);
+        let templates = SeamTemplates {
+            a_pre: &[],
+            a_post: &a_post,
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &haystack,
+            b_ch: &[haystack.clone()],
+        };
+        let placement = SeamPlacement {
+            start: 0,
+            gap_frames,
+            pre_window: 0,
+            post_window: seam_window,
+        };
+        let (_, repeat_interior) =
+            fill_repeat_correlations(&templates, placement, border_frames);
+        assert!(
+            repeat_interior < 0.3,
+            "haystack past fill end must not inflate repeat_post, got {repeat_interior}"
+        );
     }
 }

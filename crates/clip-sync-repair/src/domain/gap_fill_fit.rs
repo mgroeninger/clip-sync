@@ -211,20 +211,27 @@ fn repeat_penalty_at_placement(
     if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
         return 0.0;
     }
+    let placement = SeamPlacement {
+        start,
+        gap_frames: ctx.gap_frames,
+        pre_window: ctx.pre_window,
+        post_window: ctx.post_window,
+    };
     let (repeat_pre, repeat_post) = fill_repeat_correlations(
         ctx.templates,
-        SeamPlacement {
-            start,
-            gap_frames: ctx.gap_frames,
-            pre_window: ctx.pre_window,
-            post_window: ctx.post_window,
-        },
+        placement,
         ctx.repeat_window_frames,
     );
+    let (pre_seam, post_seam) = fill_seam_correlations(ctx.templates, placement);
     let repeat_max = repeat_pre.max(repeat_post);
     let repeat_sum = repeat_pre + repeat_post;
+    let asymmetric_post_dup = repeat_post > REPEAT_CORR_THRESHOLD
+        && post_seam > REPEAT_CORR_THRESHOLD
+        && post_seam - pre_seam > 0.35;
     if wave_min < REPEAT_SEAM_WEAK && repeat_max > REPEAT_CORR_THRESHOLD {
         repeat_max
+    } else if asymmetric_post_dup {
+        repeat_post
     } else if repeat_sum > REPEAT_SUM_CEILING && wave_min < REPEAT_SEAM_WEAK {
         repeat_sum * 0.5
     } else {
@@ -257,8 +264,10 @@ fn unified_fit_score_with_repeat(
     if let Some(prior) = anchor_prior {
         score -= prior.penalty_at_start(candidate.placement.start);
     }
-    if score.is_finite() {
+    let wf = weights.normalized().waveform_weight;
+    if wf > 0.0 && score.is_finite() {
         score -= waveform.repeat_penalty_weight
+            * wf
             * repeat_penalty_at_placement(waveform, candidate.placement.start, candidate.wave_min);
     }
     score
@@ -735,6 +744,7 @@ fn placement_repeat_post(
     a_post: &[f64],
     a_post_ch: &[Vec<f64>],
     repeat_window_frames: usize,
+    post_window: usize,
 ) -> f64 {
     let channels = channels.max(1);
     let b_mono = interleaved_to_mono(fill_interleaved, channels);
@@ -769,7 +779,7 @@ fn placement_repeat_post(
             start: 0,
             gap_frames,
             pre_window: 0,
-            post_window: 0,
+            post_window,
         },
         repeat_window_frames,
     );
@@ -811,6 +821,7 @@ pub fn score_extend_short_fill_to_gap_frames(
         borders.a_post,
         borders.a_post_ch,
         repeat_window_frames,
+        borders.post_window,
     );
 
     while current_frames < gap_frames {
@@ -829,6 +840,7 @@ pub fn score_extend_short_fill_to_gap_frames(
             borders.a_post,
             borders.a_post_ch,
             repeat_window_frames,
+            borders.post_window,
         );
 
         let score_ok = min_score >= best_min - SCORE_TIE_EPSILON;
@@ -1544,6 +1556,74 @@ mod tests {
         assert!(
             without_penalty > with_penalty,
             "repeat penalty should lower score (with={with_penalty}, without={without_penalty})"
+        );
+    }
+
+    #[test]
+    fn repeat_penalty_downranks_speech_in_fill_tail_on_one_second_gap() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let gap_frames = 48_000usize;
+        let seam_window = 12_000usize;
+        let border_frames = 96_000usize;
+        let a_post: Vec<f64> = (0..seam_window)
+            .map(|i| (i as f64 * 0.12).sin())
+            .collect();
+        let a_pre: Vec<f64> = vec![0.05; seam_window];
+
+        let mut b_speech = vec![0.02f64; gap_frames + seam_window];
+        b_speech[gap_frames - seam_window..gap_frames].copy_from_slice(&a_post);
+        b_speech[gap_frames..gap_frames + seam_window].copy_from_slice(&a_post);
+
+        let mut b_music = vec![0.02f64; gap_frames + seam_window];
+        b_music[gap_frames..gap_frames + seam_window].copy_from_slice(&a_post);
+
+        let params = StructureMatchParams {
+            gap_frames,
+            bin_frames: 2_400,
+            search_radius_frames: 4_800,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights::default();
+        let nominal_start = 0usize;
+        let nominal_end = gap_frames;
+
+        let score_for = |b_mono: &[f64], wave_min: f64| {
+            let b_ch = vec![b_mono.to_vec()];
+            let templates = SeamTemplates {
+                a_pre: &a_pre,
+                a_post: &a_post,
+                a_pre_ch: std::slice::from_ref(&a_pre),
+                a_post_ch: std::slice::from_ref(&a_post),
+                b_mono,
+                b_ch: &b_ch,
+            };
+            let waveform = WaveformSeamContext {
+                templates: &templates,
+                gap_frames,
+                pre_window: seam_window,
+                post_window: seam_window,
+                b_total_frames: b_mono.len(),
+                repeat_window_frames: border_frames,
+                repeat_penalty_weight: 0.4,
+            };
+            unified_fit_score_with_repeat(
+                fit_candidate(0.85, 0.95, wave_min, nominal_start, nominal_end, nominal_start, nominal_end),
+                &params,
+                weights,
+                &waveform,
+                None,
+            )
+        };
+
+        let speech_score = score_for(&b_speech, 0.31);
+        let music_score = score_for(&b_music, 0.31);
+        assert!(
+            music_score > speech_score,
+            "music-only fill should outrank speech-in-tail (music={music_score}, speech={speech_score})"
         );
     }
 }

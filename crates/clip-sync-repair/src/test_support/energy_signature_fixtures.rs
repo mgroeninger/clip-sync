@@ -8,7 +8,8 @@ use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatu
 use crate::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
 use crate::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
-    interleaved_to_mono, FillAlignment, GapBorderSpec, SeamPlacement, SeamTemplates,
+    interleaved_to_mono, refine_gap_frames, FillAlignment, GapBorderSpec, RefinedGapFrames,
+    SeamPlacement, SeamTemplates,
 };
 
 pub const BOOL_AMBIGUITY_EPS: f64 = 0.45;
@@ -30,6 +31,8 @@ pub struct EnergySignatureFixture {
     pub true_fill_end: usize,
     pub nominal_fill_start: usize,
     pub nominal_fill_end: usize,
+    /// F1: offset between B true dropout and the unshifted decoy copy; `0` otherwise.
+    pub b_dropout_shift_frames: usize,
     pub structure_params: StructureMatchParams,
 }
 
@@ -40,6 +43,15 @@ impl EnergySignatureFixture {
 
     pub fn bin_frames(&self) -> usize {
         self.structure_params.bin_frames
+    }
+
+    /// B-side decoy dropout start (F1 shifted duplicate); equals nominal when shift is zero.
+    pub fn b_decoy_fill_start(&self) -> usize {
+        if self.b_dropout_shift_frames > 0 {
+            self.true_fill_start.saturating_sub(self.b_dropout_shift_frames)
+        } else {
+            self.nominal_fill_start
+        }
     }
 
     pub fn signature(&self, mode: GapSignatureMode) -> GapSignature {
@@ -359,6 +371,7 @@ pub fn build_f1() -> EnergySignatureFixture {
         true_fill_end: gap_end + shift_frames,
         nominal_fill_start: gap_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: shift_frames,
         structure_params,
     }
 }
@@ -428,6 +441,7 @@ pub fn build_f2() -> EnergySignatureFixture {
         true_fill_end: pause1_end,
         nominal_fill_start: pause2_start,
         nominal_fill_end: pause2_end,
+        b_dropout_shift_frames: 0,
         structure_params,
     }
 }
@@ -466,6 +480,7 @@ pub fn build_f3_silence() -> EnergySignatureFixture {
         true_fill_end: gap_end,
         nominal_fill_start: gap_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
         structure_params,
     }
 }
@@ -514,6 +529,7 @@ pub fn build_f3_drone() -> EnergySignatureFixture {
         true_fill_end: gap_end,
         nominal_fill_start: gap_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
         structure_params,
     }
 }
@@ -618,6 +634,7 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
         true_fill_end: gap_end + shift_frames,
         nominal_fill_start: gap_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: shift_frames,
         structure_params,
     }
 }
@@ -688,6 +705,7 @@ fn build_f2_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
         true_fill_end: pause1_end,
         nominal_fill_start: pause2_start,
         nominal_fill_end: pause2_end,
+        b_dropout_shift_frames: 0,
         structure_params,
     }
 }
@@ -736,17 +754,44 @@ fn build_f3_drone_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFi
         true_fill_end: gap_end,
         nominal_fill_start: gap_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
         structure_params,
     }
 }
 
 const INTEGRATION_TOTAL_SECS: f64 = 8.0;
 
+/// Mirror `GAP_EDGE_REFINE_SECS` in `application/patch_audio.rs`.
+const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
+
+fn patch_refine_gap_frames(
+    samples: &[i16],
+    channels: usize,
+    sample_rate: u32,
+    reported_start: usize,
+    reported_end: usize,
+) -> RefinedGapFrames {
+    let max_refine_frames = (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+    refine_gap_frames(
+        samples,
+        channels,
+        reported_start,
+        reported_end,
+        0.01,
+        0.0,
+        max_refine_frames,
+    )
+}
+
 fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
     (secs * sample_rate as f64).round() as usize
 }
 
 /// **F1** geometry stretched to ~8 s for `PatchAudio` integration (I1/I2).
+///
+/// PCM uses a short silence lead before the reported gap; `ramp_end = silence_start` so
+/// `refine_gap_frames` does not walk back into the ramp. [`gap_report_times`] applies refine
+/// for patch integration.
 pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
     let ch = channels.max(1);
     let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
@@ -776,6 +821,10 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
             post_rise_frames: bin_frames.max(1),
         },
     );
+    if silence_start > 0 {
+        // Block refine from walking off the silence lead into the quiet ramp tail.
+        write_frame(&mut a, ch, silence_start - 1, post_amp / 2);
+    }
 
     let mut b = Vec::new();
     fill_ramp_gap(
@@ -792,11 +841,14 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
             post_rise_frames: bin_frames.max(1),
         },
     );
+    let b_guard = silence_start + shift_frames;
+    if b_guard > 0 {
+        write_frame(&mut b, ch, b_guard - 1, post_amp / 2);
+    }
 
-    let reported_gap_frames = gap_end.saturating_sub(silence_start);
     let search_radius = (gap_frames * 2).max(shift_frames * 2);
     let structure_params = StructureMatchParams {
-        gap_frames: reported_gap_frames,
+        gap_frames: gap_end.saturating_sub(silence_start),
         bin_frames,
         search_radius_frames: search_radius,
         fill_length_slack_frames: bin_frames,
@@ -818,6 +870,7 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
         true_fill_end: gap_end + shift_frames,
         nominal_fill_start: silence_start,
         nominal_fill_end: gap_end,
+        b_dropout_shift_frames: shift_frames,
         structure_params,
     }
 }
@@ -868,13 +921,23 @@ pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, 
 }
 
 /// A gap times plus total duration (seconds).
+///
+/// A times follow `refine_gap_frames` on the scan-reported [`EnergySignatureFixture::gap_start`]
+/// / [`EnergySignatureFixture::gap_end`] so patch integration matches production.
 pub fn gap_report_times(fixture: &EnergySignatureFixture) -> (f64, f64, f64, f64, f64) {
     let rate = fixture.sample_rate as f64;
     let ch = fixture.channels.max(1);
-    let a_start = fixture.gap_start as f64 / rate;
-    let a_end = fixture.gap_end as f64 / rate;
-    let b_nominal_start = fixture.nominal_fill_start as f64 / rate;
-    let b_nominal_end = fixture.nominal_fill_end as f64 / rate;
+    let refined = patch_refine_gap_frames(
+        &fixture.a_samples,
+        ch,
+        fixture.sample_rate,
+        fixture.gap_start,
+        fixture.gap_end,
+    );
+    let a_start = refined.start_frame as f64 / rate;
+    let a_end = refined.end_frame as f64 / rate;
+    let b_nominal_start = refined.start_frame as f64 / rate;
+    let b_nominal_end = refined.end_frame as f64 / rate;
     let total_secs = fixture.a_samples.len() as f64 / ch as f64 / rate;
     (a_start, a_end, b_nominal_start, b_nominal_end, total_secs)
 }
