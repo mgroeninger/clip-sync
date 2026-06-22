@@ -1,6 +1,6 @@
 # Temporary plan: energy-envelope gap structure matching
 
-> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (`bool` default), fit-path search + `auto` flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8**, **I1–I5**, **P2-1–P2-2** green. Phase 3 tuning/default flip remains open.
+> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (`bool` default), fit-path search + `auto` flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 tuning/default flip remains open.
 >
 > Archive to `docs/archive/energy-signature-plan.md` when Phase 3 ships.
 
@@ -22,7 +22,7 @@
 | Unified fit | `domain/gap_fill_fit.rs` | Joint structure + waveform scoring (`fill_fit_*_weight`) | 2 |
 | Seam scoring | `domain/policies.rs` | `fill_seam_correlations`, `trim_low_energy_*` (local gate analogue) | — (unchanged) |
 | Config | `infrastructure/config.rs` | `gap_signature_context_secs`, `gap_signature_bin_ms`, silence thresholds | 1 |
-| Integration tests | `tests/patch_audio_integration.rs` | Bool-structure fixtures | 0, 3 |
+| Integration tests | `tests/patch_audio_integration.rs` | Energy acceptance I1–I4, diagnostics, `assert_energy_integration_patch` | 0, 2 |
 | Fill fitting | `docs/TEMP-fill-fitting-plan.md` | Phases A–C shipped (`fill_mode = fit` default) | 2 (scores into unified fit) |
 
 ### Pipeline fit (unchanged outer stages)
@@ -69,7 +69,7 @@ B extract geometry already includes signature context on both sides (`patch_audi
 
 **Intent:** Prove bool structure fails and energy wins on controlled synthetic gaps before changing production defaults.
 
-- [x] Implement the three **fixture geometries** below — shared module `crates/clip-sync-repair/src/test_support/energy_signature_fixtures.rs` + `energy_signature_acceptance.rs` (U1–U8) + `tests/patch_audio_integration.rs` (I1–I4).
+- [x] Implement the three **fixture geometries** below — shared module `crates/clip-sync-repair/src/test_support/energy_signature_fixtures.rs` + `energy_signature_acceptance.rs` (U1–U8, U5b/U5c, `f2_integration_energy_scores_are_finite`) + `tests/patch_audio_integration.rs` (I1–I4, diagnostics, `assert_energy_integration_patch`).
 - [x] Meet all **automated acceptance** rows in [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteria).
 - [ ] Record baseline (manual): run existing `patch_audio_integration` with verbose; note structure pre/post on a drift-heavy long-form pair if available — see [Manual baseline](#manual-baseline-optional).
 
@@ -87,7 +87,9 @@ Automated Phase 0/2 is **done** when every row in the tables below passes in CI.
 | `gap_signature_bin_ms` | `50` | Match production default; 20 ms bins in unit tests when timeline is short. |
 | `absolute_silence_rms` | `0.0` | Synthetic gaps are exact zeros unless noted. |
 | `silence_peak_fraction` | `0.01` | Match scan / repair defaults. |
-| `min_structure_match_score` | `0.55` | Production default until Phase 3 retune. |
+| `min_structure_match_score` | `0.0` in `energy_sig_patch_options()` | Acceptance tests disable structure floor; production default `0.55` until Phase 3 retune. |
+| `fill_absolute_floor` | `-0.05` in `energy_sig_patch_options()` | F2 post-seam at pause₁ is intentionally asymmetric (A ramp vs B hard cut); allows Marginal confidence. Production default unchanged. |
+| `short_gap_one_strong_seam_fallback` | `true` in `energy_sig_patch_options()` | Matches production `repair.toml` default. |
 | Extension grid | off in fast fixtures | `gap_*_extend_on_*_seam_fail = false`, small `gap_end_extend_max_ms` — keeps CI fast; optional slow fixture with extension on. |
 | Waveform design | ramps / level steps on A | Pure sine at two decoys can let **waveform** decide; structure discrimination must not be masked by identical Pearson seams. |
 
@@ -98,7 +100,15 @@ Automated Phase 0/2 is **done** when every row in the tables below passes in CI.
 | ID | Scenario | A (around gap) | B haystack | Nominal B map | Decoy |
 |----|----------|----------------|------------|---------------|-------|
 | **F1** | Same pause pattern, different levels | Linear amp ramp → silence (gap) → steady post level | Same ramp at **true** offset; **shifted** copy at `+Δ` frames (`Δ` ≥ 2 bins, ≤ `search_radius`) | Points at **decoy** (shifted dropout) | Bool-active/silent **pattern** matches at both sites; energy contour matches only at true site |
-| **F2** | Multiple pauses | Single gap with distinctive pre-gap contour (e.g. ramp into silence) | Two pauses within `fill_border_search_secs`: **pause₁** (ramp into silence), **pause₂** (hard cut); similar duration (~300–800 ms) | Points at **pause₂** | **pause₁** is true alignment; bool scores within **ε = 0.08** of each other at both pauses; energy `structure_pre` at pause₁ exceeds pause₂ by **≥ 0.15** |
+| **F2** | Multiple pauses | Single gap with distinctive pre-gap contour (ramp into silence) | Two pauses within `fill_border_search_secs`: **pause₁** (ramp into silence), **pause₂** (hard cut); similar duration | Points at **pause₂** | **pause₁** is true alignment; bool scores within **ε** at both pauses; energy `structure_pre` at pause₁ exceeds pause₂ by **≥ 0.15** |
+
+**Integration variants** (`build_*_integration` at 48 kHz, 8 s timeline):
+
+| ID | Builder | Notes |
+|----|---------|-------|
+| F1 | `build_f1_integration` | Silence lead before reported gap; guard at `silence_start - 1` blocks refine into ramp tail. |
+| F2 | `build_f2_integration` | Unit F2 spacing at ~2.35 s (room for `gap_signature_context_secs`); gap ≥ 2×50 ms bins; scaled domain bins (U5 parity); guards at pause edges. A uses ramp + post-rise; B has hard cut at pause₂. |
+| F3 | `build_f3_drone_integration` | Scaled drone + pad to 8 s. |
 | **F3** | Flat envelope | Gap in steady non-silent level (drone / constant amp, not digital zero) | Steady level throughout context | Nominal map at gap | N/A — `auto` should not use energy |
 
 Reference implementation sketch for **F1**: `gap_energy.rs` test `energy_finds_offset_when_bool_pattern_ambiguous` (scoring only); extend to full search + bool comparison.
@@ -112,47 +122,61 @@ Reference implementation sketch for **F1**: `gap_energy.rs` test `energy_finds_o
 | U3 | F1 | `energy` | `match_gap_fill_unified_in_b`: `alignment.start_frame` within ±1 bin of **true** offset. |
 | U4 | F1 | `bool` | `match_gap_fill_unified_in_b`: `start_frame` at **decoy** **or** `\|start − true\| > \|start_energy − true\|` (energy strictly closer). |
 | U5 | F2 | `energy` | Unified search: `start_frame` within ±1 bin of **pause₁**. |
+| U5b | F2_integration | `energy` | Same as U5 on `build_f2_integration(48_000, …)` — domain oracle before patch path. |
+| U5c | F2 @ 48 kHz (scaled unit) | `energy` | `build_f2_at_rate` — confirms scaled unit geometry at patch rate without 8 s pad. |
 | U6 | F2 | `bool` | Unified search: `start_frame` at **pause₂** (nominal) **or** bool `structure_pre` within ε at both pauses. |
 | U7 | F3 | `auto` | `build_gap_signature(...)` → `GapSignature::Bool(_)`. |
 | U8 | F3 | `energy` vs `bool` | At nominal map, unified `structure_pre` and `structure_post` differ by **≤ 0.08** between modes. |
 
 #### Automated acceptance — integration (`tests/patch_audio_integration.rs`)
 
-Use `energy_sig_patch_options()` for I1–I4 (`fill_mode = fit`, `fill_border_search_secs = 3.5`, `gap_signature_context_secs = 0.5`, extensions off, structure-heavy weights with `waveform_weight = 0`, bias scales 0). `gap_signature_mode` on `PatchTestOptions`.
+Use `energy_sig_patch_options()` for I1–I4 (`fill_mode = fit`, `fill_border_search_secs = 3.5`, `gap_signature_context_secs = 0.5`, extensions off, structure-heavy weights with `waveform_weight = 0`, bias scales 0, `min_structure_match_score = 0.0`, `fill_absolute_floor = -0.05`, `short_gap_one_strong_seam_fallback = true`). `gap_signature_mode` on `PatchTestOptions`.
+
+Shared helper `assert_energy_integration_patch(fixture, report, options, test_id, expected_slide_secs)` runs domain oracle, haystack oracle (`preview_patch_geometry` + `unified_match_on_haystack`), full `PatchAudio`, requires `patched_count == 1`, and checks `align_adjustment_secs` within ±1 bin of `expected_slide_secs` (or `structure_slide_secs(fixture, true_fill_start)` when `None`).
 
 | ID | Fixture | Request | Assertion | Status |
 |----|---------|---------|-----------|--------|
-| I1 | F1 | `gap_signature_mode = energy`, `fill_mode = fit` | **Domain** + **haystack** oracles within ±1 bin; **patch** `patched_count ≥ 1` and slide within ±1 bin. | ✅ |
+| I1 | F1 | `gap_signature_mode = energy`, `fill_mode = fit` | `assert_energy_integration_patch(…, None)` — slide vs `structure_slide_secs(true_fill)`. | ✅ |
 | I2 | F1 | same geometry, `gap_signature_mode = bool` | **Domain:** bool `start_frame` at decoy **or** farther from truth than energy unified match. | ✅ |
-| I3 | F2 | `energy` | **Domain:** unified match at pause₁. **Patch (optional):** slide within ±1 bin when patched. | ✅ |
+| I3 | F2 | `energy` | `assert_energy_integration_patch(…, Some(0.0))` — A/B aligned at pause₁; slide **0** (not pause₂ nominal offset). | ✅ |
 | I4 | F3 | `auto` | `build_gap_signature(Auto)` → `Bool`; domain `unified_match(auto)` same `start_frame` as `bool`. (Full patch outcome equivalence deferred — drone fixture rarely patches through full pipeline.) | ✅ |
 | I5 | — | all existing tests, default `bool` | No regressions; suite green (27 passed, 1 ignored smoke). | ✅ |
 
 #### Domain oracle vs patch path
 
-**Domain oracle** (`EnergySignatureFixture::unified_match`) calls `match_gap_fill_unified_in_b` on in-memory PCM with fixture geometry: exact gap frames, full-track B haystack, nominal map at decoy.
+Three layers can disagree; I1/I3 require all three to agree within tolerance:
 
-**Patch path** runs the full `PatchAudio` pipeline: WAV decode → A gap refinement → B haystack slice from offset map + `fill_border_search_secs` / `gap_signature_context_secs` → `evaluate_seam_gate` (unified fit + waveform Pearson + thresholds).
+| Layer | API | B PCM scope |
+|-------|-----|-------------|
+| **Domain** | `EnergySignatureFixture::unified_match` | Full-track B PCM |
+| **Haystack** | `PatchGeometryPreview::unified_match_on_haystack` | Sliced B (patch geometry) |
+| **Patch** | `run_patch` → `PatchAudio` | Production pipeline + seam gates |
 
-On F1/F2 energy fixtures the domain oracle reliably finds the true offset. The patch path often **skips** the gap (`patched_count = 0`) because extra pipeline stages reject the fill even when structure search succeeds:
+**Domain oracle** uses fixture `gap_start`/`gap_end` for the A signature and searches full B with `nominal_fill_start` at the decoy (F1) or pause₂ (F2). **Do not** set fixture `gap_start` to refined frames — that desyncs energy signatures (e.g. `-inf` scores).
 
-| Skip reason | Typical cause on synthetic fixtures |
-|-------------|-------------------------------------|
-| `BoundaryAlignmentFailed` | `match_gap_fill_unified_in_b` returns `None` inside the **sliced** B haystack (nominal offset / refinement / search radius misaligned with fixture truth), or grid search finds no candidate. |
-| `CorrelationBelowThreshold` | Structure scores below `min_structure_match_score` (I1/I3 set `0.0`; bool path on F1 can still fail waveform gate with 0.0 seam Pearson). |
-| `WaveformBelowThreshold` | Border templates or seam Pearson fail `min_fill_correlation` / `fill_absolute_floor` after structure placement. |
+**Patch path** uses `gap_report_times(fixture)` for `GapReport` A/B times: `refine_gap_frames` on A at pause₁ and separately on B at `nominal_fill_start`/`nominal_fill_end` (pause₂ for F2). When global alignment offset is zero, structure search still centers on pause₁ on B; the B report times encode the wrong nominal map (pause₂).
 
-I1/I3 therefore treat the domain oracle as the primary structure-tier proof; patch slide is asserted only when the seam gate accepts the fill. Closing the patch-path gap (haystack geometry, refinement, waveform borders) is follow-up, not a Phase 0/2 blocker.
+**Common patch-path failures (fixed in integration fixtures):**
 
-**Diagnostic test:** `i1_f1_patch_diagnostic` (ignored) prints fixture vs refined frames, haystack bounds, domain vs haystack-slice unified match, and patch skip reason:
+| Skip reason | Cause | Mitigation |
+|-------------|-------|------------|
+| `BoundaryAlignmentFailed` | `refine_gap_frames` walks into quiet ramp → haystack signature ≠ domain; or gap shorter than one 50 ms energy bin | F1/F2: guard sample at `gap_start - 1`; F2: place pauses ~2.35 s in, gap ≥ `2 × patch_bin_frames` |
+| `CorrelationBelowThreshold` / `WaveformBelowThreshold` | Structure or waveform seam gate after placement | F2: intentional A post-rise vs B hard cut — `fill_absolute_floor = -0.05` + `short_gap_one_strong_seam_fallback` in test options |
+
+**Diagnostic tests** (ignored; `--ignored --nocapture`) print fixture vs refined frames, haystack bounds, domain vs haystack match, and patch outcome via `energy_sig_patch_diagnostic`:
 
 ```powershell
 cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture
+cargo test -p clip-sync-repair i3_f2_patch_diagnostic -- --ignored --nocapture
 ```
 
-Helper: `test_support/patch_geometry_preview.rs` (`preview_patch_geometry`, `unified_match_on_haystack`).
+Helper: `test_support/patch_geometry_preview.rs` (`preview_patch_geometry`, `unified_match_on_haystack`, `format_diagnostic`).
 
-**F1 integration alignment:** `build_f1_integration` keeps scan-reported `gap_start`/`gap_end` for the domain oracle; `gap_report_times` applies `refine_gap_frames` for patch reports. A non-silent guard sample at `silence_start - 1` prevents refine from walking into the quiet ramp tail (which would desync energy signatures). I1 asserts domain + haystack oracles and `patched_count >= 1`.
+**F1 integration alignment:** `build_f1_integration` keeps scan-reported `gap_start`/`gap_end` for the domain oracle; `gap_report_times` applies refine for patch reports only. Guard at `silence_start - 1` on A and matching B frame.
+
+**F2 integration alignment:** `build_f2_integration` uses unit-like A (ramp into pause₁, no silence lead), pause₂ as nominal map, gap sized for 50 ms patch bins. I3 expects `align_adjustment_secs ≈ 0` when tracks are aligned at pause₁ (not `structure_slide_secs` relative to pause₂).
+
+**Phase 3 follow-up (optional):** align A/B post-seam at pause₁ in F2 fixture so acceptance tests can use production `fill_absolute_floor` (0.12) instead of `-0.05`.
 
 
 | ID | Item | Assertion | Status |
@@ -178,6 +202,10 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 - **Decoy outside `search_radius`** → neither mode can win; keep decoy inside `fill_border_search_secs` + margin.
 - **Gate mode** → energy not exercised; F1–F3 integration tests must use **fit**.
 - **All-silence F3** → only exercises silence; include **steady non-zero** drone for realistic `auto` fallback.
+- **F2 gap shorter than 50 ms bin** → haystack energy search returns `None` (`BoundaryAlignmentFailed`); integration gap must be ≥ `2 × patch_bin_frames`.
+- **F2 pauses at start of 8 s file** → `context_frames` larger than `gap_start` breaks domain signature; place pauses ~2.35 s in (same anchor as F1 integration).
+- **Scaled F2 + pad only** → refine walks into ramp; use `build_f2_integration` native timeline, not `build_f2_scaled` + tail pad alone.
+- **F2 slide assertion** → when A/B are drift-aligned at pause₁, expect `align_adjustment_secs ≈ 0`, not slide relative to pause₂ nominal map.
 
 ### Phase 1 — Energy bins + timeline
 
@@ -210,6 +238,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 - [ ] README § Gap patching — new subsection “Structure signatures” (energy vs bool, context length).
 - [ ] `docs/cli-output.md` — verbose `signature_mode` if exposed.
 - [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps.
+- [ ] (Optional) F2 integration fixture: align post-seam at pause₁ so tests need not lower `fill_absolute_floor`.
 
 ### Phase 4 — Optional optimizations (defer if Phase 3 ships clean)
 
@@ -243,7 +272,7 @@ Executable oracles: [Phase 0/2 acceptance criteria](#phase-02-acceptance-criteri
 | Layer | What |
 |-------|------|
 | Unit | `energy_bins` gate + RMS; `energy_similarity`; **U7** (`auto` flat → bool) |
-| Lib | **U1–U6**, **U8** — `match_gap_fill_unified_in_b` energy vs bool on **F1–F3** |
+| Lib | **U1–U6**, **U8**, **U5b**/**U5c** — `match_gap_fill_unified_in_b` energy vs bool on **F1–F3** (+ integration domain) |
 | Integration | **I1–I4** — full `PatchAudio` on **F1–F3** under `energy` / `bool` / `auto` |
 | Regression | **I5** — full suite with `bool` (CI default in `repair.toml` until Phase 3) |
 | Manual | [Manual baseline](#manual-baseline-optional) — drift-heavy pair for Phase 3 notes |
