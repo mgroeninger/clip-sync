@@ -225,28 +225,6 @@ fn anchored_retry_drift_patch_options() -> PatchTestOptions {
     }
 }
 
-/// Fit-mode options for marginal pass-2 upgrade: standard seam floors with a tight haystack so
-/// the hard tail can patch marginal on pass 1 and upgrade to High on pass 2 with anchors.
-fn marginal_upgrade_patch_options() -> PatchTestOptions {
-    PatchTestOptions {
-        fill_mode: FillMode::Fit,
-        fill_offset_mode: FillOffsetMode::AnchoredRetry,
-        fill_border_search_secs: 0.35,
-        fill_align_margin_secs: 0.1,
-        gap_signature_context_secs: 1.0,
-        fill_length_slack_secs: 0.0,
-        gap_end_extend_max_ms: 0,
-        gap_end_extend_step_ms: 40,
-        gap_end_extend_on_post_seam_fail: false,
-        gap_start_extend_on_pre_seam_fail: false,
-        short_gap_one_strong_seam_fallback: false,
-        short_gap_mean_correlation_secs: 0.5,
-        fill_marginal_margin: 0.08,
-        fill_absolute_floor: 0.12,
-        ..Default::default()
-    }
-}
-
 /// Gate-mode drift options: fit-sized haystack; `strong_structure_trust` above 1.0 forces
 /// waveform gate (anchors) instead of structure-trust skips; extension helps pass 2 on hard tail.
 fn anchored_retry_drift_gate_patch_options() -> PatchTestOptions {
@@ -289,98 +267,6 @@ fn build_drift_anchor_retry_fixture_with_hard_shift(hard_b_shift: f64) -> DriftA
         ((50.0, 52.0), 1.35),
         ((53.0, 56.0), hard_b_shift),
     ])
-}
-
-/// Two-gap slice of the drift timeline: easy anchor + hard tail with a weak post seam on B.
-fn build_marginal_upgrade_fixture(hard_b_shift: f64) -> DriftAnchorRetryFixture {
-    let gap_specs = [((36.0, 39.0), 0.35), ((53.0, 56.0), hard_b_shift)];
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path_a = temp.path().join("a.wav");
-    let path_b = temp.path().join("b.wav");
-
-    let a_gaps: Vec<(f64, f64)> = gap_specs.iter().map(|&(span, _)| span).collect();
-    write_stereo_sine_with_gaps(
-        &path_a,
-        SAMPLE_RATE,
-        DRIFT_ANCHOR_TIMELINE_SECS,
-        &a_gaps,
-        440.0,
-        16_000.0,
-    );
-    write_stereo_sine_with_shifted_gaps_and_hard_post_distortion(
-        &path_b,
-        SAMPLE_RATE,
-        DRIFT_ANCHOR_TIMELINE_SECS,
-        &gap_specs,
-        0.35,
-    );
-
-    let gaps: Vec<Gap> = gap_specs
-        .iter()
-        .map(|&((start, end), _)| make_gap_on_a(start, end, DRIFT_ANCHOR_START_OFFSET))
-        .collect();
-    let alignment = make_drift_alignment(
-        DRIFT_ANCHOR_START_OFFSET,
-        DRIFT_ANCHOR_END_OFFSET,
-        f64::from(DRIFT_ANCHOR_TIMELINE_SECS),
-    );
-    let report = make_report_with_alignment(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-        alignment,
-        gaps,
-    );
-
-    DriftAnchorRetryFixture {
-        _temp: temp,
-        hard_gap_span: gap_specs[1].0,
-        report,
-    }
-}
-
-fn write_stereo_sine_with_shifted_gaps_and_hard_post_distortion(
-    path: &Path,
-    sample_rate: u32,
-    total_secs: u32,
-    gap_specs: &[((f64, f64), f64)],
-    distort_mix: f32,
-) {
-    let spec = WavSpec {
-        channels: CHANNELS,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: SampleFormat::Int,
-    };
-    let mut writer = WavWriter::create(path, spec).expect("create wav");
-    let total_frames = u64::from(sample_rate) * u64::from(total_secs);
-    let ((_, hard_end), hard_shift) = *gap_specs
-        .last()
-        .expect("hard gap for distortion");
-    let distort_start = hard_end + hard_shift;
-    let distort_end = distort_start + 0.25;
-    let mix = distort_mix.clamp(0.0, 1.0);
-
-    for frame in 0..total_frames {
-        let t = frame as f64 / f64::from(sample_rate);
-        let silent = gap_specs
-            .iter()
-            .any(|&((start, end), shift)| t >= start + shift && t < end + shift);
-        let s = if silent {
-            0i16
-        } else {
-            sine_sample(sample_rate, frame, 440.0, 16_000.0)
-        };
-        let sample = if t >= distort_start && t < distort_end {
-            let blended = s as f32 * (1.0 - 2.0 * mix);
-            blended.round() as i16
-        } else {
-            s
-        };
-        writer.write_sample(sample).expect("write L");
-        writer.write_sample(sample).expect("write R");
-    }
-    writer.finalize().expect("finalize wav");
 }
 
 fn build_drift_anchor_retry_fixture_from_specs(
@@ -2098,54 +1984,79 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
 }
 
 #[test]
-fn patch_audio_anchored_retry_pass2_upgrades_marginal_when_enabled() {
-    const HARD_SHIFT: f64 = 1.32;
-    const MIN_FILL_CORRELATION: f32 = 0.999;
-    let fixture = build_marginal_upgrade_fixture(HARD_SHIFT);
-    let opts = marginal_upgrade_patch_options();
+fn patch_audio_anchored_retry_with_marginal_flag_recovers_hard_gap() {
+    let fixture = build_drift_anchor_retry_fixture();
+    let mut opts = anchored_retry_drift_patch_options();
+    opts.fill_anchor_retry_marginal = true;
 
-    let without_retry = run_patch(
+    let anchored = run_patch(
         patch_request_with_options(
-            fixture.report.clone(),
+            fixture.report,
             false,
             5.0,
-            MIN_FILL_CORRELATION,
-            opts.clone(),
+            DRIFT_ANCHOR_MIN_CORRELATION,
+            opts,
         ),
         10,
     );
     assert_eq!(
-        without_retry.summary.patched_count, 2,
-        "expected easy + marginal hard gap on pass 1, got {:?}",
-        without_retry.summary.gaps
+        anchored.summary.patched_count, 5,
+        "marginal retry flag must not regress hard-gap recovery, got {:?}",
+        anchored.summary.gaps
     );
-    assert_eq!(without_retry.summary.patched_marginal_count, 1);
-    match &without_retry.summary.gaps[1].status {
-        GapPatchStatus::Patched {
-            confidence: FillConfidence::Marginal,
-            ..
-        } => {}
-        other => panic!("expected hard gap marginal on pass 1, got {other:?}"),
-    }
+    assert_eq!(anchored.summary.patched_marginal_count, 0);
+}
 
-    let mut with_retry = opts;
-    with_retry.fill_anchor_retry_marginal = true;
-    let upgraded = run_patch(
-        patch_request_with_options(fixture.report, false, 5.0, MIN_FILL_CORRELATION, with_retry),
+#[test]
+fn patch_audio_anchored_retry_marginal_flag_without_anchors_skips_pass2() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_seam_distortion(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_END,
+        GAP_END + 0.25,
+        440.0,
+        16_000.0,
+        0.49,
+    );
+
+    let report = GapReport {
+        gaps: vec![default_gap()],
+        ..make_report(
+            path_a,
+            path_b,
+            stereo_identical_compat(SAMPLE_RATE),
+        )
+    };
+
+    let mut opts = fast_fit_patch_options();
+    opts.fill_offset_mode = FillOffsetMode::AnchoredRetry;
+    opts.fill_anchor_retry_marginal = true;
+    opts.gap_end_extend_on_post_seam_fail = false;
+    opts.gap_start_extend_on_pre_seam_fail = false;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.999, opts),
         10,
     );
-    assert_eq!(upgraded.summary.patched_count, 2);
-    assert_eq!(
-        upgraded.summary.patched_marginal_count, 0,
-        "pass 2 should upgrade marginal hard gap to High"
+    assert_eq!(patched.summary.patched_count, 1);
+    assert_eq!(patched.summary.patched_marginal_count, 1);
+    assert!(
+        patched.summary.patch_anchors_used.is_none(),
+        "marginal pass-1 patch must not build anchors or run pass 2 even with marginal retry flag"
     );
-    match &upgraded.summary.gaps[1].status {
-        GapPatchStatus::Patched {
-            confidence: FillConfidence::High,
-            ..
-        } => {}
-        other => panic!("expected hard gap upgraded to High on pass 2, got {other:?}"),
-    }
 }
 
 #[test]

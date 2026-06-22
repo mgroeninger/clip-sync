@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md) (`anchored_retry`).
+**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 
@@ -72,12 +72,15 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--fill-offset` | **Active** | **Active** |
 | `fill_offset_mode = anchored_retry` | **Active** — two-pass offset map | **Active** |
 | `--border-standoff-secs` | **Active** | **Active** |
+| `--fill-border-search-secs` | **Primary** B haystack slide radius for unified search | Structure match search radius |
+| `--fill-align-margin-secs` | Extra B extract padding | Extra B extract padding |
+| `--gap-signature-context-secs` | Structure signature context; sizes B extract | Structure signature context |
+| `--fill-length-slack-secs` | B fill-end slide slack | B fill-end slide slack |
 | `--no-gap-end-extend` | Disables **joint grid** end axis (baseline only on that axis) | Disables post-seam **retry** loop |
 | `--no-gap-start-extend` | Disables **joint grid** start axis | Disables pre-seam **retry** loop |
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | Grid span / step on A (fit) | Retry span / step (gate) |
 | `--crossfade-ms`, `--no-normalize` | **Active** | **Active** |
-| `--max-fill-align-adjust-secs` | Config key kept; **not** the main B search radius in fit (see below) | Structure polish window (legacy) |
-| `fill_border_search_secs` | **Primary** B haystack slide radius for unified search (config-only) | Structure match search radius |
+| `--max-fill-align-adjust-secs` | Legacy polish window only — **not** the main B search radius in fit | Structure polish window (legacy) |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 
@@ -117,7 +120,7 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 - Scores B candidates with  
   `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)`  
   (defaults **0.35 / 0.65**).
-- B slide radius: **`fill_border_search_secs`** (default **10 s**), not `--max-fill-align-adjust-secs`.
+- B slide radius: **`--fill-border-search-secs`** (default **10 s**), not `--max-fill-align-adjust-secs`.
 - Haystack extract also uses context, margin, length slack, and extension slack — see config example in README.
 
 ### Gate waveform gate
@@ -130,7 +133,7 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 
 ## Patch anchors
 
-**Status:** `anchored_retry` shipped (2026-06-20). See [TEMP-patch-anchor-offset-plan.md](TEMP-patch-anchor-offset-plan.md).
+**Status:** `anchored_retry` shipped (2026-06-20). See [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md).
 
 Some runs patch several gaps cleanly (`slide=+0.35s` in verbose) while others fail seam search because the **nominal B map** from alignment is off by hundreds of ms at that point on A — the true dropout sits near the edge of `fill_border_search_secs`, not because `fit` or `gate` chose wrong.
 
@@ -165,6 +168,7 @@ Try **`--fill-offset interpolated`** first on drift-heavy pairs. When hard gaps 
 | `fill_anchor_exclude_structure_trusted` | `true` | Gate-mode patches that skipped waveform measurement |
 | `fill_anchor_max_adjustment_frac` | `0.9` | Reject anchors whose `\|align_adjustment\|` exceeds this fraction of `fill_border_search_secs` (edge-clamped slides) |
 | `fill_anchor_search_prior_weight` | `0.0` | Fit mode + patch anchors: soft penalty in unified search for candidates far from anchor-predicted B start (0 = off) |
+| `fill_anchor_retry_marginal` | `false` | Fit mode + `anchored_retry` pass 2: re-run pass-1 `marginal` patches with anchored offset; replace only when pass 2 is `high` |
 
 Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on pass-2 retries, `offset anchor: +Xs from gap #…` or `between gap #… and gap #…`. JSON: `patch.patch_anchors_used` when `anchored_retry` built anchors. See [cli-output.md](cli-output.md).
 
@@ -208,6 +212,7 @@ gap_end_extend_step_ms = 40
 clip-sync-repair a.mkv b.mkv --mux out.mp4 `
   --fill-offset interpolated `
   --min-fill-correlation 0.35 `
+  --fill-border-search-secs 5 `
   --no-gap-end-extend --no-gap-start-extend `
   -v
 ```
@@ -232,7 +237,7 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   -v
 ```
 
-(`--fill-mode fit` is default; add tighter `fill_border_search_secs` in config if patch phase is slow.)
+(`--fill-mode fit` is default; use `--fill-border-search-secs 5` or tighter haystack flags if patch phase is slow.)
 
 **Drift + anchored retry** (when interpolated still skips gaps):
 
@@ -248,22 +253,25 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
 
 ## Config keys (fit-specific)
 
-| Key | Default | Notes |
-|-----|---------|--------|
-| `fill_mode` | `"fit"` | `"gate"` for legacy |
-| `fill_border_search_secs` | `10.0` | B slide radius (unified search) |
-| `fill_repeat_penalty_weight` | `0.4` | Phase D: penalize repeat-at-seam when seams weak (0 = off). Repeat window = `border_frames` (`normalize_window_secs`), not crossfade length — keep crossfade ≤ border window. |
-| `fill_fit_structure_weight` | `0.35` | Unified scorer |
-| `fill_fit_waveform_weight` | `0.65` | Unified scorer |
-| `fill_marginal_margin` | `0.08` | Warn band below `min_fill_correlation` |
-| `fill_absolute_floor` | `0.12` | Hard skip; follows lowered `min_fill_correlation` when gate disabled |
-| `gap_end_extend_max_ms` | `500` | A-boundary grid / gate retries |
-| `gap_end_extend_step_ms` | `20` | Grid/retry step |
-| `max_fill_align_adjustment_secs` | `0.5` | Legacy; see matrix above |
+| Key | Default | CLI | Notes |
+|-----|---------|-----|--------|
+| `fill_mode` | `"fit"` | `--fill-mode` | `"gate"` for legacy |
+| `fill_border_search_secs` | `10.0` | `--fill-border-search-secs` | B slide radius (unified search) |
+| `fill_align_margin_secs` | `1.0` | `--fill-align-margin-secs` | Extra B extract padding |
+| `gap_signature_context_secs` | `3.0` | `--gap-signature-context-secs` | Structure signature context |
+| `fill_length_slack_secs` | `5.0` | `--fill-length-slack-secs` | B fill-end slide slack |
+| `fill_repeat_penalty_weight` | `0.4` | `--fill-repeat-penalty-weight` | Penalize repeat-at-seam when seams weak (0 = off) |
+| `fill_fit_structure_weight` | `0.35` | `--fill-fit-structure-weight` | Unified scorer |
+| `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |
+| `fill_marginal_margin` | `0.08` | — | Warn band below `min_fill_correlation` |
+| `fill_absolute_floor` | `0.12` | — | Hard skip floor |
+| `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
+| `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |
+| `max_fill_align_adjustment_secs` | `0.5` | `--max-fill-align-adjust-secs` | Legacy polish window |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 
-CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight` override fit weights when exposed in your build.
+CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight`, and the B haystack flags above override config when passed on the command line.
 
 ---
 

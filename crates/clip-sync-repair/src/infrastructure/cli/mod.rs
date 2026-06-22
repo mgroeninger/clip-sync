@@ -279,6 +279,18 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(secs) = args.max_fill_align_adjust_secs {
         config.repair.max_fill_align_adjustment_secs = secs;
     }
+    if let Some(secs) = args.fill_border_search_secs {
+        config.repair.fill_border_search_secs = secs;
+    }
+    if let Some(secs) = args.fill_align_margin_secs {
+        config.repair.fill_align_margin_secs = secs;
+    }
+    if let Some(secs) = args.gap_signature_context_secs {
+        config.repair.gap_signature_context_secs = secs;
+    }
+    if let Some(secs) = args.fill_length_slack_secs {
+        config.repair.fill_length_slack_secs = secs;
+    }
     if let Some(secs) = args.border_standoff_secs {
         config.repair.border_standoff_secs = secs;
     }
@@ -441,6 +453,14 @@ mod cli_override_tests {
             "0.25",
             "--border-standoff-secs",
             "0.5",
+            "--fill-border-search-secs",
+            "5",
+            "--fill-align-margin-secs",
+            "0.5",
+            "--gap-signature-context-secs",
+            "2",
+            "--fill-length-slack-secs",
+            "3",
             "--fill-offset",
             "interpolated",
             "--fill-fit-structure-weight",
@@ -463,6 +483,10 @@ mod cli_override_tests {
         assert!((config.repair.absolute_silence_rms - 25.0).abs() < f32::EPSILON);
         assert!((config.repair.min_fill_correlation - 0.45).abs() < f32::EPSILON);
         assert!((config.repair.max_fill_align_adjustment_secs - 0.25).abs() < f64::EPSILON);
+        assert!((config.repair.fill_border_search_secs - 5.0).abs() < f64::EPSILON);
+        assert!((config.repair.fill_align_margin_secs - 0.5).abs() < f64::EPSILON);
+        assert!((config.repair.gap_signature_context_secs - 2.0).abs() < f64::EPSILON);
+        assert!((config.repair.fill_length_slack_secs - 3.0).abs() < f64::EPSILON);
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);

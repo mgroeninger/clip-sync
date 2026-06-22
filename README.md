@@ -175,7 +175,11 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
 | `--no-structure-trust` | — | Stricter seams (gate only): always run waveform Pearson; no structure skip/soften; both seams required |
 | `--min-fill-correlation <N>` | `0.35` | Waveform seam floor (`min(pre, post)` in fit; gate threshold when waveform runs) |
-| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Legacy structure polish window; **fit** B slide uses `fill_border_search_secs` (config) |
+| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Legacy structure polish window; **fit** B slide uses `--fill-border-search-secs` |
+| `--fill-border-search-secs <SECS>` | `10` | B slide radius for unified gap-fill search; primary patch performance lever |
+| `--fill-align-margin-secs <SECS>` | `1` | Extra B audio extracted on each side of the mapped gap |
+| `--gap-signature-context-secs <SECS>` | `3` | A audio on each side of the gap used for structure signatures |
+| `--fill-length-slack-secs <SECS>` | `5` | How far B fill end may differ from A gap length when locating post-border |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
 | `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended` or `interpolated` (drift between start/end clips) |
 | `--fill-mode <MODE>` | `fit` | `fit` (unified search + tiering) or `gate` (legacy Pearson gate). See [docs/gap-fill-modes.md](docs/gap-fill-modes.md) |
@@ -206,7 +210,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
-**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--fill-mode`, `--min-fill-correlation`, `--max-fill-align-adjust-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`) can be set on the CLI or in `[repair]` in a config file. Flags marked **gate only** in the table above (`--no-structure-trust`, `--no-short-gap-one-strong-seam`) apply only with `--fill-mode gate`. Other patch settings (structure signature size, fill search radius, normalization window, etc.) are config-only — see the example below.
+**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--fill-mode`, `--min-fill-correlation`, `--fill-border-search-secs`, `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`) can be set on the CLI or in `[repair]` in a config file. Flags marked **gate only** in the table above (`--no-structure-trust`, `--no-short-gap-one-strong-seam`) apply only with `--fill-mode gate`. Other patch settings (structure bin width, seam search window, normalization window, etc.) are config-only — see the example below.
 
 **Timeline / duration warnings and mux preflight** (overlap start, PTS vs sample-clock skew, PCM vs container length, mux duration gate) are documented in [docs/cli-output.md](docs/cli-output.md#timeline--duration-warnings).
 
@@ -267,7 +271,9 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--no-short-gap-one-strong-seam` | **No effect** — one-strong-seam is a `gate` shortcut only (`--fill-mode gate`). |
 | `strong_structure_trust`, `partial_structure_waveform_soften` (config) | **No effect on waveform** — structure match still runs; waveform is never skipped for trust. |
 | `--min-fill-correlation` | **Active** — `min(pre, post)` floor; **High** vs **Marginal** tier (`fill_marginal_margin`). |
-| `--max-fill-align-adjust-secs` | Config only for fit B search — use **`fill_border_search_secs`** for slide radius. |
+| `--max-fill-align-adjust-secs` | Legacy polish window only — use **`--fill-border-search-secs`** for B slide radius. |
+| `--fill-border-search-secs` | **Active** — B slide radius and part of per-gap extract window. |
+| `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs` | **Active** — B haystack extract padding. |
 | `--fill-offset interpolated` | **Active** — per-gap B map before local search. |
 | `--fill-offset anchored-retry` | **Active** — two-pass offset map; pass 2 retries failures using patch anchors. |
 | `--fill-fit-structure-weight`, `--fill-fit-waveform-weight` | **Active** — unified scorer weights. |
@@ -294,7 +300,7 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   --mux repaired.mp4 `
   --fill-offset interpolated `
   --min-fill-correlation 0.35 `
-  --max-fill-align-adjust-secs 1.0 `
+  --fill-border-search-secs 5 `
   -v
 ```
 
@@ -371,6 +377,10 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--min-fill-correlation` | `min_fill_correlation` |
 | `--max-fill-align-adjust-secs` | `max_fill_align_adjustment_secs` |
 | `--border-standoff-secs` | `border_standoff_secs` |
+| `--fill-border-search-secs` | `fill_border_search_secs` |
+| `--fill-align-margin-secs` | `fill_align_margin_secs` |
+| `--gap-signature-context-secs` | `gap_signature_context_secs` |
+| `--fill-length-slack-secs` | `fill_length_slack_secs` |
 | `--fill-offset` | `fill_offset_mode` |
 | `--fill-mode` | `fill_mode` |
 | `--fill-fit-structure-weight` | `fill_fit_structure_weight` |
@@ -380,7 +390,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` (gate only) |
 | `--gap-end-extend-max-ms` / `--gap-end-extend-step-ms` | `gap_end_extend_max_ms` / `gap_end_extend_step_ms` |
 
-Config-only (no CLI): `short_gap_mean_correlation_secs`, **`fill_border_search_secs`** (main B slide radius in fit), `fill_length_slack_secs`, `fill_seam_search_secs`, `gap_signature_context_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `fill_align_margin_secs`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, **`fill_anchor_min_correlation`**, **`fill_anchor_exclude_structure_trusted`**, **`fill_anchor_max_adjustment_frac`** (anchored-retry only), normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
+Config-only (no CLI): `short_gap_mean_correlation_secs`, `fill_seam_search_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
 
 ---
 
@@ -488,7 +498,7 @@ min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only: true or --no-structure-trust
 fill_align_margin_secs = 1.0
 max_fill_align_adjustment_secs = 0.5
-fill_border_search_secs = 10.0      # fit: B slide radius (default 10; lower for faster patch)
+fill_border_search_secs = 10.0      # fit: B slide radius (default 10; CLI: --fill-border-search-secs)
 min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35
 short_gap_mean_correlation_secs = 2.0
@@ -504,6 +514,7 @@ fill_anchor_min_correlation = 0.35           # anchored_retry: min(pre, post) fo
 fill_anchor_exclude_structure_trusted = true # anchored_retry: gate patches without waveform
 fill_anchor_max_adjustment_frac = 0.9        # anchored_retry: max |slide| / fill_border_search_secs
 fill_anchor_search_prior_weight = 0.0        # fit + anchors: unified-search prior (0 = off)
+fill_anchor_retry_marginal = false           # anchored_retry pass 2: re-run fit marginal pass-1 gaps; keep pass 2 only when High
 gap_signature_mode = "bool"                  # bool | energy | auto (fit path structure tier)
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
 fill_fit_structure_weight = 0.35   # fit only: unified search

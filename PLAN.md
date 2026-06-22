@@ -1038,6 +1038,7 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md) | Archived (2026-06-16): B-longer donor (short A, long B), offset sign + span remapping |
 | [docs/archive/anchored-end-extraction-plan.md](docs/archive/anchored-end-extraction-plan.md) | Shipped (2026-06-17): shared-timeline end anchoring, paired symmetric extraction, `end_clip_anchor` config + JSON |
 | [docs/archive/anchored-interior-extraction-plan.md](docs/archive/anchored-interior-extraction-plan.md) | Shipped (2026-06-17): combined with end plan — `SharedTimeline` interior from `T_anchor` when `num_clips > 2` |
+| [docs/archive/patch-anchor-offset-plan.md](docs/archive/patch-anchor-offset-plan.md) | Shipped (2026-06-22): `anchored_retry` patch offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 

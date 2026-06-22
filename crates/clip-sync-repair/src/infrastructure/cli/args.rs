@@ -92,10 +92,29 @@ pub struct Args {
     pub min_fill_correlation: Option<f32>,
 
     /// Override: maximum B fill slide during structure match (seconds) [default: 0.5].
-    /// Under `fill_mode = fit`, structure search uses `fill_border_search_secs`; this key is
-    /// reserved for future waveform-slide tuning (not the fine-polish loop).
+    /// Legacy structure polish window. Under `fill_mode = fit`, B slide radius is
+    /// `--fill-border-search-secs` (not this flag).
     #[arg(long, value_name = "SECS")]
     pub max_fill_align_adjust_secs: Option<f64>,
+
+    /// Override: B slide radius for unified gap-fill search (seconds) [default: 10].
+    /// Primary performance lever; also sizes part of the per-gap B extract window.
+    #[arg(long, value_name = "SECS")]
+    pub fill_border_search_secs: Option<f64>,
+
+    /// Override: extra B audio extracted on each side of the mapped gap (seconds) [default: 1].
+    #[arg(long, value_name = "SECS")]
+    pub fill_align_margin_secs: Option<f64>,
+
+    /// Override: A audio on each side of the gap used for structure signatures (seconds)
+    /// [default: 3].
+    #[arg(long, value_name = "SECS")]
+    pub gap_signature_context_secs: Option<f64>,
+
+    /// Override: how far B fill end may differ from A gap length when locating post-border
+    /// (seconds) [default: 5].
+    #[arg(long, value_name = "SECS")]
+    pub fill_length_slack_secs: Option<f64>,
 
     /// Unified fit scorer: structure term weight (`fill_mode = fit` only) [default: 0.35].
     #[arg(long, value_name = "N")]
@@ -333,6 +352,10 @@ mod tests {
             &format!("[default: {}]", defaults.repair.absolute_silence_rms as u32),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
             &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
+            &format!("[default: {}]", defaults.repair.fill_border_search_secs),
+            &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
+            &format!("[default: {}]", defaults.repair.gap_signature_context_secs),
+            &format!("[default: {}]", defaults.repair.fill_length_slack_secs),
             &format!("[default: {}]", defaults.repair.fill_fit_structure_weight),
             &format!("[default: {}]", defaults.repair.fill_fit_waveform_weight),
             &format!("[default: {}]", defaults.repair.fill_repeat_penalty_weight),
@@ -348,6 +371,10 @@ mod tests {
             "fill-anchor-include-structure-trusted",
             "fill-anchor-max-adjustment-frac",
             "fill-anchor-search-prior-weight",
+            "fill-border-search-secs",
+            "fill-align-margin-secs",
+            "gap-signature-context-secs",
+            "fill-length-slack-secs",
             "[default: fit]",
             "[fill-mode: gate only]",
             "[default: 2]",
