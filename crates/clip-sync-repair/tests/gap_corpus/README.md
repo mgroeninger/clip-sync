@@ -27,8 +27,11 @@ tests default to `fill_mode = gate` where gate shortcuts are under test) and uni
 # Committed only (fast, always green in CI)
 cargo test -p clip-sync-repair gap_corpus_committed
 
-# Patch timing on committed gap fixtures (scan + production-default fit patch)
+# Patch timing on committed gap fixtures (scan + fit patch; 5s border, no extension grid)
 cargo test -p clip-sync-repair gap_corpus_patch_timing_committed
+
+# Production-default fit patch on corpus (slow; run before release)
+cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture
 
 # Committed + generated
 cargo test -p clip-sync-repair gap_corpus -- --ignored

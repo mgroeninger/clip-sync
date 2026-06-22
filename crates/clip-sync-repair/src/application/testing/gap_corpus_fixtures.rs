@@ -718,6 +718,14 @@ fn patch_audio_request_from_defaults(
     use crate::infrastructure::config::RepairConfig;
 
     let repair = RepairConfig::default();
+    patch_audio_request_from_repair(report, &repair)
+}
+
+/// Production-default repair knobs (see `RepairConfig::default`).
+fn patch_audio_request_from_repair(
+    report: crate::domain::GapReport,
+    repair: &crate::infrastructure::config::RepairConfig,
+) -> crate::application::PatchAudioRequest {
     crate::application::PatchAudioRequest {
         report,
         normalize_fill: repair.normalize_fill,
@@ -757,6 +765,18 @@ fn patch_audio_request_from_defaults(
         fill_anchor_search_prior_weight: repair.fill_anchor_search_prior_weight,
         gap_signature_mode: repair.gap_signature_mode,
     }
+}
+
+/// Fit patch config for committed corpus timing: still `fill_mode = fit`, but without the
+/// joint boundary grid and with a smaller B haystack so debug CI stays fast.
+fn patch_audio_request_for_corpus_timing(
+    report: crate::domain::GapReport,
+) -> crate::application::PatchAudioRequest {
+    let mut repair = crate::infrastructure::config::RepairConfig::default();
+    repair.fill_border_search_secs = 5.0;
+    repair.gap_end_extend_on_post_seam_fail = false;
+    repair.gap_start_extend_on_pre_seam_fail = false;
+    patch_audio_request_from_repair(report, &repair)
 }
 
 // ── #[cfg(test)] ──────────────────────────────────────────────────────────────
@@ -890,7 +910,7 @@ mod tests {
                 case.id
             );
 
-            let patch_request = patch_audio_request_from_defaults(report);
+            let patch_request = patch_audio_request_for_corpus_timing(report);
             let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
             let result: PatchAudioResult = patch
                 .execute(patch_request, crossfade_ms)
@@ -916,9 +936,57 @@ mod tests {
         }
     }
 
+    fn run_patch_timing_production_cases(tier: GapCorpusTier) {
+        let manifest = load_manifest();
+        let media_reader = SymphoniaMediaReader;
+        let progress = FakeProgressReporter;
+        let aligner = NeverCalledAligner;
+        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+        let patch = PatchAudio::new(&media_reader, &progress);
+
+        for case in manifest.case.iter().filter(|c| {
+            c.tier == tier && !c.ignore && !c.expected_gaps.is_empty()
+        }) {
+            let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
+            let temp_b = tempfile::tempdir().expect("tempdir for reference B");
+            let video_b = temp_b.path().join("reference_b.wav");
+            write_clean_chirp_reference(&video_b, &video_a);
+
+            let (sample_rate, _, frames) = read_wav_metadata(&video_a);
+            let duration_secs = frames as f64 / f64::from(sample_rate);
+
+            let scan_request =
+                build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+            let report = scan
+                .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
+                .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+
+            let started = std::time::Instant::now();
+            let patch_request = patch_audio_request_from_defaults(report);
+            let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+            let result = patch
+                .execute(patch_request, crossfade_ms)
+                .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
+            let elapsed = started.elapsed();
+            eprintln!(
+                "case {}: production-default patch in {:.2?} ({} patched, {} skipped)",
+                case.id,
+                elapsed,
+                result.summary.patched_count,
+                result.summary.skipped_count,
+            );
+        }
+    }
+
     #[test]
     fn gap_corpus_patch_timing_committed() {
         run_patch_timing_cases(GapCorpusTier::Committed);
+    }
+
+    #[test]
+    #[ignore = "production-default fit; cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture"]
+    fn gap_corpus_patch_timing_production() {
+        run_patch_timing_production_cases(GapCorpusTier::Committed);
     }
 
     #[test]

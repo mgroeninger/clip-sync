@@ -184,12 +184,16 @@ Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-
 | `patch_audio_integration` | **ignored** | Same fixtures, production-like fit config (`fill_border_search_secs = 10`, full extension grid) | `patch_audio_fit_production_defaults_smoke` — run before release |
 | `query_reference_integration` | **committed** | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
 | `gap_corpus` | external / manual | `CLIP_SYNC_GAP_CORPUS` real media | Listen + skip/marginal counts (see gap corpus README) |
+| `gap_corpus_patch_timing_committed` | **committed** (CI) | Gap corpus WAVs + generated clean B reference | Patch wall-time budget (`max_patch_wall_secs` in manifest) |
+| `gap_corpus_patch_timing_production` | **ignored** | Same fixtures, `RepairConfig::default()` fit | Manual perf smoke before release |
 
 **CI command:**
 
 ```powershell
 cargo test -p clip-sync-repair patch_audio_integration
 cargo test -p clip-sync-repair patch_audio_fit_production_defaults -- --ignored
+cargo test -p clip-sync-repair gap_corpus_patch_timing_committed
+cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture
 ```
 
 **Patch summary fields to track** (JSON / `PatchSummary`): `patched_count`, `skipped_count`, `patched_marginal_count`, per-gap `confidence`, `gap_*_adjust_frames`.

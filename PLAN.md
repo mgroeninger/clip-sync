@@ -731,7 +731,7 @@ trait ProgressReporter {
 
 - Default filter (when `RUST_LOG` unset): `clip_sync=<level>,clip_sync_repair=<level>,warn` — third-party crates at `warn`.
 - Operational messages (structure-match trust, ffmpeg mux) at **debug**; skipped fills at **warn**.
-- Spans: `align_videos`, `open_media`, `extract_clip`, `fingerprint`, `align`, `scan_gaps`.
+- Spans: `align_videos`, `open_media`, `extract_clip`, `fingerprint`, `align`, `scan_gaps`, `patch_audio`, `patch_decode_a`, `patch_decode_b`, `patch_gap`, `patch_anchored_retry`, `patch_splice`.
 - Fields: `path`, `track_index`, `window_start`, `window_end`, `offset`, `score`.
 - Errors logged after mapping; see [docs/error-mapping.md](docs/error-mapping.md).
 
