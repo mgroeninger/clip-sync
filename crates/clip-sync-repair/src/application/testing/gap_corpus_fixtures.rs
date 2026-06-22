@@ -763,6 +763,7 @@ fn patch_audio_request_from_repair(
         fill_anchor_exclude_structure_trusted: repair.fill_anchor_exclude_structure_trusted,
         fill_anchor_max_adjustment_frac: repair.fill_anchor_max_adjustment_frac,
         fill_anchor_search_prior_weight: repair.fill_anchor_search_prior_weight,
+        fill_anchor_retry_marginal: repair.fill_anchor_retry_marginal,
         gap_signature_mode: repair.gap_signature_mode,
     }
 }

@@ -116,6 +116,8 @@ pub struct PatchAudioRequest {
     pub fill_anchor_max_adjustment_frac: f64,
     /// Fit mode: soft penalty in unified search for B candidates far from anchor-predicted start (0 = off).
     pub fill_anchor_search_prior_weight: f64,
+    /// `anchored_retry` pass 2: re-run fit-mode marginal pass-1 patches with anchored offset; keep pass 2 only when `High`.
+    pub fill_anchor_retry_marginal: bool,
     /// Structure signature representation for gap fill search.
     pub gap_signature_mode: crate::domain::GapSignatureMode,
 }
@@ -271,6 +273,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Step 8: Collect B segments (immutable borrow on a_pcm.samples),
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
+        let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
         let region_count = plan.regions.len() as u64;
 
@@ -313,7 +316,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             record_patch_gap_span(&gap_span, &outcome);
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
+                let slot = patches.len();
                 patches.push(patch);
+                patch_slot_by_gap.push(Some(slot));
+            } else {
+                patch_slot_by_gap.push(None);
             }
         }
 
@@ -336,6 +343,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 run_anchored_retry_pass(
                     self.progress,
                     &mut patches,
+                    &mut patch_slot_by_gap,
                     &mut region_results,
                     &plan.regions,
                     &request,
@@ -562,9 +570,70 @@ fn build_patch_anchor_candidates(
         .collect()
 }
 
+fn anchored_retry_gap_indices(
+    region_results: &[(f64, f64, RegionPatchOutcome)],
+    retry_marginal: bool,
+) -> Vec<usize> {
+    region_results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, _, outcome))| {
+            let retry = match outcome {
+                RegionPatchOutcome::Skipped(reason) => is_retryable_patch_skip(reason),
+                RegionPatchOutcome::Patched {
+                    confidence: FillConfidence::Marginal,
+                    ..
+                } => retry_marginal,
+                _ => false,
+            };
+            retry.then_some(index)
+        })
+        .collect()
+}
+
+fn should_apply_anchored_retry_outcome(
+    prior: &RegionPatchOutcome,
+    new: &RegionPatchOutcome,
+) -> bool {
+    match (prior, new) {
+        (_, RegionPatchOutcome::Skipped(_)) => false,
+        (RegionPatchOutcome::Skipped(_), RegionPatchOutcome::Patched { .. }) => true,
+        (
+            RegionPatchOutcome::Patched {
+                confidence: FillConfidence::Marginal,
+                ..
+            },
+            RegionPatchOutcome::Patched {
+                confidence: FillConfidence::High,
+                ..
+            },
+        ) => true,
+        _ => false,
+    }
+}
+
+fn store_anchored_retry_patch(
+    patches: &mut Vec<RegionPatch>,
+    patch_slot_by_gap: &mut [Option<usize>],
+    gap_index: usize,
+    patch: RegionPatch,
+) {
+    if let Some(slot) = patch_slot_by_gap
+        .get_mut(gap_index)
+        .and_then(|slot| slot.as_mut())
+    {
+        patches[*slot] = patch;
+    } else {
+        let slot = patches.len();
+        patches.push(patch);
+        patch_slot_by_gap[gap_index] = Some(slot);
+    }
+}
+
 fn run_anchored_retry_pass(
     progress: &dyn ProgressReporter,
     patches: &mut Vec<RegionPatch>,
+    patch_slot_by_gap: &mut [Option<usize>],
     region_results: &mut [(f64, f64, RegionPatchOutcome)],
     regions: &[FillRegion],
     request: &PatchAudioRequest,
@@ -573,17 +642,9 @@ fn run_anchored_retry_pass(
     a_pcm: &MultiChannelPcm,
     table: &PatchAnchorTable,
 ) {
-    let retry_indices: Vec<usize> = region_results
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (_, _, outcome))| {
-            if let RegionPatchOutcome::Skipped(reason) = outcome {
-                is_retryable_patch_skip(reason).then_some(index)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let retry_marginal =
+        request.fill_anchor_retry_marginal && request.fill_mode == FillMode::Fit;
+    let retry_indices = anchored_retry_gap_indices(region_results, retry_marginal);
     if retry_indices.is_empty() {
         return;
     }
@@ -597,8 +658,20 @@ fn run_anchored_retry_pass(
     for index in retry_indices {
         let region = &regions[index];
         let gap_num = index + 1;
+        let prior = &region_results[index].2;
+        let retry_label = if matches!(
+            prior,
+            RegionPatchOutcome::Patched {
+                confidence: FillConfidence::Marginal,
+                ..
+            }
+        ) {
+            "marginal upgrade"
+        } else {
+            "retry"
+        };
         progress.phase_verbose(&format!(
-            "  anchored retry gap {gap_num}: A {}",
+            "  anchored {retry_label} gap {gap_num}: A {}",
             format_time_range(region.a_start_secs, region.a_end_secs)
         ));
         let gap_span = tracing::info_span!(
@@ -626,10 +699,10 @@ fn run_anchored_retry_pass(
             Some(&table),
         );
         record_patch_gap_span(&gap_span, &outcome);
-        if matches!(outcome, RegionPatchOutcome::Patched { .. }) {
+        if should_apply_anchored_retry_outcome(prior, &outcome) {
             region_results[index].2 = outcome;
             if let Some(patch) = patch {
-                patches.push(patch);
+                store_anchored_retry_patch(patches, patch_slot_by_gap, index, patch);
             }
         }
     }
@@ -1493,9 +1566,90 @@ fn splice_into_a(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_gap_fill_plan_lines, format_gap_fill_result_line};
+    use super::{
+        anchored_retry_gap_indices, format_gap_fill_plan_lines, format_gap_fill_result_line,
+        should_apply_anchored_retry_outcome, RegionPatchOutcome,
+    };
+    use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
+    use crate::domain::patch_result::GapPatchSkipReason;
     use crate::domain::{FillOffsetMode, Gap};
+
+    #[test]
+    fn anchored_retry_gap_indices_includes_skips_and_optional_marginal() {
+        let region_results = vec![
+            (
+                0.0,
+                1.0,
+                RegionPatchOutcome::Patched {
+                    pre_correlation: 0.5,
+                    post_correlation: 0.5,
+                    align_adjustment_secs: 0.0,
+                    waveform_adjustment_secs: 0.0,
+                    structure_trusted: false,
+                    confidence: FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
+                },
+            ),
+            (
+                2.0,
+                3.0,
+                RegionPatchOutcome::Patched {
+                    pre_correlation: 0.3,
+                    post_correlation: 0.28,
+                    align_adjustment_secs: 0.1,
+                    waveform_adjustment_secs: 0.1,
+                    structure_trusted: false,
+                    confidence: FillConfidence::Marginal,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
+                },
+            ),
+            (
+                4.0,
+                5.0,
+                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.1,
+                    post_correlation: 0.1,
+                    min_correlation: 0.35,
+                }),
+            ),
+        ];
+        let without = anchored_retry_gap_indices(&region_results, false);
+        assert_eq!(without, vec![2]);
+        let with = anchored_retry_gap_indices(&region_results, true);
+        assert_eq!(with, vec![1, 2]);
+    }
+
+    #[test]
+    fn should_apply_anchored_retry_outcome_rules() {
+        let skip = RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed);
+        let marginal = RegionPatchOutcome::Patched {
+            pre_correlation: 0.3,
+            post_correlation: 0.28,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: FillConfidence::Marginal,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+        };
+        let high = RegionPatchOutcome::Patched {
+            pre_correlation: 0.5,
+            post_correlation: 0.5,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+        };
+        assert!(should_apply_anchored_retry_outcome(&skip, &high));
+        assert!(should_apply_anchored_retry_outcome(&marginal, &high));
+        assert!(!should_apply_anchored_retry_outcome(&marginal, &marginal));
+        assert!(!should_apply_anchored_retry_outcome(&high, &high));
+    }
 
     #[test]
     fn fit_fill_trims_tail_without_resampling() {

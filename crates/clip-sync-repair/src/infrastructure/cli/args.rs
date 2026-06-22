@@ -145,6 +145,11 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub fill_anchor_search_prior_weight: Option<f64>,
 
+    /// `anchored_retry` pass 2: re-run fit-mode marginal pass-1 patches with anchored offset;
+    /// keep pass 2 only when seam confidence upgrades to `high`.
+    #[arg(long)]
+    pub fill_anchor_retry_marginal: bool,
+
     /// Gap-fill placement: `gate` (legacy threshold checks) or `fit` (waveform slide search)
     /// [default: fit].
     #[arg(long, value_enum, value_name = "MODE")]

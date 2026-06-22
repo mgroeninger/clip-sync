@@ -139,6 +139,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
                         .fill_anchor_exclude_structure_trusted,
                     fill_anchor_max_adjustment_frac: config.repair.fill_anchor_max_adjustment_frac,
                     fill_anchor_search_prior_weight: config.repair.fill_anchor_search_prior_weight,
+                    fill_anchor_retry_marginal: config.repair.fill_anchor_retry_marginal,
                     gap_signature_mode: config.repair.gap_signature_mode,
                     gap_end_extend_on_post_seam_fail: config
                         .repair
@@ -298,6 +299,9 @@ fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if let Some(w) = args.fill_anchor_search_prior_weight {
         config.repair.fill_anchor_search_prior_weight = w;
+    }
+    if args.fill_anchor_retry_marginal {
+        config.repair.fill_anchor_retry_marginal = true;
     }
     if let Some(mode) = args.fill_mode {
         config.repair.fill_mode = mode;

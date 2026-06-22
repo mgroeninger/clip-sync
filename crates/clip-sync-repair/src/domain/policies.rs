@@ -887,8 +887,8 @@ fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
 
 /// Splice `b_fill` into `a_samples` at the gap, crossfading against A's real border audio.
 ///
-/// Fade-in ramps inside the silent gap (pre-gap audio is left untouched). Fade-out
-/// blends across the gap/post seam.
+/// Equal-power crossfades at both seams: pre-gap tail with fill head, fill tail with post-gap
+/// head. Each seam writes the same blended samples on both sides of the boundary.
 ///
 /// `gap_start_frame` / `gap_end_frame` are frame indices (not interleaved sample indices).
 pub fn apply_seam_crossfade(
@@ -906,9 +906,11 @@ pub fn apply_seam_crossfade(
         return;
     }
 
+    let pre_available = gap_start_frame;
     let post_available = total_frames.saturating_sub(gap_end_frame);
     let cf = crossfade_frames
         .min(gap_frames / 2)
+        .min(pre_available)
         .min(post_available);
 
     if cf == 0 {
@@ -922,21 +924,19 @@ pub fn apply_seam_crossfade(
         return;
     }
 
-    // Fade-in: ramp fill up inside the dropout (A is silent here; keep pre-gap level).
+    // Fade-in: blend pre-gap tail with fill head across the gap/pre seam.
     for i in 0..cf {
-        let frame = gap_start_frame + i;
         let t = i as f32 / cf as f32;
         let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
         let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
         for ch in 0..channels {
-            let a_idx = frame * channels + ch;
-            let b_idx = i * channels + ch;
-            a_samples[a_idx] = blend_samples(
-                a_samples[a_idx] as f32,
-                b_fill[b_idx] as f32,
-                a_w,
-                b_w,
-            );
+            let b_val = b_fill[i * channels + ch] as f32;
+            let pre_idx = (gap_start_frame - cf + i) * channels + ch;
+            let a_val = a_samples[pre_idx] as f32;
+            let blended = blend_samples(a_val, b_val, a_w, b_w);
+            let gap_idx = (gap_start_frame + i) * channels + ch;
+            a_samples[pre_idx] = blended;
+            a_samples[gap_idx] = blended;
         }
     }
 
@@ -1245,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_seam_crossfade_preserves_pre_gap_and_ramps_inside_gap() {
+    fn apply_seam_crossfade_blends_pre_gap_tail_with_fill_head() {
         // Layout: [pre-border loud][gap silent][post-border loud]
         let cf = 4usize;
         let gap_start = 10usize;
@@ -1264,16 +1264,51 @@ mod tests {
         apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
 
         assert_eq!(
-            a[gap_start - 1],
+            a[gap_start - cf - 1],
             8_000,
-            "pre-gap border should not be attenuated by fade-in"
+            "pre-gap audio before the crossfade window should be untouched"
         );
-        assert!(
-            a[gap_start] < 500,
-            "gap fade-in should start from silence, got {}",
-            a[gap_start]
+        assert_eq!(
+            a[gap_start - cf],
+            8_000,
+            "crossfade should start from pure pre-gap audio"
         );
         assert_eq!(a[gap_start + cf], 4_000, "middle should be pure fill");
+        assert!(
+            a[gap_start + cf - 1] > 3_000,
+            "gap head should reach mostly fill before the middle"
+        );
+    }
+
+    #[test]
+    fn apply_seam_crossfade_is_continuous_at_pre_seam() {
+        let cf = 4usize;
+        let gap_start = 10usize;
+        let gap_end = 20usize;
+        let gap_frames = gap_end - gap_start;
+
+        let mut a = vec![0i16; 30];
+        for s in &mut a[0..gap_start] {
+            *s = 8_000;
+        }
+        for s in &mut a[gap_end..] {
+            *s = 8_000;
+        }
+
+        let b_fill = vec![4_000i16; gap_frames];
+        apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
+
+        for i in (gap_start - cf + 1)..(gap_start + cf) {
+            let diff = (a[i] as i32 - a[i - 1] as i32).abs();
+            assert!(
+                diff <= 4_500,
+                "jump of {diff} between frame {} and {} (values {} {})",
+                i - 1,
+                i,
+                a[i - 1],
+                a[i]
+            );
+        }
     }
 
     #[test]

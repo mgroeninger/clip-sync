@@ -161,6 +161,9 @@ pub struct RepairConfig {
     /// Fit mode: penalize unified-search candidates far from patch-anchor prediction (0 = off).
     #[serde(default)]
     pub fill_anchor_search_prior_weight: f64,
+    /// `anchored_retry` pass 2: re-run fit-mode marginal pass-1 patches with anchored offset.
+    #[serde(default)]
+    pub fill_anchor_retry_marginal: bool,
     /// Structure signature for gap fill search (`bool`, `energy`, or `auto`).
     #[serde(default)]
     pub gap_signature_mode: crate::domain::GapSignatureMode,
@@ -328,6 +331,7 @@ impl Default for RepairConfig {
             fill_anchor_exclude_structure_trusted: true,
             fill_anchor_max_adjustment_frac: default_fill_anchor_max_adjustment_frac(),
             fill_anchor_search_prior_weight: 0.0,
+            fill_anchor_retry_marginal: false,
             gap_signature_mode: crate::domain::GapSignatureMode::default(),
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
