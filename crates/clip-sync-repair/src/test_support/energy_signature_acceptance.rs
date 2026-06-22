@@ -2,13 +2,26 @@
 
 use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 use crate::test_support::energy_signature_fixtures::{
-    build_f1, build_f1_integration, build_f2, build_f3_drone, build_f3_silence, structure_heavy_weights,
-    BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN, MODE_SCORE_EPS,
+    build_f1, build_f1_integration, build_f2, build_f2_at_rate, build_f2_integration, build_f3_drone, build_f3_silence,
+    structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN, MODE_SCORE_EPS,
 };
 
 #[test]
 fn f1_integration_energy_scores_are_finite() {
     let f = build_f1_integration(48_000, 2);
+    assert!(
+        f.energy_pre_at(f.true_fill_start).is_finite(),
+        "true pre energy"
+    );
+    assert!(
+        f.energy_pre_at(f.nominal_fill_start).is_finite(),
+        "nominal pre energy"
+    );
+}
+
+#[test]
+fn f2_integration_energy_scores_are_finite() {
+    let f = build_f2_integration(48_000, 2);
     assert!(
         f.energy_pre_at(f.true_fill_start).is_finite(),
         "true pre energy"
@@ -113,6 +126,37 @@ fn u5_f2_energy_unified_finds_pause_one() {
         "U5: start {} pause1 {}",
         matched.alignment.start_frame,
         f.true_fill_start
+    );
+}
+
+#[test]
+fn u5c_f2_scaled_48k_energy_unified_finds_pause_one() {
+    let f = build_f2_at_rate(48_000, 2);
+    let weights = structure_heavy_weights();
+    let matched = f
+        .unified_match(GapSignatureMode::Energy, weights)
+        .expect("U5c: energy unified match");
+    assert!(
+        f.within_bin_tolerance(matched.alignment.start_frame, f.true_fill_start),
+        "U5c: start {} pause1 {}",
+        matched.alignment.start_frame,
+        f.true_fill_start,
+    );
+}
+
+#[test]
+fn u5b_f2_integration_energy_unified_finds_pause_one() {
+    let f = build_f2_integration(48_000, 2);
+    let weights = structure_heavy_weights();
+    let matched = f
+        .unified_match(GapSignatureMode::Energy, weights)
+        .expect("U5b: energy unified match");
+    assert!(
+        f.within_bin_tolerance(matched.alignment.start_frame, f.true_fill_start),
+        "U5b: start {} pause1 {} (nominal {})",
+        matched.alignment.start_frame,
+        f.true_fill_start,
+        f.nominal_fill_start,
     );
 }
 

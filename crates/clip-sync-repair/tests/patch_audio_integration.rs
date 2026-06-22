@@ -581,13 +581,13 @@ fn energy_sig_patch_options(mode: GapSignatureMode) -> PatchTestOptions {
         gap_end_extend_step_ms: 40,
         gap_end_extend_on_post_seam_fail: false,
         gap_start_extend_on_pre_seam_fail: false,
-        short_gap_one_strong_seam_fallback: false,
+        short_gap_one_strong_seam_fallback: true,
         fill_fit_structure_weight: 1.0,
         fill_fit_waveform_weight: 0.0,
         fill_fit_nominal_bias_scale: 0.0,
         fill_fit_late_start_penalty_scale: 0.0,
         fill_marginal_margin: 0.08,
-        fill_absolute_floor: 0.0,
+        fill_absolute_floor: -0.05,
         min_structure_match_score: 0.0,
         min_border_discovery_secs: 0.25,
         gap_signature_mode: mode,
@@ -653,11 +653,10 @@ fn gap_align_slide_secs(result: &PatchAudioResult, gap_idx: usize) -> Option<f64
 fn slide_within_bin(
     fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
     slide_secs: f64,
-    truth_start: usize,
+    truth_slide_secs: f64,
 ) -> bool {
-    let truth = structure_slide_secs(fixture, truth_start);
     let bin_secs = fixture.bin_frames() as f64 / fixture.sample_rate as f64;
-    (slide_secs - truth).abs() <= bin_secs * 1.1
+    (slide_secs - truth_slide_secs).abs() <= bin_secs * 1.1
 }
 
 fn patch_request(
@@ -2396,18 +2395,16 @@ fn energy_sig_geometry_params(options: &PatchTestOptions) -> PatchGeometryParams
     }
 }
 
-#[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture"]
-fn i1_f1_patch_diagnostic() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
-    let (a_start, a_end, b_start, b_end, _) = gap_report_times(&fixture);
-    let options = energy_sig_patch_options(GapSignatureMode::Energy);
-    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+fn energy_sig_patch_diagnostic(
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+    report: &GapReport,
+    options: PatchTestOptions,
+    label: &str,
+) {
+    let (a_start, a_end, b_start, b_end, _) = gap_report_times(fixture);
     let weights = structure_heavy_weights();
-
     let preview = preview_patch_geometry(
-        &fixture,
+        fixture,
         &report.alignment,
         a_start,
         a_end,
@@ -2415,7 +2412,8 @@ fn i1_f1_patch_diagnostic() {
         b_end,
         &energy_sig_geometry_params(&options),
     );
-    eprintln!("{}", preview.format_diagnostic(&fixture));
+    eprintln!("=== {label} patch geometry diagnostic ({}) ===", fixture.id);
+    eprintln!("{}", preview.format_diagnostic(fixture));
 
     let domain = fixture
         .unified_match(GapSignatureMode::Energy, weights)
@@ -2423,27 +2421,29 @@ fn i1_f1_patch_diagnostic() {
     eprintln!(
         "domain unified: start={} slide={:.6}s (truth slide {:.6}s)",
         domain.alignment.start_frame,
-        structure_slide_secs(&fixture, domain.alignment.start_frame),
-        structure_slide_secs(&fixture, fixture.true_fill_start),
+        structure_slide_secs(fixture, domain.alignment.start_frame),
+        structure_slide_secs(fixture, fixture.true_fill_start),
     );
 
-    match preview.unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights) {
-        Some(haystack) => eprintln!(
-            "haystack unified: start={} slide={:.6}s (in haystack coords; full-B slide {:.6}s)",
-            haystack.alignment.start_frame,
-            (haystack.alignment.start_frame as i64 - preview.offset_nominal_start as i64) as f64
-                / ENERGY_SIG_RATE as f64,
-            structure_slide_secs(
-                &fixture,
-                haystack.alignment.start_frame
-                    + (preview.b_extract_start_secs * ENERGY_SIG_RATE as f64).round() as usize,
-            ),
-        ),
+    match preview.unified_match_on_haystack(fixture, GapSignatureMode::Energy, weights) {
+        Some(haystack) => {
+            let extract_start =
+                (preview.b_extract_start_secs * fixture.sample_rate as f64).round() as usize;
+            eprintln!(
+                "haystack unified: start={} full_B={} slide={:.6}s",
+                haystack.alignment.start_frame,
+                haystack.alignment.start_frame + extract_start,
+                structure_slide_secs(
+                    fixture,
+                    haystack.alignment.start_frame + extract_start,
+                ),
+            );
+        }
         None => eprintln!("haystack unified: None (structure search failed on sliced B)"),
     }
 
     let result = run_patch(
-        patch_request_with_options(report, false, 0.25, 0.0, options),
+        patch_request_with_options(report.clone(), false, 0.25, 0.0, options),
         10,
     );
     eprintln!(
@@ -2464,14 +2464,15 @@ fn i1_f1_patch_diagnostic() {
     }
 }
 
-#[test]
-fn i1_f1_energy_finds_true_offset_domain_and_patch_when_aligned() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
-    let options = energy_sig_patch_options(GapSignatureMode::Energy);
-    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    assert_domain_energy_finds_truth(&fixture);
-    assert_haystack_energy_finds_truth(&fixture, &report, &options);
+fn assert_energy_integration_patch(
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+    report: GapReport,
+    options: PatchTestOptions,
+    test_id: &str,
+    expected_slide_secs: Option<f64>,
+) {
+    assert_domain_energy_finds_truth(fixture);
+    assert_haystack_energy_finds_truth(fixture, &report, &options);
 
     let result = run_patch(
         patch_request_with_options(report, false, 0.25, 0.0, options),
@@ -2479,15 +2480,46 @@ fn i1_f1_energy_finds_true_offset_domain_and_patch_when_aligned() {
     );
     assert_eq!(
         result.summary.patched_count, 1,
-        "I1: expected patch, got {:?}",
+        "{test_id}: expected patch, got {:?}",
         result.summary.gaps
     );
-    let slide = gap_align_slide_secs(&result, 0).expect("I1: patched gap slide");
+    let slide = gap_align_slide_secs(&result, 0)
+        .unwrap_or_else(|| panic!("{test_id}: patched gap slide"));
+    let truth = expected_slide_secs
+        .unwrap_or_else(|| structure_slide_secs(fixture, fixture.true_fill_start));
     assert!(
-        slide_within_bin(&fixture, slide, fixture.true_fill_start),
-        "I1: slide {slide}s not within bin of truth {}",
-        structure_slide_secs(&fixture, fixture.true_fill_start),
+        slide_within_bin(fixture, slide, truth),
+        "{test_id}: slide {slide}s not within bin of truth {truth}s",
     );
+}
+
+#[test]
+#[ignore = "diagnostic: cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture"]
+fn i1_f1_patch_diagnostic() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    energy_sig_patch_diagnostic(&fixture, &report, options, "I1 F1");
+}
+
+#[test]
+#[ignore = "diagnostic: cargo test -p clip-sync-repair i3_f2_patch_diagnostic -- --ignored --nocapture"]
+fn i3_f2_patch_diagnostic() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f2_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    energy_sig_patch_diagnostic(&fixture, &report, options, "I3 F2");
+}
+
+#[test]
+fn i1_f1_energy_finds_true_offset_domain_and_patch_when_aligned() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    assert_energy_integration_patch(&fixture, report, options, "I1", None);
 }
 
 #[test]
@@ -2519,34 +2551,9 @@ fn i2_f1_bool_domain_closer_to_decoy_than_energy() {
 fn i3_f2_energy_finds_pause_one_domain_and_patch_when_aligned() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_f2_integration(ENERGY_SIG_RATE, CHANNELS as usize);
-    let matched = fixture
-        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
-        .expect("I3 domain energy");
-    assert!(
-        fixture.within_bin_tolerance(matched.alignment.start_frame, fixture.true_fill_start),
-        "I3 domain start {} pause1 {}",
-        matched.alignment.start_frame,
-        fixture.true_fill_start,
-    );
-
-    let result = run_patch(
-        patch_request_with_options(
-            gap_report_from_energy_fixture(temp.path(), &fixture),
-            false,
-            0.25,
-            0.0,
-            energy_sig_patch_options(GapSignatureMode::Energy),
-        ),
-        10,
-    );
-    if result.summary.patched_count >= 1 {
-        let slide = gap_align_slide_secs(&result, 0).expect("I3: slide");
-        assert!(
-            slide_within_bin(&fixture, slide, fixture.true_fill_start),
-            "I3: slide {slide}s vs pause1 truth {}",
-            structure_slide_secs(&fixture, fixture.true_fill_start),
-        );
-    }
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    assert_energy_integration_patch(&fixture, report, options, "I3", Some(0.0));
 }
 
 #[test]

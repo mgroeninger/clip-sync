@@ -876,17 +876,95 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
 }
 
 /// **F2** geometry stretched for integration (I3).
+///
+/// Unit F2 pause spacing placed ~2.35 s into an 8 s timeline (room for patch context),
+/// refine guards at pause edges, scaled bins for domain search (U5 parity).
 pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
-    let mut fixture = build_f2_scaled(sample_rate, channels);
-    let ch = fixture.channels.max(1);
+    let ch = channels.max(1);
+    let scale = frame_scale(sample_rate);
     let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
-    let current_frames = fixture.a_samples.len() / ch;
-    for frame in current_frames..total_frames {
-        write_frame(&mut fixture.a_samples, ch, frame, 8_000);
-        write_frame(&mut fixture.b_samples, ch, frame, 8_000);
+    let bin_frames = scaled_usize(10, scale).max(1);
+    let patch_bin_frames = ((0.050 * sample_rate as f64).round() as usize).max(1);
+    let gap_frames = scaled_usize(50, scale)
+        .max(bin_frames * 2)
+        .max(patch_bin_frames * 2);
+    let bridge_frames = gap_frames * 9 / 5;
+    let context_frames = scaled_usize(50, scale);
+    let pause1_anchor = (total_frames * 3 / 10).max(context_frames + bin_frames * 2);
+    let gap_start = pause1_anchor;
+    let gap_end = gap_start + gap_frames;
+    let pause2_start = gap_end + bridge_frames;
+    let pause2_end = pause2_start + gap_frames;
+    let ramp_end = gap_start.saturating_sub(scaled_usize(40, scale).max(1));
+    let post_amp = 8_000i16;
+    let post_rise = scaled_usize(15, scale).max(1);
+
+    let mut a = vec![0i16; total_frames * ch];
+    for frame in 0..gap_start {
+        let amp = ramp_amp(frame, ramp_end, 200, post_amp);
+        write_frame(&mut a, ch, frame, amp);
     }
-    fixture.id = "F2_integration";
-    fixture
+    write_post_with_rise(&mut a, ch, gap_end, total_frames, post_amp, post_rise);
+    if gap_start > 0 {
+        write_frame(&mut a, ch, gap_start - 1, post_amp / 2);
+    }
+
+    let mut b = Vec::new();
+    for frame in 0..total_frames {
+        let amp = if frame >= gap_end && frame < pause2_start {
+            post_amp
+        } else if frame >= pause2_end {
+            if frame < pause2_end + post_rise {
+                let t = (frame - pause2_end) as i32;
+                (t * i32::from(post_amp) / post_rise as i32).min(i32::from(post_amp)) as i16
+            } else {
+                post_amp
+            }
+        } else if (gap_start..gap_end).contains(&frame)
+            || (pause2_start..pause2_end).contains(&frame)
+        {
+            0
+        } else {
+            ramp_amp(frame, ramp_end, 150, post_amp)
+        };
+        write_frame(&mut b, ch, frame, amp);
+    }
+    if gap_start > 0 {
+        write_frame(&mut b, ch, gap_start - 1, post_amp / 2);
+    }
+    if pause2_start > 0 {
+        write_frame(&mut b, ch, pause2_start - 1, post_amp / 2);
+    }
+
+    let search_radius = scaled_usize(160, scale)
+        .max(bin_frames)
+        .max(pause2_start.saturating_sub(gap_start) + bin_frames);
+    let structure_params = StructureMatchParams {
+        gap_frames,
+        bin_frames,
+        search_radius_frames: search_radius,
+        fill_length_slack_frames: scaled_usize(5, scale).max(1),
+        max_fine_adjustment_frames: scaled_usize(3, scale).max(1),
+        silence_peak_fraction: 0.01,
+        absolute_silence_rms: 0.0,
+    };
+
+    EnergySignatureFixture {
+        id: "F2_integration",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start,
+        gap_end,
+        context_frames,
+        true_fill_start: gap_start,
+        true_fill_end: gap_end,
+        nominal_fill_start: pause2_start,
+        nominal_fill_end: pause2_end,
+        b_dropout_shift_frames: 0,
+        structure_params,
+    }
 }
 
 /// **F3** drone stretched for integration (I4).
@@ -927,17 +1005,24 @@ pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, 
 pub fn gap_report_times(fixture: &EnergySignatureFixture) -> (f64, f64, f64, f64, f64) {
     let rate = fixture.sample_rate as f64;
     let ch = fixture.channels.max(1);
-    let refined = patch_refine_gap_frames(
+    let refined_a = patch_refine_gap_frames(
         &fixture.a_samples,
         ch,
         fixture.sample_rate,
         fixture.gap_start,
         fixture.gap_end,
     );
-    let a_start = refined.start_frame as f64 / rate;
-    let a_end = refined.end_frame as f64 / rate;
-    let b_nominal_start = refined.start_frame as f64 / rate;
-    let b_nominal_end = refined.end_frame as f64 / rate;
+    let refined_b = patch_refine_gap_frames(
+        &fixture.b_samples,
+        ch,
+        fixture.sample_rate,
+        fixture.nominal_fill_start,
+        fixture.nominal_fill_end,
+    );
+    let a_start = refined_a.start_frame as f64 / rate;
+    let a_end = refined_a.end_frame as f64 / rate;
+    let b_nominal_start = refined_b.start_frame as f64 / rate;
+    let b_nominal_end = refined_b.end_frame as f64 / rate;
     let total_secs = fixture.a_samples.len() as f64 / ch as f64 / rate;
     (a_start, a_end, b_nominal_start, b_nominal_end, total_secs)
 }
