@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use clip_sync::{align_with_defaults, AlignVideosRequest, AlignmentResult, AppError, ProgressReporter};
-
-use crate::infrastructure::config::AppConfig;
+use clip_sync::{
+    align_with_defaults, AlignConfig, AlignVideosRequest, AlignmentResult, AppError,
+    ProgressReporter,
+};
 
 pub fn run_align(
-    config: &AppConfig,
+    align: &AlignConfig,
     video_a: PathBuf,
     video_b: PathBuf,
     progress: &dyn ProgressReporter,
@@ -14,7 +15,7 @@ pub fn run_align(
         AlignVideosRequest {
             video_a,
             video_b,
-            config: config.align.clone(),
+            config: align.clone(),
         },
         progress,
     )

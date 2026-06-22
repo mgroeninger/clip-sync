@@ -38,7 +38,7 @@ fn run_inner() -> Result<(), AppError> {
         cli.video_a.display(),
         cli.video_b.display()
     ));
-    let result = run_align(&config, cli.video_a, cli.video_b, &progress)?;
+    let result = run_align(&config.align, cli.video_a, cli.video_b, &progress)?;
 
     output::print_success(&config.output, &result)
 }
