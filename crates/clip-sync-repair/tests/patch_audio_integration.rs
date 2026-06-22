@@ -210,14 +210,17 @@ fn anchored_retry_drift_patch_options() -> PatchTestOptions {
     PatchTestOptions {
         fill_mode: FillMode::Fit,
         fill_offset_mode: FillOffsetMode::AnchoredRetry,
-        fill_border_search_secs: 0.35,
+        fill_border_search_secs: 0.32,
         fill_align_margin_secs: 0.1,
         gap_signature_context_secs: 1.0,
         fill_length_slack_secs: 0.0,
-        gap_end_extend_max_ms: 40,
+        gap_end_extend_max_ms: 0,
         gap_end_extend_step_ms: 40,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
         short_gap_one_strong_seam_fallback: false,
         short_gap_mean_correlation_secs: 0.5,
+        fill_absolute_floor: 0.78,
         ..Default::default()
     }
 }
@@ -1612,25 +1615,29 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
 
 #[test]
 fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
-    const TIMELINE_SECS: u32 = 120;
+    const TIMELINE_SECS: u32 = 60;
     const START_OFFSET: f64 = 0.0;
     const END_OFFSET: f64 = 1.0;
-    // Local B shift in the late region exceeds what pass-1 clip interpolation predicts.
     const EASY_B_SHIFT: f64 = 0.35;
-    const HARD_B_SHIFT: f64 = 1.0;
+    const MEDIUM_B_SHIFT: f64 = 0.76;
+    const NEAR_B_SHIFT: f64 = 1.05;
+    const BRIDGE_B_SHIFT: f64 = 1.35;
+    const HARD_B_SHIFT: f64 = 1.42;
+    const DRIFT_MIN_CORRELATION: f32 = 0.78;
 
-    let easy_gaps = [(72.0, 75.0), (78.0, 81.0)];
-    let hard_gap = (90.0, 93.0);
+    let gap_specs: [((f64, f64), f64); 5] = [
+        ((36.0, 39.0), EASY_B_SHIFT),
+        ((44.0, 46.0), MEDIUM_B_SHIFT),
+        ((47.0, 49.0), NEAR_B_SHIFT),
+        ((50.0, 52.0), BRIDGE_B_SHIFT),
+        ((53.0, 56.0), HARD_B_SHIFT),
+    ];
 
     let temp = tempfile::tempdir().expect("tempdir");
     let path_a = temp.path().join("a.wav");
     let path_b = temp.path().join("b.wav");
 
-    let a_gaps: Vec<(f64, f64)> = easy_gaps
-        .iter()
-        .copied()
-        .chain(std::iter::once(hard_gap))
-        .collect();
+    let a_gaps: Vec<(f64, f64)> = gap_specs.iter().map(|&(span, _)| span).collect();
     write_stereo_sine_with_gaps(
         &path_a,
         SAMPLE_RATE,
@@ -1640,11 +1647,10 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
         16_000.0,
     );
 
-    let mut b_gaps: Vec<(f64, f64)> = easy_gaps
+    let b_gaps: Vec<(f64, f64)> = gap_specs
         .iter()
-        .map(|&(start, end)| (start + EASY_B_SHIFT, end + EASY_B_SHIFT))
+        .map(|&((start, end), shift)| (start + shift, end + shift))
         .collect();
-    b_gaps.push((hard_gap.0 + HARD_B_SHIFT, hard_gap.1 + HARD_B_SHIFT));
     write_stereo_sine_with_gaps(
         &path_b,
         SAMPLE_RATE,
@@ -1654,10 +1660,9 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
         16_000.0,
     );
 
-    let gaps: Vec<Gap> = easy_gaps
+    let gaps: Vec<Gap> = gap_specs
         .iter()
-        .map(|&(start, end)| make_gap_on_a(start, end, START_OFFSET))
-        .chain(std::iter::once(make_gap_on_a(hard_gap.0, hard_gap.1, START_OFFSET)))
+        .map(|&((start, end), _)| make_gap_on_a(start, end, START_OFFSET))
         .collect();
 
     let alignment = make_drift_alignment(
@@ -1674,35 +1679,33 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     );
 
     let opts = anchored_retry_drift_patch_options();
+    let interpolated_opts = PatchTestOptions {
+        fill_offset_mode: FillOffsetMode::Interpolated,
+        fill_mode: FillMode::Fit,
+        fill_border_search_secs: opts.fill_border_search_secs,
+        fill_align_margin_secs: opts.fill_align_margin_secs,
+        gap_signature_context_secs: opts.gap_signature_context_secs,
+        fill_length_slack_secs: opts.fill_length_slack_secs,
+        gap_end_extend_max_ms: opts.gap_end_extend_max_ms,
+        gap_end_extend_step_ms: opts.gap_end_extend_step_ms,
+        gap_end_extend_on_post_seam_fail: opts.gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail: opts.gap_start_extend_on_pre_seam_fail,
+        short_gap_one_strong_seam_fallback: false,
+        short_gap_mean_correlation_secs: opts.short_gap_mean_correlation_secs,
+        fill_absolute_floor: opts.fill_absolute_floor,
+        ..Default::default()
+    };
 
     let interpolated_only = run_patch(
-        patch_request_with_options(
-            report.clone(),
-            false,
-            5.0,
-            0.35,
-            PatchTestOptions {
-                fill_offset_mode: FillOffsetMode::Interpolated,
-                fill_mode: FillMode::Fit,
-                fill_border_search_secs: opts.fill_border_search_secs,
-                fill_align_margin_secs: opts.fill_align_margin_secs,
-                gap_signature_context_secs: opts.gap_signature_context_secs,
-                fill_length_slack_secs: opts.fill_length_slack_secs,
-                gap_end_extend_max_ms: opts.gap_end_extend_max_ms,
-                gap_end_extend_step_ms: opts.gap_end_extend_step_ms,
-                short_gap_one_strong_seam_fallback: false,
-                short_gap_mean_correlation_secs: opts.short_gap_mean_correlation_secs,
-                ..Default::default()
-            },
-        ),
+        patch_request_with_options(report.clone(), false, 5.0, DRIFT_MIN_CORRELATION, interpolated_opts),
         10,
     );
     assert_eq!(
-        interpolated_only.summary.patched_count, 2,
-        "easy gaps should patch under interpolated offset, got {:?}",
+        interpolated_only.summary.patched_count, 4,
+        "bridge gaps should patch under interpolated offset, hard gap should not, got {:?}",
         interpolated_only.summary.gaps
     );
-    match &interpolated_only.summary.gaps[2].status {
+    match &interpolated_only.summary.gaps[4].status {
         GapPatchStatus::Skipped { reason, .. } => {
             assert!(
                 matches!(
@@ -1710,18 +1713,18 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
                     GapPatchSkipReason::CorrelationBelowThreshold { .. }
                         | GapPatchSkipReason::BoundaryAlignmentFailed
                 ),
-                "hard gap should fail pass-1 offset with tight search, got {reason:?}"
+                "hard gap should fail when true B shift exceeds search window, got {reason:?}"
             );
         }
         other => panic!("expected hard gap to skip on interpolated-only pass, got {other:?}"),
     }
 
     let anchored = run_patch(
-        patch_request_with_options(report, false, 5.0, 0.35, opts),
+        patch_request_with_options(report, false, 5.0, DRIFT_MIN_CORRELATION, opts),
         10,
     );
     assert_eq!(
-        anchored.summary.patched_count, 3,
+        anchored.summary.patched_count, 5,
         "anchored_retry pass 2 should recover hard gap, got {:?}",
         anchored.summary.gaps
     );
@@ -1732,10 +1735,10 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
         .expect("expected pass-1 anchors to be exported");
     assert!(
         anchors.len() >= 2,
-        "expected anchors from easy gaps, got {anchors:?}"
+        "expected pass-1 anchors from gaps that patch inside the search window, got {anchors:?}"
     );
 
-    match &anchored.summary.gaps[2].status {
+    match &anchored.summary.gaps[4].status {
         GapPatchStatus::Patched {
             confidence: FillConfidence::High,
             ..
@@ -1744,6 +1747,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     }
 
     let pcm = expect_pcm(&anchored);
+    let hard_gap = gap_specs[4].0;
     let gap_rms = rms_region(
         &pcm.samples,
         SAMPLE_RATE,
@@ -1760,19 +1764,42 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
 #[test]
 fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_seam_distortion(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_END,
+        GAP_END + 0.25,
+        440.0,
+        16_000.0,
+        0.49,
+    );
+
     let report = GapReport {
         gaps: vec![default_gap()],
         ..make_report(
-            fixture.path_a,
-            fixture.path_b,
+            path_a,
+            path_b,
             stereo_identical_compat(SAMPLE_RATE),
         )
     };
 
     // Marginal tier is excluded from the anchor table.
-    let mut opts = anchored_retry_drift_patch_options();
+    let mut opts = fast_fit_patch_options();
     opts.fill_offset_mode = FillOffsetMode::AnchoredRetry;
+    opts.gap_end_extend_on_post_seam_fail = false;
+    opts.gap_start_extend_on_pre_seam_fail = false;
 
     let patched = run_patch(
         patch_request_with_options(report, false, 5.0, 0.999, opts),
@@ -1799,8 +1826,12 @@ fn patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1() {
         )
     };
 
+    let mut opts = fast_fit_patch_options();
+    opts.fill_offset_mode = FillOffsetMode::AnchoredRetry;
+    opts.fill_border_search_secs = 5.0;
+
     let patched = run_patch(
-        patch_request_with_options(report, false, 5.0, 0.35, anchored_retry_drift_patch_options()),
+        patch_request_with_options(report, false, 5.0, 0.35, opts),
         10,
     );
     assert_eq!(patched.summary.patched_count, 1);
@@ -1815,7 +1846,7 @@ fn patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1() {
         .summary
         .patch_anchors_used
         .as_ref()
-        .expect("high-confidence pass-1 success should export anchors");
+        .expect("pass-1 anchor table should export even when pass 2 has nothing to retry");
     assert_eq!(anchors.len(), 1);
 }
 
