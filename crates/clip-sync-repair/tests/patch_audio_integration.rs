@@ -23,6 +23,9 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration, build_f3_drone_integration, gap_report_times,
     structure_heavy_weights, structure_slide_secs, write_fixture_wavs,
 };
+use clip_sync_repair::test_support::patch_geometry_preview::{
+    preview_patch_geometry, PatchGeometryParams,
+};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -127,18 +130,32 @@ fn write_stereo_sine_with_inverted_region(
     writer.finalize().expect("finalize wav");
 }
 
-/// Blend sine samples toward inverted in `[distort_start_secs, distort_end_secs)`.
+/// Blend sine samples toward inverted in `[start_secs, end_secs)`.
 /// `mix_inverted = 0` matches A; `1` fully inverts (Pearson ≈ −1).
+struct SeamDistortionWindow {
+    start_secs: f64,
+    end_secs: f64,
+    mix_inverted: f32,
+}
+
+struct SineTone {
+    freq: f32,
+    amplitude: f32,
+}
+
 fn write_stereo_sine_with_seam_distortion(
     path: &Path,
     sample_rate: u32,
     total_secs: u32,
-    distort_start_secs: f64,
-    distort_end_secs: f64,
-    freq: f32,
-    amplitude: f32,
-    mix_inverted: f32,
+    distortion: SeamDistortionWindow,
+    tone: SineTone,
 ) {
+    let SeamDistortionWindow {
+        start_secs: distort_start_secs,
+        end_secs: distort_end_secs,
+        mix_inverted,
+    } = distortion;
+    let SineTone { freq, amplitude } = tone;
     let spec = WavSpec {
         channels: CHANNELS,
         sample_rate,
@@ -1599,11 +1616,15 @@ fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
         &path_b,
         SAMPLE_RATE,
         TOTAL_SECS,
-        GAP_END,
-        GAP_END + 0.25,
-        440.0,
-        16_000.0,
-        0.49,
+        SeamDistortionWindow {
+            start_secs: GAP_END,
+            end_secs: GAP_END + 0.25,
+            mix_inverted: 0.49,
+        },
+        SineTone {
+            freq: 440.0,
+            amplitude: 16_000.0,
+        },
     );
 
     let report = make_report(
@@ -2134,11 +2155,15 @@ fn patch_audio_anchored_retry_marginal_flag_without_anchors_skips_pass2() {
         &path_b,
         SAMPLE_RATE,
         TOTAL_SECS,
-        GAP_END,
-        GAP_END + 0.25,
-        440.0,
-        16_000.0,
-        0.49,
+        SeamDistortionWindow {
+            start_secs: GAP_END,
+            end_secs: GAP_END + 0.25,
+            mix_inverted: 0.49,
+        },
+        SineTone {
+            freq: 440.0,
+            amplitude: 16_000.0,
+        },
     );
 
     let report = GapReport {
@@ -2186,11 +2211,15 @@ fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
         &path_b,
         SAMPLE_RATE,
         TOTAL_SECS,
-        GAP_END,
-        GAP_END + 0.25,
-        440.0,
-        16_000.0,
-        0.49,
+        SeamDistortionWindow {
+            start_secs: GAP_END,
+            end_secs: GAP_END + 0.25,
+            mix_inverted: 0.49,
+        },
+        SineTone {
+            freq: 440.0,
+            amplitude: 16_000.0,
+        },
     );
 
     let report = GapReport {
@@ -2322,6 +2351,87 @@ fn assert_domain_energy_finds_truth(
         matched.alignment.start_frame,
         fixture.true_fill_start,
     );
+}
+
+fn energy_sig_geometry_params(options: &PatchTestOptions) -> PatchGeometryParams {
+    PatchGeometryParams {
+        fill_border_search_secs: options.fill_border_search_secs,
+        fill_align_margin_secs: options.fill_align_margin_secs,
+        gap_signature_context_secs: options.gap_signature_context_secs,
+        fill_length_slack_secs: options.fill_length_slack_secs,
+        gap_end_extend_max_ms: options.gap_end_extend_max_ms,
+        fill_offset_mode: options.fill_offset_mode,
+        fill_mode_fit: options.fill_mode == FillMode::Fit,
+        gap_signature_bin_ms: 50,
+    }
+}
+
+#[test]
+#[ignore = "diagnostic: cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture"]
+fn i1_f1_patch_diagnostic() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_integration(ENERGY_SIG_RATE, CHANNELS as usize);
+    let (a_start, a_end, b_start, b_end, _) = gap_report_times(&fixture);
+    let options = energy_sig_patch_options(GapSignatureMode::Energy);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let weights = structure_heavy_weights();
+
+    let preview = preview_patch_geometry(
+        &fixture,
+        &report.alignment,
+        a_start,
+        a_end,
+        b_start,
+        b_end,
+        &energy_sig_geometry_params(&options),
+    );
+    eprintln!("{}", preview.format_diagnostic(&fixture));
+
+    let domain = fixture
+        .unified_match(GapSignatureMode::Energy, weights)
+        .expect("domain oracle");
+    eprintln!(
+        "domain unified: start={} slide={:.6}s (truth slide {:.6}s)",
+        domain.alignment.start_frame,
+        structure_slide_secs(&fixture, domain.alignment.start_frame),
+        structure_slide_secs(&fixture, fixture.true_fill_start),
+    );
+
+    match preview.unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights) {
+        Some(haystack) => eprintln!(
+            "haystack unified: start={} slide={:.6}s (in haystack coords; full-B slide {:.6}s)",
+            haystack.alignment.start_frame,
+            (haystack.alignment.start_frame as i64 - preview.offset_nominal_start as i64) as f64
+                / ENERGY_SIG_RATE as f64,
+            structure_slide_secs(
+                &fixture,
+                haystack.alignment.start_frame
+                    + (preview.b_extract_start_secs * ENERGY_SIG_RATE as f64).round() as usize,
+            ),
+        ),
+        None => eprintln!("haystack unified: None (structure search failed on sliced B)"),
+    }
+
+    let result = run_patch(
+        patch_request_with_options(report, false, 0.25, 0.0, options),
+        10,
+    );
+    eprintln!(
+        "patch result: patched_count={} skipped_count={}",
+        result.summary.patched_count, result.summary.skipped_count,
+    );
+    match &result.summary.gaps[0].status {
+        GapPatchStatus::Skipped { reason } => eprintln!("patch skip reason: {reason:?}"),
+        GapPatchStatus::Patched {
+            align_adjustment_secs,
+            pre_correlation,
+            post_correlation,
+            ..
+        } => eprintln!(
+            "patch patched: slide={align_adjustment_secs:.6}s pre={pre_correlation} post={post_correlation}",
+        ),
+        other => eprintln!("patch status: {other:?}"),
+    }
 }
 
 #[test]

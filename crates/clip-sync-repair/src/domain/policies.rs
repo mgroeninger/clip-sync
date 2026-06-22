@@ -822,18 +822,31 @@ fn score_splice_post_seam_border(fill_mono: &[f64], a_post: &[f64], post_window:
     seam_pearson(&a_post[..w], &fill_mono[len - w..])
 }
 
+/// A-side border templates and seam window sizes for splice scoring on decoded fill PCM.
+pub struct BorderSeamTemplates<'a> {
+    pub a_pre: &'a [f64],
+    pub a_post: &'a [f64],
+    pub a_pre_ch: &'a [Vec<f64>],
+    pub a_post_ch: &'a [Vec<f64>],
+    pub pre_window: usize,
+    pub post_window: usize,
+}
+
 /// Like [`fill_splice_seam_correlations`] but scores each channel when stereo borders are present.
 pub fn fill_splice_seam_correlations_interleaved(
     fill_interleaved: &[i16],
     channels: usize,
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    pre_window: usize,
-    post_window: usize,
+    borders: &BorderSeamTemplates<'_>,
     ctx: SpliceSeamContext<'_>,
 ) -> (f64, f64) {
+    let BorderSeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        pre_window,
+        post_window,
+    } = *borders;
     let channels = channels.max(1);
     let fill_mono = interleaved_to_mono(fill_interleaved, channels);
     let use_channels = channels > 1

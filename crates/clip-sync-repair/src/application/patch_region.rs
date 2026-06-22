@@ -5,7 +5,8 @@ use clip_sync::MultiChannelPcm;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::{
     boundary_search_step_frames, classify_fill_waveform_confidence, fit_candidate_ranking_score,
-    match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFitWeights,
+    match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFillSearchInput,
+    UnifiedFitWeights,
     WaveformSeamContext,
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
@@ -363,16 +364,18 @@ fn evaluate_seam_gate_fit_candidate(
         waveform_weight: params.fill_fit_waveform_weight,
         nominal_bias_scale: params.fill_fit_nominal_bias_scale,
         late_start_penalty_scale: params.fill_fit_late_start_penalty_scale,
-        ..Default::default()
     };
     let structure_timeline = cache.structure_timeline(&signature);
+    let search_input = UnifiedFillSearchInput {
+        signature: &signature,
+        b_samples: params.b_samples,
+        channels: params.channels,
+        waveform: &waveform,
+        nominal_fill_start: offset_nominal_start,
+        nominal_fill_end: gap_end_in_haystack,
+    };
     let unified = match_gap_fill_unified_in_b_with_timeline(
-        &signature,
-        params.b_samples,
-        params.channels,
-        &waveform,
-        offset_nominal_start,
-        gap_end_in_haystack,
+        &search_input,
         &structure_params,
         weights,
         &structure_timeline,

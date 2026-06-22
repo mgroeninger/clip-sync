@@ -775,10 +775,12 @@ fn patch_audio_request_from_repair(
 fn patch_audio_request_for_corpus_timing(
     report: crate::domain::GapReport,
 ) -> crate::application::PatchAudioRequest {
-    let mut repair = crate::infrastructure::config::RepairConfig::default();
-    repair.fill_border_search_secs = 5.0;
-    repair.gap_end_extend_on_post_seam_fail = false;
-    repair.gap_start_extend_on_pre_seam_fail = false;
+    let repair = crate::infrastructure::config::RepairConfig {
+        fill_border_search_secs: 5.0,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        ..Default::default()
+    };
     patch_audio_request_from_repair(report, &repair)
 }
 

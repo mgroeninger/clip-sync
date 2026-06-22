@@ -191,12 +191,14 @@ impl EnergySignatureFixture {
             repeat_penalty_weight: 0.0,
         };
         match_gap_fill_unified_in_b(
-            &signature,
-            &self.b_samples,
-            self.channels,
-            &waveform,
-            self.nominal_fill_start,
-            self.nominal_fill_end,
+            &crate::domain::gap_fill_fit::UnifiedFillSearchInput {
+                signature: &signature,
+                b_samples: &self.b_samples,
+                channels: self.channels,
+                waveform: &waveform,
+                nominal_fill_start: self.nominal_fill_start,
+                nominal_fill_end: self.nominal_fill_end,
+            },
             &self.structure_params,
             weights,
         )
@@ -242,13 +244,10 @@ fn ramp_amp(frame: usize, ramp_end: usize, step: i32, cap: i16) -> i16 {
     if frame >= ramp_end {
         return 0;
     }
-    ((frame as i32 * step).min(i32::from(cap)).max(0)) as i16
+    ((frame as i32 * step).clamp(0, i32::from(cap))) as i16
 }
 
-fn fill_ramp_gap(
-    samples: &mut Vec<i16>,
-    channels: usize,
-    total_frames: usize,
+struct RampGapFillSpec {
     ramp_end: usize,
     gap_start: usize,
     gap_end: usize,
@@ -256,7 +255,23 @@ fn fill_ramp_gap(
     ramp_step: i32,
     ramp_delay: usize,
     post_rise_frames: usize,
+}
+
+fn fill_ramp_gap(
+    samples: &mut Vec<i16>,
+    channels: usize,
+    total_frames: usize,
+    spec: &RampGapFillSpec,
 ) {
+    let RampGapFillSpec {
+        ramp_end,
+        gap_start,
+        gap_end,
+        post_amp,
+        ramp_step,
+        ramp_delay,
+        post_rise_frames,
+    } = *spec;
     for frame in 0..total_frames.min(gap_end) {
         let amp = if frame >= gap_start {
             0
@@ -306,7 +321,7 @@ pub fn build_f1() -> EnergySignatureFixture {
 
     let mut b = vec![0i16; total_frames * channels];
     for f in 0..70 {
-        let amp = (((f as i32).saturating_sub(15) * 150).min(8_000).max(0)) as i16;
+        let amp = ((f as i32).saturating_sub(15) * 150).clamp(0, 8_000) as i16;
         write_frame(&mut b, channels, f, amp);
     }
     for f in 70..gap_end + shift_frames {
@@ -380,9 +395,9 @@ pub fn build_f2() -> EnergySignatureFixture {
             } else {
                 post_amp
             }
-        } else if frame >= pause2_start {
-            0
-        } else if frame >= pause1_start {
+        } else if (pause1_start..pause1_end).contains(&frame)
+            || (pause2_start..pause2_end).contains(&frame)
+        {
             0
         } else {
             ramp_amp(frame, pause1_start - ramp_len, 200, post_amp)
@@ -553,13 +568,15 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
         &mut a,
         ch,
         total_frames,
-        ramp_end,
-        gap_start,
-        gap_end,
-        post_amp,
-        150,
-        0,
-        scaled_usize(12, scale).max(1),
+        &RampGapFillSpec {
+            ramp_end,
+            gap_start,
+            gap_end,
+            post_amp,
+            ramp_step: 150,
+            ramp_delay: 0,
+            post_rise_frames: scaled_usize(12, scale).max(1),
+        },
     );
 
     let mut b = Vec::new();
@@ -567,13 +584,15 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
         &mut b,
         ch,
         total_frames,
-        ramp_end + shift_frames,
-        gap_start + shift_frames,
-        gap_end + shift_frames,
-        post_amp,
-        150,
-        shift_frames,
-        scaled_usize(12, scale).max(1),
+        &RampGapFillSpec {
+            ramp_end: ramp_end + shift_frames,
+            gap_start: gap_start + shift_frames,
+            gap_end: gap_end + shift_frames,
+            post_amp,
+            ramp_step: 150,
+            ramp_delay: shift_frames,
+            post_rise_frames: scaled_usize(12, scale).max(1),
+        },
     );
 
     let structure_params = StructureMatchParams {
@@ -636,9 +655,9 @@ fn build_f2_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
             } else {
                 post_amp
             }
-        } else if frame >= pause2_start {
-            0
-        } else if frame >= pause1_start {
+        } else if (pause1_start..pause1_end).contains(&frame)
+            || (pause2_start..pause2_end).contains(&frame)
+        {
             0
         } else {
             ramp_amp(frame, pause1_start - ramp_len, 200, post_amp)
@@ -747,13 +766,15 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
         &mut a,
         ch,
         total_frames,
-        ramp_end,
-        silence_start,
-        gap_end,
-        post_amp,
-        150,
-        0,
-        bin_frames.max(1),
+        &RampGapFillSpec {
+            ramp_end,
+            gap_start: silence_start,
+            gap_end,
+            post_amp,
+            ramp_step: 150,
+            ramp_delay: 0,
+            post_rise_frames: bin_frames.max(1),
+        },
     );
 
     let mut b = Vec::new();
@@ -761,13 +782,15 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
         &mut b,
         ch,
         total_frames,
-        ramp_end + shift_frames,
-        silence_start + shift_frames,
-        gap_end + shift_frames,
-        post_amp,
-        150,
-        shift_frames,
-        bin_frames.max(1),
+        &RampGapFillSpec {
+            ramp_end: ramp_end + shift_frames,
+            gap_start: silence_start + shift_frames,
+            gap_end: gap_end + shift_frames,
+            post_amp,
+            ramp_step: 150,
+            ramp_delay: shift_frames,
+            post_rise_frames: bin_frames.max(1),
+        },
     );
 
     let reported_gap_frames = gap_end.saturating_sub(silence_start);

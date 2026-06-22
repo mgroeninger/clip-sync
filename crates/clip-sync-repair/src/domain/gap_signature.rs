@@ -188,11 +188,8 @@ pub(crate) fn snap_fill_to_gap(
     timeline: &StructureTimeline<'_>,
     params: &StructureMatchParams,
 ) {
-    match (signature, timeline) {
-        (GapSignature::Bool(sig), StructureTimeline::Bool(timeline)) => {
-            gap_structure::snap_structure_fill_to_gap(alignment, sig, timeline, params);
-        }
-        _ => {}
+    if let (GapSignature::Bool(sig), StructureTimeline::Bool(timeline)) = (signature, timeline) {
+        gap_structure::snap_structure_fill_to_gap(alignment, sig, timeline, params);
     }
 }
 
@@ -221,12 +218,9 @@ mod tests {
 
     #[test]
     fn auto_falls_back_to_bool_on_steady_drone() {
-        let mut samples = vec![0i16; 400];
-        for i in 0..400 {
-            samples[i] = 6_000;
-        }
-        for i in 100..120 {
-            samples[i] = 0;
+        let mut samples = vec![6_000i16; 400];
+        for sample in samples.iter_mut().take(120).skip(100) {
+            *sample = 0;
         }
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
         assert!(matches!(sig, GapSignature::Bool(_)));

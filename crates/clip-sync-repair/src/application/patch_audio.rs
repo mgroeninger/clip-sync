@@ -311,13 +311,17 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
             let (patch, outcome) = prepare_region_patch(
                 self.progress,
-                &b_samples_full,
-                &a_pcm,
+                &RegionPatchMedia {
+                    b_samples_full: &b_samples_full,
+                    a_pcm: &a_pcm,
+                },
                 region,
                 &request,
                 &region_ctx,
-                AnchoredRetryPass::First,
-                None,
+                RegionPatchOpts {
+                    anchored_retry_pass: AnchoredRetryPass::First,
+                    patch_anchors: None,
+                },
             );
             record_patch_gap_span(&gap_span, &outcome);
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
@@ -348,14 +352,18 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 .entered();
                 run_anchored_retry_pass(
                     self.progress,
-                    &mut patches,
-                    &mut patch_slot_by_gap,
-                    &mut region_results,
+                    &mut AnchoredRetryState {
+                        patches: &mut patches,
+                        patch_slot_by_gap: &mut patch_slot_by_gap,
+                        region_results: &mut region_results,
+                    },
                     &plan.regions,
                     &request,
                     &region_ctx,
-                    &b_samples_full,
-                    &a_pcm,
+                    &RegionPatchMedia {
+                        b_samples_full: &b_samples_full,
+                        a_pcm: &a_pcm,
+                    },
                     &table,
                 );
                 Some(table.to_reports())
@@ -499,9 +507,7 @@ fn anchor_search_prior_for_gap(
     request: &PatchAudioRequest,
     patch_anchors: Option<&PatchAnchorTable>,
     anchored_retry_pass: AnchoredRetryPass,
-    gap_time_on_a: f64,
-    a_start_secs: f64,
-    _gap_offset_secs: f64,
+    region: &FillRegion,
     b_extract_start_secs: f64,
     search_radius_frames: usize,
     sample_rate: u32,
@@ -515,12 +521,13 @@ fn anchor_search_prior_for_gap(
     {
         return None;
     }
+    let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
     let predicted_offset = interpolate_anchored_offset_secs(
         &request.report.alignment,
         gap_time_on_a,
         table,
     )?;
-    let predicted_b_start = a_start_secs + predicted_offset;
+    let predicted_b_start = region.a_start_secs + predicted_offset;
     let predicted_start_frame = ((predicted_b_start - b_extract_start_secs) * sample_rate as f64)
         .round()
         .max(0.0) as usize;
@@ -636,21 +643,34 @@ fn store_anchored_retry_patch(
     }
 }
 
+struct AnchoredRetryState<'a> {
+    patches: &'a mut Vec<RegionPatch>,
+    patch_slot_by_gap: &'a mut [Option<usize>],
+    region_results: &'a mut [(f64, f64, RegionPatchOutcome)],
+}
+
+struct RegionPatchMedia<'a> {
+    b_samples_full: &'a [i16],
+    a_pcm: &'a MultiChannelPcm,
+}
+
+struct RegionPatchOpts<'a> {
+    anchored_retry_pass: AnchoredRetryPass,
+    patch_anchors: Option<&'a PatchAnchorTable>,
+}
+
 fn run_anchored_retry_pass(
     progress: &dyn ProgressReporter,
-    patches: &mut Vec<RegionPatch>,
-    patch_slot_by_gap: &mut [Option<usize>],
-    region_results: &mut [(f64, f64, RegionPatchOutcome)],
+    state: &mut AnchoredRetryState<'_>,
     regions: &[FillRegion],
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
-    b_samples_full: &[i16],
-    a_pcm: &MultiChannelPcm,
+    media: &RegionPatchMedia<'_>,
     table: &PatchAnchorTable,
 ) {
     let retry_marginal =
         request.fill_anchor_retry_marginal && request.fill_mode == FillMode::Fit;
-    let retry_indices = anchored_retry_gap_indices(region_results, retry_marginal);
+    let retry_indices = anchored_retry_gap_indices(state.region_results, retry_marginal);
     if retry_indices.is_empty() {
         return;
     }
@@ -664,7 +684,7 @@ fn run_anchored_retry_pass(
     for index in retry_indices {
         let region = &regions[index];
         let gap_num = index + 1;
-        let prior = &region_results[index].2;
+        let prior = &state.region_results[index].2;
         let retry_label = if matches!(
             prior,
             RegionPatchOutcome::Patched {
@@ -696,79 +716,99 @@ fn run_anchored_retry_pass(
         let _gap_enter = gap_span.enter();
         let (patch, outcome) = prepare_region_patch(
             progress,
-            b_samples_full,
-            a_pcm,
+            media,
             region,
             request,
             ctx,
-            AnchoredRetryPass::Second,
-            Some(&table),
+            RegionPatchOpts {
+                anchored_retry_pass: AnchoredRetryPass::Second,
+                patch_anchors: Some(table),
+            },
         );
         record_patch_gap_span(&gap_span, &outcome);
         if should_apply_anchored_retry_outcome(prior, &outcome) {
-            region_results[index].2 = outcome;
+            state.region_results[index].2 = outcome;
             if let Some(patch) = patch {
-                store_anchored_retry_patch(patches, patch_slot_by_gap, index, patch);
+                store_anchored_retry_patch(
+                    state.patches,
+                    state.patch_slot_by_gap,
+                    index,
+                    patch,
+                );
             }
         }
     }
 }
 
+/// Per-gap A/B timeline fields for verbose fill planning logs.
+pub(crate) struct GapFillPlanLog<'a> {
+    pub scan_a_start_secs: f64,
+    pub scan_a_end_secs: f64,
+    pub refined_a_start_secs: f64,
+    pub refined_a_end_secs: f64,
+    pub gap_offset_secs: f64,
+    pub fill_offset_mode: FillOffsetMode,
+    pub mapped_b_start_secs: f64,
+    pub mapped_b_end_secs: f64,
+    pub b_search_start_secs: f64,
+    pub b_search_end_secs: f64,
+    pub signature_mode_label: &'a str,
+}
+
+/// B fill placement and slide metadata for verbose result logs.
+pub(crate) struct GapFillResultLog {
+    pub b_search_start_secs: f64,
+    pub sample_rate: u32,
+    pub channels: usize,
+    pub fill_start_sample: usize,
+    pub fill_end_sample: usize,
+    pub structure_slide_secs: f64,
+    pub waveform_slide_secs: f64,
+}
+
 /// Verbose stderr lines: per-gap A/B timeline used for structure search and fill.
-pub(crate) fn format_gap_fill_plan_lines(
-    scan_a_start_secs: f64,
-    scan_a_end_secs: f64,
-    refined_a_start_secs: f64,
-    refined_a_end_secs: f64,
-    gap_offset_secs: f64,
-    fill_offset_mode: FillOffsetMode,
-    mapped_b_start_secs: f64,
-    mapped_b_end_secs: f64,
-    b_search_start_secs: f64,
-    b_search_end_secs: f64,
-    signature_mode_label: &str,
-) -> Vec<String> {
+pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<String> {
     let mut lines = vec![format!(
         "           fill offset {:+.3}s ({})",
-        gap_offset_secs,
-        fill_offset_mode_label(fill_offset_mode),
+        plan.gap_offset_secs,
+        fill_offset_mode_label(plan.fill_offset_mode),
     )];
-    if (refined_a_start_secs - scan_a_start_secs).abs() > 0.001
-        || (refined_a_end_secs - scan_a_end_secs).abs() > 0.001
+    if (plan.refined_a_start_secs - plan.scan_a_start_secs).abs() > 0.001
+        || (plan.refined_a_end_secs - plan.scan_a_end_secs).abs() > 0.001
     {
         lines.push(format!(
             "           A gap (refined): {}",
-            format_time_range(refined_a_start_secs, refined_a_end_secs)
+            format_time_range(plan.refined_a_start_secs, plan.refined_a_end_secs)
         ));
     }
     lines.push(format!(
         "           B gap (mapped): {}",
-        format_time_range(mapped_b_start_secs, mapped_b_end_secs)
+        format_time_range(plan.mapped_b_start_secs, plan.mapped_b_end_secs)
     ));
     lines.push(format!(
         "           B search window: {}",
-        format_time_range(b_search_start_secs, b_search_end_secs)
+        format_time_range(plan.b_search_start_secs, plan.b_search_end_secs)
     ));
-    lines.push(format!("           signature_mode={signature_mode_label}"));
+    lines.push(format!(
+        "           signature_mode={}",
+        plan.signature_mode_label
+    ));
     lines
 }
 
-pub(crate) fn format_gap_fill_result_line(
-    b_search_start_secs: f64,
-    sample_rate: u32,
-    channels: usize,
-    fill_start_sample: usize,
-    fill_end_sample: usize,
-    structure_slide_secs: f64,
-    waveform_slide_secs: f64,
-) -> String {
-    let ch = channels.max(1);
-    let to_secs = |sample: usize| sample as f64 / ch as f64 / f64::from(sample_rate);
-    let fill_start = b_search_start_secs + to_secs(fill_start_sample);
-    let fill_end = b_search_start_secs + to_secs(fill_end_sample);
-    let mut slide = format!("structure slide {:+.3}s", structure_slide_secs);
-    if waveform_slide_secs.abs() > 0.000_5 {
-        slide.push_str(&format!(", waveform slide {:+.3}s", waveform_slide_secs));
+pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
+    let ch = result.channels.max(1);
+    let to_secs = |sample: usize| {
+        sample as f64 / ch as f64 / f64::from(result.sample_rate)
+    };
+    let fill_start = result.b_search_start_secs + to_secs(result.fill_start_sample);
+    let fill_end = result.b_search_start_secs + to_secs(result.fill_end_sample);
+    let mut slide = format!("structure slide {:+.3}s", result.structure_slide_secs);
+    if result.waveform_slide_secs.abs() > 0.000_5 {
+        slide.push_str(&format!(
+            ", waveform slide {:+.3}s",
+            result.waveform_slide_secs
+        ));
     }
     format!(
         "           B fill source: {} ({slide})",
@@ -776,56 +816,14 @@ pub(crate) fn format_gap_fill_result_line(
     )
 }
 
-fn log_gap_fill_plan_verbose(
-    progress: &dyn ProgressReporter,
-    scan_a_start_secs: f64,
-    scan_a_end_secs: f64,
-    refined_a_start_secs: f64,
-    refined_a_end_secs: f64,
-    gap_offset_secs: f64,
-    fill_offset_mode: FillOffsetMode,
-    mapped_b_start_secs: f64,
-    mapped_b_end_secs: f64,
-    b_search_start_secs: f64,
-    b_search_end_secs: f64,
-    signature_mode_label: &str,
-) {
-    for line in format_gap_fill_plan_lines(
-        scan_a_start_secs,
-        scan_a_end_secs,
-        refined_a_start_secs,
-        refined_a_end_secs,
-        gap_offset_secs,
-        fill_offset_mode,
-        mapped_b_start_secs,
-        mapped_b_end_secs,
-        b_search_start_secs,
-        b_search_end_secs,
-        signature_mode_label,
-    ) {
+fn log_gap_fill_plan_verbose(progress: &dyn ProgressReporter, plan: &GapFillPlanLog<'_>) {
+    for line in format_gap_fill_plan_lines(plan) {
         progress.phase_verbose(&line);
     }
 }
 
-fn log_gap_fill_result_verbose(
-    progress: &dyn ProgressReporter,
-    b_search_start_secs: f64,
-    sample_rate: u32,
-    channels: usize,
-    fill_start_sample: usize,
-    fill_end_sample: usize,
-    structure_slide_secs: f64,
-    waveform_slide_secs: f64,
-) {
-    progress.phase_verbose(&format_gap_fill_result_line(
-        b_search_start_secs,
-        sample_rate,
-        channels,
-        fill_start_sample,
-        fill_end_sample,
-        structure_slide_secs,
-        waveform_slide_secs,
-    ));
+fn log_gap_fill_result_verbose(progress: &dyn ProgressReporter, result: &GapFillResultLog) {
+    progress.phase_verbose(&format_gap_fill_result_line(result));
 }
 
 /// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
@@ -991,14 +989,20 @@ fn seam_failure_outcome(
 
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
-    b_samples_full: &[i16],
-    a_pcm: &MultiChannelPcm,
+    media: &RegionPatchMedia<'_>,
     region: &FillRegion,
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
-    anchored_retry_pass: AnchoredRetryPass,
-    patch_anchors: Option<&PatchAnchorTable>,
+    opts: RegionPatchOpts<'_>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    let RegionPatchMedia {
+        b_samples_full,
+        a_pcm,
+    } = *media;
+    let RegionPatchOpts {
+        anchored_retry_pass,
+        patch_anchors,
+    } = opts;
     let &RegionPatchContext {
         channels,
         sample_rate,
@@ -1142,17 +1146,19 @@ fn prepare_region_patch(
 
     log_gap_fill_plan_verbose(
         progress,
-        region.a_start_secs,
-        region.a_end_secs,
-        refined_a_start_secs,
-        refined_a_end_secs,
-        gap_offset_secs,
-        fill_offset_mode,
-        refined_b_start_secs,
-        refined_b_end_secs,
-        b_extract_start_secs,
-        b_extract_end_secs,
-        signature_mode_label,
+        &GapFillPlanLog {
+            scan_a_start_secs: region.a_start_secs,
+            scan_a_end_secs: region.a_end_secs,
+            refined_a_start_secs,
+            refined_a_end_secs,
+            gap_offset_secs,
+            fill_offset_mode,
+            mapped_b_start_secs: refined_b_start_secs,
+            mapped_b_end_secs: refined_b_end_secs,
+            b_search_start_secs: b_extract_start_secs,
+            b_search_end_secs: b_extract_end_secs,
+            signature_mode_label,
+        },
     );
 
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
@@ -1247,9 +1253,7 @@ fn prepare_region_patch(
             request,
             patch_anchors,
             anchored_retry_pass,
-            gap_time_on_a,
-            region.a_start_secs,
-            gap_offset_secs,
+            region,
             b_extract_start_secs,
             search_radius_frames,
             sample_rate,
@@ -1398,17 +1402,20 @@ fn prepare_region_patch(
         channels,
     };
     let b_fill = if request.fill_mode == FillMode::Fit {
+        let borders = policies::BorderSeamTemplates {
+            a_pre: &a_pre_border,
+            a_post: &a_post_border,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            pre_window: pre_gate_frames,
+            post_window: post_gate_frames,
+        };
         fit_fill_length_for_gap(
             &b_fill_raw,
             b_extension,
             channels,
             gap_frames,
-            &a_pre_border,
-            &a_post_border,
-            &a_pre_ch,
-            &a_post_ch,
-            pre_gate_frames,
-            post_gate_frames,
+            &borders,
             repeat_window_frames,
             seam_ctx,
         )
@@ -1445,13 +1452,15 @@ fn prepare_region_patch(
 
     log_gap_fill_result_verbose(
         progress,
-        b_extract_start_secs,
-        sample_rate,
-        channels,
-        fill_start_sample,
-        b_fill_end_sample,
-        structure_slide_secs,
-        waveform_slide_secs,
+        &GapFillResultLog {
+            b_search_start_secs: b_extract_start_secs,
+            sample_rate,
+            channels,
+            fill_start_sample,
+            fill_end_sample: b_fill_end_sample,
+            structure_slide_secs,
+            waveform_slide_secs,
+        },
     );
 
     let (final_pre, final_post, final_confidence) = if patched_structure_trusted {
@@ -1460,12 +1469,14 @@ fn prepare_region_patch(
         let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
             &b_fill,
             channels,
-            &a_pre_border,
-            &a_post_border,
-            &a_pre_ch,
-            &a_post_ch,
-            pre_gate_frames,
-            post_gate_frames,
+            &policies::BorderSeamTemplates {
+                a_pre: &a_pre_border,
+                a_post: &a_post_border,
+                a_pre_ch: &a_pre_ch,
+                a_post_ch: &a_post_ch,
+                pre_window: pre_gate_frames,
+                post_window: post_gate_frames,
+            },
             seam_ctx,
         );
         let gate_min = report_pre.min(report_post);
@@ -1659,7 +1670,7 @@ fn splice_into_a(
 mod tests {
     use super::{
         anchored_retry_gap_indices, format_gap_fill_plan_lines, format_gap_fill_result_line,
-        should_apply_anchored_retry_outcome, RegionPatchOutcome,
+        should_apply_anchored_retry_outcome, GapFillPlanLog, GapFillResultLog, RegionPatchOutcome,
     };
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
@@ -1767,19 +1778,19 @@ mod tests {
 
     #[test]
     fn format_gap_fill_plan_lines_shows_mapped_and_search_windows() {
-        let lines = format_gap_fill_plan_lines(
-            0.0,
-            3.0,
-            0.1,
-            2.9,
-            61.199,
-            FillOffsetMode::Interpolated,
-            61.299,
-            64.099,
-            50.0,
-            80.0,
-            "energy",
-        );
+        let lines = format_gap_fill_plan_lines(&GapFillPlanLog {
+            scan_a_start_secs: 0.0,
+            scan_a_end_secs: 3.0,
+            refined_a_start_secs: 0.1,
+            refined_a_end_secs: 2.9,
+            gap_offset_secs: 61.199,
+            fill_offset_mode: FillOffsetMode::Interpolated,
+            mapped_b_start_secs: 61.299,
+            mapped_b_end_secs: 64.099,
+            b_search_start_secs: 50.0,
+            b_search_end_secs: 80.0,
+            signature_mode_label: "energy",
+        });
         assert!(lines.iter().any(|l| l.contains("fill offset +61.199s (interpolated)")));
         assert!(lines.iter().any(|l| l.contains("A gap (refined):")));
         assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));
@@ -1789,9 +1800,15 @@ mod tests {
 
     #[test]
     fn format_gap_fill_result_line_converts_sample_offsets_to_timeline() {
-        let line = format_gap_fill_result_line(
-            50.0, 48_000, 6, 48_000 * 6, 96_000 * 6, -0.02, 0.01,
-        );
+        let line = format_gap_fill_result_line(&GapFillResultLog {
+            b_search_start_secs: 50.0,
+            sample_rate: 48_000,
+            channels: 6,
+            fill_start_sample: 48_000 * 6,
+            fill_end_sample: 96_000 * 6,
+            structure_slide_secs: -0.02,
+            waveform_slide_secs: 0.01,
+        });
         assert!(line.contains("B fill source:"));
         assert!(line.contains("structure slide -0.020s"));
         assert!(line.contains("waveform slide +0.010s"));

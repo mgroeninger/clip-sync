@@ -144,7 +144,14 @@ On F1/F2 energy fixtures the domain oracle reliably finds the true offset. The p
 
 I1/I3 therefore treat the domain oracle as the primary structure-tier proof; patch slide is asserted only when the seam gate accepts the fill. Closing the patch-path gap (haystack geometry, refinement, waveform borders) is follow-up, not a Phase 0/2 blocker.
 
-#### Phase 2-only acceptance
+**Diagnostic test:** `i1_f1_patch_diagnostic` (ignored) prints fixture vs refined frames, haystack bounds, domain vs haystack-slice unified match, and patch skip reason:
+
+```powershell
+cargo test -p clip-sync-repair i1_f1_patch_diagnostic -- --ignored --nocapture
+```
+
+Helper: `test_support/patch_geometry_preview.rs` (`preview_patch_geometry`, `unified_match_on_haystack`).
+
 
 | ID | Item | Assertion | Status |
 |----|------|-----------|--------|

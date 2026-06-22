@@ -42,7 +42,7 @@ pub fn energy_bins(
                 .map(|&s| f64::from(s))
                 .sum::<f64>()
                 / channels as f64;
-            sum_sq += f64::from(mono) * f64::from(mono);
+            sum_sq += mono * mono;
             count += 1;
         }
         let rms = if count == 0 {
@@ -306,7 +306,7 @@ mod tests {
 
         let mut b_shifted = vec![0i16; 200];
         for f in 0..70 {
-            let amp = (((f as i32).saturating_sub(15) * 150).min(8_000).max(0)) as i16;
+            let amp = ((f as i32).saturating_sub(15) * 150).clamp(0, 8_000) as i16;
             write_frame(&mut b_shifted, channels, f, amp);
         }
         for f in 70..gap_end + 15 {

@@ -253,10 +253,12 @@ fn fine_polish_structure_start(
         let mut score = combined_structure_score(
             pre_score,
             post_score,
-            candidate,
-            candidate_end,
-            nominal_start,
-            nominal_end,
+            FillBracketPlacement {
+                start: candidate,
+                end: candidate_end,
+                nominal_start,
+                nominal_end,
+            },
             params,
             1.0,
         );
@@ -288,7 +290,7 @@ pub(crate) fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize
 /// `max_fill_align_adjustment_secs` controls B waveform placement elsewhere; using that
 /// value here caused multi-second exhaustive loops per fit candidate.
 pub(crate) fn structure_fine_polish_frames(bin_frames: usize) -> usize {
-    bin_frames.max(1).min(128)
+    bin_frames.clamp(1, 128)
 }
 
 fn search_best_fill_start(
@@ -438,16 +440,28 @@ fn search_best_fill_end(
     Some((best_end, best_post))
 }
 
+/// Start/end frame bracket for a B-side fill candidate (actual + nominal).
+#[derive(Debug, Clone, Copy)]
+pub struct FillBracketPlacement {
+    pub start: usize,
+    pub end: usize,
+    pub nominal_start: usize,
+    pub nominal_end: usize,
+}
+
 pub(crate) fn combined_structure_score(
     pre_score: f64,
     post_score: f64,
-    start: usize,
-    end: usize,
-    nominal_start: usize,
-    nominal_end: usize,
+    placement: FillBracketPlacement,
     params: &StructureMatchParams,
     nominal_bias_scale: f64,
 ) -> f64 {
+    let FillBracketPlacement {
+        start,
+        end,
+        nominal_start,
+        nominal_end,
+    } = placement;
     let fill_len = end.saturating_sub(start);
     let len_penalty = LENGTH_MISMATCH_PENALTY
         * fill_len.abs_diff(params.gap_frames) as f64 / params.gap_frames.max(1) as f64;

@@ -8,12 +8,13 @@ use crate::domain::gap_signature::{
 };
 use crate::domain::gap_structure::{
     self, combined_structure_score, prefer_end, prefer_start, search_coarse_step,
-    GapContextSignature, StructureMatchParams,
+    FillBracketPlacement, GapContextSignature, StructureMatchParams,
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::{
-    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved, interleaved_to_mono, FillAlignment, SeamPlacement,
-    SeamTemplates, SpliceSeamContext,
+    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved,
+    interleaved_to_mono, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
+    SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -135,15 +136,46 @@ pub struct WaveformSeamContext<'a> {
     pub repeat_penalty_weight: f64,
 }
 
+/// B-side haystack and nominal bracket for unified structure+waveform fill search.
+pub struct UnifiedFillSearchInput<'a> {
+    pub signature: &'a GapSignature,
+    pub b_samples: &'a [i16],
+    pub channels: usize,
+    pub waveform: &'a WaveformSeamContext<'a>,
+    pub nominal_fill_start: usize,
+    pub nominal_fill_end: usize,
+}
+
+struct UnifiedSearchCtx<'a> {
+    timeline: &'a StructureTimeline<'a>,
+    waveform: &'a WaveformSeamContext<'a>,
+    params: &'a StructureMatchParams,
+    weights: UnifiedFitWeights,
+    anchor_prior: Option<AnchorSearchPrior>,
+    nominal_start: usize,
+    nominal_end: usize,
+}
+
+fn fill_bracket_placement(
+    start: usize,
+    end: usize,
+    nominal_start: usize,
+    nominal_end: usize,
+) -> FillBracketPlacement {
+    FillBracketPlacement {
+        start,
+        end,
+        nominal_start,
+        nominal_end,
+    }
+}
+
 /// Combined objective for one B fill bracket candidate.
 pub fn unified_fit_score(
     structure_pre: f64,
     structure_post: f64,
     waveform_min: f64,
-    start: usize,
-    end: usize,
-    nominal_start: usize,
-    nominal_end: usize,
+    placement: FillBracketPlacement,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
 ) -> f64 {
@@ -157,17 +189,15 @@ pub fn unified_fit_score(
     let structure_combined = combined_structure_score(
         structure_pre,
         structure_post,
-        start,
-        end,
-        nominal_start,
-        nominal_end,
+        placement,
         params,
         weights.nominal_bias_scale,
     );
     let mut score =
         weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
-    if start > nominal_start {
-        let late_frac = (start - nominal_start) as f64 / params.gap_frames.max(1) as f64;
+    if placement.start > placement.nominal_start {
+        let late_frac = (placement.start - placement.nominal_start) as f64
+            / params.gap_frames.max(1) as f64;
         score -= LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
     }
     score
@@ -202,36 +232,34 @@ fn repeat_penalty_at_placement(
     }
 }
 
-fn unified_fit_score_with_repeat(
+struct UnifiedFitCandidate {
     structure_pre: f64,
     structure_post: f64,
     wave_min: f64,
-    start: usize,
-    end: usize,
-    nominal_start: usize,
-    nominal_end: usize,
+    placement: FillBracketPlacement,
+}
+
+fn unified_fit_score_with_repeat(
+    candidate: UnifiedFitCandidate,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
     waveform: &WaveformSeamContext<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
 ) -> f64 {
     let mut score = unified_fit_score(
-        structure_pre,
-        structure_post,
-        wave_min,
-        start,
-        end,
-        nominal_start,
-        nominal_end,
+        candidate.structure_pre,
+        candidate.structure_post,
+        candidate.wave_min,
+        candidate.placement,
         params,
         weights,
     );
     if let Some(prior) = anchor_prior {
-        score -= prior.penalty_at_start(start);
+        score -= prior.penalty_at_start(candidate.placement.start);
     }
     if score.is_finite() {
         score -= waveform.repeat_penalty_weight
-            * repeat_penalty_at_placement(waveform, start, wave_min);
+            * repeat_penalty_at_placement(waveform, candidate.placement.start, candidate.wave_min);
     }
     score
 }
@@ -268,23 +296,18 @@ pub struct UnifiedFillMatch {
 
 /// Locate a B fill bracket by jointly ranking structure and waveform seam scores.
 pub fn match_gap_fill_unified_in_b(
-    signature: &GapSignature,
-    b_samples: &[i16],
-    channels: usize,
-    waveform: &WaveformSeamContext<'_>,
-    nominal_fill_start: usize,
-    nominal_fill_end: usize,
+    input: &UnifiedFillSearchInput<'_>,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
 ) -> Option<UnifiedFillMatch> {
-    let channels = channels.max(1);
-    let total_frames = b_samples.len() / channels;
+    let channels = input.channels.max(1);
+    let total_frames = input.b_samples.len() / channels;
     let bool_timeline;
     let energy_timeline;
-    let structure_timeline = match signature {
+    let structure_timeline = match input.signature {
         GapSignature::Bool(_) => {
             bool_timeline = gap_structure::ActivityTimeline::build(
-                b_samples,
+                input.b_samples,
                 channels,
                 total_frames,
                 params.bin_frames,
@@ -295,7 +318,7 @@ pub fn match_gap_fill_unified_in_b(
         }
         GapSignature::Energy(_) => {
             energy_timeline = crate::domain::gap_energy::EnergyTimeline::build(
-                b_samples,
+                input.b_samples,
                 channels,
                 total_frames,
                 params.bin_frames,
@@ -306,12 +329,7 @@ pub fn match_gap_fill_unified_in_b(
         }
     };
     match_gap_fill_unified_in_b_with_timeline(
-        signature,
-        b_samples,
-        channels,
-        waveform,
-        nominal_fill_start,
-        nominal_fill_end,
+        input,
         params,
         weights,
         &structure_timeline,
@@ -321,28 +339,23 @@ pub fn match_gap_fill_unified_in_b(
 
 /// Like [`match_gap_fill_unified_in_b`] but reuses a pre-built structure timeline (joint grid perf).
 pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
-    signature: &GapSignature,
-    b_samples: &[i16],
-    channels: usize,
-    waveform: &WaveformSeamContext<'_>,
-    nominal_fill_start: usize,
-    nominal_fill_end: usize,
+    input: &UnifiedFillSearchInput<'_>,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
     structure_timeline: &StructureTimeline<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
 ) -> Option<UnifiedFillMatch> {
-    if signature.is_empty() || params.gap_frames == 0 || params.bin_frames == 0 {
+    if input.signature.is_empty() || params.gap_frames == 0 || params.bin_frames == 0 {
         return None;
     }
 
-    let channels = channels.max(1);
-    let total_frames = b_samples.len() / channels;
-    let pre_span = match signature {
+    let channels = input.channels.max(1);
+    let total_frames = input.b_samples.len() / channels;
+    let pre_span = match input.signature {
         GapSignature::Bool(sig) => sig.pre_bins.len() * params.bin_frames,
         GapSignature::Energy(sig) => sig.pre_energy.len() * params.bin_frames,
     };
-    let post_span = match signature {
+    let post_span = match input.signature {
         GapSignature::Bool(sig) => sig.post_bins.len() * params.bin_frames,
         GapSignature::Energy(sig) => sig.post_energy.len() * params.bin_frames,
     };
@@ -351,49 +364,34 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         return None;
     }
 
+    let search = UnifiedSearchCtx {
+        timeline: structure_timeline,
+        waveform: input.waveform,
+        params,
+        weights,
+        anchor_prior,
+        nominal_start: input.nominal_fill_start,
+        nominal_end: input.nominal_fill_end,
+    };
+
     let (mut best_start, _) = unified_search_best_fill_start(
-        signature,
-        &structure_timeline,
-        waveform,
-        nominal_fill_start,
-        nominal_fill_end,
+        input.signature,
+        &search,
         pre_span,
         post_span,
         total_frames,
-        params,
-        weights,
-        anchor_prior,
     )?;
 
-    let (mut best_end, _) = unified_search_best_fill_end(
-        signature,
-        &structure_timeline,
-        waveform,
-        best_start,
-        nominal_fill_end,
-        post_span,
-        total_frames,
-        params,
-        weights,
-    )?;
+    let (mut best_end, _) =
+        unified_search_best_fill_end(input.signature, &search, best_start, post_span, total_frames)?;
 
     let matched_fill_len = best_end.saturating_sub(best_start);
-    let polished_start = unified_fine_polish_start(
-        signature,
-        &structure_timeline,
-        waveform,
-        best_start,
-        best_end,
-        nominal_fill_start,
-        nominal_fill_end,
-        params,
-        weights,
-        anchor_prior,
-    );
+    let polished_start =
+        unified_fine_polish_start(input.signature, &search, best_start, best_end);
     best_start = polished_start;
     best_end = best_start + matched_fill_len;
 
-    let (wave_pre, wave_post) = waveform_seams_at_start(waveform, best_start);
+    let (wave_pre, wave_post) = waveform_seams_at_start(input.waveform, best_start);
 
     let fill_frames = best_end.saturating_sub(best_start);
     if fill_frames == 0 {
@@ -406,12 +404,16 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         pre_correlation: wave_pre,
         post_correlation: wave_post,
     };
-    snap_fill_to_gap(&mut alignment, signature, structure_timeline, params);
+    snap_fill_to_gap(&mut alignment, input.signature, structure_timeline, params);
 
-    let structure_pre =
-        score_pre_for_signature(signature, structure_timeline, alignment.start_frame, params);
+    let structure_pre = score_pre_for_signature(
+        input.signature,
+        structure_timeline,
+        alignment.start_frame,
+        params,
+    );
     let structure_post = score_post_for_signature(
-        signature,
+        input.signature,
         structure_timeline,
         alignment.start_frame + alignment.fill_frames,
         params,
@@ -447,23 +449,26 @@ fn waveform_seams_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> (f64,
 
 fn unified_search_best_fill_start(
     signature: &GapSignature,
-    timeline: &StructureTimeline<'_>,
-    waveform: &WaveformSeamContext<'_>,
-    nominal_fill_start: usize,
-    nominal_fill_end: usize,
+    ctx: &UnifiedSearchCtx<'_>,
     pre_span: usize,
     post_span: usize,
     total_frames: usize,
-    params: &StructureMatchParams,
-    weights: UnifiedFitWeights,
-    anchor_prior: Option<AnchorSearchPrior>,
 ) -> Option<(usize, f64)> {
-    let search_min = nominal_fill_start.saturating_sub(params.search_radius_frames);
-    let search_max = (nominal_fill_start + params.search_radius_frames).min(total_frames);
+    let UnifiedSearchCtx {
+        timeline,
+        waveform,
+        params,
+        weights,
+        anchor_prior,
+        nominal_start,
+        nominal_end,
+    } = *ctx;
+    let search_min = nominal_start.saturating_sub(params.search_radius_frames);
+    let search_max = (nominal_start + params.search_radius_frames).min(total_frames);
     let span = search_max.saturating_sub(search_min);
     let coarse_step = search_coarse_step(params.bin_frames, span);
 
-    let mut best_start = nominal_fill_start;
+    let mut best_start = nominal_start;
     let mut best_score = f64::NEG_INFINITY;
 
     let consider = |start: usize, best_start: &mut usize, best_score: &mut f64| {
@@ -478,13 +483,12 @@ fn unified_search_best_fill_start(
         let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
         let wave_min = waveform_min_at_start(waveform, start);
         let score = unified_fit_score_with_repeat(
-            pre_score,
-            post_score,
-            wave_min,
-            start,
-            candidate_end,
-            nominal_fill_start,
-            nominal_fill_end,
+            UnifiedFitCandidate {
+                structure_pre: pre_score,
+                structure_post: post_score,
+                wave_min,
+                placement: fill_bracket_placement(start, candidate_end, nominal_start, nominal_end),
+            },
             params,
             weights,
             waveform,
@@ -492,15 +496,15 @@ fn unified_search_best_fill_start(
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
             || (score >= *best_score - SCORE_TIE_EPSILON
-                && prefer_start(start, *best_start, nominal_fill_start));
+                && prefer_start(start, *best_start, nominal_start));
         if better {
             *best_score = score;
             *best_start = start;
         }
     };
 
-    if nominal_fill_start >= pre_span {
-        consider(nominal_fill_start, &mut best_start, &mut best_score);
+    if nominal_start >= pre_span {
+        consider(nominal_start, &mut best_start, &mut best_score);
     }
 
     let mut start = search_min;
@@ -524,15 +528,19 @@ fn unified_search_best_fill_start(
 
 fn unified_search_best_fill_end(
     signature: &GapSignature,
-    timeline: &StructureTimeline<'_>,
-    waveform: &WaveformSeamContext<'_>,
+    ctx: &UnifiedSearchCtx<'_>,
     fill_start: usize,
-    nominal_fill_end: usize,
     post_span: usize,
     total_frames: usize,
-    params: &StructureMatchParams,
-    weights: UnifiedFitWeights,
 ) -> Option<(usize, f64)> {
+    let UnifiedSearchCtx {
+        timeline,
+        waveform,
+        params,
+        weights,
+        nominal_end,
+        ..
+    } = *ctx;
     let end_min = fill_start
         .saturating_add(params.gap_frames)
         .saturating_sub(params.fill_length_slack_frames);
@@ -545,7 +553,7 @@ fn unified_search_best_fill_end(
     let span = end_max.saturating_sub(end_min);
     let coarse_step = search_coarse_step(params.bin_frames, span);
 
-    let mut best_end = nominal_fill_end.clamp(end_min, end_max);
+    let mut best_end = nominal_end.clamp(end_min, end_max);
     let mut best_score = f64::NEG_INFINITY;
 
     let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
@@ -564,13 +572,12 @@ fn unified_search_best_fill_end(
         let post_score = score_post_for_signature(signature, timeline, end, params);
         let wave_min = waveform_min_at_start(waveform, fill_start);
         let score = unified_fit_score_with_repeat(
-            pre_score,
-            post_score,
-            wave_min,
-            fill_start,
-            end,
-            fill_start,
-            nominal_fill_end,
+            UnifiedFitCandidate {
+                structure_pre: pre_score,
+                structure_post: post_score,
+                wave_min,
+                placement: fill_bracket_placement(fill_start, end, fill_start, nominal_end),
+            },
             params,
             weights,
             waveform,
@@ -578,7 +585,7 @@ fn unified_search_best_fill_end(
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
             || (score >= *best_score - SCORE_TIE_EPSILON
-                && prefer_end(end, *best_end, nominal_fill_end));
+                && prefer_end(end, *best_end, nominal_end));
         if better {
             *best_score = score;
             *best_end = end;
@@ -608,16 +615,19 @@ fn unified_search_best_fill_end(
 
 fn unified_fine_polish_start(
     signature: &GapSignature,
-    timeline: &StructureTimeline<'_>,
-    waveform: &WaveformSeamContext<'_>,
+    ctx: &UnifiedSearchCtx<'_>,
     start: usize,
     end: usize,
-    nominal_start: usize,
-    nominal_end: usize,
-    params: &StructureMatchParams,
-    weights: UnifiedFitWeights,
-    anchor_prior: Option<AnchorSearchPrior>,
 ) -> usize {
+    let UnifiedSearchCtx {
+        timeline,
+        waveform,
+        params,
+        weights,
+        anchor_prior,
+        nominal_start,
+        nominal_end,
+    } = *ctx;
     if params.max_fine_adjustment_frames == 0 {
         return start;
     }
@@ -639,13 +649,17 @@ fn unified_fine_polish_start(
         let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
         let wave_min = waveform_min_at_start(waveform, candidate);
         let score = unified_fit_score_with_repeat(
-            pre_score,
-            post_score,
-            wave_min,
-            candidate,
-            candidate_end,
-            nominal_start,
-            nominal_end,
+            UnifiedFitCandidate {
+                structure_pre: pre_score,
+                structure_post: post_score,
+                wave_min,
+                placement: fill_bracket_placement(
+                    candidate,
+                    candidate_end,
+                    nominal_start,
+                    nominal_end,
+                ),
+            },
             params,
             weights,
             waveform,
@@ -682,30 +696,6 @@ pub fn match_gap_structure_only_in_b(
     )
 }
 
-
-fn fill_anchor_seams(
-    fill_interleaved: &[i16],
-    channels: usize,
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    pre_window: usize,
-    post_window: usize,
-    seam_ctx: SpliceSeamContext<'_>,
-) -> (f64, f64) {
-    fill_splice_seam_correlations_interleaved(
-        fill_interleaved,
-        channels,
-        a_pre,
-        a_post,
-        a_pre_ch,
-        a_post_ch,
-        pre_window,
-        post_window,
-        seam_ctx,
-    )
-}
 
 fn fill_anchor_better(
     head: (f64, f64),
@@ -793,12 +783,7 @@ pub fn score_extend_short_fill_to_gap_frames(
     extension_interleaved: &[i16],
     channels: usize,
     gap_frames: usize,
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    pre_window: usize,
-    post_window: usize,
+    borders: &BorderSeamTemplates<'_>,
     repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
@@ -810,15 +795,10 @@ pub fn score_extend_short_fill_to_gap_frames(
     let mut out = fill_interleaved.to_vec();
     let score_at_length = |samples: &[i16]| {
         let padded = fit_fill_to_gap_frames(samples, channels, gap_frames);
-        let (pre, post) = fill_anchor_seams(
+        let (pre, post) = fill_splice_seam_correlations_interleaved(
             &padded,
             channels,
-            a_pre,
-            a_post,
-            a_pre_ch,
-            a_post_ch,
-            pre_window,
-            post_window,
+            borders,
             seam_ctx,
         );
         (pre.min(post), padded)
@@ -828,8 +808,8 @@ pub fn score_extend_short_fill_to_gap_frames(
     let mut prev_repeat = placement_repeat_post(
         &out,
         channels,
-        a_post,
-        a_post_ch,
+        borders.a_post,
+        borders.a_post_ch,
         repeat_window_frames,
     );
 
@@ -846,8 +826,8 @@ pub fn score_extend_short_fill_to_gap_frames(
         let next_repeat = placement_repeat_post(
             &trial,
             channels,
-            a_post,
-            a_post_ch,
+            borders.a_post,
+            borders.a_post_ch,
             repeat_window_frames,
         );
 
@@ -874,42 +854,21 @@ pub fn fit_fill_length_for_gap(
     extension_interleaved: &[i16],
     channels: usize,
     gap_frames: usize,
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    pre_window: usize,
-    post_window: usize,
+    borders: &BorderSeamTemplates<'_>,
     repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames > gap_frames {
-        pick_fill_length_anchor(
-            fill_interleaved,
-            channels,
-            gap_frames,
-            a_pre,
-            a_post,
-            a_pre_ch,
-            a_post_ch,
-            pre_window,
-            post_window,
-            seam_ctx,
-        )
+        pick_fill_length_anchor(fill_interleaved, channels, gap_frames, borders, seam_ctx)
     } else if source_frames < gap_frames {
         score_extend_short_fill_to_gap_frames(
             fill_interleaved,
             extension_interleaved,
             channels,
             gap_frames,
-            a_pre,
-            a_post,
-            a_pre_ch,
-            a_post_ch,
-            pre_window,
-            post_window,
+            borders,
             repeat_window_frames,
             seam_ctx,
         )
@@ -923,12 +882,7 @@ pub fn pick_fill_length_anchor(
     fill_interleaved: &[i16],
     channels: usize,
     gap_frames: usize,
-    a_pre: &[f64],
-    a_post: &[f64],
-    a_pre_ch: &[Vec<f64>],
-    a_post_ch: &[Vec<f64>],
-    pre_window: usize,
-    post_window: usize,
+    borders: &BorderSeamTemplates<'_>,
     seam_ctx: SpliceSeamContext<'_>,
 ) -> Vec<i16> {
     let channels = channels.max(1);
@@ -942,26 +896,16 @@ pub fn pick_fill_length_anchor(
     let skip_samples = skip_frames * channels;
     let trim_head = fill_interleaved[skip_samples..].to_vec();
 
-    let seams_tail = fill_anchor_seams(
+    let seams_tail = fill_splice_seam_correlations_interleaved(
         &trim_tail,
         channels,
-        a_pre,
-        a_post,
-        a_pre_ch,
-        a_post_ch,
-        pre_window,
-        post_window,
+        borders,
         seam_ctx,
     );
-    let seams_head = fill_anchor_seams(
+    let seams_head = fill_splice_seam_correlations_interleaved(
         &trim_head,
         channels,
-        a_pre,
-        a_post,
-        a_pre_ch,
-        a_post_ch,
-        pre_window,
-        post_window,
+        borders,
         seam_ctx,
     );
 
@@ -1104,6 +1048,41 @@ mod tests {
         }
     }
 
+    fn test_borders<'a>(
+        a_pre: &'a [f64],
+        a_post: &'a [f64],
+        a_pre_ch: &'a [Vec<f64>],
+        a_post_ch: &'a [Vec<f64>],
+        pre_window: usize,
+        post_window: usize,
+    ) -> BorderSeamTemplates<'a> {
+        BorderSeamTemplates {
+            a_pre,
+            a_post,
+            a_pre_ch,
+            a_post_ch,
+            pre_window,
+            post_window,
+        }
+    }
+
+    fn fit_candidate(
+        structure_pre: f64,
+        structure_post: f64,
+        wave_min: f64,
+        start: usize,
+        end: usize,
+        nominal_start: usize,
+        nominal_end: usize,
+    ) -> UnifiedFitCandidate {
+        UnifiedFitCandidate {
+            structure_pre,
+            structure_post,
+            wave_min,
+            placement: fill_bracket_placement(start, end, nominal_start, nominal_end),
+        }
+    }
+
     use crate::domain::policies::{interleaved_to_channels, interleaved_to_mono};
 
     fn sine_frame(frame: usize, rate: u32) -> i16 {
@@ -1166,8 +1145,8 @@ mod tests {
         let templates = SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: &b_ch,
         };
@@ -1267,10 +1246,7 @@ mod tests {
             0.92,
             0.92,
             0.05,
-            nominal_start,
-            nominal_end,
-            nominal_start,
-            nominal_end,
+            fill_bracket_placement(nominal_start, nominal_end, nominal_start, nominal_end),
             &params,
             weights,
         );
@@ -1278,10 +1254,7 @@ mod tests {
             0.88,
             0.88,
             0.96,
-            100,
-            140,
-            nominal_start,
-            nominal_end,
+            fill_bracket_placement(100, 140, nominal_start, nominal_end),
             &params,
             weights,
         );
@@ -1308,16 +1281,14 @@ mod tests {
         let a_pre: Vec<f64> = (0..16).map(|i| (i as f64 * 0.1).sin()).collect();
         let a_post: Vec<f64> = (0..16).map(|i| (i as f64 * 0.2).cos()).collect();
         let mut b_mono = vec![0.0f64; 200];
-        for i in 0..16 {
-            b_mono[100 + i] = a_pre[i];
-            b_mono[140 + i] = a_post[i];
-        }
+        b_mono[100..116].copy_from_slice(&a_pre[..16]);
+        b_mono[140..156].copy_from_slice(&a_post[..16]);
         let b_ch = vec![b_mono.clone()];
         let templates = SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: &b_ch,
         };
@@ -1331,13 +1302,7 @@ mod tests {
             repeat_penalty_weight: 1.0,
         };
         let base = unified_fit_score_with_repeat(
-            0.9,
-            0.9,
-            0.2,
-            100,
-            140,
-            100,
-            140,
+            fit_candidate(0.9, 0.9, 0.2, 100, 140, 100, 140),
             &params,
             weights,
             &waveform,
@@ -1348,13 +1313,7 @@ mod tests {
             ..waveform
         };
         let without = unified_fit_score_with_repeat(
-            0.9,
-            0.9,
-            0.2,
-            100,
-            140,
-            100,
-            140,
+            fit_candidate(0.9, 0.9, 0.2, 100, 140, 100, 140),
             &params,
             weights,
             &no_penalty,
@@ -1382,12 +1341,7 @@ mod tests {
             &fill,
             channels,
             gap_frames,
-            &a_pre,
-            &a_post,
-            &[],
-            &[],
-            pre_w,
-            post_w,
+            &test_borders(&a_pre, &a_post, &[], &[], pre_w, post_w),
             seam_ctx,
         );
         assert_eq!(picked, vec![0, 0, post[0], post[1]]);
@@ -1420,12 +1374,7 @@ mod tests {
             &fill,
             channels,
             gap_frames,
-            &a_pre,
-            &a_post,
-            &a_pre_ch,
-            &a_post_ch,
-            pre_w,
-            post_w,
+            &test_borders(&a_pre, &a_post, &a_pre_ch, &a_post_ch, pre_w, post_w),
             seam_ctx,
         );
         assert_eq!(picked, vec![0, 0, post[0], post[1]]);
@@ -1458,12 +1407,14 @@ mod tests {
             &extension,
             channels,
             gap_frames,
-            &a_pre,
-            &a_post,
-            &[a_pre.clone()],
-            &[a_post.clone()],
-            pre_w,
-            post_w,
+            &test_borders(
+                &a_pre,
+                &a_post,
+                std::slice::from_ref(&a_pre),
+                std::slice::from_ref(&a_post),
+                pre_w,
+                post_w,
+            ),
             pre_w,
             no_seam_ctx(&[]),
         );
@@ -1498,17 +1449,20 @@ mod tests {
             to_i16(-1.0),
             to_i16(-1.0),
         ];
+        let borders = test_borders(
+            &a_pre,
+            &a_post,
+            std::slice::from_ref(&a_pre),
+            std::slice::from_ref(&a_post),
+            window,
+            window,
+        );
         let via_api = fit_fill_length_for_gap(
             &fill,
             &extension,
             channels,
             gap_frames,
-            &a_pre,
-            &a_post,
-            &[a_pre.clone()],
-            &[a_post.clone()],
-            window,
-            window,
+            &borders,
             window,
             no_seam_ctx(&[]),
         );
@@ -1517,12 +1471,7 @@ mod tests {
             &extension,
             channels,
             gap_frames,
-            &a_pre,
-            &a_post,
-            &[a_pre.clone()],
-            &[a_post.clone()],
-            window,
-            window,
+            &borders,
             window,
             no_seam_ctx(&[]),
         );
@@ -1553,15 +1502,13 @@ mod tests {
         let a_pre: Vec<f64> = (0..16).map(|i| (i as f64 * 0.1).sin()).collect();
         let a_post: Vec<f64> = (0..16).map(|i| (i as f64 * 0.2).cos()).collect();
         let mut b_mono = vec![0.0f64; 200];
-        for i in 0..16 {
-            b_mono[100 + i] = a_pre[i];
-        }
+        b_mono[100..116].copy_from_slice(&a_pre[..16]);
         let b_ch = vec![b_mono.clone()];
         let templates = SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: &b_ch,
         };
@@ -1581,26 +1528,14 @@ mod tests {
         let nominal_start = 100usize;
         let nominal_end = 140usize;
         let with_penalty = unified_fit_score_with_repeat(
-            0.9,
-            0.9,
-            0.2,
-            nominal_start,
-            nominal_end,
-            nominal_start,
-            nominal_end,
+            fit_candidate(0.9, 0.9, 0.2, nominal_start, nominal_end, nominal_start, nominal_end),
             &params,
             weights,
             &waveform_penalized,
             None,
         );
         let without_penalty = unified_fit_score_with_repeat(
-            0.9,
-            0.9,
-            0.2,
-            nominal_start,
-            nominal_end,
-            nominal_start,
-            nominal_end,
+            fit_candidate(0.9, 0.9, 0.2, nominal_start, nominal_end, nominal_start, nominal_end),
             &params,
             weights,
             &waveform_off,
