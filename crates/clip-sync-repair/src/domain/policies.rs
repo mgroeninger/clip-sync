@@ -1763,7 +1763,7 @@ mod tests {
         let music_fill = vec![0.02f64; gap_frames];
         let templates_music = SeamTemplates {
             b_mono: &music_fill,
-            b_ch: &[music_fill.clone()],
+            b_ch: std::slice::from_ref(&music_fill),
             ..templates
         };
         let (_, repeat_music) =

@@ -2368,7 +2368,7 @@ fn assert_haystack_energy_finds_truth(
         &energy_sig_geometry_params(options),
     );
     let matched = preview
-        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, structure_heavy_weights())
+        .unified_match_on_haystack(fixture, GapSignatureMode::Energy, structure_heavy_weights())
         .expect("haystack oracle should match patch geometry");
     let extract_start =
         (preview.b_extract_start_secs * fixture.sample_rate as f64).round() as usize;
