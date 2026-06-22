@@ -102,6 +102,24 @@ pub fn build_gap_signature(
     }
 }
 
+fn energy_envelope_is_flat(bins: &[f32]) -> bool {
+    if bins.is_empty() {
+        return true;
+    }
+    let peak = bins.iter().copied().fold(0.0f32, f32::max);
+    if peak <= f32::EPSILON {
+        return true;
+    }
+    let mut min = f32::MAX;
+    let mut max = 0.0f32;
+    for &v in bins {
+        let n = v / peak;
+        min = min.min(n);
+        max = max.max(n);
+    }
+    (max - min) <= 0.05
+}
+
 fn effective_mode(
     samples: &[i16],
     channels: usize,
@@ -122,9 +140,7 @@ fn effective_mode(
         context_frames,
         params,
     );
-    let pre_max = energy.pre_energy.iter().copied().fold(0.0f32, f32::max);
-    let post_max = energy.post_energy.iter().copied().fold(0.0f32, f32::max);
-    if pre_max <= f32::EPSILON || post_max <= f32::EPSILON {
+    if energy_envelope_is_flat(&energy.pre_energy) || energy_envelope_is_flat(&energy.post_energy) {
         tracing::debug!("gap signature auto: flat envelope → bool");
         GapSignatureMode::Bool
     } else {
@@ -199,6 +215,19 @@ mod tests {
     #[test]
     fn auto_falls_back_to_bool_on_flat_envelope() {
         let samples = vec![0i16; 400];
+        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
+        assert!(matches!(sig, GapSignature::Bool(_)));
+    }
+
+    #[test]
+    fn auto_falls_back_to_bool_on_steady_drone() {
+        let mut samples = vec![0i16; 400];
+        for i in 0..400 {
+            samples[i] = 6_000;
+        }
+        for i in 100..120 {
+            samples[i] = 0;
+        }
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
         assert!(matches!(sig, GapSignature::Bool(_)));
     }

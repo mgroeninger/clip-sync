@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tracing::debug;
 
-use crate::application::config::{ClipConfig, ValidationConfig};
+use crate::application::config::{AlignConfig, ClipConfig, ValidationConfig};
 use crate::application::error::debug_media_error;
 use crate::application::offset_refinement::pcm_cross_correlate_lag;
 use crate::application::ports::{
@@ -31,24 +31,37 @@ pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub correlator: &'a dyn PcmCorrelator,
 }
 
+/// Injected ports for offset verification (mirrors [`crate::application::locate_query::LocateQueryDeps`]).
+pub struct OffsetVerificationDeps<'a, FP, AL> {
+    pub fingerprinter: &'a FP,
+    pub aligner: &'a AL,
+    pub repetition_detector: &'a dyn ClipRepetitionDetector,
+}
+
+struct PeriodicRecheckContext<'a, FP> {
+    clip_config: &'a ClipConfig,
+    validation: &'a ValidationConfig,
+    clip_length: Duration,
+    fingerprinter: &'a FP,
+    repetition_detector: &'a dyn ClipRepetitionDetector,
+    progress: &'a dyn ProgressReporter,
+}
+
 /// Extract a hold-out window and score lag-0 similarity to independently verify the recommended
-/// offset. Writes `result.offset_verification` when `validation.verify_offset` is on (including
-/// skip cases); leaves the field `None` when the flag is off.
+/// offset. Writes `result.offset_verification` when `config.validation.verify_offset` is on
+/// (including skip cases); leaves the field `None` when the flag is off.
 pub fn apply_offset_verification<MS, FP, AL>(
     input: &mut OffsetVerificationInput<'_, MS>,
-    clip_config: &ClipConfig,
-    validation: &ValidationConfig,
+    config: &AlignConfig,
     result: &mut AlignmentResult,
-    fingerprinter: &FP,
-    aligner: &AL,
-    repetition_detector: &dyn ClipRepetitionDetector,
+    deps: &OffsetVerificationDeps<'_, FP, AL>,
     progress: &dyn ProgressReporter,
 ) where
     MS: MediaSession,
     FP: Fingerprinter,
     AL: Aligner,
 {
-    if !validation.verify_offset {
+    if !config.validation.verify_offset {
         return;
     }
 
@@ -59,6 +72,9 @@ pub fn apply_offset_verification<MS, FP, AL>(
     };
 
     progress.phase_verbose("Verifying offset at hold-out window...");
+
+    let clip_config = &config.clip;
+    let validation = &config.validation;
 
     let pick_duration = holdout_pick_duration(result, input.extent_a, input.extent_b);
     let clip_length = clip_config.clip_length.min(pick_duration);
@@ -76,16 +92,16 @@ pub fn apply_offset_verification<MS, FP, AL>(
     let dur_a = input.extent_a.effective().as_secs_f64();
     let dur_b = input.extent_b.effective().as_secs_f64();
 
-    let (_period_secs, parallel_independent) = resolve_parallel_periodic_recheck(
-        input,
+    let recheck_ctx = PeriodicRecheckContext {
         clip_config,
         validation,
-        result,
         clip_length,
-        fingerprinter,
-        repetition_detector,
+        fingerprinter: deps.fingerprinter,
+        repetition_detector: deps.repetition_detector,
         progress,
-    );
+    };
+    let (_period_secs, parallel_independent) =
+        resolve_parallel_periodic_recheck(input, result, &recheck_ctx);
 
     let candidates = resolve_holdout_candidates(
         result,
@@ -214,7 +230,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
             }
         };
 
-        let fp_a = match fingerprinter.fingerprint(&prepared_a) {
+        let fp_a = match deps.fingerprinter.fingerprint(&prepared_a) {
             Ok(fp) => fp,
             Err(e) => {
                 last_failure = format!("fingerprint A failed: {e}");
@@ -222,7 +238,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
                 continue;
             }
         };
-        let fp_b = match fingerprinter.fingerprint(&prepared_b) {
+        let fp_b = match deps.fingerprinter.fingerprint(&prepared_b) {
             Ok(fp) => fp,
             Err(e) => {
                 last_failure = format!("fingerprint B failed: {e}");
@@ -231,7 +247,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
             }
         };
 
-        let estimate = match aligner.find_offset(&fp_a, &fp_b) {
+        let estimate = match deps.aligner.find_offset(&fp_a, &fp_b) {
             Ok(e) => e,
             Err(e) => {
                 last_failure = format!("aligner failed: {e}");
@@ -244,14 +260,14 @@ pub fn apply_offset_verification<MS, FP, AL>(
         if validation.check_clip_repetition {
             let preset = clip_config.chromaprint_preset;
             let min_conf = validation.min_repetition_confidence;
-            let rep_a = repetition_detector.detect_clip_repetition(
+            let rep_a = deps.repetition_detector.detect_clip_repetition(
                 &fp_a,
                 prepared_a.duration_secs(),
                 preset,
                 min_conf,
                 source_duration_a,
             );
-            let rep_b = repetition_detector.detect_clip_repetition(
+            let rep_b = deps.repetition_detector.detect_clip_repetition(
                 &fp_b,
                 prepared_b.duration_secs(),
                 preset,
@@ -395,31 +411,17 @@ fn should_run_parallel_periodic_recheck(period_secs: Option<f64>) -> bool {
 
 fn resolve_parallel_periodic_recheck<MS, FP>(
     input: &mut OffsetVerificationInput<'_, MS>,
-    clip_config: &ClipConfig,
-    validation: &ValidationConfig,
     result: &mut AlignmentResult,
-    clip_length: Duration,
-    fingerprinter: &FP,
-    repetition_detector: &dyn ClipRepetitionDetector,
-    progress: &dyn ProgressReporter,
+    ctx: &PeriodicRecheckContext<'_, FP>,
 ) -> (Option<f64>, Option<f64>)
 where
     MS: MediaSession,
     FP: Fingerprinter,
 {
-    let clip_length_secs = clip_length.as_secs_f64();
-    let mut period_secs = known_periodic_period_secs(result, validation);
+    let clip_length_secs = ctx.clip_length.as_secs_f64();
+    let mut period_secs = known_periodic_period_secs(result, ctx.validation);
     let parallel = if should_run_parallel_periodic_recheck(period_secs) {
-        run_parallel_offset_recheck(
-            input,
-            clip_config,
-            validation,
-            clip_length,
-            fingerprinter,
-            repetition_detector,
-            progress,
-            &mut period_secs,
-        )
+        run_parallel_offset_recheck(input, ctx, &mut period_secs)
     } else {
         None
     };
@@ -510,18 +512,19 @@ fn apply_periodic_verify_gating(
 
 fn run_parallel_offset_recheck<MS, FP>(
     input: &mut OffsetVerificationInput<'_, MS>,
-    clip_config: &ClipConfig,
-    validation: &ValidationConfig,
-    clip_length: Duration,
-    fingerprinter: &FP,
-    repetition_detector: &dyn ClipRepetitionDetector,
-    progress: &dyn ProgressReporter,
+    ctx: &PeriodicRecheckContext<'_, FP>,
     period_secs: &mut Option<f64>,
 ) -> Option<f64>
 where
     MS: MediaSession,
     FP: Fingerprinter,
 {
+    let clip_config = ctx.clip_config;
+    let validation = ctx.validation;
+    let clip_length = ctx.clip_length;
+    let fingerprinter = ctx.fingerprinter;
+    let repetition_detector = ctx.repetition_detector;
+    let progress = ctx.progress;
     let clip_length_secs = clip_length.as_secs_f64();
     const PARALLEL_PCM_WINDOW_SECS: u32 = 20;
     let prep_options = PcmPreparationOptions {
@@ -731,7 +734,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::config::{ClipConfig, ValidationConfig};
+    use crate::application::config::{AlignConfig, ClipConfig, ValidationConfig};
     use crate::application::testing::fakes::{
         FakeAligner, FakeFingerprinter, FakeMediaSession, FakePcmCorrelator, FakeProgressReporter,
     };
@@ -760,6 +763,25 @@ mod tests {
             trim_silence: false,
             window_slide_secs: 0,
             ..ClipConfig::default()
+        }
+    }
+
+    fn verification_align_config() -> AlignConfig {
+        AlignConfig {
+            clip: holdout_clip_config(),
+            validation: verification_validation(),
+            ..Default::default()
+        }
+    }
+
+    fn verification_deps<'a, FP, AL>(
+        fingerprinter: &'a FP,
+        aligner: &'a AL,
+    ) -> OffsetVerificationDeps<'a, FP, AL> {
+        OffsetVerificationDeps {
+            fingerprinter,
+            aligner,
+            repetition_detector: &ChromaprintClipRepetitionDetector,
         }
     }
 
@@ -846,7 +868,11 @@ mod tests {
 
         let mut result = result_with_offset(offset_secs);
         result.offset_ambiguous_mod_secs = offset_ambiguous_mod_secs;
-        let clip_config = holdout_clip_config();
+        let config = AlignConfig {
+            clip: holdout_clip_config(),
+            validation,
+            ..Default::default()
+        };
         let windows = discovery_windows();
         let (min_holdout_decode_fraction, max_holdout_decode_skips) = default_decode_policy();
 
@@ -866,12 +892,9 @@ mod tests {
                 resampler: &crate::infrastructure::resample::RubatoResampler,
                 correlator: &crate::infrastructure::correlation::FftCorrelator,
             },
-            &clip_config,
-            &validation,
+            &config,
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
         result
@@ -1001,8 +1024,6 @@ mod tests {
         let mut result = result_with_offset(3.0);
         result.offset_ambiguous_mod_secs = Some(10.0);
 
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1028,12 +1049,9 @@ mod tests {
                 resampler: &crate::infrastructure::resample::RubatoResampler,
                 correlator: &correlator,
             },
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1156,8 +1174,6 @@ mod tests {
         let mut result = result_with_offset(13.0);
         result.offset_ambiguous_mod_secs = Some(10.0);
 
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1187,12 +1203,9 @@ mod tests {
                 resampler: &crate::infrastructure::resample::RubatoResampler,
                 correlator: &correlator,
             },
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1247,8 +1260,6 @@ mod tests {
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(offset_secs);
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let progress = FakeProgressReporter;
@@ -1262,12 +1273,9 @@ mod tests {
                 &windows,
                 duration,
             ),
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1373,11 +1381,8 @@ mod tests {
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
-        let clip_config = ClipConfig {
-            clip_length: Duration::from_secs(60),
-            ..holdout_clip_config()
-        };
-        let validation = verification_validation();
+        let mut config = verification_align_config();
+        config.clip.clip_length = Duration::from_secs(60);
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1388,12 +1393,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &config,
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1422,8 +1424,6 @@ mod tests {
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(large_offset);
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1434,12 +1434,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1471,8 +1468,6 @@ mod tests {
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1483,12 +1478,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1524,8 +1516,6 @@ mod tests {
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1536,12 +1526,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1570,11 +1557,8 @@ mod tests {
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
-        let clip_config = holdout_clip_config();
-        let validation = ValidationConfig {
-            verify_offset: false,
-            ..Default::default()
-        };
+        let mut config = verification_align_config();
+        config.validation.verify_offset = false;
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1585,12 +1569,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &config,
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1614,8 +1595,6 @@ mod tests {
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
-        let clip_config = holdout_clip_config();
-        let validation = verification_validation();
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1626,12 +1605,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &verification_align_config(),
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 
@@ -1660,8 +1636,8 @@ mod tests {
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
         let mut result = result_with_offset(3.0);
-        let clip_config = holdout_clip_config();
-        let validation = ValidationConfig { verify_offset: false, ..Default::default() };
+        let mut config = verification_align_config();
+        config.validation.verify_offset = false;
         let windows = discovery_windows();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1672,12 +1648,9 @@ mod tests {
 
         apply_offset_verification(
             &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
-            &clip_config,
-            &validation,
+            &config,
             &mut result,
-            &fingerprinter,
-            &aligner,
-            &ChromaprintClipRepetitionDetector,
+            &verification_deps(&fingerprinter, &aligner),
             &progress,
         );
 

@@ -7,7 +7,9 @@ use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighR
 use crate::application::locate_query::{
     locate_query_in_reference, resolve_alignment_mode, LocateQueryDeps, LocateQueryFile,
 };
-use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
+use crate::application::offset_verification::{
+    apply_offset_verification, OffsetVerificationDeps, OffsetVerificationInput,
+};
 use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
 use crate::application::ports::{
@@ -149,12 +151,13 @@ where
                 resampler: self.resampler,
                 correlator: self.correlator,
             },
-            &request.config.clip,
-            &request.config.validation,
+            &request.config,
             &mut result,
-            self.fingerprinter,
-            self.aligner,
-            self.repetition_detector,
+            &OffsetVerificationDeps {
+                fingerprinter: self.fingerprinter,
+                aligner: self.aligner,
+                repetition_detector: self.repetition_detector,
+            },
             self.progress,
         );
 

@@ -815,50 +815,16 @@ pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatur
 
 /// **F3** drone stretched for integration (I4).
 pub fn build_f3_drone_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
-    let ch = channels.max(1);
+    let mut fixture = build_f3_drone_scaled(sample_rate, channels);
+    let ch = fixture.channels.max(1);
     let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
-    let bin_frames = ((0.050 * sample_rate as f64).round() as usize).max(1);
-    let gap_frames = ((0.20 * sample_rate as f64).round() as usize).max(bin_frames);
-    let gap_start = secs_to_frames(3.0, sample_rate);
-    let gap_end = gap_start + gap_frames;
-    let context_frames = ((1.0 * sample_rate as f64).round() as usize).max(bin_frames);
-    let drone = 6_000i16;
-
-    let mut samples = Vec::new();
-    for frame in 0..total_frames {
-        let amp = if frame >= gap_start && frame < gap_end {
-            0
-        } else {
-            drone
-        };
-        write_frame(&mut samples, ch, frame, amp);
+    let current_frames = fixture.a_samples.len() / ch;
+    for frame in current_frames..total_frames {
+        write_frame(&mut fixture.a_samples, ch, frame, 6_000);
+        write_frame(&mut fixture.b_samples, ch, frame, 6_000);
     }
-
-    let structure_params = StructureMatchParams {
-        gap_frames,
-        bin_frames,
-        search_radius_frames: bin_frames * 4,
-        fill_length_slack_frames: bin_frames,
-        max_fine_adjustment_frames: bin_frames,
-        silence_peak_fraction: 0.01,
-        absolute_silence_rms: 0.0,
-    };
-
-    EnergySignatureFixture {
-        id: "F3_drone_integration",
-        a_samples: samples.clone(),
-        b_samples: samples,
-        channels: ch,
-        sample_rate,
-        gap_start,
-        gap_end,
-        context_frames,
-        true_fill_start: gap_start,
-        true_fill_end: gap_end,
-        nominal_fill_start: gap_start,
-        nominal_fill_end: gap_end,
-        structure_params,
-    }
+    fixture.id = "F3_drone_integration";
+    fixture
 }
 
 /// Write interleaved PCM to a WAV file.

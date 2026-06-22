@@ -921,8 +921,10 @@ pub fn run_wrong_offset_verification_probe(
 ) -> crate::domain::OffsetVerification {
     use std::time::Duration;
 
-    use crate::application::config::{AlignmentConfig, ChromaprintPreset, ClipConfig, ValidationConfig};
-    use crate::application::offset_verification::{apply_offset_verification, OffsetVerificationInput};
+    use crate::application::config::{AlignConfig, AlignmentConfig, ChromaprintPreset, ClipConfig, ValidationConfig};
+    use crate::application::offset_verification::{
+        apply_offset_verification, OffsetVerificationDeps, OffsetVerificationInput,
+    };
     use crate::application::ports::{MediaReader, MediaSession};
     use crate::application::testing::fakes::FakeProgressReporter;
     use crate::domain::{AlignmentResult, ClipLabel, ClipWindow, MediaExtent, MediaSource};
@@ -974,10 +976,14 @@ pub fn run_wrong_offset_verification_probe(
         window_slide_secs: 0,
         ..ClipConfig::default()
     };
-    let validation = ValidationConfig {
-        verify_offset: true,
-        min_verification_confidence: 0.5,
-        check_clip_repetition: true,
+    let config = AlignConfig {
+        clip: clip_config,
+        validation: ValidationConfig {
+            verify_offset: true,
+            min_verification_confidence: 0.5,
+            check_clip_repetition: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let discovery_windows = vec![ClipWindow::new(
@@ -1002,12 +1008,13 @@ pub fn run_wrong_offset_verification_probe(
             resampler: &crate::infrastructure::resample::RubatoResampler,
             correlator: &crate::infrastructure::correlation::FftCorrelator,
         },
-        &clip_config,
-        &validation,
+        &config,
         &mut result,
-        &fingerprinter,
-        &aligner,
-        &ChromaprintClipRepetitionDetector,
+        &OffsetVerificationDeps {
+            fingerprinter: &fingerprinter,
+            aligner: &aligner,
+            repetition_detector: &ChromaprintClipRepetitionDetector,
+        },
         &progress,
     );
 

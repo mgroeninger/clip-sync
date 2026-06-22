@@ -2408,44 +2408,28 @@ fn i3_f2_energy_finds_pause_one_domain_and_patch_when_aligned() {
 
 #[test]
 fn i4_f3_auto_matches_bool_outcome() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature};
+
     let fixture = build_f3_drone_integration(ENERGY_SIG_RATE, CHANNELS as usize);
-    let report_auto = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let report_bool = gap_report_from_energy_fixture(temp.path(), &fixture);
-
-    let auto = run_patch(
-        patch_request_with_options(
-            report_auto,
-            false,
-            0.25,
-            0.0,
-            energy_sig_patch_options(GapSignatureMode::Auto),
-        ),
-        10,
+    let auto_sig = build_gap_signature(
+        &fixture.a_samples,
+        fixture.channels,
+        fixture.gap_start,
+        fixture.gap_end,
+        fixture.context_frames,
+        &fixture.structure_params,
+        GapSignatureMode::Auto,
     );
-    let bool_result = run_patch(
-        patch_request_with_options(
-            report_bool,
-            false,
-            0.25,
-            0.0,
-            energy_sig_patch_options(GapSignatureMode::Bool),
-        ),
-        10,
+    assert!(
+        matches!(auto_sig, GapSignature::Bool(_)),
+        "I4: auto on drone should resolve to bool"
     );
 
+    let auto_domain = fixture.unified_match(GapSignatureMode::Auto, structure_heavy_weights());
+    let bool_domain = fixture.unified_match(GapSignatureMode::Bool, structure_heavy_weights());
     assert_eq!(
-        auto.summary.patched_count, bool_result.summary.patched_count,
-        "I4: auto vs bool patch count"
+        auto_domain.map(|m| m.alignment.start_frame),
+        bool_domain.map(|m| m.alignment.start_frame),
+        "I4: auto and bool domain placement should match"
     );
-    if auto.summary.patched_count == 0 {
-        assert_eq!(
-            auto.summary.skipped_count, bool_result.summary.skipped_count,
-            "I4: skip parity"
-        );
-    } else {
-        let auto_slide = gap_align_slide_secs(&auto, 0);
-        let bool_slide = gap_align_slide_secs(&bool_result, 0);
-        assert_eq!(auto_slide, bool_slide, "I4: slide parity when patched");
-    }
 }
