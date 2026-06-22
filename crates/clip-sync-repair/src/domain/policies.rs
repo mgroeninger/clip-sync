@@ -887,6 +887,9 @@ fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
 
 /// Splice `b_fill` into `a_samples` at the gap, crossfading against A's real border audio.
 ///
+/// Fade-in ramps inside the silent gap (pre-gap audio is left untouched). Fade-out
+/// blends across the gap/post seam.
+///
 /// `gap_start_frame` / `gap_end_frame` are frame indices (not interleaved sample indices).
 pub fn apply_seam_crossfade(
     a_samples: &mut [i16],
@@ -903,11 +906,9 @@ pub fn apply_seam_crossfade(
         return;
     }
 
-    let pre_available = gap_start_frame;
     let post_available = total_frames.saturating_sub(gap_end_frame);
     let cf = crossfade_frames
         .min(gap_frames / 2)
-        .min(pre_available)
         .min(post_available);
 
     if cf == 0 {
@@ -921,9 +922,9 @@ pub fn apply_seam_crossfade(
         return;
     }
 
-    // Fade-in: blend A's pre-gap tail with the head of the fill.
+    // Fade-in: ramp fill up inside the dropout (A is silent here; keep pre-gap level).
     for i in 0..cf {
-        let frame = gap_start_frame - cf + i;
+        let frame = gap_start_frame + i;
         let t = i as f32 / cf as f32;
         let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
         let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
@@ -940,7 +941,7 @@ pub fn apply_seam_crossfade(
     }
 
     // Middle: pure fill (offset by `cf` frames consumed in the fade-in).
-    for frame in gap_start_frame..(gap_end_frame - cf) {
+    for frame in (gap_start_frame + cf)..(gap_end_frame - cf) {
         for ch in 0..channels {
             let a_idx = frame * channels + ch;
             let b_idx = (frame - gap_start_frame + cf) * channels + ch;
@@ -1244,28 +1245,32 @@ mod tests {
     }
 
     #[test]
-    fn apply_seam_crossfade_blends_from_border_not_silence() {
+    fn apply_seam_crossfade_preserves_pre_gap_and_ramps_inside_gap() {
         // Layout: [pre-border loud][gap silent][post-border loud]
         let cf = 4usize;
         let gap_start = 10usize;
         let gap_end = 20usize;
-        let total = 30usize;
         let gap_frames = gap_end - gap_start;
 
-        let mut a = vec![0i16; total];
+        let mut a = vec![0i16; 30];
         for s in &mut a[0..gap_start] {
             *s = 8_000;
         }
-        for s in &mut a[gap_end..total] {
+        for s in &mut a[gap_end..] {
             *s = 8_000;
         }
 
         let b_fill = vec![4_000i16; gap_frames];
         apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
 
+        assert_eq!(
+            a[gap_start - 1],
+            8_000,
+            "pre-gap border should not be attenuated by fade-in"
+        );
         assert!(
-            a[gap_start] > 1_000,
-            "first gap frame should blend from loud pre-border, got {}",
+            a[gap_start] < 500,
+            "gap fade-in should start from silence, got {}",
             a[gap_start]
         );
         assert_eq!(a[gap_start + cf], 4_000, "middle should be pure fill");

@@ -3,7 +3,7 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::Deserialize;
 use tempfile::TempDir;
 
-use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
+use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader, TimelineOverlap};
 use clip_sync::testing::fakes::FakeProgressReporter;
 
 use crate::application::ports::Aligner;
@@ -40,6 +40,9 @@ pub struct GapCorpusDefaults {
     pub tolerance_secs: f64,
     #[serde(default = "default_sample_rate")]
     pub sample_rate: u32,
+    /// Default wall-time budget (seconds) for patch timing corpus cases.
+    #[serde(default = "default_patch_max_wall_secs")]
+    pub patch_max_wall_secs: f64,
 }
 
 impl Default for GapCorpusDefaults {
@@ -52,6 +55,7 @@ impl Default for GapCorpusDefaults {
             silence_hold_ms: default_silence_hold_ms(),
             tolerance_secs: default_tolerance_secs(),
             sample_rate: default_sample_rate(),
+            patch_max_wall_secs: default_patch_max_wall_secs(),
         }
     }
 }
@@ -63,6 +67,7 @@ fn default_min_gap_ms() -> u64 { 1_000 }
 fn default_silence_hold_ms() -> u64 { 500 }
 fn default_tolerance_secs() -> f64 { 0.3 }
 fn default_sample_rate() -> u32 { DEFAULT_SAMPLE_RATE }
+fn default_patch_max_wall_secs() -> f64 { 90.0 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -129,6 +134,9 @@ pub struct GapCorpusCase {
     pub tolerance_secs: Option<f64>,
     #[serde(default)]
     pub ignore: bool,
+    /// Per-case patch wall-time budget (seconds); falls back to `[defaults].patch_max_wall_secs`.
+    #[serde(default)]
+    pub max_patch_wall_secs: Option<f64>,
 }
 
 pub struct GeneratedCasePaths {
@@ -548,6 +556,7 @@ fn no_op_alignment() -> AlignmentResult {
 
 fn build_scan_request(
     video_a: PathBuf,
+    video_b: PathBuf,
     case: &GapCorpusCase,
     defaults: &GapCorpusDefaults,
 ) -> ScanGapsRequest {
@@ -562,7 +571,7 @@ fn build_scan_request(
 
     ScanGapsRequest {
         video_a: video_a.clone(),
-        video_b: video_a, // unused (no alignment offset)
+        video_b,
         align: Default::default(),
         decode_chunk_secs: 10,
         scan_block_secs: scan_block_ms as f64 / 1000.0,
@@ -639,11 +648,123 @@ pub fn assert_gap_expectations(
     }
 }
 
+/// Read `(sample_rate, channels, frame_count)` from a corpus WAV.
+pub fn read_wav_metadata(path: &Path) -> (u32, u16, u64) {
+    let reader = WavReader::open(path).expect("open wav");
+    let spec = reader.spec();
+    let channels = spec.channels.max(1);
+    let frames = reader.len() as u64 / u64::from(channels);
+    (spec.sample_rate, channels, frames)
+}
+
+/// Write a gap-free chirp WAV matching `format_from` channel layout and duration.
+pub fn write_clean_chirp_reference(dest: &Path, format_from: &Path) {
+    let (rate, channels, frames) = read_wav_metadata(format_from);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).expect("create reference wav parent");
+    }
+    if channels > 1 {
+        write_interleaved_wav(
+            dest,
+            rate,
+            channels,
+            symmetric_stereo_chirp_frames(rate, frames, 1.0),
+        );
+    } else {
+        let samples = (0..frames).map(|i| chirp_sample(rate, i));
+        write_mono_wav(dest, rate, samples);
+    }
+}
+
+fn patch_corpus_alignment(duration_secs: f64) -> AlignmentResult {
+    AlignmentResult {
+        clips: vec![ClipMatch {
+            label: ClipLabel::Start,
+            window_start_secs: 0.0,
+            window_end_secs: duration_secs,
+            aligned: true,
+            offset_secs: Some(0.0),
+            confidence: 0.95,
+            video_a_decode_skips: 0,
+            video_b_decode_skips: 0,
+            repetition: None,
+            video_b_window_start_secs: None,
+            video_b_window_end_secs: None,
+        }],
+        start_aligned: true,
+        end_aligned: None,
+        recommended_offset_secs: Some(0.0),
+        offsets_consistent: true,
+        offset_drift_secs: None,
+        start_overlap: Some(TimelineOverlap {
+            video_a_start_secs: 0.0,
+            video_a_end_secs: duration_secs,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: duration_secs,
+            shared_length_secs: duration_secs,
+        }),
+        high_rate_refinement: None,
+        offset_verification: None,
+        offset_ambiguous_mod_secs: None,
+        alignment_mode_used: None,
+        query_localization: None,
+        end_clip_anchor: None,
+    }
+}
+
+fn patch_audio_request_from_defaults(
+    report: crate::domain::GapReport,
+) -> crate::application::PatchAudioRequest {
+    use crate::infrastructure::config::RepairConfig;
+
+    let repair = RepairConfig::default();
+    crate::application::PatchAudioRequest {
+        report,
+        normalize_fill: repair.normalize_fill,
+        normalize_window_secs: repair.normalize_window_secs,
+        max_fill_gain_db: repair.max_fill_gain_db,
+        min_fill_correlation: repair.min_fill_correlation,
+        fill_align_margin_secs: repair.fill_align_margin_secs,
+        max_fill_align_adjustment_secs: repair.max_fill_align_adjustment_secs,
+        fill_border_search_secs: repair.fill_border_search_secs,
+        min_border_discovery_secs: repair.min_border_discovery_secs,
+        border_standoff_secs: repair.border_standoff_secs,
+        short_gap_mean_correlation_secs: repair.short_gap_mean_correlation_secs,
+        fill_length_slack_secs: repair.fill_length_slack_secs,
+        fill_seam_search_secs: repair.fill_seam_search_secs,
+        gap_signature_context_secs: repair.gap_signature_context_secs,
+        gap_signature_bin_ms: repair.gap_signature_bin_ms,
+        min_structure_match_score: repair.min_structure_match_score,
+        strong_structure_trust: repair.strong_structure_trust,
+        disable_structure_trust: repair.disable_structure_trust,
+        partial_structure_waveform_soften: repair.partial_structure_waveform_soften,
+        absolute_silence_rms: repair.absolute_silence_rms,
+        fill_offset_mode: repair.fill_offset_mode,
+        gap_end_extend_on_post_seam_fail: repair.gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail: repair.gap_start_extend_on_pre_seam_fail,
+        gap_end_extend_max_ms: repair.gap_end_extend_max_ms,
+        gap_end_extend_step_ms: repair.gap_end_extend_step_ms,
+        short_gap_one_strong_seam_fallback: repair.short_gap_one_strong_seam_fallback,
+        fill_mode: repair.fill_mode,
+        fill_fit_structure_weight: repair.fill_fit_structure_weight,
+        fill_fit_waveform_weight: repair.fill_fit_waveform_weight,
+        fill_marginal_margin: repair.fill_marginal_margin,
+        fill_absolute_floor: repair.fill_absolute_floor,
+        fill_repeat_penalty_weight: repair.fill_repeat_penalty_weight,
+        fill_anchor_min_correlation: repair.fill_anchor_min_correlation,
+        fill_anchor_exclude_structure_trusted: repair.fill_anchor_exclude_structure_trusted,
+        fill_anchor_max_adjustment_frac: repair.fill_anchor_max_adjustment_frac,
+        fill_anchor_search_prior_weight: repair.fill_anchor_search_prior_weight,
+        gap_signature_mode: repair.gap_signature_mode,
+    }
+}
+
 // ── #[cfg(test)] ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::{PatchAudio, PatchAudioResult};
 
     #[test]
     #[ignore = "run manually to regenerate: cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture"]
@@ -695,7 +816,7 @@ mod tests {
                 );
             }
 
-            let request = build_scan_request(video_a, case, &manifest.defaults);
+            let request = build_scan_request(video_a.clone(), video_a, case, &manifest.defaults);
             let alignment = no_op_alignment();
             let report = scan
                 .scan_after_alignment(request, alignment)
@@ -711,6 +832,99 @@ mod tests {
 
             eprintln!("case {}: {} gap(s) detected in {:.2?}", case.id, report.gaps.len(), started.elapsed());
         }
+    }
+
+    fn run_patch_timing_cases(tier: GapCorpusTier) {
+        let manifest = load_manifest();
+        let media_reader = SymphoniaMediaReader;
+        let progress = FakeProgressReporter;
+        let aligner = NeverCalledAligner;
+        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+        let patch = PatchAudio::new(&media_reader, &progress);
+
+        for case in manifest.case.iter().filter(|c| {
+            c.tier == tier && !c.ignore && !c.expected_gaps.is_empty()
+        }) {
+            let max_wall_secs = case
+                .max_patch_wall_secs
+                .unwrap_or(manifest.defaults.patch_max_wall_secs);
+
+            let started = std::time::Instant::now();
+            let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
+
+            if tier == GapCorpusTier::Committed {
+                assert!(
+                    video_a.is_file(),
+                    "case {}: missing committed fixture {}",
+                    case.id,
+                    video_a.display()
+                );
+            }
+
+            let temp_b = tempfile::tempdir().expect("tempdir for reference B");
+            let video_b = temp_b.path().join("reference_b.wav");
+            write_clean_chirp_reference(&video_b, &video_a);
+
+            let (sample_rate, channels, frames) = read_wav_metadata(&video_a);
+            let duration_secs = frames as f64 / f64::from(sample_rate);
+
+            let scan_request =
+                build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+            let alignment = patch_corpus_alignment(duration_secs);
+            let report = scan
+                .scan_after_alignment(scan_request, alignment)
+                .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+
+            assert_gap_expectations(
+                &case.id,
+                &case.expected_gaps,
+                &report.gaps,
+                case.tolerance_secs,
+                &manifest.defaults,
+            );
+
+            let fillable = report.gaps.iter().filter(|g| g.is_fillable()).count();
+            assert!(
+                fillable > 0,
+                "case {}: expected at least one fillable gap for patch timing (got {fillable})",
+                case.id
+            );
+
+            let patch_request = patch_audio_request_from_defaults(report);
+            let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+            let result: PatchAudioResult = patch
+                .execute(patch_request, crossfade_ms)
+                .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
+
+            let elapsed = started.elapsed();
+            eprintln!(
+                "case {}: patch {} gap(s) ({} patched, {} skipped) in {:.2?} (channels={channels})",
+                case.id,
+                fillable,
+                result.summary.patched_count,
+                result.summary.skipped_count,
+                elapsed,
+            );
+
+            assert!(
+                elapsed.as_secs_f64() <= max_wall_secs,
+                "case {}: patch wall time {:.2?} exceeds {:.1}s budget",
+                case.id,
+                elapsed,
+                max_wall_secs
+            );
+        }
+    }
+
+    #[test]
+    fn gap_corpus_patch_timing_committed() {
+        run_patch_timing_cases(GapCorpusTier::Committed);
+    }
+
+    #[test]
+    #[ignore = "generates WAV fixtures at test time; cargo test -p clip-sync-repair gap_corpus_patch_timing_generated -- --ignored"]
+    fn gap_corpus_patch_timing_generated() {
+        run_patch_timing_cases(GapCorpusTier::Generated);
     }
 
     #[test]

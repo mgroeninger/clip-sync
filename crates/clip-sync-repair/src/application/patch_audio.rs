@@ -17,6 +17,7 @@ use crate::domain::{
     fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
     fill_mode::FillMode,
+    gap_fill_fit::FillConfidence,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase, FillRegion, GapFillPlan},
     gap_fill_fit::{fit_fill_length_for_gap, fit_fill_to_gap_frames},
     patch_anchor::{
@@ -169,6 +170,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             });
         }
 
+        let _patch_audio_span = tracing::info_span!(
+            "patch_audio",
+            region_count = plan.regions.len(),
+            fill_mode = ?request.fill_mode,
+            fill_offset_mode = ?request.fill_offset_mode,
+        )
+        .entered();
+
         // Step 2: Open A, select best track, get duration.
         let source_a = MediaSource::new(request.report.video_a.clone());
         let mut session_a = self
@@ -184,9 +193,19 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         // Step 3: Extract full A timeline.
         let full_window_a = ClipWindow::new(Duration::ZERO, duration_a, ClipLabel::Interior);
-        let mut a_pcm = session_a
-            .extract_interleaved(&track_a, &full_window_a, self.progress, "patch-a")
-            .map_err(RepairError::Media)?;
+        let mut a_pcm = {
+            let _decode_a = tracing::info_span!(
+                "patch_decode_a",
+                path = %request.report.video_a.display(),
+                duration_secs = duration_a.as_secs_f64(),
+                channels = track_a.channels,
+                sample_rate = track_a.sample_rate,
+            )
+            .entered();
+            session_a
+                .extract_interleaved(&track_a, &full_window_a, self.progress, "patch-a")
+                .map_err(RepairError::Media)?
+        };
         let source_audio_bitrate_a_bps = a_pcm.measured_bitrate_bps();
 
         // Step 5: Open B, select best track.
@@ -203,11 +222,27 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .duration
             .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
         let full_window_b = ClipWindow::new(Duration::ZERO, duration_b, ClipLabel::Interior);
-        let b_pcm_full = session_b
-            .extract_interleaved(&track_b, &full_window_b, self.progress, "patch-b")
-            .map_err(RepairError::Media)?;
+        let b_pcm_full = {
+            let _decode_b = tracing::info_span!(
+                "patch_decode_b",
+                path = %request.report.video_b.display(),
+                duration_secs = duration_b.as_secs_f64(),
+                channels = track_b.channels,
+                sample_rate = track_b.sample_rate,
+            )
+            .entered();
+            session_b
+                .extract_interleaved(&track_b, &full_window_b, self.progress, "patch-b")
+                .map_err(RepairError::Media)?
+        };
         let source_audio_bitrate_b_bps = b_pcm_full.measured_bitrate_bps();
         let b_samples_full = if b_pcm_full.sample_rate != a_pcm.sample_rate {
+            let _resample = tracing::debug_span!(
+                "patch_resample_b",
+                from_rate = b_pcm_full.sample_rate,
+                to_rate = a_pcm.sample_rate,
+            )
+            .entered();
             resample_interleaved(
                 &b_pcm_full.samples,
                 b_pcm_full.channels,
@@ -250,6 +285,21 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 format_time_range(region.a_start_secs, region.a_end_secs)
             ));
 
+            let gap_span = tracing::info_span!(
+                "patch_gap",
+                gap_index = gap_num,
+                region_count,
+                a_start_secs = region.a_start_secs,
+                a_end_secs = region.a_end_secs,
+                fill_mode = ?request.fill_mode,
+                anchored_retry = false,
+                outcome = tracing::field::Empty,
+                confidence = tracing::field::Empty,
+                skip_reason = tracing::field::Empty,
+                boundary_grid = tracing::field::Empty,
+            );
+            let _gap_enter = gap_span.enter();
+
             let (patch, outcome) = prepare_region_patch(
                 self.progress,
                 &b_samples_full,
@@ -260,6 +310,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 AnchoredRetryPass::First,
                 None,
             );
+            record_patch_gap_span(&gap_span, &outcome);
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
                 patches.push(patch);
@@ -276,6 +327,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             } else {
                 self.progress
                     .phase_verbose(&format_patch_anchor_table_summary(&table));
+                let _anchored_retry = tracing::info_span!(
+                    "patch_anchored_retry",
+                    anchor_count = table.anchors.len(),
+                    fill_mode = ?request.fill_mode,
+                )
+                .entered();
                 run_anchored_retry_pass(
                     self.progress,
                     &mut patches,
@@ -298,27 +355,30 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         if patch_count > 0 {
             self.progress.phase(&format!("Splicing {patch_count} fill(s) into timeline..."));
         }
-        for (index, patch) in patches.iter().enumerate() {
-            self.progress.progress("patch-splice", index as u64 + 1, patch_count);
-            let b_gained: Vec<i16> = patch
-                .b_samples
-                .iter()
-                .map(|&s| {
-                    (s as f32 * patch.gain)
-                        .round()
-                        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-                })
-                .collect();
+        if patch_count > 0 {
+            let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
+            for (index, patch) in patches.iter().enumerate() {
+                self.progress.progress("patch-splice", index as u64 + 1, patch_count);
+                let b_gained: Vec<i16> = patch
+                    .b_samples
+                    .iter()
+                    .map(|&s| {
+                        (s as f32 * patch.gain)
+                            .round()
+                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+                    })
+                    .collect();
 
-            splice_into_a(
-                &mut a_pcm.samples,
-                &b_gained,
-                channels,
-                patch.a_start_frame,
-                patch.a_end_frame,
-                patch.crossfade_secs,
-                sample_rate,
-            );
+                splice_into_a(
+                    &mut a_pcm.samples,
+                    &b_gained,
+                    channels,
+                    patch.a_start_frame,
+                    patch.a_end_frame,
+                    patch.crossfade_secs,
+                    sample_rate,
+                );
+            }
         }
 
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
@@ -364,11 +424,39 @@ enum RegionPatchOutcome {
         align_adjustment_secs: f64,
         waveform_adjustment_secs: f64,
         structure_trusted: bool,
-        confidence: crate::domain::FillConfidence,
+        confidence: FillConfidence,
         gap_start_adjust_frames: i64,
         gap_end_adjust_frames: i64,
     },
     Skipped(GapPatchSkipReason),
+}
+
+fn record_patch_gap_span(span: &tracing::Span, outcome: &RegionPatchOutcome) {
+    match outcome {
+        RegionPatchOutcome::Patched {
+            confidence,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
+            ..
+        } => {
+            span.record("outcome", "patched");
+            span.record(
+                "confidence",
+                match confidence {
+                    FillConfidence::High => "high",
+                    FillConfidence::Marginal => "marginal",
+                },
+            );
+            span.record(
+                "boundary_grid",
+                *gap_start_adjust_frames != 0 || *gap_end_adjust_frames != 0,
+            );
+        }
+        RegionPatchOutcome::Skipped(reason) => {
+            span.record("outcome", "skipped");
+            span.record("skip_reason", format!("{reason:?}"));
+        }
+    }
 }
 
 fn gap_key(start_secs: f64, end_secs: f64) -> (u64, u64) {
@@ -513,6 +601,20 @@ fn run_anchored_retry_pass(
             "  anchored retry gap {gap_num}: A {}",
             format_time_range(region.a_start_secs, region.a_end_secs)
         ));
+        let gap_span = tracing::info_span!(
+            "patch_gap",
+            gap_index = gap_num,
+            region_count = regions.len() as u64,
+            a_start_secs = region.a_start_secs,
+            a_end_secs = region.a_end_secs,
+            fill_mode = ?request.fill_mode,
+            anchored_retry = true,
+            outcome = tracing::field::Empty,
+            confidence = tracing::field::Empty,
+            skip_reason = tracing::field::Empty,
+            boundary_grid = tracing::field::Empty,
+        );
+        let _gap_enter = gap_span.enter();
         let (patch, outcome) = prepare_region_patch(
             progress,
             b_samples_full,
@@ -523,6 +625,7 @@ fn run_anchored_retry_pass(
             AnchoredRetryPass::Second,
             Some(&table),
         );
+        record_patch_gap_span(&gap_span, &outcome);
         if matches!(outcome, RegionPatchOutcome::Patched { .. }) {
             region_results[index].2 = outcome;
             if let Some(patch) = patch {

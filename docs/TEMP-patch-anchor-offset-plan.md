@@ -129,12 +129,12 @@ Pass 1 should use the user's configured `fill_mode` for both anchor collection a
   - Pass 2 success replaces pass-1 outcome and appends splice patch; pass-2 failure keeps pass-1 skip.
 - [x] Wire `fill_offset_mode` through `config.rs`, CLI (`--fill-offset anchored-retry`), `PatchAudioRequest`; `fill_anchor_*` policy keys.
 - [x] `prepare_region_patch`: `anchored_retry_pass` + optional `patch_anchors` → `resolve_gap_offset_secs`.
-- [ ] Integration tests (partial):
+- [x] Integration tests (partial):
   - [x] Smoke: `patch_audio_anchored_retry_passes_on_clean_single_gap` (fit, single gap, no pass-2 needed).
-  - [ ] Drift fixture: pass 1 skips hard gap; pass 2 patches with anchors from easy gaps (Phase 0 fixture).
+  - [x] Drift fixture: `patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors` — pass 1 skips hard gap under `interpolated` + tight search; `anchored_retry` pass 2 patches using interior anchors (~3 min; 60 s WAV).
   - [ ] Run drift fixture under **`fill_mode = gate`** — anchor eligibility (`structure_trusted` exclusion) distinct from fit.
   - [x] Regression: `Recommended` / `Interpolated` paths unchanged (existing integration tests; no second pass).
-  - [ ] Explicit test: no pass-2 retries when all pass-1 succeed or table empty (behavior covered by unit tests only).
+  - [x] Explicit: `patch_audio_anchored_retry_skips_pass2_when_no_anchors` (marginal → empty table); `patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1` (pass-1 success exports anchors, no retries).
 
 ### Phase 3 — `Anchored` single-pass + docs
 
@@ -178,10 +178,10 @@ CLI: `--fill-offset anchored-retry`; `--fill-anchor-min-correlation`, `--fill-an
 |-------|------|--------|
 | Unit | `PatchAnchorTable::from_candidates` filter; weighted interpolation; extrapolation clamp; fallback chain | Shipped (`patch_anchor.rs`) |
 | Unit | `resolve_gap_offset_secs` / `anchored_retry` pass 1 vs 2 | Shipped (`fill_offset.rs`) |
-| Integration | Drift fixture two-pass retry | **Open** (Phase 0) |
+| Integration | Drift fixture two-pass retry | Shipped (`patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors`; ~3 min) |
 | Integration | Pass-1 success unchanged when mode `recommended` / `interpolated` | Covered by existing patch tests |
-| Integration | `anchored_retry` smoke (clean single gap) | Shipped (`patch_audio_anchored_retry_passes_on_clean_single_gap`) |
-| Integration | No pass 2 when zero eligible anchors / all pass-1 succeed | **Open** (unit-level only today) |
+| Integration | `anchored_retry` smoke (clean single gap) | Shipped |
+| Integration | No pass 2 when zero eligible anchors / all pass-1 succeed | Shipped (`skips_pass2_when_no_anchors`, `skips_pass2_when_all_gaps_patch_in_pass1`) |
 | Integration | `fill_mode = gate` anchor eligibility | **Open** |
 | Manual | Long-form drift pair: compare skip count `recommended` vs `anchored-retry` | **Open** (Phase 0) |
 
