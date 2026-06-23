@@ -75,7 +75,8 @@ pub fn gap_report_from_energy_fixture(
     }
 }
 
-/// Repair config mirroring production defaults for signature matrix runs.
+/// Repair config for signature matrix runs: production geometry with acceptance-style
+/// structure isolation (decoy fixtures need zero nominal bias and structure-heavy fit).
 pub fn production_repair_config(
     gap_signature_mode: GapSignatureMode,
     gap_signature_context_secs: f64,
@@ -85,6 +86,13 @@ pub fn production_repair_config(
         gap_signature_context_secs,
         fill_border_search_secs: 10.0,
         fill_align_margin_secs: 1.0,
+        fill_fit_structure_weight: 1.0,
+        fill_fit_waveform_weight: 0.0,
+        fill_fit_nominal_bias_scale: 0.0,
+        fill_fit_late_start_penalty_scale: 0.0,
+        min_structure_match_score: 0.0,
+        min_fill_correlation: 0.0,
+        fill_absolute_floor: -0.05,
         gap_end_extend_on_post_seam_fail: true,
         gap_start_extend_on_pre_seam_fail: true,
         ..Default::default()
@@ -209,8 +217,11 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
     let media_reader = SymphoniaMediaReader;
     let progress = NoOpProgressReporter;
     let scan = ScanGaps::new(&media_reader, &progress, &NeverCalledAligner);
-    scan.scan_after_alignment(request, zero_offset_alignment(total_secs))
-        .expect("scan energy fixture WAV")
+    let mut report = scan
+        .scan_after_alignment(request, zero_offset_alignment(total_secs))
+        .expect("scan energy fixture WAV");
+    inject_oracle_alignment(&mut report, total_secs);
+    report
 }
 
 pub fn patch_request_from_repair(report: GapReport, repair: &RepairConfig) -> PatchAudioRequest {

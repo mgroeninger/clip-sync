@@ -12,9 +12,73 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f1_production_at,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_energy_fixture, normalize_scan_gap_b_mapping, patch_request_from_repair,
-    production_matrix_contexts, production_repair_config, scan_gaps_for_fixture,
+    gap_report_from_energy_fixture, patch_request_from_repair, production_matrix_contexts,
+    production_repair_config, scan_gaps_for_fixture,
 };
+
+#[test]
+#[ignore = "matrix: cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture"]
+fn energy_signature_mode_matrix() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+
+    eprintln!("fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,skip_reason");
+
+    let fixture = build_f1_production(48_000, 2, 3.0);
+    run_oracle_control_row(&patch, &temp, "F1-long", &fixture, 3.0, &repair_defaults);
+
+    run_matrix_rows(
+        &patch,
+        &temp,
+        "F1-long",
+        "scan_derived",
+        &fixture,
+        60.0,
+        &repair_defaults,
+    );
+
+    let fixture_120 = build_f1_production_at(48_000, 2, 120.0, 30.0);
+    run_oracle_control_row(
+        &patch,
+        &temp,
+        "F1-long-120s",
+        &fixture_120,
+        30.0,
+        &repair_defaults,
+    );
+    run_matrix_rows(
+        &patch,
+        &temp,
+        "F1-long-120s",
+        "scan_derived",
+        &fixture_120,
+        120.0,
+        &repair_defaults,
+    );
+}
+
+#[test]
+#[ignore = "smoke: cargo test -p clip-sync-repair f1_production_scan_patch_smoke -- --ignored --nocapture"]
+fn f1_production_scan_patch_smoke() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f1_production(48_000, 2, 3.0);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let report = scan_gaps_for_fixture(&fixture, temp.path());
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("scan patch smoke");
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "F1-long scan→patch smoke: {:?}",
+        result.summary.gaps,
+    );
+}
 
 #[test]
 #[ignore = "control: cargo test -p clip-sync-repair f1_production_oracle_patch_control -- --ignored --nocapture"]
@@ -43,72 +107,36 @@ fn f1_production_oracle_patch_control() {
     );
 }
 
-#[test]
-#[ignore = "control: cargo test -p clip-sync-repair f1_production_scan_patch_control -- --ignored --nocapture"]
-fn f1_production_scan_patch_control() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let repair_defaults = RepairConfig::default();
-    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
-    let fixture = build_f1_production(48_000, 2, 3.0);
-    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
-
-    let raw_report = scan_gaps_for_fixture(&fixture, temp.path());
-    let raw_result = patch
+fn run_oracle_control_row(
+    patch: &PatchAudio<'_, SymphoniaMediaReader>,
+    temp: &tempfile::TempDir,
+    fixture_label: &str,
+    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
+    context_secs: f64,
+    repair_defaults: &RepairConfig,
+) {
+    let repair = production_repair_config(GapSignatureMode::Energy, context_secs);
+    let report = gap_report_from_energy_fixture(temp.path(), fixture);
+    let started = Instant::now();
+    let result = patch
         .execute(
-            patch_request_from_repair(raw_report.clone(), &repair),
+            patch_request_from_repair(report, &repair),
             repair_defaults.crossfade_ms,
         )
-        .expect("raw scan patch");
+        .expect("oracle control patch");
+    let skip_reason = result
+        .summary
+        .gaps
+        .first()
+        .map(|g| format_skip_reason(&g.status))
+        .unwrap_or_else(|| "no_gap".into());
     eprintln!(
-        "scan raw: patched={} skipped={} status={:?}",
-        raw_result.summary.patched_count,
-        raw_result.summary.skipped_count,
-        raw_result.summary.gaps.first().map(|g| &g.status),
-    );
-
-    let mut normalized = raw_report;
-    normalize_scan_gap_b_mapping(&mut normalized, &fixture);
-    let norm_result = patch
-        .execute(
-            patch_request_from_repair(normalized, &repair),
-            repair_defaults.crossfade_ms,
-        )
-        .expect("normalized scan patch");
-    eprintln!(
-        "scan normalized: patched={} skipped={} status={:?}",
-        norm_result.summary.patched_count,
-        norm_result.summary.skipped_count,
-        norm_result.summary.gaps.first().map(|g| &g.status),
-    );
-}
-
-#[test]
-#[ignore = "matrix: cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture"]
-fn energy_signature_mode_matrix() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let repair_defaults = RepairConfig::default();
-    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
-
-    eprintln!("fixture,mode,context_secs,patched,skipped,marginal,wall_ms,skip_reason");
-
-    run_matrix_rows(
-        &patch,
-        &temp,
-        "F1-long",
-        &build_f1_production(48_000, 2, 3.0),
-        60.0,
-        &repair_defaults,
-    );
-
-    // Context 30 requires ≥ ~83 s tail room; 120 s fixture only.
-    let fixture_120 = build_f1_production_at(48_000, 2, 120.0, 30.0);
-    run_matrix_rows(
-        &patch,
-        &temp,
-        "F1-long-120s",
-        &fixture_120,
-        120.0,
-        &repair_defaults,
+        "{fixture_label},oracle_injected,Energy,{context_secs},{},{},{},{},{}",
+        result.summary.patched_count,
+        result.summary.skipped_count,
+        result.summary.patched_marginal_count,
+        started.elapsed().as_millis(),
+        skip_reason,
     );
 }
 
@@ -116,6 +144,7 @@ fn run_matrix_rows(
     patch: &PatchAudio<'_, SymphoniaMediaReader>,
     temp: &tempfile::TempDir,
     fixture_label: &str,
+    source: &str,
     fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
     total_secs: f64,
     repair_defaults: &RepairConfig,
@@ -132,8 +161,8 @@ fn run_matrix_rows(
         GapSignatureMode::Energy,
         GapSignatureMode::Auto,
     ] {
-        for context in &contexts {
-            let repair = production_repair_config(mode, *context);
+        for &context in &contexts {
+            let repair = production_repair_config(mode, context);
             let request = patch_request_from_repair(report.clone(), &repair);
             let started = Instant::now();
             let result = patch
@@ -146,7 +175,7 @@ fn run_matrix_rows(
                 .map(|g| format_skip_reason(&g.status))
                 .unwrap_or_else(|| "no_gap".into());
             eprintln!(
-                "{fixture_label},{mode:?},{context},{},{},{},{},{}",
+                "{fixture_label},{source},{mode:?},{context},{},{},{},{},{}",
                 result.summary.patched_count,
                 result.summary.skipped_count,
                 result.summary.patched_marginal_count,

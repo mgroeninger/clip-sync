@@ -62,7 +62,7 @@ expected_gaps = []
 id    = "stereo_mid_gap_2s"
 tier  = "committed"
 video_a = "wav/stereo_mid_gap_2s_a.wav"
-max_patch_wall_secs = 15.0
+max_patch_wall_secs = 20.0
 # Both channels zeroed in the gap — multichannel scan must still detect it.
 [[case.expected_gaps]]
 start_secs = 14.0

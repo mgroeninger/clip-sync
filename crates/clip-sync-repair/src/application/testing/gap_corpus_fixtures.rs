@@ -833,7 +833,6 @@ mod tests {
                 .max_patch_wall_secs
                 .unwrap_or(manifest.defaults.patch_max_wall_secs);
 
-            let started = std::time::Instant::now();
             let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
 
             if tier == GapCorpusTier::Committed {
@@ -876,6 +875,7 @@ mod tests {
 
             let patch_request = patch_audio_request_for_corpus_timing(report);
             let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+            let started = std::time::Instant::now();
             let result: PatchAudioResult = patch
                 .execute(patch_request, crossfade_ms)
                 .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));

@@ -144,6 +144,12 @@ pub struct RepairConfig {
     /// Unified fit: weight on `min(pre, post)` waveform Pearson (Phase B; fit mode only).
     #[serde(default = "default_fill_fit_waveform_weight")]
     pub fill_fit_waveform_weight: f64,
+    /// Unified fit: scale distance-from-nominal penalty in structure tier (1.0 = production default).
+    #[serde(default = "default_fill_fit_nominal_bias_scale")]
+    pub fill_fit_nominal_bias_scale: f64,
+    /// Unified fit: scale late-start penalty when candidate start exceeds nominal (1.0 = default).
+    #[serde(default = "default_fill_fit_late_start_penalty_scale")]
+    pub fill_fit_late_start_penalty_scale: f64,
     /// Fit mode: patch band below `min_fill_correlation` with a marginal warning (Phase C).
     #[serde(default = "default_fill_marginal_margin")]
     pub fill_marginal_margin: f32,
@@ -281,6 +287,12 @@ fn default_fill_fit_structure_weight() -> f64 {
 fn default_fill_fit_waveform_weight() -> f64 {
     0.65
 }
+fn default_fill_fit_nominal_bias_scale() -> f64 {
+    1.0
+}
+fn default_fill_fit_late_start_penalty_scale() -> f64 {
+    1.0
+}
 fn default_fill_marginal_margin() -> f32 {
     crate::domain::gap_fill_fit::DEFAULT_FILL_MARGINAL_MARGIN
 }
@@ -364,6 +376,8 @@ impl Default for RepairConfig {
             fill_mode: crate::domain::FillMode::default(),
             fill_fit_structure_weight: default_fill_fit_structure_weight(),
             fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
+            fill_fit_nominal_bias_scale: default_fill_fit_nominal_bias_scale(),
+            fill_fit_late_start_penalty_scale: default_fill_fit_late_start_penalty_scale(),
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
             fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
@@ -478,8 +492,8 @@ impl RepairConfig {
             fill_mode: self.fill_mode,
             fill_fit_structure_weight: self.fill_fit_structure_weight,
             fill_fit_waveform_weight: self.fill_fit_waveform_weight,
-            fill_fit_nominal_bias_scale: 1.0,
-            fill_fit_late_start_penalty_scale: 1.0,
+            fill_fit_nominal_bias_scale: self.fill_fit_nominal_bias_scale,
+            fill_fit_late_start_penalty_scale: self.fill_fit_late_start_penalty_scale,
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,
             fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
