@@ -3,7 +3,8 @@
 use crate::test_support::energy_signature_fixtures::{
     build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
     build_f2_production, build_f3_drone, build_f3_drone_production, build_f3_silence,
-    structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN, MODE_SCORE_EPS,
+    build_f4_decoy_production, structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN,
+    MODE_SCORE_EPS,
 };
 use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 
@@ -273,5 +274,70 @@ fn p3_f3_production_auto_resolves_to_bool() {
     assert!(
         matches!(sig, GapSignature::Bool(_)),
         "P3: auto on flat drone should resolve to bool"
+    );
+}
+
+/// **EC-6 (domain oracle, fast):** on the F4 decoy fixture the **energy** envelope separates the
+/// true pause from the decoy, while the **bool** active/silent pattern is identical at both —
+/// the discrimination F2 could not produce (score-level, no search; see the `#[ignore]`d
+/// `p4_f4_decoy_unified_search_diverges` for the placement-level check).
+#[test]
+fn p4_f4_decoy_energy_separates_but_bool_ties() {
+    let f = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+
+    // Energy: true pause clearly outscores the decoy on both halves.
+    let e_pre_true = f.energy_pre_at(f.true_fill_start);
+    let e_pre_decoy = f.energy_pre_at(f.nominal_fill_start);
+    assert!(
+        e_pre_true > e_pre_decoy + ENERGY_PAUSE_MARGIN,
+        "P4 energy pre: truth {e_pre_true} should beat decoy {e_pre_decoy} by ≥ {ENERGY_PAUSE_MARGIN}",
+    );
+
+    // Bool: identical active/silent pattern → scores tie (well within the ambiguity band).
+    let b_pre_true = f.bool_pre_at(f.true_fill_start);
+    let b_pre_decoy = f.bool_pre_at(f.nominal_fill_start);
+    assert!(
+        (b_pre_true - b_pre_decoy).abs() <= BOOL_AMBIGUITY_EPS,
+        "P4 bool pre: truth {b_pre_true} and decoy {b_pre_decoy} must be ambiguous (≤ {BOOL_AMBIGUITY_EPS})",
+    );
+}
+
+/// **EC-6 (domain oracle, placement):** full unified search — `energy` lands on the true pause,
+/// `bool` ties and `prefer_start` keeps it at the decoy nominal. Ignored: the per-candidate
+/// waveform correlation over a dense 90 s B costs ~1 min in debug.
+#[test]
+#[ignore = "slow (~1 min debug): cargo test -p clip-sync-repair p4_f4_decoy_unified_search_diverges -- --ignored --nocapture"]
+fn p4_f4_decoy_unified_search_diverges() {
+    let f = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+
+    let energy = f
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("P4: energy unified on F4-decoy");
+    assert!(
+        f.within_bin_tolerance(energy.alignment.start_frame, f.true_fill_start),
+        "P4 energy start {} should be at truth {}",
+        energy.alignment.start_frame,
+        f.true_fill_start,
+    );
+
+    let bool_match = f
+        .unified_match(GapSignatureMode::Bool, structure_heavy_weights())
+        .expect("P4: bool unified on F4-decoy");
+    assert!(
+        f.within_bin_tolerance(bool_match.alignment.start_frame, f.nominal_fill_start),
+        "P4 bool start {} should stay at decoy {}",
+        bool_match.alignment.start_frame,
+        f.nominal_fill_start,
+    );
+
+    assert!(
+        energy
+            .alignment
+            .start_frame
+            .abs_diff(bool_match.alignment.start_frame)
+            > f.bin_frames(),
+        "P4: energy ({}) and bool ({}) placements must diverge",
+        energy.alignment.start_frame,
+        bool_match.alignment.start_frame,
     );
 }

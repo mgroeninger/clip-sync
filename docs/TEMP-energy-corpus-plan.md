@@ -1,6 +1,6 @@
 # Temporary plan: energy signature production corpus (synthetic tuning)
 
-> **Status:** **Phases A–D landed** (2026-06-23). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3 domain oracles**, F1-long **scan→patch e2e** (`f1_production_scan_patch_smoke` + oracle control, both `#[ignore]`), F2-long **oracle patch** (`f2_production_oracle_patch_smoke`, energy at pause₁), and ignored mode matrix (F1-long scan-derived + F2-long oracle-injected rows; context 30 on the 120 s fixture). Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md). **Open:** **EC-6** mode discrimination — F2-long matrix (2026-06-23 b/c) shows all modes patch at pause₁ (slide 0) under both structure-isolated and production fit weights. Discrimination is domain-only; the patch path needs a **redesigned decoy fixture** (F2's `b = a.clone()` makes pause₁ uniquely waveform-identifiable), not a config change (see Tuning record). Non-ignored CI smoke; Phase F/G.
+> **Status:** **Phases A–D landed** (2026-06-23). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3 domain oracles**, F1-long **scan→patch e2e** (`f1_production_scan_patch_smoke` + oracle control, both `#[ignore]`), F2-long **oracle patch** (`f2_production_oracle_patch_smoke`, energy at pause₁), and ignored mode matrix (F1-long scan-derived + F2-long oracle-injected rows; context 30 on the 120 s fixture). Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md). **EC-6 met (2026-06-23 d)** via the new `build_f4_decoy_production` fixture: under structure isolation `energy`/`auto` patch the true pause (slide +7 s) while `bool` stays at the decoy (slide 0) — `f4_decoy_patch_discrimination` + `p4_*`. (Production fit weights mask the split — see Tuning record.) **Open:** non-ignored CI smoke; `min_structure_match_score` / weight tuning informed by the F4 masking finding; Phase F/G.
 >
 > Archive to `docs/archive/energy-corpus-plan.md` when the production corpus ships and tuning notes are recorded. Update [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) Phase 3 checklist, [corpus-validation.md](corpus-validation.md) § Gap fill, and [gap-repair-guide.md](gap-repair-guide.md) as needed.
 
@@ -167,7 +167,7 @@ Corpus IDs **EC-1–EC-6** (lib tests: `p1_` / `p2_` / `p3_` where implemented).
 | **EC-3** | F3-long drone | `auto` | Resolved `signature_mode=bool` (`p3_`) | ✅ |
 | **EC-4** | F1-long | `auto`, context 3 | No regression vs I5-style suite defaults — F1-long auto patches in 2026-06-23 matrix | ✅ |
 | **EC-5** | F1-long 120 s | context **30** | Completes within wall budget; no hot-path failure — 120 s fixture patches at context 30 (~43 s, 2026-06-23) | ✅ |
-| **EC-6** | Matrix | all | Record sheet: cases where `auto`/`energy` patches and `bool` skips (or reverse); include vocabulary tags | **Not met (config-exhausted)** — F2-long matrix (2026-06-23 b/c): all modes patch at pause₁ (slide 0) under both structure-isolated **and** production fit weights. Root cause is fixture geometry (`b = a.clone()` makes pause₁ uniquely waveform-identifiable); needs a redesigned decoy fixture, not a config knob (see Tuning record + [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign-next)) |
+| **EC-6** | F4-decoy | structure-isolated | `energy`/`auto` patch at the true pause (slide +7 s); `bool` stays at the decoy (slide 0) | **Met (2026-06-23 d)** — `f4_decoy_patch_discrimination` (patch) + `p4_*` (domain). Note: production fit weights mask the split (all modes → decoy); see Tuning record + [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign-next) |
 
 ### Phase E.1 — EC-6 decoy fixture redesign (next)
 
@@ -192,9 +192,9 @@ So all three tiers — bool, structure, waveform — independently converge on p
 
 **Acceptance shape:** new builder (e.g. `build_f4_decoy_production`) + matrix rows where **`energy`/`auto` patch near the true pause (non-zero slide toward truth) and `bool` lands on the decoy (slide ≈ 0) or skips.** Assert the slide divergence, not just patched counts (the `slide_secs` column already surfaces it).
 
-- [ ] Builder with offset injection + distinct true-pause B content.
-- [ ] Oracle domain test: `energy` at truth, `bool` at decoy (lib `p4_`).
-- [ ] Matrix rows (oracle-injected, context 3) showing the bool/energy slide split → records **EC-6**.
+- [x] Builder with offset injection + distinct true-pause B content — `build_f4_decoy_production` (`test_support/energy_signature_fixtures.rs`). A's gap sits at the decoy time; B carries the decoy (descending outer pre) and the true pause (ascending outer pre, matching A) with an **identical inner border** so the narrow waveform seam stays neutral. Context-3 only (`shift = gap + 2·context ≤ border`).
+- [x] Oracle domain test: `energy` at truth, `bool` ties at decoy — `p4_f4_decoy_energy_separates_but_bool_ties` (fast, score-level) + `p4_f4_decoy_unified_search_diverges` (`#[ignore]`, full unified search confirms `prefer_start` keeps bool at the decoy nominal while energy lands on truth).
+- [x] Matrix rows (oracle-injected, context 3) showing the bool/energy slide split → records **EC-6**. F4-decoy wired into `energy_signature_mode_matrix` (structure-isolated) + `f4_decoy_patch_discrimination` asserts energy→truth (slide +7 s) / bool→decoy (slide 0). Waveform neutrality holds at the patch layer under structure isolation; production weights mask the split (recorded in Tuning record).
 
 ### Phase F — Profile → synthesize (optional)
 
@@ -336,6 +336,19 @@ Fixed other knobs: `fill_mode = fit`, `fill_border_search_secs = 10`, `repair pr
 - **Root cause is the fixture, not the config:** F2's `b = a.clone()` with only pause₂ zeroed means pause₁ is **uniquely identifiable by waveform** (B's pre/post around pause₁ matches A exactly), while the decoy pause₂ has no matching B content. So every tier — bool (via `snap_fill_to_gap`), structure, and waveform — independently converges on pause₁. No weight setting can expose a bool/energy gap here.
 - **Wall cost:** production weights run ~4–6× slower (~46–70 s vs ~12 s) because the waveform tier does full-PCM Pearson over the haystack.
 - **EC-6 needs a redesigned fixture**, not a config knob. Requirements: (1) the patch haystack must *include* the decoy as a genuine competitor (non-zero offset mapping A's pause₁ onto B's pause₂, so the haystack centers on the decoy); (2) bool/structure ambiguous between true and decoy; (3) **B content distinct at pause₁** so waveform alone cannot trivially win while the energy contour still can. The current `b = a.clone()` violates (1) and (3).
+
+**F4-decoy result (2026-06-23 d) — EC-6 MET.** New `build_f4_decoy_production` fixture (Phase E.1) satisfies all three requirements: A's gap sits at the decoy nominal; the true pause is shifted +7 s in B; decoy/truth carry identical bool patterns but anti-correlated outer energy contours; the inner ~200 ms border is identical (waveform-neutral). Oracle-injected patch, context 3.
+
+| Fixture | Config | Mode | Patched | Slide s | Wall s | Result |
+|---------|--------|------|---------|---------|--------|--------|
+| F4-decoy | structure-isolated | Bool | 1 | **0.000** | ~36 | stays at decoy |
+| F4-decoy | structure-isolated | Energy | 1 | **7.000** | ~37 | slides to true pause |
+| F4-decoy | structure-isolated | Auto | 1 | **7.000** | ~38 | slides to true pause |
+| F4-decoy-prodw | production fit weights | Bool/Energy/Auto | 1 each | 0.000 | ~265–282 | all stay at decoy |
+
+- **Discrimination survives the patch path** under structure isolation: `energy`/`auto` resolve the true pause (slide +7 s), `bool` stays at the decoy (slide 0). Asserted by `f4_decoy_patch_discrimination` (`#[ignore]`); domain oracle by `p4_*`.
+- **Production weights mask the split** — with `waveform 0.65` + nominal bias, all modes stay at the decoy (slide 0). By design the inner border is waveform-neutral, so the waveform tier can't pull energy to the truth and the 0.35 structure weight is outvoted by the nominal bias. **Operational takeaway:** the energy signature's advantage shows up when structure drives placement; under default fit weights the waveform tier dominates and can erase it. Relevant to the parent plan's `min_structure_match_score` / weight tuning.
+- **Wall cost:** production-weights rows ~7× slower (~270 s vs ~37 s) — full-PCM Pearson per candidate.
 
 ---
 

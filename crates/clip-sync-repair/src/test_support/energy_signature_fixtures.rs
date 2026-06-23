@@ -1244,6 +1244,109 @@ fn build_f3_drone_with_total_secs(
     fixture
 }
 
+/// **F4-decoy** — patch-layer `energy` vs `bool` discriminator (energy corpus Phase E.1).
+///
+/// Geometry mirrors F1 (A's gap sits at the **decoy** time; the true fill is shifted forward
+/// in B), but the decoy and true pause carry **identical active/silent bool patterns** while
+/// their **energy contours are anti-correlated**: the outer context ramps *up* into the true
+/// pause (matching A) and *down* into the decoy. The immediate inner border is identical at
+/// both, so the narrow waveform seam cannot tell them apart — only the wide energy envelope can.
+///
+/// Outcome: `bool` scores tie between decoy and truth, so `prefer_start` keeps it at the decoy
+/// nominal; `energy` / `auto` resolve to the true pause. This is the EC-6 discrimination the F2
+/// fixture could not provide (`b = a.clone()` made the true pause uniquely waveform-identifiable).
+///
+/// Context is effectively pinned to **3 s**: the decoy→truth shift is `gap + 2·context`, which
+/// must stay inside `fill_border_search_secs = 10` (3 s → 7 s shift; 10 s → 21 s overruns).
+pub fn build_f4_decoy_production(
+    sample_rate: u32,
+    channels: usize,
+    total_secs: f64,
+    gap_signature_context_secs: f64,
+) -> EnergySignatureFixture {
+    let ch = channels.max(1);
+    let spec = ProductionScenarioSpec::production_standard(total_secs, gap_signature_context_secs);
+    let total_frames = secs_to_frames(total_secs, sample_rate);
+    let bin = spec.bin_frames(sample_rate);
+    let context = spec.context_frames(sample_rate, total_frames);
+    let gap = spec.min_gap_frames(sample_rate).max(bin * 2);
+    let inner = bin * 4; // identical immediate border → waveform-neutral
+    let hi = 8_000i16;
+    let lo = 3_000i16; // stays above the silence floor → still "active" for bool
+
+    // Decoy sits at the A-aligned nominal; the true pause is shifted forward in B so the decoy's
+    // post context and the true pause's pre context do not overlap, and the shift stays inside
+    // the border search radius.
+    let shift = gap + context * 2;
+    debug_assert!(
+        shift <= spec.search_radius_frames(sample_rate),
+        "F4 decoy shift {shift} exceeds search radius (raise total/context support)"
+    );
+    let decoy_start = secs_to_frames(gap_anchor_secs(&spec), sample_rate).max(context + inner);
+    let decoy_end = decoy_start + gap;
+    let truth_start = decoy_start + shift;
+    let truth_end = truth_start + gap;
+
+    let write_ramp = |samples: &mut Vec<i16>, start: usize, end: usize, from: i16, to: i16| {
+        let span = end.saturating_sub(start).max(1) as i32;
+        for f in start..end {
+            let t = (f - start) as i32;
+            let amp = i32::from(from) + (i32::from(to) - i32::from(from)) * t / span;
+            write_frame(samples, ch, f, amp as i16);
+        }
+    };
+    let write_const = |samples: &mut Vec<i16>, start: usize, end: usize, amp: i16| {
+        for f in start..end {
+            write_frame(samples, ch, f, amp);
+        }
+    };
+
+    // Shared pause shape: ramped outer pre → steady inner border → silent gap → shared post
+    // contour. `descending` flips only the outer pre ramp (decoy), keeping the inner border,
+    // gap, and post identical so the bool pattern matches but the energy contour does not.
+    let write_pause = |samples: &mut Vec<i16>, g_start: usize, g_end: usize, descending: bool| {
+        let pre_start = g_start - context;
+        let inner_start = g_start - inner;
+        if descending {
+            write_ramp(samples, pre_start, inner_start, hi, lo);
+        } else {
+            write_ramp(samples, pre_start, inner_start, lo, hi);
+        }
+        write_const(samples, inner_start, g_start, hi); // identical inner border
+        write_const(samples, g_start, g_end, 0); // silent gap
+        write_ramp(samples, g_end, g_end + context, hi, lo); // shared post contour
+    };
+
+    // A: content baseline with a single dropout at the decoy time (rising pre contour).
+    let mut a = vec![hi; total_frames * ch];
+    write_pause(&mut a, decoy_start, decoy_end, false);
+
+    // B: content baseline with the decoy (descending pre) and the true pause (rising pre).
+    let mut b = vec![hi; total_frames * ch];
+    write_pause(&mut b, decoy_start, decoy_end, true);
+    write_pause(&mut b, truth_start, truth_end, false);
+
+    let structure_params =
+        spec.structure_match_params(sample_rate, gap, spec.search_radius_frames(sample_rate));
+
+    EnergySignatureFixture {
+        id: "F4_decoy_production",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start: decoy_start,
+        gap_end: decoy_end,
+        context_frames: context,
+        true_fill_start: truth_start,
+        true_fill_end: truth_end,
+        nominal_fill_start: decoy_start,
+        nominal_fill_end: decoy_end,
+        b_dropout_shift_frames: shift,
+        structure_params,
+    }
+}
+
 /// Write interleaved PCM to a WAV file.
 pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, samples: &[i16]) {
     use hound::{SampleFormat, WavSpec, WavWriter};

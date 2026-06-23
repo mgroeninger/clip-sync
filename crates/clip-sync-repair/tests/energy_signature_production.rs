@@ -9,8 +9,8 @@ use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
-    build_f1_production, build_f1_production_at, build_f2_production, structure_slide_secs,
-    EnergySignatureFixture,
+    build_f1_production, build_f1_production_at, build_f2_production, build_f4_decoy_production,
+    structure_slide_secs, EnergySignatureFixture,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
@@ -84,6 +84,20 @@ fn energy_signature_mode_matrix() {
         &fixture_f2,
         &[3.0],
         production_fit_weights_config,
+        &repair_defaults,
+    );
+
+    // F4-decoy: the EC-6 discriminator. Under structure isolation, energy/auto slide to the
+    // true pause (≈ +7 s) while bool stays at the decoy nominal (≈ 0). (Production-weights
+    // rows are in `f4_decoy_patch_diagnostic`; they mask the split and cost ~270 s each.)
+    let fixture_f4 = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    run_oracle_matrix_rows(
+        &patch,
+        &temp,
+        "F4-decoy",
+        &fixture_f4,
+        &[3.0],
+        production_repair_config,
         &repair_defaults,
     );
 }
@@ -198,6 +212,93 @@ fn f2_production_weights_diagnostic() {
         &patch,
         &temp,
         "F2-long-prodw",
+        &fixture,
+        &[3.0],
+        production_fit_weights_config,
+        &repair_defaults,
+    );
+}
+
+/// **EC-6 (patch layer):** on the F4 decoy fixture under the structure-isolated corpus config,
+/// `energy`/`auto` slide to the true pause while `bool` stays at the decoy nominal — the
+/// bool-vs-energy split survives the full patch path. Ignored: ~36 s per patch in debug.
+#[test]
+#[ignore = "ec6: cargo test -p clip-sync-repair f4_decoy_patch_discrimination -- --ignored --nocapture"]
+fn f4_decoy_patch_discrimination() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+
+    let slide_for = |mode: GapSignatureMode| -> f64 {
+        let repair = production_repair_config(mode, 3.0);
+        let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+        let result = patch
+            .execute(
+                patch_request_from_repair(report, &repair),
+                repair_defaults.crossfade_ms,
+            )
+            .expect("F4 decoy patch");
+        assert_eq!(
+            result.summary.patched_count, 1,
+            "F4 {mode:?} should patch: {:?}",
+            result.summary.gaps,
+        );
+        match &result.summary.gaps[0].status {
+            GapPatchStatus::Patched {
+                align_adjustment_secs,
+                ..
+            } => *align_adjustment_secs,
+            other => panic!("F4 {mode:?}: expected patched, got {other:?}"),
+        }
+    };
+
+    let tol = 0.1; // ~2 × 50 ms bins
+    let energy_slide = slide_for(GapSignatureMode::Energy);
+    let bool_slide = slide_for(GapSignatureMode::Bool);
+    eprintln!(
+        "F4 EC-6: energy slide {energy_slide:.3}s (truth ≈ {truth_slide:.3}s), bool slide {bool_slide:.3}s (decoy ≈ 0)"
+    );
+
+    assert!(
+        (energy_slide - truth_slide).abs() <= tol,
+        "energy slide {energy_slide:.3}s should reach the true pause ≈ {truth_slide:.3}s",
+    );
+    assert!(
+        bool_slide.abs() <= tol,
+        "bool slide {bool_slide:.3}s should stay at the decoy nominal (≈ 0)",
+    );
+    assert!(
+        (energy_slide - bool_slide).abs() > truth_slide.abs() / 2.0,
+        "energy and bool placements must diverge ({energy_slide:.3}s vs {bool_slide:.3}s)",
+    );
+}
+
+#[test]
+#[ignore = "diagnostic: cargo test -p clip-sync-repair f4_decoy_patch_diagnostic -- --ignored --nocapture"]
+fn f4_decoy_patch_diagnostic() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+    eprintln!("F4 decoy: truth slide ≈ {truth_slide:.3}s (energy target), decoy slide ≈ 0 (bool target)");
+
+    eprintln!("fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason");
+    run_oracle_matrix_rows(
+        &patch,
+        &temp,
+        "F4-decoy",
+        &fixture,
+        &[3.0],
+        production_repair_config,
+        &repair_defaults,
+    );
+    run_oracle_matrix_rows(
+        &patch,
+        &temp,
+        "F4-decoy-prodw",
         &fixture,
         &[3.0],
         production_fit_weights_config,
