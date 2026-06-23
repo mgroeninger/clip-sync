@@ -1,6 +1,6 @@
 # Temporary plan: energy-envelope gap structure matching
 
-> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (**`auto` default**), fit-path search + flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 corpus tuning / docs remain open.
+> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (**`auto` default**), fit-path search + flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 partially landed: **`--gap-signature-mode` / `--gap-signature-context-secs` CLI flags shipped**, signature-mode guidance lives in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4. Remaining Phase 3 docs (`cli-output.md` verbose `signature_mode`, README hard-gap context example) and corpus tuning open.
 >
 > Archive to `docs/archive/energy-signature-plan.md` when Phase 3 ships.
 
@@ -237,9 +237,10 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 - [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}. Record rows with vocabulary tags ([gap-repair-guide.md](gap-repair-guide.md) § Vocabulary; acceptance **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md)).
 - [ ] Adjust `min_structure_match_score` default if energy score distribution shifts (document old vs new).
 - [x] Default `gap_signature_mode` → `auto`.
-- [ ] README § Gap patching — new subsection “Structure signatures” (energy vs bool, context length).
-- [ ] `docs/cli-output.md` — verbose `signature_mode` if exposed.
-- [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps.
+- [x] Structure signature guidance (energy vs bool, context length) — landed in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 (resolved `signature_mode=` verbose line documented there). No separate README subsection added.
+- [ ] `docs/cli-output.md` — verbose `signature_mode` (currently only in `gap-repair-guide.md`; not yet in `cli-output.md`).
+- [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps (README block has `= 3.0` default only).
+- [x] CLI flags `--gap-signature-mode` / `--gap-signature-context-secs` shipped (`args.rs`; README flag table).
 - [x] (Optional) F2 integration fixture: align post-seam at pause₁ — done for **F2-long** production geometry; I3 still uses integration floor `-0.05`.
 
 ### Phase 4 — Optional optimizations (defer if Phase 3 ships clean)
@@ -261,7 +262,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 | `absolute_silence_rms` | — | (scan) | Reused as envelope floor |
 | `min_structure_match_score` | 3 | `0.55` (retune?) | Same semantic, new distribution |
 
-No new CLI flags required for v1 (config-only, matching `gap_signature_*` today). Optional later: `--gap-signature-mode energy`.
+**Shipped:** `--gap-signature-mode` and `--gap-signature-context-secs` CLI flags (`args.rs`; README flag table) override the corresponding `gap_signature_*` TOML keys. (Originally scoped as config-only for v1; the flags were added during Phase 3.)
 
 Existing keys unchanged: `fill_mode`, `fill_fit_*_weight`, `min_fill_correlation`, `fill_border_search_secs`, `fill_seam_search_secs`, gap extension flags.
 
@@ -333,5 +334,5 @@ Do not block energy signature on Phase D. Ship energy through structure tier ind
 1. **Enum vs parallel fields:** `GapSignature` enum vs extending `GapContextSignature` with optional `Vec<f32>` — enum preferred for invariant clarity?
 2. **Default context after flip:** Keep 3 s default or bump to 5–10 s when `energy` becomes default?
 3. **Band-limit:** Speech band (300 Hz–3 kHz) before RMS — worth Phase 1 or only if HVAC rumble false-matches appear?
-4. **Expose mode on CLI** for debugging (`--gap-signature-mode`) in Phase 2 or config-only through Phase 3?
+4. ~~**Expose mode on CLI** for debugging (`--gap-signature-mode`)?~~ **Resolved:** `--gap-signature-mode` and `--gap-signature-context-secs` shipped in Phase 3.
 5. **Score naming in JSON/verbose:** Keep `struct pre=` label for energy scores or add `energy pre=` alias for clarity?

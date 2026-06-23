@@ -99,6 +99,24 @@ pub fn production_repair_config(
     }
 }
 
+/// Variant of [`production_repair_config`] with **production fit weights**
+/// (`structure 0.35 / waveform 0.65`) and production nominal bias, instead of structure
+/// isolation. Used to test whether the waveform tier — rather than structure +
+/// `snap_fill_to_gap` — changes mode discrimination on decoy fixtures (EC-6 follow-up).
+/// Gating floors stay corpus-relaxed (`min_fill_correlation = 0`, `fill_absolute_floor =
+/// -0.05`) so we isolate the weights/bias variable from seam-gate rejection.
+pub fn production_fit_weights_config(
+    gap_signature_mode: GapSignatureMode,
+    gap_signature_context_secs: f64,
+) -> RepairConfig {
+    RepairConfig {
+        fill_fit_structure_weight: 0.35,
+        fill_fit_waveform_weight: 0.65,
+        fill_fit_nominal_bias_scale: 1.0,
+        ..production_repair_config(gap_signature_mode, gap_signature_context_secs)
+    }
+}
+
 struct NeverCalledAligner;
 
 impl Aligner for NeverCalledAligner {
