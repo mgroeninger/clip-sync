@@ -186,6 +186,8 @@ Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
 **Mode-coupled nominal bias:** energy-resolved gaps use `fill_fit_energy_nominal_bias_scale` (default `0.25`) for the distance-from-nominal penalty; bool keeps the base `fill_fit_nominal_bias_scale` (default `1.0`). The lower energy scale lets a confident contour override a **drifted nominal B map** (energy mode self-corrects), while only loosening far-off candidates — sub-second offsets are unaffected. Raise toward `1.0` to restore hard anchoring for energy gaps.
 
+**Context length (`gap_signature_context_secs`, default `3.0`):** keep 3 s. Larger values (10 / 30 s) widen the matched signature window for ambiguous/long drift gaps, but the synthetic corpus (contexts 3 / 10 / 30) showed no measurable patch benefit and a longer context costs more B decode/memory per gap. A manual knob to try on a stubborn gap, not a default to raise.
+
 ---
 
 ## Performance

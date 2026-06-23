@@ -113,6 +113,8 @@ Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolve
 
 **Mode-coupled nominal bias.** When a gap resolves to **energy**, the search uses a lower distance-from-nominal penalty (`fill_fit_energy_nominal_bias_scale`, default **0.25**) than bool-resolved gaps (`fill_fit_nominal_bias_scale`, default **1.0**). An energy match is the signal that the alignment-supplied nominal B map may be wrong, so a confident energy contour is allowed to slide further off the nominal to the true pause — energy mode **self-corrects a drifted nominal map** without you touching the base bias. The penalty grows with distance, so this only loosens far-off (seconds of drift) candidates; sub-second offsets place the same either way. To restore the old hard anchoring for energy gaps, raise `fill_fit_energy_nominal_bias_scale` toward `1.0`. Both are config-only (no CLI flag).
 
+**Context length (`gap_signature_context_secs`).** Keep the **3 s** default. Raising it (10 / 30 s) widens the envelope/bool window matched on each side of the gap — in principle more disambiguating for hard gaps where 3 s of context aliases across several candidates — but the synthetic corpus matrix (contexts 3 / 10 / 30) showed **no measurable patch benefit**, and a longer context decodes and holds more B audio per gap (slower, more memory). Treat it as a manual knob to try on a specific stubborn drift gap, **not** a default to raise. CLI: `--gap-signature-context-secs`.
+
 ---
 
 ## Layer 5 — Repair profiles and search depth

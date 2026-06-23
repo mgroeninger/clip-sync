@@ -18,6 +18,40 @@ use clip_sync_repair::test_support::energy_signature_production::{
     production_weight_sweep_config, scan_gaps_for_fixture,
 };
 
+/// **Non-ignored CI tripwire** for the corpus e2e path. The 48 kHz corpus patch tests below are
+/// all `#[ignore]`d for cost, leaving `ScanGaps → refine → haystack → seam gates → splice`
+/// uncovered on every PR. This runs the full scan→patch pipeline on a small low-rate production
+/// F1 (16 kHz / 32 s, but production-shaped geometry: border 10 s, 50 ms bins) and asserts one gap
+/// is detected and patched. Lives in the integration binary (not the lib suite) so it does not
+/// contend with wall-clock-budget timing tests there; ~5 s.
+#[test]
+fn corpus_scan_patch_smoke() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_production_at(16_000, 1, 32.0, 3.0);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+
+    let report = scan_gaps_for_fixture(&fixture, temp.path());
+    assert_eq!(
+        report.gaps.iter().filter(|g| g.is_fillable()).count(),
+        1,
+        "smoke: scan should find one fillable gap: {:#?}",
+        report.gaps,
+    );
+
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            RepairConfig::default().crossfade_ms,
+        )
+        .expect("smoke scan→patch");
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "corpus smoke should patch one gap: {:?}",
+        result.summary.gaps,
+    );
+}
+
 #[test]
 #[ignore = "matrix: cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture"]
 fn energy_signature_mode_matrix() {
