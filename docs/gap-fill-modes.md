@@ -184,6 +184,8 @@ Verbose (`-v`): after pass 1, `anchored: N offset anchor(s) from gap #…`; on p
 
 Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
+**Mode-coupled nominal bias:** energy-resolved gaps use `fill_fit_energy_nominal_bias_scale` (default `0.25`) for the distance-from-nominal penalty; bool keeps the base `fill_fit_nominal_bias_scale` (default `1.0`). The lower energy scale lets a confident contour override a **drifted nominal B map** (energy mode self-corrects), while only loosening far-off candidates — sub-second offsets are unaffected. Raise toward `1.0` to restore hard anchoring for energy gaps.
+
 ---
 
 ## Performance
@@ -280,6 +282,7 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
 | `fill_repeat_penalty_weight` | `0.4` | `--fill-repeat-penalty-weight` | Penalize repeat-at-seam when seams weak (0 = off) |
 | `fill_fit_structure_weight` | `0.35` | `--fill-fit-structure-weight` | Unified scorer |
 | `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |
+| `fill_fit_energy_nominal_bias_scale` | `0.25` | — | Distance-from-nominal penalty for energy-resolved gaps (< base `1.0`; energy self-corrects drifted nominal) |
 | `fill_marginal_margin` | `0.08` | — | Warn band below `min_fill_correlation` |
 | `fill_absolute_floor` | `0.12` | — | Hard skip floor |
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |

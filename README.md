@@ -537,6 +537,7 @@ gap_signature_mode = "auto"                  # auto (default) | bool | energy (f
 fill_mode = "fit"                  # default; or "gate" for legacy; CLI: --fill-mode
 fill_fit_structure_weight = 0.35   # fit only: unified search
 fill_fit_waveform_weight = 0.65    # fit only: unified search
+fill_fit_energy_nominal_bias_scale = 0.25  # fit only: distance-from-nominal penalty scale for energy-resolved gaps (< base 1.0 lets a confident energy contour override a drifted nominal map)
 fill_marginal_margin = 0.08          # fit only: warn-patch band
 fill_absolute_floor = 0.12           # fit only: hard skip floor
 gap_end_extend_on_post_seam_fail = true

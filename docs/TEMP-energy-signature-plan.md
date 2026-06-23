@@ -234,8 +234,8 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 > **Corpus plan:** [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) — long synthetic F1/F2 @ production geometry, mode matrix, optional PD/CC profile → regenerate (no copyrighted media in repo).
 
-- [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}. Record rows with vocabulary tags ([gap-repair-guide.md](gap-repair-guide.md) § Vocabulary; acceptance **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md)).
-- [ ] Adjust `min_structure_match_score` default if energy score distribution shifts (document old vs new).
+- [x] Corpus / manual pass: mode matrix recorded with vocabulary tags; acceptance **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) (**EC-6 met** via `build_f4_decoy_production` — energy resolves a 7 s-off nominal where bool stays at the decoy).
+- [x] Adjust `min_structure_match_score` default — **no change.** The F4 weight sweep shows energy-vs-bool placement is masked by `fill_fit_nominal_bias_scale` (default `1.0`), not by a structure-score floor; `min_structure_match_score` is orthogonal. Energy recovers a 7 s-off true pause at production weights (0.35/0.65) once `nominal_bias ≤ ~0.25`. See [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) Tuning record (2026-06-23 e).
 - [x] Default `gap_signature_mode` → `auto`.
 - [x] Structure signature guidance (energy vs bool, context length) — landed in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 (resolved `signature_mode=` verbose line documented there). No separate README subsection added.
 - [ ] `docs/cli-output.md` — verbose `signature_mode` (currently only in `gap-repair-guide.md`; not yet in `cli-output.md`).
@@ -248,6 +248,7 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 - [ ] FFT cross-correlation for pre/post slide when `context_secs * 1000 / bin_ms > 1000` (profile-driven).
 - [ ] **Adaptive context:** only widen context when bool/energy score at nominal map < floor (saves decode on easy gaps) — requires second pass or lazy extend; backlog if not needed.
 - [ ] Peak-picked sparse landmarks as third `GapSignature` variant — only if envelope still ambiguous on speech-heavy corpus.
+- [x] **Mode-coupled `nominal_bias` — shipped (2026-06-23 f).** New `fill_fit_energy_nominal_bias_scale` config (default **0.25**): energy-resolved gaps use this lower distance-from-nominal penalty while bool keeps the base `fill_fit_nominal_bias_scale` (default 1.0). Applied per-resolved-signature in `application/patch_region.rs`; plumbed config → `PatchAudioRequest` → `SeamGateParams`. An energy match signals the nominal map may be wrong, so a confident energy contour can override a drifted nominal without loosening bool. Guarded by `f4_decoy_mode_coupled_bias` (energy → true pause, bool → decoy, at base bias 1.0). Penalty scales with distance, so the lower scale only frees far-off (drift) candidates — low-risk for small offsets. Details in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) Tuning record (2026-06-23 e/f).
 
 ---
 

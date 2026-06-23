@@ -111,6 +111,8 @@ Gate legacy path **always** uses bool structure. Signature mode does **not** cha
 
 Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolved** tier after `auto` selection, not the config value `auto`.
 
+**Mode-coupled nominal bias.** When a gap resolves to **energy**, the search uses a lower distance-from-nominal penalty (`fill_fit_energy_nominal_bias_scale`, default **0.25**) than bool-resolved gaps (`fill_fit_nominal_bias_scale`, default **1.0**). An energy match is the signal that the alignment-supplied nominal B map may be wrong, so a confident energy contour is allowed to slide further off the nominal to the true pause — energy mode **self-corrects a drifted nominal map** without you touching the base bias. The penalty grows with distance, so this only loosens far-off (seconds of drift) candidates; sub-second offsets place the same either way. To restore the old hard anchoring for energy gaps, raise `fill_fit_energy_nominal_bias_scale` toward `1.0`. Both are config-only (no CLI flag).
+
 ---
 
 ## Layer 5 — Repair profiles and search depth

@@ -211,7 +211,8 @@ So all three tiers — bool, structure, waveform — independently converge on p
 **Intent:** Close Phase 3 from parent plan.
 
 - [x] Run matrix (ignored); record outcomes in this doc § [Tuning record](#tuning-record) (2026-06-22: all-skip; 2026-06-23: all patch after corpus config fix).
-- [ ] Confirm or retune `min_structure_match_score` (default 0.55) — corpus matrix uses **0.0** (structure-isolated, like I1); operator defaults unchanged.
+- [x] Confirm or retune `min_structure_match_score` (default 0.55) — **no change.** The F4 weight sweep (2026-06-23 e) shows the energy-vs-bool masking lever is `fill_fit_nominal_bias_scale`, not a structure-score floor; `min_structure_match_score` is orthogonal. Corpus matrix uses **0.0** (structure-isolated, like I1); operator defaults unchanged.
+- [x] Document **mode-coupled `fill_fit_energy_nominal_bias_scale`** (default 0.25; energy self-corrects a drifted nominal) in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 + [gap-fill-modes.md](gap-fill-modes.md) (Structure signatures + config table).
 - [ ] Document recommended `gap_signature_context_secs` (3 vs 10 vs 30) in [gap-repair-guide.md](gap-repair-guide.md) / [gap-fill-modes.md](gap-fill-modes.md).
 - [x] Wire vocabulary into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md) (fixture table, matrix row format, EC-* naming).
 - [ ] Cross-link from [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md); archive parent Phase 3 when done.
@@ -347,8 +348,36 @@ Fixed other knobs: `fill_mode = fit`, `fill_border_search_secs = 10`, `repair pr
 | F4-decoy-prodw | production fit weights | Bool/Energy/Auto | 1 each | 0.000 | ~265–282 | all stay at decoy |
 
 - **Discrimination survives the patch path** under structure isolation: `energy`/`auto` resolve the true pause (slide +7 s), `bool` stays at the decoy (slide 0). Asserted by `f4_decoy_patch_discrimination` (`#[ignore]`); domain oracle by `p4_*`.
-- **Production weights mask the split** — with `waveform 0.65` + nominal bias, all modes stay at the decoy (slide 0). By design the inner border is waveform-neutral, so the waveform tier can't pull energy to the truth and the 0.35 structure weight is outvoted by the nominal bias. **Operational takeaway:** the energy signature's advantage shows up when structure drives placement; under default fit weights the waveform tier dominates and can erase it. Relevant to the parent plan's `min_structure_match_score` / weight tuning.
+- **Production weights mask the split** — with full production fit weights (`structure 0.35 / waveform 0.65`, `nominal_bias 1.0`), all modes stay at the decoy (slide 0). The weight **sweep below** shows the masking lever is `nominal_bias`, not the waveform weight.
 - **Wall cost:** production-weights rows ~7× slower (~270 s vs ~37 s) — full-PCM Pearson per candidate.
+
+**Weight tuning — `nominal_bias` is the lever, not the structure/waveform split (2026-06-23 e).** Sweep on F4 (energy mode, decoy 7 s off the nominal map), `f4_decoy_weight_sweep` + `f4_decoy_bias_boundary`:
+
+| structure_w | waveform_w | nominal_bias | energy slide | result |
+|-------------|------------|--------------|--------------|--------|
+| 1.00 | 0.00 | 0.0 | 7.000 | truth (structure isolation) |
+| 0.35 | 0.65 | 0.0 | 7.000 | **truth — full production weights, no bias** |
+| 0.35 | 0.65 | 0.10 | 7.000 | truth |
+| 0.35 | 0.65 | 0.25 | 7.000 | truth (boundary) |
+| 0.35 | 0.65 | 0.35 | 0.000 | decoy (masked) |
+| 0.35 | 0.65 | 0.50 | 0.000 | decoy |
+| 0.35 | 0.65 | 1.00 | 0.000 | decoy (default) |
+| 0.65 | 0.35 | 1.00 | 0.000 | decoy (more structure does not rescue it) |
+| 0.50 | 0.50 | 1.00 | 0.000 | decoy |
+
+(`bool` control stays at the decoy in every row, with and without bias.)
+
+**Findings:**
+
+- **The structure/waveform weight split does not mask energy.** At the full production `0.35 / 0.65`, energy still resolves the true pause — provided `nominal_bias ≤ ~0.25`. No need to change the weight split for the energy signature.
+- **`fill_fit_nominal_bias_scale` is the lever.** It anchors the search to the alignment-supplied nominal map; at the default `1.0` it pins placement to the (wrong) decoy and a confident energy score cannot override it. Masking begins at bias `0.35` for a 7 s-off nominal; smaller real-world offsets ("hundreds of ms", the plan's motivating case) tolerate more bias, but the direction is unambiguous: **energy mode wants low `nominal_bias`.**
+- **`min_structure_match_score` is *not* the relevant knob.** The masking is in the search objective's bias term, not a structure-score floor — retuning the floor would not change this. (Closes the parent plan's "retune `min_structure_match_score`" question: no change needed on this account.)
+- **Guarded by** `f4_decoy_energy_recovers_at_low_bias` (energy, `0.35/0.65`, bias `0.25` → slide 7.000).
+
+**Recommendation (no global default change):** keep `nominal_bias = 1.0` as the default — it protects the common case where the alignment map is correct and guards against the search wandering to spurious far matches. Instead:
+
+1. **Operator guidance:** repairing drift-heavy material where the nominal B map is off should pair `gap_signature_mode = energy` (or `auto`) with a reduced `fill_fit_nominal_bias_scale` (≤ 0.25 recovers a 7 s offset at default weights). Document in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 / [gap-fill-modes.md](gap-fill-modes.md).
+2. **Mode-coupled `nominal_bias` — IMPLEMENTED (2026-06-23 f).** New `fill_fit_energy_nominal_bias_scale` config (default **0.25**) applies a lower distance-from-nominal penalty when the resolved signature is **energy**, while bool-resolved gaps keep the base `fill_fit_nominal_bias_scale` (default 1.0). Applied per-resolved-signature in `patch_region.rs`. So at production fit weights, energy automatically un-masks (slide → true pause) without operators touching the base bias. Guarded by `f4_decoy_mode_coupled_bias` (energy → 7.000 s / bool → 0.000 s with base bias 1.0). The penalty scales linearly with distance (`0.02 × scale × bins`), so the lowered energy scale only frees far-off (drifted) candidates — small offsets win under either scale, keeping the change low-risk for the common case.
 
 ---
 
