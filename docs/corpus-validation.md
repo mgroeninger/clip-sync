@@ -251,8 +251,8 @@ Record **fixture oracle** (what the test asserts) separately from **run tags** (
 
 | `fixture_scenario` | Geometry | Domain oracle (EC-*) | Typical run tags (production default, if patched) |
 |--------------------|----------|----------------------|---------------------------------------------------|
-| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1:** energy/`auto` → true offset; bool → decoy | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
-| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2:** energy → pause₁ | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
+| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1 (domain):** energy/`auto` → true offset on full B (`p1_` test). **Patch layer open:** bool decoy + production weights | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
+| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2 (domain):** energy → pause₁ (`p2_` test). **Patch layer open:** slide ≈ 0 | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
 | `F3-long` | Steady drone | **EC-3:** `auto` → resolved `bool` | `signature_mode=bool`, `content_hint=flat` |
 
 Short fixtures **F1–F3** @ 11.025 Hz / 8 s integration (**U\***, **I1–I4**) use the same geometry at `integration_fast()` scale.

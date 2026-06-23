@@ -1,6 +1,6 @@
 # Temporary plan: energy signature production corpus (synthetic tuning)
 
-> **Status:** **Phases A–D in progress** (2026-06-22). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3** acceptance, and ignored mode matrix landed. Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary and [corpus-validation.md](corpus-validation.md) § Energy signature. F1-long end-to-end patch on scan-derived gaps remains open (domain + scan smoke pass; use I1-style oracle `GapReport` for patch until refine/scan alignment is tightened).
+> **Status:** **Phases A–D largely landed** (2026-06-22). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3 domain oracles**, and ignored mode matrix (context 30 skipped on 60 s fixtures). Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md). **Open:** F1-long scan→patch e2e; EC-1/EC-2 patch-layer criteria; EC-4–EC-6; Phase F/G.
 >
 > Archive to `docs/archive/energy-corpus-plan.md` when the production corpus ships and tuning notes are recorded. Update [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) Phase 3 checklist, [corpus-validation.md](corpus-validation.md) § Gap fill, and [gap-repair-guide.md](gap-repair-guide.md) as needed.
 
@@ -40,7 +40,7 @@
 |------|------|---------------|-----|
 | Short oracles | `test_support/energy_signature_fixtures.rs` | F1–F3 unit + `build_f*_integration` @ **8 s** | Too short for 10 s border + 30 s context |
 | Integration tests | `tests/patch_audio_integration.rs` | I1–I4 via `energy_sig_patch_options` (3.5 s border, 0.5 s context, `waveform_weight = 0`) | Not production defaults |
-| Gap injection | `gap_report_from_energy_fixture` | Skips real scan | Need scan-and-patch path |
+| Gap injection | `gap_report_from_energy_fixture` in `test_support/energy_signature_production.rs` | Shared oracle path for I1-style reports | Scan→patch e2e still open |
 | Structure params | F1 integration | `search_radius_frames = gap_frames * 2` | Not tied to `fill_border_search_secs` |
 | Silence threshold | Fixtures | `absolute_silence_rms: 0.0` in structure params | Production scan uses **33.0** |
 | F2 seam | F2 integration | A post-rise vs B hard cut | Needs `fill_absolute_floor = -0.05` in I3; production is **0.12** |
@@ -81,7 +81,7 @@ decoy   within fill_border_search_secs of nominal (F1 shift, F2 pause spacing)
 | **Sample rate** | **48 kHz** for production corpus; keep 11.025 kHz unit fixtures unchanged. |
 | **Channels** | Mono + one **stereo** smoke case (optional). |
 | **Scan** | Gap regions **digital zero** (or below `absolute_silence_rms = 33`); duration ≥ **1000 ms**; block-aligned (~250 ms). |
-| **Patch config** | New `production_sig_patch_options(mode, context_secs)` mirroring `RepairConfig` defaults (`border = 10`, weights 0.35/0.65, `min_structure_match_score = 0.55`). |
+| **Patch config** | `production_repair_config(mode, context_secs)` in `energy_signature_production.rs` (plan name `production_sig_patch_options`); mirrors production defaults (`border = 10`, weights 0.35/0.65, `min_structure_match_score = 0.55`). |
 | **Structure isolation** | Domain oracles may use structure-heavy weights; **production matrix** uses default unified weights. |
 | **F2 post-seam** | **Done:** pause₂ placed outside pause₁ post context; B cloned from A with pause₂ silence only; production uses multi-bin post rise + zero fill slack. |
 | **Matrix** | Modes: `bool`, `energy`, `auto`. Contexts: `3`, `10`, `30` (skip invalid combos per file length). |
@@ -117,55 +117,57 @@ Lib test names (`p1_f1_production_…`, `p2_f2_…`) keep historical prefixes; d
 
 **Intent:** Refactor builders; keep 8 s integration tests green.
 
-- [ ] Add `ProductionScenarioSpec` (`total_secs`, `sample_rate`, `channels`, `gap_signature_context_secs`, `fill_border_search_secs`, `gap_signature_bin_ms`, margins, `min_gap_secs`).
-- [ ] Add `gap_anchor_secs(spec) -> f64` (lead-in from context + border + margin).
-- [ ] Derive `StructureMatchParams` from spec:
+- [x] Add `ProductionScenarioSpec` (`total_secs`, `gap_signature_context_secs`, `fill_border_search_secs`, `gap_signature_bin_ms`, margins, `min_gap_secs`). `sample_rate` / `channels` remain builder args.
+- [x] Add `gap_anchor_secs(spec) -> f64` (lead-in from context + border + margin).
+- [x] Derive `StructureMatchParams` from spec:
   - `bin_frames = round(bin_ms × rate)`
   - `search_radius_frames = round(fill_border_search_secs × rate)`
   - `gap_frames ≥ max(min_gap, 2 × bin_frames)`
   - `context_frames = round(context_secs × rate)`
-- [ ] Refactor `build_f1_integration` / `build_f2_integration` → wrappers on `ProductionScenarioSpec::integration_fast()` (8 s, current behavior).
-- [ ] Unit test: anchor helper places F1 decoy inside search radius for 60 s / border 10.
+- [x] Refactor `build_f1_integration` / `build_f2_integration` → wrappers on `ProductionScenarioSpec::integration_fast()` (8 s, current behavior).
+- [x] Unit test: anchor helper places F1 decoy inside search radius for 60 s / border 10.
 
 ### Phase B — F1-long / F2-long builders
 
 **Intent:** Production-scale WAV geometry (F1 decoy, F2 dual-pause).
 
-- [ ] `build_f1_production(spec) -> EnergySignatureFixture` — reuse `RampGapFillSpec` / `fill_ramp_gap`; keep refine guards (`silence_start - 1`, B guard frame).
-- [ ] `build_f2_production(spec) -> EnergySignatureFixture` — pause spacing `≤ 2 × border`; guards at pause edges.
-- [ ] `build_f3_drone_production(spec)` for `auto` → bool (flat envelope, non-zero level).
-- [ ] `write_fixture_wavs` unchanged; optional output under `target/energy_corpus/` for manual CLI.
+- [x] `build_f1_production` / `build_f1_production_at(total_secs, …)` — reuse `RampGapFillSpec` / `fill_ramp_gap`; refine guards.
+- [x] `build_f2_production(spec) -> EnergySignatureFixture` — pause spacing `≤ 2 × border`; guards at pause edges.
+- [x] `build_f3_drone_production(spec)` for `auto` → bool (flat envelope, non-zero level).
+- [x] `write_fixture_wavs` unchanged; optional output under `target/energy_corpus/` for manual CLI not implemented.
+- [ ] Optional stereo F1-long smoke.
 
 ### Phase C — Scan-and-patch path
 
 **Intent:** Exercise real `ScanGaps` + refine, not only injected `GapReport`.
 
-- [ ] After `write_fixture_wavs`, run `ScanGaps` with production scan defaults (`min_gap_ms = 1000`, `absolute_silence_rms = 33`, `scan_block_ms = 250`).
-- [ ] Assert detected gap count and boundaries within tolerance (± block or ±1 bin).
-- [ ] Build B reference: aligned copy for F1/F2 (same as integration) or `write_clean_*` only where geometry allows.
-- [ ] `PatchAudio` with `production_sig_patch_options(mode, context_secs)`.
+- [x] After `write_fixture_wavs`, run `ScanGaps` with production scan defaults (`min_gap_ms = 1000`, `absolute_silence_rms = 33`, `scan_block_ms = 250`).
+- [x] Assert detected gap count and boundaries within tolerance (±0.35 s scan smoke; tighter ± block TBD).
+- [x] Build B reference: aligned copy for F1/F2 (same as integration).
+- [ ] `PatchAudio` on **scan-derived** gaps with production defaults (e2e acceptance); oracle-injected patch via shared `gap_report_from_energy_fixture` works for I1 pattern.
 
 ### Phase D — Mode matrix runner
 
 **Intent:** Automated Phase 3 comparison without external media.
 
-- [ ] New module: `test_support/energy_signature_production_corpus.rs` or `tests/energy_signature_matrix.rs`.
-- [ ] Ignored test loops: fixtures × modes × contexts; logs CSV-friendly rows (fixture, mode, context, patched, skipped, marginal, wall_ms, notes).
+- [x] `tests/energy_signature_production.rs` (`energy_signature_mode_matrix`, `#[ignore]`).
+- [x] Ignored test loops: fixtures × modes × contexts; logs CSV-friendly rows with `skip_reason`.
+- [x] Skip invalid context combos (`production_matrix_contexts`: context 30 only on ≥ ~83 s fixtures; 120 s block for EC-5 prep).
 - [ ] Optional: subprocess `clip-sync-repair -v` on written WAVs for verbose `signature_mode=` / struct lines.
-- [ ] **CI smoke:** one case committed (fast budget, e.g. 90 s wall in manifest).
+- [ ] **CI smoke:** one committed non-ignored patch case (fast budget).
 
 ### Phase E — Acceptance criteria (production synthetic)
 
 Corpus IDs **EC-1–EC-6** (lib tests: `p1_` / `p2_` / `p3_` where implemented).
 
-| ID | Fixture | Config | Assertion |
-|----|---------|--------|-----------|
-| **EC-1** | F1-long 60 s | `energy` or `auto`, context 3, production patch opts | Unified/patch `start_frame` within ±1 bin of truth; `bool` at decoy or strictly farther |
-| **EC-2** | F2-long | same | Slide ≈ 0 at pause₁ (aligned A/B), not pause₂ nominal |
-| **EC-3** | F3-long drone | `auto` | Resolved `signature_mode=bool` |
-| **EC-4** | F1-long | `auto`, context 3 | No regression vs I5-style suite defaults |
-| **EC-5** | F1-long 120 s | context **30** | Completes within wall budget; no hot-path failure |
-| **EC-6** | Matrix | all | Record sheet: cases where `auto`/`energy` patches and `bool` skips (or reverse); include vocabulary tags |
+| ID | Fixture | Config | Assertion | Status |
+|----|---------|--------|-----------|--------|
+| **EC-1** | F1-long 60 s | `energy`, context 3, structure-heavy domain weights | **Domain:** unified `start_frame` within ±1 bin of truth (`p1_`). **Patch (open):** production weights; bool at decoy or farther | Domain ✅ |
+| **EC-2** | F2-long | same | **Domain:** energy at pause₁ (`p2_`). **Patch (open):** slide ≈ 0 at pause₁ | Domain ✅ |
+| **EC-3** | F3-long drone | `auto` | Resolved `signature_mode=bool` (`p3_`) | ✅ |
+| **EC-4** | F1-long | `auto`, context 3 | No regression vs I5-style suite defaults | Open |
+| **EC-5** | F1-long 120 s | context **30** | Completes within wall budget; no hot-path failure | Open (`build_f1_production_at` landed) |
+| **EC-6** | Matrix | all | Record sheet: cases where `auto`/`energy` patches and `bool` skips (or reverse); include vocabulary tags | Open |
 
 ### Phase F — Profile → synthesize (optional)
 
@@ -181,8 +183,8 @@ Corpus IDs **EC-1–EC-6** (lib tests: `p1_` / `p2_` / `p3_` where implemented).
 
 **Intent:** Close Phase 3 from parent plan.
 
-- [ ] Run matrix (ignored); record outcomes in this doc § [Tuning record](#tuning-record) or `corpus-validation.md`.
-- [ ] Confirm or retune `min_structure_match_score` (default 0.55).
+- [x] Run matrix (ignored); record outcomes in this doc § [Tuning record](#tuning-record) or `corpus-validation.md` (2026-06-22: F1-long 9/9 skip).
+- [ ] Confirm or retune `min_structure_match_score` (default 0.55) — **deferred** until scan→patch haystack works.
 - [ ] Document recommended `gap_signature_context_secs` (3 vs 10 vs 30) in [gap-repair-guide.md](gap-repair-guide.md) / [gap-fill-modes.md](gap-fill-modes.md).
 - [x] Wire vocabulary into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md) (fixture table, matrix row format, EC-* naming).
 - [ ] Cross-link from [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md); archive parent Phase 3 when done.
@@ -195,7 +197,7 @@ Corpus IDs **EC-1–EC-6** (lib tests: `p1_` / `p2_` / `p3_` where implemented).
 |------|---------|
 | `test_support/energy_signature_fixtures.rs` | `ProductionScenarioSpec`, anchor math, `build_f1/f2/f3_production`, refactor integration wrappers |
 | `test_support/energy_signature_acceptance.rs` | Optional U9–U11 domain oracles for long fixtures |
-| `tests/patch_audio_integration.rs` | `production_sig_patch_options`, P1–P4 smoke, delegate to matrix module |
+| `tests/patch_audio_integration.rs` | I1–I4 use shared `gap_report_from_energy_fixture`; production patch smoke still open |
 | `test_support/patch_geometry_preview.rs` | Haystack oracle accepts production spec |
 | `tests/energy_corpus/` (new) | `profiles/*.json`, optional `manifest.toml` wall budgets |
 | `scripts/profile_envelope.ps1` | Phase F optional |
@@ -231,17 +233,30 @@ Fixed other knobs: `fill_mode = fit`, `fill_border_search_secs = 10`, `repair pr
 
 ## Tuning record
 
-*(Fill after Phase D/G matrix run.)*
+**Matrix run 2026-06-22** — F1-long 60 s, `scan_derived`, production defaults (`fill_border_search_secs = 10`, `baseline_only`, default weights). Total wall **~972 s** (~108 s/run avg).
 
 | Date | Fixture | Mode | Context | Source | Patched | Skipped | Marginal | Wall s | Tags | Notes |
 |------|---------|------|---------|--------|---------|---------|----------|--------|------|-------|
-| | | | | | | | | | | |
+| 2026-06-22 | F1-long | bool | 3 | scan_derived | 0 | 1 | 0 | 112 | `plan=fillable tier=structure_fail seam=n/a` | EC-1 domain OK; patch haystack fail |
+| 2026-06-22 | F1-long | bool | 10 | scan_derived | 0 | 1 | 0 | 114 | same | context change no effect |
+| 2026-06-22 | F1-long | bool | 30 | scan_derived | — | — | — | — | — | **Invalid on 60 s** — matrix now skips (use 120 s fixture) |
+| 2026-06-22 | F1-long | energy | 3 | scan_derived | 0 | 1 | 0 | 104 | same | energy domain finds truth on full B |
+| 2026-06-22 | F1-long | energy | 10 | scan_derived | 0 | 1 | 0 | 100 | same | |
+| 2026-06-22 | F1-long | energy | 30 | scan_derived | — | — | — | — | — | **Invalid on 60 s** — matrix now skips |
+| 2026-06-22 | F1-long | auto | 3 | scan_derived | 0 | 1 | 0 | 99 | same | |
+| 2026-06-22 | F1-long | auto | 10 | scan_derived | 0 | 1 | 0 | 99 | same | |
+| 2026-06-22 | F1-long | auto | 30 | scan_derived | — | — | — | — | — | **Invalid on 60 s** — matrix now skips |
 
-`Source` = `scan_derived` | `oracle_injected`. `Tags` = `-v` `gap tags:` line or composed equivalents.
+**Findings:**
 
-**Threshold decision:** `min_structure_match_score` = ___ (was 0.55).
+- **No mode/context delta on patch** — bool, energy, and auto all skip; context 3 / 10 / 30 does not change outcome. Signature mode affects placement on full B (EC-1 domain passes) but not scan→patch on this fixture yet.
+- **Likely skip:** structure gate `correlation_below_threshold` with `pre=0 post=0` (structure search on sliced B haystack fails before waveform tier). Re-run with updated matrix test to confirm exact `min=` in skip column.
+- **EC-6 goal not met** — no case where `auto`/`energy` patches and `bool` skips (all skip equally).
+- **Performance:** ~100 s/patch on 60 s mono F1-long @ 48 kHz stereo with 10 s border — budget accordingly for F2-long / 120 s matrix expansion.
 
-**Context guidance:** default 3 s; raise to ___ s when ___.
+**Threshold decision:** `min_structure_match_score` = **unchanged (0.55)** — matrix did not reach waveform tier; retune deferred until haystack placement works.
+
+**Context guidance:** default **3 s** retained; raising to 10 / 30 s showed **no patch benefit** on F1-long scan path (domain-only discrimination unchanged in prior EC-1 runs).
 
 ---
 
@@ -251,8 +266,9 @@ Fixed other knobs: `fill_mode = fit`, `fill_border_search_secs = 10`, `repair pr
 |------|------------|
 | 60 s still too short for context 30 | Use 120 s fixture for context 30 only (EC-5) |
 | Scan doesn't detect synthetic gap | Zero gap ≥ 1 s; silence lead; assert in Phase C before patch |
-| F2-long fails at `fill_absolute_floor = 0.12` | Phase B post-seam alignment; or split structure-only vs full-production tests |
-| Matrix runtime | Ignored by default; CI smoke only one case |
+| F2-long fails at `fill_absolute_floor = 0.12` | Phase B post-seam alignment — **fixed** for domain EC-2; patch matrix not run yet |
+| Matrix all-skip on F1-long scan path | Fix scan/refine vs decoy geometry (Phase C); compare `oracle_injected` matrix row as control |
+| Matrix runtime (~100 s/run × 9 ≈ 16 min) | Ignored by default; CI smoke only one case; add `skip_reason` column logged |
 | Profile drift from real speech | Profile is optional; synthetic F1/F2 remain canonical oracles |
 
 ---

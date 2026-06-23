@@ -199,6 +199,8 @@ Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
 Profiles bundle haystack size, extension flags, and boundary-grid policy. Explicit CLI flags and TOML keys **override** individual bundle fields (verbose lists overrides as `+ override: …`).
 
+**Profile flag precedence:** `--quick` and `--full` take priority over `--profile <name>` when both are present (e.g. `--quick --profile full` resolves to **quick**). `--quick` and `--full` cannot be combined. Resolution order: load TOML → apply profile bundle from TOML `profile` unless a CLI profile flag is set → apply `--quick` / `--full` / `--profile` if present → apply per-field CLI/TOML overrides.
+
 | Profile | CLI | Boundary grid | `fill_border_search_secs` | Typical use |
 |---------|-----|---------------|---------------------------|-------------|
 | **default** | *(none)* | Off (`baseline_only`) | 10 | Interactive repair; accepts marginal baseline |

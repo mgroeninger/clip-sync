@@ -117,6 +117,8 @@ Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolve
 
 Profiles bundle haystack size, extension flags, and whether the **boundary grid** runs. Explicit CLI/TOML flags override individual fields. See [gap-fill-modes.md](gap-fill-modes.md) and [archive/repair-profiles-plan.md](archive/repair-profiles-plan.md).
 
+**Profile flag precedence:** `--quick` and `--full` win over `--profile <name>` when combined (e.g. `--quick --profile full` → **quick**). `--quick` and `--full` are mutually exclusive. Order: TOML load → TOML `profile` bundle → CLI `--quick` / `--full` / `--profile` → per-field overrides.
+
 | Profile | CLI | Boundary grid | `fill_border_search_secs` | Typical use |
 |---------|-----|---------------|---------------------------|-------------|
 | **default** | *(none)* | Off (`baseline_only`) | 10 | Interactive repair; accepts marginal baseline |

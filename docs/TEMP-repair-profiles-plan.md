@@ -56,6 +56,7 @@ baseline unified search
 |-------|----------|
 | **Profile enum** | `default` \| `quick` \| `full` on `[repair]`; CLI `--quick`, `--full`, optional `--profile <name>` |
 | **Precedence** | Explicit CLI flag > TOML `[repair]` key > profile bundle > `RepairConfig` struct defaults |
+| **Profile CLI precedence** | `--quick` / `--full` override `--profile <name>` when combined; `--quick` and `--full` are mutually exclusive |
 | **Override policy** | Profiles **do not** disable other settings; log effective config in verbose |
 | **`--quick` + `--full`** | Error: `cannot use --quick and --full together` |
 | **Default profile name** | `default` (implicit when no profile flag) |
