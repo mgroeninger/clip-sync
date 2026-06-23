@@ -20,8 +20,9 @@ use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration, build_f3_drone_integration, gap_report_times,
-    structure_heavy_weights, structure_slide_secs, write_fixture_wavs,
+    structure_heavy_weights, structure_slide_secs,
 };
+use clip_sync_repair::test_support::energy_signature_production::gap_report_from_energy_fixture;
 use clip_sync_repair::test_support::patch_geometry_preview::{
     preview_patch_geometry, PatchGeometryParams,
 };
@@ -596,51 +597,6 @@ fn energy_sig_patch_options(mode: GapSignatureMode) -> PatchTestOptions {
         min_border_discovery_secs: 0.25,
         gap_signature_mode: mode,
         ..Default::default()
-    }
-}
-
-fn stereo_compat_at_rate(sample_rate: u32) -> TrackCompatibility {
-    TrackCompatibility {
-        a_channels: CHANNELS,
-        b_channels: CHANNELS,
-        a_sample_rate: sample_rate,
-        b_sample_rate: sample_rate,
-        channels_match: true,
-        rate_match: true,
-        verdict: CompatibilityVerdict::Compatible,
-    }
-}
-
-fn gap_report_from_energy_fixture(
-    temp: &Path,
-    fixture: &clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture,
-) -> GapReport {
-    let (path_a, path_b) = write_fixture_wavs(temp, fixture);
-    let (a_start, a_end, b_start, b_end, _) = gap_report_times(fixture);
-    GapReport {
-        video_a: path_a,
-        video_b: path_b,
-        track_compatibility: Some(stereo_compat_at_rate(fixture.sample_rate)),
-        alignment: make_drift_alignment(
-            0.0,
-            0.0,
-            fixture.a_samples.len() as f64
-                / fixture.channels.max(1) as f64
-                / fixture.sample_rate as f64,
-        ),
-        gaps: vec![Gap {
-            video_a_start_secs: a_start,
-            video_a_end_secs: a_end,
-            video_b_start_secs: Some(b_start),
-            video_b_end_secs: Some(b_end),
-            b_has_energy: true,
-        }],
-        gap_offset_agreement: None,
-        decode_chunk_secs: 60,
-        scan_block_ms: 250,
-        silence_peak_fraction: 0.01,
-        limit_fill_to_mapped_region: true,
-        audio_timeline_skew: None,
     }
 }
 

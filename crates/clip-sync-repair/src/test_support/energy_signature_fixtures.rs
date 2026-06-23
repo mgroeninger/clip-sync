@@ -869,62 +869,6 @@ pub fn f1_decoy_shift_frames(_spec: &ProductionScenarioSpec, _sample_rate: u32, 
     gap_frames / 2
 }
 
-#[cfg(test)]
-mod production_spec_tests {
-    use super::*;
-
-    #[test]
-    fn gap_anchor_secs_sums_context_border_and_margin() {
-        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
-        assert!((gap_anchor_secs(&spec) - 14.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn production_anchor_places_f1_decoy_inside_border_search() {
-        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
-        let rate = 48_000u32;
-        let anchor = gap_anchor_secs(&spec);
-        assert!(
-            anchor + spec.min_gap_secs + 2.0 <= spec.total_secs,
-            "gap anchor {anchor}s needs room inside {}s timeline",
-            spec.total_secs
-        );
-        let bin = spec.bin_frames(rate);
-        let gap_frames = spec.min_gap_frames(rate).max(bin * 2);
-        let shift = f1_decoy_shift_frames(&spec, rate, gap_frames);
-        let search = spec.search_radius_frames(rate);
-        assert!(
-            shift <= search,
-            "decoy shift {shift} frames must be ≤ search radius {search}"
-        );
-    }
-
-    #[test]
-    fn integration_fast_spec_matches_legacy_total_secs() {
-        let spec = ProductionScenarioSpec::integration_fast();
-        assert!((spec.total_secs - INTEGRATION_TOTAL_SECS).abs() < f64::EPSILON);
-        assert!(spec.integration_legacy_search);
-    }
-
-    #[test]
-    fn f2_production_energy_separates_pauses() {
-        use super::{build_f2_production, ENERGY_PAUSE_MARGIN};
-        let f = build_f2_production(48_000, 2, 90.0, 3.0);
-        let pre1 = f.energy_pre_at(f.true_fill_start);
-        let pre2 = f.energy_pre_at(f.nominal_fill_start);
-        let post1 = f.energy_post_at(f.true_fill_end);
-        let post2 = f.energy_post_at(f.nominal_fill_end);
-        assert!(
-            pre1 >= pre2 + ENERGY_PAUSE_MARGIN,
-            "F2-prod: energy pre should separate pauses ({pre1} vs {pre2})"
-        );
-        assert!(
-            post1 >= post2 + ENERGY_PAUSE_MARGIN,
-            "F2-prod: energy post should separate pauses ({post1} vs {post2})"
-        );
-    }
-}
-
 /// Mirror `GAP_EDGE_REFINE_SECS` in `application/patch_audio.rs`.
 const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
@@ -966,10 +910,20 @@ pub fn build_f1_production(
     channels: usize,
     gap_signature_context_secs: f64,
 ) -> EnergySignatureFixture {
+    build_f1_production_at(sample_rate, channels, 60.0, gap_signature_context_secs)
+}
+
+/// **F1-long** at arbitrary length (e.g. 120 s for context-30 matrix / EC-5).
+pub fn build_f1_production_at(
+    sample_rate: u32,
+    channels: usize,
+    total_secs: f64,
+    gap_signature_context_secs: f64,
+) -> EnergySignatureFixture {
     build_f1_with_spec(
         sample_rate,
         channels,
-        ProductionScenarioSpec::production_standard(60.0, gap_signature_context_secs),
+        ProductionScenarioSpec::production_standard(total_secs, gap_signature_context_secs),
     )
 }
 
@@ -1371,5 +1325,61 @@ pub(crate) fn placement_in_gap(fill_start: usize, gap_frames: usize) -> SeamPlac
         gap_frames,
         pre_window: 8,
         post_window: 8,
+    }
+}
+
+#[cfg(test)]
+mod production_spec_tests {
+    use super::*;
+
+    #[test]
+    fn gap_anchor_secs_sums_context_border_and_margin() {
+        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+        assert!((gap_anchor_secs(&spec) - 14.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn production_anchor_places_f1_decoy_inside_border_search() {
+        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+        let rate = 48_000u32;
+        let anchor = gap_anchor_secs(&spec);
+        assert!(
+            anchor + spec.min_gap_secs + 2.0 <= spec.total_secs,
+            "gap anchor {anchor}s needs room inside {}s timeline",
+            spec.total_secs
+        );
+        let bin = spec.bin_frames(rate);
+        let gap_frames = spec.min_gap_frames(rate).max(bin * 2);
+        let shift = f1_decoy_shift_frames(&spec, rate, gap_frames);
+        let search = spec.search_radius_frames(rate);
+        assert!(
+            shift <= search,
+            "decoy shift {shift} frames must be ≤ search radius {search}"
+        );
+    }
+
+    #[test]
+    fn integration_fast_spec_matches_legacy_total_secs() {
+        let spec = ProductionScenarioSpec::integration_fast();
+        assert!((spec.total_secs - INTEGRATION_TOTAL_SECS).abs() < f64::EPSILON);
+        assert!(spec.integration_legacy_search);
+    }
+
+    #[test]
+    fn f2_production_energy_separates_pauses() {
+        use super::{build_f2_production, ENERGY_PAUSE_MARGIN};
+        let f = build_f2_production(48_000, 2, 90.0, 3.0);
+        let pre1 = f.energy_pre_at(f.true_fill_start);
+        let pre2 = f.energy_pre_at(f.nominal_fill_start);
+        let post1 = f.energy_post_at(f.true_fill_end);
+        let post2 = f.energy_post_at(f.nominal_fill_end);
+        assert!(
+            pre1 >= pre2 + ENERGY_PAUSE_MARGIN,
+            "F2-prod: energy pre should separate pauses ({pre1} vs {pre2})"
+        );
+        assert!(
+            post1 >= post2 + ENERGY_PAUSE_MARGIN,
+            "F2-prod: energy post should separate pauses ({post1} vs {post2})"
+        );
     }
 }

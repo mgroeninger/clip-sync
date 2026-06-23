@@ -227,6 +227,8 @@ fn u8_f3_drone_energy_and_bool_scores_agree() {
 }
 
 #[test]
+/// **EC-1 (domain oracle only):** energy unified match on full B at true offset.
+/// Patch-layer criteria (bool decoy, production weights) deferred until scan→patch e2e lands.
 fn p1_f1_production_energy_unified_finds_true_offset() {
     let f = build_f1_production(48_000, 2, 3.0);
     let matched = f
@@ -241,6 +243,8 @@ fn p1_f1_production_energy_unified_finds_true_offset() {
 }
 
 #[test]
+/// **EC-2 (domain oracle only):** energy unified match at pause₁ on F2-long.
+/// Slide ≈ 0 and patch-layer checks deferred until scan→patch e2e lands.
 fn p2_f2_production_energy_unified_finds_pause_one() {
     let f = build_f2_production(48_000, 2, 90.0, 3.0);
     let matched = f
