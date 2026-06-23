@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
+**Related:** [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 

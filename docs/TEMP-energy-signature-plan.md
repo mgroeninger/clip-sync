@@ -232,7 +232,9 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 **Intent:** Tune thresholds on real material; make energy the default; document context guidance.
 
-- [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}.
+> **Corpus plan:** [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) — long synthetic F1/F2 @ production geometry, mode matrix, optional PD/CC profile → regenerate (no copyrighted media in repo).
+
+- [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}. See [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md).
 - [ ] Adjust `min_structure_match_score` default if energy score distribution shifts (document old vs new).
 - [x] Default `gap_signature_mode` → `auto`.
 - [ ] README § Gap patching — new subsection “Structure signatures” (energy vs bool, context length).

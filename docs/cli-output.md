@@ -283,7 +283,7 @@ Dry-run / scan-only: header uses repairable counts from scan; status from scan l
 
 #### Gap patch gate and skip reasons
 
-Normative detail for patch outcomes; user-facing summary in [README.md](../README.md) § Gap patching pipeline. **Flag matrix, extension semantics, performance:** [gap-fill-modes.md](gap-fill-modes.md).
+Normative detail for patch outcomes; user-facing summary in [README.md](../README.md) § Gap patching pipeline. **Classifying gaps and choosing settings:** [gap-repair-guide.md](gap-repair-guide.md). **Flag matrix, extension semantics, performance:** [gap-fill-modes.md](gap-fill-modes.md).
 
 **Per-gap pipeline (write mode):**
 

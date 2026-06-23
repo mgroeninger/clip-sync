@@ -237,7 +237,7 @@ Progress stages (`Aligning audio fingerprints…`, `Scanning video A for gaps…
 
 #### Gap patching pipeline
 
-When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, waveform placement (`fill_mode`), and optional A-boundary extension before splice. **Flag interactions and performance:** [docs/gap-fill-modes.md](docs/gap-fill-modes.md). Report layout: [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
+When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, waveform placement (`fill_mode`), and optional A-boundary extension before splice. **Classifying gaps and choosing profiles:** [docs/gap-repair-guide.md](docs/gap-repair-guide.md). **Flag interactions and performance:** [docs/gap-fill-modes.md](docs/gap-fill-modes.md). Report layout: [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
 
 **1. Per-gap B timeline (`fill_offset_mode`)**
 
@@ -636,6 +636,7 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 
 ## Documentation
 
+- [docs/gap-repair-guide.md](docs/gap-repair-guide.md) — **gap types**, waveform tiers, and repair recommendations
 - [docs/gap-fill-modes.md](docs/gap-fill-modes.md) — **`fit` vs `gate`**, flag matrix, extension semantics, performance recipes
 - [docs/development.md](docs/development.md) — features, build, full test suite
 - [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes, timeline/duration warnings, mux failures

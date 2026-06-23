@@ -9,7 +9,7 @@ Last updated: 2026-06-22.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Energy signature Phase 3](docs/TEMP-energy-signature-plan.md); optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
+**Next:** [Energy signature Phase 3 corpus](docs/TEMP-energy-corpus-plan.md); optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
 
 ---
 
@@ -18,7 +18,8 @@ Last updated: 2026-06-22.
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (upgrade from bool bins) |
+| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (Phases 0–2 shipped) |
+| [TEMP-energy-corpus-plan.md](docs/TEMP-energy-corpus-plan.md) | Phase 3 synthetic production corpus + signature mode matrix (no copyrighted media) |
 | [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
 
 **Recently shipped:** [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade. Prior: [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17).
