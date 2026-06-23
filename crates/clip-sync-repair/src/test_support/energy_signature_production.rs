@@ -1,4 +1,4 @@
-//! Production-scale energy corpus helpers (`docs/TEMP-energy-corpus-plan.md`).
+//! Production-scale energy corpus helpers (`docs/archive/energy-corpus-plan.md`).
 
 use std::path::Path;
 

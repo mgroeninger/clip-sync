@@ -1,8 +1,8 @@
 # Temporary plan: energy signature production corpus (synthetic tuning)
 
-> **Status:** **Phases A–D landed** (2026-06-23). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3 domain oracles**, F1-long **scan→patch e2e** (`f1_production_scan_patch_smoke` + oracle control, both `#[ignore]`), F2-long **oracle patch** (`f2_production_oracle_patch_smoke`, energy at pause₁), and ignored mode matrix (F1-long scan-derived + F2-long oracle-injected rows; context 30 on the 120 s fixture). Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md). **EC-6 met (2026-06-23 d)** via the new `build_f4_decoy_production` fixture: under structure isolation `energy`/`auto` patch the true pause (slide +7 s) while `bool` stays at the decoy (slide 0) — `f4_decoy_patch_discrimination` + `p4_*`. (Production fit weights mask the split — but the shipped **mode-coupled `fill_fit_energy_nominal_bias_scale`**, default 0.25, un-masks it: energy auto-corrects a drifted nominal map — see Tuning record 2026-06-23 f.) Weight tuning resolved (lever is nominal bias, not the weight split / `min_structure_match_score`). Non-ignored CI smoke landed (`corpus_scan_patch_smoke`). **Open:** Phase F (optional profile→synthesize); Phase G archival + cross-links.
+> **Status:** **Phases A–D landed** (2026-06-23). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, **EC-1–EC-3 domain oracles**, F1-long **scan→patch e2e** (`f1_production_scan_patch_smoke` + oracle control, both `#[ignore]`), F2-long **oracle patch** (`f2_production_oracle_patch_smoke`, energy at pause₁), and ignored mode matrix (F1-long scan-derived + F2-long oracle-injected rows; context 30 on the 120 s fixture). Vocabulary wired into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md). **EC-6 met (2026-06-23 d)** via the new `build_f4_decoy_production` fixture: under structure isolation `energy`/`auto` patch the true pause (slide +7 s) while `bool` stays at the decoy (slide 0) — `f4_decoy_patch_discrimination` + `p4_*`. (Production fit weights mask the split — but the shipped **mode-coupled `fill_fit_energy_nominal_bias_scale`**, default 0.25, un-masks it: energy auto-corrects a drifted nominal map — see Tuning record 2026-06-23 f.) Weight tuning resolved (lever is nominal bias, not the weight split / `min_structure_match_score`). Non-ignored CI smoke landed (`corpus_scan_patch_smoke`). **Complete — archived 2026-06-23.** Phase F (profile→synthesize) was dropped: the tuning decisions turned out structural, not envelope-statistical, so distribution-matched fixtures would have changed nothing (see note in Phase F below). Optional stereo smoke and subprocess CLI deferred.
 >
-> Archive to `docs/archive/energy-corpus-plan.md` when the production corpus ships and tuning notes are recorded. Update [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) Phase 3 checklist, [corpus-validation.md](corpus-validation.md) § Gap fill, and [gap-repair-guide.md](gap-repair-guide.md) as needed.
+> **Archived** to `docs/archive/energy-corpus-plan.md`. Parent `TEMP-energy-signature-plan.md` Phase 3, `corpus-validation.md` § Energy signature corpus, and `gap-repair-guide.md` all updated. (Frozen record — outbound links are relative to the original `docs/` location.)
 
 **Problem:** Energy signature shipped with **short synthetic oracles** (8 s integration fixtures, tight `fill_border_search_secs`, structure-heavy weights). Phase 3 tuning — compare `bool` / `energy` / `auto`, sweep `gap_signature_context_secs`, retune `min_structure_match_score` — was defined as operator corpus work on long-form pairs. That requires media the project may not commit (copyright). Existing **gap_corpus** chirp WAVs exercise **scan**, not energy discrimination (identical sine seams let waveform dominate).
 
@@ -11,7 +11,7 @@
 1. **F1-long / F2-long** pure-Rust fixtures @ **48 kHz**, **60–120 s**, sized for production defaults (`fill_border_search_secs = 10`, context **3 / 10 / 30**).
 2. **Full pipeline path** — `ScanGaps` → `PatchAudio` on written WAVs, not only injected `GapReport`.
 3. **Mode matrix runner** — record patched/skipped/marginal, slides, wall time; find bool-skip / auto-patch deltas.
-4. **Optional `EnvelopeProfile`** — offline stats from PD/CC (local only) → parameters for generators; **no source audio in repo**.
+4. ~~**Optional `EnvelopeProfile`** — offline stats from PD/CC → generator parameters.~~ **Dropped** (see Phase F note).
 5. Document tuning outcomes (context guidance, threshold retune or confirm `0.55`).
 
 **Non-goals:**
@@ -83,10 +83,10 @@ decoy   within fill_border_search_secs of nominal (F1 shift, F2 pause spacing)
 | **Scan** | Gap regions **digital zero** (or below `absolute_silence_rms = 33`); duration ≥ **1000 ms**; block-aligned (~250 ms). |
 | **Patch config** | `production_repair_config(mode, context_secs)` in `energy_signature_production.rs` (plan name `production_sig_patch_options`); mirrors production defaults (`border = 10`, weights 0.35/0.65, `min_structure_match_score = 0.55`). |
 | **Structure isolation** | Domain oracles may use structure-heavy weights; **production matrix** uses default unified weights. |
-| **F2 post-seam** | **Done (domain only):** pause₂ placed outside pause₁ post context; B cloned from A with pause₂ silence only; production uses multi-bin post rise + zero fill slack. **Limitation (2026-06-23):** `b = a.clone()` makes pause₁ uniquely waveform-identifiable, so F2 cannot separate `bool` from `energy` at the patch layer — see [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign-next). |
+| **F2 post-seam** | **Done (domain only):** pause₂ placed outside pause₁ post context; B cloned from A with pause₂ silence only; production uses multi-bin post rise + zero fill slack. **Limitation (2026-06-23):** `b = a.clone()` makes pause₁ uniquely waveform-identifiable, so F2 cannot separate `bool` from `energy` at the patch layer — see [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign). |
 | **Matrix** | Modes: `bool`, `energy`, `auto`. Contexts: `3`, `10`, `30` (skip invalid combos per file length). |
 | **CI** | One committed smoke: F1-long 60 s, `auto`, context 3, `baseline_only`. Full matrix **`--ignored`**. |
-| **Profile format** | JSON under `tests/energy_corpus/profiles/` (committed example only). |
+| ~~**Profile format**~~ | ~~JSON under `tests/energy_corpus/profiles/`~~ — Phase F dropped. |
 
 ---
 
@@ -135,7 +135,7 @@ Lib test names (`p1_f1_production_…`, `p2_f2_…`) keep historical prefixes; d
 - [x] `build_f2_production(spec) -> EnergySignatureFixture` — pause spacing `≤ 2 × border`; guards at pause edges.
 - [x] `build_f3_drone_production(spec)` for `auto` → bool (flat envelope, non-zero level).
 - [x] `write_fixture_wavs` unchanged; optional output under `target/energy_corpus/` for manual CLI not implemented.
-- [ ] Optional stereo F1-long smoke.
+- [~] Optional stereo F1-long smoke — **deferred.** Mono coverage is sufficient; revisit only if a channel-downmix bug surfaces.
 
 ### Phase C — Scan-and-patch path
 
@@ -153,7 +153,7 @@ Lib test names (`p1_f1_production_…`, `p2_f2_…`) keep historical prefixes; d
 - [x] `tests/energy_signature_production.rs` (`energy_signature_mode_matrix`, `#[ignore]`).
 - [x] Ignored test loops: fixtures × modes × contexts; logs CSV-friendly rows with `slide_secs` + `skip_reason`. F1-long via `run_matrix_rows` (scan-derived); F2-long via `run_oracle_matrix_rows` (oracle-injected — real scan can't detect F2's pause₁ gap since B is silent there).
 - [x] Skip invalid context combos (`production_matrix_contexts`: context 30 only on ≥ ~83 s fixtures; 120 s block for EC-5 prep). F2-long pinned to context 3 (pause₂→pause₁ slide must stay inside `fill_border_search_secs = 10`).
-- [ ] Optional: subprocess `clip-sync-repair -v` on written WAVs for verbose `signature_mode=` / struct lines.
+- [~] Optional: subprocess `clip-sync-repair -v` on written WAVs for verbose `signature_mode=` / struct lines — **deferred.** In-process `PatchAudio` coverage is sufficient; the real operator CLI path is exercised manually on actual media.
 - [x] **CI smoke:** one committed non-ignored patch case (fast budget) — `corpus_scan_patch_smoke` (in `tests/energy_signature_production.rs`, the integration binary, so it does not contend with the lib-suite wall-clock timing tests). Full scan→patch on a 16 kHz / 32 s production-geometry F1 (border 10 s, 50 ms bins); asserts one gap detected and patched. ~5 s, runs on every PR. Guards the e2e path the `#[ignore]`d 48 kHz corpus tests cover only on demand.
 
 ### Phase E — Acceptance criteria (production synthetic)
@@ -167,9 +167,9 @@ Corpus IDs **EC-1–EC-6** (lib tests: `p1_` / `p2_` / `p3_` where implemented).
 | **EC-3** | F3-long drone | `auto` | Resolved `signature_mode=bool` (`p3_`) | ✅ |
 | **EC-4** | F1-long | `auto`, context 3 | No regression vs I5-style suite defaults — F1-long auto patches in 2026-06-23 matrix | ✅ |
 | **EC-5** | F1-long 120 s | context **30** | Completes within wall budget; no hot-path failure — 120 s fixture patches at context 30 (~43 s, 2026-06-23) | ✅ |
-| **EC-6** | F4-decoy | structure-isolated | `energy`/`auto` patch at the true pause (slide +7 s); `bool` stays at the decoy (slide 0) | **Met (2026-06-23 d)** — `f4_decoy_patch_discrimination` (patch) + `p4_*` (domain). Note: production fit weights mask the split (all modes → decoy); see Tuning record + [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign-next) |
+| **EC-6** | F4-decoy | structure-isolated | `energy`/`auto` patch at the true pause (slide +7 s); `bool` stays at the decoy (slide 0) | **Met (2026-06-23 d)** — `f4_decoy_patch_discrimination` (patch) + `p4_*` (domain). Note: production fit weights mask the split (all modes → decoy); see Tuning record + [Phase E.1](#phase-e1--ec-6-decoy-fixture-redesign) |
 
-### Phase E.1 — EC-6 decoy fixture redesign (next)
+### Phase E.1 — EC-6 decoy fixture redesign
 
 **Intent:** Build the one fixture that actually separates `bool` from `energy` **at the patch layer**. The 2026-06-23 b/c runs proved config can't do it — the gap is fixture geometry.
 
@@ -196,15 +196,15 @@ So all three tiers — bool, structure, waveform — independently converge on p
 - [x] Oracle domain test: `energy` at truth, `bool` ties at decoy — `p4_f4_decoy_energy_separates_but_bool_ties` (fast, score-level) + `p4_f4_decoy_unified_search_diverges` (`#[ignore]`, full unified search confirms `prefer_start` keeps bool at the decoy nominal while energy lands on truth).
 - [x] Matrix rows (oracle-injected, context 3) showing the bool/energy slide split → records **EC-6**. F4-decoy wired into `energy_signature_mode_matrix` (structure-isolated) + `f4_decoy_patch_discrimination` asserts energy→truth (slide +7 s) / bool→decoy (slide 0). Waveform neutrality holds at the patch layer under structure isolation; production weights mask the split (recorded in Tuning record).
 
-### Phase F — Profile → synthesize (optional)
+### Phase F — Profile → synthesize — DROPPED (2026-06-23)
 
-**Intent:** Loosely match real pause/level stats without committing audio.
+**Decision: not implemented; not worth the maintenance.** Phase F existed to calibrate fixture envelopes to *real* pause/level statistics (extracted locally from PD/CC media, committing only the JSON stats) so Phase-3 threshold tuning wouldn't rest on hand-drawn ramps. That rationale evaporated:
 
-- [ ] `EnvelopeProfile` struct: `pause_duration_secs`, `pre_gap_ramp_secs`, `post_gap_level_db`, `inter_pause_secs`, `envelope_flat`, `suggested_ramp_step`.
-- [ ] Committed example: `tests/energy_corpus/profiles/synthetic_example.json` (hand-authored stats, `"source": "synthetic"`).
-- [ ] `build_from_profile(profile, scenario: F1|F2|F3) -> EnergySignatureFixture`.
-- [ ] Doc + script: `scripts/profile_envelope.ps1` (ffmpeg `silencedetect` / `astats` on **local** PD/CC file → operator fills JSON template).
-- [ ] One acceptance test: example profile produces finite scores and EC-1-like discrimination when mapped to F1-long geometry.
+- The tuning decisions came out **structural, not envelope-statistical** — `min_structure_match_score` needed no change, and the EC-6 masking lever was `nominal_bias` (a search-objective term), neither of which a realistic envelope distribution would move.
+- A profile of summary stats (pause durations, ramp lengths, levels) regenerates **synthetic ramps with realistic durations** — it would **not** validate energy-vs-bool on real *content*, because the bool-ambiguous / energy-distinct property is a fine envelope-shape feature, not a summary statistic. So it wouldn't answer the one question still open ("does the signature help on real audio").
+- That question is better answered for free by running `--gap-signature-mode energy|bool|auto` on an actual drift-heavy operator pair (the synthetic corpus already proves the mechanism).
+
+If a future tuning decision genuinely needs distribution-matched fixtures, revive from git history. Not tracked further.
 
 ### Phase G — Tuning outcomes & docs
 
@@ -215,7 +215,7 @@ So all three tiers — bool, structure, waveform — independently converge on p
 - [x] Document **mode-coupled `fill_fit_energy_nominal_bias_scale`** (default 0.25; energy self-corrects a drifted nominal) in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 + [gap-fill-modes.md](gap-fill-modes.md) (Structure signatures + config table).
 - [x] Document recommended `gap_signature_context_secs` (3 vs 10 vs 30) in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 + [gap-fill-modes.md](gap-fill-modes.md) — caveated: keep the 3 s default; matrix showed no measurable patch benefit from 10 / 30 s; treat as a manual per-gap knob, not a default to raise.
 - [x] Wire vocabulary into [gap-repair-guide.md](gap-repair-guide.md) and [corpus-validation.md](corpus-validation.md) (fixture table, matrix row format, EC-* naming).
-- [ ] Cross-link from [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md); archive parent Phase 3 when done.
+- [x] Cross-link from [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) (Phase 3 references this corpus + EC-6); this doc archived to `docs/archive/energy-corpus-plan.md`.
 
 ---
 
@@ -227,8 +227,8 @@ So all three tiers — bool, structure, waveform — independently converge on p
 | `test_support/energy_signature_acceptance.rs` | Optional U9–U11 domain oracles for long fixtures |
 | `tests/patch_audio_integration.rs` | I1–I4 use shared `gap_report_from_energy_fixture`; production patch smoke landed in `tests/energy_signature_production.rs` (`f1_production_scan_patch_smoke`, `f1_production_oracle_patch_control`, `f2_production_oracle_patch_smoke`) |
 | `test_support/patch_geometry_preview.rs` | Haystack oracle accepts production spec |
-| `tests/energy_corpus/` (new) | `profiles/*.json`, optional `manifest.toml` wall budgets |
-| `scripts/profile_envelope.ps1` | Phase F optional |
+| ~~`tests/energy_corpus/`~~ | ~~`profiles/*.json`~~ — Phase F dropped |
+| ~~`scripts/profile_envelope.ps1`~~ | ~~Phase F~~ — dropped |
 | `docs/corpus-validation.md` | § Energy signature production corpus + matrix row format |
 
 **No change** expected to `gap_energy.rs`, `gap_signature.rs`, or search unless P5 finds bugs.

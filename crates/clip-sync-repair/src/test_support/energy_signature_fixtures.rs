@@ -761,7 +761,7 @@ fn build_f3_drone_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFi
 
 const INTEGRATION_TOTAL_SECS: f64 = 8.0;
 
-/// Production-scale geometry for energy corpus fixtures (see `docs/TEMP-energy-corpus-plan.md`).
+/// Production-scale geometry for energy corpus fixtures (see `docs/archive/energy-corpus-plan.md`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProductionScenarioSpec {
     pub total_secs: f64,

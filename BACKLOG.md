@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-22.
+Last updated: 2026-06-23.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** [Energy signature Phase 3 corpus](docs/TEMP-energy-corpus-plan.md); optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
+**Next:** optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
 
 ---
 
@@ -18,11 +18,10 @@ Last updated: 2026-06-22.
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (Phases 0–2 shipped) |
-| [TEMP-energy-corpus-plan.md](docs/TEMP-energy-corpus-plan.md) | Phase 3 synthetic production corpus + signature mode matrix (no copyrighted media) |
+| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (Phases 0–2 shipped; Phase 3 corpus complete; optional Phase 4 open) |
 | [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
 
-**Recently shipped:** [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade. Prior: [anchored end + interior extraction](docs/archive/anchored-end-extraction-plan.md) (2026-06-17).
+**Recently shipped:** [energy signature production corpus](docs/archive/energy-corpus-plan.md) (2026-06-23) — F1/F2/F3-long + F4-decoy synthetic fixtures, mode matrix, **EC-1–EC-6**, mode-coupled `fill_fit_energy_nominal_bias_scale`, committed scan→patch CI smoke (Phase F profile→synthesize dropped as not decision-relevant). Prior: [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade.
 
 ## Open work
 

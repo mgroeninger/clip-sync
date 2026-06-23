@@ -174,7 +174,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
 | `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate |
 
-**Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
+**Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
 
 ### Corpus fixtures (F1–F3)
 
@@ -380,5 +380,5 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | [cli-output.md](cli-output.md) | Progress, gap table, skip reason strings |
 | [json-output.md](json-output.md) | `GapPatchStatus`, `confidence`, machine-readable outcomes |
 | [corpus-validation.md](corpus-validation.md) | Corpus tiers, energy-signature oracles, vocabulary matrix rows |
-| [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) | F1/F2-long synthetic tuning (EC-* acceptance) |
+| [energy-corpus-plan.md](archive/energy-corpus-plan.md) | F1/F2-long synthetic tuning (EC-* acceptance) |
 | [README.md](../README.md) § Gap patching | Short pipeline overview |

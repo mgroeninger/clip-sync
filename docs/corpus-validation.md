@@ -223,7 +223,7 @@ Optional: tune `fill_repeat_penalty_weight` in repair config after listen pass (
 
 ## Energy signature production corpus
 
-Shipped with [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) (Phases A–D). Pure-Rust **F1/F2/F3-long** fixtures @ 48 kHz exercise **structure signature** discrimination (`bool` / `energy` / `auto`) at production geometry — orthogonal to **gap_corpus** chirp scan tests.
+Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Phases A–G complete). Pure-Rust **F1/F2/F3-long** + **F4-decoy** fixtures @ 48 kHz exercise **structure signature** discrimination (`bool` / `energy` / `auto`) at production geometry — orthogonal to **gap_corpus** chirp scan tests. **EC-6 met:** F4-decoy separates `energy` (slides to the true pause) from `bool` (stays at the decoy) through the full patch path; the shipped **mode-coupled `fill_fit_energy_nominal_bias_scale`** (default 0.25) lets energy auto-correct a drifted nominal map.
 
 **Vocabulary:** tag names and derivation rules live in [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary. Use **guide P0–P7** for plan-time gap types; use **EC-1–EC-6** for corpus acceptance IDs (not the same namespace).
 
@@ -231,18 +231,20 @@ Shipped with [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) (Phases A�
 
 | Layer | Tier | Fixture / test | Asserts |
 |-------|------|----------------|---------|
-| Domain oracle | **committed** (lib) | `build_f1/f2/f3_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_` tests) | Unified match on full B; energy vs bool discrimination |
+| Domain oracle | **committed** (lib) | `build_f1/f2/f3_production` + `build_f4_decoy_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_`), **EC-6** (`p4_f4_decoy_energy_separates_but_bool_ties`) | Unified match on full B; energy vs bool discrimination |
 | Scan path | **committed** (lib) | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
+| **End-to-end (CI smoke)** | **committed** | `corpus_scan_patch_smoke` (integration binary, ~5 s) | Full scan → patch on 16 kHz / 32 s production-geometry F1; asserts one gap detected and patched |
 | Integration (fast) | **committed** | I1–I4 @ 8 s, `energy_sig_patch_options` | Patch with oracle `GapReport`, structure-heavy weights |
-| Mode matrix | **ignored** | `energy_signature_mode_matrix` | CSV-friendly rows: fixture × mode × context |
-| End-to-end patch (long) | **open** | F1-long scan → patch | Domain + scan pass; full patch on scan-derived report still blocked (use I1 oracle path until refine aligns) |
+| Mode matrix + EC-6 patch | **ignored** | `energy_signature_mode_matrix`, `f4_decoy_patch_discrimination`, `f4_decoy_mode_coupled_bias` | CSV rows (fixture × mode × context); **EC-6:** energy → true pause (slide +7 s) / bool → decoy (slide 0); mode-coupled bias un-masks at production weights |
 
 **CI commands:**
 
 ```powershell
 cargo test -p clip-sync-repair --lib production
-cargo test -p clip-sync-repair --lib u5 f2 p1_f1 p2_f2 p3_f3
+cargo test -p clip-sync-repair --lib u5 f2 p1_f1 p2_f2 p3_f3 p4_f4   # EC-1..EC-3, EC-6 (fast)
+cargo test -p clip-sync-repair corpus_scan_patch_smoke               # committed e2e tripwire (~5 s)
 cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture
+cargo test -p clip-sync-repair f4_decoy_patch_discrimination -- --ignored --nocapture  # EC-6 patch layer
 ```
 
 ### Fixture scenarios → oracles and tags
@@ -251,9 +253,10 @@ Record **fixture oracle** (what the test asserts) separately from **run tags** (
 
 | `fixture_scenario` | Geometry | Domain oracle (EC-*) | Typical run tags (production default, if patched) |
 |--------------------|----------|----------------------|---------------------------------------------------|
-| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1 (domain):** energy/`auto` → true offset on full B (`p1_` test). **Patch layer open:** bool decoy + production weights | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
-| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2 (domain):** energy → pause₁ (`p2_` test). **Patch layer open:** slide ≈ 0 | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
+| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1:** energy/`auto` → true offset (`p1_` domain; `f1_production_scan_patch_smoke` patch) | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
+| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2:** energy → pause₁ (`p2_` domain; `f2_production_oracle_patch_smoke` patch, slide ≈ 0 from A-aligned nominal) | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
 | `F3-long` | Steady drone | **EC-3:** `auto` → resolved `bool` | `signature_mode=bool`, `content_hint=flat` |
+| `F4-decoy` | A gap at decoy; truth shifted +7 s in B; identical bool pattern, anti-correlated energy contour, waveform-neutral inner border | **EC-6:** `energy`/`auto` patch the true pause (slide +7 s), `bool` stays at the decoy (slide 0) — `p4_*` domain; `f4_decoy_patch_discrimination` patch | `signature_mode=energy`, slide → true pause |
 
 Short fixtures **F1–F3** @ 11.025 Hz / 8 s integration (**U\***, **I1–I4**) use the same geometry at `integration_fast()` scale.
 
@@ -277,9 +280,9 @@ After matrix or config changes, extend the [gap fill checklist](#manual-acceptan
 | Check | Pass? | Notes |
 |-------|-------|-------|
 | EC-1–EC-3 lib tests green | | `cargo test -p clip-sync-repair --lib production` |
-| Mode matrix recorded (ignored run) | | Paste rows into [Tuning record](TEMP-energy-corpus-plan.md#tuning-record) |
+| Mode matrix recorded (ignored run) | | Paste rows into [Tuning record](archive/energy-corpus-plan.md#tuning-record) |
 | `-v` `gap tags:` match expected tier for listen-approved gaps | | Compare to fixture table above |
-| `auto` patches cases where `bool` skips (or document reverse) | | EC-6 goal |
+| `auto`/`energy` patch cases where `bool` skips or mis-places | | **EC-6 met** on synthetic F4-decoy (`f4_decoy_patch_discrimination`); confirm on real drift-heavy media |
 
 ---
 
