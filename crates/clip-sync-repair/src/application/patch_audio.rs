@@ -115,6 +115,9 @@ pub struct PatchAudioRequest {
     pub fill_fit_waveform_weight: f64,
     /// Scales distance-from-nominal penalty in unified fit structure scoring (1.0 = default).
     pub fill_fit_nominal_bias_scale: f64,
+    /// Distance-from-nominal penalty scale applied when the resolved signature is energy
+    /// (mode-coupled bias; defaults lower than the base scale).
+    pub fill_fit_energy_nominal_bias_scale: f64,
     /// Scales late-start penalty when structure search starts after the nominal map (1.0 = default).
     pub fill_fit_late_start_penalty_scale: f64,
     /// Fit mode marginal patch band below `min_fill_correlation` (Phase C).
@@ -173,6 +176,7 @@ pub struct PatchRequestSettings {
     pub fill_fit_structure_weight: f64,
     pub fill_fit_waveform_weight: f64,
     pub fill_fit_nominal_bias_scale: f64,
+    pub fill_fit_energy_nominal_bias_scale: f64,
     pub fill_fit_late_start_penalty_scale: f64,
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
@@ -220,6 +224,7 @@ impl PatchRequestSettings {
             fill_fit_structure_weight: self.fill_fit_structure_weight,
             fill_fit_waveform_weight: self.fill_fit_waveform_weight,
             fill_fit_nominal_bias_scale: self.fill_fit_nominal_bias_scale,
+            fill_fit_energy_nominal_bias_scale: self.fill_fit_energy_nominal_bias_scale,
             fill_fit_late_start_penalty_scale: self.fill_fit_late_start_penalty_scale,
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,
@@ -1451,6 +1456,7 @@ fn prepare_region_patch(
         fill_fit_structure_weight: request.fill_fit_structure_weight,
         fill_fit_waveform_weight: request.fill_fit_waveform_weight,
         fill_fit_nominal_bias_scale: request.fill_fit_nominal_bias_scale,
+        fill_fit_energy_nominal_bias_scale: request.fill_fit_energy_nominal_bias_scale,
         fill_fit_late_start_penalty_scale: request.fill_fit_late_start_penalty_scale,
         fill_marginal_margin: request.fill_marginal_margin,
         fill_absolute_floor: request.fill_absolute_floor,

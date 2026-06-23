@@ -74,6 +74,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub fill_fit_structure_weight: f64,
     pub fill_fit_waveform_weight: f64,
     pub fill_fit_nominal_bias_scale: f64,
+    pub fill_fit_energy_nominal_bias_scale: f64,
     pub fill_fit_late_start_penalty_scale: f64,
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
@@ -444,10 +445,17 @@ fn evaluate_seam_gate_fit_candidate(
         repeat_window_frames: params.border_frames.max(1),
         repeat_penalty_weight: params.fill_repeat_penalty_weight,
     };
+    // Mode-coupled nominal bias: an energy-resolved signature is the signal that the alignment
+    // nominal map may be wrong, so loosen the distance-from-nominal penalty (the penalty grows
+    // linearly with distance, so this mainly frees far-off / drifted candidates). Bool keeps base.
+    let nominal_bias_scale = match signature {
+        GapSignature::Energy(_) => params.fill_fit_energy_nominal_bias_scale,
+        GapSignature::Bool(_) => params.fill_fit_nominal_bias_scale,
+    };
     let weights = UnifiedFitWeights {
         structure_weight: params.fill_fit_structure_weight,
         waveform_weight: params.fill_fit_waveform_weight,
-        nominal_bias_scale: params.fill_fit_nominal_bias_scale,
+        nominal_bias_scale,
         late_start_penalty_scale: params.fill_fit_late_start_penalty_scale,
     };
     let structure_timeline = cache.structure_timeline(&signature);

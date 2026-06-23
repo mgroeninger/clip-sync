@@ -671,6 +671,8 @@ fn patch_request_with_options(
         fill_fit_structure_weight: options.fill_fit_structure_weight,
         fill_fit_waveform_weight: options.fill_fit_waveform_weight,
         fill_fit_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
+        // Coupling-neutral for integration options: energy bias mirrors the base.
+        fill_fit_energy_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
         fill_fit_late_start_penalty_scale: options.fill_fit_late_start_penalty_scale,
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,

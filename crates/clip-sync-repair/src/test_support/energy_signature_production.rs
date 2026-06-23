@@ -89,6 +89,7 @@ pub fn production_repair_config(
         fill_fit_structure_weight: 1.0,
         fill_fit_waveform_weight: 0.0,
         fill_fit_nominal_bias_scale: 0.0,
+        fill_fit_energy_nominal_bias_scale: 0.0, // coupling-neutral: matches base
         fill_fit_late_start_penalty_scale: 0.0,
         min_structure_match_score: 0.0,
         min_fill_correlation: 0.0,
@@ -113,6 +114,44 @@ pub fn production_fit_weights_config(
         fill_fit_structure_weight: 0.35,
         fill_fit_waveform_weight: 0.65,
         fill_fit_nominal_bias_scale: 1.0,
+        fill_fit_energy_nominal_bias_scale: 1.0, // coupling-neutral: the masked prodw baseline
+        ..production_repair_config(gap_signature_mode, gap_signature_context_secs)
+    }
+}
+
+/// Shipped mode-coupled behavior: production fit weights with the **base** nominal bias for bool
+/// (`1.0`) but the **lowered** energy bias (`0.25`). Demonstrates the energy/bool split surviving
+/// at production weights once the coupling is in effect (EC-6 follow-up).
+pub fn production_mode_coupled_config(
+    gap_signature_mode: GapSignatureMode,
+    gap_signature_context_secs: f64,
+) -> RepairConfig {
+    RepairConfig {
+        fill_fit_structure_weight: 0.35,
+        fill_fit_waveform_weight: 0.65,
+        fill_fit_nominal_bias_scale: 1.0,
+        fill_fit_energy_nominal_bias_scale: 0.25,
+        ..production_repair_config(gap_signature_mode, gap_signature_context_secs)
+    }
+}
+
+/// [`production_repair_config`] with explicit fit weights + nominal bias, for the EC-6 weight
+/// sweep (find where the energy/bool split survives between structure isolation and production
+/// fit weights). Gating floors stay corpus-relaxed so we isolate weights/bias from seam-gate
+/// rejection.
+pub fn production_weight_sweep_config(
+    gap_signature_mode: GapSignatureMode,
+    gap_signature_context_secs: f64,
+    structure_weight: f64,
+    waveform_weight: f64,
+    nominal_bias_scale: f64,
+) -> RepairConfig {
+    RepairConfig {
+        fill_fit_structure_weight: structure_weight,
+        fill_fit_waveform_weight: waveform_weight,
+        fill_fit_nominal_bias_scale: nominal_bias_scale,
+        // Sweep controls the actual bias for both modes (coupling-neutral).
+        fill_fit_energy_nominal_bias_scale: nominal_bias_scale,
         ..production_repair_config(gap_signature_mode, gap_signature_context_secs)
     }
 }

@@ -147,6 +147,12 @@ pub struct RepairConfig {
     /// Unified fit: scale distance-from-nominal penalty in structure tier (1.0 = production default).
     #[serde(default = "default_fill_fit_nominal_bias_scale")]
     pub fill_fit_nominal_bias_scale: f64,
+    /// Unified fit: distance-from-nominal penalty scale used when the resolved gap signature is
+    /// **energy** (mode-coupled bias). An energy match signals the nominal map may be wrong, so the
+    /// default is lower than [`Self::fill_fit_nominal_bias_scale`] to let a confident energy
+    /// contour override a drifted nominal. Bool-resolved gaps keep the base scale.
+    #[serde(default = "default_fill_fit_energy_nominal_bias_scale")]
+    pub fill_fit_energy_nominal_bias_scale: f64,
     /// Unified fit: scale late-start penalty when candidate start exceeds nominal (1.0 = default).
     #[serde(default = "default_fill_fit_late_start_penalty_scale")]
     pub fill_fit_late_start_penalty_scale: f64,
@@ -290,6 +296,12 @@ fn default_fill_fit_waveform_weight() -> f64 {
 fn default_fill_fit_nominal_bias_scale() -> f64 {
     1.0
 }
+fn default_fill_fit_energy_nominal_bias_scale() -> f64 {
+    // Lower than the base 1.0: the penalty grows linearly with distance from the nominal map
+    // (`0.02 × scale × bins`), so this only loosens far-off (drift) candidates while small offsets
+    // win under either scale. 0.25 recovers a 7 s-off nominal in the F4 EC-6 sweep.
+    0.25
+}
 fn default_fill_fit_late_start_penalty_scale() -> f64 {
     1.0
 }
@@ -377,6 +389,7 @@ impl Default for RepairConfig {
             fill_fit_structure_weight: default_fill_fit_structure_weight(),
             fill_fit_waveform_weight: default_fill_fit_waveform_weight(),
             fill_fit_nominal_bias_scale: default_fill_fit_nominal_bias_scale(),
+            fill_fit_energy_nominal_bias_scale: default_fill_fit_energy_nominal_bias_scale(),
             fill_fit_late_start_penalty_scale: default_fill_fit_late_start_penalty_scale(),
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
@@ -493,6 +506,7 @@ impl RepairConfig {
             fill_fit_structure_weight: self.fill_fit_structure_weight,
             fill_fit_waveform_weight: self.fill_fit_waveform_weight,
             fill_fit_nominal_bias_scale: self.fill_fit_nominal_bias_scale,
+            fill_fit_energy_nominal_bias_scale: self.fill_fit_energy_nominal_bias_scale,
             fill_fit_late_start_penalty_scale: self.fill_fit_late_start_penalty_scale,
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,

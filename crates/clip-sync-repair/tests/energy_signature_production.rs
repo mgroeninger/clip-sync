@@ -14,7 +14,8 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
 };
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
-    production_matrix_contexts, production_repair_config, scan_gaps_for_fixture,
+    production_matrix_contexts, production_mode_coupled_config, production_repair_config,
+    production_weight_sweep_config, scan_gaps_for_fixture,
 };
 
 #[test]
@@ -273,6 +274,177 @@ fn f4_decoy_patch_discrimination() {
         (energy_slide - bool_slide).abs() > truth_slide.abs() / 2.0,
         "energy and bool placements must diverge ({energy_slide:.3}s vs {bool_slide:.3}s)",
     );
+}
+
+/// **Mode-coupled nominal bias (parent plan Phase 4):** with production fit weights and the
+/// **base** nominal bias at the default `1.0`, the lowered energy bias (`0.25`) lets `energy`
+/// resolve the true pause while `bool` — still on the base `1.0` — stays at the decoy. Proves the
+/// coupling un-masks the EC-6 split that full production weights otherwise hide.
+#[test]
+#[ignore = "ec6: cargo test -p clip-sync-repair f4_decoy_mode_coupled_bias -- --ignored --nocapture"]
+fn f4_decoy_mode_coupled_bias() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+
+    let slide_for = |mode: GapSignatureMode| -> f64 {
+        let repair = production_mode_coupled_config(mode, 3.0);
+        let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+        let result = patch
+            .execute(
+                patch_request_from_repair(report, &repair),
+                repair_defaults.crossfade_ms,
+            )
+            .expect("F4 coupled-bias patch");
+        assert_eq!(
+            result.summary.patched_count, 1,
+            "F4 {mode:?} should patch: {:?}",
+            result.summary.gaps,
+        );
+        match &result.summary.gaps[0].status {
+            GapPatchStatus::Patched {
+                align_adjustment_secs,
+                ..
+            } => *align_adjustment_secs,
+            other => panic!("F4 {mode:?}: expected patched, got {other:?}"),
+        }
+    };
+
+    let energy_slide = slide_for(GapSignatureMode::Energy);
+    let bool_slide = slide_for(GapSignatureMode::Bool);
+    eprintln!(
+        "F4 mode-coupled (base bias 1.0, energy 0.25): energy {energy_slide:.3}s (truth ≈ {truth_slide:.3}s), bool {bool_slide:.3}s (decoy ≈ 0)"
+    );
+    assert!(
+        (energy_slide - truth_slide).abs() <= 0.1,
+        "coupled energy should reach the true pause ({energy_slide:.3}s vs {truth_slide:.3}s)",
+    );
+    assert!(
+        bool_slide.abs() <= 0.1,
+        "bool (base bias 1.0) should stay at the decoy ({bool_slide:.3}s)",
+    );
+}
+
+/// EC-6 tuning regression: energy recovers the true pause at **production fit weights**
+/// (0.35/0.65) once `nominal_bias` is reduced to ≤ 0.25 — proving the signature helps under
+/// realistic weights, and that the masking lever is `nominal_bias`, not the weight split.
+#[test]
+#[ignore = "ec6: cargo test -p clip-sync-repair f4_decoy_energy_recovers_at_low_bias -- --ignored --nocapture"]
+fn f4_decoy_energy_recovers_at_low_bias() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+
+    // Production fit weights (0.35 / 0.65) with nominal bias trimmed to the recovery boundary.
+    let repair = production_weight_sweep_config(GapSignatureMode::Energy, 3.0, 0.35, 0.65, 0.25);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("F4 low-bias patch");
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "F4 energy (production weights, bias 0.25) should patch: {:?}",
+        result.summary.gaps,
+    );
+    let slide = match &result.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            align_adjustment_secs,
+            ..
+        } => *align_adjustment_secs,
+        other => panic!("expected patched, got {other:?}"),
+    };
+    eprintln!("F4 energy @ 0.35/0.65 bias 0.25: slide {slide:.3}s (truth ≈ {truth_slide:.3}s)");
+    assert!(
+        (slide - truth_slide).abs() <= 0.1,
+        "energy at production weights + bias 0.25 should still reach the true pause \
+         ({slide:.3}s vs {truth_slide:.3}s)",
+    );
+}
+
+/// EC-6 weight sweep: where between structure isolation and production fit weights does the
+/// energy/bool split survive? Varies `structure/waveform` weights and `nominal_bias` on F4.
+/// Energy target slide ≈ +7 s (true pause); bool/masked ≈ 0 (decoy).
+#[test]
+#[ignore = "sweep: cargo test -p clip-sync-repair f4_decoy_weight_sweep -- --ignored --nocapture"]
+fn f4_decoy_weight_sweep() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+    eprintln!("F4 weight sweep: truth slide ≈ {truth_slide:.3}s (energy target), decoy ≈ 0");
+    eprintln!("mode,structure_w,waveform_w,nominal_bias,patched,slide_secs,wall_ms");
+
+    // (mode, structure_w, waveform_w, nominal_bias)
+    let grid = [
+        (GapSignatureMode::Energy, 1.00, 0.00, 0.0), // control: structure isolation
+        (GapSignatureMode::Energy, 0.35, 0.65, 0.0), // production weights, no bias
+        (GapSignatureMode::Energy, 0.35, 0.65, 0.5), // production weights, half bias
+        (GapSignatureMode::Energy, 0.35, 0.65, 1.0), // full production: masked baseline
+        (GapSignatureMode::Energy, 0.65, 0.35, 1.0), // structure-leaning + full bias
+        (GapSignatureMode::Energy, 0.50, 0.50, 1.0), // balanced + full bias
+        (GapSignatureMode::Bool, 1.00, 0.00, 0.0),   // control: bool should stay at decoy
+        (GapSignatureMode::Bool, 0.35, 0.65, 0.0),   // bool with no bias
+    ];
+
+    for (mode, sw, ww, bias) in grid {
+        let repair = production_weight_sweep_config(mode, 3.0, sw, ww, bias);
+        let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+        let started = Instant::now();
+        let result = patch
+            .execute(
+                patch_request_from_repair(report, &repair),
+                repair_defaults.crossfade_ms,
+            )
+            .expect("F4 weight sweep patch");
+        let first = result.summary.gaps.first();
+        eprintln!(
+            "{mode:?},{sw},{ww},{bias},{},{},{}",
+            result.summary.patched_count,
+            format_slide(first.map(|g| &g.status)),
+            started.elapsed().as_millis(),
+        );
+    }
+}
+
+/// EC-6 bias boundary: the weight sweep showed `nominal_bias` (not waveform weight) masks the
+/// energy/bool split. Pin the threshold between 0 and 0.5 at production weights (0.35/0.65).
+#[test]
+#[ignore = "sweep: cargo test -p clip-sync-repair f4_decoy_bias_boundary -- --ignored --nocapture"]
+fn f4_decoy_bias_boundary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+    eprintln!("F4 bias boundary (Energy, 0.35/0.65): truth ≈ {truth_slide:.3}s, decoy ≈ 0");
+    eprintln!("nominal_bias,patched,slide_secs,wall_ms");
+
+    for bias in [0.1, 0.2, 0.25, 0.35] {
+        let repair = production_weight_sweep_config(GapSignatureMode::Energy, 3.0, 0.35, 0.65, bias);
+        let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+        let started = Instant::now();
+        let result = patch
+            .execute(
+                patch_request_from_repair(report, &repair),
+                repair_defaults.crossfade_ms,
+            )
+            .expect("F4 bias boundary patch");
+        let first = result.summary.gaps.first();
+        eprintln!(
+            "{bias},{},{},{}",
+            result.summary.patched_count,
+            format_slide(first.map(|g| &g.status)),
+            started.elapsed().as_millis(),
+        );
+    }
 }
 
 #[test]
