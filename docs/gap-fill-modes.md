@@ -190,34 +190,47 @@ Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
 | Path | Typical trigger | Cost driver |
 |------|-----------------|-------------|
-| **Fast** | Baseline **High** (`min(pre, post) ≥ min_fill_correlation`) | One unified search per gap |
-| **Slow** | Borderline seams + extension on + large `fill_border_search_secs` | ~13×13 grid × unified search × long B haystack |
+| **Fast** | Baseline **High** or **Marginal** under `default` / `quick` (`fit_boundary_search = baseline_only`) | One unified search per gap |
+| **Slow** | `--full` or `fit_boundary_search = full_grid` when baseline is not **High** | ~13×13 grid × unified search × long B haystack |
 
 **Per-gap time scales with gap count** — ten slow-path gaps can mean hours.
 
-### Recipes
+### Repair profiles
 
-**Interactive / faster fit** (still default mode):
+Profiles bundle haystack size, extension flags, and boundary-grid policy. Explicit CLI flags and TOML keys **override** individual bundle fields (verbose lists overrides as `+ override: …`).
+
+| Profile | CLI | Boundary grid | `fill_border_search_secs` | Typical use |
+|---------|-----|---------------|---------------------------|-------------|
+| **default** | *(none)* | Off (`baseline_only`) | 10 | Interactive repair; accepts marginal baseline |
+| **quick** | `--quick` | Off | 5 | Draft mux; faster; smaller B window |
+| **full** | `--full` | On (`full_grid`) | 10 | Quality pass; may shift A bracket on hard gaps |
 
 ```toml
 [repair]
-fill_mode = "fit"
-fill_border_search_secs = 5.0      # default 10 — largest lever
-gap_end_extend_max_ms = 200        # default 500
-gap_end_extend_step_ms = 40
-# optional: disable grid entirely
-# gap_end_extend_on_post_seam_fail = false
-# gap_start_extend_on_pre_seam_fail = false
+profile = "default"   # default | quick | full
+# Advanced (set by profile; overridable):
+# fit_boundary_search = "baseline_only"   # baseline_only | full_grid
 ```
 
 ```powershell
-clip-sync-repair a.mkv b.mkv --mux out.mp4 `
-  --fill-offset interpolated `
-  --min-fill-correlation 0.35 `
-  --fill-border-search-secs 5 `
-  --no-gap-end-extend --no-gap-start-extend `
-  -v
+# Interactive default
+clip-sync-repair a.mkv b.mkv --mux out.mp4 -v
+
+# Draft / first listen
+clip-sync-repair a.mkv b.mkv --mux draft.mp4 --quick -v
+
+# Quality pass (legacy CPU cost)
+clip-sync-repair a.mkv b.mkv --mux best.mp4 --full -v
+
+# Quick + one override
+clip-sync-repair a.mkv b.mkv --mux out.mp4 --quick --fill-border-search-secs 8 -v
 ```
+
+Under **`baseline_only`**, `gap_end_extend_*` flags do **not** run the grid or add B haystack slack until `--full` (or `fit_boundary_search = full_grid`). `-v` emits `repair note:` when those settings are stored but inactive.
+
+**`anchored_retry` is not part of profiles.** Add `--fill-offset anchored-retry` on `full` runs when drift-heavy pairs still skip gaps after the quality pass. See [gap-repair-guide.md](gap-repair-guide.md) Layer 5.
+
+### Other recipes
 
 **Legacy strict gate** (pre-fit behavior):
 

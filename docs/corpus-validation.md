@@ -221,6 +221,68 @@ Optional: tune `fill_repeat_penalty_weight` in repair config after listen pass (
 
 ---
 
+## Energy signature production corpus
+
+Shipped with [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) (Phases A–D). Pure-Rust **F1/F2/F3-long** fixtures @ 48 kHz exercise **structure signature** discrimination (`bool` / `energy` / `auto`) at production geometry — orthogonal to **gap_corpus** chirp scan tests.
+
+**Vocabulary:** tag names and derivation rules live in [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary. Use **guide P0–P7** for plan-time gap types; use **EC-1–EC-6** for corpus acceptance IDs (not the same namespace).
+
+### Corpus tiers
+
+| Layer | Tier | Fixture / test | Asserts |
+|-------|------|----------------|---------|
+| Domain oracle | **committed** (lib) | `build_f1/f2/f3_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_` tests) | Unified match on full B; energy vs bool discrimination |
+| Scan path | **committed** (lib) | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
+| Integration (fast) | **committed** | I1–I4 @ 8 s, `energy_sig_patch_options` | Patch with oracle `GapReport`, structure-heavy weights |
+| Mode matrix | **ignored** | `energy_signature_mode_matrix` | CSV-friendly rows: fixture × mode × context |
+| End-to-end patch (long) | **open** | F1-long scan → patch | Domain + scan pass; full patch on scan-derived report still blocked (use I1 oracle path until refine aligns) |
+
+**CI commands:**
+
+```powershell
+cargo test -p clip-sync-repair --lib production
+cargo test -p clip-sync-repair --lib u5 f2 p1_f1 p2_f2 p3_f3
+cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture
+```
+
+### Fixture scenarios → oracles and tags
+
+Record **fixture oracle** (what the test asserts) separately from **run tags** (what `-v` would show on a production-default patch).
+
+| `fixture_scenario` | Geometry | Domain oracle (EC-*) | Typical run tags (production default, if patched) |
+|--------------------|----------|----------------------|---------------------------------------------------|
+| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1:** energy/`auto` → true offset; bool → decoy | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
+| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2:** energy → pause₁ | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
+| `F3-long` | Steady drone | **EC-3:** `auto` → resolved `bool` | `signature_mode=bool`, `content_hint=flat` |
+
+Short fixtures **F1–F3** @ 11.025 Hz / 8 s integration (**U\***, **I1–I4**) use the same geometry at `integration_fast()` scale.
+
+### Matrix row format (tuning record)
+
+When running the ignored mode matrix or manual CLI on written WAVs, log one line per run:
+
+```text
+fixture,mode_config,context_secs,gap_report_source,patched,skipped,marginal,wall_ms,tags,notes
+F1-long,auto,3,scan_derived,0,1,0,8420,"plan=fillable tier=structure_fail seam=n/a sig=energy","domain OK; haystack structure 0/0"
+```
+
+**Tags column:** copy from `-v` `gap tags:` when patch runs; otherwise derive from JSON skip reason + scores ([gap-repair-guide.md](gap-repair-guide.md) § Deriving tags).
+
+**Run metadata columns:** `mode_config` = `signature_mode_config`; `gap_report_source` = `scan_derived` (after `ScanGaps`) or `oracle_injected` (`gap_report_from_energy_fixture`, I1 pattern).
+
+### Manual acceptance (energy corpus / real media)
+
+After matrix or config changes, extend the [gap fill checklist](#manual-acceptance-external-pair-or-clip_sync_gap_corpus) with:
+
+| Check | Pass? | Notes |
+|-------|-------|-------|
+| EC-1–EC-3 lib tests green | | `cargo test -p clip-sync-repair --lib production` |
+| Mode matrix recorded (ignored run) | | Paste rows into [Tuning record](TEMP-energy-corpus-plan.md#tuning-record) |
+| `-v` `gap tags:` match expected tier for listen-approved gaps | | Compare to fixture table above |
+| `auto` patches cases where `bool` skips (or document reverse) | | EC-6 goal |
+
+---
+
 ## Follow-up
 
 Tracked in [BACKLOG.md](../BACKLOG.md):

@@ -103,19 +103,19 @@ The skip line always shows `min=0.12` in the status column; that is the **absolu
 
 | Mode | Behavior | When to try |
 |------|----------|-------------|
-| **`bool`** (default) | Active/silent bins | Default; talk/pause patterns |
+| **`auto`** (default) | Energy when pre/post envelope has contour (&gt;5% range); else bool | General long-form without per-gap tuning |
+| **`bool`** | Active/silent bins | Talk/pause patterns; force when energy over-slides |
 | **`energy`** | Log-RMS envelope Pearson | Contour-rich gaps; ambiguous bool |
-| **`auto`** | Energy when pre/post envelope has contour (&gt;5% range); else bool | General long-form without per-gap tuning |
 
 Gate legacy path **always** uses bool structure. Signature mode does **not** change scan, profiles, or tier thresholds — only placement and thus `pre`/`post`.
 
-Verbose line: `signature_mode=bool` or `signature_mode=energy`.
+Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolved** tier after `auto` selection, not the config value `auto`.
 
 ---
 
 ## Layer 5 — Repair profiles and search depth
 
-Profiles bundle haystack size, extension flags, and whether the **boundary grid** runs. Explicit CLI/TOML flags override individual fields. See [gap-fill-modes.md](gap-fill-modes.md) and [TEMP-repair-profiles-plan.md](TEMP-repair-profiles-plan.md).
+Profiles bundle haystack size, extension flags, and whether the **boundary grid** runs. Explicit CLI/TOML flags override individual fields. See [gap-fill-modes.md](gap-fill-modes.md) and [archive/repair-profiles-plan.md](archive/repair-profiles-plan.md).
 
 | Profile | CLI | Boundary grid | `fill_border_search_secs` | Typical use |
 |---------|-----|---------------|---------------------------|-------------|
@@ -153,9 +153,36 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Derive from verbose `pre`/`post` |
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
-| `signature_mode` | `bool`, `energy` | Layer 4 | `-v` `signature_mode=` |
+| `signature_mode` | `bool`, `energy` | Layer 4 (resolved) | `-v` `signature_mode=` |
+| `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap` | Patch skip enum | JSON `reason`; verbose skip line |
 
 `patch_tier` and `seam_shape` apply only when the gap reached patch with `fill_mode = fit`. Plan-only gaps use `patch_tier = not_applicable`.
+
+**Run metadata** (corpus matrix / tuning notes — not emitted as `gap tags:` today):
+
+| Field | Values | Use |
+|-------|--------|-----|
+| `signature_mode_config` | `bool`, `energy`, `auto` | TOML/CLI request before per-gap resolve |
+| `gap_signature_context_secs` | e.g. `3`, `10`, `30` | Matrix column |
+| `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](corpus-validation.md)) |
+| `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
+| `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate |
+
+**Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
+
+### Corpus fixtures (F1–F3)
+
+Synthetic energy-signature oracles ([corpus-validation.md](corpus-validation.md) § Energy signature). **`fixture_scenario`** + domain oracle define the test; **vocabulary tags** describe a production-default patch run on the same WAVs.
+
+| Scenario | Geometry | Domain oracle | Typical `content_hint` | Expected tags when patched (production default) |
+|----------|----------|---------------|------------------------|--------------------------------------------------|
+| **F1** / **F1-long** | Decoy dropout within border; nominal B map wrong | Energy/`auto` → true offset; bool → decoy or tie | `contour`, `decoy_duplicate`* | `plan_kind=fillable`, `signature_mode=energy`, slide ≠ 0 |
+| **F2** / **F2-long** | Two pauses; nominal → pause₂, truth → pause₁ | Energy/`auto` → pause₁ | `contour`, `dual_pause`* | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 at pause₁ |
+| **F3** / **F3-long** | Steady drone | `auto` resolves → bool | `flat` | `signature_mode=bool` (resolved) |
+
+\*Guide-only hints for run notes — not computed by `gap_tags.rs`.
+
+**Structure vs waveform skip:** `skipped: boundary correlation below threshold` covers both structure-below-threshold and waveform-below-threshold. Use verbose scores and JSON `min_correlation` to distinguish; structure-only failures often show `pre=0 post=0` before waveform tier runs. Tag as `patch_tier=structure_fail` only for `boundary alignment failed`; correlation skips use `dead_zone` / `hard_skip` via score bands below.
 
 ### Deriving tags from a run
 
@@ -225,6 +252,11 @@ signature_mode=energy fit_path=baseline_only
 plan_kind=unfillable plan_skip_reason=not_fillable
 patch_tier=not_applicable seam_shape=not_applicable
 → guide: P1 or P2
+
+# Energy corpus F1-long — domain OK, patch may skip on haystack (record both)
+fixture_scenario=F1-long signature_mode_config=auto gap_signature_context_secs=3 gap_report_source=scan_derived
+domain=energy_finds_truth tags=plan_kind=fillable patch_tier=structure_fail patch_skip_reason=correlation_below_threshold
+→ EC-1; compare with oracle_injected path (I1 pattern)
 ```
 
 ### ID → tag quick map
@@ -250,6 +282,8 @@ patch_tier=not_applicable seam_shape=not_applicable
 | W5 | `patch_tier=dead_zone`, `seam_shape=symmetric_weak` |
 | W6 | `patch_tier=structure_fail` |
 
+Tags are computed at patch time for fillable regions (preserving `fit_path` and `signature_mode`). Plan-only gaps derive tags from `status` only.
+
 ### Tool output
 
 With **`-v`**, each fillable gap emits a line after placement:
@@ -258,7 +292,7 @@ With **`-v`**, each fillable gap emits a line after placement:
            gap tags: plan=fillable tier=dead_zone seam=asymmetric_post fit_path=baseline_only signature_mode=bool
 ```
 
-Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`.
+Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`. The same `tags` object is emitted on each `GapPatchOutcome` in `--format json` output. Corpus matrix rows and tuning records: [corpus-validation.md](corpus-validation.md) § Energy signature production corpus.
 
 ---
 
@@ -339,4 +373,6 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | [gap-fill-modes.md](gap-fill-modes.md) | `fit` vs `gate`, flag × mode matrix, extension, profiles, performance recipes |
 | [cli-output.md](cli-output.md) | Progress, gap table, skip reason strings |
 | [json-output.md](json-output.md) | `GapPatchStatus`, `confidence`, machine-readable outcomes |
+| [corpus-validation.md](corpus-validation.md) | Corpus tiers, energy-signature oracles, vocabulary matrix rows |
+| [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) | F1/F2-long synthetic tuning (EC-* acceptance) |
 | [README.md](../README.md) § Gap patching | Short pipeline overview |

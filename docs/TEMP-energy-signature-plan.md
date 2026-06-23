@@ -234,13 +234,13 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 > **Corpus plan:** [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md) — long synthetic F1/F2 @ production geometry, mode matrix, optional PD/CC profile → regenerate (no copyrighted media in repo).
 
-- [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}. See [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md).
+- [ ] Corpus / manual pass: compare skip counts and structure pre/post on repair matrix with `gap_signature_context_secs` ∈ {3, 10, 30}. Record rows with vocabulary tags ([gap-repair-guide.md](gap-repair-guide.md) § Vocabulary; acceptance **EC-1–EC-6** in [TEMP-energy-corpus-plan.md](TEMP-energy-corpus-plan.md)).
 - [ ] Adjust `min_structure_match_score` default if energy score distribution shifts (document old vs new).
 - [x] Default `gap_signature_mode` → `auto`.
 - [ ] README § Gap patching — new subsection “Structure signatures” (energy vs bool, context length).
 - [ ] `docs/cli-output.md` — verbose `signature_mode` if exposed.
 - [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps.
-- [ ] (Optional) F2 integration fixture: align post-seam at pause₁ so tests need not lower `fill_absolute_floor`.
+- [x] (Optional) F2 integration fixture: align post-seam at pause₁ — done for **F2-long** production geometry; I3 still uses integration floor `-0.05`.
 
 ### Phase 4 — Optional optimizations (defer if Phase 3 ships clean)
 

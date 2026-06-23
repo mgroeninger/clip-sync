@@ -233,6 +233,20 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 |-------|------|----------|---------|
 | `a_start_secs` / `a_end_secs` | number | always | Gap bounds on A |
 | `status` | [GapPatchStatus](#gappatchstatus) | always | Outcome (externally tagged enum) |
+| `tags` | [GapTags](#gaptags) | always | Vocabulary tags derived at patch time (see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary) |
+
+### GapTags
+
+Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signature_mode` are omitted from JSON when not applicable.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `plan_kind` | string | always | `below_scan_floor` \| `unfillable` \| `not_planned` \| `fillable` |
+| `plan_skip_reason` | string | when plan not fillable | Same values as [GapFillSkipReason](#gappatchstatus) |
+| `patch_tier` | string | always | `high` \| `marginal` \| `dead_zone` \| `hard_skip` \| `structure_fail` \| `not_applicable` |
+| `seam_shape` | string | always | `balanced` \| `asymmetric_post` \| `asymmetric_pre` \| `symmetric_weak` \| `not_applicable` |
+| `fit_path` | string | fit gaps only | `baseline_only` \| `boundary_grid` |
+| `signature_mode` | string | fit gaps only | `bool` \| `energy` |
 
 ### GapPatchStatus
 

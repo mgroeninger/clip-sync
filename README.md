@@ -293,6 +293,23 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   -v
 ```
 
+(`--fill-mode fit` is the default; use `--quick` for draft muxes or `--full` when gaps need the boundary grid.)
+
+**Repair profiles** (`default` / `quick` / `full`) bundle haystack size, extension flags, and whether fit mode runs the joint A-boundary grid. The default profile accepts marginal baseline placements and skips the grid (minutes per gap instead of tens of minutes on long-form material).
+
+```powershell
+# Interactive default (marginal baseline OK; no boundary grid)
+clip-sync-repair recording_with_gaps.mp4 reference.mkv --mux repaired.mp4 -v
+
+# Draft / first listen (smaller haystack)
+clip-sync-repair recording_with_gaps.mp4 reference.mkv --mux draft.mp4 --quick -v
+
+# Quality pass when default placement is wrong (full boundary grid)
+clip-sync-repair recording_with_gaps.mp4 reference.mkv --mux best.mp4 --full -v
+```
+
+Profiles do **not** enable `anchored_retry`. On drift-heavy pairs, add `--fill-offset anchored-retry` when needed (often together with `--full` on remaining hard gaps). See [gap-repair-guide.md](docs/gap-repair-guide.md).
+
 **Example — drift + fit (e.g. long pairs with ~1 s clip drift):**
 
 ```powershell
