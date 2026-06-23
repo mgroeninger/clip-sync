@@ -1,6 +1,6 @@
 # Temporary plan: energy signature production corpus (synthetic tuning)
 
-> **Status:** **Not started** (2026-06-22). Parent feature shipped in [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) Phases 0–2 (`auto` default). This plan covers **Phase 3 corpus tuning** without copyrighted media: long synthetic F1/F2 fixtures at production geometry, optional PD/CC **profile → regenerate**, and a signature-mode matrix runner.
+> **Status:** **Phases A–D in progress** (2026-06-22). `ProductionScenarioSpec`, F1/F2/F3-long builders, scan helpers, P1–P3 acceptance, and ignored mode matrix landed. F1-long end-to-end patch on scan-derived gaps remains open (domain + scan smoke pass; use I1-style oracle `GapReport` for patch until refine/scan alignment is tightened).
 >
 > Archive to `docs/archive/energy-corpus-plan.md` when the production corpus ships and tuning notes are recorded. Update [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) Phase 3 checklist, [corpus-validation.md](corpus-validation.md) § Gap fill, and [gap-repair-guide.md](gap-repair-guide.md) as needed.
 
@@ -83,7 +83,7 @@ decoy   within fill_border_search_secs of nominal (F1 shift, F2 pause spacing)
 | **Scan** | Gap regions **digital zero** (or below `absolute_silence_rms = 33`); duration ≥ **1000 ms**; block-aligned (~250 ms). |
 | **Patch config** | New `production_sig_patch_options(mode, context_secs)` mirroring `RepairConfig` defaults (`border = 10`, weights 0.35/0.65, `min_structure_match_score = 0.55`). |
 | **Structure isolation** | Domain oracles may use structure-heavy weights; **production matrix** uses default unified weights. |
-| **F2 post-seam** | Prefer **align A/B post-seam at pause₁** in F2-long so matrix runs at `fill_absolute_floor = 0.12`; else document structure-only F2-long variant. |
+| **F2 post-seam** | **Done:** pause₂ placed outside pause₁ post context; B cloned from A with pause₂ silence only; production uses multi-bin post rise + zero fill slack. |
 | **Matrix** | Modes: `bool`, `energy`, `auto`. Contexts: `3`, `10`, `30` (skip invalid combos per file length). |
 | **CI** | One committed smoke: F1-long 60 s, `auto`, context 3, `baseline_only`. Full matrix **`--ignored`**. |
 | **Profile format** | JSON under `tests/energy_corpus/profiles/` (committed example only). |

@@ -1,10 +1,11 @@
 //! Phase 0/2 acceptance rows U1–U8 (`docs/TEMP-energy-signature-plan.md`).
 
-use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 use crate::test_support::energy_signature_fixtures::{
-    build_f1, build_f1_integration, build_f2, build_f2_at_rate, build_f2_integration, build_f3_drone, build_f3_silence,
+    build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
+    build_f2_production, build_f3_drone, build_f3_drone_production, build_f3_silence,
     structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN, MODE_SCORE_EPS,
 };
+use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 
 #[test]
 fn f1_integration_energy_scores_are_finite() {
@@ -222,5 +223,51 @@ fn u8_f3_drone_energy_and_bool_scores_agree() {
     assert!(
         bool_pre.is_finite() || bool_post.is_finite(),
         "U8: bool scores should be finite on drone fixture"
+    );
+}
+
+#[test]
+fn p1_f1_production_energy_unified_finds_true_offset() {
+    let f = build_f1_production(48_000, 2, 3.0);
+    let matched = f
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("P1: energy unified on F1-long");
+    assert!(
+        f.within_bin_tolerance(matched.alignment.start_frame, f.true_fill_start),
+        "P1: start {} true {}",
+        matched.alignment.start_frame,
+        f.true_fill_start,
+    );
+}
+
+#[test]
+fn p2_f2_production_energy_unified_finds_pause_one() {
+    let f = build_f2_production(48_000, 2, 90.0, 3.0);
+    let matched = f
+        .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+        .expect("P2: energy unified on F2-long");
+    assert!(
+        f.within_bin_tolerance(matched.alignment.start_frame, f.true_fill_start),
+        "P2: start {} pause1 {}",
+        matched.alignment.start_frame,
+        f.true_fill_start,
+    );
+}
+
+#[test]
+fn p3_f3_production_auto_resolves_to_bool() {
+    let f = build_f3_drone_production(48_000, 2, 60.0, 3.0);
+    let sig = build_gap_signature(
+        &f.a_samples,
+        f.channels,
+        f.gap_start,
+        f.gap_end,
+        f.context_frames,
+        &f.structure_params,
+        GapSignatureMode::Auto,
+    );
+    assert!(
+        matches!(sig, GapSignature::Bool(_)),
+        "P3: auto on flat drone should resolve to bool"
     );
 }

@@ -25,6 +25,10 @@ use crate::domain::{
     gap_fill_fit::{classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames},
     gap_signature::build_gap_signature,
     gap_structure::StructureMatchParams,
+    gap_tags::{
+        derive_gap_tags_from_patch_outcome, format_gap_tags_verbose_line, FillTierThresholds,
+        GapPatchTierInput, GapTagsPatchContext,
+    },
     patch_anchor::{
         format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
         interpolate_anchored_offset_secs, is_retryable_patch_skip, AnchorSearchPrior,
@@ -423,7 +427,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             );
             let _gap_enter = gap_span.enter();
 
-            let (patch, outcome) = prepare_region_patch(
+            let (patch, outcome, tag_ctx) = prepare_region_patch(
                 self.progress,
                 &RegionPatchMedia {
                     b_samples_full: &b_samples_full,
@@ -437,6 +441,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     patch_anchors: None,
                 },
             );
+            log_gap_tags_verbose(self.progress, &outcome, tag_ctx);
             record_patch_gap_span(&gap_span, &outcome);
             region_results.push((region.a_start_secs, region.a_end_secs, outcome));
             if let Some(patch) = patch {
@@ -828,7 +833,7 @@ fn run_anchored_retry_pass(
             boundary_grid = tracing::field::Empty,
         );
         let _gap_enter = gap_span.enter();
-        let (patch, outcome) = prepare_region_patch(
+        let (patch, outcome, tag_ctx) = prepare_region_patch(
             progress,
             media,
             region,
@@ -839,6 +844,7 @@ fn run_anchored_retry_pass(
                 patch_anchors: Some(table),
             },
         );
+        log_gap_tags_verbose(progress, &outcome, tag_ctx);
         record_patch_gap_span(&gap_span, &outcome);
         if should_apply_anchored_retry_outcome(prior, &outcome) {
             state.region_results[index].2 = outcome;
@@ -1049,13 +1055,36 @@ struct RegionPatchContext {
     silence_peak_fraction: f32,
 }
 
+fn log_gap_tags_verbose(
+    progress: &dyn ProgressReporter,
+    outcome: &RegionPatchOutcome,
+    tag_ctx: GapTagsPatchContext,
+) {
+    let input = match outcome {
+        RegionPatchOutcome::Patched {
+            pre_correlation,
+            post_correlation,
+            confidence,
+            ..
+        } => GapPatchTierInput::Patched {
+            pre: *pre_correlation,
+            post: *post_correlation,
+            confidence: *confidence,
+        },
+        RegionPatchOutcome::Skipped(reason) => GapPatchTierInput::Skipped(reason),
+    };
+    let tags = derive_gap_tags_from_patch_outcome(&input, tag_ctx);
+    progress.phase_verbose(&format_gap_tags_verbose_line(&tags));
+}
+
 fn seam_failure_outcome(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
     region: &FillRegion,
     fail: SeamGateFailure,
     min_structure_match_score: f32,
-) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    tag_ctx: GapTagsPatchContext,
+) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
     match fail {
         SeamGateFailure::StructureAlignmentFailed => {
             warn_skip_gap_fill(
@@ -1068,6 +1097,7 @@ fn seam_failure_outcome(
             (
                 None,
                 RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed),
+                tag_ctx,
             )
         }
         SeamGateFailure::StructureBelowThreshold { pre, post } => {
@@ -1085,6 +1115,7 @@ fn seam_failure_outcome(
                     post_correlation: post,
                     min_correlation: min_structure_match_score,
                 }),
+                tag_ctx,
             )
         }
         SeamGateFailure::WaveformBelowThreshold { pre, post, min } => {
@@ -1102,6 +1133,7 @@ fn seam_failure_outcome(
                     post_correlation: post,
                     min_correlation: min,
                 }),
+                tag_ctx,
             )
         }
     }
@@ -1114,7 +1146,7 @@ fn prepare_region_patch(
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
-) -> (Option<RegionPatch>, RegionPatchOutcome) {
+) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
     let RegionPatchMedia {
         b_samples_full,
         a_pcm,
@@ -1257,6 +1289,17 @@ fn prepare_region_patch(
         "bool"
     };
 
+    let mut tag_ctx = GapTagsPatchContext {
+        fill_mode: request.fill_mode,
+        thresholds: FillTierThresholds {
+            min_fill_correlation: request.min_fill_correlation,
+            fill_marginal_margin: request.fill_marginal_margin,
+            fill_absolute_floor: request.fill_absolute_floor,
+        },
+        signature_mode_label,
+        fit_used_boundary_grid: false,
+    };
+
     log_gap_fill_plan_verbose(
         progress,
         &GapFillPlanLog {
@@ -1279,6 +1322,7 @@ fn prepare_region_patch(
         return (
             None,
             RegionPatchOutcome::Skipped(GapPatchSkipReason::ZeroLengthGap),
+            tag_ctx,
         );
     }
 
@@ -1309,6 +1353,7 @@ fn prepare_region_patch(
             return (
                 None,
                 RegionPatchOutcome::Skipped(GapPatchSkipReason::BExtractFailed),
+                tag_ctx,
             );
         }
     };
@@ -1403,6 +1448,7 @@ fn prepare_region_patch(
                                 region,
                                 retry_fail,
                                 min_structure_match_score,
+                                tag_ctx,
                             );
                         }
                     }
@@ -1414,6 +1460,7 @@ fn prepare_region_patch(
                         region,
                         other,
                         min_structure_match_score,
+                        tag_ctx,
                     );
                 }
             }
@@ -1425,6 +1472,7 @@ fn prepare_region_patch(
                 region,
                 other,
                 min_structure_match_score,
+                tag_ctx,
             );
         }
     };
@@ -1442,6 +1490,7 @@ fn prepare_region_patch(
         gap_end_adjust_frames,
         fit_used_boundary_grid,
     } = gate_outcome;
+    tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
 
     let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
 
@@ -1467,6 +1516,7 @@ fn prepare_region_patch(
         return (
             None,
             RegionPatchOutcome::Skipped(GapPatchSkipReason::AlignedSegmentOutOfRange),
+            tag_ctx,
         );
     }
 
@@ -1638,6 +1688,7 @@ fn prepare_region_patch(
             gap_start_adjust_frames,
             gap_end_adjust_frames,
         },
+        tag_ctx,
     )
 }
 

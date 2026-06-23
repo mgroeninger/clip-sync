@@ -1,0 +1,538 @@
+//! Canonical gap vocabulary tags ([gap-repair-guide.md]).
+//!
+//! Orthogonal facts derived from plan/patch outcomes and seam scores. `content_hint`
+//! remains guide-only and is not computed here.
+//!
+//! [gap-repair-guide.md]: ../../../docs/gap-repair-guide.md
+
+use serde::Serialize;
+
+use crate::domain::fill_mode::FillMode;
+use crate::domain::gap_fill_fit::{effective_fill_absolute_floor, FillConfidence};
+use crate::domain::patch_result::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
+use crate::domain::repair_profile::FitBoundarySearch;
+
+/// Plan-time classification (P-layer in the guide).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanKind {
+    BelowScanFloor,
+    Unfillable,
+    NotPlanned,
+    Fillable,
+}
+
+impl PlanKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BelowScanFloor => "below_scan_floor",
+            Self::Unfillable => "unfillable",
+            Self::NotPlanned => "not_planned",
+            Self::Fillable => "fillable",
+        }
+    }
+}
+
+/// Fit-mode patch tier (W-layer tiers; guide `patch_tier`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchTier {
+    High,
+    Marginal,
+    DeadZone,
+    HardSkip,
+    StructureFail,
+    NotApplicable,
+}
+
+impl PatchTier {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Marginal => "marginal",
+            Self::DeadZone => "dead_zone",
+            Self::HardSkip => "hard_skip",
+            Self::StructureFail => "structure_fail",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+/// Seam score shape heuristic (W-layer patterns).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeamShape {
+    Balanced,
+    AsymmetricPost,
+    AsymmetricPre,
+    SymmetricWeak,
+    NotApplicable,
+}
+
+impl SeamShape {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::AsymmetricPost => "asymmetric_post",
+            Self::AsymmetricPre => "asymmetric_pre",
+            Self::SymmetricWeak => "symmetric_weak",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+/// Effective fit search path for a gap (guide `fit_path`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitPathTag {
+    BaselineOnly,
+    BoundaryGrid,
+}
+
+impl FitPathTag {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BaselineOnly => "baseline_only",
+            Self::BoundaryGrid => "boundary_grid",
+        }
+    }
+
+    pub fn from_boundary_grid_used(used: bool) -> Self {
+        if used {
+            Self::BoundaryGrid
+        } else {
+            Self::BaselineOnly
+        }
+    }
+
+    pub fn from_fit_boundary_search(search: FitBoundarySearch) -> Self {
+        match search {
+            FitBoundarySearch::BaselineOnly => Self::BaselineOnly,
+            FitBoundarySearch::FullGrid => Self::BoundaryGrid,
+        }
+    }
+}
+
+/// Structure signature tier used for placement (guide `signature_mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignatureModeTag {
+    Bool,
+    Energy,
+}
+
+impl SignatureModeTag {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::Energy => "energy",
+        }
+    }
+
+    pub fn parse_label(label: &str) -> Option<Self> {
+        match label {
+            "bool" => Some(Self::Bool),
+            "energy" => Some(Self::Energy),
+            _ => None,
+        }
+    }
+}
+
+/// Thresholds for fit-mode waveform tiering.
+#[derive(Debug, Clone, Copy)]
+pub struct FillTierThresholds {
+    pub min_fill_correlation: f32,
+    pub fill_marginal_margin: f32,
+    pub fill_absolute_floor: f32,
+}
+
+impl FillTierThresholds {
+    pub const DEFAULT: Self = Self {
+        min_fill_correlation: 0.35,
+        fill_marginal_margin: 0.08,
+        fill_absolute_floor: 0.12,
+    };
+}
+
+/// Composed gap tags (orthogonal axes).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GapTags {
+    pub plan_kind: PlanKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_skip_reason: Option<GapFillSkipReason>,
+    pub patch_tier: PatchTier,
+    pub seam_shape: SeamShape,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit_path: Option<FitPathTag>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_mode: Option<SignatureModeTag>,
+}
+
+/// Inputs for tag derivation during a fill-region patch attempt.
+#[derive(Debug, Clone, Copy)]
+pub struct GapTagsPatchContext {
+    pub fill_mode: FillMode,
+    pub thresholds: FillTierThresholds,
+    pub signature_mode_label: &'static str,
+    pub fit_used_boundary_grid: bool,
+}
+
+impl GapTagsPatchContext {
+    pub fn fit_path_tag(self) -> Option<FitPathTag> {
+        if self.fill_mode == FillMode::Fit {
+            Some(FitPathTag::from_boundary_grid_used(
+                self.fit_used_boundary_grid,
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn signature_mode_tag(self) -> Option<SignatureModeTag> {
+        if self.fill_mode == FillMode::Fit {
+            SignatureModeTag::parse_label(self.signature_mode_label)
+        } else {
+            None
+        }
+    }
+}
+
+/// Classify seam shape from pre/post scores (guide heuristics).
+pub fn classify_seam_shape(pre: f64, post: f64) -> SeamShape {
+    let diff = (pre - post).abs();
+    if post >= 0.85 && post - pre >= 0.35 {
+        return SeamShape::AsymmetricPost;
+    }
+    if pre >= 0.85 && pre - post >= 0.35 {
+        return SeamShape::AsymmetricPre;
+    }
+    if pre < 0.27 && post < 0.27 && diff <= 0.10 {
+        return SeamShape::SymmetricWeak;
+    }
+    if pre >= 0.27 && post >= 0.27 && diff <= 0.15 {
+        return SeamShape::Balanced;
+    }
+    SeamShape::NotApplicable
+}
+
+/// Map correlation skip scores to dead zone vs hard skip.
+pub fn patch_tier_from_correlation_skip(
+    pre: f64,
+    post: f64,
+    thresholds: FillTierThresholds,
+) -> PatchTier {
+    let min_score = pre.min(post);
+    let hard_floor = f64::from(effective_fill_absolute_floor(
+        thresholds.min_fill_correlation,
+        thresholds.fill_absolute_floor,
+    ));
+    if min_score < hard_floor {
+        return PatchTier::HardSkip;
+    }
+    let marginal_floor =
+        f64::from(thresholds.min_fill_correlation - thresholds.fill_marginal_margin);
+    if min_score < marginal_floor {
+        PatchTier::DeadZone
+    } else {
+        // Correlation skip with scores still in marginal/high band — treat as dead zone for fit.
+        PatchTier::DeadZone
+    }
+}
+
+fn patch_tier_from_patched(confidence: FillConfidence, fill_mode: FillMode) -> PatchTier {
+    if fill_mode != FillMode::Fit {
+        return PatchTier::NotApplicable;
+    }
+    match confidence {
+        FillConfidence::High => PatchTier::High,
+        FillConfidence::Marginal => PatchTier::Marginal,
+    }
+}
+
+/// Derive tags from a per-gap patch attempt outcome (fillable plan region).
+pub fn derive_gap_tags_from_patch_outcome(
+    outcome: &GapPatchTierInput<'_>,
+    ctx: GapTagsPatchContext,
+) -> GapTags {
+    let (patch_tier, seam_shape) = match outcome {
+        GapPatchTierInput::Patched {
+            pre,
+            post,
+            confidence,
+        } => {
+            let tier = patch_tier_from_patched(*confidence, ctx.fill_mode);
+            let seam = if ctx.fill_mode == FillMode::Fit {
+                classify_seam_shape(*pre, *post)
+            } else {
+                SeamShape::NotApplicable
+            };
+            (tier, seam)
+        }
+        GapPatchTierInput::Skipped(reason) => match reason {
+            GapPatchSkipReason::BoundaryAlignmentFailed => {
+                (PatchTier::StructureFail, SeamShape::NotApplicable)
+            }
+            GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation,
+                post_correlation,
+                ..
+            } => {
+                let tier = if ctx.fill_mode == FillMode::Fit {
+                    patch_tier_from_correlation_skip(
+                        *pre_correlation,
+                        *post_correlation,
+                        ctx.thresholds,
+                    )
+                } else {
+                    PatchTier::NotApplicable
+                };
+                let seam = if ctx.fill_mode == FillMode::Fit {
+                    classify_seam_shape(*pre_correlation, *post_correlation)
+                } else {
+                    SeamShape::NotApplicable
+                };
+                (tier, seam)
+            }
+            _ => (PatchTier::NotApplicable, SeamShape::NotApplicable),
+        },
+    };
+
+    GapTags {
+        plan_kind: PlanKind::Fillable,
+        plan_skip_reason: None,
+        patch_tier,
+        seam_shape,
+        fit_path: ctx.fit_path_tag(),
+        signature_mode: ctx.signature_mode_tag(),
+    }
+}
+
+/// Derive tags from a report-order [`GapPatchStatus`].
+pub fn derive_gap_tags_from_status(
+    status: &GapPatchStatus,
+    fill_mode: FillMode,
+    thresholds: FillTierThresholds,
+) -> GapTags {
+    match status {
+        GapPatchStatus::NotPlanned { reason } => {
+            let plan_kind = match reason {
+                GapFillSkipReason::NotFillable => PlanKind::Unfillable,
+                GapFillSkipReason::OutsideReferenceCoverage
+                | GapFillSkipReason::TrackLayoutMismatch
+                | GapFillSkipReason::TrackCompatibilityUnavailable => PlanKind::NotPlanned,
+            };
+            GapTags {
+                plan_kind,
+                plan_skip_reason: Some(reason.clone()),
+                patch_tier: PatchTier::NotApplicable,
+                seam_shape: SeamShape::NotApplicable,
+                fit_path: None,
+                signature_mode: None,
+            }
+        }
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            confidence,
+            ..
+        } => derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre: *pre_correlation,
+                post: *post_correlation,
+                confidence: *confidence,
+            },
+            GapTagsPatchContext {
+                fill_mode,
+                thresholds,
+                signature_mode_label: "bool",
+                fit_used_boundary_grid: false,
+            },
+        ),
+        GapPatchStatus::Skipped { reason } => derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Skipped(reason),
+            GapTagsPatchContext {
+                fill_mode,
+                thresholds,
+                signature_mode_label: "bool",
+                fit_used_boundary_grid: false,
+            },
+        ),
+    }
+}
+
+/// Patch outcome view for tag derivation (application layer).
+pub enum GapPatchTierInput<'a> {
+    Patched {
+        pre: f64,
+        post: f64,
+        confidence: FillConfidence,
+    },
+    Skipped(&'a GapPatchSkipReason),
+}
+
+impl<'a> From<&'a RegionPatchOutcomeView<'a>> for GapPatchTierInput<'a> {
+    fn from(view: &'a RegionPatchOutcomeView<'a>) -> Self {
+        match view {
+            RegionPatchOutcomeView::Patched {
+                pre_correlation,
+                post_correlation,
+                confidence,
+            } => GapPatchTierInput::Patched {
+                pre: *pre_correlation,
+                post: *post_correlation,
+                confidence: *confidence,
+            },
+            RegionPatchOutcomeView::Skipped(reason) => GapPatchTierInput::Skipped(reason),
+        }
+    }
+}
+
+/// Minimal outcome view for tag derivation without coupling to application enums.
+#[derive(Debug, Clone, Copy)]
+pub enum RegionPatchOutcomeView<'a> {
+    Patched {
+        pre_correlation: f64,
+        post_correlation: f64,
+        confidence: FillConfidence,
+    },
+    Skipped(&'a GapPatchSkipReason),
+}
+
+fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
+    match reason {
+        GapFillSkipReason::NotFillable => "not_fillable",
+        GapFillSkipReason::OutsideReferenceCoverage => "outside_reference_coverage",
+        GapFillSkipReason::TrackLayoutMismatch => "track_layout_mismatch",
+        GapFillSkipReason::TrackCompatibilityUnavailable => "track_compatibility_unavailable",
+    }
+}
+
+/// Verbose stderr line (`-v`): `gap tags: plan=… tier=… seam=…`.
+pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
+    let mut parts = vec![
+        format!("plan={}", tags.plan_kind.as_str()),
+        format!("tier={}", tags.patch_tier.as_str()),
+        format!("seam={}", tags.seam_shape.as_str()),
+    ];
+    if let Some(reason) = &tags.plan_skip_reason {
+        parts.push(format!("plan_skip={}", format_plan_skip_reason(reason)));
+    }
+    if let Some(fit_path) = tags.fit_path {
+        parts.push(format!("fit_path={}", fit_path.as_str()));
+    }
+    if let Some(mode) = tags.signature_mode {
+        parts.push(format!("signature_mode={}", mode.as_str()));
+    }
+    format!("           gap tags: {}", parts.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::patch_result::GapPatchSkipReason;
+
+    fn patch_ctx() -> GapTagsPatchContext {
+        GapTagsPatchContext {
+            fill_mode: FillMode::Fit,
+            thresholds: FillTierThresholds::DEFAULT,
+            signature_mode_label: "bool",
+            fit_used_boundary_grid: false,
+        }
+    }
+
+    fn tags_from_skip(pre: f64, post: f64) -> GapTags {
+        let reason = GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation: pre,
+            post_correlation: post,
+            min_correlation: 0.35,
+        };
+        derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Skipped(&reason),
+            patch_ctx(),
+        )
+    }
+
+    fn tags_from_patched(pre: f64, post: f64, confidence: FillConfidence) -> GapTags {
+        derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre,
+                post,
+                confidence,
+            },
+            patch_ctx(),
+        )
+    }
+
+    #[test]
+    fn seam_shape_guide_examples() {
+        assert_eq!(classify_seam_shape(0.6, 0.5), SeamShape::Balanced);
+        assert_eq!(classify_seam_shape(0.30, 0.32), SeamShape::Balanced);
+        assert_eq!(classify_seam_shape(0.28, 1.0), SeamShape::AsymmetricPost);
+        assert_eq!(classify_seam_shape(0.23, 1.0), SeamShape::AsymmetricPost);
+        assert_eq!(classify_seam_shape(0.14, 0.14), SeamShape::SymmetricWeak);
+    }
+
+    #[test]
+    fn patch_tier_guide_w4_boundary_skip() {
+        let tags = tags_from_skip(0.23, 1.0);
+        assert_eq!(tags.patch_tier, PatchTier::DeadZone);
+        assert_eq!(tags.seam_shape, SeamShape::AsymmetricPost);
+        assert_eq!(tags.plan_kind, PlanKind::Fillable);
+        assert_eq!(tags.fit_path, Some(FitPathTag::BaselineOnly));
+    }
+
+    #[test]
+    fn patch_tier_guide_w3_marginal_asymmetric() {
+        let tags = tags_from_patched(0.28, 1.0, FillConfidence::Marginal);
+        assert_eq!(tags.patch_tier, PatchTier::Marginal);
+        assert_eq!(tags.seam_shape, SeamShape::AsymmetricPost);
+    }
+
+    #[test]
+    fn patch_tier_guide_w5_symmetric_weak() {
+        let tags = tags_from_skip(0.14, 0.14);
+        assert_eq!(tags.patch_tier, PatchTier::DeadZone);
+        assert_eq!(tags.seam_shape, SeamShape::SymmetricWeak);
+    }
+
+    #[test]
+    fn patch_tier_hard_skip_below_floor() {
+        let tags = tags_from_skip(0.05, 0.04);
+        assert_eq!(tags.patch_tier, PatchTier::HardSkip);
+    }
+
+    #[test]
+    fn patch_tier_structure_fail() {
+        let tags = derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Skipped(&GapPatchSkipReason::BoundaryAlignmentFailed),
+            patch_ctx(),
+        );
+        assert_eq!(tags.patch_tier, PatchTier::StructureFail);
+        assert_eq!(tags.seam_shape, SeamShape::NotApplicable);
+    }
+
+    #[test]
+    fn plan_not_planned_tags() {
+        let status = GapPatchStatus::NotPlanned {
+            reason: GapFillSkipReason::OutsideReferenceCoverage,
+        };
+        let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
+        assert_eq!(tags.plan_kind, PlanKind::NotPlanned);
+        assert_eq!(
+            tags.plan_skip_reason,
+            Some(GapFillSkipReason::OutsideReferenceCoverage)
+        );
+        assert_eq!(tags.patch_tier, PatchTier::NotApplicable);
+    }
+
+    #[test]
+    fn verbose_line_includes_core_tags() {
+        let line = format_gap_tags_verbose_line(&tags_from_skip(0.23, 1.0));
+        assert!(line.contains("gap tags:"));
+        assert!(line.contains("plan=fillable"));
+        assert!(line.contains("tier=dead_zone"));
+        assert!(line.contains("seam=asymmetric_post"));
+        assert!(line.contains("fit_path=baseline_only"));
+        assert!(line.contains("signature_mode=bool"));
+    }
+}

@@ -761,6 +761,170 @@ fn build_f3_drone_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFi
 
 const INTEGRATION_TOTAL_SECS: f64 = 8.0;
 
+/// Production-scale geometry for energy corpus fixtures (see `docs/TEMP-energy-corpus-plan.md`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProductionScenarioSpec {
+    pub total_secs: f64,
+    pub gap_signature_context_secs: f64,
+    pub fill_border_search_secs: f64,
+    pub fill_align_margin_secs: f64,
+    pub gap_signature_bin_ms: u64,
+    pub min_gap_secs: f64,
+    pub silence_peak_fraction: f32,
+    pub absolute_silence_rms: f32,
+    /// F1 context as a fraction of timeline length (integration fast path).
+    pub f1_context_fraction: Option<f64>,
+    /// F1 gap length as a fraction of timeline (integration fast path).
+    pub f1_gap_fraction: Option<f64>,
+    /// Use gap-scaled search radii from F1/F2 integration fixtures instead of `fill_border_search_secs`.
+    pub integration_legacy_search: bool,
+}
+
+impl ProductionScenarioSpec {
+    /// 8 s timelines matching existing I1–I4 integration tests.
+    pub fn integration_fast() -> Self {
+        Self {
+            total_secs: INTEGRATION_TOTAL_SECS,
+            gap_signature_context_secs: 2.0,
+            fill_border_search_secs: 3.5,
+            fill_align_margin_secs: 0.2,
+            gap_signature_bin_ms: 50,
+            min_gap_secs: 1.0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            f1_context_fraction: Some(0.25),
+            f1_gap_fraction: Some(0.15),
+            integration_legacy_search: true,
+        }
+    }
+
+    /// 60 s @ production border/margin; context from caller (3 / 10 / 30 s matrix).
+    pub fn production_standard(total_secs: f64, gap_signature_context_secs: f64) -> Self {
+        Self {
+            total_secs,
+            gap_signature_context_secs,
+            fill_border_search_secs: 10.0,
+            fill_align_margin_secs: 1.0,
+            gap_signature_bin_ms: 50,
+            min_gap_secs: 1.0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+            f1_context_fraction: None,
+            f1_gap_fraction: None,
+            integration_legacy_search: false,
+        }
+    }
+
+    pub fn bin_frames(&self, sample_rate: u32) -> usize {
+        ((self.gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64)
+            .round()
+            .max(1.0) as usize
+    }
+
+    pub fn context_frames(&self, sample_rate: u32, total_frames: usize) -> usize {
+        if let Some(frac) = self.f1_context_fraction {
+            (frac * total_frames as f64)
+                .round()
+                .max(self.bin_frames(sample_rate) as f64) as usize
+        } else {
+            secs_to_frames(self.gap_signature_context_secs, sample_rate)
+                .max(self.bin_frames(sample_rate))
+        }
+    }
+
+    pub fn search_radius_frames(&self, sample_rate: u32) -> usize {
+        secs_to_frames(self.fill_border_search_secs, sample_rate)
+    }
+
+    pub fn min_gap_frames(&self, sample_rate: u32) -> usize {
+        secs_to_frames(self.min_gap_secs, sample_rate)
+    }
+
+    pub fn structure_match_params(
+        &self,
+        sample_rate: u32,
+        gap_frames: usize,
+        search_radius_frames: usize,
+    ) -> StructureMatchParams {
+        let bin_frames = self.bin_frames(sample_rate);
+        StructureMatchParams {
+            gap_frames,
+            bin_frames,
+            search_radius_frames,
+            fill_length_slack_frames: bin_frames,
+            max_fine_adjustment_frames: bin_frames,
+            silence_peak_fraction: self.silence_peak_fraction,
+            absolute_silence_rms: self.absolute_silence_rms,
+        }
+    }
+}
+
+/// Minimum timeline lead before the first gap anchor (context + border search + margin).
+pub fn gap_anchor_secs(spec: &ProductionScenarioSpec) -> f64 {
+    spec.gap_signature_context_secs + spec.fill_border_search_secs + spec.fill_align_margin_secs
+}
+
+/// F1 decoy shift (half gap) for production geometry checks.
+pub fn f1_decoy_shift_frames(_spec: &ProductionScenarioSpec, _sample_rate: u32, gap_frames: usize) -> usize {
+    gap_frames / 2
+}
+
+#[cfg(test)]
+mod production_spec_tests {
+    use super::*;
+
+    #[test]
+    fn gap_anchor_secs_sums_context_border_and_margin() {
+        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+        assert!((gap_anchor_secs(&spec) - 14.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn production_anchor_places_f1_decoy_inside_border_search() {
+        let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+        let rate = 48_000u32;
+        let anchor = gap_anchor_secs(&spec);
+        assert!(
+            anchor + spec.min_gap_secs + 2.0 <= spec.total_secs,
+            "gap anchor {anchor}s needs room inside {}s timeline",
+            spec.total_secs
+        );
+        let bin = spec.bin_frames(rate);
+        let gap_frames = spec.min_gap_frames(rate).max(bin * 2);
+        let shift = f1_decoy_shift_frames(&spec, rate, gap_frames);
+        let search = spec.search_radius_frames(rate);
+        assert!(
+            shift <= search,
+            "decoy shift {shift} frames must be ≤ search radius {search}"
+        );
+    }
+
+    #[test]
+    fn integration_fast_spec_matches_legacy_total_secs() {
+        let spec = ProductionScenarioSpec::integration_fast();
+        assert!((spec.total_secs - INTEGRATION_TOTAL_SECS).abs() < f64::EPSILON);
+        assert!(spec.integration_legacy_search);
+    }
+
+    #[test]
+    fn f2_production_energy_separates_pauses() {
+        use super::{build_f2_production, ENERGY_PAUSE_MARGIN};
+        let f = build_f2_production(48_000, 2, 90.0, 3.0);
+        let pre1 = f.energy_pre_at(f.true_fill_start);
+        let pre2 = f.energy_pre_at(f.nominal_fill_start);
+        let post1 = f.energy_post_at(f.true_fill_end);
+        let post2 = f.energy_post_at(f.nominal_fill_end);
+        assert!(
+            pre1 >= pre2 + ENERGY_PAUSE_MARGIN,
+            "F2-prod: energy pre should separate pauses ({pre1} vs {pre2})"
+        );
+        assert!(
+            post1 >= post2 + ENERGY_PAUSE_MARGIN,
+            "F2-prod: energy post should separate pauses ({post1} vs {post2})"
+        );
+    }
+}
+
 /// Mirror `GAP_EDGE_REFINE_SECS` in `application/patch_audio.rs`.
 const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
@@ -793,13 +957,43 @@ fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
 /// `refine_gap_frames` does not walk back into the ramp. [`gap_report_times`] applies refine
 /// for patch integration.
 pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
+    build_f1_with_spec(sample_rate, channels, ProductionScenarioSpec::integration_fast())
+}
+
+/// **F1-long** @ 60 s with production border/context sizing (energy corpus Phase B).
+pub fn build_f1_production(
+    sample_rate: u32,
+    channels: usize,
+    gap_signature_context_secs: f64,
+) -> EnergySignatureFixture {
+    build_f1_with_spec(
+        sample_rate,
+        channels,
+        ProductionScenarioSpec::production_standard(60.0, gap_signature_context_secs),
+    )
+}
+
+fn build_f1_with_spec(
+    sample_rate: u32,
+    channels: usize,
+    spec: ProductionScenarioSpec,
+) -> EnergySignatureFixture {
     let ch = channels.max(1);
-    let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
-    let bin_frames = ((0.050 * sample_rate as f64).round() as usize).max(1);
-    let gap_frames = ((0.15 * total_frames as f64).round() as usize).max(bin_frames * 2);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = spec.bin_frames(sample_rate);
+    let gap_frames = if let Some(frac) = spec.f1_gap_fraction {
+        ((frac * total_frames as f64).round() as usize).max(bin_frames * 2)
+    } else {
+        spec.min_gap_frames(sample_rate).max(bin_frames * 2)
+    };
     let shift_frames = gap_frames / 2;
-    let context_frames = ((0.25 * total_frames as f64).round() as usize).max(bin_frames);
-    let gap_start = (total_frames * 3 / 10).max(context_frames + bin_frames);
+    let context_frames = spec.context_frames(sample_rate, total_frames);
+    let gap_start = if spec.integration_legacy_search {
+        (total_frames * 3 / 10).max(context_frames + bin_frames)
+    } else {
+        let anchor = secs_to_frames(gap_anchor_secs(&spec), sample_rate);
+        anchor.max(context_frames + bin_frames)
+    };
     let silence_lead = bin_frames;
     let silence_start = gap_start.saturating_sub(silence_lead);
     let gap_end = gap_start + gap_frames;
@@ -822,7 +1016,6 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
         },
     );
     if silence_start > 0 {
-        // Block refine from walking off the silence lead into the quiet ramp tail.
         write_frame(&mut a, ch, silence_start - 1, post_amp / 2);
     }
 
@@ -846,19 +1039,25 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
         write_frame(&mut b, ch, b_guard - 1, post_amp / 2);
     }
 
-    let search_radius = (gap_frames * 2).max(shift_frames * 2);
-    let structure_params = StructureMatchParams {
-        gap_frames: gap_end.saturating_sub(silence_start),
-        bin_frames,
-        search_radius_frames: search_radius,
-        fill_length_slack_frames: bin_frames,
-        max_fine_adjustment_frames: bin_frames,
-        silence_peak_fraction: 0.01,
-        absolute_silence_rms: 0.0,
+    let search_radius = if spec.integration_legacy_search {
+        (gap_frames * 2).max(shift_frames * 2)
+    } else {
+        spec.search_radius_frames(sample_rate)
+    };
+    let structure_params = spec.structure_match_params(
+        sample_rate,
+        gap_end.saturating_sub(silence_start),
+        search_radius,
+    );
+
+    let id = if spec.integration_legacy_search {
+        "F1_integration"
+    } else {
+        "F1_production"
     };
 
     EnergySignatureFixture {
-        id: "F1_integration",
+        id,
         a_samples: a,
         b_samples: b,
         channels: ch,
@@ -880,24 +1079,79 @@ pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatur
 /// Unit F2 pause spacing placed ~2.35 s into an 8 s timeline (room for patch context),
 /// refine guards at pause edges, scaled bins for domain search (U5 parity).
 pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
+    build_f2_with_spec(sample_rate, channels, ProductionScenarioSpec::integration_fast())
+}
+
+/// **F2-long** with production border/context sizing (default 90 s timeline).
+pub fn build_f2_production(
+    sample_rate: u32,
+    channels: usize,
+    total_secs: f64,
+    gap_signature_context_secs: f64,
+) -> EnergySignatureFixture {
+    build_f2_with_spec(
+        sample_rate,
+        channels,
+        ProductionScenarioSpec::production_standard(total_secs, gap_signature_context_secs),
+    )
+}
+
+fn build_f2_with_spec(
+    sample_rate: u32,
+    channels: usize,
+    spec: ProductionScenarioSpec,
+) -> EnergySignatureFixture {
     let ch = channels.max(1);
     let scale = frame_scale(sample_rate);
-    let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
-    let bin_frames = scaled_usize(10, scale).max(1);
-    let patch_bin_frames = ((0.050 * sample_rate as f64).round() as usize).max(1);
-    let gap_frames = scaled_usize(50, scale)
-        .max(bin_frames * 2)
-        .max(patch_bin_frames * 2);
-    let bridge_frames = gap_frames * 9 / 5;
-    let context_frames = scaled_usize(50, scale);
-    let pause1_anchor = (total_frames * 3 / 10).max(context_frames + bin_frames * 2);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = if spec.integration_legacy_search {
+        scaled_usize(10, scale).max(1)
+    } else {
+        spec.bin_frames(sample_rate)
+    };
+    let patch_bin_frames = spec.bin_frames(sample_rate);
+    let gap_frames = if spec.integration_legacy_search {
+        scaled_usize(50, scale)
+            .max(bin_frames * 2)
+            .max(patch_bin_frames * 2)
+    } else {
+        spec.min_gap_frames(sample_rate)
+            .max(bin_frames * 2)
+            .max(patch_bin_frames * 2)
+    };
+    let context_frames = if spec.integration_legacy_search {
+        scaled_usize(50, scale)
+    } else {
+        spec.context_frames(sample_rate, total_frames)
+    };
+    let bridge_frames = if spec.integration_legacy_search {
+        gap_frames * 9 / 5
+    } else {
+        context_frames.max(gap_frames + bin_frames * 2)
+    };
+    let pause1_anchor = if spec.integration_legacy_search {
+        (total_frames * 3 / 10).max(context_frames + bin_frames * 2)
+    } else {
+        secs_to_frames(gap_anchor_secs(&spec), sample_rate).max(context_frames + bin_frames * 2)
+    };
     let gap_start = pause1_anchor;
     let gap_end = gap_start + gap_frames;
     let pause2_start = gap_end + bridge_frames;
     let pause2_end = pause2_start + gap_frames;
-    let ramp_end = gap_start.saturating_sub(scaled_usize(40, scale).max(1));
+    let ramp_end = if spec.integration_legacy_search {
+        gap_start.saturating_sub(scaled_usize(40, scale).max(1))
+    } else {
+        let ramp_len = spec
+            .context_frames(sample_rate, total_frames)
+            .max(bin_frames * 4);
+        gap_start.saturating_sub(ramp_len)
+    };
     let post_amp = 8_000i16;
-    let post_rise = scaled_usize(15, scale).max(1);
+    let post_rise = if spec.integration_legacy_search {
+        scaled_usize(15, scale).max(1)
+    } else {
+        patch_bin_frames * 2
+    };
 
     let mut a = vec![0i16; total_frames * ch];
     for frame in 0..gap_start {
@@ -910,47 +1164,72 @@ pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatur
     }
 
     let mut b = Vec::new();
-    for frame in 0..total_frames {
-        let amp = if frame >= gap_end && frame < pause2_start {
-            post_amp
-        } else if frame >= pause2_end {
-            if frame < pause2_end + post_rise {
-                let t = (frame - pause2_end) as i32;
-                (t * i32::from(post_amp) / post_rise as i32).min(i32::from(post_amp)) as i16
-            } else {
+    if spec.integration_legacy_search {
+        for frame in 0..total_frames {
+            let amp = if frame >= gap_end && frame < pause2_start {
                 post_amp
-            }
-        } else if (gap_start..gap_end).contains(&frame)
-            || (pause2_start..pause2_end).contains(&frame)
-        {
-            0
-        } else {
-            ramp_amp(frame, ramp_end, 150, post_amp)
-        };
-        write_frame(&mut b, ch, frame, amp);
-    }
-    if gap_start > 0 {
-        write_frame(&mut b, ch, gap_start - 1, post_amp / 2);
-    }
-    if pause2_start > 0 {
-        write_frame(&mut b, ch, pause2_start - 1, post_amp / 2);
+            } else if frame >= pause2_end {
+                if frame < pause2_end + post_rise {
+                    let t = (frame - pause2_end) as i32;
+                    (t * i32::from(post_amp) / post_rise as i32).min(i32::from(post_amp)) as i16
+                } else {
+                    post_amp
+                }
+            } else if (gap_start..gap_end).contains(&frame)
+                || (pause2_start..pause2_end).contains(&frame)
+            {
+                0
+            } else {
+                ramp_amp(frame, ramp_end, 150, post_amp)
+            };
+            write_frame(&mut b, ch, frame, amp);
+        }
+        if gap_start > 0 {
+            write_frame(&mut b, ch, gap_start - 1, post_amp / 2);
+        }
+        if pause2_start > 0 {
+            write_frame(&mut b, ch, pause2_start - 1, post_amp / 2);
+        }
+    } else {
+        b = a.clone();
+        for frame in pause2_start..pause2_end {
+            write_frame(&mut b, ch, frame, 0);
+        }
     }
 
-    let search_radius = scaled_usize(160, scale)
-        .max(bin_frames)
-        .max(pause2_start.saturating_sub(gap_start) + bin_frames);
-    let structure_params = StructureMatchParams {
-        gap_frames,
-        bin_frames,
-        search_radius_frames: search_radius,
-        fill_length_slack_frames: scaled_usize(5, scale).max(1),
-        max_fine_adjustment_frames: scaled_usize(3, scale).max(1),
-        silence_peak_fraction: 0.01,
-        absolute_silence_rms: 0.0,
+    let search_radius = if spec.integration_legacy_search {
+        scaled_usize(160, scale)
+            .max(bin_frames)
+            .max(pause2_start.saturating_sub(gap_start) + bin_frames)
+    } else {
+        spec.search_radius_frames(sample_rate)
+    };
+    let structure_params = if spec.integration_legacy_search {
+        StructureMatchParams {
+            gap_frames,
+            bin_frames,
+            search_radius_frames: search_radius,
+            fill_length_slack_frames: scaled_usize(5, scale).max(1),
+            max_fine_adjustment_frames: scaled_usize(3, scale).max(1),
+            silence_peak_fraction: spec.silence_peak_fraction,
+            absolute_silence_rms: spec.absolute_silence_rms,
+        }
+    } else {
+        let mut params = spec.structure_match_params(sample_rate, gap_frames, search_radius);
+        // End slack lets pause₂ bracket game post-seam scores at 50 ms bins; keep fixed gap length.
+        params.fill_length_slack_frames = 0;
+        params.max_fine_adjustment_frames = 0;
+        params
+    };
+
+    let id = if spec.integration_legacy_search {
+        "F2_integration"
+    } else {
+        "F2_production"
     };
 
     EnergySignatureFixture {
-        id: "F2_integration",
+        id,
         a_samples: a,
         b_samples: b,
         channels: ch,
@@ -969,15 +1248,45 @@ pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatur
 
 /// **F3** drone stretched for integration (I4).
 pub fn build_f3_drone_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
+    build_f3_drone_with_total_secs(sample_rate, channels, INTEGRATION_TOTAL_SECS, None)
+}
+
+/// **F3-long** steady drone for production `auto` → bool checks.
+pub fn build_f3_drone_production(
+    sample_rate: u32,
+    channels: usize,
+    total_secs: f64,
+    gap_signature_context_secs: f64,
+) -> EnergySignatureFixture {
+    build_f3_drone_with_total_secs(sample_rate, channels, total_secs, Some(gap_signature_context_secs))
+}
+
+fn build_f3_drone_with_total_secs(
+    sample_rate: u32,
+    channels: usize,
+    total_secs: f64,
+    gap_signature_context_secs: Option<f64>,
+) -> EnergySignatureFixture {
+    let spec = gap_signature_context_secs.map(|ctx| ProductionScenarioSpec::production_standard(total_secs, ctx));
     let mut fixture = build_f3_drone_scaled(sample_rate, channels);
     let ch = fixture.channels.max(1);
-    let total_frames = secs_to_frames(INTEGRATION_TOTAL_SECS, sample_rate);
+    let total_frames = secs_to_frames(total_secs, sample_rate);
     let current_frames = fixture.a_samples.len() / ch;
     for frame in current_frames..total_frames {
         write_frame(&mut fixture.a_samples, ch, frame, 6_000);
         write_frame(&mut fixture.b_samples, ch, frame, 6_000);
     }
-    fixture.id = "F3_drone_integration";
+    if let Some(spec) = spec {
+        fixture.context_frames = spec.context_frames(sample_rate, total_frames);
+        fixture.structure_params = spec.structure_match_params(
+            sample_rate,
+            fixture.gap_end.saturating_sub(fixture.gap_start),
+            spec.search_radius_frames(sample_rate),
+        );
+        fixture.id = "F3_drone_production";
+    } else {
+        fixture.id = "F3_drone_integration";
+    }
     fixture
 }
 

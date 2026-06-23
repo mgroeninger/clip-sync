@@ -8,6 +8,7 @@ pub mod gap_seam_extend;
 pub mod gap_fill;
 pub mod gap_energy;
 pub mod gap_signature;
+pub mod gap_tags;
 pub mod gap_structure;
 pub mod patch_anchor;
 pub mod patch_result;
@@ -20,6 +21,12 @@ pub use fill_offset::{AnchoredRetryPass, FillOffsetMode, fill_offset_secs, resol
 pub use patch_anchor::{
     is_retryable_patch_skip, AnchorSearchPrior, PatchAnchorCandidate, PatchAnchorPolicy,
     PatchAnchorReport, PatchAnchorTable, PatchOffsetAnchor,
+};
+pub use gap_tags::{
+    classify_seam_shape, derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status,
+    format_gap_tags_verbose_line, FillTierThresholds, FitPathTag, GapPatchTierInput,
+    GapTags, GapTagsPatchContext, PatchTier, PlanKind, RegionPatchOutcomeView, SeamShape,
+    SignatureModeTag,
 };
 pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};

@@ -250,9 +250,15 @@ patch_tier=not_applicable seam_shape=not_applicable
 | W5 | `patch_tier=dead_zone`, `seam_shape=symmetric_weak` |
 | W6 | `patch_tier=structure_fail` |
 
-### Tool output (planned)
+### Tool output
 
-Tags are **defined here first**. A future `-v` line (`gap tags: tier=dead_zone seam=asymmetric_post`) and optional JSON fields on `GapPatchStatus` will use the same names. Until then, derive tags from the gap table and verbose lines using the rules above.
+With **`-v`**, each fillable gap emits a line after placement:
+
+```text
+           gap tags: plan=fillable tier=dead_zone seam=asymmetric_post fit_path=baseline_only signature_mode=bool
+```
+
+Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`.
 
 ---
 
@@ -304,6 +310,7 @@ In gap table?
 | `B search window:` | B haystack; width ∝ `fill_border_search_secs` + context/margins |
 | `structure slide` / `waveform slide` | B placement vs nominal map |
 | `fit path:` | `baseline only` (default/quick) vs `boundary grid` (`--full`) |
+| `gap tags:` | Composed vocabulary tags (`plan`, `tier`, `seam`, `fit_path`, `signature_mode`) — see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary |
 
 Full column semantics: [cli-output.md](cli-output.md).
 
