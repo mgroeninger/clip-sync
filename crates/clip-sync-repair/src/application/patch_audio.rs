@@ -26,8 +26,9 @@ use crate::domain::{
     gap_signature::build_gap_signature,
     gap_structure::StructureMatchParams,
     gap_tags::{
-        derive_gap_tags_from_patch_outcome, format_gap_tags_verbose_line, FillTierThresholds,
-        GapPatchTierInput, GapTagsPatchContext,
+        derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status,
+        format_gap_tags_verbose_line, FillTierThresholds, GapPatchTierInput, GapTags,
+        GapTagsPatchContext,
     },
     patch_anchor::{
         format_anchored_offset_verbose_line, format_patch_anchor_table_summary,
@@ -275,6 +276,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &request.report.gaps,
                 &plan,
                 &[],
+                request.fill_mode,
+                FillTierThresholds {
+                    min_fill_correlation: request.min_fill_correlation,
+                    fill_marginal_margin: request.fill_marginal_margin,
+                    fill_absolute_floor: request.fill_absolute_floor,
+                },
             ));
             return Ok(PatchAudioResult {
                 pcm: None,
@@ -297,6 +304,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             request.profile,
             request.fit_boundary_search,
             request.fill_border_search_secs,
+            request.gap_end_extend_on_post_seam_fail,
+            request.gap_start_extend_on_pre_seam_fail,
         ));
         let patch_config_view = repair_patch_config_view(&request);
         for note in inactive_repair_flag_notes(patch_config_view) {
@@ -398,7 +407,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // then apply them in a separate pass (mutable borrow).
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
-        let mut region_results: Vec<(f64, f64, RegionPatchOutcome)> = Vec::new();
+        let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
         let region_count = plan.regions.len() as u64;
 
         self.progress
@@ -424,6 +433,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 confidence = tracing::field::Empty,
                 skip_reason = tracing::field::Empty,
                 boundary_grid = tracing::field::Empty,
+                grid_cells = tracing::field::Empty,
             );
             let _gap_enter = gap_span.enter();
 
@@ -441,9 +451,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     patch_anchors: None,
                 },
             );
-            log_gap_tags_verbose(self.progress, &outcome, tag_ctx);
+            let tags = region_outcome_gap_tags(&outcome, tag_ctx);
+            log_gap_tags_verbose(self.progress, &tags);
             record_patch_gap_span(&gap_span, &outcome);
-            region_results.push((region.a_start_secs, region.a_end_secs, outcome));
+            region_results.push((region.a_start_secs, region.a_end_secs, outcome, tags));
             if let Some(patch) = patch {
                 let slot = patches.len();
                 patches.push(patch);
@@ -522,10 +533,17 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
+        let thresholds = FillTierThresholds {
+            min_fill_correlation: request.min_fill_correlation,
+            fill_marginal_margin: request.fill_marginal_margin,
+            fill_absolute_floor: request.fill_absolute_floor,
+        };
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
             &plan,
             &region_results,
+            request.fill_mode,
+            thresholds,
         ));
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
@@ -568,6 +586,8 @@ enum RegionPatchOutcome {
         confidence: FillConfidence,
         gap_start_adjust_frames: i64,
         gap_end_adjust_frames: i64,
+        fit_used_boundary_grid: bool,
+        fit_boundary_grid_cells: Option<u32>,
     },
     Skipped(GapPatchSkipReason),
 }
@@ -576,8 +596,8 @@ fn record_patch_gap_span(span: &tracing::Span, outcome: &RegionPatchOutcome) {
     match outcome {
         RegionPatchOutcome::Patched {
             confidence,
-            gap_start_adjust_frames,
-            gap_end_adjust_frames,
+            fit_used_boundary_grid,
+            fit_boundary_grid_cells,
             ..
         } => {
             span.record("outcome", "patched");
@@ -588,10 +608,10 @@ fn record_patch_gap_span(span: &tracing::Span, outcome: &RegionPatchOutcome) {
                     FillConfidence::Marginal => "marginal",
                 },
             );
-            span.record(
-                "boundary_grid",
-                *gap_start_adjust_frames != 0 || *gap_end_adjust_frames != 0,
-            );
+            span.record("boundary_grid", *fit_used_boundary_grid);
+            if let Some(cells) = fit_boundary_grid_cells {
+                span.record("grid_cells", cells);
+            }
         }
         RegionPatchOutcome::Skipped(reason) => {
             span.record("outcome", "skipped");
@@ -660,13 +680,13 @@ fn anchor_search_prior_for_gap(
 fn build_patch_anchor_candidates(
     request: &PatchAudioRequest,
     regions: &[FillRegion],
-    region_results: &[(f64, f64, RegionPatchOutcome)],
+    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
 ) -> Vec<PatchAnchorCandidate> {
     regions
         .iter()
         .zip(region_results.iter())
         .enumerate()
-        .filter_map(|(gap_index, (region, (_, _, outcome)))| {
+        .filter_map(|(gap_index, (region, (_, _, outcome, _)))| {
             let RegionPatchOutcome::Patched {
                 pre_correlation,
                 post_correlation,
@@ -703,13 +723,13 @@ fn build_patch_anchor_candidates(
 }
 
 fn anchored_retry_gap_indices(
-    region_results: &[(f64, f64, RegionPatchOutcome)],
+    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
     retry_marginal: bool,
 ) -> Vec<usize> {
     region_results
         .iter()
         .enumerate()
-        .filter_map(|(index, (_, _, outcome))| {
+        .filter_map(|(index, (_, _, outcome, _))| {
             let retry = match outcome {
                 RegionPatchOutcome::Skipped(reason) => is_retryable_patch_skip(reason),
                 RegionPatchOutcome::Patched {
@@ -765,7 +785,7 @@ fn store_anchored_retry_patch(
 struct AnchoredRetryState<'a> {
     patches: &'a mut Vec<RegionPatch>,
     patch_slot_by_gap: &'a mut [Option<usize>],
-    region_results: &'a mut [(f64, f64, RegionPatchOutcome)],
+    region_results: &'a mut [(f64, f64, RegionPatchOutcome, GapTags)],
 }
 
 struct RegionPatchMedia<'a> {
@@ -831,6 +851,7 @@ fn run_anchored_retry_pass(
             confidence = tracing::field::Empty,
             skip_reason = tracing::field::Empty,
             boundary_grid = tracing::field::Empty,
+            grid_cells = tracing::field::Empty,
         );
         let _gap_enter = gap_span.enter();
         let (patch, outcome, tag_ctx) = prepare_region_patch(
@@ -844,10 +865,12 @@ fn run_anchored_retry_pass(
                 patch_anchors: Some(table),
             },
         );
-        log_gap_tags_verbose(progress, &outcome, tag_ctx);
+        let tags = region_outcome_gap_tags(&outcome, tag_ctx);
+        log_gap_tags_verbose(progress, &tags);
         record_patch_gap_span(&gap_span, &outcome);
         if should_apply_anchored_retry_outcome(prior, &outcome) {
             state.region_results[index].2 = outcome;
+            state.region_results[index].3 = tags;
             if let Some(patch) = patch {
                 store_anchored_retry_patch(
                     state.patches,
@@ -885,6 +908,11 @@ pub(crate) struct GapFillResultLog {
     pub structure_slide_secs: f64,
     pub waveform_slide_secs: f64,
     pub fit_used_boundary_grid: bool,
+    pub fit_boundary_grid_cells: Option<u32>,
+    pub fit_haystack_secs: f64,
+    pub report_pre: f64,
+    pub report_post: f64,
+    pub confidence: FillConfidence,
 }
 
 /// Verbose stderr lines: per-gap A/B timeline used for structure search and fill.
@@ -932,9 +960,21 @@ pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
         ));
     }
     let fit_path = if result.fit_used_boundary_grid {
-        "boundary grid"
+        if let Some(cells) = result.fit_boundary_grid_cells {
+            format!(
+                "boundary grid ({cells} cells, haystack {:.1}s)",
+                result.fit_haystack_secs
+            )
+        } else {
+            "boundary grid".to_string()
+        }
+    } else if result.confidence == FillConfidence::Marginal {
+        format!(
+            "baseline only (marginal, pre={:.2} post={:.2})",
+            result.report_pre, result.report_post
+        )
     } else {
-        "baseline only"
+        "baseline only".to_string()
     };
     format!(
         "           B fill source: {} ({slide}; fit path: {fit_path})",
@@ -987,20 +1027,24 @@ fn warn_skip_gap_fill(
 fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
-    region_results: &[(f64, f64, RegionPatchOutcome)],
+    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
+    fill_mode: FillMode,
+    thresholds: FillTierThresholds,
 ) -> Vec<GapPatchOutcome> {
     let mut status_by_gap: HashMap<(u64, u64), GapPatchStatus> = HashMap::new();
+    let mut tags_by_gap: HashMap<(u64, u64), GapTags> = HashMap::new();
 
     for skip in &plan.skipped {
-        status_by_gap.insert(
-            gap_key(skip.a_start_secs, skip.a_end_secs),
-            GapPatchStatus::NotPlanned {
-                reason: skip.reason.clone(),
-            },
-        );
+        let key = gap_key(skip.a_start_secs, skip.a_end_secs);
+        let status = GapPatchStatus::NotPlanned {
+            reason: skip.reason.clone(),
+        };
+        let tags = derive_gap_tags_from_status(&status, fill_mode, thresholds);
+        status_by_gap.insert(key, status);
+        tags_by_gap.insert(key, tags);
     }
 
-    for (a_start, a_end, outcome) in region_results {
+    for (a_start, a_end, outcome, tags) in region_results {
         let status = match outcome {
             RegionPatchOutcome::Patched {
                 pre_correlation,
@@ -1011,6 +1055,7 @@ fn outcomes_in_report_order(
                 confidence,
                 gap_start_adjust_frames,
                 gap_end_adjust_frames,
+                ..
             } => GapPatchStatus::Patched {
                 pre_correlation: *pre_correlation,
                 post_correlation: *post_correlation,
@@ -1025,22 +1070,27 @@ fn outcomes_in_report_order(
                 reason: reason.clone(),
             },
         };
-        status_by_gap.insert(gap_key(*a_start, *a_end), status);
+        let key = gap_key(*a_start, *a_end);
+        status_by_gap.insert(key, status);
+        tags_by_gap.insert(key, tags.clone());
     }
 
     gaps
         .iter()
         .map(|gap| {
-            let status = status_by_gap
-                .remove(&gap_key(gap.video_a_start_secs, gap.video_a_end_secs))
-                .unwrap_or(GapPatchStatus::NotPlanned {
-                    reason: GapFillSkipReason::NotFillable,
-                });
-            GapPatchOutcome {
-                a_start_secs: gap.video_a_start_secs,
-                a_end_secs: gap.video_a_end_secs,
+            let key = gap_key(gap.video_a_start_secs, gap.video_a_end_secs);
+            let status = status_by_gap.remove(&key).unwrap_or(GapPatchStatus::NotPlanned {
+                reason: GapFillSkipReason::NotFillable,
+            });
+            let tags = tags_by_gap.remove(&key).unwrap_or_else(|| {
+                derive_gap_tags_from_status(&status, fill_mode, thresholds)
+            });
+            GapPatchOutcome::new(
+                gap.video_a_start_secs,
+                gap.video_a_end_secs,
                 status,
-            }
+                tags,
+            )
         })
         .collect()
 }
@@ -1055,11 +1105,10 @@ struct RegionPatchContext {
     silence_peak_fraction: f32,
 }
 
-fn log_gap_tags_verbose(
-    progress: &dyn ProgressReporter,
+fn region_outcome_gap_tags(
     outcome: &RegionPatchOutcome,
     tag_ctx: GapTagsPatchContext,
-) {
+) -> GapTags {
     let input = match outcome {
         RegionPatchOutcome::Patched {
             pre_correlation,
@@ -1073,8 +1122,11 @@ fn log_gap_tags_verbose(
         },
         RegionPatchOutcome::Skipped(reason) => GapPatchTierInput::Skipped(reason),
     };
-    let tags = derive_gap_tags_from_patch_outcome(&input, tag_ctx);
-    progress.phase_verbose(&format_gap_tags_verbose_line(&tags));
+    derive_gap_tags_from_patch_outcome(&input, tag_ctx)
+}
+
+fn log_gap_tags_verbose(progress: &dyn ProgressReporter, tags: &GapTags) {
+    progress.phase_verbose(&format_gap_tags_verbose_line(tags));
 }
 
 fn seam_failure_outcome(
@@ -1489,6 +1541,8 @@ fn prepare_region_patch(
         gap_start_adjust_frames,
         gap_end_adjust_frames,
         fit_used_boundary_grid,
+        fit_boundary_grid_cells,
+        fit_haystack_secs,
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
 
@@ -1626,6 +1680,11 @@ fn prepare_region_patch(
             structure_slide_secs,
             waveform_slide_secs,
             fit_used_boundary_grid,
+            fit_boundary_grid_cells,
+            fit_haystack_secs,
+            report_pre,
+            report_post,
+            confidence,
         },
     );
 
@@ -1687,6 +1746,8 @@ fn prepare_region_patch(
             confidence: final_confidence,
             gap_start_adjust_frames,
             gap_end_adjust_frames,
+            fit_used_boundary_grid,
+            fit_boundary_grid_cells,
         },
         tag_ctx,
     )
@@ -1857,7 +1918,19 @@ mod tests {
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
     use crate::domain::patch_result::GapPatchSkipReason;
+    use crate::domain::gap_tags::{GapTags, PatchTier, PlanKind, SeamShape};
     use crate::domain::{FillOffsetMode, Gap};
+
+    fn dummy_region_tags() -> GapTags {
+        GapTags {
+            plan_kind: PlanKind::Fillable,
+            plan_skip_reason: None,
+            patch_tier: PatchTier::NotApplicable,
+            seam_shape: SeamShape::NotApplicable,
+            fit_path: None,
+            signature_mode: None,
+        }
+    }
 
     #[test]
     fn anchored_retry_gap_indices_includes_skips_and_optional_marginal() {
@@ -1874,7 +1947,10 @@ mod tests {
                     confidence: FillConfidence::High,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    fit_used_boundary_grid: false,
+                    fit_boundary_grid_cells: None,
                 },
+                dummy_region_tags(),
             ),
             (
                 2.0,
@@ -1888,7 +1964,10 @@ mod tests {
                     confidence: FillConfidence::Marginal,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    fit_used_boundary_grid: false,
+                    fit_boundary_grid_cells: None,
                 },
+                dummy_region_tags(),
             ),
             (
                 4.0,
@@ -1898,6 +1977,7 @@ mod tests {
                     post_correlation: 0.1,
                     min_correlation: 0.35,
                 }),
+                dummy_region_tags(),
             ),
         ];
         let without = anchored_retry_gap_indices(&region_results, false);
@@ -1918,6 +1998,8 @@ mod tests {
             confidence: FillConfidence::Marginal,
             gap_start_adjust_frames: 0,
             gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
         };
         let high = RegionPatchOutcome::Patched {
             pre_correlation: 0.5,
@@ -1928,6 +2010,8 @@ mod tests {
             confidence: FillConfidence::High,
             gap_start_adjust_frames: 0,
             gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
         };
         assert!(should_apply_anchored_retry_outcome(&skip, &high));
         assert!(should_apply_anchored_retry_outcome(&marginal, &high));
@@ -1992,11 +2076,37 @@ mod tests {
             structure_slide_secs: -0.02,
             waveform_slide_secs: 0.01,
             fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            fit_haystack_secs: 12.0,
+            report_pre: 0.31,
+            report_post: 1.0,
+            confidence: FillConfidence::Marginal,
         });
         assert!(line.contains("B fill source:"));
         assert!(line.contains("structure slide -0.020s"));
         assert!(line.contains("waveform slide +0.010s"));
         assert!(line.contains("0:51.000 – 0:52.000"));
+        assert!(line.contains("baseline only (marginal, pre=0.31 post=1.00)"));
+    }
+
+    #[test]
+    fn format_gap_fill_result_line_shows_boundary_grid_cells() {
+        let line = format_gap_fill_result_line(&GapFillResultLog {
+            b_search_start_secs: 0.0,
+            sample_rate: 48_000,
+            channels: 2,
+            fill_start_sample: 0,
+            fill_end_sample: 96_000,
+            structure_slide_secs: 0.0,
+            waveform_slide_secs: 0.0,
+            fit_used_boundary_grid: true,
+            fit_boundary_grid_cells: Some(143),
+            fit_haystack_secs: 36.0,
+            report_pre: 0.5,
+            report_post: 0.5,
+            confidence: FillConfidence::High,
+        });
+        assert!(line.contains("boundary grid (143 cells, haystack 36.0s)"));
     }
 
     #[test]

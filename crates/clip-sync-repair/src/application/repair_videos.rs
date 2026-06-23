@@ -213,6 +213,8 @@ mod tests {
     use clip_sync::{MediaError, MediaReader, MediaSession, MediaSource, MultiChannelPcm};
 
     use crate::application::patch_audio::PatchAudioResult;
+    use crate::domain::fill_mode::FillMode;
+    use crate::domain::gap_tags::FillTierThresholds;
     use crate::domain::patch_result::{GapPatchOutcome, GapPatchStatus, PatchSummary};
 
     #[cfg(feature = "ffmpeg-mux")]
@@ -360,11 +362,14 @@ mod tests {
     }
 
     fn patch_result(patched_count: usize, pcm: Option<MultiChannelPcm>) -> PatchAudioResult {
+        use crate::domain::fill_mode::FillMode;
+        use crate::domain::gap_tags::FillTierThresholds;
+
         let gaps = if patched_count > 0 {
-            vec![GapPatchOutcome {
-                a_start_secs: 1.0,
-                a_end_secs: 2.0,
-                status: GapPatchStatus::Patched {
+            vec![GapPatchOutcome::with_tags_from_status(
+                1.0,
+                2.0,
+                GapPatchStatus::Patched {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
@@ -374,7 +379,9 @@ mod tests {
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
                 },
-            }]
+                FillMode::Fit,
+                FillTierThresholds::DEFAULT,
+            )]
         } else {
             vec![]
         };
@@ -476,10 +483,10 @@ mod tests {
         let empty = PatchSummary::from_outcomes(vec![]);
         assert!(!empty.has_patches());
 
-        let patched = PatchSummary::from_outcomes(vec![GapPatchOutcome {
-            a_start_secs: 0.0,
-            a_end_secs: 1.0,
-            status: GapPatchStatus::Patched {
+        let patched = PatchSummary::from_outcomes(vec![GapPatchOutcome::with_tags_from_status(
+            0.0,
+            1.0,
+            GapPatchStatus::Patched {
                 pre_correlation: 1.0,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
@@ -489,7 +496,9 @@ mod tests {
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
             },
-        }]);
+            FillMode::Fit,
+            FillTierThresholds::DEFAULT,
+        )]);
         assert!(patched.has_patches());
     }
 

@@ -128,6 +128,13 @@
             "gap_start_adjust_frames": 0,
             "gap_end_adjust_frames": 0
           }
+        },
+        "tags": {
+          "plan_kind": "fillable",
+          "patch_tier": "high",
+          "seam_shape": "balanced",
+          "fit_path": "baseline_only",
+          "signature_mode": "bool"
         }
       },
       {
@@ -143,6 +150,13 @@
               }
             }
           }
+        },
+        "tags": {
+          "plan_kind": "fillable",
+          "patch_tier": "dead_zone",
+          "seam_shape": "symmetric_weak",
+          "fit_path": "baseline_only",
+          "signature_mode": "bool"
         }
       },
       {
@@ -152,6 +166,12 @@
           "not_planned": {
             "reason": "not_fillable"
           }
+        },
+        "tags": {
+          "plan_kind": "unfillable",
+          "plan_skip_reason": "not_fillable",
+          "patch_tier": "not_applicable",
+          "seam_shape": "not_applicable"
         }
       }
     ]

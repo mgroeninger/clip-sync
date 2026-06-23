@@ -145,14 +145,56 @@ impl RepairProfile {
     }
 }
 
+pub fn repair_profile_override_notes(
+    profile: RepairProfile,
+    fill_border_search_secs: f64,
+    gap_end_extend_on_post_seam_fail: bool,
+    gap_start_extend_on_pre_seam_fail: bool,
+    fit_boundary_search: FitBoundarySearch,
+) -> Vec<String> {
+    let bundle = profile.bundle();
+    let mut notes = Vec::new();
+    if (fill_border_search_secs - bundle.fill_border_search_secs).abs() > f64::EPSILON {
+        notes.push(format!("fill_border_search_secs={fill_border_search_secs:.1}"));
+    }
+    if gap_end_extend_on_post_seam_fail != bundle.gap_end_extend_on_post_seam_fail {
+        notes.push(format!(
+            "gap_end_extend_on_post_seam_fail={gap_end_extend_on_post_seam_fail}"
+        ));
+    }
+    if gap_start_extend_on_pre_seam_fail != bundle.gap_start_extend_on_pre_seam_fail {
+        notes.push(format!(
+            "gap_start_extend_on_pre_seam_fail={gap_start_extend_on_pre_seam_fail}"
+        ));
+    }
+    if fit_boundary_search != bundle.fit_boundary_search {
+        notes.push(format!("fit_boundary_search={fit_boundary_search}"));
+    }
+    notes
+}
+
 pub fn format_repair_profile_verbose(
     profile: RepairProfile,
     fit_boundary_search: FitBoundarySearch,
     fill_border_search_secs: f64,
+    gap_end_extend_on_post_seam_fail: bool,
+    gap_start_extend_on_pre_seam_fail: bool,
 ) -> String {
-    format!(
+    let base = format!(
         "repair profile: {profile} (fit_boundary_search={fit_boundary_search}, fill_border_search_secs={fill_border_search_secs:.1})"
-    )
+    );
+    let overrides = repair_profile_override_notes(
+        profile,
+        fill_border_search_secs,
+        gap_end_extend_on_post_seam_fail,
+        gap_start_extend_on_pre_seam_fail,
+        fit_boundary_search,
+    );
+    if overrides.is_empty() {
+        base
+    } else {
+        format!("{base} (+ override: {})", overrides.join(", "))
+    }
 }
 
 /// Subset of patch config used to explain flags that are stored but inactive.
@@ -329,5 +371,31 @@ mod tests {
             "QUICK".parse::<RepairProfile>().unwrap(),
             RepairProfile::Quick
         );
+    }
+
+    #[test]
+    fn format_repair_profile_verbose_lists_overrides() {
+        let line = format_repair_profile_verbose(
+            RepairProfile::Quick,
+            FitBoundarySearch::BaselineOnly,
+            8.0,
+            false,
+            false,
+        );
+        assert!(line.contains("repair profile: quick"));
+        assert!(line.contains("+ override: fill_border_search_secs=8.0"));
+    }
+
+    #[test]
+    fn repair_profile_override_notes_empty_when_bundle_matches() {
+        let bundle = RepairProfile::Default.bundle();
+        assert!(repair_profile_override_notes(
+            RepairProfile::Default,
+            bundle.fill_border_search_secs,
+            bundle.gap_end_extend_on_post_seam_fail,
+            bundle.gap_start_extend_on_pre_seam_fail,
+            bundle.fit_boundary_search,
+        )
+        .is_empty());
     }
 }

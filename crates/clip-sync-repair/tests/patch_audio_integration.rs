@@ -1600,6 +1600,70 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
 }
 
 #[test]
+fn patch_audio_full_profile_runs_boundary_grid_when_baseline_insufficient() {
+    const EARLY_GAP_END: f64 = 5.85;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_inverted_region(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        EARLY_GAP_END - 0.05,
+        GAP_END + 0.10,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = Gap {
+        video_a_start_secs: GAP_START,
+        video_a_end_secs: GAP_END,
+        video_b_start_secs: Some(GAP_START),
+        video_b_end_secs: Some(GAP_END),
+        b_has_energy: true,
+    };
+    let report = make_report(
+        path_a.clone(),
+        path_b.clone(),
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    let report = GapReport {
+        gaps: vec![gap],
+        ..report
+    };
+
+    let mut full_profile = fast_fit_patch_options();
+    full_profile.profile = RepairProfile::Full;
+    full_profile.fit_boundary_search = FitBoundarySearch::FullGrid;
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 5.0, 0.35, full_profile),
+        10,
+    );
+    assert_eq!(patched.summary.patched_count, 1);
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            gap_end_adjust_frames,
+            ..
+        } => assert!(
+            *gap_end_adjust_frames > 0,
+            "full profile should shift gap end via boundary grid"
+        ),
+        other => panic!("expected patched gap under full profile, got {other:?}"),
+    }
+}
+
+#[test]
 fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path_a = temp.path().join("a.wav");

@@ -692,7 +692,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{format_patch_summary, format_repair_json_output, RepairJsonOutput};
+    use crate::domain::fill_mode::FillMode;
     use crate::domain::gap::{Gap, GapOffsetAgreement, GapReport};
+    use crate::domain::gap_tags::FillTierThresholds;
     use crate::domain::{
         CompatibilityVerdict, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
         GapPatchStatus, PatchSummary, TrackCompatibility,
@@ -705,6 +707,16 @@ mod tests {
     /// `include_str!` on Windows can embed CRLF from checkout; serde JSON uses LF.
     fn normalize_golden_newlines(s: &str) -> String {
         s.replace("\r\n", "\n")
+    }
+
+    fn gap_patch_outcome(a_start: f64, a_end: f64, status: GapPatchStatus) -> GapPatchOutcome {
+        GapPatchOutcome::with_tags_from_status(
+            a_start,
+            a_end,
+            status,
+            FillMode::Fit,
+            FillTierThresholds::DEFAULT,
+        )
     }
 
     fn full_surface_gap_report() -> GapReport {
@@ -831,10 +843,10 @@ mod tests {
 
     fn full_surface_patch_summary() -> PatchSummary {
         PatchSummary::from_outcomes(vec![
-            GapPatchOutcome {
-                a_start_secs: 45.0,
-                a_end_secs: 47.5,
-                status: GapPatchStatus::Patched {
+            gap_patch_outcome(
+                45.0,
+                47.5,
+                GapPatchStatus::Patched {
                     pre_correlation: 0.91,
                     post_correlation: 0.88,
                     align_adjustment_secs: 0.02,
@@ -844,25 +856,25 @@ mod tests {
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 120.0,
-                a_end_secs: 125.0,
-                status: GapPatchStatus::Skipped {
+            ),
+            gap_patch_outcome(
+                120.0,
+                125.0,
+                GapPatchStatus::Skipped {
                     reason: GapPatchSkipReason::CorrelationBelowThreshold {
                         pre_correlation: 0.22,
                         post_correlation: 0.19,
                         min_correlation: 0.35,
                     },
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 200.0,
-                a_end_secs: 205.0,
-                status: GapPatchStatus::NotPlanned {
+            ),
+            gap_patch_outcome(
+                200.0,
+                205.0,
+                GapPatchStatus::NotPlanned {
                     reason: GapFillSkipReason::NotFillable,
                 },
-            },
+            ),
         ])
     }
 
@@ -970,13 +982,13 @@ mod tests {
 
     #[test]
     fn json_repair_output_includes_patch_summary_when_present() {
-        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+        use crate::domain::{GapPatchStatus, PatchSummary};
 
         let report = minimal_report();
-        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
-            a_start_secs: 0.0,
-            a_end_secs: 60.0,
-            status: GapPatchStatus::Patched {
+        let summary = PatchSummary::from_outcomes(vec![gap_patch_outcome(
+            0.0,
+            60.0,
+            GapPatchStatus::Patched {
                 pre_correlation: 0.91,
                 post_correlation: 0.88,
                 align_adjustment_secs: 0.02,
@@ -986,7 +998,7 @@ mod tests {
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
             },
-        }]);
+        )]);
         let payload = RepairJsonOutput {
             scan: super::GapScanJson::from(&report),
             patch: Some(&summary),
@@ -999,19 +1011,21 @@ mod tests {
             value["patch"]["gaps"][0]["status"]["patched"]["pre_correlation"],
             0.91
         );
+        assert_eq!(value["patch"]["gaps"][0]["tags"]["plan_kind"], "fillable");
+        assert_eq!(value["patch"]["gaps"][0]["tags"]["patch_tier"], "high");
     }
 
     #[test]
     fn human_patch_summary_lists_patched_and_skipped_gaps() {
         use crate::domain::{
-            GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+            GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, PatchSummary,
         };
 
         let summary = PatchSummary::from_outcomes(vec![
-            GapPatchOutcome {
-                a_start_secs: 1.0,
-                a_end_secs: 4.0,
-                status: GapPatchStatus::Patched {
+            gap_patch_outcome(
+                1.0,
+                4.0,
+                GapPatchStatus::Patched {
                     pre_correlation: 0.92,
                     post_correlation: 0.90,
                     align_adjustment_secs: 0.01,
@@ -1021,25 +1035,25 @@ mod tests {
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 5979.0,
-                a_end_secs: 6180.0,
-                status: GapPatchStatus::Skipped {
+            ),
+            gap_patch_outcome(
+                5979.0,
+                6180.0,
+                GapPatchStatus::Skipped {
                     reason: GapPatchSkipReason::CorrelationBelowThreshold {
                         pre_correlation: 0.1,
                         post_correlation: 0.08,
                         min_correlation: 0.35,
                     },
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 7000.0,
-                a_end_secs: 7010.0,
-                status: GapPatchStatus::NotPlanned {
+            ),
+            gap_patch_outcome(
+                7000.0,
+                7010.0,
+                GapPatchStatus::NotPlanned {
                     reason: GapFillSkipReason::NotFillable,
                 },
-            },
+            ),
         ]);
 
         let text = format_patch_summary(&summary);
@@ -1237,13 +1251,13 @@ mod tests {
 
     #[test]
     fn unified_gap_report_merges_scan_and_patch() {
-        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+        use crate::domain::{GapPatchStatus, PatchSummary};
 
         let report = minimal_report();
-        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
-            a_start_secs: 0.0,
-            a_end_secs: 60.0,
-            status: GapPatchStatus::Patched {
+        let summary = PatchSummary::from_outcomes(vec![gap_patch_outcome(
+            0.0,
+            60.0,
+            GapPatchStatus::Patched {
                 pre_correlation: 0.98,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
@@ -1253,7 +1267,7 @@ mod tests {
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
             },
-        }]);
+        )]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false);
         assert!(text.contains("1 found, 1 repaired, 0 skipped, 0 unfillable"));
@@ -1264,13 +1278,13 @@ mod tests {
 
     #[test]
     fn unified_gap_report_verbose_shows_patch_detail() {
-        use crate::domain::{GapPatchOutcome, GapPatchStatus, PatchSummary};
+        use crate::domain::{GapPatchStatus, PatchSummary};
 
         let report = minimal_report();
-        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome {
-            a_start_secs: 0.0,
-            a_end_secs: 60.0,
-            status: GapPatchStatus::Patched {
+        let summary = PatchSummary::from_outcomes(vec![gap_patch_outcome(
+            0.0,
+            60.0,
+            GapPatchStatus::Patched {
                 pre_correlation: 0.92,
                 post_correlation: 0.90,
                 align_adjustment_secs: 0.01,
@@ -1280,7 +1294,7 @@ mod tests {
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
             },
-        }]);
+        )]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), true);
         assert!(text.contains("struct pre=0.92 post=0.90 slide=+0.010s"));
@@ -1302,7 +1316,7 @@ mod tests {
     #[test]
     fn human_report_shows_alignment_instability_warning() {
         use crate::domain::gap::GapOffsetAgreement;
-        use crate::domain::{GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary};
+        use crate::domain::{GapPatchSkipReason, GapPatchStatus, PatchSummary};
 
         let mut report = minimal_report();
         report.gaps = vec![
@@ -1362,10 +1376,10 @@ mod tests {
         });
 
         let summary = PatchSummary::from_outcomes(vec![
-            GapPatchOutcome {
-                a_start_secs: 0.0,
-                a_end_secs: 2.0,
-                status: GapPatchStatus::Patched {
+            gap_patch_outcome(
+                0.0,
+                2.0,
+                GapPatchStatus::Patched {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
@@ -1375,14 +1389,14 @@ mod tests {
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 6128.0,
-                a_end_secs: 6359.7,
-                status: GapPatchStatus::Skipped {
+            ),
+            gap_patch_outcome(
+                6128.0,
+                6359.7,
+                GapPatchStatus::Skipped {
                     reason: GapPatchSkipReason::BoundaryAlignmentFailed,
                 },
-            },
+            ),
         ]);
 
         let text = super::format_human(&report, Some(&summary), None, false, None);
@@ -1400,7 +1414,7 @@ mod tests {
 
     #[test]
     fn unified_gap_report_lists_gaps_in_timeline_order() {
-        use crate::domain::{GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary};
+        use crate::domain::{GapPatchSkipReason, GapPatchStatus, PatchSummary};
 
         let mut report = minimal_report();
         report.gaps = vec![
@@ -1427,10 +1441,10 @@ mod tests {
             },
         ];
         let summary = PatchSummary::from_outcomes(vec![
-            GapPatchOutcome {
-                a_start_secs: 192.0,
-                a_end_secs: 194.0,
-                status: GapPatchStatus::Patched {
+            gap_patch_outcome(
+                192.0,
+                194.0,
+                GapPatchStatus::Patched {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
@@ -1440,21 +1454,21 @@ mod tests {
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 0.0,
-                a_end_secs: 8.0,
-                status: GapPatchStatus::NotPlanned {
+            ),
+            gap_patch_outcome(
+                0.0,
+                8.0,
+                GapPatchStatus::NotPlanned {
                     reason: GapFillSkipReason::NotFillable,
                 },
-            },
-            GapPatchOutcome {
-                a_start_secs: 6128.0,
-                a_end_secs: 6359.7,
-                status: GapPatchStatus::Skipped {
+            ),
+            gap_patch_outcome(
+                6128.0,
+                6359.7,
+                GapPatchStatus::Skipped {
                     reason: GapPatchSkipReason::BoundaryAlignmentFailed,
                 },
-            },
+            ),
         ]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false);

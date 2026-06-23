@@ -175,11 +175,11 @@ pub struct Args {
     pub fill_mode: Option<FillMode>,
 
     /// Draft repair profile: smaller haystack, no extension, baseline-only fit path.
-    #[arg(long, overrides_with = "full")]
+    #[arg(long, conflicts_with = "full")]
     pub quick: bool,
 
     /// Quality repair profile: full boundary grid and extension retries.
-    #[arg(long, overrides_with = "quick")]
+    #[arg(long, conflicts_with = "quick")]
     pub full: bool,
 
     /// Explicit repair profile (`default`, `quick`, `full`).

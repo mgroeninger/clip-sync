@@ -6,7 +6,8 @@ use clip_sync::{
     AlignVideosRequest, AlignmentResult, ClipLabel, ClipMatch, ProgressReporter,
     SymphoniaMediaReader, TimelineOverlap,
 };
-use clip_sync::testing::fakes::FakeProgressReporter;
+
+use crate::test_support::NoOpProgressReporter;
 
 use crate::application::ports::Aligner;
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
@@ -164,7 +165,7 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
         limit_fill_to_mapped_region: true,
     };
     let media_reader = SymphoniaMediaReader;
-    let progress = FakeProgressReporter;
+    let progress = NoOpProgressReporter;
     let scan = ScanGaps::new(&media_reader, &progress, &NeverCalledAligner);
     scan.scan_after_alignment(request, zero_offset_alignment(total_secs))
         .expect("scan energy fixture WAV")

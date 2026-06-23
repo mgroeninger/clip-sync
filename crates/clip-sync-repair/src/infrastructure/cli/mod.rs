@@ -185,6 +185,14 @@ fn resolve_cli_profile(args: &Args) -> Option<RepairProfile> {
     }
 }
 
+/// Reject incompatible repair profile CLI flags.
+pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
+    if args.quick && args.full {
+        return Err("cannot use --quick and --full together".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod cli_override_tests {
     use super::*;
@@ -380,5 +388,23 @@ mod cli_override_tests {
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
         assert!((config.repair.fill_border_search_secs - 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn quick_and_full_together_is_rejected() {
+        use clap::Parser;
+        let err = crate::infrastructure::cli::args::Args::try_parse_from([
+            "clip-sync-repair",
+            "a.mkv",
+            "b.mkv",
+            "--quick",
+            "--full",
+        ])
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("quick")
+                && err.to_string().contains("full"),
+            "unexpected clap error: {err}"
+        );
     }
 }

@@ -1,6 +1,8 @@
 use serde::Serialize;
 
+use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::FillConfidence;
+use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, GapTags};
 
 /// Why a detected gap was not included in the fill plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -33,6 +35,36 @@ pub struct GapPatchOutcome {
     pub a_start_secs: f64,
     pub a_end_secs: f64,
     pub status: GapPatchStatus,
+    /// Vocabulary tags derived at patch time (or from plan status for not-planned gaps).
+    pub tags: GapTags,
+}
+
+impl GapPatchOutcome {
+    pub fn new(
+        a_start_secs: f64,
+        a_end_secs: f64,
+        status: GapPatchStatus,
+        tags: GapTags,
+    ) -> Self {
+        Self {
+            a_start_secs,
+            a_end_secs,
+            status,
+            tags,
+        }
+    }
+
+    /// Build tags from [`GapPatchStatus`] only (lossy for patched/skipped fit gaps).
+    pub fn with_tags_from_status(
+        a_start_secs: f64,
+        a_end_secs: f64,
+        status: GapPatchStatus,
+        fill_mode: FillMode,
+        thresholds: FillTierThresholds,
+    ) -> Self {
+        let tags = derive_gap_tags_from_status(&status, fill_mode, thresholds);
+        Self::new(a_start_secs, a_end_secs, status, tags)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

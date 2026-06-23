@@ -40,6 +40,10 @@ pub(crate) struct SeamGateOutcome {
     pub gap_end_adjust_frames: i64,
     /// True when fit mode ran the joint A-boundary grid (not baseline-only short path).
     pub fit_used_boundary_grid: bool,
+    /// Non-baseline grid cells evaluated when `fit_used_boundary_grid` (verbose diagnostics).
+    pub fit_boundary_grid_cells: Option<u32>,
+    /// B haystack duration in seconds (unified search window).
+    pub fit_haystack_secs: f64,
 }
 
 pub(crate) struct SeamGateParams<'a> {
@@ -199,12 +203,60 @@ fn record_fit_joint_candidate(
     }
 }
 
+/// Count non-baseline joint A-boundary grid cells (for verbose diagnostics).
+pub(crate) fn count_joint_boundary_grid_cells(
+    baseline: RefinedGapFrames,
+    start_min: usize,
+    end_max: usize,
+    step: usize,
+) -> u32 {
+    let mut count = 0u32;
+    let mut try_start = baseline.start_frame;
+    while try_start >= start_min {
+        let mut try_end = baseline.end_frame;
+        while try_end <= end_max {
+            if try_end > try_start
+                && (try_start != baseline.start_frame || try_end != baseline.end_frame)
+            {
+                count += 1;
+            }
+            if try_end >= end_max {
+                break;
+            }
+            try_end = (try_end + step).min(end_max);
+        }
+        if try_start <= start_min {
+            break;
+        }
+        try_start = try_start.saturating_sub(step).max(start_min);
+    }
+    count
+}
+
+/// Whether fit mode may return after baseline unified search without running the grid.
+pub(crate) fn accepts_baseline_without_boundary_grid(
+    search: FitBoundarySearch,
+    confidence: FillConfidence,
+) -> bool {
+    search == FitBoundarySearch::BaselineOnly
+        && matches!(
+            confidence,
+            FillConfidence::High | FillConfidence::Marginal
+        )
+}
+
+fn fit_haystack_secs(params: &SeamGateParams<'_>) -> f64 {
+    let channels = params.channels.max(1);
+    params.b_samples.len() as f64 / channels as f64 / f64::from(params.sample_rate)
+}
+
 fn evaluate_seam_gate_fit_joint(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     let step = boundary_search_step_frames(params.max_extend_frames, params.step_frames);
     let total_frames = params.a_pcm.samples.len() / params.channels.max(1);
+    let haystack_secs = fit_haystack_secs(params);
 
     let start_min = if params.gap_start_extend_on_pre_seam_fail {
         baseline.start_frame.saturating_sub(params.max_extend_frames)
@@ -226,11 +278,16 @@ fn evaluate_seam_gate_fit_joint(
         .as_ref()
         .is_some_and(|c| c.outcome.confidence == FillConfidence::High);
     if baseline_high {
-        return Ok(best.expect("baseline high").outcome);
+        let mut outcome = best.expect("baseline high").outcome;
+        outcome.fit_haystack_secs = haystack_secs;
+        return Ok(outcome);
     }
 
-    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
-        if let Some(candidate) = &best {
+    if let Some(candidate) = &best {
+        if accepts_baseline_without_boundary_grid(
+            params.fit_boundary_search,
+            candidate.outcome.confidence,
+        ) {
             if candidate.outcome.confidence == FillConfidence::Marginal {
                 tracing::warn!(
                     pre = candidate.outcome.report_pre,
@@ -239,10 +296,16 @@ fn evaluate_seam_gate_fit_joint(
                     "marginal waveform seam patch (below min_fill_correlation)"
                 );
             }
-            return Ok(candidate.outcome.clone());
+            let mut outcome = candidate.outcome.clone();
+            outcome.fit_haystack_secs = haystack_secs;
+            return Ok(outcome);
         }
+    }
+    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
         return Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed));
     }
+
+    let grid_cells = count_joint_boundary_grid_cells(baseline, start_min, end_max, step);
 
     let mut try_start = baseline.start_frame;
     while try_start >= start_min {
@@ -290,6 +353,8 @@ fn evaluate_seam_gate_fit_joint(
             );
         }
         candidate.outcome.fit_used_boundary_grid = true;
+        candidate.outcome.fit_boundary_grid_cells = Some(grid_cells);
+        candidate.outcome.fit_haystack_secs = haystack_secs;
         return Ok(candidate.outcome);
     }
 
@@ -454,6 +519,8 @@ fn evaluate_seam_gate_fit_candidate(
             gap_start_adjust_frames: refined.start_frame as i64 - baseline.start_frame as i64,
             gap_end_adjust_frames: refined.end_frame as i64 - baseline.end_frame as i64,
             fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            fit_haystack_secs: fit_haystack_secs(params),
         },
         ranking_score,
     ))
@@ -612,6 +679,8 @@ fn evaluate_seam_gate_legacy(
         gap_start_adjust_frames: 0,
         gap_end_adjust_frames: 0,
         fit_used_boundary_grid: false,
+        fit_boundary_grid_cells: None,
+        fit_haystack_secs: 0.0,
     })
 }
 
@@ -932,5 +1001,42 @@ mod tests {
             false,
             true,
         ));
+    }
+
+    #[test]
+    fn baseline_only_accepts_marginal_without_grid() {
+        assert!(accepts_baseline_without_boundary_grid(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::Marginal,
+        ));
+    }
+
+    #[test]
+    fn full_grid_does_not_short_circuit_marginal_baseline() {
+        assert!(!accepts_baseline_without_boundary_grid(
+            FitBoundarySearch::FullGrid,
+            FillConfidence::Marginal,
+        ));
+    }
+
+    #[test]
+    fn baseline_only_accepts_high_without_grid() {
+        assert!(accepts_baseline_without_boundary_grid(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::High,
+        ));
+    }
+
+    #[test]
+    fn joint_boundary_grid_cell_count_positive_when_extension_enabled() {
+        let baseline = RefinedGapFrames {
+            start_frame: 48_000,
+            end_frame: 96_000,
+        };
+        let start_min = 36_000;
+        let end_max = 108_000;
+        let step = 4_800;
+        let cells = count_joint_boundary_grid_cells(baseline, start_min, end_max, step);
+        assert!(cells > 0, "expected grid cells, got {cells}");
     }
 }
