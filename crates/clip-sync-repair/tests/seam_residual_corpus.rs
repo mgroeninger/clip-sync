@@ -1,29 +1,31 @@
-//! Step 1 of the residual-vs-seam value experiment (report-only, direct scoring).
+//! Residual-vs-seam corpus: score CSVs (steps 1–2) and Pearson vs residual **disagreement table** (step 3).
 //!
-//! For each oracle fixture (F1, F2, F4-decoy) this scores the **seam Pearson**, the **residual**
-//! cancellation, and the **measured floor** at the known placements (truth / decoy / nominal),
-//! using the *same window geometry as `patch_region`* so the dB numbers transfer to the pipeline.
-//! It emits one CSV row per `(fixture, variant, placement)` — the schema steps 2 (codec-noise
-//! variants) and 3 (disagreement table) extend by adding rows, not columns.
+//! For each oracle fixture this scores seam Pearson, residual cancellation, and measured floor at
+//! known placements (truth / decoy / nominal), using the *same window geometry as `patch_region`*.
 //!
-//! This measures **scoring discrimination** (does residual separate truth from decoy better than
-//! Pearson?), not the end-to-end search+gate decision. The floor here is anchored at the *true*
-//! alignment because these fixtures carry a deliberately wrong nominal map; production anchors the
-//! floor at the alignment nominal (with the probe's wide lag + outward walk absorbing local drift).
+//! **Disagreement table** (`seam_residual_disagreement_csv`): per `(fixture, placement)` compares
+//! production Pearson tiering with `apply_residual_to_confidence` under `veto` and `veto_rescue`.
 //!
-//! Run: `cargo test -p clip-sync-repair seam_residual_truth_decoy_csv -- --ignored --nocapture`
+//! The floor here is anchored at the *true* alignment (see header in `score_placement`); production
+//! anchors at the alignment nominal. Use for relative discrimination, not absolute wrong-nominal numbers.
+//!
+//! Run disagreement: `cargo test -p clip-sync-repair seam_residual_disagreement_csv -- --ignored --nocapture`
+//! Run scores: `cargo test -p clip-sync-repair seam_residual_truth_decoy_csv -- --ignored --nocapture`
 
 use clip_sync_repair::domain::gap_fill_fit::{
-    apply_residual_to_confidence, FillConfidence, ResidualGateError,
+    apply_residual_to_confidence, classify_fill_waveform_confidence, FillConfidence,
+    ResidualGateError,
 };
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
     interleaved_to_channels, interleaved_to_mono, seam_chosen_and_floor, GapBorderSpec,
-    DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamFloorParams, SeamPlacement, SeamSide, SeamTemplates,
+    DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamFloorParams, SeamFloorProbe, SeamPlacement, SeamResidualVerdict,
+    SeamSide, SeamTemplates,
 };
 use clip_sync_repair::domain::{
     residual_max_lag_frames, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
 };
+use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f2_production, build_f4_decoy_production, EnergySignatureFixture,
 };
@@ -65,8 +67,12 @@ fn geometry_for(gap_frames: usize, rate: u32) -> Geometry {
 }
 
 struct Scored {
+    /// Best-lag Pearson (fair baseline for discrimination CSVs).
     seam_pre: f64,
     seam_post: f64,
+    /// Production Pearson at the chosen placement (no lag) — matches `patch_region`.
+    pearson_pre: f64,
+    pearson_post: f64,
     residual_pre_db: f64,
     residual_post_db: f64,
     floor_pre_db: f64,
@@ -81,6 +87,154 @@ impl Scored {
     }
     fn headroom_post(&self) -> f64 {
         self.residual_post_db - self.floor_post_db
+    }
+}
+
+struct ScoredPlacement {
+    scored: Scored,
+    chosen_pre: SeamFloorProbe,
+    chosen_post: SeamFloorProbe,
+    floor_pre: SeamFloorProbe,
+    floor_post: SeamFloorProbe,
+}
+
+impl ScoredPlacement {
+    fn verdict(&self) -> SeamResidualVerdict {
+        SeamResidualVerdict::from_parts(
+            &self.chosen_pre,
+            &self.chosen_post,
+            &self.floor_pre,
+            &self.floor_post,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PearsonTierLabel {
+    High,
+    Marginal,
+    DeadZone,
+}
+
+impl PearsonTierLabel {
+    fn from_confidence(c: FillConfidence) -> Self {
+        match c {
+            FillConfidence::High => Self::High,
+            FillConfidence::Marginal => Self::Marginal,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Marginal => "marginal",
+            Self::DeadZone => "dead_zone",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateOutcomeLabel {
+    Pass,
+    Rescue,
+    Veto,
+    Abstain,
+    SkipPearson,
+}
+
+impl GateOutcomeLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Rescue => "rescue",
+            Self::Veto => "veto",
+            Self::Abstain => "abstain",
+            Self::SkipPearson => "skip_pearson",
+        }
+    }
+}
+
+struct DisagreementRow {
+    pearson_min: f64,
+    pearson_tier: PearsonTierLabel,
+    pearson_patches: bool,
+    informative: bool,
+    headroom_db: f64,
+    veto_outcome: GateOutcomeLabel,
+    rescue_outcome: GateOutcomeLabel,
+    veto_patches: bool,
+    rescue_patches: bool,
+}
+
+fn production_pearson(
+    pearson_pre: f64,
+    pearson_post: f64,
+) -> Result<FillConfidence, f64> {
+    let repair = RepairConfig::default();
+    classify_fill_waveform_confidence(
+        pearson_pre,
+        pearson_post,
+        repair.min_fill_correlation,
+        repair.fill_marginal_margin,
+        repair.fill_absolute_floor,
+    )
+}
+
+fn gate_outcome(
+    pearson: Result<FillConfidence, f64>,
+    verdict: &SeamResidualVerdict,
+    rescue_enabled: bool,
+) -> GateOutcomeLabel {
+    if !verdict.informative {
+        return match pearson {
+            Ok(_) => GateOutcomeLabel::Abstain,
+            Err(_) => GateOutcomeLabel::SkipPearson,
+        };
+    }
+    let pearson_was_err = pearson.is_err();
+    match apply_residual_to_confidence(
+        pearson,
+        verdict,
+        DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+        rescue_enabled,
+    ) {
+        Ok(FillConfidence::Marginal) if rescue_enabled && pearson_was_err => {
+            GateOutcomeLabel::Rescue
+        }
+        Ok(_) => GateOutcomeLabel::Pass,
+        Err(ResidualGateError::HeadroomExceeded { .. }) => GateOutcomeLabel::Veto,
+        Err(ResidualGateError::PearsonBelowFloor(_)) => GateOutcomeLabel::SkipPearson,
+    }
+}
+
+fn gate_patches(outcome: GateOutcomeLabel) -> bool {
+    matches!(
+        outcome,
+        GateOutcomeLabel::Pass | GateOutcomeLabel::Rescue | GateOutcomeLabel::Abstain
+    )
+}
+
+fn disagreement_row(placement: &ScoredPlacement) -> DisagreementRow {
+    let s = &placement.scored;
+    let verdict = placement.verdict();
+    let pearson = production_pearson(s.pearson_pre, s.pearson_post);
+    let pearson_tier = match pearson {
+        Ok(c) => PearsonTierLabel::from_confidence(c),
+        Err(_) => PearsonTierLabel::DeadZone,
+    };
+    let pearson_patches = pearson.is_ok();
+    let veto_outcome = gate_outcome(pearson, &verdict, false);
+    let rescue_outcome = gate_outcome(pearson, &verdict, true);
+    DisagreementRow {
+        pearson_min: s.pearson_pre.min(s.pearson_post),
+        pearson_tier,
+        pearson_patches,
+        informative: verdict.informative,
+        headroom_db: verdict.worst_headroom_db(),
+        veto_outcome,
+        rescue_outcome,
+        veto_patches: gate_patches(veto_outcome),
+        rescue_patches: gate_patches(rescue_outcome),
     }
 }
 
@@ -103,10 +257,10 @@ fn best_lag_seam(templates: &SeamTemplates<'_>, placement: SeamPlacement, max_la
     (best_pre, best_post)
 }
 
-/// Build `patch_region`-matched templates + the true-alignment floor for `fixture`, then score the
-/// seam (best-lag Pearson), residual, and floor at B frame `start`. The floor is anchored at the
-/// true alignment and is independent of `start`; it is rebuilt per call for simplicity.
-fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {
+/// Score seam (best-lag Pearson), residual, and floor at B frame `start`.
+///
+/// Floor anchors at the **true** alignment; chosen residual is at `start`.
+fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> ScoredPlacement {
     let ch = fixture.channels.max(1);
     let rate = fixture.sample_rate;
     let gap_start = fixture.gap_start;
@@ -140,6 +294,7 @@ fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {
     };
     let placement = SeamPlacement { start, gap_frames, pre_window, post_window };
     let max_lag = residual_max_lag_frames(rate, DEFAULT_RESIDUAL_LAG_SECS);
+    let (pearson_pre, pearson_post) = fill_seam_correlations(&templates, placement);
     let (seam_pre, seam_post) = best_lag_seam(&templates, placement, max_lag);
 
     // Unified model (matches the pipeline): chosen residual and floor share the same lag radius
@@ -173,16 +328,76 @@ fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {
         chosen_delta,
     );
 
-    Scored {
-        seam_pre,
-        seam_post,
-        residual_pre_db: chosen_pre.residual_db,
-        residual_post_db: chosen_post.residual_db,
-        floor_pre_db: floor_pre.residual_db,
-        floor_post_db: floor_post.residual_db,
-        floor_src_pre: floor_pre.source_label(),
-        floor_src_post: floor_post.source_label(),
+    ScoredPlacement {
+        scored: Scored {
+            seam_pre,
+            seam_post,
+            pearson_pre,
+            pearson_post,
+            residual_pre_db: chosen_pre.residual_db,
+            residual_post_db: chosen_post.residual_db,
+            floor_pre_db: floor_pre.residual_db,
+            floor_post_db: floor_post.residual_db,
+            floor_src_pre: floor_pre.source_label(),
+            floor_src_post: floor_post.source_label(),
+        },
+        chosen_pre,
+        chosen_post,
+        floor_pre,
+        floor_post,
     }
+}
+
+fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {
+    score_placement(fixture, start).scored
+}
+
+impl DisagreementRow {
+    fn veto_flipped(&self) -> bool {
+        self.pearson_patches != self.veto_patches
+    }
+
+    fn rescue_flipped(&self) -> bool {
+        self.pearson_patches != self.rescue_patches
+    }
+}
+
+fn run_disagreement_fixture(fixture: &EnergySignatureFixture, variant: &str) {
+    let placements = [
+        ("truth", fixture.true_fill_start),
+        ("decoy", fixture.b_decoy_fill_start()),
+        ("nominal", fixture.nominal_fill_start),
+    ];
+    for (label, start) in placements {
+        let row = disagreement_row(&score_placement(fixture, start));
+        let oracle_correct = start == fixture.true_fill_start;
+        println!(
+            "{},{},{},{},{:.3},{},{},{},{:.1},{},{},{},{}",
+            fixture.id,
+            variant,
+            label,
+            oracle_correct,
+            row.pearson_min,
+            row.pearson_tier.as_str(),
+            row.pearson_patches,
+            row.informative,
+            row.headroom_db,
+            row.veto_outcome.as_str(),
+            row.rescue_outcome.as_str(),
+            row.veto_flipped(),
+            row.rescue_flipped(),
+        );
+    }
+}
+
+fn disagreement_at(fixture: &EnergySignatureFixture, placement: &str) -> DisagreementRow {
+    let start = match placement {
+        "truth" => fixture.true_fill_start,
+        "decoy" => fixture.b_decoy_fill_start(),
+        "nominal" => fixture.nominal_fill_start,
+        other => panic!("unknown placement {other}"),
+    };
+    disagreement_row(&score_placement(fixture, start))
 }
 
 fn run_fixture(fixture: &EnergySignatureFixture, variant: &str) {
@@ -392,37 +607,30 @@ fn seam_residual_alignment_sweep_csv() {
 fn f4_decoy_placement_informative_with_high_headroom() {
     let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
     let decoy = fixture.b_decoy_fill_start();
-    let s = score_at(&fixture, decoy);
+    let placement = score_placement(&fixture, decoy);
+    let s = &placement.scored;
 
-    let pearson_min = s.seam_pre.min(s.seam_post);
+    let pearson_min = s.pearson_pre.min(s.pearson_post);
     assert!(
         pearson_min >= 0.35,
         "F4 decoy Pearson {pearson_min:.3} should pass min_fill_correlation",
     );
 
-    let headroom = s.headroom_pre().max(s.headroom_post());
+    // Real verdict — `informative` is computed from the measured floor via `from_parts`.
+    let verdict = placement.verdict();
+    assert!(
+        verdict.informative,
+        "F4 decoy floor pre={:.1} post={:.1} should be informative (≤ {DEFAULT_RESIDUAL_FLOOR_OK_DB})",
+        verdict.floor_pre_db,
+        verdict.floor_post_db,
+    );
+    let headroom = verdict.worst_headroom_db();
     assert!(
         headroom > DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         "F4 decoy headroom {headroom:.1} dB should exceed veto margin {}",
         DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
     );
-    assert!(
-        s.floor_pre_db <= DEFAULT_RESIDUAL_FLOOR_OK_DB
-            && s.floor_post_db <= DEFAULT_RESIDUAL_FLOOR_OK_DB,
-        "F4 decoy floor pre={:.1} post={:.1} should be informative (≤ {DEFAULT_RESIDUAL_FLOOR_OK_DB})",
-        s.floor_pre_db,
-        s.floor_post_db,
-    );
 
-    let verdict = clip_sync_repair::domain::policies::SeamResidualVerdict {
-        chosen_pre_db: s.residual_pre_db,
-        chosen_post_db: s.residual_post_db,
-        floor_pre_db: s.floor_pre_db,
-        floor_post_db: s.floor_post_db,
-        floor_source_pre: clip_sync_repair::domain::policies::SeamFloorSource::Border,
-        floor_source_post: clip_sync_repair::domain::policies::SeamFloorSource::Border,
-        informative: true,
-    };
     let err = apply_residual_to_confidence(
         Ok(FillConfidence::High),
         &verdict,
@@ -445,4 +653,75 @@ fn seam_residual_truth_decoy_csv() {
     run_fixture(&build_f1_production(48_000, 2, 3.0), "clean");
     run_fixture(&build_f2_production(48_000, 2, 90.0, 3.0), "clean");
     run_fixture(&build_f4_decoy_production(48_000, 2, 90.0, 3.0), "clean");
+}
+
+#[test]
+#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_disagreement_csv -- --ignored --nocapture"]
+fn seam_residual_disagreement_csv() {
+    println!(
+        "fixture,variant,placement,oracle_correct,pearson_min,pearson_tier,\
+         pearson_patches,informative,headroom_db,veto_outcome,rescue_outcome,\
+         veto_flipped,rescue_flipped"
+    );
+
+    run_disagreement_fixture(&build_f1_production(48_000, 2, 3.0), "clean");
+    run_disagreement_fixture(&build_f2_production(48_000, 2, 90.0, 3.0), "clean");
+    run_disagreement_fixture(&build_f4_decoy_production(48_000, 2, 90.0, 3.0), "clean");
+
+    for variant in [Variant::Clean, Variant::CodecNoise] {
+        run_disagreement_fixture(&build_broadband(16_000, variant), variant.label());
+    }
+}
+
+/// Fast oracle cells for the disagreement table (score-level, production Pearson floors).
+#[test]
+fn seam_residual_disagreement_oracles() {
+    let f4 = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let f4_decoy = disagreement_at(&f4, "decoy");
+    assert!(
+        f4_decoy.pearson_patches,
+        "F4 decoy Pearson should pass production floor"
+    );
+    assert!(f4_decoy.informative, "F4 decoy floor should be informative");
+    assert_eq!(f4_decoy.veto_outcome, GateOutcomeLabel::Veto, "F4 decoy veto case");
+    assert!(
+        f4_decoy.pearson_patches && f4_decoy.veto_outcome == GateOutcomeLabel::Veto,
+        "F4 decoy: Pearson pass → veto skip"
+    );
+
+    let f1 = build_f1_production(48_000, 2, 3.0);
+    let f1_truth = disagreement_at(&f1, "truth");
+    assert!(f1_truth.pearson_patches, "F1 truth should pass Pearson");
+    assert_eq!(
+        f1_truth.veto_outcome,
+        GateOutcomeLabel::Pass,
+        "F1 truth: veto agrees with Pearson"
+    );
+    assert!(
+        !f1_truth.veto_flipped(),
+        "F1 truth should not flip under veto"
+    );
+
+    let broadband = build_broadband(16_000, Variant::CodecNoise);
+    let bb_truth = disagreement_at(&broadband, "truth");
+    assert_eq!(
+        bb_truth.pearson_tier,
+        PearsonTierLabel::DeadZone,
+        "broadband codec-noise truth: Pearson dead zone"
+    );
+    assert!(bb_truth.informative, "broadband truth floor informative");
+    assert!(
+        bb_truth.headroom_db <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+        "broadband truth headroom {:.1} should be within margin",
+        bb_truth.headroom_db
+    );
+    assert_eq!(
+        bb_truth.rescue_outcome,
+        GateOutcomeLabel::Rescue,
+        "broadband H2-B: rescue from dead zone"
+    );
+    assert!(
+        bb_truth.rescue_flipped(),
+        "broadband rescue should flip Pearson skip → marginal"
+    );
 }

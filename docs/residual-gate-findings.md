@@ -22,7 +22,7 @@ Legend: **status** = fixed / open; **sev** = high / med / low / gap / regression
 
 | id | sev | what | notes |
 |----|-----|------|-------|
-| **M2** | med | **`FLOOR_OK` uncalibrated on real codecs.** Synthetic floor (~−44 dB) is optimistic; real lossy codecs sit higher. The `informative` gate threshold is a guess until measured. | Needs the injected-gap **real-codec corpus** (reuse `tests/corpus/sources.toml` + ffmpeg re-encode for B; inject known gaps). If real floors routinely exceed `FLOOR_OK`, switch to a relative floor. |
+| **M2** | med | **`FLOOR_OK` uncalibrated on real codecs.** Synthetic floor (~−44 dB) is optimistic; real lossy codecs sit higher. The `informative` gate threshold is a guess until measured. | **Partially calibrated** (`source_gap_oracle_floor_csv`, CC sources via ffmpeg): real **AAC** same-master floors land **−23 to −35 dB** (two independent encodes), all ≤ `FLOOR_OK = −15` → informative; unrelated content → floor ≈ 0 → uninformative (regime gate confirmed on real media). **FLOOR_OK = −15 validated for AAC.** Remaining: **MP3 / low-bitrate / Opus breadth** (worst observed −20.4 leaves only ~5 dB margin). Caveats: the `aac_same` worse side (−20.4) is inflated by inject-then-reencode MDCT spread (trust `aac_dual`); the `two_mic` fixture is unrelated-content, not a true same-event two-mic pair. |
 | **M3** | med | **`seam_floor_probe` refactor edge case.** `select_reference_window` (energy gate only) + `measure_window_at_delta` no longer *walks past* a window whose B mapping is out of bounds — it returns `NaN` at the first energetic window instead. Old code walked on. | Our fixtures never hit it, but near haystack-coverage edges the new code may abstain where the old found a usable window. Low likelihood; document or restore walk-on-out-of-bounds if it shows up. |
 
 ## Open — low / smells
@@ -47,9 +47,9 @@ Legend: **status** = fixed / open; **sev** = high / med / low / gap / regression
 
 | id | sev | what | notes |
 |----|-----|------|-------|
-| **G1** | gap | **Skipped gaps carry no JSON residual** (only patched). The echo/veto (skip) disagreement data must come from the debug log, not JSON. | Acceptable for P1; note for the disagreement-table analysis. |
+| **G1** | gap | **Skipped gaps carry no JSON residual** (only patched). The echo/veto (skip) disagreement data must come from the debug log, not JSON. | **Analysis need met** by `seam_residual_disagreement_csv` (computes the table via the domain fns directly, not pipeline JSON). The *production-reporting* gap (no residual on skipped `GapPatchOutcome`) remains open; low priority. |
 | **G2** | gap | **Pre-existing: `peak_normalize_f64` in `seam_pearson` is a no-op** (Pearson is scale-invariant). Harmless dead work; docs misattribute its purpose ("reduces level mismatch"). | Remove the call + fix the doc, or leave and note. |
-| **G3** | gap | **Real-codec FLOOR_OK calibration corpus not built** (the injected-gap oracle's realistic tier). Overlaps M2. | Required to set thresholds with confidence before flipping `residual_gate` default to `veto`. |
+| **G3** | gap | **Real-codec FLOOR_OK calibration corpus not built** (the injected-gap oracle's realistic tier). Overlaps M2. | **Addressed:** built as `floor_oracle_integration` + the floor-oracle manifest (CC sources, ffmpeg wav/aac_same/aac_dual + two_mic). Calibration findings now tracked under M2 (codec breadth pending). |
 | **G4** | gap | **Channel-following residual not implemented** (overlaps L2). | Required for 5.1 validity. |
 
 ## Regressions
@@ -61,3 +61,10 @@ Legend: **status** = fixed / open; **sev** = high / med / low / gap / regression
 - **Residual is a better gate signal than Pearson for broadband.** At a correct same-master placement, residual headroom = 0 while Pearson ≈ 0 — so residual *rescues* fills Pearson falsely skips, not only *vetoes* echoes. This is the empirical motivation for the rescue path (H2-B fix).
 - **The floor-informative check is the same-master regime gate for free** — two-mic pairs can't cancel → floor uninformative → gate abstains, so `donor_relation` is derived, not an input.
 - **Harness ↔ pipeline representativeness restored.** The direct harness was updated to the unified `seam_chosen_and_floor` model so its numbers predict pipeline behavior (the old ±64/±512 false-reject band was a harness artifact, now gone).
+
+## Validation infrastructure (where the evidence lives)
+
+- **`tests/seam_residual_corpus.rs`** — direct-scoring harness (truth/decoy CSV, broadband CSV, placement-offset sweep).
+- **`tests/seam_residual_oracle.rs`** — in-memory same-master oracle through `PatchAudio` (`seam_residual_oracle_csv`; H2-B rescue test `broadband_oracle_veto_rescue_patches_marginal`; `seam_residual_h2_placement_experiment`).
+- **`tests/floor_oracle_integration.rs`** + floor-oracle manifest — real-codec FLOOR_OK calibration (`source_gap_oracle_floor_csv`, CC sources via ffmpeg; G3).
+- **Disagreement table** — `seam_residual_disagreement_csv` (`#[ignore]`, ~96 s): one row per (fixture, variant, placement) over F1/F2/F4 @ {truth, decoy, nominal} + broadband @ {clean, codec_noise}, columns `oracle_correct, pearson_min, pearson_tier, pearson_patches, informative, headroom_db, veto_outcome, rescue_outcome, veto_flipped, rescue_flipped`. CI-fast asserts in `seam_residual_disagreement_oracles` (~23 s): **F4 decoy → Pearson passes, veto flips**; **F1 truth → veto agrees (no flip)**; **broadband codec-noise truth → Pearson dead zone, rescue flips**. These three cells lock the gate's value (catches echoes, doesn't touch good fills, rescues broadband false-skips). **Caveat:** the floor here is **true-anchored**, so the cells are *score-level discrimination* (does the gate flip correctly given a good floor?); **production-fidelity** (the floor actually establishes at the *nominal* anchor — which for nominal≠true fixtures like the corpus broadband, where nominal = decoy, it may not) is proven by the oracle/patch tests, not these cells.
