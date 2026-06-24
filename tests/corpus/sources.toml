@@ -11,7 +11,7 @@ commons_page = "https://commons.wikimedia.org/wiki/File:Martin_Amis_and_creative
 license = "CC-BY-SA-4.0"
 author = "Maximilian Schönherr"
 title = "Martin Amis and creative writing (Interview 1990)"
-sha256 = "83b945501abbc79dfab723a952ea9f2403ad03d48c0c368c9286af2bcbd0597"
+sha256 = "83b945501abbc79dfab723a952ea9f2403ad03d48c0c368c9286af2bcbd0597e"
 
 [[source]]
 id = "wikimedia_schiphol_restaurant_ambience"
@@ -21,4 +21,15 @@ commons_page = "https://commons.wikimedia.org/wiki/File:Schiphol,_geroezemoes_in
 license = "CC-BY-SA-3.0"
 author = "Beeld en Geluid (Netherlands Institute for Sound and Vision)"
 title = "Schiphol: geroezemoes in het restaurant"
-sha256 = "9a09d3d3e68f0c64072fc7a2c90439a3f342ec01febba0cd230a66075ed4936"
+sha256 = "9a09d3d3e68f0c64072fca7a2c90439a3f342ec01febba0cd230a66075ed4936"
+
+[[source]]
+id = "musopen_grieg_mountain_king"
+filename = "grieg_peer_gynt_mountain_king_musopen.flac"
+url = "https://upload.wikimedia.org/wikipedia/commons/8/84/Grieg_-_Peer_Gynt_Suite_No._1%2C_Op._46_-_IV._In_the_Hall_of_the_Mountain_King_%28Musopen_Symphony%29.flac"
+commons_page = "https://commons.wikimedia.org/wiki/File:Grieg_-_Peer_Gynt_Suite_No._1,_Op._46_-_IV._In_the_Hall_of_the_Mountain_King_(Musopen_Symphony).flac"
+license = "PDM-1.0"
+author = "Musopen Symphony (musopen.org)"
+title = "Grieg - Peer Gynt Suite No. 1, Op. 46 - IV. In the Hall of the Mountain King"
+# Lossless modern orchestral master (full-bandwidth music) for FLOOR_OK calibration.
+sha256 = "1c1be6b3e0042ee031cee42a8d151b04c78bfccf3126c4de6271e7b2fdcb6937"

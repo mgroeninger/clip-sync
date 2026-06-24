@@ -201,8 +201,10 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
   F4 corpus test `f4_decoy_placement_informative_with_high_headroom`; integration
   `f4_decoy_residual_gate_vetoes_bool` (ignored, slow). Calibrate `FLOOR_OK` on real media.
 - **P3 — rescue (`veto_rescue`):** false-skip rescue; validate it doesn't over-patch.
-- **P4 — defaults + `donor_relation`:** flip default to `veto` for same-master once calibrated;
-  emit `donor_relation`.
+- **P4 — defaults + `donor_relation`:** flip default to `veto` on the **validated codecs** (AAC,
+  Vorbis, music). **MP3 is unvalidated (M4):** it rides the same codec-agnostic floor/headroom gate,
+  abstains when uninformative, but its acting-branch behavior and the same-encoder determinism floor
+  are unverified — accepted as a known limitation, not a blocker. Emit `donor_relation`.
 
 ## 9. Test plan
 
@@ -221,7 +223,11 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
 - **Real-codec floor calibration.** Synthetic floor ≈ −44 dB is optimistic; lossy codecs sit
   higher. `FLOOR_OK = −15` is a guess — P1's real-media numbers set it. If real floors routinely
   exceed `FLOOR_OK`, the gate abstains too often (safe but useless) → may need per-gap-relative
-  floor instead of absolute.
+  floor instead of absolute. **Validated:** AAC, Vorbis, music (`source_gap_oracle_floor_csv`).
+  **MP3 unvalidated (M4):** excluded from calibration; rides the codec-agnostic gate without
+  codec-specific code; acting-branch behavior and libmp3lame same-encoder determinism floor
+  unverified — see [residual-gate-findings.md](residual-gate-findings.md) M4. Parked behind
+  punch-after-encode oracle + `veto_rescue`-on-MP3 run.
 - **Fractional-delay ceiling.** Integer-only lag caps absolute cancellation (−16 dB at 0.5 sample);
   headroom hides it, but if `FLOOR_OK` is set too low a correct-but-fractionally-delayed fill reads
   uninformative. Mitigation: parabolic/fractional resample before subtraction (deferred).
@@ -237,5 +243,5 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
 - [gap-fill-modes.md](gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
 - [gap-repair-guide.md](gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
 - [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) — the floor's multi-donor use
-- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1 fixed; H2-B, L1–L12 open)
+- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1 fixed; M4 deferred; M5, L1–L12 open)
 - `tests/seam_residual_corpus.rs` — the experiments grounding §2 and §4e

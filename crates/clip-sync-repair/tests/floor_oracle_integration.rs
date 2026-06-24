@@ -48,7 +48,13 @@ fn gap_status_label(status: &GapPatchStatus) -> (&'static str, String) {
 
 fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
     match reason {
-        GapPatchSkipReason::CorrelationBelowThreshold { .. } => "correlation_below".into(),
+        GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation,
+            post_correlation,
+            min_correlation,
+        } => format!(
+            "correlation_below(pre={pre_correlation:.4},post={post_correlation:.4},min={min_correlation})"
+        ),
         GapPatchSkipReason::ResidualHeadroomExceeded { .. } => "residual_headroom".into(),
         GapPatchSkipReason::BExtractFailed => "b_extract_failed".into(),
         GapPatchSkipReason::BoundaryAlignmentFailed => "boundary_alignment_failed".into(),
@@ -156,33 +162,41 @@ fn print_csv_row(built: &BuiltFloorOracle, run: &FloorOracleRun) {
     );
 }
 
-fn assert_floor_expectations(case_id: &str, built: &BuiltFloorOracle, run: &FloorOracleRun) {
+/// Returns `Err(description)` when the measured floor disagrees with the case's expectation, so the
+/// calibration loop can print the whole CSV and report all mismatches at once instead of aborting on
+/// the first. (`expect_informative_floor` for lossy same-master cases is the calibration *output*.)
+fn check_floor_expectations(
+    case_id: &str,
+    built: &BuiltFloorOracle,
+    run: &FloorOracleRun,
+) -> Result<(), String> {
     let Some(residual) = run.residual else {
-        if built.meta.expect_informative_floor {
-            panic!(
-                "{case_id}: no residual on outcome (status={}, skip={}) — \
-                 expected patch + informative floor",
-                run.status,
-                run.skip_reason
-            );
-        }
-        return;
+        return if built.meta.expect_informative_floor {
+            Err(format!(
+                "{case_id}: no residual (status={}, skip={}) — expected patch + informative floor",
+                run.status, run.skip_reason
+            ))
+        } else {
+            // No residual on an expected-uninformative case = skip/abstain, the safe outcome.
+            Ok(())
+        };
     };
+    match (built.meta.expect_informative_floor, residual.informative) {
+        (true, false) => Err(format!(
+            "{case_id}: expected informative floor, got uninformative (pre={:.1} post={:.1}, FLOOR_OK={DEFAULT_RESIDUAL_FLOOR_OK_DB})",
+            residual.floor_pre_db, residual.floor_post_db
+        )),
+        (false, true) => Err(format!(
+            "{case_id}: expected uninformative floor, got informative (pre={:.1} post={:.1})",
+            residual.floor_pre_db, residual.floor_post_db
+        )),
+        _ => Ok(()),
+    }
+}
 
-    if built.meta.expect_informative_floor {
-        assert!(
-            residual.informative,
-            "{case_id}: expected informative floor (pre={:.1} post={:.1}, FLOOR_OK={DEFAULT_RESIDUAL_FLOOR_OK_DB})",
-            residual.floor_pre_db,
-            residual.floor_post_db,
-        );
-    } else {
-        assert!(
-            !residual.informative,
-            "{case_id}: two-mic should not be informative (pre={:.1} post={:.1})",
-            residual.floor_pre_db,
-            residual.floor_post_db,
-        );
+fn assert_floor_expectations(case_id: &str, built: &BuiltFloorOracle, run: &FloorOracleRun) {
+    if let Err(e) = check_floor_expectations(case_id, built, run) {
+        panic!("{e}");
     }
 }
 
@@ -224,8 +238,8 @@ fn floor_oracle_gap_frames_use_production_anchor() {
         oracle_variant: None,
         format_a: None,
         format_b: None,
-        aac_bitrate_a: None,
-        aac_bitrate_b: None,
+        bitrate_a: None,
+        bitrate_b: None,
         total_secs: Some(60),
         sample_rate: Some(48_000),
         gap_duration_secs: Some(1.0),
@@ -253,6 +267,7 @@ fn source_gap_oracle_floor_csv() {
     print_csv_header();
 
     let mut ran = 0usize;
+    let mut mismatches: Vec<String> = Vec::new();
     for case in &manifest.case {
         if case.ignore {
             continue;
@@ -269,9 +284,20 @@ fn source_gap_oracle_floor_csv() {
         let built = build_floor_oracle_pair(&case_dir, case, &manifest.defaults);
         let run = run_built_floor_oracle(&built, ResidualGateMode::Off);
         print_csv_row(&built, &run);
-        assert_floor_expectations(&case.id, &built, &run);
+        // Collect, don't abort: one run prints the whole matrix, then reports every cell whose
+        // measured floor disagrees with the manifest — the values to flip during calibration.
+        if let Err(e) = check_floor_expectations(&case.id, &built, &run) {
+            mismatches.push(e);
+        }
         ran += 1;
     }
+
+    assert!(
+        mismatches.is_empty(),
+        "floor expectation mismatches ({} — update manifest `expect_informative_floor`):\n{}",
+        mismatches.len(),
+        mismatches.join("\n"),
+    );
 
     if ran == 0 {
         eprintln!(

@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use clip_sync::testing::corpus_sources::{
     find_source, load_sources, prepare_source_master_wav, source_cache_path, source_ready,
 };
-use clip_sync::testing::ffmpeg_util::{self, delay_wav, ffmpeg_available, EncodeFormat};
+use clip_sync::testing::ffmpeg_util::{self, delay_wav, ffmpeg_available};
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     gap_anchor_secs, ProductionScenarioSpec,
 };
@@ -32,8 +32,9 @@ pub struct FloorOracleDefaults {
     pub gap_duration_secs: f64,
     #[serde(default = "default_gap_signature_context_secs")]
     pub gap_signature_context_secs: f64,
-    #[serde(default = "default_aac_bitrate")]
-    pub aac_bitrate: String,
+    /// Per-encode bitrate (any lossy codec, not just AAC), e.g. "128k", "64k".
+    #[serde(default = "default_bitrate", alias = "aac_bitrate")]
+    pub bitrate: String,
     #[serde(default = "default_duration_match_tolerance_secs")]
     pub duration_match_tolerance_secs: f64,
     #[serde(default = "default_gap_interior_edge_secs")]
@@ -49,7 +50,7 @@ impl Default for FloorOracleDefaults {
             sample_rate: default_sample_rate(),
             gap_duration_secs: default_gap_duration_secs(),
             gap_signature_context_secs: default_gap_signature_context_secs(),
-            aac_bitrate: default_aac_bitrate(),
+            bitrate: default_bitrate(),
             duration_match_tolerance_secs: default_duration_match_tolerance_secs(),
             gap_interior_edge_secs: default_gap_interior_edge_secs(),
             gap_interior_peak_max: default_gap_interior_peak_max(),
@@ -69,7 +70,7 @@ fn default_gap_duration_secs() -> f64 {
 fn default_gap_signature_context_secs() -> f64 {
     3.0
 }
-fn default_aac_bitrate() -> String {
+fn default_bitrate() -> String {
     "128k".into()
 }
 fn default_duration_match_tolerance_secs() -> f64 {
@@ -95,6 +96,9 @@ pub enum FloorOracleFormat {
     Wav,
     Mp3,
     Mp4Aac,
+    /// Ogg/Vorbis — decodable by the production pipeline (Symphonia `format-ogg` + `codec-vorbis`),
+    /// so the `.ogg` is fed straight through. (Opus is *not* decodable: no Symphonia Opus codec.)
+    Vorbis,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -109,10 +113,10 @@ pub struct FloorOracleCase {
     pub format_a: Option<FloorOracleFormat>,
     #[serde(default)]
     pub format_b: Option<FloorOracleFormat>,
-    #[serde(default)]
-    pub aac_bitrate_a: Option<String>,
-    #[serde(default)]
-    pub aac_bitrate_b: Option<String>,
+    #[serde(default, alias = "aac_bitrate_a")]
+    pub bitrate_a: Option<String>,
+    #[serde(default, alias = "aac_bitrate_b")]
+    pub bitrate_b: Option<String>,
     #[serde(default)]
     pub total_secs: Option<u32>,
     #[serde(default)]
@@ -253,19 +257,61 @@ fn output_path(dir: &Path, stem: &str, format: FloorOracleFormat) -> PathBuf {
         FloorOracleFormat::Wav => "wav",
         FloorOracleFormat::Mp3 => "mp3",
         FloorOracleFormat::Mp4Aac => "mp4",
+        FloorOracleFormat::Vorbis => "ogg",
     };
     dir.join(format!("{stem}.{ext}"))
 }
 
-fn encode_with_format(input_wav: &Path, output: &Path, format: FloorOracleFormat, aac_bitrate: &str) -> bool {
+fn encode_with_format(input_wav: &Path, output: &Path, format: FloorOracleFormat, bitrate: &str) -> bool {
     if !ffmpeg_available() {
         return false;
     }
     match format {
         FloorOracleFormat::Wav => std::fs::copy(input_wav, output).is_ok(),
-        FloorOracleFormat::Mp3 => ffmpeg_util::encode_audio(input_wav, output, EncodeFormat::Mp3),
-        FloorOracleFormat::Mp4Aac => encode_aac_mp4(input_wav, output, aac_bitrate),
+        FloorOracleFormat::Mp3 => encode_mp3(input_wav, output, bitrate),
+        FloorOracleFormat::Mp4Aac => encode_aac_mp4(input_wav, output, bitrate),
+        FloorOracleFormat::Vorbis => encode_vorbis(input_wav, output, bitrate),
     }
+}
+
+/// CBR-ish Ogg/Vorbis at `bitrate` (`-c:a libvorbis -b:a`). Fed straight to the pipeline — Symphonia
+/// decodes Ogg/Vorbis natively, so the floor reflects the real production decode path.
+fn encode_vorbis(input_wav: &Path, output: &Path, bitrate: &str) -> bool {
+    Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(input_wav)
+        .args(["-vn", "-c:a", "libvorbis", "-b:a", bitrate])
+        .arg("-f")
+        .arg("ogg")
+        .arg(output)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// CBR MP3 at `bitrate` (e.g. "128k", "64k") — configurable, unlike the fixed `-q:a 4` helper, so
+/// low-bitrate cases and genuine dual-encode (different A/B bitrates) are expressible.
+fn encode_mp3(input_wav: &Path, output: &Path, bitrate: &str) -> bool {
+    Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(input_wav)
+        .args(["-vn", "-c:a", "libmp3lame", "-b:a", bitrate])
+        .arg("-f")
+        .arg("mp3")
+        .arg(output)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn encode_aac_mp4(input_wav: &Path, output: &Path, bitrate: &str) -> bool {
@@ -322,13 +368,13 @@ pub fn build_floor_oracle_pair(
     let format_a = case.format_a.unwrap_or(FloorOracleFormat::Wav);
     let format_b = case.format_b.unwrap_or(FloorOracleFormat::Wav);
     let bitrate_a = case
-        .aac_bitrate_a
+        .bitrate_a
         .as_deref()
-        .unwrap_or(defaults.aac_bitrate.as_str());
+        .unwrap_or(defaults.bitrate.as_str());
     let bitrate_b = case
-        .aac_bitrate_b
+        .bitrate_b
         .as_deref()
-        .unwrap_or(defaults.aac_bitrate.as_str());
+        .unwrap_or(defaults.bitrate.as_str());
     let variant = case.variant();
 
     let master_a = resolve_source_master(dir, &case.source_id, sample_rate, total_secs);
@@ -459,5 +505,6 @@ pub fn format_label(format: FloorOracleFormat) -> &'static str {
         FloorOracleFormat::Wav => "wav",
         FloorOracleFormat::Mp3 => "mp3",
         FloorOracleFormat::Mp4Aac => "mp4_aac",
+        FloorOracleFormat::Vorbis => "vorbis",
     }
 }
