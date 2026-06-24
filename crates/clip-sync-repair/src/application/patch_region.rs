@@ -506,6 +506,35 @@ fn evaluate_seam_gate_fit_candidate(
             mono_post = diag.mono.1,
             "fill seam channel diagnostics"
         );
+
+        // Prototype: residual-cancellation diagnostic for the same-master, multiple-copies repair
+        // case. Measures how cleanly B cancels A's border (scalar gain + integer-lag fit) rather
+        // than waveform similarity; `residual_db` near `floor_db` means a true same-source match.
+        // Debug logging only — does not gate any decision.
+        let residual = policies::seam_residual_diagnostics(
+            &templates,
+            policies::SeamPlacement {
+                start: alignment.start_frame,
+                gap_frames,
+                pre_window: waveform_gate_frames,
+                post_window: post_gate_frames,
+            },
+        );
+        let nan = f64::NAN;
+        tracing::debug!(
+            start_frame = alignment.start_frame,
+            pre_residual_db = residual.pre.map_or(nan, |r| r.residual_db),
+            pre_floor_db = residual.pre.map_or(nan, |r| r.floor_db),
+            pre_headroom_db = residual.pre.map_or(nan, |r| r.headroom_db()),
+            pre_gain = residual.pre.map_or(nan, |r| r.gain),
+            pre_lag = residual.pre.map_or(nan, |r| r.best_lag as f64 + r.frac_lag),
+            post_residual_db = residual.post.map_or(nan, |r| r.residual_db),
+            post_floor_db = residual.post.map_or(nan, |r| r.floor_db),
+            post_headroom_db = residual.post.map_or(nan, |r| r.headroom_db()),
+            post_gain = residual.post.map_or(nan, |r| r.gain),
+            post_lag = residual.post.map_or(nan, |r| r.best_lag as f64 + r.frac_lag),
+            "fill seam residual diagnostics"
+        );
     }
 
     if !structure_passes_gate(

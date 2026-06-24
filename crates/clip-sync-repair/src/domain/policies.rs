@@ -1246,6 +1246,184 @@ pub fn seam_channel_diagnostics(
     }
 }
 
+/// Max integer sample lag searched on each side by [`seam_residual_diagnostics`].
+///
+/// Covers the fixed sub-sample / encoder-priming delay between two encodes of the same master
+/// after gross alignment has already placed the bracket; not a re-alignment search.
+const SEAM_RESIDUAL_MAX_LAG: i64 = 64;
+
+/// Residual-cancellation diagnostic for one seam side (prototype; debug logging only).
+///
+/// Built for the *same-master, multiple-copies* repair case: when A and B are the same source
+/// audio, a correct placement cancels to the requantization floor after a scalar gain + integer
+/// lag fit, so `residual_db` is sharply bimodal (correct match near `floor_db`, wrong match ≈ 0 dB).
+#[derive(Debug, Clone, Copy)]
+pub struct SeamResidual {
+    /// Least-squares scalar gain `g` minimizing `||a - g·b||` at the best lag.
+    pub gain: f64,
+    /// Best integer sample lag (B shifted vs A) minimizing normalized residual.
+    pub best_lag: i64,
+    /// Parabolic sub-sample refinement added to `best_lag`.
+    pub frac_lag: f64,
+    /// Normalized residual energy `||a - g·b||² / ||a||²` at the best lag, in dB (≤ 0 = cancellation).
+    pub residual_db: f64,
+    /// i16 requantization noise floor relative to signal energy, in dB (a lower-bound reference).
+    pub floor_db: f64,
+}
+
+impl SeamResidual {
+    /// dB the residual sits above the requantization floor (≈ 0 = cancels as well as the codec allows).
+    pub fn headroom_db(&self) -> f64 {
+        self.residual_db - self.floor_db
+    }
+}
+
+/// Pre/post residual-cancellation diagnostics at a placement (prototype; debug logging only).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SeamResidualDiagnostics {
+    pub pre: Option<SeamResidual>,
+    pub post: Option<SeamResidual>,
+}
+
+/// Least-squares scalar fit `a ≈ g·b`; returns `(gain, ||a - g·b||² / ||a||²)`.
+fn lsq_residual_ratio(a: &[f64], b: &[f64]) -> Option<(f64, f64)> {
+    if a.len() != b.len() || a.is_empty() {
+        return None;
+    }
+    let aa: f64 = a.iter().map(|x| x * x).sum();
+    if aa <= f64::EPSILON {
+        return None;
+    }
+    let bb: f64 = b.iter().map(|y| y * y).sum();
+    if bb <= f64::EPSILON {
+        return Some((0.0, 1.0));
+    }
+    let ab: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let g = ab / bb;
+    let res: f64 = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| {
+            let d = x - g * y;
+            d * d
+        })
+        .sum();
+    Some((g, (res / aa).max(0.0)))
+}
+
+/// Search integer lags for the minimum normalized residual of `a_win` against B windows supplied
+/// by `b_at_lag`, then parabolically refine the sub-sample offset.
+fn seam_residual_for_side<F>(a_win: &[f64], b_at_lag: F) -> Option<SeamResidual>
+where
+    F: Fn(i64) -> Option<Vec<f64>>,
+{
+    let w = a_win.len();
+    if w == 0 {
+        return None;
+    }
+    let aa: f64 = a_win.iter().map(|x| x * x).sum();
+    if aa <= f64::EPSILON {
+        return None;
+    }
+
+    let span = (2 * SEAM_RESIDUAL_MAX_LAG + 1) as usize;
+    let mut ratios = vec![f64::NAN; span];
+    let mut best_idx: Option<usize> = None;
+    let mut best_gain = 0.0;
+    for lag in -SEAM_RESIDUAL_MAX_LAG..=SEAM_RESIDUAL_MAX_LAG {
+        let Some(b_win) = b_at_lag(lag) else {
+            continue;
+        };
+        let Some((g, ratio)) = lsq_residual_ratio(a_win, &b_win) else {
+            continue;
+        };
+        let idx = (lag + SEAM_RESIDUAL_MAX_LAG) as usize;
+        ratios[idx] = ratio;
+        if best_idx.is_none_or(|bi| ratio < ratios[bi]) {
+            best_idx = Some(idx);
+            best_gain = g;
+        }
+    }
+
+    let best_idx = best_idx?;
+    let best_ratio = ratios[best_idx];
+    let best_lag = best_idx as i64 - SEAM_RESIDUAL_MAX_LAG;
+
+    let frac = if best_idx > 0 && best_idx + 1 < span {
+        let ym = ratios[best_idx - 1];
+        let yp = ratios[best_idx + 1];
+        if ym.is_finite() && yp.is_finite() {
+            let denom = ym - 2.0 * best_ratio + yp;
+            if denom.abs() > f64::EPSILON {
+                (0.5 * (ym - yp) / denom).clamp(-1.0, 1.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let residual_db = 10.0 * best_ratio.max(1e-12).log10();
+    let mean_sq = aa / w as f64;
+    let floor_db = 10.0 * ((1.0 / 12.0) / mean_sq.max(1e-12)).max(1e-12).log10();
+
+    Some(SeamResidual {
+        gain: best_gain,
+        best_lag,
+        frac_lag: frac,
+        residual_db,
+        floor_db,
+    })
+}
+
+/// Residual-cancellation diagnostic at a placement, mirroring the windows of
+/// [`fill_seam_correlations`] but measuring how cleanly B *cancels* A's border (mono only).
+///
+/// Prototype for the same-master repair case — see [`SeamResidual`]. Allocates per lag; call only
+/// behind a `tracing::enabled!(DEBUG)` guard.
+pub fn seam_residual_diagnostics(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
+) -> SeamResidualDiagnostics {
+    let SeamTemplates { a_pre, a_post, b_mono, .. } = *templates;
+    let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
+    let len = b_mono.len() as i64;
+
+    let pre = if pre_window > 0 && a_pre.len() >= pre_window {
+        let a_win = &a_pre[a_pre.len() - pre_window..];
+        seam_residual_for_side(a_win, |lag| {
+            let lo = start as i64 - pre_window as i64 + lag;
+            let hi = start as i64 + lag;
+            if lo < 0 || hi > len || hi <= lo {
+                return None;
+            }
+            Some(b_mono[lo as usize..hi as usize].to_vec())
+        })
+    } else {
+        None
+    };
+
+    let post = if post_window > 0 && a_post.len() >= post_window {
+        let a_win = &a_post[..post_window];
+        let tail = (start + gap_frames) as i64;
+        seam_residual_for_side(a_win, |lag| {
+            let lo = tail + lag;
+            let hi = tail + post_window as i64 + lag;
+            if lo < 0 || hi > len {
+                return None;
+            }
+            Some(b_mono[lo as usize..hi as usize].to_vec())
+        })
+    } else {
+        None
+    };
+
+    SeamResidualDiagnostics { pre, post }
+}
+
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
 fn trim_low_energy_suffix(samples: &[f64]) -> Vec<f64> {
     if samples.is_empty() {
@@ -1965,5 +2143,101 @@ mod tests {
         let (pre, post) = fill_seam_correlations(&templates, placement);
         assert!(pre > 0.9, "pre seam should track the center channel, got {pre}");
         assert!(post > 0.9, "post seam should track the center channel, got {post}");
+    }
+
+    #[test]
+    fn seam_residual_cancels_identical_scaled_source() {
+        // Same-master case: B is the source, A's border is the same audio at half level.
+        // Residual should fall far below 0 dB and the gain should recover ~2.0 (a ≈ 0.5·b → fit g=0.5).
+        let pre_window = 16usize;
+        let post_window = 16usize;
+        let gap_frames = 8usize;
+        let start = 64usize;
+
+        let b_mono: Vec<f64> = (0..200)
+            .map(|i| (i as f64 * 0.21).sin() * 1000.0 + (i as f64 * 0.07).cos() * 400.0)
+            .collect();
+        let a_pre: Vec<f64> = b_mono[start - pre_window..start].iter().map(|s| s * 0.5).collect();
+        let a_post: Vec<f64> = b_mono[start + gap_frames..start + gap_frames + post_window]
+            .iter()
+            .map(|s| s * 0.5)
+            .collect();
+
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &b_mono,
+            b_ch: &[],
+        };
+        let diag = seam_residual_diagnostics(
+            &templates,
+            SeamPlacement { start, gap_frames, pre_window, post_window },
+        );
+        let pre = diag.pre.expect("pre residual");
+        let post = diag.post.expect("post residual");
+        assert_eq!(pre.best_lag, 0, "true lag is 0, got {}", pre.best_lag);
+        assert!(pre.residual_db < -60.0, "expected deep cancellation, got {} dB", pre.residual_db);
+        assert!((pre.gain - 0.5).abs() < 1e-6, "expected gain ~0.5, got {}", pre.gain);
+        assert!(post.residual_db < -60.0, "expected deep cancellation, got {} dB", post.residual_db);
+    }
+
+    #[test]
+    fn seam_residual_recovers_integer_lag() {
+        // A's border equals B shifted by +3 samples; the lag search should report best_lag = 3.
+        let pre_window = 16usize;
+        let gap_frames = 8usize;
+        let start = 64usize;
+        let true_lag = 3i64;
+
+        let b_mono: Vec<f64> = (0..200).map(|i| (i as f64 * 0.3).sin() * 1000.0).collect();
+        let lo = (start as i64 - pre_window as i64 + true_lag) as usize;
+        let hi = (start as i64 + true_lag) as usize;
+        let a_pre: Vec<f64> = b_mono[lo..hi].to_vec();
+
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &[],
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &b_mono,
+            b_ch: &[],
+        };
+        let diag = seam_residual_diagnostics(
+            &templates,
+            SeamPlacement { start, gap_frames, pre_window, post_window: 0 },
+        );
+        let pre = diag.pre.expect("pre residual");
+        assert_eq!(pre.best_lag, true_lag, "expected lag {true_lag}, got {}", pre.best_lag);
+        assert!(pre.residual_db < -60.0, "shifted copy should cancel, got {} dB", pre.residual_db);
+    }
+
+    #[test]
+    fn seam_residual_high_for_unrelated_audio() {
+        // A's border is unrelated to B at the placement: residual stays near 0 dB (no cancellation).
+        let pre_window = 16usize;
+        let gap_frames = 8usize;
+        let start = 64usize;
+
+        let b_mono: Vec<f64> = (0..200).map(|i| (i as f64 * 0.3).sin() * 1000.0).collect();
+        let a_pre: Vec<f64> = (0..pre_window)
+            .map(|i| (i as f64 * 1.7 + 0.5).cos() * 1000.0)
+            .collect();
+
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &[],
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &b_mono,
+            b_ch: &[],
+        };
+        let diag = seam_residual_diagnostics(
+            &templates,
+            SeamPlacement { start, gap_frames, pre_window, post_window: 0 },
+        );
+        let pre = diag.pre.expect("pre residual");
+        assert!(pre.residual_db > -6.0, "unrelated audio should not cancel, got {} dB", pre.residual_db);
     }
 }
