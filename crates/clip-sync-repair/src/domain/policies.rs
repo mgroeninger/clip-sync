@@ -1175,6 +1175,77 @@ pub fn fill_seam_correlations(
     (pre, post)
 }
 
+/// Per-channel seam diagnostics at a placement, for debug logging of multichannel scoring.
+#[derive(Debug, Clone)]
+pub struct SeamChannelDiagnostics {
+    /// Energy-selected channels actually scored (see [`seam_score_channel_indices`]).
+    pub selected: Vec<usize>,
+    /// `(pre, post)` Pearson per channel index; `NaN` where the seam window did not fit.
+    pub per_channel: Vec<(f64, f64)>,
+    /// Mono downmix fallback `(pre, post)`.
+    pub mono: (f64, f64),
+}
+
+/// Recompute per-channel seam correlations at `placement` without the best-channel reduction,
+/// for debug diagnostics. Mirrors the windows used by [`fill_seam_correlations`].
+pub fn seam_channel_diagnostics(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
+) -> SeamChannelDiagnostics {
+    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
+
+    let pre_fits = |len: usize| pre_window > 0 && start >= pre_window && start <= len;
+    let post_fits = |len: usize| post_window > 0 && start + gap_frames + post_window <= len;
+
+    let mut per_channel = Vec::with_capacity(b_ch.len());
+    for ch in 0..b_ch.len() {
+        let pre = if ch < a_pre_ch.len() && a_pre_ch[ch].len() >= pre_window && pre_fits(b_ch[ch].len()) {
+            seam_pearson(
+                &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],
+                &b_ch[ch][start - pre_window..start],
+            )
+        } else {
+            f64::NAN
+        };
+        let post = if ch < a_post_ch.len()
+            && a_post_ch[ch].len() >= post_window
+            && post_fits(b_ch[ch].len())
+        {
+            seam_pearson(
+                &a_post_ch[ch][..post_window],
+                &b_ch[ch][start + gap_frames..start + gap_frames + post_window],
+            )
+        } else {
+            f64::NAN
+        };
+        per_channel.push((pre, post));
+    }
+
+    let mono_pre = if !a_pre.is_empty() && pre_fits(b_mono.len()) {
+        seam_pearson(
+            &a_pre[a_pre.len().saturating_sub(pre_window)..],
+            &b_mono[start - pre_window..start],
+        )
+    } else {
+        f64::NAN
+    };
+    let mono_post = if !a_post.is_empty() && post_fits(b_mono.len()) {
+        seam_pearson(
+            &a_post[..post_window.min(a_post.len())],
+            &b_mono[start + gap_frames..start + gap_frames + post_window],
+        )
+    } else {
+        f64::NAN
+    };
+
+    SeamChannelDiagnostics {
+        selected: seam_score_channel_indices(a_pre_ch, a_post_ch),
+        per_channel,
+        mono: (mono_pre, mono_post),
+    }
+}
+
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
 fn trim_low_energy_suffix(samples: &[f64]) -> Vec<f64> {
     if samples.is_empty() {

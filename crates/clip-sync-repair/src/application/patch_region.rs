@@ -481,6 +481,33 @@ fn evaluate_seam_gate_fit_candidate(
     let structure_post = unified.structure_post;
     let structure_start_frame = alignment.start_frame;
 
+    // Per-gap seam diagnostics (RUST_LOG=debug): which channels were scored and their
+    // per-channel correlations at the winning placement — explains low pre/post on surround.
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let diag = policies::seam_channel_diagnostics(
+            &templates,
+            policies::SeamPlacement {
+                start: alignment.start_frame,
+                gap_frames,
+                pre_window: waveform_gate_frames,
+                post_window: post_gate_frames,
+            },
+        );
+        tracing::debug!(
+            start_frame = alignment.start_frame,
+            seam_pre = alignment.pre_correlation,
+            seam_post = alignment.post_correlation,
+            structure_pre,
+            structure_post,
+            signature = signature.mode_label(),
+            selected_channels = ?diag.selected,
+            per_channel = ?diag.per_channel,
+            mono_pre = diag.mono.0,
+            mono_post = diag.mono.1,
+            "fill seam channel diagnostics"
+        );
+    }
+
     if !structure_passes_gate(
         structure_pre,
         structure_post,
