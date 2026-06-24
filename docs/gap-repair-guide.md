@@ -97,6 +97,8 @@ The skip line always shows `min=0.12` in the status column; that is the **absolu
 | **W5** | Symmetric weak (common with **energy**) | pre 0.14, post 0.14 | Dead zone | Skipped |
 | **W6** | Structure fail | — | `skipped: boundary alignment failed` | Skipped (C5, P6) |
 
+**Surround (5.1) note:** seam Pearson follows the channel(s) carrying signal (within ~20 dB of the loudest), not a fixed front L/R pair — so a **center-dominant 5.1 mix** is scored on its center channel. Before this, near-silent front channels produced noise-correlation `pre/post ≈ 0` (a false **W5**) and skipped fillable gaps. If you still see persistent symmetric-weak seams on surround content, confirm the content isn't genuinely near-silent across *all* channels (then the skip is correct). See [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
+
 ---
 
 ## Layer 4 — Structure signature mode (`fit` only)

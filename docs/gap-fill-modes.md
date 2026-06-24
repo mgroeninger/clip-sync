@@ -131,6 +131,12 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 - May be **skipped** when both structure scores ≥ `strong_structure_trust` (default 0.90).
 - Short gaps may pass on **mean** or **one strong seam** when enabled.
 
+### Multichannel seams (5.1 / surround)
+
+Seam Pearson is **peak-normalized** (level is removed) and computed on the channel(s) that **carry signal** — those within ~20 dB of the loudest A-side border channel — taking the best match among them. Silent channels (e.g. empty surrounds/LFE, or near-silent front L/R in a **center-dominant 5.1 mix**) are skipped, so they neither veto nor inflate a splice. When every channel is near-silent the scorer falls back to the mono downmix.
+
+This matters because seam Pearson on **near-silent audio is noise** (peak-normalized noise correlates to ~0). If scoring were locked to front L/R, a 5.1 mix with dialogue in the center channel and quiet fronts would show **pre/post ≈ 0** and skip a perfectly fillable gap. Following the signal-bearing channel(s) gives such gaps an honest seam score. (Mono/stereo content is unaffected — all channels carry signal, so all are scored as before.)
+
 ---
 
 ## Patch anchors

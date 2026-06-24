@@ -535,13 +535,34 @@ pub fn border_templates_per_channel_for_gap(
     (pre_ch, post_ch)
 }
 
-/// Channel indices used for seam scoring on multichannel audio (front L/R).
-fn seam_score_channel_indices(channel_count: usize) -> Vec<usize> {
-    if channel_count >= 2 {
-        vec![0, 1]
-    } else {
-        vec![0]
+/// Mean-square energy of a (peak-domain) seam template.
+fn template_mean_square(samples: &[f64]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
     }
+    samples.iter().map(|s| s * s).sum::<f64>() / samples.len() as f64
+}
+
+/// A-side channels that carry seam signal — those within ~20 dB of the loudest channel's
+/// energy. Lets seam scoring follow the channel(s) that actually hold content (e.g. a
+/// center-dominant 5.1 mix where front L/R are near-silent) instead of assuming front L/R.
+/// Returns empty when every channel is near-silent, so the caller falls back to the mono mix.
+fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> Vec<usize> {
+    let n = a_pre_ch.len().min(a_post_ch.len());
+    if n == 0 {
+        return Vec::new();
+    }
+    let energy: Vec<f64> = (0..n)
+        .map(|ch| template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch])))
+        .collect();
+    let max_energy = energy.iter().copied().fold(0.0, f64::max);
+    if max_energy <= f64::EPSILON {
+        return Vec::new();
+    }
+    // Mean-square ratio 0.01 ≈ −20 dB in amplitude: a channel must carry meaningful signal
+    // relative to the loudest to be scored, so silent surrounds/LFE never veto a good splice.
+    let threshold = max_energy * 0.01;
+    (0..n).filter(|&ch| energy[ch] >= threshold).collect()
 }
 
 fn peak_normalize_f64(samples: &[f64]) -> Vec<f64> {
@@ -922,9 +943,10 @@ pub fn fill_splice_seam_correlations_interleaved(
     }
 
     let gap_frames = fill_mono.len();
-    let mut pre_scores = Vec::with_capacity(channels);
-    let mut post_scores = Vec::with_capacity(channels);
-    for ch in 0..channels {
+    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
+    let mut pre_scores = Vec::with_capacity(score_channels.len());
+    let mut post_scores = Vec::with_capacity(score_channels.len());
+    for &ch in &score_channels {
         let ch_fill: Vec<f64> = fill_interleaved
             .iter()
             .skip(ch)
@@ -1104,7 +1126,7 @@ pub fn fill_seam_correlations(
         return (pre, post);
     }
 
-    let score_channels = seam_score_channel_indices(b_ch.len());
+    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
     let mut pre_scores = Vec::with_capacity(score_channels.len());
     let mut post_scores = Vec::with_capacity(score_channels.len());
     for &ch in &score_channels {
@@ -1804,5 +1826,73 @@ mod tests {
             repeat_interior < 0.3,
             "haystack past fill end must not inflate repeat_post, got {repeat_interior}"
         );
+    }
+
+    #[test]
+    fn seam_score_channel_indices_picks_signal_channels() {
+        let quiet = vec![1.0, -1.0, 1.0, -1.0];
+        let loud = vec![1000.0, -1000.0, 1000.0, -1000.0];
+
+        // Center-dominant 5.1 (FL, FR, FC, LFE, SL, SR): only the center carries signal.
+        let pre = vec![
+            quiet.clone(),
+            quiet.clone(),
+            loud.clone(),
+            vec![],
+            quiet.clone(),
+            quiet.clone(),
+        ];
+        assert_eq!(seam_score_channel_indices(&pre, &pre), vec![2]);
+
+        // Stereo with equal energy: both front channels are scored (prior behavior).
+        let stereo = vec![loud.clone(), loud.clone()];
+        assert_eq!(seam_score_channel_indices(&stereo, &stereo), vec![0, 1]);
+
+        // Every channel near-silent → empty, so the caller falls back to the mono mix.
+        let silent = vec![vec![0.0; 4], vec![0.0; 4]];
+        assert!(seam_score_channel_indices(&silent, &silent).is_empty());
+    }
+
+    #[test]
+    fn fill_seam_correlations_follows_center_channel_when_front_is_silent() {
+        // 5.1-style: front L/R carry only low noise; the center channel holds the signal that
+        // matches B. Seam scoring must follow the center, not the hardcoded front L/R (which
+        // would have scored noise and returned ~0).
+        let pre_window = 8usize;
+        let post_window = 8usize;
+        let gap_frames = 4usize;
+        let start = 8usize;
+
+        let front: Vec<f64> = vec![5.0, -5.0, 5.0, -5.0, 5.0, -5.0, 5.0, -5.0];
+        let center_pre: Vec<f64> = (1..=8).map(|i| i as f64 * 100.0).collect(); // 100..800
+        let center_post: Vec<f64> = (1..=8).rev().map(|i| i as f64 * 100.0).collect(); // 800..100
+
+        let a_pre_ch = vec![front.clone(), front.clone(), center_pre.clone()];
+        let a_post_ch = vec![front.clone(), front.clone(), center_post.clone()];
+
+        let mut b_center = vec![0.0f64; 20];
+        b_center[0..8].copy_from_slice(&center_pre); // pre window [start-8 .. start]
+        b_center[12..20].copy_from_slice(&center_post); // post window [start+gap .. +8]
+        // Front B channels: anti-correlated noise — would drag the score down if scored.
+        let front_b: Vec<f64> = (0..20).map(|i| if i % 2 == 0 { -5.0 } else { 5.0 }).collect();
+        let b_ch = vec![front_b.clone(), front_b.clone(), b_center.clone()];
+
+        let templates = SeamTemplates {
+            a_pre: &center_pre,
+            a_post: &center_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_center,
+            b_ch: &b_ch,
+        };
+        let placement = SeamPlacement {
+            start,
+            gap_frames,
+            pre_window,
+            post_window,
+        };
+        let (pre, post) = fill_seam_correlations(&templates, placement);
+        assert!(pre > 0.9, "pre seam should track the center channel, got {pre}");
+        assert!(post > 0.9, "post seam should track the center channel, got {post}");
     }
 }
