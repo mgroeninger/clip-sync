@@ -75,6 +75,66 @@ pub fn gap_report_from_energy_fixture(
     }
 }
 
+/// Oracle `GapReport` for real-media floor calibration pairs.
+///
+/// Refines A gap edges on decoded mono PCM; B fill times match A (same-master, zero offset).
+pub fn gap_report_from_floor_oracle(
+    path_a: &Path,
+    path_b: &Path,
+    decoded_a_mono: &[i16],
+    sample_rate: u32,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+) -> GapReport {
+    use crate::domain::gap::Gap;
+    use crate::domain::policies::refine_gap_frames;
+
+    const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
+    let max_refine_frames =
+        (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+    let refined_a = refine_gap_frames(
+        decoded_a_mono,
+        1,
+        gap_start_frame,
+        gap_end_frame,
+        0.01,
+        0.0,
+        max_refine_frames,
+    );
+    let rate = sample_rate as f64;
+    let a_start = refined_a.start_frame as f64 / rate;
+    let a_end = refined_a.end_frame as f64 / rate;
+    let total_secs = decoded_a_mono.len() as f64 / rate;
+
+    GapReport {
+        video_a: path_a.to_path_buf(),
+        video_b: path_b.to_path_buf(),
+        track_compatibility: Some(crate::domain::TrackCompatibility {
+            a_channels: 1,
+            b_channels: 1,
+            a_sample_rate: sample_rate,
+            b_sample_rate: sample_rate,
+            channels_match: true,
+            rate_match: true,
+            verdict: crate::domain::CompatibilityVerdict::Compatible,
+        }),
+        alignment: oracle_injected_alignment(total_secs),
+        gaps: vec![Gap {
+            video_a_start_secs: a_start,
+            video_a_end_secs: a_end,
+            video_b_start_secs: Some(a_start),
+            video_b_end_secs: Some(a_end),
+            b_has_energy: true,
+        }],
+        gap_offset_agreement: None,
+        decode_chunk_secs: 60,
+        scan_block_ms: 250,
+        silence_peak_fraction: 0.01,
+        limit_fill_to_mapped_region: true,
+        audio_timeline_skew: None,
+    }
+}
+
 /// Repair config for signature matrix runs: production geometry with acceptance-style
 /// structure isolation (decoy fixtures need zero nominal bias and structure-heavy fit).
 pub fn production_repair_config(

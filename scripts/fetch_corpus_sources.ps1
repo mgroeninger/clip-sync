@@ -60,4 +60,6 @@ if ($failed) {
     throw "One or more sources failed verification"
 }
 
-Write-Host "Done. Run: cargo test -p clip-sync corpus_source_cases -- --ignored"
+Write-Host "Done."
+Write-Host "  cargo test -p clip-sync corpus_source_cases -- --ignored"
+Write-Host "  cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture"

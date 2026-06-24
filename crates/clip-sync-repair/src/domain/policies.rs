@@ -1290,7 +1290,7 @@ fn lsq_residual_ratio(a: &[f64], b: &[f64]) -> Option<(f64, f64)> {
     }
     let bb: f64 = b.iter().map(|y| y * y).sum();
     if bb <= f64::EPSILON {
-        return Some((0.0, 1.0));
+        return None;
     }
     let ab: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let g = ab / bb;
@@ -2771,6 +2771,34 @@ mod tests {
         let none = SeamFloorProbe::none();
         let verdict = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
         assert!(!verdict.informative);
+    }
+
+    #[test]
+    fn seam_residual_abstains_when_b_silent_at_placement() {
+        // L13: silent B at every lag must not read as ~0 dB "no cancellation".
+        let pre_window = 16usize;
+        let gap_frames = 8usize;
+        let start = 64usize;
+
+        let b_mono = vec![0.0; 200];
+        let a_pre: Vec<f64> = (0..pre_window)
+            .map(|i| (i as f64 * 0.3).sin() * 1000.0)
+            .collect();
+
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &[],
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            b_mono: &b_mono,
+            b_ch: &[],
+        };
+        let diag = seam_residual_diagnostics(
+            &templates,
+            SeamPlacement { start, gap_frames, pre_window, post_window: 0 },
+            64,
+        );
+        assert!(diag.pre.is_none(), "silent B should abstain, not report ~0 dB residual");
     }
 
     #[test]

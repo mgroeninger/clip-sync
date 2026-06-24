@@ -5,12 +5,11 @@
 //! true fill sits at the gap timestamp (nominal == truth). Runs the actual `PatchAudio::execute`
 //! with `measure_residual = true` and reads `GapPatchOutcome.residual`, validating the JSON
 //! plumbing end-to-end and emitting a labeled headroom row at a known-correct fill (the
-//! false-positive / FLOOR_OK calibration substrate).
-//!
-//! This tier needs no ffmpeg/sources (noise is synthetic → optimistic floor). The realistic-codec
-//! tier reuses `tests/corpus/sources.toml` + ffmpeg re-encode for B and is the next increment.
+//! false-positive / FLOOR_OK calibration substrate). Real-codec tier:
+//! `tests/floor_oracle/manifest.toml` + `source_gap_oracle_floor_csv` (Wikimedia sources).
 //!
 //! Run: `cargo test -p clip-sync-repair seam_residual_oracle_csv -- --ignored --nocapture`
+//! H2-B rescue: `cargo test -p clip-sync-repair broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
@@ -18,11 +17,12 @@ use clip_sync::SymphoniaMediaReader;
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::gap_structure::StructureMatchParams;
 use clip_sync_repair::domain::{
-    FitBoundarySearch, GapPatchSkipReason, GapPatchStatus, GapSignatureMode,
+    FillConfidence, FitBoundarySearch, GapPatchSkipReason, GapPatchStatus, GapSignatureMode,
+    ResidualGateMode, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
-    gap_anchor_secs, EnergySignatureFixture, ProductionScenarioSpec,
+    gap_anchor_secs, structure_slide_secs, EnergySignatureFixture, ProductionScenarioSpec,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
@@ -99,6 +99,112 @@ fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergyS
         b_dropout_shift_frames: 0,
         structure_params,
     }
+}
+
+/// Production-like repair defaults for H2-B: shipped fit weights and gate floors, energy signature.
+fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairConfig {
+    RepairConfig {
+        gap_signature_mode: GapSignatureMode::Energy,
+        gap_signature_context_secs: 3.0,
+        residual_gate,
+        ..RepairConfig::default()
+    }
+}
+
+/// H2-B: broadband same-master oracle patches via residual **rescue** when Pearson is ~0.
+///
+/// At the true fill, residual headroom ≈ 0 but `fill_seam_correlations` cannot score broadband
+/// borders (Pearson below `fill_absolute_floor`). `residual_gate = veto_rescue` must upgrade the
+/// dead zone to `FillConfidence::Marginal`. With the gate off, the same placement path skips.
+/// The rescued arm also asserts `align_adjustment_secs` is within ~one energy bin of the true
+/// slide so rescue is not masking a wrong placement.
+#[test]
+#[ignore = "slow (~100s): cargo test -p clip-sync-repair broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture"]
+fn broadband_oracle_veto_rescue_patches_marginal() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_broadband_oracle(48_000, 1, 40.0);
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let crossfade_ms = RepairConfig::default().crossfade_ms;
+
+    let off_repair = production_like_broadband_repair(ResidualGateMode::Off);
+    let off_report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let off_result = patch
+        .execute(
+            patch_request_from_repair(off_report, &off_repair),
+            crossfade_ms,
+        )
+        .expect("broadband oracle patch (gate off)");
+    assert_eq!(
+        off_result.summary.patched_count, 0,
+        "gate off: Pearson dead zone should skip broadband oracle: {:?}",
+        off_result.summary.gaps,
+    );
+    match &off_result.summary.gaps[0].status {
+        GapPatchStatus::Skipped {
+            reason: GapPatchSkipReason::CorrelationBelowThreshold { .. },
+        } => {}
+        other => panic!("gate off: expected waveform/structure skip, got {other:?}"),
+    }
+
+    let rescue_repair = production_like_broadband_repair(ResidualGateMode::VetoRescue);
+    let rescue_report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let mut rescue_request = patch_request_from_repair(rescue_report, &rescue_repair);
+    rescue_request.measure_residual = true;
+    let rescue_result = patch
+        .execute(rescue_request, crossfade_ms)
+        .expect("broadband oracle patch (veto_rescue)");
+    assert_eq!(
+        rescue_result.summary.patched_count, 1,
+        "veto_rescue: should patch via residual rescue: {:?}",
+        rescue_result.summary.gaps,
+    );
+    assert_eq!(
+        rescue_result.summary.patched_marginal_count, 1,
+        "rescued patch should be marginal tier: {:?}",
+        rescue_result.summary.gaps,
+    );
+
+    let gap = &rescue_result.summary.gaps[0];
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+    let bin_secs = fixture.bin_frames() as f64 / fixture.sample_rate as f64;
+    let slide_tol = (bin_secs * 1.1).max(0.1);
+    match &gap.status {
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            confidence,
+            align_adjustment_secs,
+            ..
+        } => {
+            assert_eq!(*confidence, FillConfidence::Marginal);
+            let pearson_min = pre_correlation.min(*post_correlation);
+            assert!(
+                pearson_min < f64::from(RepairConfig::default().fill_absolute_floor),
+                "broadband Pearson should be below absolute floor (got min {pearson_min:.3})",
+            );
+            assert!(
+                (align_adjustment_secs - truth_slide).abs() <= slide_tol,
+                "rescued patch should land at truth slide {truth_slide:.3}s (got {align_adjustment_secs:.3}s, tol {slide_tol:.3}s)",
+            );
+        }
+        other => panic!("veto_rescue: expected patched, got {other:?}"),
+    }
+
+    let verdict = gap
+        .residual
+        .expect("residual on patched gap when measure_residual + veto_rescue");
+    assert!(
+        verdict.informative,
+        "same-master oracle floor should be informative: floor pre={:.1} post={:.1}",
+        verdict.floor_pre_db,
+        verdict.floor_post_db,
+    );
+    assert!(
+        verdict.worst_headroom_db() <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+        "headroom {:.1} dB should be within rescue margin {:.1} dB",
+        verdict.worst_headroom_db(),
+        DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+    );
 }
 
 /// Run one config on the broadband oracle, return `(status_label, pearson_pre, pearson_post,
