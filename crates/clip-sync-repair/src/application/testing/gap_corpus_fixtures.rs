@@ -942,7 +942,12 @@ mod tests {
         }
     }
 
+    // Wall-clock budget guard. `#[ignore]` to match its `_production` / `_generated` siblings:
+    // a wall-time assertion is load-sensitive and flakes when it competes with the rest of the
+    // lib suite for CPU (cargo parallelizes tests within a binary). Run on demand / in a dedicated
+    // CI step: `cargo test -p clip-sync-repair gap_corpus_patch_timing -- --ignored`.
     #[test]
+    #[ignore = "wall-clock budget; run on demand: cargo test -p clip-sync-repair gap_corpus_patch_timing_committed -- --ignored --nocapture"]
     fn gap_corpus_patch_timing_committed() {
         run_patch_timing_cases(GapCorpusTier::Committed);
     }
