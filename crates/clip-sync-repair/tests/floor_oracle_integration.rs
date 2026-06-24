@@ -2,6 +2,7 @@
 //!
 //! Run: `scripts/fetch_corpus_sources.ps1`
 //!      `cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture`
+//!      `cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture`
 
 mod common;
 
@@ -11,15 +12,16 @@ use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode};
+use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_floor_oracle, patch_request_from_repair, production_repair_config,
 };
 
 use common::floor_oracle_fixtures::{
-    build_floor_oracle_pair, case_sources_ready, decode_to_mono_wav_at, format_label, load_manifest,
-    read_mono_wav, BuiltFloorOracle, OracleVariant,
+    build_floor_oracle_pair, case_sources_ready, decode_to_mono_wav_at, format_label,
+    load_manifest, read_mono_wav, BuiltFloorOracle, FloorOracleCase, FloorOracleDefaults,
+    FloorOracleManifest, OracleVariant,
 };
 
 struct FloorOracleRun {
@@ -30,8 +32,10 @@ struct FloorOracleRun {
     align_adjustment_secs: f64,
 }
 
-fn floor_oracle_repair_config() -> RepairConfig {
-    production_repair_config(GapSignatureMode::Energy, 3.0)
+fn floor_oracle_repair_config(residual_gate: ResidualGateMode) -> RepairConfig {
+    let mut repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    repair.residual_gate = residual_gate;
+    repair
 }
 
 fn gap_status_label(status: &GapPatchStatus) -> (&'static str, String) {
@@ -53,7 +57,10 @@ fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
     }
 }
 
-fn run_built_floor_oracle(built: &BuiltFloorOracle) -> FloorOracleRun {
+fn run_built_floor_oracle(
+    built: &BuiltFloorOracle,
+    residual_gate: ResidualGateMode,
+) -> FloorOracleRun {
     let dir = built.path_a.parent().expect("path_a parent");
     let decoded_a = dir.join("patch_a.wav");
     assert!(decode_to_mono_wav_at(
@@ -73,7 +80,7 @@ fn run_built_floor_oracle(built: &BuiltFloorOracle) -> FloorOracleRun {
         built.meta.gap_end_frame,
     );
 
-    let repair = floor_oracle_repair_config();
+    let repair = floor_oracle_repair_config(residual_gate);
     let mut request = patch_request_from_repair(report, &repair);
     request.measure_residual = true;
 
@@ -107,6 +114,14 @@ fn variant_label(variant: OracleVariant) -> &'static str {
         OracleVariant::SameMaster => "same_master",
         OracleVariant::TwoMic => "two_mic",
     }
+}
+
+fn manifest_case<'a>(manifest: &'a FloorOracleManifest, id: &str) -> &'a FloorOracleCase {
+    manifest
+        .case
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("missing floor oracle case {id}"))
 }
 
 fn print_csv_header() {
@@ -143,12 +158,15 @@ fn print_csv_row(built: &BuiltFloorOracle, run: &FloorOracleRun) {
 
 fn assert_floor_expectations(case_id: &str, built: &BuiltFloorOracle, run: &FloorOracleRun) {
     let Some(residual) = run.residual else {
-        panic!(
-            "{case_id}: no residual on outcome (status={}, skip={}) — \
-             patch path blocked before floor measurement",
-            run.status,
-            run.skip_reason
-        );
+        if built.meta.expect_informative_floor {
+            panic!(
+                "{case_id}: no residual on outcome (status={}, skip={}) — \
+                 expected patch + informative floor",
+                run.status,
+                run.skip_reason
+            );
+        }
+        return;
     };
 
     if built.meta.expect_informative_floor {
@@ -168,19 +186,35 @@ fn assert_floor_expectations(case_id: &str, built: &BuiltFloorOracle, run: &Floo
     }
 }
 
+fn assert_truth_patches(case_id: &str, run: &FloorOracleRun, gate: ResidualGateMode) {
+    assert_eq!(
+        run.status, "patched",
+        "{case_id} with {:?} should patch at truth (skip={})",
+        gate, run.skip_reason
+    );
+    let residual = run
+        .residual
+        .expect("truth same-master should carry residual verdict");
+    assert!(
+        residual.informative,
+        "{case_id} {:?}: floor should be informative at truth",
+        gate
+    );
+}
+
 #[test]
 fn floor_oracle_manifest_loads() {
     let manifest = load_manifest();
     assert!(manifest.version >= 1);
     assert!(
-        manifest.case.len() >= 7,
-        "expected speech+ambient wav/aac matrix and two_mic case"
+        manifest.case.len() >= 12,
+        "expected speech+ambient wav/aac/mp3 matrix, aac_64k, and two_mic case"
     );
 }
 
 #[test]
 fn floor_oracle_gap_frames_use_production_anchor() {
-    use common::floor_oracle_fixtures::{gap_frames_for_case, FloorOracleCase, FloorOracleDefaults};
+    use common::floor_oracle_fixtures::{gap_frames_for_case, FloorOracleCase};
 
     let defaults = FloorOracleDefaults::default();
     let case = FloorOracleCase {
@@ -233,7 +267,7 @@ fn source_gap_oracle_floor_csv() {
 
         let case_dir = temp.path().join(&case.id);
         let built = build_floor_oracle_pair(&case_dir, case, &manifest.defaults);
-        let run = run_built_floor_oracle(&built);
+        let run = run_built_floor_oracle(&built, ResidualGateMode::Off);
         print_csv_row(&built, &run);
         assert_floor_expectations(&case.id, &built, &run);
         ran += 1;
@@ -242,6 +276,85 @@ fn source_gap_oracle_floor_csv() {
     if ran == 0 {
         eprintln!(
             "source_gap_oracle_floor_csv: no cases ran (fetch sources or check ffmpeg)"
+        );
+    }
+}
+
+/// Real-codec residual gate on Wikimedia floor oracles: truth gaps patch under `off`/`veto`/
+/// `veto_rescue`; unrelated two-mic must not be rescued into a patch.
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture"]
+fn floor_oracle_residual_gate_real_codec() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skipping floor_oracle_residual_gate_real_codec: ffmpeg unavailable");
+        return;
+    }
+
+    let manifest = load_manifest();
+    let ambient = manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same");
+    let speech = manifest_case(&manifest, "cc_speech_gap_oracle_aac_same");
+    let two_mic = manifest_case(&manifest, "cc_speech_ambient_two_mic");
+
+    for case in [ambient, speech, two_mic] {
+        if !case_sources_ready(case) {
+            eprintln!(
+                "skip floor_oracle_residual_gate_real_codec: run scripts/fetch_corpus_sources.ps1"
+            );
+            return;
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+
+    let ambient_built =
+        build_floor_oracle_pair(&temp.path().join(&ambient.id), ambient, &manifest.defaults);
+    for gate in [
+        ResidualGateMode::Off,
+        ResidualGateMode::Veto,
+        ResidualGateMode::VetoRescue,
+    ] {
+        let run = run_built_floor_oracle(&ambient_built, gate);
+        assert_truth_patches(&ambient.id, &run, gate);
+    }
+
+    let speech_built =
+        build_floor_oracle_pair(&temp.path().join(&speech.id), speech, &manifest.defaults);
+    for gate in [ResidualGateMode::Off, ResidualGateMode::Veto] {
+        let run = run_built_floor_oracle(&speech_built, gate);
+        assert_truth_patches(&speech.id, &run, gate);
+    }
+    let speech_rescue = run_built_floor_oracle(&speech_built, ResidualGateMode::VetoRescue);
+    assert_truth_patches(&speech.id, &speech_rescue, ResidualGateMode::VetoRescue);
+
+    let two_mic_built =
+        build_floor_oracle_pair(&temp.path().join(&two_mic.id), two_mic, &manifest.defaults);
+    let off = run_built_floor_oracle(&two_mic_built, ResidualGateMode::Off);
+    let rescue = run_built_floor_oracle(&two_mic_built, ResidualGateMode::VetoRescue);
+    assert_floor_expectations(&two_mic.id, &two_mic_built, &off);
+    assert_floor_expectations(&two_mic.id, &two_mic_built, &rescue);
+    assert!(
+        !off.residual.is_some_and(|v| v.informative),
+        "two_mic floor must be uninformative (gate off)"
+    );
+    assert!(
+        !rescue.residual.is_some_and(|v| v.informative),
+        "two_mic floor must stay uninformative under veto_rescue"
+    );
+    // Over-patch safety: rescue must not upgrade a Pearson skip into a patch.
+    if off.status != "patched" {
+        assert_ne!(
+            rescue.status, "patched",
+            "veto_rescue must not rescue unrelated two-mic content (off skip={})",
+            off.skip_reason
+        );
+    }
+    // Veto must not false-veto when off already patches.
+    if off.status == "patched" {
+        let veto = run_built_floor_oracle(&two_mic_built, ResidualGateMode::Veto);
+        assert_eq!(
+            veto.status, "patched",
+            "veto must not skip when gate off patches unrelated two-mic (skip={})",
+            veto.skip_reason
         );
     }
 }

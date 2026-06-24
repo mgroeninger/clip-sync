@@ -1697,7 +1697,11 @@ fn prepare_region_patch(
         &border_spec,
     );
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
-    let post_gate_frames = seam_gate_frames.min(a_post_border.len()).max(1);
+    let post_gate_frames = if a_post_border.is_empty() {
+        0
+    } else {
+        seam_gate_frames.min(a_post_border.len()).max(1)
+    };
     let repeat_window_frames = border_frames.max(1);
     let seam_cf = policies::effective_seam_crossfade_frames(
         (region.crossfade_secs * sample_rate as f64) as usize,

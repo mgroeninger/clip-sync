@@ -388,6 +388,16 @@ fn want_residual_measurement(params: &SeamGateParams<'_>) -> bool {
         || tracing::enabled!(tracing::Level::DEBUG)
 }
 
+/// Post-side seam/residual window. Returns 0 when the trimmed post border template is empty so
+/// residual measurement is skipped (L7: a forced 1-frame window can spuriously cancel).
+fn seam_post_gate_frames(seam_gate_frames: usize, post_border_len: usize) -> usize {
+    if post_border_len == 0 {
+        0
+    } else {
+        seam_gate_frames.min(post_border_len).max(1)
+    }
+}
+
 fn measure_fit_residual_verdict(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
@@ -421,13 +431,24 @@ fn measure_fit_residual_verdict(
         refined.end_frame,
         chosen_delta,
     );
-    let (chosen_post, floor_post) = policies::seam_chosen_and_floor(
-        &floor_common(post_gate_frames),
-        policies::SeamSide::Post,
-        refined.start_frame,
-        refined.end_frame,
-        chosen_delta,
-    );
+    let (chosen_post, floor_post) = if post_gate_frames == 0 {
+        // Window 0 → `select_reference_window` abstains; skip spurious 1-frame post fit (L7).
+        policies::seam_chosen_and_floor(
+            &floor_common(0),
+            policies::SeamSide::Post,
+            refined.start_frame,
+            refined.end_frame,
+            chosen_delta,
+        )
+    } else {
+        policies::seam_chosen_and_floor(
+            &floor_common(post_gate_frames),
+            policies::SeamSide::Post,
+            refined.start_frame,
+            refined.end_frame,
+            chosen_delta,
+        )
+    };
     Some(policies::SeamResidualVerdict::from_parts_with_floor_ok(
         &chosen_pre,
         &chosen_post,
@@ -502,7 +523,7 @@ fn evaluate_seam_gate_fit_candidate(
     let waveform_gate_frames = params
         .seam_gate_frames
         .min(a_pre_border.len().max(1));
-    let post_gate_frames = params.seam_gate_frames.min(a_post_border.len()).max(1);
+    let post_gate_frames = seam_post_gate_frames(params.seam_gate_frames, a_post_border.len());
     let templates = policies::SeamTemplates {
         a_pre: &a_pre_border,
         a_post: &a_post_border,
@@ -782,7 +803,7 @@ fn evaluate_seam_gate_legacy(
         let waveform_gate_frames = params
             .seam_gate_frames
             .min(a_pre_border.len().max(1));
-        let post_gate_frames = params.seam_gate_frames.min(a_post_border.len()).max(1);
+        let post_gate_frames = seam_post_gate_frames(params.seam_gate_frames, a_post_border.len());
         let templates = policies::SeamTemplates {
             a_pre: &a_pre_border,
             a_post: &a_post_border,
@@ -1206,5 +1227,12 @@ mod tests {
         let step = 4_800;
         let cells = count_joint_boundary_grid_cells(baseline, start_min, end_max, step);
         assert!(cells > 0, "expected grid cells, got {cells}");
+    }
+
+    #[test]
+    fn seam_post_gate_frames_zero_when_post_border_empty() {
+        assert_eq!(seam_post_gate_frames(12_000, 0), 0);
+        assert_eq!(seam_post_gate_frames(12_000, 8), 8);
+        assert_eq!(seam_post_gate_frames(12_000, 96_000), 12_000);
     }
 }

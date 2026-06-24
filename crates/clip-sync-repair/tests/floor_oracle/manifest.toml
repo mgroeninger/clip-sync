@@ -43,6 +43,34 @@ aac_bitrate_b = "192k"
 expect_informative_floor = true
 
 [[case]]
+id = "cc_speech_gap_oracle_aac_64k"
+source_id = "wikimedia_martin_amis_interview_1990"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+aac_bitrate_a = "64k"
+aac_bitrate_b = "64k"
+# Post-side floor can exceed FLOOR_OK (-15) at 64k; gate abstains (safe). See source_gap_oracle_floor_csv.
+expect_informative_floor = false
+
+[[case]]
+id = "cc_speech_gap_oracle_mp3_same"
+source_id = "wikimedia_martin_amis_interview_1990"
+oracle_variant = "same_master"
+format_a = "mp3"
+format_b = "mp3"
+# Speech MP3: Pearson skip at truth on current encode path; floor unmeasured. See CSV.
+expect_informative_floor = false
+
+[[case]]
+id = "cc_speech_gap_oracle_mp3_dual"
+source_id = "wikimedia_martin_amis_interview_1990"
+oracle_variant = "same_master"
+format_a = "mp3"
+format_b = "mp3"
+expect_informative_floor = false
+
+[[case]]
 id = "cc_ambient_gap_oracle_wav"
 source_id = "wikimedia_schiphol_restaurant_ambience"
 oracle_variant = "same_master"
@@ -69,6 +97,22 @@ format_b = "mp4_aac"
 aac_bitrate_a = "128k"
 aac_bitrate_b = "192k"
 expect_informative_floor = true
+
+[[case]]
+id = "cc_ambient_gap_oracle_mp3_same"
+source_id = "wikimedia_schiphol_restaurant_ambience"
+oracle_variant = "same_master"
+format_a = "mp3"
+format_b = "mp3"
+expect_informative_floor = false
+
+[[case]]
+id = "cc_ambient_gap_oracle_mp3_dual"
+source_id = "wikimedia_schiphol_restaurant_ambience"
+oracle_variant = "same_master"
+format_a = "mp3"
+format_b = "mp3"
+expect_informative_floor = false
 
 [[case]]
 id = "cc_speech_ambient_two_mic"
