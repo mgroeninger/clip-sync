@@ -237,7 +237,7 @@ Progress stages (`Aligning audio fingerprints…`, `Scanning video A for gaps…
 
 #### Gap patching pipeline
 
-When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, waveform placement (`fill_mode`), and optional A-boundary extension before splice. **Classifying gaps and choosing profiles:** [docs/gap-repair-guide.md](docs/gap-repair-guide.md). **Flag interactions and performance:** [docs/gap-fill-modes.md](docs/gap-fill-modes.md). Report layout: [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
+When write mode runs (`--wav` / `--mux`), each fillable gap goes through structure matching on B, waveform placement (`fill_mode`), and optional A-boundary extension before splice. **Full pipeline overview (all phases):** [docs/pipeline.md](docs/pipeline.md). **Classifying gaps and choosing profiles:** [docs/gap-repair-guide.md](docs/gap-repair-guide.md). **Flag interactions and performance:** [docs/gap-fill-modes.md](docs/gap-fill-modes.md). **How seams are scored:** [docs/seam-scoring.md](docs/seam-scoring.md). Report layout: [docs/cli-output.md](docs/cli-output.md) § Repair gap outcomes.
 
 **1. Per-gap B timeline (`fill_offset_mode`)**
 

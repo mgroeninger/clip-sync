@@ -1,6 +1,6 @@
 # Gap repair guide — classifying gaps and choosing settings
 
-Operational guide for `clip-sync-repair`: what kinds of gaps exist, how they appear in the report, and which profiles and flags are worth trying.
+Operational guide for `clip-sync-repair`: what kinds of gaps exist, how they appear in the report, and which profiles and flags are worth trying. This is the **operator-decision lens** on **phase 4 (per-gap patch)** of the [repair pipeline](pipeline.md).
 
 **Normative reference** (flag matrix, pipelines, config defaults): [gap-fill-modes.md](gap-fill-modes.md).  
 **Report layout and skip strings**: [cli-output.md](cli-output.md) § Repair gap outcomes.  
@@ -87,6 +87,8 @@ Fit classifies the winning candidate using `min(pre, post)` after unified struct
 The skip line always shows `min=0.12` in the status column; that is the **absolute floor** label, not the reason a score of 0.23 failed (dead zone vs hard skip).
 
 ### Seam patterns (within fit)
+
+> How `pre`/`post` are built (border templates, channel selection, peak-normalized Pearson, windows): [seam-scoring.md](seam-scoring.md).
 
 | ID | Pattern | Example scores | Tier | Listen risk |
 |----|---------|----------------|------|-------------|

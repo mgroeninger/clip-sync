@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
+**Related:** [pipeline.md](pipeline.md) (the full repair pipeline; this is phase 4), [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [seam-scoring.md](seam-scoring.md) (how seams are scored), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 
@@ -116,6 +116,8 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 ---
 
 ## Waveform placement details
+
+> Full mechanics of how `pre`/`post` seams are identified and scored (border extraction, standoff/trim, channel selection, peak-normalized Pearson, tiers): [seam-scoring.md](seam-scoring.md).
 
 ### Fit unified search
 
