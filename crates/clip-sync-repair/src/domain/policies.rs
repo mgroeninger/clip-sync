@@ -1246,12 +1246,6 @@ pub fn seam_channel_diagnostics(
     }
 }
 
-/// Max integer sample lag searched on each side by [`seam_residual_diagnostics`].
-///
-/// Covers the fixed sub-sample / encoder-priming delay between two encodes of the same master
-/// after gross alignment has already placed the bracket; not a re-alignment search.
-const SEAM_RESIDUAL_MAX_LAG: i64 = 64;
-
 /// Residual-cancellation diagnostic for one seam side (prototype; debug logging only).
 ///
 /// Built for the *same-master, multiple-copies* repair case: when A and B are the same source
@@ -1388,6 +1382,7 @@ where
 pub fn seam_residual_diagnostics(
     templates: &SeamTemplates<'_>,
     placement: SeamPlacement,
+    max_lag: i64,
 ) -> SeamResidualDiagnostics {
     let SeamTemplates { a_pre, a_post, b_mono, .. } = *templates;
     let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
@@ -1402,7 +1397,7 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        }, SEAM_RESIDUAL_MAX_LAG)
+        }, max_lag)
     } else {
         None
     };
@@ -1417,7 +1412,7 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        }, SEAM_RESIDUAL_MAX_LAG)
+        }, max_lag)
     } else {
         None
     };
@@ -1425,15 +1420,12 @@ pub fn seam_residual_diagnostics(
     SeamResidualDiagnostics { pre, post }
 }
 
-/// Lag radius for the per-gap noise-floor probe — wider than the seam's, to absorb local drift
-/// between encodes so the measured floor reflects noise, not misalignment.
-const SEAM_FLOOR_MAX_LAG: i64 = 512;
-
 /// Reference window must peak at least this multiple of the silence floor to anchor a floor probe.
 const SEAM_FLOOR_ENERGY_MARGIN: f64 = 4.0;
 
 /// Which side of the gap a probe was taken from / where its reference window came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SeamFloorSource {
     /// Immediate border window (just past the standoff) was energetic and usable.
     Border,
@@ -1498,6 +1490,8 @@ pub struct SeamFloorParams<'a> {
     /// How far from the gap edge the outward walk may reach.
     pub max_walk_frames: usize,
     pub absolute_silence_rms: f32,
+    /// Integer sample lag searched on each side when cancelling A against B.
+    pub max_lag_frames: i64,
 }
 
 fn mono_window(a_samples: &[i16], channels: usize, lo: usize, hi: usize) -> Vec<f64> {
@@ -1513,6 +1507,103 @@ fn mono_window(a_samples: &[i16], channels: usize, lo: usize, hi: usize) -> Vec<
         .collect()
 }
 
+/// A clean, energetic raw A reference window selected for residual/floor measurement.
+struct ReferenceWindow {
+    /// Raw mono A samples (no standoff/low-energy trim — see `mono_window`).
+    a_win: Vec<f64>,
+    /// First A frame of the window (maps to B via a delta).
+    a_lo: usize,
+    /// Whether the window is the immediate border or one walked outward.
+    source: SeamFloorSource,
+}
+
+/// Walk outward from the gap edge to the first energetic raw A window (energy gate only — B-side
+/// availability is checked at measurement time so the same window can be measured at multiple deltas).
+fn select_reference_window(
+    params: &SeamFloorParams<'_>,
+    side: SeamSide,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+) -> Option<ReferenceWindow> {
+    let channels = params.channels.max(1);
+    let w = params.window;
+    if w == 0 {
+        return None;
+    }
+    let a_total = params.a_samples.len() / channels;
+    let step = params.step_frames.max(1);
+    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
+
+    let mut k = 0usize;
+    loop {
+        let walked = k * step;
+        if walked > params.max_walk_frames {
+            return None;
+        }
+        let window = match side {
+            SeamSide::Pre => match gap_start_frame.checked_sub(params.standoff_frames + walked) {
+                Some(hi) if hi >= w => Some((hi - w, hi)),
+                _ => None,
+            },
+            SeamSide::Post => {
+                let lo = gap_end_frame + params.standoff_frames + walked;
+                let hi = lo + w;
+                (hi <= a_total).then_some((lo, hi))
+            }
+        };
+        let (a_lo, a_hi) = window?;
+        let a_win = mono_window(params.a_samples, channels, a_lo, a_hi);
+        let peak = a_win.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
+        if peak >= energy_floor {
+            let source = if k == 0 {
+                SeamFloorSource::Border
+            } else {
+                SeamFloorSource::Walked
+            };
+            return Some(ReferenceWindow { a_win, a_lo, source });
+        }
+        k += 1;
+    }
+}
+
+/// Cancel a selected raw window against B at `delta` (`b_frame = a_frame + delta`) with `max_lag`.
+fn measure_window_at_delta(
+    window: &ReferenceWindow,
+    b_mono: &[f64],
+    delta: i64,
+    max_lag: i64,
+) -> SeamFloorProbe {
+    let w = window.a_win.len() as i64;
+    let b_len = b_mono.len() as i64;
+    let b_start0 = window.a_lo as i64 + delta;
+    let probe = seam_residual_for_side(
+        &window.a_win,
+        |lag| {
+            let lo = b_start0 + lag;
+            let hi = lo + w;
+            if lo < 0 || hi > b_len {
+                return None;
+            }
+            Some(b_mono[lo as usize..hi as usize].to_vec())
+        },
+        max_lag,
+    );
+    match probe {
+        Some(r) => SeamFloorProbe {
+            source: window.source,
+            residual_db: r.residual_db,
+            gain: r.gain,
+            best_lag: r.best_lag,
+        },
+        None => SeamFloorProbe {
+            source: window.source,
+            residual_db: f64::NAN,
+            gain: f64::NAN,
+            best_lag: 0,
+        },
+    }
+}
+
 /// Measure the per-gap noise floor: slide a clean, energetic A reference window against B at the
 /// nominal offset (wide lag search). Starts at the immediate border, walks outward if it is quiet.
 ///
@@ -1523,80 +1614,150 @@ pub fn seam_floor_probe(
     gap_start_frame: usize,
     gap_end_frame: usize,
 ) -> SeamFloorProbe {
-    let channels = params.channels.max(1);
-    let w = params.window;
-    if w == 0 {
-        return SeamFloorProbe::none();
+    match select_reference_window(params, side, gap_start_frame, gap_end_frame) {
+        Some(window) => {
+            measure_window_at_delta(
+                &window,
+                params.b_mono,
+                params.a_to_b_delta,
+                params.max_lag_frames,
+            )
+        }
+        None => SeamFloorProbe::none(),
     }
-    let a_total = params.a_samples.len() / channels;
-    let step = params.step_frames.max(1);
-    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
-    let b_len = params.b_mono.len() as i64;
+}
 
-    let mut k = 0usize;
-    loop {
-        let walked = k * step;
-        if walked > params.max_walk_frames {
-            return SeamFloorProbe::none();
+/// Measure one gap side's residual at the **chosen** placement and the **nominal** floor on the
+/// *same* raw reference window (so headroom is a pure difference of where-on-B, not of reference
+/// audio or lag radius). `params.a_to_b_delta` is the nominal mapping; `chosen_delta` is the
+/// chosen-placement mapping. Returns `(chosen, floor)`.
+pub fn seam_chosen_and_floor(
+    params: &SeamFloorParams<'_>,
+    side: SeamSide,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    chosen_delta: i64,
+) -> (SeamFloorProbe, SeamFloorProbe) {
+    match select_reference_window(params, side, gap_start_frame, gap_end_frame) {
+        Some(window) => {
+            let chosen = measure_window_at_delta(
+                &window,
+                params.b_mono,
+                chosen_delta,
+                params.max_lag_frames,
+            );
+            let floor = measure_window_at_delta(
+                &window,
+                params.b_mono,
+                params.a_to_b_delta,
+                params.max_lag_frames,
+            );
+            (chosen, floor)
         }
+        None => (SeamFloorProbe::none(), SeamFloorProbe::none()),
+    }
+}
 
-        let window = match side {
-            SeamSide::Pre => {
-                match gap_start_frame.checked_sub(params.standoff_frames + walked) {
-                    Some(hi) if hi >= w => Some((hi - w, hi)),
-                    _ => None,
-                }
-            }
-            SeamSide::Post => {
-                let lo = gap_end_frame + params.standoff_frames + walked;
-                let hi = lo + w;
-                if hi <= a_total {
-                    Some((lo, hi))
-                } else {
-                    None
-                }
-            }
-        };
-        // No more room on this side: report whatever we have (none).
-        let Some((a_lo, a_hi)) = window else {
-            return SeamFloorProbe::none();
-        };
+/// Default `floor_db` ceiling for an established same-master cancellation floor.
+///
+/// Floors at or below this value are treated as informative for residual gating; see
+/// [`floor_probe_informative`] and [`residual_verdict_informative`]. Calibrated in
+/// `tests/seam_residual_corpus.rs`; overridable via config when the gate ships.
+pub const DEFAULT_RESIDUAL_FLOOR_OK_DB: f64 = -15.0;
 
-        let a_win = mono_window(params.a_samples, channels, a_lo, a_hi);
-        let peak = a_win.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
-        if peak < energy_floor {
-            k += 1;
-            continue;
+/// True when a floor probe measured nominal cancellation at or below `floor_ok_db`.
+pub fn floor_probe_informative(probe: &SeamFloorProbe, floor_ok_db: f64) -> bool {
+    probe.source != SeamFloorSource::None
+        && probe.residual_db.is_finite()
+        && probe.residual_db <= floor_ok_db
+}
+
+/// Whether headroom on this gap is regime-informative (same-master + aligned at nominal).
+///
+/// Every **measured** side (`source != None`) must have `floor_db ≤ floor_ok_db`. Unmeasured
+/// sides are ignored. Returns false when no side was measured.
+pub fn residual_verdict_informative(
+    floor_pre: &SeamFloorProbe,
+    floor_post: &SeamFloorProbe,
+    floor_ok_db: f64,
+) -> bool {
+    let pre_measured = floor_pre.source != SeamFloorSource::None;
+    let post_measured = floor_post.source != SeamFloorSource::None;
+    if !pre_measured && !post_measured {
+        return false;
+    }
+    (!pre_measured || floor_probe_informative(floor_pre, floor_ok_db))
+        && (!post_measured || floor_probe_informative(floor_post, floor_ok_db))
+}
+
+/// Combined residual/floor verdict for one gap (P1 report-only, uniform schema).
+///
+/// Both the chosen-placement residual and the nominal floor are measured on the **same raw A
+/// reference window** with the same lag radius — they differ only in *where on B* (chosen vs
+/// nominal mapping) — so `headroom = chosen − floor` is a pure difference and is meaningful even
+/// when the chosen placement is not sample-accurate. `informative` uses the supplied `floor_ok_db`.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct SeamResidualVerdict {
+    pub chosen_pre_db: f64,
+    pub chosen_post_db: f64,
+    pub floor_pre_db: f64,
+    pub floor_post_db: f64,
+    pub floor_source_pre: SeamFloorSource,
+    pub floor_source_post: SeamFloorSource,
+    /// Nominal floor established cancellation on every measured side (`floor_db ≤ FLOOR_OK`).
+    pub informative: bool,
+}
+
+impl SeamResidualVerdict {
+    /// Assemble from the per-side chosen and floor probes (see [`seam_chosen_and_floor`]).
+    pub fn from_parts(
+        chosen_pre: &SeamFloorProbe,
+        chosen_post: &SeamFloorProbe,
+        floor_pre: &SeamFloorProbe,
+        floor_post: &SeamFloorProbe,
+    ) -> Self {
+        Self::from_parts_with_floor_ok(
+            chosen_pre,
+            chosen_post,
+            floor_pre,
+            floor_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+        )
+    }
+
+    /// Like [`from_parts`] but uses a custom `floor_ok_db` (calibration sweeps).
+    pub fn from_parts_with_floor_ok(
+        chosen_pre: &SeamFloorProbe,
+        chosen_post: &SeamFloorProbe,
+        floor_pre: &SeamFloorProbe,
+        floor_post: &SeamFloorProbe,
+        floor_ok_db: f64,
+    ) -> Self {
+        Self {
+            chosen_pre_db: chosen_pre.residual_db,
+            chosen_post_db: chosen_post.residual_db,
+            floor_pre_db: floor_pre.residual_db,
+            floor_post_db: floor_post.residual_db,
+            floor_source_pre: floor_pre.source,
+            floor_source_post: floor_post.source,
+            informative: residual_verdict_informative(floor_pre, floor_post, floor_ok_db),
         }
+    }
 
-        let b_start0 = a_lo as i64 + params.a_to_b_delta;
-        let probe = seam_residual_for_side(
-            &a_win,
-            |lag| {
-                let lo = b_start0 + lag;
-                let hi = lo + w as i64;
-                if lo < 0 || hi > b_len {
-                    return None;
-                }
-                Some(params.b_mono[lo as usize..hi as usize].to_vec())
-            },
-            SEAM_FLOOR_MAX_LAG,
-        );
-
-        if let Some(r) = probe {
-            let source = if k == 0 {
-                SeamFloorSource::Border
+    /// Worst-side headroom at the chosen placement (`chosen − floor`); larger = worse match.
+    ///
+    /// Ignores sides where either value is non-finite (unmeasured floor or chosen).
+    pub fn worst_headroom_db(&self) -> f64 {
+        let headrooms = [self.chosen_pre_db - self.floor_pre_db, self.chosen_post_db - self.floor_post_db]
+            .into_iter()
+            .filter(|h| h.is_finite());
+        headrooms.fold(f64::NAN, |acc, h| {
+            if acc.is_nan() {
+                h
             } else {
-                SeamFloorSource::Walked
-            };
-            return SeamFloorProbe {
-                source,
-                residual_db: r.residual_db,
-                gain: r.gain,
-                best_lag: r.best_lag,
-            };
-        }
-        k += 1;
+                acc.max(h)
+            }
+        })
     }
 }
 
@@ -2350,6 +2511,7 @@ mod tests {
         let diag = seam_residual_diagnostics(
             &templates,
             SeamPlacement { start, gap_frames, pre_window, post_window },
+            512,
         );
         let pre = diag.pre.expect("pre residual");
         let post = diag.post.expect("post residual");
@@ -2383,6 +2545,7 @@ mod tests {
         let diag = seam_residual_diagnostics(
             &templates,
             SeamPlacement { start, gap_frames, pre_window, post_window: 0 },
+            64,
         );
         let pre = diag.pre.expect("pre residual");
         assert_eq!(pre.best_lag, true_lag, "expected lag {true_lag}, got {}", pre.best_lag);
@@ -2418,6 +2581,7 @@ mod tests {
             step_frames: window,
             max_walk_frames: rate_frames,
             absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
         assert_eq!(pre.source, SeamFloorSource::Border);
@@ -2457,10 +2621,130 @@ mod tests {
             step_frames: window,
             max_walk_frames: total,
             absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
         assert_eq!(pre.source, SeamFloorSource::Walked, "should walk past the quiet border");
         assert!(pre.residual_db < -60.0, "walked floor should still cancel, got {}", pre.residual_db);
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_same_window_zero_headroom_when_nominal_correct() {
+        // Same-master: A's border equals B (scaled). With chosen_delta == nominal_delta (correct
+        // placement), chosen and floor are measured on the same raw window at the same mapping, so
+        // both cancel deeply and headroom ≈ 0.
+        let rate = 2000usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let b_mono: Vec<f64> = (0..rate)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+            .collect();
+        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0, // nominal == truth (same timeline)
+            step_frames: window,
+            max_walk_frames: rate,
+            absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
+        };
+        let (chosen, floor) =
+            seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, 0);
+        assert_eq!(chosen.source, SeamFloorSource::Border);
+        assert!(chosen.residual_db < -60.0, "chosen should cancel: {}", chosen.residual_db);
+        assert!(floor.residual_db < -60.0, "floor should cancel: {}", floor.residual_db);
+
+        let verdict = SeamResidualVerdict::from_parts(&chosen, &chosen, &floor, &floor);
+        assert!(
+            verdict.worst_headroom_db().abs() < 1.0,
+            "headroom should be ~0 at correct placement, got {}",
+            verdict.worst_headroom_db()
+        );
+        assert!(verdict.informative, "same-master floor should be informative");
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_headroom_large_when_chosen_wrong() {
+        // Two-region B: the reference window (near gap_start) is region-1 content; the floor maps to
+        // region 1 (cancels) while a wrong chosen delta maps into region-2 (different) content that
+        // does not cancel at any lag → large headroom.
+        let half = 2000usize;
+        let total = half * 2;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| {
+                if i < half {
+                    (i as f64 * 0.23).sin() * 4000.0
+                } else {
+                    (i as f64 * 0.71).sin() * 4000.0
+                }
+            })
+            .collect();
+        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0, // nominal maps the region-1 window to region-1 → cancels
+            step_frames: window,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
+        };
+        // Chosen delta maps the region-1 reference window into region-2 content (in bounds, ±512 lag
+        // stays within region 2) → no cancellation.
+        let (chosen, floor) =
+            seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, half as i64);
+        assert!(floor.residual_db < -60.0, "floor should cancel at nominal: {}", floor.residual_db);
+        assert!(
+            chosen.residual_db > -6.0,
+            "chosen should not cancel into different content: {}",
+            chosen.residual_db
+        );
+        let verdict = SeamResidualVerdict::from_parts(&chosen, &chosen, &floor, &floor);
+        assert!(
+            verdict.worst_headroom_db() > 40.0,
+            "headroom should be large: {}",
+            verdict.worst_headroom_db()
+        );
+        assert!(verdict.informative, "floor still cancels at nominal");
+    }
+
+    #[test]
+    fn residual_verdict_informative_boundary_at_floor_ok() {
+        let deep = SeamFloorProbe {
+            source: SeamFloorSource::Border,
+            residual_db: -20.0,
+            gain: 1.0,
+            best_lag: 0,
+        };
+        let shallow = SeamFloorProbe {
+            source: SeamFloorSource::Border,
+            residual_db: -10.0,
+            gain: 1.0,
+            best_lag: 0,
+        };
+        let none = SeamFloorProbe::none();
+        let floor_ok = -15.0;
+
+        assert!(residual_verdict_informative(&deep, &deep, floor_ok));
+        assert!(!residual_verdict_informative(&shallow, &deep, floor_ok));
+        assert!(!residual_verdict_informative(&deep, &shallow, floor_ok));
+        assert!(!residual_verdict_informative(&none, &none, floor_ok));
+        assert!(residual_verdict_informative(&deep, &none, floor_ok));
     }
 
     #[test]
@@ -2479,10 +2763,14 @@ mod tests {
             step_frames: 128,
             max_walk_frames: total,
             absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, 600, 800);
         assert_eq!(pre.source, SeamFloorSource::None);
         assert!(pre.residual_db.is_nan());
+        let none = SeamFloorProbe::none();
+        let verdict = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
+        assert!(!verdict.informative);
     }
 
     #[test]
@@ -2508,6 +2796,7 @@ mod tests {
         let diag = seam_residual_diagnostics(
             &templates,
             SeamPlacement { start, gap_frames, pre_window, post_window: 0 },
+            64,
         );
         let pre = diag.pre.expect("pre residual");
         assert!(pre.residual_db > -6.0, "unrelated audio should not cancel, got {} dB", pre.residual_db);

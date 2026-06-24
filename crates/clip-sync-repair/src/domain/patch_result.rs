@@ -3,6 +3,7 @@ use serde::Serialize;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::FillConfidence;
 use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, GapTags};
+use crate::domain::policies::SeamResidualVerdict;
 
 /// Why a detected gap was not included in the fill plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -27,6 +28,14 @@ pub enum GapPatchSkipReason {
     },
     AlignedSegmentOutOfRange,
     ZeroLengthGap,
+    ResidualHeadroomExceeded {
+        pre_correlation: f64,
+        post_correlation: f64,
+        headroom_db: f64,
+        floor_pre_db: f64,
+        floor_post_db: f64,
+        margin_db: f64,
+    },
 }
 
 /// Per-gap outcome after a patch pass (scan gaps in report order).
@@ -37,6 +46,10 @@ pub struct GapPatchOutcome {
     pub status: GapPatchStatus,
     /// Vocabulary tags derived at patch time (or from plan status for not-planned gaps).
     pub tags: GapTags,
+    /// Residual/floor verdict (P1 report-only). Present only when residual measurement is enabled
+    /// (`measure_residual` or debug logging) and the gap reached the fit waveform tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub residual: Option<SeamResidualVerdict>,
 }
 
 impl GapPatchOutcome {
@@ -51,7 +64,14 @@ impl GapPatchOutcome {
             a_end_secs,
             status,
             tags,
+            residual: None,
         }
+    }
+
+    /// Attach a residual/floor verdict (P1 report-only); no-op when `None`.
+    pub fn with_residual(mut self, residual: Option<SeamResidualVerdict>) -> Self {
+        self.residual = residual;
+        self
     }
 
     /// Build tags from [`GapPatchStatus`] only (lossy for patched/skipped fit gaps).

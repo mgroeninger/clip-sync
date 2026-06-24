@@ -675,6 +675,18 @@ fn format_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
         ),
         GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
         GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
+        GapPatchSkipReason::ResidualHeadroomExceeded {
+            pre_correlation,
+            post_correlation,
+            headroom_db,
+            floor_pre_db,
+            floor_post_db,
+            margin_db,
+        } => format!(
+            "residual headroom exceeded (pre={pre_correlation:.2} post={post_correlation:.2} \
+             headroom={headroom_db:.1} dB floor_pre={floor_pre_db:.1} floor_post={floor_post_db:.1} \
+             margin={margin_db:.1} dB)"
+        ),
     }
 }
 

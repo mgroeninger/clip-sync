@@ -219,6 +219,11 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
                 profile: clip_sync_repair::domain::RepairProfile::Default,
                 fit_boundary_search: clip_sync_repair::domain::FitBoundarySearch::BaselineOnly,
+                measure_residual: false,
+                residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
+                residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
+                residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+                residual_lag_secs: clip_sync_repair::domain::DEFAULT_RESIDUAL_LAG_SECS,
             },
             10,
         )

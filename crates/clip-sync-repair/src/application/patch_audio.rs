@@ -142,6 +142,13 @@ pub struct PatchAudioRequest {
     pub profile: crate::domain::RepairProfile,
     /// Fit mode boundary search policy.
     pub fit_boundary_search: crate::domain::FitBoundarySearch,
+    /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
+    /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
+    pub measure_residual: bool,
+    pub residual_gate: crate::domain::ResidualGateMode,
+    pub residual_floor_ok_db: f64,
+    pub residual_headroom_margin_db: f64,
+    pub residual_lag_secs: f64,
 }
 
 /// Patch parameters without the scan report — filled in after gap scan.
@@ -189,6 +196,10 @@ pub struct PatchRequestSettings {
     pub gap_signature_mode: crate::domain::GapSignatureMode,
     pub profile: crate::domain::RepairProfile,
     pub fit_boundary_search: crate::domain::FitBoundarySearch,
+    pub residual_gate: crate::domain::ResidualGateMode,
+    pub residual_floor_ok_db: f64,
+    pub residual_headroom_margin_db: f64,
+    pub residual_lag_secs: f64,
 }
 
 impl PatchRequestSettings {
@@ -237,6 +248,12 @@ impl PatchRequestSettings {
             gap_signature_mode: self.gap_signature_mode,
             profile: self.profile,
             fit_boundary_search: self.fit_boundary_search,
+            // Report-only residual measurement is opt-in; callers set it on the request directly.
+            measure_residual: false,
+            residual_gate: self.residual_gate,
+            residual_floor_ok_db: self.residual_floor_ok_db,
+            residual_headroom_margin_db: self.residual_headroom_margin_db,
+            residual_lag_secs: self.residual_lag_secs,
         }
     }
 }
@@ -593,8 +610,26 @@ enum RegionPatchOutcome {
         gap_end_adjust_frames: i64,
         fit_used_boundary_grid: bool,
         fit_boundary_grid_cells: Option<u32>,
+        residual: Option<policies::SeamResidualVerdict>,
     },
-    Skipped(GapPatchSkipReason),
+    Skipped {
+        reason: GapPatchSkipReason,
+        residual: Option<policies::SeamResidualVerdict>,
+    },
+}
+
+fn skipped_patch(reason: GapPatchSkipReason) -> RegionPatchOutcome {
+    RegionPatchOutcome::Skipped {
+        reason,
+        residual: None,
+    }
+}
+
+fn skipped_patch_with_residual(
+    reason: GapPatchSkipReason,
+    residual: Option<policies::SeamResidualVerdict>,
+) -> RegionPatchOutcome {
+    RegionPatchOutcome::Skipped { reason, residual }
 }
 
 fn record_patch_gap_span(span: &tracing::Span, outcome: &RegionPatchOutcome) {
@@ -618,7 +653,7 @@ fn record_patch_gap_span(span: &tracing::Span, outcome: &RegionPatchOutcome) {
                 span.record("grid_cells", cells);
             }
         }
-        RegionPatchOutcome::Skipped(reason) => {
+        RegionPatchOutcome::Skipped { reason, .. } => {
             span.record("outcome", "skipped");
             span.record("skip_reason", format!("{reason:?}"));
         }
@@ -736,7 +771,7 @@ fn anchored_retry_gap_indices(
         .enumerate()
         .filter_map(|(index, (_, _, outcome, _))| {
             let retry = match outcome {
-                RegionPatchOutcome::Skipped(reason) => is_retryable_patch_skip(reason),
+                RegionPatchOutcome::Skipped { reason, .. } => is_retryable_patch_skip(reason),
                 RegionPatchOutcome::Patched {
                     confidence: FillConfidence::Marginal,
                     ..
@@ -753,8 +788,8 @@ fn should_apply_anchored_retry_outcome(
     new: &RegionPatchOutcome,
 ) -> bool {
     match (prior, new) {
-        (_, RegionPatchOutcome::Skipped(_)) => false,
-        (RegionPatchOutcome::Skipped(_), RegionPatchOutcome::Patched { .. }) => true,
+        (_, RegionPatchOutcome::Skipped { .. }) => false,
+        (RegionPatchOutcome::Skipped { .. }, RegionPatchOutcome::Patched { .. }) => true,
         (
             RegionPatchOutcome::Patched {
                 confidence: FillConfidence::Marginal,
@@ -1038,6 +1073,7 @@ fn outcomes_in_report_order(
 ) -> Vec<GapPatchOutcome> {
     let mut status_by_gap: HashMap<(u64, u64), GapPatchStatus> = HashMap::new();
     let mut tags_by_gap: HashMap<(u64, u64), GapTags> = HashMap::new();
+    let mut residual_by_gap: HashMap<(u64, u64), policies::SeamResidualVerdict> = HashMap::new();
 
     for skip in &plan.skipped {
         let key = gap_key(skip.a_start_secs, skip.a_end_secs);
@@ -1060,20 +1096,31 @@ fn outcomes_in_report_order(
                 confidence,
                 gap_start_adjust_frames,
                 gap_end_adjust_frames,
+                residual,
                 ..
-            } => GapPatchStatus::Patched {
-                pre_correlation: *pre_correlation,
-                post_correlation: *post_correlation,
-                align_adjustment_secs: *align_adjustment_secs,
-                waveform_adjustment_secs: *waveform_adjustment_secs,
-                structure_trusted: *structure_trusted,
-                confidence: *confidence,
-                gap_start_adjust_frames: *gap_start_adjust_frames,
-                gap_end_adjust_frames: *gap_end_adjust_frames,
-            },
-            RegionPatchOutcome::Skipped(reason) => GapPatchStatus::Skipped {
-                reason: reason.clone(),
-            },
+            } => {
+                if let Some(verdict) = residual {
+                    residual_by_gap.insert(gap_key(*a_start, *a_end), *verdict);
+                }
+                GapPatchStatus::Patched {
+                    pre_correlation: *pre_correlation,
+                    post_correlation: *post_correlation,
+                    align_adjustment_secs: *align_adjustment_secs,
+                    waveform_adjustment_secs: *waveform_adjustment_secs,
+                    structure_trusted: *structure_trusted,
+                    confidence: *confidence,
+                    gap_start_adjust_frames: *gap_start_adjust_frames,
+                    gap_end_adjust_frames: *gap_end_adjust_frames,
+                }
+            }
+            RegionPatchOutcome::Skipped { reason, residual } => {
+                if let Some(verdict) = residual {
+                    residual_by_gap.insert(gap_key(*a_start, *a_end), *verdict);
+                }
+                GapPatchStatus::Skipped {
+                    reason: reason.clone(),
+                }
+            }
         };
         let key = gap_key(*a_start, *a_end);
         status_by_gap.insert(key, status);
@@ -1096,6 +1143,7 @@ fn outcomes_in_report_order(
                 status,
                 tags,
             )
+            .with_residual(residual_by_gap.remove(&key))
         })
         .collect()
 }
@@ -1125,7 +1173,7 @@ fn region_outcome_gap_tags(
             post: *post_correlation,
             confidence: *confidence,
         },
-        RegionPatchOutcome::Skipped(reason) => GapPatchTierInput::Skipped(reason),
+        RegionPatchOutcome::Skipped { reason, .. } => GapPatchTierInput::Skipped(reason),
     };
     derive_gap_tags_from_patch_outcome(&input, tag_ctx)
 }
@@ -1153,7 +1201,7 @@ fn seam_failure_outcome(
             );
             (
                 None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed),
+                skipped_patch(GapPatchSkipReason::BoundaryAlignmentFailed),
                 tag_ctx,
             )
         }
@@ -1167,7 +1215,7 @@ fn seam_failure_outcome(
             );
             (
                 None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
                     pre_correlation: pre,
                     post_correlation: post,
                     min_correlation: min_structure_match_score,
@@ -1185,11 +1233,40 @@ fn seam_failure_outcome(
             );
             (
                 None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
                     pre_correlation: pre,
                     post_correlation: post,
                     min_correlation: min,
                 }),
+                tag_ctx,
+            )
+        }
+        SeamGateFailure::ResidualHeadroomExceeded {
+            pre,
+            post,
+            residual,
+            margin_db,
+        } => {
+            warn_skip_gap_fill(
+                progress,
+                &request.report.gaps,
+                region.a_start_secs,
+                region.a_end_secs,
+                "residual headroom exceeded (anti-echo veto)",
+            );
+            (
+                None,
+                skipped_patch_with_residual(
+                    GapPatchSkipReason::ResidualHeadroomExceeded {
+                        pre_correlation: pre,
+                        post_correlation: post,
+                        headroom_db: residual.worst_headroom_db(),
+                        floor_pre_db: residual.floor_pre_db,
+                        floor_post_db: residual.floor_post_db,
+                        margin_db,
+                    },
+                    Some(residual),
+                ),
                 tag_ctx,
             )
         }
@@ -1378,7 +1455,7 @@ fn prepare_region_patch(
     if gap_frames == 0 {
         return (
             None,
-            RegionPatchOutcome::Skipped(GapPatchSkipReason::ZeroLengthGap),
+            skipped_patch(GapPatchSkipReason::ZeroLengthGap),
             tag_ctx,
         );
     }
@@ -1409,7 +1486,7 @@ fn prepare_region_patch(
             );
             return (
                 None,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::BExtractFailed),
+                skipped_patch(GapPatchSkipReason::BExtractFailed),
                 tag_ctx,
             );
         }
@@ -1476,6 +1553,14 @@ fn prepare_region_patch(
         ),
         gap_signature_mode: request.gap_signature_mode,
         fit_boundary_search: request.fit_boundary_search,
+        measure_residual: request.measure_residual,
+        residual_gate: request.residual_gate,
+        residual_floor_ok_db: request.residual_floor_ok_db,
+        residual_headroom_margin_db: request.residual_headroom_margin_db,
+        residual_max_lag_frames: crate::domain::residual_max_lag_frames(
+            sample_rate,
+            request.residual_lag_secs,
+        ),
     };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
@@ -1549,6 +1634,7 @@ fn prepare_region_patch(
         fit_used_boundary_grid,
         fit_boundary_grid_cells,
         fit_haystack_secs,
+        residual: residual_verdict,
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
 
@@ -1575,7 +1661,7 @@ fn prepare_region_patch(
         );
         return (
             None,
-            RegionPatchOutcome::Skipped(GapPatchSkipReason::AlignedSegmentOutOfRange),
+            skipped_patch(GapPatchSkipReason::AlignedSegmentOutOfRange),
             tag_ctx,
         );
     }
@@ -1754,6 +1840,7 @@ fn prepare_region_patch(
             gap_end_adjust_frames,
             fit_used_boundary_grid,
             fit_boundary_grid_cells,
+            residual: residual_verdict,
         },
         tag_ctx,
     )
@@ -1919,7 +2006,8 @@ fn splice_into_a(
 mod tests {
     use super::{
         anchored_retry_gap_indices, format_gap_fill_plan_lines, format_gap_fill_result_line,
-        should_apply_anchored_retry_outcome, GapFillPlanLog, GapFillResultLog, RegionPatchOutcome,
+        should_apply_anchored_retry_outcome, skipped_patch, GapFillPlanLog, GapFillResultLog,
+        RegionPatchOutcome,
     };
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
@@ -1955,6 +2043,7 @@ mod tests {
                     gap_end_adjust_frames: 0,
                     fit_used_boundary_grid: false,
                     fit_boundary_grid_cells: None,
+                    residual: None,
                 },
                 dummy_region_tags(),
             ),
@@ -1972,13 +2061,14 @@ mod tests {
                     gap_end_adjust_frames: 0,
                     fit_used_boundary_grid: false,
                     fit_boundary_grid_cells: None,
+                    residual: None,
                 },
                 dummy_region_tags(),
             ),
             (
                 4.0,
                 5.0,
-                RegionPatchOutcome::Skipped(GapPatchSkipReason::CorrelationBelowThreshold {
+                skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
                     pre_correlation: 0.1,
                     post_correlation: 0.1,
                     min_correlation: 0.35,
@@ -1994,7 +2084,7 @@ mod tests {
 
     #[test]
     fn should_apply_anchored_retry_outcome_rules() {
-        let skip = RegionPatchOutcome::Skipped(GapPatchSkipReason::BoundaryAlignmentFailed);
+        let skip = skipped_patch(GapPatchSkipReason::BoundaryAlignmentFailed);
         let marginal = RegionPatchOutcome::Patched {
             pre_correlation: 0.3,
             post_correlation: 0.28,
@@ -2006,6 +2096,7 @@ mod tests {
             gap_end_adjust_frames: 0,
             fit_used_boundary_grid: false,
             fit_boundary_grid_cells: None,
+            residual: None,
         };
         let high = RegionPatchOutcome::Patched {
             pre_correlation: 0.5,
@@ -2018,6 +2109,7 @@ mod tests {
             gap_end_adjust_frames: 0,
             fit_used_boundary_grid: false,
             fit_boundary_grid_cells: None,
+            residual: None,
         };
         assert!(should_apply_anchored_retry_outcome(&skip, &high));
         assert!(should_apply_anchored_retry_outcome(&marginal, &high));

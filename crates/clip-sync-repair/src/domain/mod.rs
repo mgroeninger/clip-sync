@@ -14,6 +14,7 @@ pub mod patch_anchor;
 pub mod patch_result;
 pub mod policies;
 pub mod repair_profile;
+pub mod residual_gate;
 pub mod track_match;
 
 pub use fill_mode::FillMode;
@@ -29,7 +30,11 @@ pub use gap_tags::{
     SignatureModeTag,
 };
 pub use gap_signature::{GapSignature, GapSignatureMode};
-pub use gap_fill_fit::{FillConfidence, classify_fill_waveform_confidence};
+pub use gap_fill_fit::{FillConfidence, ResidualGateError, apply_residual_to_confidence, classify_fill_waveform_confidence};
+pub use residual_gate::{
+    ResidualGateMode, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
+    residual_max_lag_frames,
+};
 pub use repair_profile::{
     boundary_grid_may_run, format_repair_profile_verbose, gap_extension_slack_secs,
     inactive_repair_flag_notes, FitBoundarySearch, RepairPatchConfigView, RepairProfile,

@@ -11,6 +11,7 @@ use crate::domain::gap_structure::{
     FillBracketPlacement, GapContextSignature, StructureMatchParams,
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
+use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved,
     interleaved_to_mono, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
@@ -67,6 +68,40 @@ pub fn classify_fill_waveform_confidence(
         return Ok(FillConfidence::Marginal);
     }
     Err(min_score)
+}
+
+/// Why [`apply_residual_to_confidence`] rejected a candidate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResidualGateError {
+    PearsonBelowFloor(f64),
+    HeadroomExceeded {
+        headroom_db: f64,
+        margin_db: f64,
+    },
+}
+
+/// Compose Pearson waveform tiering with the residual headroom gate (fit mode).
+///
+/// Abstains (`NoOpinion`) when `!verdict.informative` — returns `pearson` unchanged.
+pub fn apply_residual_to_confidence(
+    pearson: Result<FillConfidence, f64>,
+    verdict: &SeamResidualVerdict,
+    margin_db: f64,
+    rescue_enabled: bool,
+) -> Result<FillConfidence, ResidualGateError> {
+    if !verdict.informative {
+        return pearson.map_err(ResidualGateError::PearsonBelowFloor);
+    }
+    let headroom = verdict.worst_headroom_db();
+    match pearson {
+        Ok(_tier) if headroom > margin_db => Err(ResidualGateError::HeadroomExceeded {
+            headroom_db: headroom,
+            margin_db,
+        }),
+        Ok(tier) => Ok(tier),
+        Err(_score) if headroom <= margin_db && rescue_enabled => Ok(FillConfidence::Marginal),
+        Err(score) => Err(ResidualGateError::PearsonBelowFloor(score)),
+    }
 }
 
 /// Penalty subtracted from ranking score per frame of A-boundary movement (Phase C).
@@ -1049,6 +1084,71 @@ fn placement_in_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::policies::{
+        SeamFloorSource, SeamResidualVerdict,
+    };
+
+    fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {
+        let floor_db = if informative { -40.0 } else { -5.0 };
+        let chosen_db = floor_db + headroom;
+        SeamResidualVerdict {
+            chosen_pre_db: chosen_db,
+            chosen_post_db: chosen_db,
+            floor_pre_db: floor_db,
+            floor_post_db: floor_db,
+            floor_source_pre: SeamFloorSource::Border,
+            floor_source_post: SeamFloorSource::Border,
+            informative,
+        }
+    }
+
+    #[test]
+    fn apply_residual_abstains_when_uninformative() {
+        let pearson = Ok(FillConfidence::High);
+        let out = apply_residual_to_confidence(
+            pearson,
+            &verdict(false, 100.0),
+            6.0,
+            false,
+        );
+        assert_eq!(out, Ok(FillConfidence::High));
+    }
+
+    #[test]
+    fn apply_residual_vetoes_high_pearson_when_headroom_large() {
+        let err = apply_residual_to_confidence(
+            Ok(FillConfidence::High),
+            &verdict(true, 20.0),
+            6.0,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ResidualGateError::HeadroomExceeded { .. }));
+    }
+
+    #[test]
+    fn apply_residual_rescues_dead_zone_when_enabled() {
+        let out = apply_residual_to_confidence(
+            Err(0.13),
+            &verdict(true, 0.0),
+            6.0,
+            true,
+        )
+        .expect("rescue");
+        assert_eq!(out, FillConfidence::Marginal);
+    }
+
+    #[test]
+    fn apply_residual_leaves_dead_zone_when_headroom_high() {
+        let err = apply_residual_to_confidence(
+            Err(0.13),
+            &verdict(true, 20.0),
+            6.0,
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ResidualGateError::PearsonBelowFloor(_)));
+    }
 
     fn no_seam_ctx<'a>(a_samples: &'a [i16]) -> SpliceSeamContext<'a> {
         SpliceSeamContext {

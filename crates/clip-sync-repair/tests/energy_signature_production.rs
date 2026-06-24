@@ -6,7 +6,7 @@ use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
 
 use clip_sync_repair::application::PatchAudio;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode};
+use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f1_production_at, build_f2_production, build_f4_decoy_production,
@@ -252,6 +252,68 @@ fn f2_production_weights_diagnostic() {
         production_fit_weights_config,
         &repair_defaults,
     );
+}
+
+/// **EC-6 + residual veto:** bool mode patches the F4 decoy without the gate; with
+/// `residual_gate = veto` the informative high-headroom decoy skips via
+/// `ResidualHeadroomExceeded`. Energy mode still patches the true pause. Ignored: ~72 s in debug.
+#[test]
+#[ignore = "ec6: cargo test -p clip-sync-repair f4_decoy_residual_gate_vetoes_bool -- --ignored --nocapture"]
+fn f4_decoy_residual_gate_vetoes_bool() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
+    let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
+
+    let mut bool_repair = production_repair_config(GapSignatureMode::Bool, 3.0);
+    bool_repair.residual_gate = ResidualGateMode::Veto;
+    let bool_report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let bool_result = patch
+        .execute(
+            patch_request_from_repair(bool_report, &bool_repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("F4 bool+veto patch");
+    assert_eq!(
+        bool_result.summary.skipped_count, 1,
+        "bool+veto should skip the decoy fill: {:?}",
+        bool_result.summary.gaps,
+    );
+    match &bool_result.summary.gaps[0].status {
+        GapPatchStatus::Skipped {
+            reason: GapPatchSkipReason::ResidualHeadroomExceeded { .. },
+        } => {}
+        other => panic!("bool+veto: expected residual skip, got {other:?}"),
+    }
+
+    let mut energy_repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    energy_repair.residual_gate = ResidualGateMode::Veto;
+    let energy_report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let energy_result = patch
+        .execute(
+            patch_request_from_repair(energy_report, &energy_repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("F4 energy+veto patch");
+    assert_eq!(
+        energy_result.summary.patched_count, 1,
+        "energy+veto should still patch truth: {:?}",
+        energy_result.summary.gaps,
+    );
+    match &energy_result.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            align_adjustment_secs,
+            ..
+        } => {
+            let tol = 0.1;
+            assert!(
+                (align_adjustment_secs - truth_slide).abs() <= tol,
+                "energy+veto slide {align_adjustment_secs:.3}s should reach truth ≈ {truth_slide:.3}s",
+            );
+        }
+        other => panic!("energy+veto: expected patched, got {other:?}"),
+    }
 }
 
 /// **EC-6 (patch layer):** on the F4 decoy fixture under the structure-isolated corpus config,
@@ -657,6 +719,9 @@ fn format_skip_reason(status: &GapPatchStatus) -> String {
             GapPatchSkipReason::BExtractFailed => "b_extract_failed".into(),
             GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range".into(),
             GapPatchSkipReason::ZeroLengthGap => "zero_length_gap".into(),
+            GapPatchSkipReason::ResidualHeadroomExceeded { headroom_db, .. } => {
+                format!("residual_headroom_exceeded(headroom={headroom_db:.1})")
+            }
         },
         GapPatchStatus::Patched { confidence, .. } => format!("patched({confidence:?})"),
         GapPatchStatus::NotPlanned { reason } => format!("not_planned({reason:?})"),

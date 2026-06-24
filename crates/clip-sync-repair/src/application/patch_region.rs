@@ -5,11 +5,11 @@ use clip_sync::MultiChannelPcm;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::repair_profile::FitBoundarySearch;
 use crate::domain::gap_fill_fit::{
-    boundary_search_step_frames, classify_fill_waveform_confidence, fit_candidate_ranking_score,
-    match_gap_fill_unified_in_b_with_timeline, FillConfidence, UnifiedFillSearchInput,
-    UnifiedFitWeights,
-    WaveformSeamContext,
+    boundary_search_step_frames, apply_residual_to_confidence, classify_fill_waveform_confidence,
+    fit_candidate_ranking_score, match_gap_fill_unified_in_b_with_timeline, FillConfidence,
+    ResidualGateError, UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
 };
+use crate::domain::residual_gate::ResidualGateMode;
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
@@ -44,6 +44,8 @@ pub(crate) struct SeamGateOutcome {
     pub fit_boundary_grid_cells: Option<u32>,
     /// B haystack duration in seconds (unified search window).
     pub fit_haystack_secs: f64,
+    /// Residual/floor verdict (P1 report-only); `Some` when residual measurement is enabled.
+    pub residual: Option<policies::SeamResidualVerdict>,
 }
 
 pub(crate) struct SeamGateParams<'a> {
@@ -86,6 +88,13 @@ pub(crate) struct SeamGateParams<'a> {
     pub anchor_search_prior: Option<AnchorSearchPrior>,
     pub gap_signature_mode: GapSignatureMode,
     pub fit_boundary_search: FitBoundarySearch,
+    /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
+    pub measure_residual: bool,
+    /// Residual headroom gate mode (`off` = no gating; measurement still obeys `measure_residual`).
+    pub residual_gate: ResidualGateMode,
+    pub residual_floor_ok_db: f64,
+    pub residual_headroom_margin_db: f64,
+    pub residual_max_lag_frames: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,6 +108,12 @@ pub(crate) enum SeamGateFailure {
         pre: f64,
         post: f64,
         min: f32,
+    },
+    ResidualHeadroomExceeded {
+        pre: f64,
+        post: f64,
+        residual: policies::SeamResidualVerdict,
+        margin_db: f64,
     },
 }
 
@@ -194,6 +209,11 @@ fn record_fit_joint_candidate(
                     post,
                     min,
                 });
+            }
+        }
+        Err(fail @ SeamGateFailure::ResidualHeadroomExceeded { .. }) => {
+            if best_below_floor.is_none() {
+                *best_below_floor = Some(fail);
             }
         }
         Err(other) => {
@@ -362,6 +382,61 @@ fn evaluate_seam_gate_fit_joint(
     Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed))
 }
 
+fn want_residual_measurement(params: &SeamGateParams<'_>) -> bool {
+    params.measure_residual
+        || params.residual_gate.is_active()
+        || tracing::enabled!(tracing::Level::DEBUG)
+}
+
+fn measure_fit_residual_verdict(
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    refined: RefinedGapFrames,
+    alignment_start_frame: usize,
+    offset_nominal_start: usize,
+    waveform_gate_frames: usize,
+    post_gate_frames: usize,
+) -> Option<policies::SeamResidualVerdict> {
+    if !want_residual_measurement(params) {
+        return None;
+    }
+    let chosen_delta = alignment_start_frame as i64 - refined.start_frame as i64;
+    let nominal_delta = offset_nominal_start as i64 - refined.start_frame as i64;
+    let floor_common = |window: usize| policies::SeamFloorParams {
+        a_samples: &params.a_pcm.samples,
+        channels: params.channels,
+        b_mono: &cache.b_mono,
+        window,
+        standoff_frames: params.border_standoff_frames,
+        a_to_b_delta: nominal_delta,
+        step_frames: window.max(1),
+        max_walk_frames: params.sample_rate as usize * 3,
+        absolute_silence_rms: params.absolute_silence_rms,
+        max_lag_frames: params.residual_max_lag_frames,
+    };
+    let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
+        &floor_common(waveform_gate_frames),
+        policies::SeamSide::Pre,
+        refined.start_frame,
+        refined.end_frame,
+        chosen_delta,
+    );
+    let (chosen_post, floor_post) = policies::seam_chosen_and_floor(
+        &floor_common(post_gate_frames),
+        policies::SeamSide::Post,
+        refined.start_frame,
+        refined.end_frame,
+        chosen_delta,
+    );
+    Some(policies::SeamResidualVerdict::from_parts_with_floor_ok(
+        &chosen_pre,
+        &chosen_post,
+        &floor_pre,
+        &floor_post,
+        params.residual_floor_ok_db,
+    ))
+}
+
 fn evaluate_seam_gate_fit_candidate(
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
@@ -507,77 +582,31 @@ fn evaluate_seam_gate_fit_candidate(
             "fill seam channel diagnostics"
         );
 
-        // Prototype: residual-cancellation diagnostic for the same-master, multiple-copies repair
-        // case. Measures how cleanly B cancels A's border (scalar gain + integer-lag fit) rather
-        // than waveform similarity; `residual_db` near `floor_db` means a true same-source match.
-        // Debug logging only — does not gate any decision.
-        let residual = policies::seam_residual_diagnostics(
-            &templates,
-            policies::SeamPlacement {
-                start: alignment.start_frame,
-                gap_frames,
-                pre_window: waveform_gate_frames,
-                post_window: post_gate_frames,
-            },
-        );
-        let nan = f64::NAN;
-        tracing::debug!(
-            start_frame = alignment.start_frame,
-            pre_residual_db = residual.pre.map_or(nan, |r| r.residual_db),
-            pre_floor_db = residual.pre.map_or(nan, |r| r.floor_db),
-            pre_headroom_db = residual.pre.map_or(nan, |r| r.headroom_db()),
-            pre_gain = residual.pre.map_or(nan, |r| r.gain),
-            pre_lag = residual.pre.map_or(nan, |r| r.best_lag as f64 + r.frac_lag),
-            post_residual_db = residual.post.map_or(nan, |r| r.residual_db),
-            post_floor_db = residual.post.map_or(nan, |r| r.floor_db),
-            post_headroom_db = residual.post.map_or(nan, |r| r.headroom_db()),
-            post_gain = residual.post.map_or(nan, |r| r.gain),
-            post_lag = residual.post.map_or(nan, |r| r.best_lag as f64 + r.frac_lag),
-            "fill seam residual diagnostics"
-        );
+    }
 
-        // Per-gap *measured* noise floor (report-only): probe a clean, energetic A reference window
-        // against B at the nominal offset (wide lag). `headroom_db` = seam residual minus this floor
-        // is the content/codec-adaptive separator we ultimately want to gate on. Gates nothing yet.
-        let a_to_b_delta = offset_nominal_start as i64 - refined.start_frame as i64;
-        let floor_common = |window: usize| policies::SeamFloorParams {
-            a_samples: &params.a_pcm.samples,
-            channels: params.channels,
-            b_mono: &cache.b_mono,
-            window,
-            standoff_frames: params.border_standoff_frames,
-            a_to_b_delta,
-            step_frames: window.max(1),
-            max_walk_frames: params.sample_rate as usize * 3,
-            absolute_silence_rms: params.absolute_silence_rms,
-        };
-        let floor_pre = policies::seam_floor_probe(
-            &floor_common(waveform_gate_frames),
-            policies::SeamSide::Pre,
-            refined.start_frame,
-            refined.end_frame,
-        );
-        let floor_post = policies::seam_floor_probe(
-            &floor_common(post_gate_frames),
-            policies::SeamSide::Post,
-            refined.start_frame,
-            refined.end_frame,
-        );
-        let pre_seam_db = residual.pre.map_or(nan, |r| r.residual_db);
-        let post_seam_db = residual.post.map_or(nan, |r| r.residual_db);
+    let residual = measure_fit_residual_verdict(
+        params,
+        cache,
+        refined,
+        alignment.start_frame,
+        offset_nominal_start,
+        waveform_gate_frames,
+        post_gate_frames,
+    );
+    if let Some(verdict) = residual {
         tracing::debug!(
             start_frame = alignment.start_frame,
-            pre_seam_db,
-            pre_floor_db = floor_pre.residual_db,
-            pre_headroom_db = pre_seam_db - floor_pre.residual_db,
-            pre_floor_source = floor_pre.source_label(),
-            pre_floor_lag = floor_pre.best_lag,
-            post_seam_db,
-            post_floor_db = floor_post.residual_db,
-            post_headroom_db = post_seam_db - floor_post.residual_db,
-            post_floor_source = floor_post.source_label(),
-            post_floor_lag = floor_post.best_lag,
-            "fill seam floor diagnostics"
+            nominal_start = offset_nominal_start,
+            seam_pre = alignment.pre_correlation,
+            seam_post = alignment.post_correlation,
+            chosen_pre_db = verdict.chosen_pre_db,
+            chosen_post_db = verdict.chosen_post_db,
+            floor_pre_db = verdict.floor_pre_db,
+            floor_post_db = verdict.floor_post_db,
+            headroom_db = verdict.worst_headroom_db(),
+            informative = verdict.informative,
+            residual_gate = ?params.residual_gate,
+            "fill seam residual verdict"
         );
     }
 
@@ -596,18 +625,46 @@ fn evaluate_seam_gate_fit_candidate(
 
     let pre_corr = alignment.pre_correlation;
     let post_corr = alignment.post_correlation;
-    let confidence = classify_fill_waveform_confidence(
+    let pearson = classify_fill_waveform_confidence(
         pre_corr,
         post_corr,
         params.min_fill_correlation,
         params.fill_marginal_margin,
         params.fill_absolute_floor,
-    )
-    .map_err(|_| SeamGateFailure::WaveformBelowThreshold {
-        pre: pre_corr,
-        post: post_corr,
-        min: params.fill_absolute_floor,
-    })?;
+    );
+
+    let confidence = if params.residual_gate.is_active() {
+        let verdict = residual.ok_or(SeamGateFailure::StructureAlignmentFailed)?;
+        match apply_residual_to_confidence(
+            pearson,
+            &verdict,
+            params.residual_headroom_margin_db,
+            params.residual_gate.rescue_enabled(),
+        ) {
+            Ok(confidence) => confidence,
+            Err(ResidualGateError::HeadroomExceeded { margin_db, .. }) => {
+                return Err(SeamGateFailure::ResidualHeadroomExceeded {
+                    pre: pre_corr,
+                    post: post_corr,
+                    residual: verdict,
+                    margin_db,
+                });
+            }
+            Err(ResidualGateError::PearsonBelowFloor(_)) => {
+                return Err(SeamGateFailure::WaveformBelowThreshold {
+                    pre: pre_corr,
+                    post: post_corr,
+                    min: params.fill_absolute_floor,
+                });
+            }
+        }
+    } else {
+        pearson.map_err(|_| SeamGateFailure::WaveformBelowThreshold {
+            pre: pre_corr,
+            post: post_corr,
+            min: params.fill_absolute_floor,
+        })?
+    };
 
     let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
         + baseline.end_frame.abs_diff(refined.end_frame);
@@ -629,6 +686,7 @@ fn evaluate_seam_gate_fit_candidate(
             fit_used_boundary_grid: false,
             fit_boundary_grid_cells: None,
             fit_haystack_secs: fit_haystack_secs(params),
+            residual,
         },
         ranking_score,
     ))
@@ -789,6 +847,8 @@ fn evaluate_seam_gate_legacy(
         fit_used_boundary_grid: false,
         fit_boundary_grid_cells: None,
         fit_haystack_secs: 0.0,
+        // Legacy gate path does not compute the residual verdict (fit-mode only).
+        residual: None,
     })
 }
 

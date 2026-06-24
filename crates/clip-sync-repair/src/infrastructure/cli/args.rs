@@ -174,6 +174,21 @@ pub struct Args {
     #[arg(long, value_parser = clap::value_parser!(FillMode), value_name = "MODE")]
     pub fill_mode: Option<FillMode>,
 
+    #[arg(long, value_parser = clap::value_parser!(crate::domain::ResidualGateMode), value_name = "MODE")]
+    pub residual_gate: Option<crate::domain::ResidualGateMode>,
+
+    /// Nominal floor ceiling (dB) for informative residual gating [default: -15].
+    #[arg(long, value_name = "DB")]
+    pub residual_floor_ok_db: Option<f64>,
+
+    /// Max residual headroom (dB) before veto/rescue [default: 6].
+    #[arg(long, value_name = "DB")]
+    pub residual_headroom_margin_db: Option<f64>,
+
+    /// Unified seam/floor lag search radius (seconds) [default: 0.010].
+    #[arg(long, value_name = "SECS")]
+    pub residual_lag_secs: Option<f64>,
+
     /// Draft repair profile: smaller haystack, no extension, baseline-only fit path.
     #[arg(long, conflicts_with = "full")]
     pub quick: bool,

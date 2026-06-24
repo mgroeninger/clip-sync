@@ -100,6 +100,18 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(mode) = args.fill_mode {
         config.repair.fill_mode = mode;
     }
+    if let Some(mode) = args.residual_gate {
+        config.repair.residual_gate = mode;
+    }
+    if let Some(db) = args.residual_floor_ok_db {
+        config.repair.residual_floor_ok_db = db;
+    }
+    if let Some(db) = args.residual_headroom_margin_db {
+        config.repair.residual_headroom_margin_db = db;
+    }
+    if let Some(secs) = args.residual_lag_secs {
+        config.repair.residual_lag_secs = secs;
+    }
     if let Some(w) = args.fill_fit_structure_weight {
         config.repair.fill_fit_structure_weight = w;
     }

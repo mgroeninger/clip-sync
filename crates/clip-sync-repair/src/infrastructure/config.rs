@@ -204,6 +204,18 @@ pub struct RepairConfig {
     /// Fit mode: skip boundary grid on marginal baseline (`baseline_only`) or run full grid.
     #[serde(default)]
     pub fit_boundary_search: FitBoundarySearch,
+    /// Residual headroom gate (`off`, `veto`, `veto_rescue`); fit mode only.
+    #[serde(default)]
+    pub residual_gate: crate::domain::ResidualGateMode,
+    /// Nominal floor must be at or below this (dB) for the residual gate to apply.
+    #[serde(default = "default_residual_floor_ok_db")]
+    pub residual_floor_ok_db: f64,
+    /// Max headroom (dB) before informative residual veto / rescue.
+    #[serde(default = "default_residual_headroom_margin_db")]
+    pub residual_headroom_margin_db: f64,
+    /// Unified seam/floor integer-lag search radius (seconds).
+    #[serde(default = "default_residual_lag_secs")]
+    pub residual_lag_secs: f64,
 }
 
 fn default_min_gap_ms() -> u64 {
@@ -311,6 +323,15 @@ fn default_fill_marginal_margin() -> f32 {
 fn default_fill_absolute_floor() -> f32 {
     crate::domain::gap_fill_fit::DEFAULT_FILL_ABSOLUTE_FLOOR
 }
+fn default_residual_floor_ok_db() -> f64 {
+    crate::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB
+}
+fn default_residual_headroom_margin_db() -> f64 {
+    crate::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB
+}
+fn default_residual_lag_secs() -> f64 {
+    crate::domain::DEFAULT_RESIDUAL_LAG_SECS
+}
 fn default_fill_repeat_penalty_weight() -> f64 {
     0.4
 }
@@ -407,6 +428,10 @@ impl Default for RepairConfig {
             short_gap_one_strong_seam_fallback: true,
             profile: RepairProfile::default(),
             fit_boundary_search: FitBoundarySearch::default(),
+            residual_gate: crate::domain::ResidualGateMode::default(),
+            residual_floor_ok_db: default_residual_floor_ok_db(),
+            residual_headroom_margin_db: default_residual_headroom_margin_db(),
+            residual_lag_secs: default_residual_lag_secs(),
         }
     }
 }
@@ -519,6 +544,10 @@ impl RepairConfig {
             gap_signature_mode: self.gap_signature_mode,
             profile: self.profile,
             fit_boundary_search: self.fit_boundary_search,
+            residual_gate: self.residual_gate,
+            residual_floor_ok_db: self.residual_floor_ok_db,
+            residual_headroom_margin_db: self.residual_headroom_margin_db,
+            residual_lag_secs: self.residual_lag_secs,
         }
     }
 
@@ -709,6 +738,18 @@ impl RepairConfig {
         if self.fill_repeat_penalty_weight < 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "fill_repeat_penalty_weight".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.residual_lag_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "residual_lag_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.residual_headroom_margin_db < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "residual_headroom_margin_db".into(),
                 reason: "must be non-negative".into(),
             });
         }
