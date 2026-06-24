@@ -306,6 +306,31 @@ fn source_gap_oracle_floor_csv() {
     }
 }
 
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_vorbis_64k_veto_no_false_veto -- --ignored --nocapture"]
+fn floor_oracle_vorbis_64k_veto_no_false_veto() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skip: ffmpeg unavailable");
+        return;
+    }
+    let manifest = load_manifest();
+    let case = manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_64k");
+    if !case_sources_ready(case) {
+        eprintln!("skip: run scripts/fetch_corpus_sources.ps1");
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let built = build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+    let off = run_built_floor_oracle(&built, ResidualGateMode::Off);
+    assert_eq!(off.status, "patched", "vorbis_64k should patch (skip={})", off.skip_reason);
+    let veto = run_built_floor_oracle(&built, ResidualGateMode::Veto);
+    assert_eq!(
+        veto.status, "patched",
+        "M5: veto must not false-veto when slide > reach (abstain); skip={}",
+        veto.skip_reason
+    );
+}
+
 /// Real-codec residual gate on Wikimedia floor oracles: truth gaps patch under `off`/`veto`/
 /// `veto_rescue`; unrelated two-mic must not be rescued into a patch.
 #[test]
@@ -319,9 +344,11 @@ fn floor_oracle_residual_gate_real_codec() {
     let manifest = load_manifest();
     let ambient = manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same");
     let speech = manifest_case(&manifest, "cc_speech_gap_oracle_aac_same");
+    let speech_vorbis = manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_128k");
+    let ambient_vorbis = manifest_case(&manifest, "cc_ambient_gap_oracle_vorbis_128k");
     let two_mic = manifest_case(&manifest, "cc_speech_ambient_two_mic");
 
-    for case in [ambient, speech, two_mic] {
+    for case in [ambient, speech, speech_vorbis, ambient_vorbis, two_mic] {
         if !case_sources_ready(case) {
             eprintln!(
                 "skip floor_oracle_residual_gate_real_codec: run scripts/fetch_corpus_sources.ps1"
@@ -351,6 +378,34 @@ fn floor_oracle_residual_gate_real_codec() {
     }
     let speech_rescue = run_built_floor_oracle(&speech_built, ResidualGateMode::VetoRescue);
     assert_truth_patches(&speech.id, &speech_rescue, ResidualGateMode::VetoRescue);
+
+    let speech_vorbis_built = build_floor_oracle_pair(
+        &temp.path().join(&speech_vorbis.id),
+        speech_vorbis,
+        &manifest.defaults,
+    );
+    for gate in [
+        ResidualGateMode::Off,
+        ResidualGateMode::Veto,
+        ResidualGateMode::VetoRescue,
+    ] {
+        let run = run_built_floor_oracle(&speech_vorbis_built, gate);
+        assert_truth_patches(&speech_vorbis.id, &run, gate);
+    }
+
+    let ambient_vorbis_built = build_floor_oracle_pair(
+        &temp.path().join(&ambient_vorbis.id),
+        ambient_vorbis,
+        &manifest.defaults,
+    );
+    for gate in [
+        ResidualGateMode::Off,
+        ResidualGateMode::Veto,
+        ResidualGateMode::VetoRescue,
+    ] {
+        let run = run_built_floor_oracle(&ambient_vorbis_built, gate);
+        assert_truth_patches(&ambient_vorbis.id, &run, gate);
+    }
 
     let two_mic_built =
         build_floor_oracle_pair(&temp.path().join(&two_mic.id), two_mic, &manifest.defaults);

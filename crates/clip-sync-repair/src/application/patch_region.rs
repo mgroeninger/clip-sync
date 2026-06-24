@@ -449,12 +449,14 @@ fn measure_fit_residual_verdict(
             chosen_delta,
         )
     };
-    Some(policies::SeamResidualVerdict::from_parts_with_floor_ok(
+    Some(policies::SeamResidualVerdict::from_parts_with_placement(
         &chosen_pre,
         &chosen_post,
         &floor_pre,
         &floor_post,
         params.residual_floor_ok_db,
+        alignment_start_frame.abs_diff(offset_nominal_start) as u64,
+        params.residual_max_lag_frames,
     ))
 }
 

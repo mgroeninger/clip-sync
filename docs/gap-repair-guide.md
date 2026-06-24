@@ -164,7 +164,8 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
 | `signature_mode` | `bool`, `energy` | Layer 4 (resolved) | `-v` `signature_mode=` |
-| `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap` | Patch skip enum | JSON `reason`; verbose skip line |
+| `residual_band` | `cancels`, `correlates_only`, `no_floor` | Residual/floor headroom (fit mode) | `-v` `residual_band=`; JSON `tags` |
+| `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap`, `residual_headroom_exceeded` | Patch skip enum | JSON `reason`; verbose skip line |
 
 `patch_tier` and `seam_shape` apply only when the gap reached patch with `fill_mode = fit`. Plan-only gaps use `patch_tier = not_applicable`.
 
@@ -177,6 +178,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](corpus-validation.md)) |
 | `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
 | `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate |
+| `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`) | JSON `patch.donor_relation`; patch summary header |
 
 **Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
 

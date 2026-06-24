@@ -82,14 +82,15 @@ pub enum ResidualGateError {
 
 /// Compose Pearson waveform tiering with the residual headroom gate (fit mode).
 ///
-/// Abstains (`NoOpinion`) when `!verdict.informative` — returns `pearson` unchanged.
+/// Abstains (`NoOpinion`) when `!verdict.informative` or `verdict.beyond_lag_reach()` — returns
+/// `pearson` unchanged.
 pub fn apply_residual_to_confidence(
     pearson: Result<FillConfidence, f64>,
     verdict: &SeamResidualVerdict,
     margin_db: f64,
     rescue_enabled: bool,
 ) -> Result<FillConfidence, ResidualGateError> {
-    if !verdict.informative {
+    if !verdict.informative || verdict.beyond_lag_reach() {
         return pearson.map_err(ResidualGateError::PearsonBelowFloor);
     }
     let headroom = verdict.worst_headroom_db();
@@ -1099,7 +1100,24 @@ mod tests {
             floor_source_pre: SeamFloorSource::Border,
             floor_source_post: SeamFloorSource::Border,
             informative,
+            placement_slide_frames: 0,
+            max_lag_frames: 0,
         }
+    }
+
+    #[test]
+    fn apply_residual_abstains_when_beyond_lag_reach() {
+        let mut v = verdict(true, 120.0);
+        v.placement_slide_frames = 600;
+        v.max_lag_frames = 480;
+        assert!(v.beyond_lag_reach());
+        let out = apply_residual_to_confidence(
+            Ok(FillConfidence::High),
+            &v,
+            6.0,
+            false,
+        );
+        assert_eq!(out, Ok(FillConfidence::High));
     }
 
     #[test]

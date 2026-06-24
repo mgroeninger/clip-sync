@@ -225,6 +225,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `patched_marginal_count` | integer | always | Patches in warn tier (`confidence: marginal`) |
 | `skipped_count` | integer | always | Planned but skipped during splice |
 | `not_planned_count` | integer | always | Excluded at plan time |
+| `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
 ### GapPatchOutcome
@@ -234,6 +235,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `a_start_secs` / `a_end_secs` | number | always | Gap bounds on A |
 | `status` | [GapPatchStatus](#gappatchstatus) | always | Outcome (externally tagged enum) |
 | `tags` | [GapTags](#gaptags) | always | Vocabulary tags derived at patch time (see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary) |
+| `residual` | object | when measured | Full [`SeamResidualVerdict`](#seamresidualverdict) (gate active or `measure_residual`) |
 
 ### GapTags
 
@@ -247,18 +249,21 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `seam_shape` | string | always | `balanced` \| `asymmetric_post` \| `asymmetric_pre` \| `symmetric_weak` \| `not_applicable` |
 | `fit_path` | string | fit gaps only | `baseline_only` \| `boundary_grid` |
 | `signature_mode` | string | fit gaps only | `bool` \| `energy` |
+| `residual_band` | string | when residual measured | `cancels` \| `correlates_only` \| `no_floor` |
 
 ### GapPatchStatus
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number}}`
+
+Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. Full per-side detail is in `GapPatchOutcome.residual`.
 
 `structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`
 - `{"not_planned": {"reason": <GapFillSkipReason>}}`
 
-**GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"`, or the object form `{"correlation_below_threshold": {"pre_correlation": number, "post_correlation": number, "min_correlation": number}}`.
+**GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"`, or object forms `{"correlation_below_threshold": …}` | `{"residual_headroom_exceeded": {"pre_correlation", "post_correlation", "headroom_db", "floor_pre_db", "floor_post_db", "margin_db"}}`.
 
 **GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"` | `"outside_reference_coverage"`.
 

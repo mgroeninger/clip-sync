@@ -36,7 +36,8 @@ use crate::domain::{
         PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
     },
     patch_result::{
-        GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+        residual_summary_scalar_fields, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
+        GapPatchStatus, PatchSummary,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
     RepairPatchConfigView,
@@ -1102,6 +1103,8 @@ fn outcomes_in_report_order(
                 if let Some(verdict) = residual {
                     residual_by_gap.insert(gap_key(*a_start, *a_end), *verdict);
                 }
+                let (residual_db, floor_db, headroom_db) =
+                    residual_summary_scalar_fields(residual.as_ref());
                 GapPatchStatus::Patched {
                     pre_correlation: *pre_correlation,
                     post_correlation: *post_correlation,
@@ -1111,6 +1114,9 @@ fn outcomes_in_report_order(
                     confidence: *confidence,
                     gap_start_adjust_frames: *gap_start_adjust_frames,
                     gap_end_adjust_frames: *gap_end_adjust_frames,
+                    residual_db,
+                    floor_db,
+                    headroom_db,
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -1160,8 +1166,13 @@ struct RegionPatchContext {
 
 fn region_outcome_gap_tags(
     outcome: &RegionPatchOutcome,
-    tag_ctx: GapTagsPatchContext,
+    mut tag_ctx: GapTagsPatchContext,
 ) -> GapTags {
+    tag_ctx.residual = match outcome {
+        RegionPatchOutcome::Patched { residual, .. } | RegionPatchOutcome::Skipped { residual, .. } => {
+            *residual
+        }
+    };
     let input = match outcome {
         RegionPatchOutcome::Patched {
             pre_correlation,
@@ -1432,6 +1443,8 @@ fn prepare_region_patch(
         },
         signature_mode_label,
         fit_used_boundary_grid: false,
+        residual: None,
+        residual_headroom_margin_db: request.residual_headroom_margin_db,
     };
 
     log_gap_fill_plan_verbose(
@@ -2027,6 +2040,7 @@ mod tests {
             seam_shape: SeamShape::NotApplicable,
             fit_path: None,
             signature_mode: None,
+            residual_band: None,
         }
     }
 

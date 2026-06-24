@@ -24,10 +24,11 @@ pub use patch_anchor::{
     PatchAnchorReport, PatchAnchorTable, PatchOffsetAnchor,
 };
 pub use gap_tags::{
-    classify_seam_shape, derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status,
-    format_gap_tags_verbose_line, FillTierThresholds, FitPathTag, GapPatchTierInput,
-    GapTags, GapTagsPatchContext, PatchTier, PlanKind, RegionPatchOutcomeView, SeamShape,
-    SignatureModeTag,
+    classify_residual_band, classify_seam_shape, derive_donor_relation,
+    derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status,
+    format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag,
+    GapPatchTierInput, GapTags, GapTagsPatchContext, PatchTier, PlanKind,
+    RegionPatchOutcomeView, ResidualBand, SeamShape, SignatureModeTag,
 };
 pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{FillConfidence, ResidualGateError, apply_residual_to_confidence, classify_fill_waveform_confidence};
@@ -44,7 +45,8 @@ pub use repair_profile::{
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};
 pub use patch_result::{
-    GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+    residual_summary_scalar_fields, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
+    GapPatchStatus, PatchSummary,
 };
 pub use track_match::{
     assess_track_compatibility, CompatibilityVerdict, TrackCompatibility, TrackDescriptor,

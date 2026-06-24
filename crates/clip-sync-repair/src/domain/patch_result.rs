@@ -5,6 +5,29 @@ use crate::domain::gap_fill_fit::FillConfidence;
 use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, GapTags};
 use crate::domain::policies::SeamResidualVerdict;
 
+/// Absent residual summary scalars on [`GapPatchStatus::Patched`] (tests / lossy builders).
+#[inline]
+pub const fn gap_patch_residual_unmeasured() -> (Option<f64>, Option<f64>, Option<f64>) {
+    (None, None, None)
+}
+
+/// Scalar residual summary fields for patched gaps (P1 JSON).
+pub fn residual_summary_scalar_fields(
+    residual: Option<&SeamResidualVerdict>,
+) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let Some(v) = residual else {
+        return (None, None, None);
+    };
+    let residual_db = v.worst_chosen_db();
+    let floor_db = v.worst_floor_db();
+    let headroom_db = v.worst_headroom_db();
+    (
+        residual_db.is_finite().then_some(residual_db),
+        floor_db.is_finite().then_some(floor_db),
+        headroom_db.is_finite().then_some(headroom_db),
+    )
+}
+
 /// Why a detected gap was not included in the fill plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +132,15 @@ pub enum GapPatchStatus {
         /// Frames the winning A gap end was extended from the pre-search refined edge.
         #[serde(default)]
         gap_end_adjust_frames: i64,
+        /// Worst-side chosen-placement residual (dB); present when residual was measured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        residual_db: Option<f64>,
+        /// Worst-side nominal floor (dB); present when residual was measured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        floor_db: Option<f64>,
+        /// Worst-side headroom at chosen placement (dB); present when residual was measured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headroom_db: Option<f64>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -131,6 +163,9 @@ pub struct PatchSummary {
     pub skipped_count: usize,
     pub not_planned_count: usize,
     pub gaps: Vec<GapPatchOutcome>,
+    /// Run-level donor relationship inferred from informative-floor fraction (P4 diagnostic).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub donor_relation: Option<crate::domain::gap_tags::DonorRelation>,
     /// Offset anchors built from pass-1 successes (`anchored_retry`); omitted when empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch_anchors_used: Option<Vec<crate::domain::patch_anchor::PatchAnchorReport>>,
@@ -143,6 +178,7 @@ impl PatchSummary {
     }
 
     pub fn from_outcomes(gaps: Vec<GapPatchOutcome>) -> Self {
+        let donor_relation = crate::domain::gap_tags::derive_donor_relation(&gaps);
         let mut patched_count = 0usize;
         let mut patched_marginal_count = 0usize;
         let mut skipped_count = 0usize;
@@ -165,6 +201,7 @@ impl PatchSummary {
             skipped_count,
             not_planned_count,
             gaps,
+            donor_relation,
             patch_anchors_used: None,
         }
     }

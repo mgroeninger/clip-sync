@@ -1,11 +1,10 @@
 # Residual / floor gate — end-to-end wiring design
 
-Status: **P1 + P2 partially shipped** (default `residual_gate = off`). Implemented: unified lag
-radius, `SeamResidualVerdict.informative`, fit-mode measurement in `evaluate_seam_gate_fit_candidate`,
-`apply_residual_to_confidence`, config/CLI (`residual_gate`, `residual_floor_ok_db`,
-`residual_headroom_margin_db`, `residual_lag_secs`), `ResidualHeadroomExceeded` skip reason. Not yet:
-residual fields on `Patched` status, `residual_band` / `donor_relation` tags, default flip to
-`veto`, `veto_rescue` validation corpus.
+Status: **P1 + P2 + P4 shipped** (default `residual_gate = veto`). Implemented: unified lag
+radius, `SeamResidualVerdict.informative`, fit-mode measurement, `apply_residual_to_confidence`,
+config/CLI, `ResidualHeadroomExceeded` skip reason, residual scalars on `Patched`, `residual_band`
+per-gap tag, `donor_relation` run diagnostic, real-codec gate oracle (AAC + Vorbis 128k). Not yet:
+`veto_rescue` as default; MP3 calibration (M4 deferred).
 
 Builds on the report-only prototype (`policies::seam_residual_diagnostics`,
 `policies::seam_floor_probe`) and the corpus experiments in `tests/seam_residual_corpus.rs`.
@@ -34,9 +33,8 @@ From steps 1–2 and the alignment sweep (`tests/seam_residual_corpus.rs`):
 3. **The seam and floor lag radii must be equal.** With seam ±64 and floor ±512, offsets in
    (64, 512] made a *true* fill's headroom blow up to ~40 dB (false reject). **Resolved:** a single
    configurable `max_lag_frames` (from `residual_lag_secs`, 10 ms default) serves both probes, so the
-   mismatch band is gone. The recovery reach is now exactly the configured lag — the placement-offset
-   sweep @16k (≈160 frames) shows headroom 0 through offset 100 and ~38 dB at ≥200; a correct fill
-   offset *beyond* the lag still false-rejects (intended, tunable; fewer frames at low sample rates).
+   mismatch band is gone. Within reach, lag-centered chosen measurement keeps headroom meaningful
+   (**M5**). Beyond the lag radius, headroom is undefined — the gate **abstains** (not veto).
 4. **Headroom ≈ 0 is necessary but not sufficient.** Beyond the lag radius, *if the floor itself also
    fails to cancel* (gross donor misalignment), headroom collapses to ~0 spuriously (false accept).
    **Also require the floor itself to be low (`floor_db ≤ FLOOR_OK`)** — shipped as the verdict's
@@ -117,13 +115,16 @@ pub fn apply_residual_to_confidence(
 
 Rules (constraints 1, 4, 5, 6):
 
-| Floor | Headroom | Pearson tier | Result |
-|-------|----------|--------------|--------|
-| uninformative (`!informative`) | — | any | **unchanged** (abstain → today's behavior; protects two-mic) |
-| informative | ≤ `margin` | High/Marginal | **unchanged** (agree → patch) |
-| informative | > `margin` | High/Marginal | **veto → skip** (`ResidualHeadroomExceeded`) — the F4/echo catch |
-| informative | ≤ `margin` | dead_zone (Err) | **rescue → Marginal** *iff* `rescue_enabled` — the W5/false-skip catch |
-| informative | > `margin` | dead_zone (Err) | unchanged (skip) |
+| Floor | Headroom | Slide vs reach | Pearson tier | Result |
+|-------|----------|----------------|--------------|--------|
+| uninformative (`!informative`) | — | — | any | **unchanged** (abstain → today's behavior; protects two-mic) |
+| informative | — | `slide > max_lag` | any | **unchanged** (abstain — headroom undefined beyond unified lag; **M5**) |
+| informative | ≤ `margin` | ≤ `max_lag` | High/Marginal | **unchanged** (agree → patch) |
+| informative | > `margin` | ≤ `max_lag` | High/Marginal | **veto → skip** (`ResidualHeadroomExceeded`) — the F4/echo catch |
+| informative | ≤ `margin` | ≤ `max_lag` | dead_zone (Err) | **rescue → Marginal** *iff* `rescue_enabled` — the W5/false-skip catch |
+| informative | > `margin` | ≤ `max_lag` | dead_zone (Err) | unchanged (skip) |
+
+Within reach, the chosen probe's lag search is centered on `floor.best_lag + nominal_delta − chosen_delta` so headroom reflects content mismatch, not independent lag picks (**M5**).
 
 The veto is the high-confidence win and should ship first; rescue is opt-in (it widens what
 patches, so it needs the disagreement table before becoming default).
@@ -162,7 +163,8 @@ All config-overridable; none hard-coded in the gate.
 ## 5. Behavior-safety invariants
 
 - `fill_mode = gate`: untouched.
-- `residual_gate = off` (initial default): zero behavior change, zero added cost.
+- `residual_gate = off`: zero behavior change, zero added cost (opt out with `--residual-gate off`).
+- Default is **`veto`** (P4): residual measured on every fit-mode candidate; use `off` for regression baselines.
 - Two-mic / diff-capture pairs: floors uninformative → `NoOpinion` → unchanged.
 - Veto can only **remove** patches; rescue (opt-in) can only **add** them. Ship veto first.
 
@@ -170,15 +172,15 @@ All config-overridable; none hard-coded in the gate.
 
 ```toml
 [repair]
-residual_gate = "off"          # off | veto | veto_rescue   (CLI: --residual-gate)
+residual_gate = "veto"         # off | veto | veto_rescue   (CLI: --residual-gate)
 residual_floor_ok_db = -15.0   # FLOOR_OK
 residual_headroom_margin_db = 6.0
 residual_lag_secs = 0.010      # unified seam+floor lag radius
 ```
 
 `patch_audio.rs` converts `residual_lag_secs → frames`, passes all four into `SeamGateParams`.
-Validation: `residual_lag_secs > 0`, `headroom_margin ≥ 0`. Defaults keep the gate **off** until the
-disagreement table (step 3) and real-media calibration justify a default of `veto`.
+Validation: `residual_lag_secs > 0`, `headroom_margin ≥ 0`. Default is **`veto`** after AAC/Vorbis
+calibration and disagreement-table validation; use `off` for byte-identical regression baselines.
 
 ## 7. Reporting & vocabulary (points G, H)
 
@@ -194,17 +196,10 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
 ## 8. Phasing
 
 - **P0 (done):** debug diagnostics; corpus harness; alignment sweep.
-- **P1 (partial):** unified lag radii; compute `SeamResidualVerdict` in fit mode when gate active,
-  debug, or `measure_residual`; `ResidualHeadroomExceeded` skip reason. Remaining: residual fields
-  on `Patched` outcome/JSON + `residual_band` tag; report-only when gate off but measure on.
-- **P2 (shipped, non-default):** veto (`residual_gate = veto`) via `apply_residual_to_confidence`;
-  F4 corpus test `f4_decoy_placement_informative_with_high_headroom`; integration
-  `f4_decoy_residual_gate_vetoes_bool` (ignored, slow). Calibrate `FLOOR_OK` on real media.
+- **P1 (shipped):** unified lag radii; residual on outcomes; `residual_band` tag; scalar fields on `Patched`; report when gate active or `measure_residual`.
+- **P2 (shipped, default):** veto (`residual_gate = veto` default); F4 corpus test; integration `f4_decoy_residual_gate_vetoes_bool` (ignored).
 - **P3 — rescue (`veto_rescue`):** false-skip rescue; validate it doesn't over-patch.
-- **P4 — defaults + `donor_relation`:** flip default to `veto` on the **validated codecs** (AAC,
-  Vorbis, music). **MP3 is unvalidated (M4):** it rides the same codec-agnostic floor/headroom gate,
-  abstains when uninformative, but its acting-branch behavior and the same-encoder determinism floor
-  are unverified — accepted as a known limitation, not a blocker. Emit `donor_relation`.
+- **P4 (shipped):** default `veto`; `donor_relation` run diagnostic; `floor_oracle_residual_gate_real_codec` extended to Vorbis 128k speech/ambient.
 
 ## 9. Test plan
 
@@ -229,8 +224,8 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
   unverified — see [residual-gate-findings.md](residual-gate-findings.md) M4. Parked behind
   punch-after-encode oracle + `veto_rescue`-on-MP3 run.
 - **Fractional-delay ceiling.** Integer-only lag caps absolute cancellation (−16 dB at 0.5 sample);
-  headroom hides it, but if `FLOOR_OK` is set too low a correct-but-fractionally-delayed fill reads
-  uninformative. Mitigation: parabolic/fractional resample before subtraction (deferred).
+  headroom hides it within reach (lag-centered chosen probe, **M5**); beyond reach the gate abstains.
+  Mitigation: parabolic/fractional resample before subtraction (deferred).
 - **Cost.** Unified lag at 10 ms × seam window × candidates × gaps. Keep behind the off-by-default
   flag; profile in P1.
 - **Interaction with `anchored_retry`.** Residual verdict could feed anchor eligibility (a
@@ -243,5 +238,5 @@ disagreement table (step 3) and real-media calibration justify a default of `vet
 - [gap-fill-modes.md](gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
 - [gap-repair-guide.md](gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
 - [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) — the floor's multi-donor use
-- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1 fixed; M4 deferred; M5, L1–L12 open)
+- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1/M5 fixed; M4 deferred; L1–L12 open)
 - `tests/seam_residual_corpus.rs` — the experiments grounding §2 and §4e

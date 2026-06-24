@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum ResidualGateMode {
     /// No residual measurement for gating; zero behavior change unless `measure_residual` or debug.
-    #[default]
     Off,
     /// Anti-echo veto when informative floor and headroom exceed margin.
+    #[default]
     Veto,
     /// Veto plus false-skip rescue into marginal when headroom is clean but Pearson is in the dead zone.
     VetoRescue,
@@ -52,4 +52,14 @@ pub fn residual_max_lag_frames(sample_rate: u32, residual_lag_secs: f64) -> i64 
         return 0;
     }
     (residual_lag_secs * f64::from(sample_rate)).round().max(0.0) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_residual_gate_is_veto() {
+        assert_eq!(ResidualGateMode::default(), ResidualGateMode::Veto);
+    }
 }

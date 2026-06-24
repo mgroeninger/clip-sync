@@ -96,15 +96,20 @@ struct ScoredPlacement {
     chosen_post: SeamFloorProbe,
     floor_pre: SeamFloorProbe,
     floor_post: SeamFloorProbe,
+    placement_slide_frames: u64,
+    max_lag_frames: i64,
 }
 
 impl ScoredPlacement {
     fn verdict(&self) -> SeamResidualVerdict {
-        SeamResidualVerdict::from_parts(
+        SeamResidualVerdict::from_parts_with_placement(
             &self.chosen_pre,
             &self.chosen_post,
             &self.floor_pre,
             &self.floor_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            self.placement_slide_frames,
+            self.max_lag_frames,
         )
     }
 }
@@ -185,7 +190,7 @@ fn gate_outcome(
     verdict: &SeamResidualVerdict,
     rescue_enabled: bool,
 ) -> GateOutcomeLabel {
-    if !verdict.informative {
+    if !verdict.informative || verdict.beyond_lag_reach() {
         return match pearson {
             Ok(_) => GateOutcomeLabel::Abstain,
             Err(_) => GateOutcomeLabel::SkipPearson,
@@ -300,7 +305,16 @@ fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> ScoredPlac
     // Unified model (matches the pipeline): chosen residual and floor share the same lag radius
     // (`residual_lag_secs` → frames). Floor anchors at the true alignment; chosen at `start`.
     let delta_true = fixture.true_fill_start as i64 - gap_start as i64;
+    let nominal_delta = fixture.nominal_fill_start as i64 - gap_start as i64;
     let chosen_delta = start as i64 - gap_start as i64;
+    // Production anchors the floor at nominal; this harness often anchors at truth for
+    // discrimination. Only apply reach abstention when the floor anchor matches production.
+    let production_floor_anchor = delta_true == nominal_delta;
+    let placement_slide = if production_floor_anchor {
+        (chosen_delta - nominal_delta).unsigned_abs()
+    } else {
+        0
+    };
     let floor_params = |window: usize| SeamFloorParams {
         a_samples: &fixture.a_samples,
         channels: ch,
@@ -345,6 +359,8 @@ fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> ScoredPlac
         chosen_post,
         floor_pre,
         floor_post,
+        placement_slide_frames: placement_slide,
+        max_lag_frames: max_lag,
     }
 }
 

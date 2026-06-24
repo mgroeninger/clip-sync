@@ -1307,7 +1307,15 @@ fn lsq_residual_ratio(a: &[f64], b: &[f64]) -> Option<(f64, f64)> {
 
 /// Search integer lags for the minimum normalized residual of `a_win` against B windows supplied
 /// by `b_at_lag`, then parabolically refine the sub-sample offset.
-fn seam_residual_for_side<F>(a_win: &[f64], b_at_lag: F, max_lag: i64) -> Option<SeamResidual>
+///
+/// `lag_center` shifts the search window (e.g. `floor.best_lag + nominal_delta − chosen_delta`
+/// when placement slide is within reach).
+fn seam_residual_for_side<F>(
+    a_win: &[f64],
+    b_at_lag: F,
+    max_lag: i64,
+    lag_center: i64,
+) -> Option<SeamResidual>
 where
     F: Fn(i64) -> Option<Vec<f64>>,
 {
@@ -1325,14 +1333,17 @@ where
     let mut ratios = vec![f64::NAN; span];
     let mut best_idx: Option<usize> = None;
     let mut best_gain = 0.0;
-    for lag in -max_lag..=max_lag {
+    for lag in (lag_center - max_lag)..=(lag_center + max_lag) {
         let Some(b_win) = b_at_lag(lag) else {
             continue;
         };
         let Some((g, ratio)) = lsq_residual_ratio(a_win, &b_win) else {
             continue;
         };
-        let idx = (lag + max_lag) as usize;
+        let idx = (lag - (lag_center - max_lag)) as usize;
+        if idx >= span {
+            continue;
+        }
         ratios[idx] = ratio;
         if best_idx.is_none_or(|bi| ratio < ratios[bi]) {
             best_idx = Some(idx);
@@ -1342,7 +1353,7 @@ where
 
     let best_idx = best_idx?;
     let best_ratio = ratios[best_idx];
-    let best_lag = best_idx as i64 - max_lag;
+    let best_lag = lag_center - max_lag + best_idx as i64;
 
     let frac = if best_idx > 0 && best_idx + 1 < span {
         let ym = ratios[best_idx - 1];
@@ -1397,7 +1408,7 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        }, max_lag)
+        }, max_lag, 0)
     } else {
         None
     };
@@ -1412,7 +1423,7 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        }, max_lag)
+        }, max_lag, 0)
     } else {
         None
     };
@@ -1566,12 +1577,14 @@ fn select_reference_window(
     }
 }
 
-/// Cancel a selected raw window against B at `delta` (`b_frame = a_frame + delta`) with `max_lag`.
+/// Cancel a selected raw window against B at `delta` (`b_frame = a_frame + delta`) with `max_lag`
+/// around `lag_center`.
 fn measure_window_at_delta(
     window: &ReferenceWindow,
     b_mono: &[f64],
     delta: i64,
     max_lag: i64,
+    lag_center: i64,
 ) -> SeamFloorProbe {
     let w = window.a_win.len() as i64;
     let b_len = b_mono.len() as i64;
@@ -1587,6 +1600,7 @@ fn measure_window_at_delta(
             Some(b_mono[lo as usize..hi as usize].to_vec())
         },
         max_lag,
+        lag_center,
     );
     match probe {
         Some(r) => SeamFloorProbe {
@@ -1621,6 +1635,7 @@ pub fn seam_floor_probe(
                 params.b_mono,
                 params.a_to_b_delta,
                 params.max_lag_frames,
+                0,
             )
         }
         None => SeamFloorProbe::none(),
@@ -1640,17 +1655,27 @@ pub fn seam_chosen_and_floor(
 ) -> (SeamFloorProbe, SeamFloorProbe) {
     match select_reference_window(params, side, gap_start_frame, gap_end_frame) {
         Some(window) => {
-            let chosen = measure_window_at_delta(
-                &window,
-                params.b_mono,
-                chosen_delta,
-                params.max_lag_frames,
-            );
             let floor = measure_window_at_delta(
                 &window,
                 params.b_mono,
                 params.a_to_b_delta,
                 params.max_lag_frames,
+                0,
+            );
+            let placement_error = chosen_delta - params.a_to_b_delta;
+            let lag_center = if placement_error.abs() <= params.max_lag_frames
+                && floor.residual_db.is_finite()
+            {
+                floor.best_lag + params.a_to_b_delta - chosen_delta
+            } else {
+                0
+            };
+            let chosen = measure_window_at_delta(
+                &window,
+                params.b_mono,
+                chosen_delta,
+                params.max_lag_frames,
+                lag_center,
             );
             (chosen, floor)
         }
@@ -1694,8 +1719,10 @@ pub fn residual_verdict_informative(
 ///
 /// Both the chosen-placement residual and the nominal floor are measured on the **same raw A
 /// reference window** with the same lag radius — they differ only in *where on B* (chosen vs
-/// nominal mapping) — so `headroom = chosen − floor` is a pure difference and is meaningful even
-/// when the chosen placement is not sample-accurate. `informative` uses the supplied `floor_ok_db`.
+/// nominal mapping). When placement slide is within `max_lag_frames`, the chosen probe's lag
+/// search is centered on `floor.best_lag + nominal_delta − chosen_delta`. `informative` uses
+/// the supplied `floor_ok_db`. When `placement_slide_frames > max_lag_frames`, the gate abstains
+/// (`beyond_lag_reach`) — headroom is not meaningful outside the unified lag radius.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct SeamResidualVerdict {
     pub chosen_pre_db: f64,
@@ -1706,6 +1733,20 @@ pub struct SeamResidualVerdict {
     pub floor_source_post: SeamFloorSource,
     /// Nominal floor established cancellation on every measured side (`floor_db ≤ FLOOR_OK`).
     pub informative: bool,
+    /// `|chosen_delta − nominal_delta|` in frames (0 when unset / harness default).
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub placement_slide_frames: u64,
+    /// Unified lag radius used for this verdict (`0` = reach check disabled).
+    #[serde(skip_serializing_if = "is_zero_i64")]
+    pub max_lag_frames: i64,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
 }
 
 impl SeamResidualVerdict {
@@ -1733,6 +1774,27 @@ impl SeamResidualVerdict {
         floor_post: &SeamFloorProbe,
         floor_ok_db: f64,
     ) -> Self {
+        Self::from_parts_with_placement(
+            chosen_pre,
+            chosen_post,
+            floor_pre,
+            floor_post,
+            floor_ok_db,
+            0,
+            0,
+        )
+    }
+
+    /// Production path: includes placement slide and lag radius for reach abstention.
+    pub fn from_parts_with_placement(
+        chosen_pre: &SeamFloorProbe,
+        chosen_post: &SeamFloorProbe,
+        floor_pre: &SeamFloorProbe,
+        floor_post: &SeamFloorProbe,
+        floor_ok_db: f64,
+        placement_slide_frames: u64,
+        max_lag_frames: i64,
+    ) -> Self {
         Self {
             chosen_pre_db: chosen_pre.residual_db,
             chosen_post_db: chosen_post.residual_db,
@@ -1741,7 +1803,14 @@ impl SeamResidualVerdict {
             floor_source_pre: floor_pre.source,
             floor_source_post: floor_post.source,
             informative: residual_verdict_informative(floor_pre, floor_post, floor_ok_db),
+            placement_slide_frames,
+            max_lag_frames,
         }
+    }
+
+    /// Placement slide exceeds the unified lag radius — residual gate abstains.
+    pub fn beyond_lag_reach(&self) -> bool {
+        self.max_lag_frames > 0 && self.placement_slide_frames as i64 > self.max_lag_frames
     }
 
     /// Worst-side headroom at the chosen placement (`chosen − floor`); larger = worse match.
@@ -1759,6 +1828,29 @@ impl SeamResidualVerdict {
             }
         })
     }
+
+    /// Worst-side chosen-placement residual (higher = less cancellation).
+    pub fn worst_chosen_db(&self) -> f64 {
+        worst_finite_max([self.chosen_pre_db, self.chosen_post_db])
+    }
+
+    /// Worst-side nominal floor (higher = weaker cancellation).
+    pub fn worst_floor_db(&self) -> f64 {
+        worst_finite_max([self.floor_pre_db, self.floor_post_db])
+    }
+}
+
+fn worst_finite_max(values: [f64; 2]) -> f64 {
+    values
+        .into_iter()
+        .filter(|v| v.is_finite())
+        .fold(f64::NAN, |acc, v| {
+            if acc.is_nan() {
+                v
+            } else {
+                acc.max(v)
+            }
+        })
 }
 
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
@@ -2668,6 +2760,59 @@ mod tests {
             verdict.worst_headroom_db()
         );
         assert!(verdict.informative, "same-master floor should be informative");
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_lag_center_low_headroom_within_reach() {
+        // Same-master with a modest placement slide inside the lag radius: lag-centered chosen
+        // should cancel like the floor (headroom ≈ 0).
+        let rate = 2000usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+        let slide = 50i64;
+
+        let b_mono: Vec<f64> = (0..rate)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+            .collect();
+        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: rate,
+            absolute_silence_rms: 33.0,
+            max_lag_frames: 512,
+        };
+        let (chosen, floor) =
+            seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, slide);
+        assert!(floor.residual_db < -60.0, "floor should cancel: {}", floor.residual_db);
+        assert!(
+            chosen.residual_db < -60.0,
+            "lag-centered chosen should cancel within reach: {}",
+            chosen.residual_db
+        );
+
+        let verdict = SeamResidualVerdict::from_parts_with_placement(
+            &chosen,
+            &chosen,
+            &floor,
+            &floor,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            slide as u64,
+            512,
+        );
+        assert!(
+            verdict.worst_headroom_db().abs() < 1.0,
+            "headroom should be ~0 with lag centering, got {}",
+            verdict.worst_headroom_db()
+        );
+        assert!(!verdict.beyond_lag_reach());
     }
 
     #[test]

@@ -10,7 +10,78 @@ use serde::Serialize;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::{effective_fill_absolute_floor, FillConfidence};
 use crate::domain::patch_result::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
+use crate::domain::policies::SeamResidualVerdict;
+use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use crate::domain::repair_profile::FitBoundarySearch;
+
+/// Residual cancellation band (W-layer; guide `residual_band`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidualBand {
+    /// Informative floor and headroom within margin — content cancels at the seam.
+    Cancels,
+    /// Informative floor but headroom above margin — Pearson-only match (anti-echo risk).
+    CorrelatesOnly,
+    /// Floor uninformative, beyond lag reach, or not measured.
+    NoFloor,
+}
+
+impl ResidualBand {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancels => "cancels",
+            Self::CorrelatesOnly => "correlates_only",
+            Self::NoFloor => "no_floor",
+        }
+    }
+}
+
+/// Run-level donor relationship inferred from informative-floor fraction (guide `donor_relation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DonorRelation {
+    SameMaster,
+    Mixed,
+    DiffCapture,
+}
+
+impl DonorRelation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SameMaster => "same_master",
+            Self::Mixed => "mixed",
+            Self::DiffCapture => "diff_capture",
+        }
+    }
+}
+
+/// Classify per-gap residual band from a measured verdict and headroom margin.
+pub fn classify_residual_band(verdict: &SeamResidualVerdict, margin_db: f64) -> ResidualBand {
+    if !verdict.informative || verdict.beyond_lag_reach() {
+        ResidualBand::NoFloor
+    } else if verdict.worst_headroom_db() <= margin_db {
+        ResidualBand::Cancels
+    } else {
+        ResidualBand::CorrelatesOnly
+    }
+}
+
+/// Derive run-level donor relation from per-gap residual verdicts (≥70% informative → same_master).
+pub fn derive_donor_relation(gaps: &[crate::domain::patch_result::GapPatchOutcome]) -> Option<DonorRelation> {
+    let measured: Vec<_> = gaps.iter().filter_map(|g| g.residual.as_ref()).collect();
+    if measured.is_empty() {
+        return None;
+    }
+    let informative_count = measured.iter().filter(|v| v.informative).count();
+    let frac = informative_count as f64 / measured.len() as f64;
+    if frac >= 0.70 {
+        Some(DonorRelation::SameMaster)
+    } else if informative_count == 0 {
+        Some(DonorRelation::DiffCapture)
+    } else {
+        Some(DonorRelation::Mixed)
+    }
+}
 
 /// Plan-time classification (P-layer in the guide).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -166,6 +237,8 @@ pub struct GapTags {
     pub fit_path: Option<FitPathTag>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_mode: Option<SignatureModeTag>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub residual_band: Option<ResidualBand>,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -175,6 +248,8 @@ pub struct GapTagsPatchContext {
     pub thresholds: FillTierThresholds,
     pub signature_mode_label: &'static str,
     pub fit_used_boundary_grid: bool,
+    pub residual: Option<SeamResidualVerdict>,
+    pub residual_headroom_margin_db: f64,
 }
 
 impl GapTagsPatchContext {
@@ -194,6 +269,11 @@ impl GapTagsPatchContext {
         } else {
             None
         }
+    }
+
+    pub fn residual_band_tag(self) -> Option<ResidualBand> {
+        self.residual
+            .map(|v| classify_residual_band(&v, self.residual_headroom_margin_db))
     }
 }
 
@@ -304,6 +384,7 @@ pub fn derive_gap_tags_from_patch_outcome(
         seam_shape,
         fit_path: ctx.fit_path_tag(),
         signature_mode: ctx.signature_mode_tag(),
+        residual_band: ctx.residual_band_tag(),
     }
 }
 
@@ -328,6 +409,7 @@ pub fn derive_gap_tags_from_status(
                 seam_shape: SeamShape::NotApplicable,
                 fit_path: None,
                 signature_mode: None,
+                residual_band: None,
             }
         }
         GapPatchStatus::Patched {
@@ -346,6 +428,8 @@ pub fn derive_gap_tags_from_status(
                 thresholds,
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
+                residual: None,
+                residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
         GapPatchStatus::Skipped { reason } => derive_gap_tags_from_patch_outcome(
@@ -355,6 +439,8 @@ pub fn derive_gap_tags_from_status(
                 thresholds,
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
+                residual: None,
+                residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
     }
@@ -423,6 +509,9 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     if let Some(mode) = tags.signature_mode {
         parts.push(format!("signature_mode={}", mode.as_str()));
     }
+    if let Some(band) = tags.residual_band {
+        parts.push(format!("residual_band={}", band.as_str()));
+    }
     format!("           gap tags: {}", parts.join(" "))
 }
 
@@ -437,6 +526,8 @@ mod tests {
             thresholds: FillTierThresholds::DEFAULT,
             signature_mode_label: "bool",
             fit_used_boundary_grid: false,
+            residual: None,
+            residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }
     }
 
@@ -534,5 +625,85 @@ mod tests {
         assert!(line.contains("seam=asymmetric_post"));
         assert!(line.contains("fit_path=baseline_only"));
         assert!(line.contains("signature_mode=bool"));
+    }
+
+    #[test]
+    fn residual_band_cancels_when_informative_low_headroom() {
+        use crate::domain::policies::{
+            SeamFloorProbe, SeamFloorSource, SeamResidualVerdict,
+        };
+        let verdict = SeamResidualVerdict::from_parts_with_placement(
+            &SeamFloorProbe {
+                residual_db: -40.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -40.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -44.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -44.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            -15.0,
+            0,
+            480,
+        );
+        assert_eq!(
+            classify_residual_band(&verdict, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB),
+            ResidualBand::Cancels
+        );
+    }
+
+    #[test]
+    fn residual_band_correlates_only_when_headroom_high() {
+        use crate::domain::policies::{
+            SeamFloorProbe, SeamFloorSource, SeamResidualVerdict,
+        };
+        let verdict = SeamResidualVerdict::from_parts_with_placement(
+            &SeamFloorProbe {
+                residual_db: -20.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -20.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -44.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -44.0,
+                source: SeamFloorSource::Border,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            -15.0,
+            0,
+            480,
+        );
+        assert_eq!(
+            classify_residual_band(&verdict, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB),
+            ResidualBand::CorrelatesOnly
+        );
     }
 }

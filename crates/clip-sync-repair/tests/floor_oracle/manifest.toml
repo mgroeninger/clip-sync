@@ -119,9 +119,8 @@ format_a = "vorbis"
 format_b = "vorbis"
 bitrate_a = "64k"
 bitrate_b = "64k"
-# Calibrated: informative (deterministic libvorbis → bit-identical borders, floor -120). NOTE: the
-# chosen placement slid ~12 ms (> residual_lag) so headroom was ~120 — a true fill that would
-# false-veto. Real-codec instance of the lag-reach limit (M1 note); not a floor problem.
+# Calibrated: informative (deterministic libvorbis → bit-identical borders, floor -120).
+# Search may slide ~12 ms off truth (> residual_lag); gate abstains beyond reach (M5 fixed).
 expect_informative_floor = true
 
 # ── ambient ──────────────────────────────────────────────────────────────────

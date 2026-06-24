@@ -602,8 +602,13 @@ fn print_json_with_patch(
 pub fn format_patch_summary(summary: &PatchSummary) -> String {
     let mut out = String::new();
 
+    let donor = summary
+        .donor_relation
+        .map(|r| format!(" donor_relation={}", r.as_str()))
+        .unwrap_or_default();
+
     out.push_str(&format!(
-        "\nPatch results ({} patched, {} skipped, {} not planned):\n",
+        "\nPatch results ({} patched, {} skipped, {} not planned){donor}:\n",
         summary.patched_count, summary.skipped_count, summary.not_planned_count
     ));
 
@@ -867,6 +872,9 @@ mod tests {
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
                 },
             ),
             gap_patch_outcome(
@@ -1009,6 +1017,9 @@ mod tests {
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
+                residual_db: None,
+                floor_db: None,
+                headroom_db: None,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1046,6 +1057,9 @@ mod tests {
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
                 },
             ),
             gap_patch_outcome(
@@ -1278,6 +1292,9 @@ mod tests {
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
+                residual_db: None,
+                floor_db: None,
+                headroom_db: None,
             },
         )]);
 
@@ -1305,6 +1322,9 @@ mod tests {
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
                 gap_end_adjust_frames: 0,
+                residual_db: None,
+                floor_db: None,
+                headroom_db: None,
             },
         )]);
 
@@ -1400,6 +1420,9 @@ mod tests {
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
                 },
             ),
             gap_patch_outcome(
@@ -1465,6 +1488,9 @@ mod tests {
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
                     gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
                 },
             ),
             gap_patch_outcome(
