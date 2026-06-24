@@ -1313,7 +1313,7 @@ fn lsq_residual_ratio(a: &[f64], b: &[f64]) -> Option<(f64, f64)> {
 
 /// Search integer lags for the minimum normalized residual of `a_win` against B windows supplied
 /// by `b_at_lag`, then parabolically refine the sub-sample offset.
-fn seam_residual_for_side<F>(a_win: &[f64], b_at_lag: F) -> Option<SeamResidual>
+fn seam_residual_for_side<F>(a_win: &[f64], b_at_lag: F, max_lag: i64) -> Option<SeamResidual>
 where
     F: Fn(i64) -> Option<Vec<f64>>,
 {
@@ -1326,18 +1326,19 @@ where
         return None;
     }
 
-    let span = (2 * SEAM_RESIDUAL_MAX_LAG + 1) as usize;
+    let max_lag = max_lag.max(0);
+    let span = (2 * max_lag + 1) as usize;
     let mut ratios = vec![f64::NAN; span];
     let mut best_idx: Option<usize> = None;
     let mut best_gain = 0.0;
-    for lag in -SEAM_RESIDUAL_MAX_LAG..=SEAM_RESIDUAL_MAX_LAG {
+    for lag in -max_lag..=max_lag {
         let Some(b_win) = b_at_lag(lag) else {
             continue;
         };
         let Some((g, ratio)) = lsq_residual_ratio(a_win, &b_win) else {
             continue;
         };
-        let idx = (lag + SEAM_RESIDUAL_MAX_LAG) as usize;
+        let idx = (lag + max_lag) as usize;
         ratios[idx] = ratio;
         if best_idx.is_none_or(|bi| ratio < ratios[bi]) {
             best_idx = Some(idx);
@@ -1347,7 +1348,7 @@ where
 
     let best_idx = best_idx?;
     let best_ratio = ratios[best_idx];
-    let best_lag = best_idx as i64 - SEAM_RESIDUAL_MAX_LAG;
+    let best_lag = best_idx as i64 - max_lag;
 
     let frac = if best_idx > 0 && best_idx + 1 < span {
         let ym = ratios[best_idx - 1];
@@ -1401,7 +1402,7 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        })
+        }, SEAM_RESIDUAL_MAX_LAG)
     } else {
         None
     };
@@ -1416,12 +1417,187 @@ pub fn seam_residual_diagnostics(
                 return None;
             }
             Some(b_mono[lo as usize..hi as usize].to_vec())
-        })
+        }, SEAM_RESIDUAL_MAX_LAG)
     } else {
         None
     };
 
     SeamResidualDiagnostics { pre, post }
+}
+
+/// Lag radius for the per-gap noise-floor probe — wider than the seam's, to absorb local drift
+/// between encodes so the measured floor reflects noise, not misalignment.
+const SEAM_FLOOR_MAX_LAG: i64 = 512;
+
+/// Reference window must peak at least this multiple of the silence floor to anchor a floor probe.
+const SEAM_FLOOR_ENERGY_MARGIN: f64 = 4.0;
+
+/// Which side of the gap a probe was taken from / where its reference window came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeamFloorSource {
+    /// Immediate border window (just past the standoff) was energetic and usable.
+    Border,
+    /// Border was empty/quiet; reference came from an energetic window walked further out.
+    Walked,
+    /// No energetic, in-coverage reference window found within the horizon.
+    None,
+}
+
+/// Per-gap measured noise-floor probe (report-only): best A-vs-B residual of a clean, energetic
+/// reference window at the *nominal* offset, used to interpret a seam residual as headroom.
+#[derive(Debug, Clone, Copy)]
+pub struct SeamFloorProbe {
+    pub source: SeamFloorSource,
+    /// Normalized residual in dB at the reference window (`NaN` when `source == None`).
+    pub residual_db: f64,
+    pub gain: f64,
+    pub best_lag: i64,
+}
+
+impl SeamFloorProbe {
+    fn none() -> Self {
+        Self {
+            source: SeamFloorSource::None,
+            residual_db: f64::NAN,
+            gain: f64::NAN,
+            best_lag: 0,
+        }
+    }
+
+    pub fn source_label(&self) -> &'static str {
+        match self.source {
+            SeamFloorSource::Border => "border",
+            SeamFloorSource::Walked => "walked",
+            SeamFloorSource::None => "none",
+        }
+    }
+}
+
+/// Which gap edge a floor probe walks out from.
+#[derive(Debug, Clone, Copy)]
+pub enum SeamSide {
+    Pre,
+    Post,
+}
+
+/// Inputs to [`seam_floor_probe`] (report-only diagnostic).
+pub struct SeamFloorParams<'a> {
+    /// Full A audio (interleaved) on the same clock as the gap frames.
+    pub a_samples: &'a [i16],
+    pub channels: usize,
+    /// B haystack mono (same buffer the seam scores against).
+    pub b_mono: &'a [f64],
+    /// Reference window length in frames (use the matching seam window).
+    pub window: usize,
+    /// Frames skipped immediately adjacent to the gap (reuse the seam standoff).
+    pub standoff_frames: usize,
+    /// `b_haystack_frame = a_frame + a_to_b_delta` (nominal alignment mapping).
+    pub a_to_b_delta: i64,
+    /// Outward walk step in frames when the immediate border is quiet.
+    pub step_frames: usize,
+    /// How far from the gap edge the outward walk may reach.
+    pub max_walk_frames: usize,
+    pub absolute_silence_rms: f32,
+}
+
+fn mono_window(a_samples: &[i16], channels: usize, lo: usize, hi: usize) -> Vec<f64> {
+    let channels = channels.max(1);
+    (lo..hi)
+        .map(|frame| {
+            let base = frame * channels;
+            let sum: i64 = (0..channels)
+                .map(|c| i64::from(a_samples.get(base + c).copied().unwrap_or(0)))
+                .sum();
+            sum as f64 / channels as f64
+        })
+        .collect()
+}
+
+/// Measure the per-gap noise floor: slide a clean, energetic A reference window against B at the
+/// nominal offset (wide lag search). Starts at the immediate border, walks outward if it is quiet.
+///
+/// Report-only — allocates per lag; call behind a `tracing::enabled!(DEBUG)` guard.
+pub fn seam_floor_probe(
+    params: &SeamFloorParams<'_>,
+    side: SeamSide,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+) -> SeamFloorProbe {
+    let channels = params.channels.max(1);
+    let w = params.window;
+    if w == 0 {
+        return SeamFloorProbe::none();
+    }
+    let a_total = params.a_samples.len() / channels;
+    let step = params.step_frames.max(1);
+    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
+    let b_len = params.b_mono.len() as i64;
+
+    let mut k = 0usize;
+    loop {
+        let walked = k * step;
+        if walked > params.max_walk_frames {
+            return SeamFloorProbe::none();
+        }
+
+        let window = match side {
+            SeamSide::Pre => {
+                match gap_start_frame.checked_sub(params.standoff_frames + walked) {
+                    Some(hi) if hi >= w => Some((hi - w, hi)),
+                    _ => None,
+                }
+            }
+            SeamSide::Post => {
+                let lo = gap_end_frame + params.standoff_frames + walked;
+                let hi = lo + w;
+                if hi <= a_total {
+                    Some((lo, hi))
+                } else {
+                    None
+                }
+            }
+        };
+        // No more room on this side: report whatever we have (none).
+        let Some((a_lo, a_hi)) = window else {
+            return SeamFloorProbe::none();
+        };
+
+        let a_win = mono_window(params.a_samples, channels, a_lo, a_hi);
+        let peak = a_win.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
+        if peak < energy_floor {
+            k += 1;
+            continue;
+        }
+
+        let b_start0 = a_lo as i64 + params.a_to_b_delta;
+        let probe = seam_residual_for_side(
+            &a_win,
+            |lag| {
+                let lo = b_start0 + lag;
+                let hi = lo + w as i64;
+                if lo < 0 || hi > b_len {
+                    return None;
+                }
+                Some(params.b_mono[lo as usize..hi as usize].to_vec())
+            },
+            SEAM_FLOOR_MAX_LAG,
+        );
+
+        if let Some(r) = probe {
+            let source = if k == 0 {
+                SeamFloorSource::Border
+            } else {
+                SeamFloorSource::Walked
+            };
+            return SeamFloorProbe {
+                source,
+                residual_db: r.residual_db,
+                gain: r.gain,
+                best_lag: r.best_lag,
+            };
+        }
+        k += 1;
+    }
 }
 
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
@@ -2211,6 +2387,102 @@ mod tests {
         let pre = diag.pre.expect("pre residual");
         assert_eq!(pre.best_lag, true_lag, "expected lag {true_lag}, got {}", pre.best_lag);
         assert!(pre.residual_db < -60.0, "shifted copy should cancel, got {} dB", pre.residual_db);
+    }
+
+    #[test]
+    fn seam_floor_probe_uses_border_when_energetic() {
+        // A and B share the same master; the immediate border is energetic, so the floor probe
+        // anchors on it (source = Border) and cancels deeply.
+        let rate_frames = 2000usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+        let standoff = 16usize;
+
+        let b_mono: Vec<f64> = (0..rate_frames)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+            .collect();
+        // A = same master, half level (nominal map is exact → delta 0).
+        let a_samples: Vec<i16> = b_mono
+            .iter()
+            .map(|&s| (s * 0.5).round() as i16)
+            .collect();
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: standoff,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: rate_frames,
+            absolute_silence_rms: 33.0,
+        };
+        let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
+        assert_eq!(pre.source, SeamFloorSource::Border);
+        assert!(pre.residual_db < -60.0, "border floor should cancel, got {}", pre.residual_db);
+
+        let post = seam_floor_probe(&params, SeamSide::Post, gap_start, gap_end);
+        assert_eq!(post.source, SeamFloorSource::Border);
+        assert!(post.residual_db < -60.0, "post floor should cancel, got {}", post.residual_db);
+    }
+
+    #[test]
+    fn seam_floor_probe_walks_past_quiet_border() {
+        // The immediate pre-border is silent; the probe must walk outward to energetic audio.
+        let total = 2000usize;
+        let gap_start = 1200usize;
+        let gap_end = 1400usize;
+        let window = 128usize;
+        let standoff = 16usize;
+
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.23).sin() * 4000.0)
+            .collect();
+        let mut a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+        // Silence the region just before the gap (the immediate border), forcing an outward walk.
+        let quiet_lo = gap_start - standoff - window;
+        for s in a_samples.iter_mut().take(gap_start).skip(quiet_lo) {
+            *s = 0;
+        }
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: standoff,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0,
+        };
+        let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
+        assert_eq!(pre.source, SeamFloorSource::Walked, "should walk past the quiet border");
+        assert!(pre.residual_db < -60.0, "walked floor should still cancel, got {}", pre.residual_db);
+    }
+
+    #[test]
+    fn seam_floor_probe_none_when_all_quiet() {
+        // No energetic reference anywhere → source None.
+        let total = 1000usize;
+        let b_mono: Vec<f64> = (0..total).map(|i| (i as f64 * 0.2).sin() * 4000.0).collect();
+        let a_samples = vec![0i16; total];
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window: 128,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: 128,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0,
+        };
+        let pre = seam_floor_probe(&params, SeamSide::Pre, 600, 800);
+        assert_eq!(pre.source, SeamFloorSource::None);
+        assert!(pre.residual_db.is_nan());
     }
 
     #[test]

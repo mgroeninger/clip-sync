@@ -535,6 +535,50 @@ fn evaluate_seam_gate_fit_candidate(
             post_lag = residual.post.map_or(nan, |r| r.best_lag as f64 + r.frac_lag),
             "fill seam residual diagnostics"
         );
+
+        // Per-gap *measured* noise floor (report-only): probe a clean, energetic A reference window
+        // against B at the nominal offset (wide lag). `headroom_db` = seam residual minus this floor
+        // is the content/codec-adaptive separator we ultimately want to gate on. Gates nothing yet.
+        let a_to_b_delta = offset_nominal_start as i64 - refined.start_frame as i64;
+        let floor_common = |window: usize| policies::SeamFloorParams {
+            a_samples: &params.a_pcm.samples,
+            channels: params.channels,
+            b_mono: &cache.b_mono,
+            window,
+            standoff_frames: params.border_standoff_frames,
+            a_to_b_delta,
+            step_frames: window.max(1),
+            max_walk_frames: params.sample_rate as usize * 3,
+            absolute_silence_rms: params.absolute_silence_rms,
+        };
+        let floor_pre = policies::seam_floor_probe(
+            &floor_common(waveform_gate_frames),
+            policies::SeamSide::Pre,
+            refined.start_frame,
+            refined.end_frame,
+        );
+        let floor_post = policies::seam_floor_probe(
+            &floor_common(post_gate_frames),
+            policies::SeamSide::Post,
+            refined.start_frame,
+            refined.end_frame,
+        );
+        let pre_seam_db = residual.pre.map_or(nan, |r| r.residual_db);
+        let post_seam_db = residual.post.map_or(nan, |r| r.residual_db);
+        tracing::debug!(
+            start_frame = alignment.start_frame,
+            pre_seam_db,
+            pre_floor_db = floor_pre.residual_db,
+            pre_headroom_db = pre_seam_db - floor_pre.residual_db,
+            pre_floor_source = floor_pre.source_label(),
+            pre_floor_lag = floor_pre.best_lag,
+            post_seam_db,
+            post_floor_db = floor_post.residual_db,
+            post_headroom_db = post_seam_db - floor_post.residual_db,
+            post_floor_source = floor_post.source_label(),
+            post_floor_lag = floor_post.best_lag,
+            "fill seam floor diagnostics"
+        );
     }
 
     if !structure_passes_gate(
