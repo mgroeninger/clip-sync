@@ -374,12 +374,12 @@ pub fn preview_patch_geometry(
 }
 
 fn slice_b_interleaved(
-    b_samples: &[i16],
+    b_samples: &[f32],
     channels: usize,
     sample_rate: u32,
     start_secs: f64,
     end_secs: f64,
-) -> Vec<i16> {
+) -> Vec<f32> {
     let channels = channels.max(1);
     let start_frame = (start_secs * sample_rate as f64).round() as usize;
     let end_frame =

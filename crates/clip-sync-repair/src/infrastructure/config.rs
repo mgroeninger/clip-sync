@@ -234,7 +234,7 @@ fn default_silence_hold_ms() -> u64 {
     500
 }
 fn default_absolute_silence_rms() -> f32 {
-    33.0
+    33.0 / 32767.0
 }
 fn default_true() -> bool {
     true

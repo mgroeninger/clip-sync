@@ -905,6 +905,7 @@ mod tests {
 
             duration: Some(mins(60)),
             decodable,
+            bit_depth: None,
         }
     }
 
@@ -977,6 +978,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
             AudioTrack {
                 index: 1,
@@ -986,6 +988,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
         ];
 
@@ -1003,6 +1006,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
             AudioTrack {
                 index: 1,
@@ -1012,6 +1016,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
         ];
 
@@ -1029,6 +1034,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
             AudioTrack {
                 index: 1,
@@ -1038,6 +1044,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: false,
+                bit_depth: None,
             },
         ];
 
@@ -1054,6 +1061,7 @@ mod tests {
 
             duration: Some(mins(60)),
             decodable: false,
+            bit_depth: None,
         }];
 
         assert_eq!(
@@ -1073,6 +1081,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
             AudioTrack {
                 index: 1,
@@ -1082,6 +1091,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
         ];
 
@@ -1099,6 +1109,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: false,
+                bit_depth: None,
             },
             AudioTrack {
                 index: 1,
@@ -1108,6 +1119,7 @@ mod tests {
 
                 duration: Some(mins(60)),
                 decodable: true,
+                bit_depth: None,
             },
         ];
 

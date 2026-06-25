@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::domain::BitDepth;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioTrack {
     pub index: u32,
@@ -10,6 +12,9 @@ pub struct AudioTrack {
     pub duration: Option<Duration>,
     /// Whether Symphonia can construct a decoder for this track at probe time.
     pub decodable: bool,
+    /// Source sample format / bit depth as reported by the container codec parameters.
+    /// `None` for lossy codecs (AAC, MP3, AC-3, Opus, Vorbis) that don't carry this information.
+    pub bit_depth: Option<BitDepth>,
 }
 
 /// Human-readable channel layout for logging (e.g. `stereo`, `5.1`).
@@ -57,6 +62,7 @@ mod tests {
             sample_rate: 48_000,
             duration: None,
             decodable: true,
+            bit_depth: None,
         };
         assert_eq!(
             track.format_description(),

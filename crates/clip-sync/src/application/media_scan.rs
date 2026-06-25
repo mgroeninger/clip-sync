@@ -154,6 +154,7 @@ mod tests {
                 sample_rate: 11_025,
                 duration: Some(Duration::from_secs_f64(self.track_duration_secs)),
                 decodable: true,
+                bit_depth: None,
             }])
         }
 

@@ -1018,6 +1018,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1168,6 +1169,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1255,6 +1257,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1376,6 +1379,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1419,6 +1423,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1461,6 +1466,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration).with_extract_error(
             crate::application::error::MediaError::decode_failed(0, "boom"),
@@ -1505,6 +1511,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let short_clip = MonoPcmClip {
             sample_rate: SAMPLE_RATE,
@@ -1553,6 +1560,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1591,6 +1599,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();
@@ -1632,6 +1641,7 @@ mod tests {
             sample_rate: SAMPLE_RATE,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         };
         let mut session_a = FakeMediaSession::with_duration(duration);
         let mut session_b = session_a.clone();

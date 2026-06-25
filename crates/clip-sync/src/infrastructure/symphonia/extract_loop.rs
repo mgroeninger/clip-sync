@@ -795,7 +795,7 @@ impl ExtractSink for MonoExtractSink {
 // ---------------------------------------------------------------------------
 
 pub(super) struct InterleavedExtractSink {
-    out: Vec<i16>,
+    out: Vec<f32>,
     channels_hint: Option<usize>,
     channels: Option<usize>,
     resolved_rate: Option<u32>,
@@ -1047,7 +1047,7 @@ impl ExtractSink for InterleavedExtractSink {
                             "padding end-of-window interleaved decode gap with silence"
                         );
                     }
-                    self.out.resize(target.saturating_mul(ch), 0);
+                    self.out.resize(target.saturating_mul(ch), 0.0);
                 }
             }
         }
@@ -1080,6 +1080,7 @@ impl ExtractSink for InterleavedExtractSink {
             decode_error_skips,
             decoded_frame_count: (decoded_frame_count < target).then_some(decoded_frame_count),
             compressed_bytes: Some(ctx.compressed_bytes),
+            source_bit_depth: ctx.track.bit_depth,
         })
     }
 }

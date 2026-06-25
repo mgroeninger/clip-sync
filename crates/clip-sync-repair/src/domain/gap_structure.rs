@@ -36,7 +36,7 @@ pub(crate) struct ActivityTimeline {
 
 impl ActivityTimeline {
     pub(crate) fn build(
-        samples: &[i16],
+        samples: &[f32],
         channels: usize,
         total_frames: usize,
         bin_frames: usize,
@@ -72,7 +72,7 @@ impl ActivityTimeline {
 /// Uses `bin_frames` and the silence thresholds from `params`; the other match-search fields
 /// are not read here.
 pub fn build_gap_context_signature(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -115,7 +115,7 @@ pub fn build_gap_context_signature(
 /// Locate a B fill bracket by matching A's surrounding edit structure.
 pub fn match_gap_structure_in_b(
     signature: &GapContextSignature,
-    b_samples: &[i16],
+    b_samples: &[f32],
     channels: usize,
     nominal_fill_start: usize,
     nominal_fill_end: usize,
@@ -516,7 +516,7 @@ pub(crate) fn score_post_match(
 }
 
 fn activity_bins(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     start_frame: usize,
     end_frame: usize,
@@ -570,10 +570,10 @@ fn bin_similarity(expected: &[bool], observed: &[bool]) -> f64 {
 mod tests {
     use super::*;
 
-    fn write_frame(samples: &mut Vec<i16>, channels: usize, frame: usize, active: bool) {
-        let amp = if active { 8_000i16 } else { 0 };
+    fn write_frame(samples: &mut Vec<f32>, channels: usize, frame: usize, active: bool) {
+        let amp = if active { 8_000.0_f32 / 32767.0 } else { 0.0 };
         while samples.len() < (frame + 1) * channels {
-            samples.push(0);
+            samples.push(0.0);
         }
         for ch in 0..channels {
             samples[frame * channels + ch] = amp;
@@ -594,7 +594,7 @@ mod tests {
         let gap_start = 60usize;
         let gap_end = gap_start + gap_frames;
 
-        let mut a = vec![0i16; 200];
+        let mut a = vec![0.0f32; 200];
         for f in 0..55 {
             write_frame(&mut a, channels, f, true);
         }
@@ -608,7 +608,7 @@ mod tests {
             write_frame(&mut a, channels, f, true);
         }
 
-        let mut b = vec![0i16; 200];
+        let mut b = vec![0.0f32; 200];
         for f in 0..55 {
             write_frame(&mut b, channels, f, true);
         }
@@ -657,12 +657,12 @@ mod tests {
         let channels = 1usize;
         let bin_frames = 20usize;
         let gap_frames = 40usize;
-        let mut a = vec![0i16; 180];
+        let mut a = vec![0.0f32; 180];
         for f in 0..180 {
             write_frame(&mut a, channels, f, !(60..100).contains(&f));
         }
 
-        let mut b = vec![0i16; 180];
+        let mut b = vec![0.0f32; 180];
         for f in 0..180 {
             write_frame(&mut b, channels, f, true);
         }

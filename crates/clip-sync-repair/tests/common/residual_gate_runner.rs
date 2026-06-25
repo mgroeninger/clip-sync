@@ -120,7 +120,8 @@ pub fn run_built_floor_oracle_cfg(
         built.meta.sample_rate,
         None,
     ));
-    let (_, decoded_a_mono) = read_mono_wav(&decoded_a);
+    let (_, decoded_a_mono_i16) = read_mono_wav(&decoded_a);
+    let decoded_a_mono: Vec<f32> = decoded_a_mono_i16.iter().map(|&s| s as f32 / 32767.0).collect();
 
     let report = gap_report_from_floor_oracle(
         &built.path_a,

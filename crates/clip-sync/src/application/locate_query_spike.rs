@@ -78,6 +78,7 @@ impl ChirpReferenceSession {
             sample_rate: RATE,
             duration: Some(Duration::from_secs_f64(self.duration_secs)),
             decodable: true,
+            bit_depth: None,
         }
     }
 }

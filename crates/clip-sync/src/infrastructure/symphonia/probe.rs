@@ -16,7 +16,7 @@ use symphonia::core::units::Time;
 use tracing::debug;
 
 use crate::application::error::MediaError;
-use crate::domain::AudioTrack;
+use crate::domain::{AudioTrack, BitDepth};
 use crate::infrastructure::symphonia::codec_registry::codec_registry;
 use crate::infrastructure::symphonia::duration::{
     duration_from_chapters, format_media_duration, scan_container_audio_duration,
@@ -93,9 +93,9 @@ fn probe_from_format(
             codec: codec_name(params.codec),
             channels: channel_count(params),
             sample_rate: params.sample_rate.unwrap_or(0),
-
             duration: track_duration,
             decodable,
+            bit_depth: BitDepth::from_codec_params(params),
         });
 
         if let Some(track_duration) = track_duration {

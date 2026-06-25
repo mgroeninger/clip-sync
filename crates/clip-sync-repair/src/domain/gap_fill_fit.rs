@@ -175,7 +175,7 @@ pub struct WaveformSeamContext<'a> {
 /// B-side haystack and nominal bracket for unified structure+waveform fill search.
 pub struct UnifiedFillSearchInput<'a> {
     pub signature: &'a GapSignature,
-    pub b_samples: &'a [i16],
+    pub b_samples: &'a [f32],
     pub channels: usize,
     pub waveform: &'a WaveformSeamContext<'a>,
     pub nominal_fill_start: usize,
@@ -725,7 +725,7 @@ fn unified_fine_polish_start(
 /// Structure-only match for regression comparison in tests.
 pub fn match_gap_structure_only_in_b(
     signature: &GapContextSignature,
-    b_samples: &[i16],
+    b_samples: &[f32],
     channels: usize,
     nominal_fill_start: usize,
     nominal_fill_end: usize,
@@ -755,27 +755,27 @@ fn fill_anchor_better(
 }
 
 /// Fit a B bracket to A gap length (trim tail / pad tail).
-pub fn fit_fill_to_gap_frames(samples: &[i16], channels: usize, target_frames: usize) -> Vec<i16> {
+pub fn fit_fill_to_gap_frames(samples: &[f32], channels: usize, target_frames: usize) -> Vec<f32> {
     let channels = channels.max(1);
     let source_frames = samples.len() / channels;
     if source_frames == target_frames {
         return samples.to_vec();
     }
     if source_frames == 0 {
-        return vec![0i16; target_frames * channels];
+        return vec![0.0f32; target_frames * channels];
     }
 
     if source_frames > target_frames {
         return samples[..target_frames * channels].to_vec();
     }
 
-    let mut out = vec![0i16; target_frames * channels];
+    let mut out = vec![0.0f32; target_frames * channels];
     out[..samples.len()].copy_from_slice(samples);
     out
 }
 
 fn placement_repeat_post(
-    fill_interleaved: &[i16],
+    fill_interleaved: &[f32],
     channels: usize,
     a_post: &[f64],
     a_post_ch: &[Vec<f64>],
@@ -795,7 +795,7 @@ fn placement_repeat_post(
                     .iter()
                     .skip(ch)
                     .step_by(channels)
-                    .map(|&s| f64::from(s))
+                    .map(|&s| s as f64)
                     .collect()
             })
             .collect()
@@ -825,21 +825,21 @@ fn placement_repeat_post(
 /// Greedily extend a short B bracket into contiguous B audio while `min(pre, post)` does not
 /// fall and repeat-at-post stays bounded; zero-pad any remaining frames.
 pub fn score_extend_short_fill_to_gap_frames(
-    fill_interleaved: &[i16],
-    extension_interleaved: &[i16],
+    fill_interleaved: &[f32],
+    extension_interleaved: &[f32],
     channels: usize,
     gap_frames: usize,
     borders: &BorderSeamTemplates<'_>,
     repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<i16> {
+) -> Vec<f32> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     debug_assert!(source_frames < gap_frames);
 
     let ext_frames = extension_interleaved.len() / channels;
     let mut out = fill_interleaved.to_vec();
-    let score_at_length = |samples: &[i16]| {
+    let score_at_length = |samples: &[f32]| {
         let padded = fit_fill_to_gap_frames(samples, channels, gap_frames);
         let (pre, post) = fill_splice_seam_correlations_interleaved(
             &padded,
@@ -898,14 +898,14 @@ pub fn score_extend_short_fill_to_gap_frames(
 
 /// Fit-mode length adjust: score-based extend when short, dual-anchor trim when long.
 pub fn fit_fill_length_for_gap(
-    fill_interleaved: &[i16],
-    extension_interleaved: &[i16],
+    fill_interleaved: &[f32],
+    extension_interleaved: &[f32],
     channels: usize,
     gap_frames: usize,
     borders: &BorderSeamTemplates<'_>,
     repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<i16> {
+) -> Vec<f32> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames > gap_frames {
@@ -927,12 +927,12 @@ pub fn fit_fill_length_for_gap(
 
 /// When B bracket exceeds A gap length, pick trim-head vs trim-tail by waveform seam score (fit mode).
 pub fn pick_fill_length_anchor(
-    fill_interleaved: &[i16],
+    fill_interleaved: &[f32],
     channels: usize,
     gap_frames: usize,
     borders: &BorderSeamTemplates<'_>,
     seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<i16> {
+) -> Vec<f32> {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames <= gap_frames {
@@ -1168,7 +1168,7 @@ mod tests {
         assert!(matches!(err, ResidualGateError::PearsonBelowFloor(_)));
     }
 
-    fn no_seam_ctx<'a>(a_samples: &'a [i16]) -> SpliceSeamContext<'a> {
+    fn no_seam_ctx<'a>(a_samples: &'a [f32]) -> SpliceSeamContext<'a> {
         SpliceSeamContext {
             seam_cf: 0,
             gap_start_frame: 0,
@@ -1215,9 +1215,9 @@ mod tests {
 
     use crate::domain::policies::{interleaved_to_channels, interleaved_to_mono};
 
-    fn sine_frame(frame: usize, rate: u32) -> i16 {
+    fn sine_frame(frame: usize, rate: u32) -> f32 {
         let t = frame as f64 / f64::from(rate);
-        (f64::sin(2.0 * std::f64::consts::PI * 440.0 * t) * 10_000.0) as i16
+        (f64::sin(2.0 * std::f64::consts::PI * 440.0 * t) * 0.305) as f32
     }
 
     fn build_b_haystack_with_dropout_offset(
@@ -1226,14 +1226,14 @@ mod tests {
         lead_in_frames: usize,
         gap_frames: usize,
         post_frames: usize,
-    ) -> (Vec<i16>, usize) {
+    ) -> (Vec<f32>, usize) {
         let gap_start = pre_frames + lead_in_frames;
         let total = gap_start + gap_frames + post_frames;
         let mut samples = Vec::with_capacity(total);
         for frame in 0..total {
             let in_gap = frame >= gap_start && frame < gap_start + gap_frames;
             let sample = if in_gap {
-                0i16
+                0.0f32
             } else {
                 sine_frame(frame, rate)
             };
@@ -1258,10 +1258,10 @@ mod tests {
         let post_len = 64usize;
         let gap_start_on_a = pre_frames;
         let a_pre: Vec<f64> = (0..pre_len)
-            .map(|i| f64::from(sine_frame(gap_start_on_a - pre_len + i, rate)))
+            .map(|i| sine_frame(gap_start_on_a - pre_len + i, rate) as f64)
             .collect();
         let a_post: Vec<f64> = (0..post_len)
-            .map(|i| f64::from(sine_frame(gap_start_on_a + gap_frames + i, rate)))
+            .map(|i| sine_frame(gap_start_on_a + gap_frames + i, rate) as f64)
             .collect();
 
         let structure_start = gap_start_on_a;
@@ -1463,9 +1463,8 @@ mod tests {
         let post_w = 2usize;
         let a_pre = vec![0.1, -0.1];
         let a_post = vec![0.6, -0.4];
-        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
-        let post: Vec<i16> = a_post.iter().map(|&v| to_i16(v)).collect();
-        let fill = vec![0i16, 0, 0, 0, post[0], post[1]];
+        let post: Vec<f32> = a_post.iter().map(|&v| v as f32).collect();
+        let fill = vec![0.0f32, 0.0, 0.0, 0.0, post[0], post[1]];
         let seam_ctx = no_seam_ctx(&[]);
         let picked = pick_fill_length_anchor(
             &fill,
@@ -1474,7 +1473,7 @@ mod tests {
             &test_borders(&a_pre, &a_post, &[], &[], pre_w, post_w),
             seam_ctx,
         );
-        assert_eq!(picked, vec![0, 0, post[0], post[1]]);
+        assert_eq!(picked, vec![0.0, 0.0, post[0], post[1]]);
     }
 
     #[test]
@@ -1491,10 +1490,9 @@ mod tests {
             .collect();
         let a_pre_ch = vec![a_pre.clone()];
         let a_post_ch = vec![a_post.clone()];
-        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
-        let pre: Vec<i16> = a_pre.iter().map(|&v| to_i16(v)).collect();
-        let post: Vec<i16> = a_post.iter().map(|&v| to_i16(v)).collect();
-        let junk = vec![0i16, 0, 0, 0];
+        let pre: Vec<f32> = a_pre.iter().map(|&v| v as f32).collect();
+        let post: Vec<f32> = a_post.iter().map(|&v| v as f32).collect();
+        let junk = vec![0.0f32, 0.0, 0.0, 0.0];
         let mut fill = pre;
         fill.extend(&junk);
         fill.extend(&post);
@@ -1507,7 +1505,7 @@ mod tests {
             &test_borders(&a_pre, &a_post, &a_pre_ch, &a_post_ch, pre_w, post_w),
             seam_ctx,
         );
-        assert_eq!(picked, vec![0, 0, post[0], post[1]]);
+        assert_eq!(picked, vec![0.0, 0.0, post[0], post[1]]);
     }
 
     #[test]
@@ -1516,16 +1514,10 @@ mod tests {
         let gap_frames = 5usize;
         let pre_w = 2usize;
         let post_w = 2usize;
-        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
         let a_pre = vec![0.9, -0.9];
         let a_post = vec![0.8, 0.7];
-        let fill = vec![to_i16(0.9), to_i16(-0.9)];
-        let extension = vec![
-            to_i16(0.75),
-            to_i16(0.8),
-            to_i16(-1.0),
-            to_i16(-1.0),
-        ];
+        let fill = vec![0.9f32, -0.9f32];
+        let extension = vec![0.75f32, 0.8f32, -1.0f32, -1.0f32];
 
         let blind = {
             let mut raw = fill.clone();
@@ -1549,9 +1541,9 @@ mod tests {
             no_seam_ctx(&[]),
         );
 
-        let extension_frames_used = |samples: &[i16]| {
+        let extension_frames_used = |samples: &[f32]| {
             let mut end = samples.len();
-            while end > fill.len() && samples[end - 1] == 0 {
+            while end > fill.len() && samples[end - 1] == 0.0 {
                 end -= 1;
             }
             (end - fill.len()) / channels
@@ -1569,16 +1561,10 @@ mod tests {
         let channels = 1usize;
         let gap_frames = 5usize;
         let window = 2usize;
-        let to_i16 = |v: f64| (v * 10_000.0).round() as i16;
         let a_pre = vec![0.9, -0.9];
         let a_post = vec![0.8, 0.7];
-        let fill = vec![to_i16(0.9), to_i16(-0.9)];
-        let extension = vec![
-            to_i16(0.75),
-            to_i16(0.8),
-            to_i16(-1.0),
-            to_i16(-1.0),
-        ];
+        let fill = vec![0.9f32, -0.9f32];
+        let extension = vec![0.75f32, 0.8f32, -1.0f32, -1.0f32];
         let borders = test_borders(
             &a_pre,
             &a_post,

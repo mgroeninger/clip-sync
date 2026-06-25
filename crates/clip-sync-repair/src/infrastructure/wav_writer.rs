@@ -26,7 +26,8 @@ impl PatchedAudioWriter for WavPatchedAudioWriter {
             RepairError::Write(io::Error::other(format!("{}: {}", path.display(), e)))
         })?;
 
-        for &sample in &audio.samples {
+        for &s in &audio.samples {
+            let sample = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
             writer.write_sample(sample).map_err(|e| {
                 RepairError::Write(io::Error::other(format!("{}: {}", path.display(), e)))
             })?;

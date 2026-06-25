@@ -120,33 +120,27 @@ fn linear_resample_fallback(
     }
 }
 
-/// Resample interleaved `i16` PCM from `from_rate` to `to_rate`.
+/// Resample interleaved `f32` PCM from `from_rate` to `to_rate`.
 ///
-/// Deinterleaves to per-channel `MonoPcmClip`, resamples each via the mono path, then
+/// Deinterleaves to per-channel planes, resamples each via the FFT engine directly, then
 /// reinterleaves. Returns the input unchanged when rates match or when `channels` is zero.
 ///
 /// Facade convenience for `clip-sync-repair` (which calls this without port injection).
 pub fn resample_interleaved(
-    samples: &[i16],
+    samples: &[f32],
     channels: u16,
     from_rate: u32,
     to_rate: u32,
-) -> Vec<i16> {
+) -> Vec<f32> {
     let ch = channels as usize;
     if from_rate == to_rate || samples.is_empty() || ch == 0 {
         return samples.to_vec();
     }
 
-    let resampled: Vec<Vec<i16>> = (0..ch)
+    let resampled: Vec<Vec<f32>> = (0..ch)
         .map(|c| {
-            let plane: Vec<i16> = samples.chunks_exact(ch).map(|frame| frame[c]).collect();
-            let clip = MonoPcmClip {
-                sample_rate: from_rate,
-                samples: plane,
-                decode_error_skips: 0,
-                decoded_sample_count: None,
-            };
-            resample_mono_pcm(&clip, to_rate).samples
+            let plane: Vec<f32> = samples.chunks_exact(ch).map(|frame| frame[c]).collect();
+            resample_f32_plane(&plane, from_rate, to_rate)
         })
         .collect();
 
@@ -160,26 +154,85 @@ pub fn resample_interleaved(
     out
 }
 
+/// Resample a single-channel `f32` plane using `FftFixedIn`, falling back to linear interpolation.
+fn resample_f32_plane(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() {
+        return input.to_vec();
+    }
+    let mut resampler = match FftFixedIn::<f32>::new(
+        from_rate as usize,
+        to_rate as usize,
+        RESAMPLE_CHUNK_SIZE,
+        RESAMPLE_SUB_CHUNKS,
+        1,
+    ) {
+        Ok(r) => r,
+        Err(_) => return linear_resample_f32(input, from_rate, to_rate, "fft_init"),
+    };
+
+    let mut output = Vec::new();
+    let mut chunk_start = 0usize;
+    while chunk_start < input.len() {
+        let chunk_end = (chunk_start + RESAMPLE_CHUNK_SIZE).min(input.len());
+        let chunk_len = chunk_end - chunk_start;
+        let mut waves_in = vec![input[chunk_start..chunk_end].to_vec()];
+        if chunk_len < RESAMPLE_CHUNK_SIZE {
+            waves_in[0].resize(RESAMPLE_CHUNK_SIZE, 0.0);
+        }
+        let out_len = resampler.output_frames_max();
+        let mut waves_out = vec![vec![0.0f32; out_len]];
+        match resampler.process_into_buffer(&waves_in, &mut waves_out, None) {
+            Ok((_, produced)) => output.extend_from_slice(&waves_out[0][..produced]),
+            Err(_) => return linear_resample_f32(input, from_rate, to_rate, "process_buffer"),
+        }
+        chunk_start += chunk_len;
+    }
+    output
+}
+
+fn linear_resample_f32(
+    input: &[f32],
+    from_rate: u32,
+    to_rate: u32,
+    trigger: &'static str,
+) -> Vec<f32> {
+    warn!(from_rate, to_rate, trigger, "falling back to linear interleaved resample");
+    let output_len =
+        ((input.len() as f64 * f64::from(to_rate)) / f64::from(from_rate)).ceil() as usize;
+    let mut output = Vec::with_capacity(output_len);
+    let input_len = input.len();
+    for out_index in 0..output_len {
+        let src_pos = (out_index as f64 * f64::from(from_rate)) / f64::from(to_rate);
+        let left = src_pos.floor() as usize;
+        let right = (left + 1).min(input_len.saturating_sub(1));
+        let frac = (src_pos - left as f64) as f32;
+        let left_sample = input[left.min(input_len - 1)];
+        let right_sample = input[right];
+        output.push(left_sample + (right_sample - left_sample) * frac);
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn resample_interleaved_identity_when_rates_match() {
-        let samples = vec![100_i16, -100, 200, -200];
+        let samples = vec![0.003_f32, -0.003, 0.006, -0.006];
         let out = resample_interleaved(&samples, 2, 44_100, 44_100);
         assert_eq!(out, samples);
     }
 
     #[test]
     fn resample_interleaved_preserves_channel_layout() {
-        // Two channels: left = constant 1000, right = constant -1000.
+        // Two channels: left = constant 0.03, right = constant -0.03.
         let rate = 44_100u32;
         let frames = rate as usize;
         let mut samples = Vec::with_capacity(frames * 2);
         for _ in 0..frames {
-            samples.push(1000_i16);
-            samples.push(-1000_i16);
+            samples.push(0.03_f32);
+            samples.push(-0.03_f32);
         }
 
         let out = resample_interleaved(&samples, 2, 44_100, 22_050);

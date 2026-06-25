@@ -309,6 +309,7 @@ fn test_track(duration: Duration) -> AudioTrack {
         sample_rate: 44_100,
         duration: Some(duration),
         decodable: true,
+        bit_depth: None,
     }
 }
 

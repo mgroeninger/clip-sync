@@ -339,18 +339,20 @@ mod tests {
             return MultiChannelPcm {
                 sample_rate: clip.sample_rate,
                 channels: 1,
-                samples: clip.samples,
+                samples: clip.samples.iter().map(|&s| s as f32 / 32767.0).collect(),
                 decode_error_skips: clip.decode_error_skips,
                 decoded_frame_count: clip.decoded_sample_count,
                 compressed_bytes: None,
+                source_bit_depth: None,
             };
         }
 
         let mut samples =
             Vec::with_capacity(clip.samples.len().saturating_mul(channels as usize));
         for sample in clip.samples {
+            let s = sample as f32 / 32767.0;
             for _ in 0..channels {
-                samples.push(sample);
+                samples.push(s);
             }
         }
         MultiChannelPcm {
@@ -362,6 +364,7 @@ mod tests {
                 .decoded_sample_count
                 .map(|frames| frames * channels as usize),
             compressed_bytes: None,
+            source_bit_depth: None,
         }
     }
 
@@ -450,6 +453,7 @@ mod tests {
             sample_rate: 11_025,
             duration: Some(duration),
             decodable: true,
+            bit_depth: None,
         }
     }
 
@@ -710,6 +714,7 @@ mod tests {
                 sample_rate: 11_025,
                 duration: None,
                 decodable: true,
+                bit_depth: None,
             }])
         }
 
@@ -736,16 +741,17 @@ mod tests {
 
     #[test]
     fn loud_pcm_is_not_classified_as_silent() {
-        let loud_samples: Vec<i16> = (0..11_025)
+        let loud_samples_i16: Vec<i16> = (0..11_025)
             .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
             .collect();
         let loud_clip = MonoPcmClip {
             sample_rate: 11_025,
-            samples: loud_samples,
+            samples: loud_samples_i16.clone(),
             decode_error_skips: 0,
             decoded_sample_count: None,
         };
-        assert!(!policies::is_silent(&loud_clip.samples, 0.01, 0.0));
+        let loud_samples_f32: Vec<f32> = loud_clip.samples.iter().map(|&s| s as f32 / 32767.0).collect();
+        assert!(!policies::is_silent(&loud_samples_f32, 0.01, 0.0));
 
         let dur = Duration::from_secs(120);
         let reader = FixedReader::new()

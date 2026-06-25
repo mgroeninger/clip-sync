@@ -4,7 +4,7 @@ version = 1
 [defaults]
 scan_block_ms        = 250
 silence_peak_fraction = 0.01
-absolute_silence_floor = 33.0   # peak-based, ≈ −60 dBFS; matches ffmpeg silencedetect default
+absolute_silence_floor = 0.001007   # ≈ 33/32767 ≈ −60 dBFS; matches ffmpeg silencedetect default
 min_gap_ms           = 1000
 silence_hold_ms      = 500
 tolerance_secs       = 0.3      # per-boundary tolerance for start/end assertions

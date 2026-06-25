@@ -1,5 +1,6 @@
 pub mod alignment;
 pub mod audio_timeline;
+pub mod bit_depth;
 pub mod audio_track;
 pub mod human_format;
 pub mod clip_plan;
@@ -32,6 +33,7 @@ pub use alignment::{
 };
 pub use audio_timeline::AudioTimelineSkew;
 pub use audio_track::AudioTrack;
+pub use bit_depth::BitDepth;
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;

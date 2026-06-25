@@ -81,7 +81,7 @@ pub fn gap_report_from_energy_fixture(
 pub fn gap_report_from_floor_oracle(
     path_a: &Path,
     path_b: &Path,
-    decoded_a_mono: &[i16],
+    decoded_a_mono: &[f32],
     sample_rate: u32,
     gap_start_frame: usize,
     gap_end_frame: usize,

@@ -412,7 +412,7 @@ fn assert_patch_anchors_exclude_structure_trusted(
     }
 }
 
-fn rms_region(samples: &[i16], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
+fn rms_region(samples: &[f32], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
     let start = (start_secs * sample_rate as f64) as usize * channels as usize;
     let end = (end_secs * sample_rate as f64) as usize * channels as usize;
     let end = end.min(samples.len());
@@ -420,7 +420,7 @@ fn rms_region(samples: &[i16], sample_rate: u32, channels: u16, start_secs: f64,
         return 0.0;
     }
     let slice = &samples[start..end];
-    let sum_sq: f64 = slice.iter().map(|&s| { let v = f64::from(s); v * v }).sum();
+    let sum_sq: f64 = slice.iter().map(|&s| { let v = s as f64; v * v }).sum();
     (sum_sq / slice.len() as f64).sqrt() as f32
 }
 
@@ -792,7 +792,7 @@ fn expect_pcm(result: &clip_sync_repair::application::PatchAudioResult) -> &Mult
         .expect("expected patch to decode A when fill regions exist")
 }
 
-fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<i16>, u32, u16) {
+fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<f32>, u32, u16) {
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
 
@@ -808,9 +808,9 @@ fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<i16>,
 
     let mut reader = WavReader::open(&path_out).expect("open out.wav");
     let spec = reader.spec();
-    let samples: Vec<i16> = reader
+    let samples: Vec<f32> = reader
         .samples::<i16>()
-        .map(|s| s.expect("read sample"))
+        .map(|s| s.expect("read sample") as f32 / 32767.0)
         .collect();
     (samples, spec.sample_rate, spec.channels)
 }
@@ -871,16 +871,16 @@ fn patch_audio_fills_gap_in_stereo_wav() {
 
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "gap region should have audio after fill, got rms={gap_rms}"
     );
 
     let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    assert!(pre_rms > 100.0, "pre-gap region should have audio, got rms={pre_rms}");
+    assert!(pre_rms > 100.0 / 32767.0, "pre-gap region should have audio, got rms={pre_rms}");
 
     let post_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
     assert!(
-        post_rms > 100.0,
+        post_rms > 100.0 / 32767.0,
         "post-gap region should retain A audio after splice, got rms={post_rms}"
     );
 }
@@ -912,12 +912,12 @@ fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
     let pcm = expect_pcm(&result);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "gap should be filled when structure match is strong, got rms={gap_rms}"
     );
 
     let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    assert!(pre_rms > 100.0, "pre-gap audio should be preserved, got rms={pre_rms}");
+    assert!(pre_rms > 100.0 / 32767.0, "pre-gap audio should be preserved, got rms={pre_rms}");
 
     assert_eq!(result.summary.patched_count, 1);
     assert_eq!(result.summary.skipped_count, 0);
@@ -1005,7 +1005,7 @@ fn patch_audio_resamples_b_when_sample_rates_differ() {
 
     let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "gap should be filled after resampling B from {RATE_B} Hz, got rms={gap_rms}"
     );
 }
@@ -1035,7 +1035,7 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
 
     let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "aligned fill should recover shifted B mapping, got rms={gap_rms}"
     );
 
@@ -1045,7 +1045,7 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
     let gap_close = rms_region(&samples, SAMPLE_RATE, CHANNELS, 5.9, 6.0);
     let post_first = rms_region(&samples, SAMPLE_RATE, CHANNELS, 6.0, 6.1);
 
-    assert!(pre_last > 100.0, "pre-gap should stay loud, got rms={pre_last}");
+    assert!(pre_last > 100.0 / 32767.0, "pre-gap should stay loud, got rms={pre_last}");
     assert!(
         gap_open > pre_last * 0.5,
         "gap opening should not dip to silence (pre={pre_last}, open={gap_open})"
@@ -1054,7 +1054,7 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
         gap_close > pre_last * 0.5,
         "gap closing should not dip to silence (pre={pre_last}, close={gap_close})"
     );
-    assert!(post_first > 100.0, "post-gap should stay loud, got rms={post_first}");
+    assert!(post_first > 100.0 / 32767.0, "post-gap should stay loud, got rms={post_first}");
 }
 
 #[test]
@@ -1130,7 +1130,7 @@ fn patch_audio_fills_gap_with_imprecise_scan_boundaries() {
     let pcm = expect_pcm(&result);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "imprecise scan boundaries should still be filled, got rms={gap_rms}, status={:?}",
         result.summary.gaps[0].status
     );
@@ -1215,7 +1215,7 @@ fn scan_then_patch_fills_detected_gap() {
         f64::from(SCAN_GAP_END),
     );
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "scan-detected gap should be filled, got rms={gap_rms}"
     );
 }
@@ -1378,7 +1378,7 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, SHORT_GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "gap should contain audio after one-strong-seam patch, rms={gap_rms}"
     );
 }
@@ -1466,7 +1466,7 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "extended gap should be filled, rms={gap_rms}"
     );
 }
@@ -1557,7 +1557,7 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "extended gap should be filled, rms={gap_rms}"
     );
 }
@@ -1709,7 +1709,7 @@ fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "marginal patch should still splice audio, rms={gap_rms}"
     );
 }
@@ -1871,7 +1871,7 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         LATE_GAP_END,
     );
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "late gap should be filled with interpolated offset, rms={gap_rms}"
     );
 }
@@ -2015,7 +2015,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
         fixture.hard_gap_span.1,
     );
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "hard gap should be filled after anchored retry, rms={gap_rms}"
     );
 }
@@ -2109,7 +2109,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
         fixture.hard_gap_span.1,
     );
     assert!(
-        gap_rms > 100.0,
+        gap_rms > 100.0 / 32767.0,
         "hard gap should be filled after gate anchored retry, rms={gap_rms}"
     );
 

@@ -641,9 +641,9 @@ fn append_interleaved_frames_in_window_keeps_channels() {
 
     // Two frames × two channels, interleaved, with no downmix.
     assert_eq!(out.len(), 4);
-    assert!(out[0] > 0, "frame 0 left should be positive");
-    assert!(out[1] < 0, "frame 0 right should be negative");
-    assert!(out[2] > 0 && out[3] > 0, "frame 1 both channels positive");
+    assert!(out[0] > 0.0, "frame 0 left should be positive");
+    assert!(out[1] < 0.0, "frame 0 right should be negative");
+    assert!(out[2] > 0.0 && out[3] > 0.0, "frame 1 both channels positive");
     assert!(out[2] > out[3], "left (0.5) should exceed right (0.25)");
 }
 
@@ -668,10 +668,10 @@ fn extract_interleaved_preserves_stereo_channels() {
     assert_eq!(clip.frames(), 44_100);
     assert_eq!(clip.samples.len(), 44_100 * 2);
 
-    let left_peak = clip.samples.iter().step_by(2).map(|s| s.abs()).max().unwrap_or(0);
-    let right_peak = clip.samples.iter().skip(1).step_by(2).map(|s| s.abs()).max().unwrap_or(0);
-    assert!(left_peak > 1_000, "left channel should carry the tone, peak={left_peak}");
-    assert_eq!(right_peak, 0, "right channel was silent; downmix would leak energy here");
+    let left_peak = clip.samples.iter().step_by(2).map(|s| s.abs()).fold(0.0f32, f32::max);
+    let right_peak = clip.samples.iter().skip(1).step_by(2).map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(left_peak > 1_000.0 / 32767.0, "left channel should carry the tone, peak={left_peak}");
+    assert_eq!(right_peak, 0.0, "right channel was silent; downmix would leak energy here");
 }
 
 #[test]
@@ -692,8 +692,8 @@ fn extract_interleaved_midfile_window_seeks_correctly() {
     assert!(
         (clip.frames() as i64 - 44_100).abs() <= sample_count_tolerance(44_100) as i64
     );
-    let peak = clip.samples.iter().map(|s| s.abs()).max().unwrap_or(0);
-    assert!(peak > 1_000, "mid-file window should contain the loud second half, peak={peak}");
+    let peak = clip.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(peak > 1_000.0 / 32767.0, "mid-file window should contain the loud second half, peak={peak}");
 }
 
 #[test]
@@ -722,6 +722,7 @@ fn extract_interleaved_default_port_method_is_unsupported() {
         sample_rate: 44_100,
         duration: Some(Duration::from_secs(1)),
         decodable: true,
+        bit_depth: None,
     };
     let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
     match session.extract_interleaved(&track, &window, &NoopProgress, "x") {

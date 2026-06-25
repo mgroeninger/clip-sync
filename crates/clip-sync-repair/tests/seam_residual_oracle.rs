@@ -67,16 +67,16 @@ fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergyS
     let master = broadband_master(total_frames, rate);
     let mut seed_a = 0x1111_2222_3333_4444u64;
     let mut seed_b = 0x5555_6666_7777_8888u64;
-    let mut a = vec![0i16; total_frames * ch];
-    let mut b = vec![0i16; total_frames * ch];
+    let mut a = vec![0.0f32; total_frames * ch];
+    let mut b = vec![0.0f32; total_frames * ch];
     for (f, &m) in master.iter().enumerate() {
         let in_gap = (gap_start..gap_end).contains(&f);
         for c in 0..ch {
             let idx = f * ch + c;
             let a_val = if in_gap { 0.0 } else { m + lcg(&mut seed_a) * noise_amp };
             let b_val = m + lcg(&mut seed_b) * noise_amp;
-            a[idx] = a_val.round().clamp(-32768.0, 32767.0) as i16;
-            b[idx] = b_val.round().clamp(-32768.0, 32767.0) as i16;
+            a[idx] = (a_val / 32767.0).clamp(-1.0, 1.0) as f32;
+            b[idx] = (b_val / 32767.0).clamp(-1.0, 1.0) as f32;
         }
     }
 

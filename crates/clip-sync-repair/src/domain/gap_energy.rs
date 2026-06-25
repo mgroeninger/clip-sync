@@ -7,7 +7,7 @@ const ENERGY_FLOOR: f32 = 1e-9;
 
 /// Per-bin gated log-RMS energy (mono downmix, peak-normalized halves at match time).
 pub fn energy_bins(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     start_frame: usize,
     end_frame: usize,
@@ -39,7 +39,7 @@ pub fn energy_bins(
             }
             let mono = samples[f * channels..(f + 1) * channels]
                 .iter()
-                .map(|&s| f64::from(s))
+                .map(|&s| s as f64)
                 .sum::<f64>()
                 / channels as f64;
             sum_sq += mono * mono;
@@ -106,7 +106,7 @@ pub struct GapEnergySignature {
 }
 
 pub fn build_gap_energy_signature(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -156,7 +156,7 @@ pub(crate) struct EnergyTimeline {
 
 impl EnergyTimeline {
     pub(crate) fn build(
-        samples: &[i16],
+        samples: &[f32],
         channels: usize,
         total_frames: usize,
         bin_frames: usize,
@@ -225,9 +225,9 @@ mod tests {
     use super::*;
     use crate::domain::gap_structure::StructureMatchParams;
 
-    fn write_frame(samples: &mut Vec<i16>, channels: usize, frame: usize, amp: i16) {
+    fn write_frame(samples: &mut Vec<f32>, channels: usize, frame: usize, amp: f32) {
         while samples.len() < (frame + 1) * channels {
-            samples.push(0);
+            samples.push(0.0);
         }
         for ch in 0..channels {
             samples[frame * channels + ch] = amp;
@@ -248,9 +248,9 @@ mod tests {
 
     #[test]
     fn energy_bins_gate_silence_to_zero() {
-        let mut samples = vec![0i16; 100];
+        let mut samples = vec![0.0f32; 100];
         for f in 0..10 {
-            write_frame(&mut samples, 1, f, 8_000);
+            write_frame(&mut samples, 1, f, 8_000.0 / 32767.0);
         }
         let bins = energy_bins(&samples, 1, 0, 100, 10, 0.01, 0.0);
         assert!(!bins.is_empty());
@@ -280,40 +280,40 @@ mod tests {
         let gap_end = gap_start + gap_frames;
         let p = params(bin_frames);
 
-        let mut a = vec![0i16; 200];
+        let mut a = vec![0.0f32; 200];
         for f in 0..55 {
-            let amp = ((f as i32 * 150).min(8_000)) as i16;
+            let amp = ((f as f32 * 150.0).min(8_000.0)) / 32767.0;
             write_frame(&mut a, channels, f, amp);
         }
         for f in 55..gap_end {
-            write_frame(&mut a, channels, f, 0);
+            write_frame(&mut a, channels, f, 0.0);
         }
         for f in gap_end..150 {
-            write_frame(&mut a, channels, f, 8_000);
+            write_frame(&mut a, channels, f, 8_000.0 / 32767.0);
         }
 
-        let mut b_aligned = vec![0i16; 200];
+        let mut b_aligned = vec![0.0f32; 200];
         for f in 0..55 {
-            let amp = ((f as i32 * 150).min(8_000)) as i16;
+            let amp = ((f as f32 * 150.0).min(8_000.0)) / 32767.0;
             write_frame(&mut b_aligned, channels, f, amp);
         }
         for f in 55..gap_end {
-            write_frame(&mut b_aligned, channels, f, 0);
+            write_frame(&mut b_aligned, channels, f, 0.0);
         }
         for f in gap_end..150 {
-            write_frame(&mut b_aligned, channels, f, 8_000);
+            write_frame(&mut b_aligned, channels, f, 8_000.0 / 32767.0);
         }
 
-        let mut b_shifted = vec![0i16; 200];
+        let mut b_shifted = vec![0.0f32; 200];
         for f in 0..70 {
-            let amp = ((f as i32).saturating_sub(15) * 150).clamp(0, 8_000) as i16;
+            let amp = ((f as f32 - 15.0).max(0.0) * 150.0).min(8_000.0) / 32767.0;
             write_frame(&mut b_shifted, channels, f, amp);
         }
         for f in 70..gap_end + 15 {
-            write_frame(&mut b_shifted, channels, f, 0);
+            write_frame(&mut b_shifted, channels, f, 0.0);
         }
         for f in gap_end + 15..150 {
-            write_frame(&mut b_shifted, channels, f, 8_000);
+            write_frame(&mut b_shifted, channels, f, 8_000.0 / 32767.0);
         }
 
         let sig_a = build_gap_energy_signature(&a, channels, gap_start, gap_end, 50, &p);

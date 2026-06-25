@@ -160,7 +160,7 @@ fn write_b_longer_query_fixture(temp: &Path) -> (PathBuf, PathBuf) {
     (path_a, path_b)
 }
 
-fn mono_region(samples: &[i16], channels: u16, sample_rate: u32, start_secs: f64, end_secs: f64) -> Vec<i16> {
+fn mono_region(samples: &[f32], channels: u16, sample_rate: u32, start_secs: f64, end_secs: f64) -> Vec<f32> {
     let ch = usize::from(channels.max(1));
     let start = (start_secs * f64::from(sample_rate)).round() as usize * ch;
     let end = (end_secs * f64::from(sample_rate)).round() as usize * ch;
@@ -427,11 +427,11 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
     );
     let filled_rms: f64 = filled
         .iter()
-        .map(|&s| f64::from(s) * f64::from(s))
+        .map(|&s| s as f64 * s as f64)
         .sum::<f64>()
         / filled.len().max(1) as f64;
     assert!(
-        filled_rms.sqrt() > 500.0,
+        filled_rms.sqrt() > 500.0 / 32767.0,
         "patched gap interior should contain donor audio, rms={}",
         filled_rms.sqrt()
     );

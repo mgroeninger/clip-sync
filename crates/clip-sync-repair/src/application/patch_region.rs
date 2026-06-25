@@ -50,7 +50,7 @@ pub(crate) struct SeamGateOutcome {
 
 pub(crate) struct SeamGateParams<'a> {
     pub a_pcm: &'a MultiChannelPcm,
-    pub b_samples: &'a [i16],
+    pub b_samples: &'a [f32],
     pub b_extract_start_secs: f64,
     pub refined_b_start_secs: f64,
     pub refined_b_end_secs: f64,

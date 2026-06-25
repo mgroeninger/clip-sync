@@ -128,12 +128,13 @@ impl SilenceRunScanner {
 /// A block is silent when either:
 /// - peak amplitude is zero, or
 /// - `peak < absolute_rms_floor` — matches ffmpeg's `silencedetect` semantics: silence when the
-///   peak is below an absolute amplitude floor (default ≈ −60 dBFS = 33 on the i16 scale), or
+///   peak is below an absolute amplitude floor (in the f32 `[-1.0, 1.0]` domain; default ≈
+///   −60 dBFS ≈ 0.001007), or
 /// - `RMS < peak × silence_peak_fraction` — catches codec noise: a block whose RMS is negligible
 ///   relative to its own peak (i.e. a few isolated transients in a sea of zeros).
 ///
 /// Pass `absolute_rms_floor = 0.0` to disable the peak-floor check.
-pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor: f32) -> bool {
+pub fn is_silent(samples: &[f32], silence_peak_fraction: f32, absolute_rms_floor: f32) -> bool {
     is_silent_interleaved(samples, 1, silence_peak_fraction, absolute_rms_floor)
 }
 
@@ -141,7 +142,7 @@ pub fn is_silent(samples: &[i16], silence_peak_fraction: f32, absolute_rms_floor
 ///
 /// Matches ffmpeg `silencedetect` with `mono=0` (default): all channels must be quiet.
 pub fn is_silent_interleaved(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     silence_peak_fraction: f32,
     absolute_rms_floor: f32,
@@ -167,52 +168,51 @@ pub fn is_silent_interleaved(
 }
 
 fn is_silent_channel(
-    samples: &[i16],
+    samples: &[f32],
     channel: usize,
     channels: usize,
     frames: usize,
     silence_peak_fraction: f32,
     absolute_rms_floor: f32,
 ) -> bool {
-    let mut peak = 0u32;
+    let mut peak = 0.0f32;
     let mut sum_sq = 0f64;
     for frame in 0..frames {
         let sample = samples[frame * channels + channel];
-        peak = peak.max(u32::from(sample.unsigned_abs()));
-        let v = f64::from(sample);
+        peak = peak.max(sample.abs());
+        let v = sample as f64;
         sum_sq += v * v;
     }
 
-    if peak == 0 {
+    if peak == 0.0 {
         return true;
     }
 
-    let peak_f = peak as f32;
-    if absolute_rms_floor > 0.0 && peak_f < absolute_rms_floor {
+    if absolute_rms_floor > 0.0 && peak < absolute_rms_floor {
         return true;
     }
 
     let rms = (sum_sq / frames as f64).sqrt() as f32;
-    rms < peak_f * silence_peak_fraction
+    rms < peak * silence_peak_fraction
 }
 
-fn rms_i16(samples: &[i16]) -> f32 {
+fn rms_f32(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
     let sum_sq: f64 = samples
         .iter()
         .map(|s| {
-            let v = f64::from(*s);
+            let v = *s as f64;
             v * v
         })
         .sum();
     (sum_sq / samples.len() as f64).sqrt() as f32
 }
 
-/// RMS of interleaved (multi-channel) i16 samples.
-pub fn rms_interleaved(samples: &[i16]) -> f32 {
-    rms_i16(samples)
+/// RMS of interleaved (multi-channel) f32 samples.
+pub fn rms_interleaved(samples: &[f32]) -> f32 {
+    rms_f32(samples)
 }
 
 /// Compute a gain factor to match `b_segment_rms` to `a_border_rms`.
@@ -239,12 +239,12 @@ pub struct FillAlignment {
     pub post_correlation: f64,
 }
 
-/// Downmix interleaved i16 PCM to mono `f64` (channel average).
-pub fn interleaved_to_mono(samples: &[i16], channels: usize) -> Vec<f64> {
+/// Downmix interleaved f32 PCM to mono `f64` (channel average).
+pub fn interleaved_to_mono(samples: &[f32], channels: usize) -> Vec<f64> {
     let channels = channels.max(1);
     samples
         .chunks(channels)
-        .map(|frame| frame.iter().map(|&s| f64::from(s)).sum::<f64>() / channels as f64)
+        .map(|frame| frame.iter().map(|&s| s as f64).sum::<f64>() / channels as f64)
         .collect()
 }
 
@@ -256,7 +256,7 @@ pub struct RefinedGapFrames {
 }
 
 fn silent_run(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     start_frame: usize,
     run_frames: usize,
@@ -276,7 +276,7 @@ fn silent_run(
 
 /// Returns `true` when a single interleaved frame passes [`is_silent_interleaved`].
 pub fn is_silent_frame(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     frame: usize,
     silence_peak_fraction: f32,
@@ -303,7 +303,7 @@ pub fn is_silent_frame(
 /// - Advances `start` past leading non-silent frames (scanner started the run too early).
 /// - Extends `end` through trailing silence (scanner closed the run too early).
 pub fn refine_gap_frames(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     start_frame: usize,
     end_frame: usize,
@@ -397,7 +397,7 @@ pub struct GapBorderSpec {
 }
 
 fn gap_border_frame_range(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     spec: &GapBorderSpec,
 ) -> GapBorderFrameRange {
@@ -455,13 +455,13 @@ fn gap_border_frame_range(
 }
 
 /// Downmix interleaved PCM to one `f64` vector per channel.
-pub fn interleaved_to_channels(samples: &[i16], channels: usize) -> Vec<Vec<f64>> {
+pub fn interleaved_to_channels(samples: &[f32], channels: usize) -> Vec<Vec<f64>> {
     let channels = channels.max(1);
     (0..channels)
         .map(|ch| {
             samples
                 .chunks(channels)
-                .map(|frame| f64::from(frame[ch]))
+                .map(|frame| frame[ch] as f64)
                 .collect()
         })
         .collect()
@@ -469,7 +469,7 @@ pub fn interleaved_to_channels(samples: &[i16], channels: usize) -> Vec<Vec<f64>
 
 /// Build mono border templates for seam correlation, skipping silence adjacent to the gap.
 pub fn border_templates_for_gap(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     spec: &GapBorderSpec,
 ) -> (Vec<f64>, Vec<f64>) {
@@ -501,7 +501,7 @@ pub fn border_templates_for_gap(
 
 /// Per-channel border templates (same frame ranges as [`border_templates_for_gap`]).
 pub fn border_templates_per_channel_for_gap(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     spec: &GapBorderSpec,
 ) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
@@ -769,12 +769,12 @@ pub struct SpliceSeamContext<'a> {
     pub seam_cf: usize,
     pub gap_start_frame: usize,
     pub gap_end_frame: usize,
-    pub a_samples: &'a [i16],
+    pub a_samples: &'a [f32],
     pub channels: usize,
 }
 
 fn mono_timeline_frames_f64(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     start_frame: usize,
     end_frame: usize,
@@ -789,7 +789,7 @@ fn mono_timeline_frames_f64(
     samples[start * channels..end * channels]
         .iter()
         .step_by(channels)
-        .map(|&s| f64::from(s))
+        .map(|&s| s as f64)
         .collect()
 }
 
@@ -912,7 +912,7 @@ pub struct BorderSeamTemplates<'a> {
 
 /// Like [`fill_splice_seam_correlations`] but scores each channel when stereo borders are present.
 pub fn fill_splice_seam_correlations_interleaved(
-    fill_interleaved: &[i16],
+    fill_interleaved: &[f32],
     channels: usize,
     borders: &BorderSeamTemplates<'_>,
     ctx: SpliceSeamContext<'_>,
@@ -951,7 +951,7 @@ pub fn fill_splice_seam_correlations_interleaved(
             .iter()
             .skip(ch)
             .step_by(channels)
-            .map(|&s| f64::from(s))
+            .map(|&s| s as f64)
             .collect();
         if ch_fill.len() != gap_frames {
             continue;
@@ -1000,7 +1000,7 @@ pub fn fill_splice_seam_correlations_interleaved(
 }
 
 fn interleaved_channel_timeline_f64(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     channel: usize,
     start_frame: usize,
@@ -1014,7 +1014,7 @@ fn interleaved_channel_timeline_f64(
         return Vec::new();
     }
     (start..end)
-        .map(|frame| f64::from(samples[frame * channels + channel]))
+        .map(|frame| samples[frame * channels + channel] as f64)
         .collect()
 }
 
@@ -1397,7 +1397,7 @@ pub enum SeamSide {
 /// Inputs to [`seam_floor_probe`] (report-only diagnostic).
 pub struct SeamFloorParams<'a> {
     /// Full A audio (interleaved) on the same clock as the gap frames.
-    pub a_samples: &'a [i16],
+    pub a_samples: &'a [f32],
     pub channels: usize,
     /// B haystack mono (same buffer the seam scores against).
     pub b_mono: &'a [f64],
@@ -1416,15 +1416,15 @@ pub struct SeamFloorParams<'a> {
     pub max_lag_frames: i64,
 }
 
-fn mono_window(a_samples: &[i16], channels: usize, lo: usize, hi: usize) -> Vec<f64> {
+fn mono_window(a_samples: &[f32], channels: usize, lo: usize, hi: usize) -> Vec<f64> {
     let channels = channels.max(1);
     (lo..hi)
         .map(|frame| {
             let base = frame * channels;
-            let sum: i64 = (0..channels)
-                .map(|c| i64::from(a_samples.get(base + c).copied().unwrap_or(0)))
+            let sum: f64 = (0..channels)
+                .map(|c| a_samples.get(base + c).copied().unwrap_or(0.0) as f64)
                 .sum();
-            sum as f64 / channels as f64
+            sum / channels as f64
         })
         .collect()
 }
@@ -1797,10 +1797,8 @@ fn trim_low_energy_prefix(samples: &[f64]) -> Vec<f64> {
     samples[start..].to_vec()
 }
 
-fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
-    (a_weight * a + b_weight * b)
-        .round()
-        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> f32 {
+    (a_weight * a + b_weight * b).clamp(-1.0, 1.0)
 }
 
 /// Splice `b_fill` into `a_samples` at the gap, crossfading against A's real border audio.
@@ -1811,8 +1809,8 @@ fn blend_samples(a: f32, b: f32, a_weight: f32, b_weight: f32) -> i16 {
 ///
 /// `gap_start_frame` / `gap_end_frame` are frame indices (not interleaved sample indices).
 pub fn apply_seam_crossfade(
-    a_samples: &mut [i16],
-    b_fill: &[i16],
+    a_samples: &mut [f32],
+    b_fill: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -1851,8 +1849,8 @@ pub fn apply_seam_crossfade(
         let pre_frame = gap_start_frame - cf + i;
         for ch in 0..channels {
             let pre_idx = pre_frame * channels + ch;
-            let a_val = a_samples[pre_idx] as f32;
-            let b_val = b_fill[i * channels + ch] as f32;
+            let a_val = a_samples[pre_idx];
+            let b_val = b_fill[i * channels + ch];
             a_samples[pre_idx] = blend_samples(a_val, b_val, a_w, b_w);
         }
     }
@@ -1873,9 +1871,9 @@ pub fn apply_seam_crossfade(
         let a_w = (t * std::f32::consts::FRAC_PI_2).sin();
         let b_frame = gap_frames - cf + i;
         for ch in 0..channels {
-            let b_val = b_fill[b_frame * channels + ch] as f32;
+            let b_val = b_fill[b_frame * channels + ch];
             let post_idx = (gap_end_frame + i) * channels + ch;
-            let a_val = a_samples[post_idx] as f32;
+            let a_val = a_samples[post_idx];
             let blended = blend_samples(a_val, b_val, a_w, b_w);
             let gap_idx = (gap_end_frame - cf + i) * channels + ch;
             a_samples[gap_idx] = blended;
@@ -1889,7 +1887,7 @@ mod tests {
     use super::*;
     use clip_sync::MultiChannelPcm;
 
-    fn mono_pcm(rate: u32, samples: Vec<i16>) -> MultiChannelPcm {
+    fn mono_pcm(rate: u32, samples: Vec<f32>) -> MultiChannelPcm {
         MultiChannelPcm {
             sample_rate: rate,
             channels: 1,
@@ -1897,6 +1895,7 @@ mod tests {
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: None,
+            source_bit_depth: None,
         }
     }
 
@@ -1907,43 +1906,45 @@ mod tests {
 
     #[test]
     fn all_zeros_is_silent() {
-        assert!(is_silent(&vec![0i16; 1000], 0.01, 0.0));
+        assert!(is_silent(&vec![0.0f32; 1000], 0.01, 0.0));
     }
 
     #[test]
     fn loud_sine_is_not_silent() {
-        let samples: Vec<i16> = (0..1000)
-            .map(|i| (f32::sin(i as f32 * 0.1) * 10_000.0) as i16)
+        let samples: Vec<f32> = (0..1000)
+            .map(|i| f32::sin(i as f32 * 0.1) * 0.305)
             .collect();
         assert!(!is_silent(&samples, 0.01, 0.0));
     }
 
     #[test]
     fn single_spike_in_sea_of_zeros_is_silent() {
-        // Peak = 100, threshold = 100 * 0.01 = 1.0.
-        // 1 spike in 11025 zeros: RMS = sqrt(10000/11025) ≈ 0.95 < 1.0 → silent.
-        let mut samples = vec![0i16; 11_025];
-        samples[0] = 100;
+        // Peak ≈ 0.00305, threshold = peak * 0.01 ≈ 0.0000305.
+        // 1 spike in 11025 zeros: RMS = peak / sqrt(11025) ≈ 0.0000291 < threshold → silent.
+        let mut samples = vec![0.0f32; 11_025];
+        samples[0] = 100.0 / 32767.0;
         assert!(is_silent(&samples, 0.01, 0.0));
     }
 
     #[test]
     fn absolute_floor_catches_low_level_codec_noise() {
-        // All samples at ±1: peak = 1, RMS ≈ 1.
+        // All samples at ±(1/32767): peak ≈ 3.05e-5, RMS ≈ peak.
         // Relative check alone (RMS ≈ peak → fraction ≈ 1.0 >> 0.01) would NOT flag as silent.
-        // Peak-floor check: peak(1) < floor(2) → silent.
-        let samples: Vec<i16> = (0..11_025).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
+        // Peak-floor check: peak < floor(2/32767) → silent.
+        let v = 1.0_f32 / 32767.0;
+        let floor = 2.0_f32 / 32767.0;
+        let samples: Vec<f32> = (0..11_025).map(|i| if i % 2 == 0 { v } else { -v }).collect();
         assert!(!is_silent(&samples, 0.01, 0.0), "no floor: should not be silent");
-        assert!(is_silent(&samples, 0.01, 2.0), "floor=2: peak=1 < 2 → silent");
-        // A signal with peak above the floor is NOT classified silent by the floor check alone.
-        let loud_samples: Vec<i16> = (0..11_025).map(|i| if i % 2 == 0 { 5 } else { -5 }).collect();
-        assert!(!is_silent(&loud_samples, 0.01, 2.0), "floor=2: peak=5 > 2 → not silent by floor");
+        assert!(is_silent(&samples, 0.01, floor), "floor: peak < floor → silent");
+        let loud_v = 5.0_f32 / 32767.0;
+        let loud_samples: Vec<f32> = (0..11_025).map(|i| if i % 2 == 0 { loud_v } else { -loud_v }).collect();
+        assert!(!is_silent(&loud_samples, 0.01, floor), "floor: peak > floor → not silent by floor");
     }
 
-    fn sine_samples(rate: u32, secs: f64) -> Vec<i16> {
+    fn sine_samples(rate: u32, secs: f64) -> Vec<f32> {
         let count = (rate as f64 * secs).round() as usize;
         (0..count)
-            .map(|i| (f32::sin(i as f32 * 0.3) * 8_000.0) as i16)
+            .map(|i| f32::sin(i as f32 * 0.3) * 0.244)
             .collect()
     }
 
@@ -1952,7 +1953,7 @@ mod tests {
         let rate = 11_025u32;
         let block_secs = 0.25;
         let mut samples = sine_samples(rate, 5.0);
-        samples.extend(std::iter::repeat_n(0i16, (rate as f64 * 3.0).round() as usize));
+        samples.extend(std::iter::repeat_n(0.0f32, (rate as f64 * 3.0).round() as usize));
         samples.extend(sine_samples(rate, 5.0));
 
         let pcm = mono_pcm(rate, samples);
@@ -1972,8 +1973,8 @@ mod tests {
         let block_secs = 0.25;
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
 
-        let first = mono_pcm(rate, vec![0i16; (rate as f64 * 2.0).round() as usize]);
-        let second = mono_pcm(rate, vec![0i16; (rate as f64 * 2.0).round() as usize]);
+        let first = mono_pcm(rate, vec![0.0f32; (rate as f64 * 2.0).round() as usize]);
+        let second = mono_pcm(rate, vec![0.0f32; (rate as f64 * 2.0).round() as usize]);
 
         scanner.feed(&first, 0.0);
         scanner.feed(&second, 2.0);
@@ -1989,7 +1990,7 @@ mod tests {
         let rate = 11_025u32;
         let block_secs = 0.25;
         let mut samples = sine_samples(rate, 2.0);
-        samples.extend(vec![0i16; (rate as f64 * 0.5).round() as usize]);
+        samples.extend(vec![0.0f32; (rate as f64 * 0.5).round() as usize]);
         samples.extend(sine_samples(rate, 2.0));
 
         let pcm = mono_pcm(rate, samples);
@@ -2008,9 +2009,9 @@ mod tests {
         let block_samples = (block_secs * rate as f64).round() as usize;
 
         // 8 silent blocks + 1 noisy block + 8 silent blocks
-        let mut samples = vec![0i16; block_samples * 8];
+        let mut samples = vec![0.0f32; block_samples * 8];
         samples.extend(sine_samples(rate, block_secs));
-        samples.extend(vec![0i16; block_samples * 8]);
+        samples.extend(vec![0.0f32; block_samples * 8]);
 
         let pcm = mono_pcm(rate, samples);
 
@@ -2031,9 +2032,9 @@ mod tests {
         let block_secs = 0.25;
         let block_samples = (block_secs * rate as f64).round() as usize;
 
-        let mut samples = vec![0i16; block_samples * 8];
+        let mut samples = vec![0.0f32; block_samples * 8];
         samples.extend(sine_samples(rate, block_secs));
-        samples.extend(vec![0i16; block_samples * 8]);
+        samples.extend(vec![0.0f32; block_samples * 8]);
 
         let pcm = mono_pcm(rate, samples);
 
@@ -2048,9 +2049,9 @@ mod tests {
         let frames = rate as usize;
         let mut samples = Vec::with_capacity(frames * 2);
         for i in 0..frames {
-            let tone = (f32::sin(i as f32 * 0.3) * 8_000.0) as i16;
+            let tone = f32::sin(i as f32 * 0.3) * 0.244;
             samples.push(tone);
-            samples.push(0);
+            samples.push(0.0f32);
         }
         assert!(
             !is_silent_interleaved(&samples, 2, 0.01, 0.0),
@@ -2060,15 +2061,16 @@ mod tests {
 
     #[test]
     fn stereo_both_channels_quiet_is_silent() {
-        let samples = vec![0i16; 11_025 * 2];
+        let samples = vec![0.0f32; 11_025 * 2];
         assert!(is_silent_interleaved(&samples, 2, 0.01, 0.0));
     }
 
     #[test]
     fn rms_interleaved_of_constant() {
-        let samples = vec![1000i16; 100];
+        let v = 1000.0_f32 / 32767.0;
+        let samples = vec![v; 100];
         let result = rms_interleaved(&samples);
-        assert!((result - 1000.0).abs() < 1.0, "rms of constant 1000 should be ~1000, got {result}");
+        assert!((result - v).abs() < 0.001, "rms of constant {v} should be ~{v}, got {result}");
     }
 
     #[test]
@@ -2093,7 +2095,7 @@ mod tests {
         let gap_start = 4usize;
         let gap_end = 6usize;
         // A: ramp into gap; B fill matches the pre/post windows at splice time.
-        let a_samples: Vec<i16> = vec![100, 200, 300, 400, 0, 0, 500, 600, 0, 0];
+        let a_samples: Vec<f32> = vec![100.0, 200.0, 300.0, 400.0, 0.0, 0.0, 500.0, 600.0, 0.0, 0.0].iter().map(|&v| v / 32767.0).collect();
         let fill = vec![300.0, 400.0, 0.0, 0.0, 500.0, 600.0];
         let a_pre = vec![1.0, 0.5];
         let a_post = vec![0.8, -0.6];
@@ -2140,36 +2142,35 @@ mod tests {
         let gap_start = 10usize;
         let gap_end = 20usize;
         let gap_frames = gap_end - gap_start;
+        let loud: f32 = 8_000.0 / 32767.0;
+        let fill_level: f32 = 4_000.0 / 32767.0;
 
-        let mut a = vec![0i16; 30];
+        let mut a = vec![0.0f32; 30];
         for s in &mut a[0..gap_start] {
-            *s = 8_000;
+            *s = loud;
         }
         for s in &mut a[gap_end..] {
-            *s = 8_000;
+            *s = loud;
         }
 
-        let b_fill = vec![4_000i16; gap_frames];
+        let b_fill = vec![fill_level; gap_frames];
         apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
 
-        assert_eq!(
-            a[gap_start - cf - 1],
-            8_000,
+        assert!(
+            (a[gap_start - cf - 1] - loud).abs() < 1e-5,
             "pre-gap audio before the crossfade window should be untouched"
         );
-        assert_eq!(
-            a[gap_start - cf],
-            8_000,
+        assert!(
+            (a[gap_start - cf] - loud).abs() < 1e-5,
             "crossfade should start from pure pre-gap audio"
         );
-        assert_eq!(
-            a[gap_start],
-            4_000,
+        assert!(
+            (a[gap_start] - fill_level).abs() < 1e-5,
             "gap should start at full fill level, not a silence ramp"
         );
-        assert_eq!(a[gap_start + 1], 4_000, "gap interior should be pure fill");
+        assert!((a[gap_start + 1] - fill_level).abs() < 1e-5, "gap interior should be pure fill");
         assert!(
-            a[gap_start - 1] > 3_000,
+            a[gap_start - 1] > 3_000.0 / 32767.0,
             "pre-gap tail should bleed into fill before the gap boundary"
         );
     }
@@ -2180,21 +2181,23 @@ mod tests {
         let gap_start = 10usize;
         let gap_end = 20usize;
         let gap_frames = gap_end - gap_start;
+        let loud: f32 = 8_000.0 / 32767.0;
+        let fill_level: f32 = 4_000.0 / 32767.0;
 
-        let mut a = vec![0i16; 30];
+        let mut a = vec![0.0f32; 30];
         for s in &mut a[0..gap_start] {
-            *s = 8_000;
+            *s = loud;
         }
         for s in &mut a[gap_end..] {
-            *s = 8_000;
+            *s = loud;
         }
 
-        let b_fill = vec![4_000i16; gap_frames];
+        let b_fill = vec![fill_level; gap_frames];
         apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
 
-        let diff = (a[gap_start] as i32 - a[gap_start - 1] as i32).abs();
+        let diff = (a[gap_start] - a[gap_start - 1]).abs();
         assert!(
-            diff <= 4_500,
+            diff <= 4_500.0 / 32767.0,
             "jump of {diff} across pre seam ({} -> {})",
             a[gap_start - 1],
             a[gap_start]
@@ -2204,16 +2207,17 @@ mod tests {
     #[test]
     fn refine_gap_frames_retracts_through_leading_silence_before_reported_start() {
         let channels = 2usize;
+        let loud = 8_000.0_f32 / 32767.0;
         // [loud 5][silent 10][loud 5] — reported gap starts two frames late.
         let mut samples = Vec::new();
         for _ in 0..5 {
-            samples.extend([8_000i16, 8_000i16]);
+            samples.extend([loud, loud]);
         }
         for _ in 0..10 {
-            samples.extend([0i16, 0i16]);
+            samples.extend([0.0f32, 0.0f32]);
         }
         for _ in 0..5 {
-            samples.extend([8_000i16, 8_000i16]);
+            samples.extend([loud, loud]);
         }
 
         let refined = refine_gap_frames(&samples, channels, 7, 14, 0.01, 0.0, 10);
@@ -2224,16 +2228,17 @@ mod tests {
     #[test]
     fn refine_gap_frames_advances_past_leading_audio_and_extends_trailing_silence() {
         let channels = 2usize;
+        let loud = 8_000.0_f32 / 32767.0;
         // [loud 5][silent 10][loud 5] — reported gap starts one frame too early and ends one frame too early.
         let mut samples = Vec::new();
         for _ in 0..5 {
-            samples.extend([8_000i16, 8_000i16]);
+            samples.extend([loud, loud]);
         }
         for _ in 0..10 {
-            samples.extend([0i16, 0i16]);
+            samples.extend([0.0f32, 0.0f32]);
         }
         for _ in 0..5 {
-            samples.extend([8_000i16, 8_000i16]);
+            samples.extend([loud, loud]);
         }
 
         let refined = refine_gap_frames(&samples, channels, 4, 14, 0.01, 0.0, 10);
@@ -2246,9 +2251,10 @@ mod tests {
         let channels = 1usize;
         let mut samples = Vec::new();
         // Leading audio (2 frames), low-level dropout (8 frames), trailing audio.
-        samples.extend([8_000i16; 2]);
-        samples.extend([3i16; 8]);
-        samples.extend([8_000i16; 2]);
+        let loud = 8_000.0_f32 / 32767.0;
+        samples.extend([loud; 2]);
+        samples.extend([3.0_f32 / 32767.0; 8]);
+        samples.extend([loud; 2]);
 
         let refined = refine_gap_frames(
             &samples,
@@ -2285,26 +2291,29 @@ mod tests {
     #[test]
     fn border_templates_trim_quiet_fade_before_dropout() {
         let channels = 1usize;
+        let loud = 8_000.0_f32 / 32767.0;
+        let low = 200.0_f32 / 32767.0;
         let mut samples = Vec::new();
-        samples.extend(vec![8_000i16; 8]);
-        samples.extend(vec![200i16; 4]);
-        samples.extend(vec![0i16; 4]);
-        samples.extend(vec![200i16; 4]);
-        samples.extend(vec![8_000i16; 8]);
+        samples.extend(vec![loud; 8]);
+        samples.extend(vec![low; 4]);
+        samples.extend(vec![0.0f32; 4]);
+        samples.extend(vec![low; 4]);
+        samples.extend(vec![loud; 8]);
 
         let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(16, 20, 12, 0));
         assert!(!pre.is_empty());
-        assert!(pre.iter().all(|&v| v.abs() > 1_000.0));
+        assert!(pre.iter().all(|&v| v.abs() > 1_000.0 / 32767.0));
         assert!(!post.is_empty());
-        assert!(post.iter().all(|&v| v.abs() > 1_000.0));
+        assert!(post.iter().all(|&v| v.abs() > 1_000.0 / 32767.0));
     }
 
     #[test]
     fn border_standoff_excludes_audio_adjacent_to_dropout() {
         let channels = 1usize;
-        let mut samples = vec![8_000i16; 20];
-        samples.extend(vec![0i16; 5]);
-        samples.extend(vec![8_000i16; 20]);
+        let loud = 8_000.0_f32 / 32767.0;
+        let mut samples = vec![loud; 20];
+        samples.extend(vec![0.0f32; 5]);
+        samples.extend(vec![loud; 20]);
 
         let (pre_no, _) =
             border_templates_for_gap(&samples, channels, &test_border_spec(20, 25, 15, 0));
@@ -2317,15 +2326,16 @@ mod tests {
     #[test]
     fn border_templates_for_gap_skip_adjacent_silence() {
         let channels = 1usize;
-        let mut samples = vec![8_000i16; 5];
-        samples.extend(vec![0i16; 5]);
-        samples.extend(vec![8_000i16; 5]);
+        let loud = 8_000.0_f32 / 32767.0;
+        let mut samples = vec![loud; 5];
+        samples.extend(vec![0.0f32; 5]);
+        samples.extend(vec![loud; 5]);
 
         let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(5, 10, 5, 0));
         assert_eq!(pre.len(), 5);
-        assert!(pre.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
+        assert!(pre.iter().all(|&v| (v - loud as f64).abs() < 0.001));
         assert_eq!(post.len(), 5);
-        assert!(post.iter().all(|&v| (v - 8_000.0).abs() < 1.0));
+        assert!(post.iter().all(|&v| (v - loud as f64).abs() < 0.001));
     }
 
     #[test]
@@ -2565,9 +2575,9 @@ mod tests {
             .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
             .collect();
         // A = same master, half level (nominal map is exact → delta 0).
-        let a_samples: Vec<i16> = b_mono
+        let a_samples: Vec<f32> = b_mono
             .iter()
-            .map(|&s| (s * 0.5).round() as i16)
+            .map(|&s| (s * 0.5 / 4000.0) as f32)
             .collect();
 
         let params = SeamFloorParams {
@@ -2579,7 +2589,7 @@ mod tests {
             a_to_b_delta: 0,
             step_frames: window,
             max_walk_frames: rate_frames,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
@@ -2603,11 +2613,11 @@ mod tests {
         let b_mono: Vec<f64> = (0..total)
             .map(|i| (i as f64 * 0.23).sin() * 4000.0)
             .collect();
-        let mut a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+        let mut a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
         // Silence the region just before the gap (the immediate border), forcing an outward walk.
         let quiet_lo = gap_start - standoff - window;
         for s in a_samples.iter_mut().take(gap_start).skip(quiet_lo) {
-            *s = 0;
+            *s = 0.0;
         }
 
         let params = SeamFloorParams {
@@ -2619,7 +2629,7 @@ mod tests {
             a_to_b_delta: 0,
             step_frames: window,
             max_walk_frames: total,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
@@ -2640,7 +2650,7 @@ mod tests {
         let b_mono: Vec<f64> = (0..rate)
             .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
             .collect();
-        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+        let a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
 
         let params = SeamFloorParams {
             a_samples: &a_samples,
@@ -2651,7 +2661,7 @@ mod tests {
             a_to_b_delta: 0, // nominal == truth (same timeline)
             step_frames: window,
             max_walk_frames: rate,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         let (chosen, floor) =
@@ -2682,7 +2692,7 @@ mod tests {
         let b_mono: Vec<f64> = (0..rate)
             .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
             .collect();
-        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+        let a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
 
         let params = SeamFloorParams {
             a_samples: &a_samples,
@@ -2693,7 +2703,7 @@ mod tests {
             a_to_b_delta: 0,
             step_frames: window,
             max_walk_frames: rate,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         let (chosen, floor) =
@@ -2742,7 +2752,7 @@ mod tests {
                 }
             })
             .collect();
-        let a_samples: Vec<i16> = b_mono.iter().map(|&s| (s * 0.5).round() as i16).collect();
+        let a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
 
         let params = SeamFloorParams {
             a_samples: &a_samples,
@@ -2753,7 +2763,7 @@ mod tests {
             a_to_b_delta: 0, // nominal maps the region-1 window to region-1 → cancels
             step_frames: window,
             max_walk_frames: total,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         // Chosen delta maps the region-1 reference window into region-2 content (in bounds, ±512 lag
@@ -2804,7 +2814,7 @@ mod tests {
         // No energetic reference anywhere → source None.
         let total = 1000usize;
         let b_mono: Vec<f64> = (0..total).map(|i| (i as f64 * 0.2).sin() * 4000.0).collect();
-        let a_samples = vec![0i16; total];
+        let a_samples = vec![0.0f32; total];
         let params = SeamFloorParams {
             a_samples: &a_samples,
             channels: 1,
@@ -2814,7 +2824,7 @@ mod tests {
             a_to_b_delta: 0,
             step_frames: 128,
             max_walk_frames: total,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, 600, 800);

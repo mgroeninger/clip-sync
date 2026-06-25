@@ -336,10 +336,11 @@ mod tests {
         MultiChannelPcm {
             sample_rate: 44_100,
             channels: 1,
-            samples: vec![1_000; 100],
+            samples: vec![1_000.0_f32 / 32767.0; 100],
             decode_error_skips: 0,
             decoded_frame_count: Some(100),
             compressed_bytes: None,
+            source_bit_depth: None,
         }
     }
 

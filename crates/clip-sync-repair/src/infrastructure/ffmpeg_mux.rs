@@ -456,10 +456,11 @@ Error: no video stream\n";
         let pcm = clip_sync::MultiChannelPcm {
             sample_rate: 48_000,
             channels: 2,
-            samples: vec![0i16; 48_000 * 100],
+            samples: vec![0.0f32; 48_000 * 100],
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: None,
+            source_bit_depth: None,
         };
         let err = super::validate_mux_duration(&pcm, Path::new("missing-probe.mp4"))
             .expect_err("should fail without ffprobe or on skew");
@@ -471,10 +472,11 @@ Error: no video stream\n";
         let pcm = clip_sync::MultiChannelPcm {
             sample_rate: 48_000,
             channels: 6,
-            samples: vec![0i16; 48_000 * 6],
+            samples: vec![0.0f32; 48_000 * 6],
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: None,
+            source_bit_depth: None,
         };
         assert_eq!(pcm_duration_ms(&pcm), Some(1000));
     }
@@ -528,8 +530,8 @@ Error: no video stream\n";
         assert!(wrote, "failed to build source fixture");
 
         let sample_rate = 44_100u32;
-        let samples: Vec<i16> = (0..(sample_rate * 2) as usize)
-            .map(|i| (f32::sin(i as f32 * 2.0 * std::f32::consts::PI * 880.0 / sample_rate as f32) * 16_000.0) as i16)
+        let samples: Vec<f32> = (0..(sample_rate * 2) as usize)
+            .map(|i| f32::sin(i as f32 * 2.0 * std::f32::consts::PI * 880.0 / sample_rate as f32) * 0.488)
             .collect();
         let pcm = clip_sync::MultiChannelPcm {
             sample_rate,
@@ -538,6 +540,7 @@ Error: no video stream\n";
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: None,
+            source_bit_depth: None,
         };
 
         let progress = RecordingProgress::new();

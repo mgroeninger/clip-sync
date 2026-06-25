@@ -71,7 +71,7 @@ pub(crate) enum StructureTimeline<'a> {
 }
 
 pub fn build_gap_signature(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -121,7 +121,7 @@ fn energy_envelope_is_flat(bins: &[f32]) -> bool {
 }
 
 fn effective_mode(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -211,16 +211,16 @@ mod tests {
 
     #[test]
     fn auto_falls_back_to_bool_on_flat_envelope() {
-        let samples = vec![0i16; 400];
+        let samples = vec![0.0f32; 400];
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
         assert!(matches!(sig, GapSignature::Bool(_)));
     }
 
     #[test]
     fn auto_falls_back_to_bool_on_steady_drone() {
-        let mut samples = vec![6_000i16; 400];
+        let mut samples = vec![6_000.0_f32 / 32767.0; 400];
         for sample in samples.iter_mut().take(120).skip(100) {
-            *sample = 0;
+            *sample = 0.0;
         }
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
         assert!(matches!(sig, GapSignature::Bool(_)));

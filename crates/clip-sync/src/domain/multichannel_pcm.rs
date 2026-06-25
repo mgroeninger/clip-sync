@@ -1,17 +1,22 @@
+use crate::domain::BitDepth;
+
 /// Native-rate, all-channels PCM for a single window — the repair fill path counterpart to
 /// [`MonoPcmClip`](crate::domain::MonoPcmClip), which downmixes to mono at the fingerprint rate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultiChannelPcm {
     pub sample_rate: u32,
     pub channels: u16,
-    /// Interleaved `i16` frames: `samples.len() == frames * channels`.
-    pub samples: Vec<i16>,
+    /// Interleaved `f32` frames in `[-1.0, 1.0]`: `samples.len() == frames * channels`.
+    pub samples: Vec<f32>,
     /// Corrupt packets skipped during decode (`0` for synthetic / unknown sources).
     pub decode_error_skips: u32,
     /// Frames decoded before end-of-window silence padding, when padding was applied.
     pub decoded_frame_count: Option<usize>,
     /// Compressed codec bytes read for this window (`None` when not measured, e.g. scan buckets).
     pub compressed_bytes: Option<u64>,
+    /// Source bit depth / sample format as reported by the container at probe time.
+    /// `None` for lossy codecs or when not available.
+    pub source_bit_depth: Option<BitDepth>,
 }
 
 /// One fixed-duration bucket from a sequential interleaved timeline scan.
@@ -56,10 +61,11 @@ mod tests {
         let pcm = MultiChannelPcm {
             sample_rate: 48_000,
             channels: 2,
-            samples: vec![0; 48_000 * 2],
+            samples: vec![0.0; 48_000 * 2],
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: Some(31_000),
+            source_bit_depth: None,
         };
         assert_eq!(pcm.measured_bitrate_bps(), Some(248_000));
     }

@@ -206,8 +206,12 @@ fn session_extract_interleaved(
         .unwrap_or_else(|error| panic!("interleaved extract {label} from {}: {error}", path.display()))
 }
 
-fn peak_abs(samples: &[i16]) -> i16 {
-    samples.iter().map(|sample| sample.abs()).max().unwrap_or(0)
+fn peak_abs(samples: &[f32]) -> f32 {
+    samples.iter().map(|sample| sample.abs()).fold(0.0f32, f32::max)
+}
+
+fn peak_abs_i16(samples: &[i16]) -> f32 {
+    samples.iter().map(|&s| s.abs() as f32 / 32767.0).fold(0.0f32, f32::max)
 }
 
 fn assert_sample_count(actual: usize, expected: usize, rate: u32, context: &str) {
@@ -217,9 +221,9 @@ fn assert_sample_count(actual: usize, expected: usize, rate: u32, context: &str)
     );
 }
 
-fn assert_content_oracle(peak: i16, expect_loud: bool, lossy: bool, context: &str) {
-    let loud_threshold = if lossy { 200 } else { 1_000 };
-    let silence_threshold = if lossy { 2_000 } else { 100 };
+fn assert_content_oracle(peak: f32, expect_loud: bool, lossy: bool, context: &str) {
+    let loud_threshold = if lossy { 200.0_f32 / 32767.0 } else { 1_000.0 / 32767.0 };
+    let silence_threshold = if lossy { 2_000.0_f32 / 32767.0 } else { 100.0 / 32767.0 };
     if expect_loud {
         assert!(
             peak > loud_threshold,
@@ -261,7 +265,7 @@ fn run_mono_window_matrix(format: MonoFixtureFormat) {
         let expected = window.sample_count_at(rate);
         assert_sample_count(clip.samples.len(), expected, rate, &label);
         assert_content_oracle(
-            peak_abs(&clip.samples),
+            peak_abs_i16(&clip.samples),
             kind.expect_loud(),
             lossy,
             &label,

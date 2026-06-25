@@ -20,8 +20,8 @@ pub const MODE_SCORE_EPS: f64 = 0.08;
 #[derive(Debug, Clone)]
 pub struct EnergySignatureFixture {
     pub id: &'static str,
-    pub a_samples: Vec<i16>,
-    pub b_samples: Vec<i16>,
+    pub a_samples: Vec<f32>,
+    pub b_samples: Vec<f32>,
     pub channels: usize,
     pub sample_rate: u32,
     pub gap_start: usize,
@@ -221,11 +221,11 @@ impl EnergySignatureFixture {
     }
 }
 
-pub fn write_frame(samples: &mut Vec<i16>, channels: usize, frame: usize, amp: i16) {
+pub fn write_frame(samples: &mut Vec<f32>, channels: usize, frame: usize, amp: f32) {
     let channels = channels.max(1);
     let needed = (frame + 1) * channels;
     if samples.len() < needed {
-        samples.resize(needed, 0);
+        samples.resize(needed, 0.0);
     }
     for ch in 0..channels {
         samples[frame * channels + ch] = amp;
@@ -233,18 +233,18 @@ pub fn write_frame(samples: &mut Vec<i16>, channels: usize, frame: usize, amp: i
 }
 
 fn write_post_with_rise(
-    samples: &mut Vec<i16>,
+    samples: &mut Vec<f32>,
     channels: usize,
     post_start: usize,
     post_end: usize,
-    post_amp: i16,
+    post_amp: f32,
     rise_frames: usize,
 ) {
     let rise_frames = rise_frames.max(1);
     for f in post_start..post_end {
         let amp = if f < post_start + rise_frames {
-            let t = (f - post_start) as i32;
-            (t * i32::from(post_amp) / rise_frames as i32) as i16
+            let t = (f - post_start) as f32;
+            t * post_amp / rise_frames as f32
         } else {
             post_amp
         };
@@ -252,25 +252,25 @@ fn write_post_with_rise(
     }
 }
 
-fn ramp_amp(frame: usize, ramp_end: usize, step: i32, cap: i16) -> i16 {
+fn ramp_amp(frame: usize, ramp_end: usize, step: f32, cap: f32) -> f32 {
     if frame >= ramp_end {
-        return 0;
+        return 0.0;
     }
-    ((frame as i32 * step).clamp(0, i32::from(cap))) as i16
+    (frame as f32 * step).clamp(0.0, cap)
 }
 
 struct RampGapFillSpec {
     ramp_end: usize,
     gap_start: usize,
     gap_end: usize,
-    post_amp: i16,
-    ramp_step: i32,
+    post_amp: f32,
+    ramp_step: f32,
     ramp_delay: usize,
     post_rise_frames: usize,
 }
 
 fn fill_ramp_gap(
-    samples: &mut Vec<i16>,
+    samples: &mut Vec<f32>,
     channels: usize,
     total_frames: usize,
     spec: &RampGapFillSpec,
@@ -286,7 +286,7 @@ fn fill_ramp_gap(
     } = *spec;
     for frame in 0..total_frames.min(gap_end) {
         let amp = if frame >= gap_start {
-            0
+            0.0
         } else {
             ramp_amp(
                 frame.saturating_sub(ramp_delay),
@@ -319,25 +319,25 @@ pub fn build_f1() -> EnergySignatureFixture {
     let shift_frames = 15usize;
     let context_frames = 50usize;
     let total_frames = 200usize;
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
 
-    let mut a = vec![0i16; total_frames * channels];
+    let mut a = vec![0.0f32; total_frames * channels];
     for f in 0..55 {
-        let amp = ((f as i32 * 150).min(8_000)) as i16;
+        let amp = ((f as f32 * 150.0).min(8_000.0)) / 32767.0;
         write_frame(&mut a, channels, f, amp);
     }
     for f in 55..gap_end {
-        write_frame(&mut a, channels, f, 0);
+        write_frame(&mut a, channels, f, 0.0);
     }
     write_post_with_rise(&mut a, channels, gap_end, 150, post_amp, 12);
 
-    let mut b = vec![0i16; total_frames * channels];
+    let mut b = vec![0.0f32; total_frames * channels];
     for f in 0..70 {
-        let amp = ((f as i32).saturating_sub(15) * 150).clamp(0, 8_000) as i16;
+        let amp = ((f as f32 - 15.0).max(0.0) * 150.0).min(8_000.0) / 32767.0;
         write_frame(&mut b, channels, f, amp);
     }
     for f in 70..gap_end + shift_frames {
-        write_frame(&mut b, channels, f, 0);
+        write_frame(&mut b, channels, f, 0.0);
     }
     write_post_with_rise(
         &mut b,
@@ -387,33 +387,33 @@ pub fn build_f2() -> EnergySignatureFixture {
     let pause1_end = pause1_start + gap_frames;
     let pause2_start = 320usize;
     let pause2_end = pause2_start + gap_frames;
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
     let ramp_len = 40usize;
 
-    let mut a = vec![0i16; total_frames * channels];
+    let mut a = vec![0.0f32; total_frames * channels];
     for frame in 0..pause1_start {
-        let amp = ramp_amp(frame, pause1_start - ramp_len, 200, post_amp);
+        let amp = ramp_amp(frame, pause1_start - ramp_len, 200.0 / 32767.0, post_amp);
         write_frame(&mut a, channels, frame, amp);
     }
     write_post_with_rise(&mut a, channels, pause1_end, total_frames, post_amp, 15);
 
-    let mut b = vec![0i16; total_frames * channels];
+    let mut b = vec![0.0f32; total_frames * channels];
     for frame in 0..total_frames {
         let amp = if frame >= pause1_end && frame < pause2_start {
             post_amp
         } else if frame >= pause2_end {
             if frame < pause2_end + 15 {
-                let t = (frame - pause2_end) as i32;
-                (t * i32::from(post_amp) / 15).min(i32::from(post_amp)) as i16
+                let t = (frame - pause2_end) as f32;
+                (t * post_amp / 15.0).min(post_amp)
             } else {
                 post_amp
             }
         } else if (pause1_start..pause1_end).contains(&frame)
             || (pause2_start..pause2_end).contains(&frame)
         {
-            0
+            0.0
         } else {
-            ramp_amp(frame, pause1_start - ramp_len, 200, post_amp)
+            ramp_amp(frame, pause1_start - ramp_len, 200.0 / 32767.0, post_amp)
         };
         write_frame(&mut b, channels, frame, amp);
     }
@@ -456,7 +456,7 @@ pub fn build_f3_silence() -> EnergySignatureFixture {
     let context_frames = 50usize;
     let total_frames = 200usize;
 
-    let samples = vec![0i16; total_frames * channels];
+    let samples = vec![0.0f32; total_frames * channels];
     let structure_params = StructureMatchParams {
         gap_frames,
         bin_frames,
@@ -494,12 +494,12 @@ pub fn build_f3_drone() -> EnergySignatureFixture {
     let gap_end = gap_start + gap_frames;
     let context_frames = 50usize;
     let total_frames = 200usize;
-    let drone = 6_000i16;
+    let drone = 6_000.0_f32 / 32767.0;
 
     let mut samples = Vec::new();
     for frame in 0..total_frames {
         let amp = if frame >= gap_start && frame < gap_end {
-            0
+            0.0
         } else {
             drone
         };
@@ -577,7 +577,7 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
     let context_frames = scaled_usize(50, scale);
     let total_frames = scaled_usize(200, scale);
     let ramp_end = scaled_usize(55, scale);
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
 
     let mut a = Vec::new();
     fill_ramp_gap(
@@ -589,7 +589,7 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
             gap_start,
             gap_end,
             post_amp,
-            ramp_step: 150,
+            ramp_step: 150.0 / 32767.0,
             ramp_delay: 0,
             post_rise_frames: scaled_usize(12, scale).max(1),
         },
@@ -605,7 +605,7 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
             gap_start: gap_start + shift_frames,
             gap_end: gap_end + shift_frames,
             post_amp,
-            ramp_step: 150,
+            ramp_step: 150.0 / 32767.0,
             ramp_delay: shift_frames,
             post_rise_frames: scaled_usize(12, scale).max(1),
         },
@@ -650,34 +650,34 @@ fn build_f2_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
     let pause1_end = pause1_start + gap_frames;
     let pause2_start = scaled_usize(320, scale);
     let pause2_end = pause2_start + gap_frames;
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
     let ramp_len = scaled_usize(40, scale).max(1);
 
-    let mut a = vec![0i16; total_frames * ch];
+    let mut a = vec![0.0f32; total_frames * ch];
     for frame in 0..pause1_start {
-        let amp = ramp_amp(frame, pause1_start - ramp_len, 200, post_amp);
+        let amp = ramp_amp(frame, pause1_start - ramp_len, 200.0 / 32767.0, post_amp);
         write_frame(&mut a, ch, frame, amp);
     }
     write_post_with_rise(&mut a, ch, pause1_end, total_frames, post_amp, scaled_usize(15, scale).max(1));
 
-    let mut b = vec![0i16; total_frames * ch];
+    let mut b = vec![0.0f32; total_frames * ch];
     let rise = scaled_usize(15, scale).max(1);
     for frame in 0..total_frames {
         let amp = if frame >= pause1_end && frame < pause2_start {
             post_amp
         } else if frame >= pause2_end {
             if frame < pause2_end + rise {
-                let t = (frame - pause2_end) as i32;
-                (t * i32::from(post_amp) / rise as i32).min(i32::from(post_amp)) as i16
+                let t = (frame - pause2_end) as f32;
+                (t * post_amp / rise as f32).min(post_amp)
             } else {
                 post_amp
             }
         } else if (pause1_start..pause1_end).contains(&frame)
             || (pause2_start..pause2_end).contains(&frame)
         {
-            0
+            0.0
         } else {
-            ramp_amp(frame, pause1_start - ramp_len, 200, post_amp)
+            ramp_amp(frame, pause1_start - ramp_len, 200.0 / 32767.0, post_amp)
         };
         write_frame(&mut b, ch, frame, amp);
     }
@@ -719,12 +719,12 @@ fn build_f3_drone_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFi
     let gap_end = gap_start + gap_frames;
     let context_frames = scaled_usize(50, scale);
     let total_frames = scaled_usize(200, scale);
-    let drone = 6_000i16;
+    let drone = 6_000.0_f32 / 32767.0;
 
     let mut samples = Vec::new();
     for frame in 0..total_frames {
         let amp = if frame >= gap_start && frame < gap_end {
-            0
+            0.0
         } else {
             drone
         };
@@ -873,7 +873,7 @@ pub fn f1_decoy_shift_frames(_spec: &ProductionScenarioSpec, _sample_rate: u32, 
 const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 fn patch_refine_gap_frames(
-    samples: &[i16],
+    samples: &[f32],
     channels: usize,
     sample_rate: u32,
     reported_start: usize,
@@ -952,7 +952,7 @@ fn build_f1_with_spec(
     let silence_start = gap_start.saturating_sub(silence_lead);
     let gap_end = gap_start + gap_frames;
     let ramp_end = silence_start.saturating_sub(silence_lead);
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
 
     let mut a = Vec::new();
     fill_ramp_gap(
@@ -964,13 +964,13 @@ fn build_f1_with_spec(
             gap_start: silence_start,
             gap_end,
             post_amp,
-            ramp_step: 150,
+            ramp_step: 150.0 / 32767.0,
             ramp_delay: 0,
             post_rise_frames: bin_frames.max(1),
         },
     );
     if silence_start > 0 {
-        write_frame(&mut a, ch, silence_start - 1, post_amp / 2);
+        write_frame(&mut a, ch, silence_start - 1, post_amp / 2.0);
     }
 
     let mut b = Vec::new();
@@ -983,14 +983,14 @@ fn build_f1_with_spec(
             gap_start: silence_start + shift_frames,
             gap_end: gap_end + shift_frames,
             post_amp,
-            ramp_step: 150,
+            ramp_step: 150.0 / 32767.0,
             ramp_delay: shift_frames,
             post_rise_frames: bin_frames.max(1),
         },
     );
     let b_guard = silence_start + shift_frames;
     if b_guard > 0 {
-        write_frame(&mut b, ch, b_guard - 1, post_amp / 2);
+        write_frame(&mut b, ch, b_guard - 1, post_amp / 2.0);
     }
 
     let search_radius = if spec.integration_legacy_search {
@@ -1100,21 +1100,21 @@ fn build_f2_with_spec(
             .max(bin_frames * 4);
         gap_start.saturating_sub(ramp_len)
     };
-    let post_amp = 8_000i16;
+    let post_amp = 8_000.0_f32 / 32767.0;
     let post_rise = if spec.integration_legacy_search {
         scaled_usize(15, scale).max(1)
     } else {
         patch_bin_frames * 2
     };
 
-    let mut a = vec![0i16; total_frames * ch];
+    let mut a = vec![0.0f32; total_frames * ch];
     for frame in 0..gap_start {
-        let amp = ramp_amp(frame, ramp_end, 200, post_amp);
+        let amp = ramp_amp(frame, ramp_end, 200.0 / 32767.0, post_amp);
         write_frame(&mut a, ch, frame, amp);
     }
     write_post_with_rise(&mut a, ch, gap_end, total_frames, post_amp, post_rise);
     if gap_start > 0 {
-        write_frame(&mut a, ch, gap_start - 1, post_amp / 2);
+        write_frame(&mut a, ch, gap_start - 1, post_amp / 2.0);
     }
 
     let mut b = Vec::new();
@@ -1124,30 +1124,30 @@ fn build_f2_with_spec(
                 post_amp
             } else if frame >= pause2_end {
                 if frame < pause2_end + post_rise {
-                    let t = (frame - pause2_end) as i32;
-                    (t * i32::from(post_amp) / post_rise as i32).min(i32::from(post_amp)) as i16
+                    let t = (frame - pause2_end) as f32;
+                    (t * post_amp / post_rise as f32).min(post_amp)
                 } else {
                     post_amp
                 }
             } else if (gap_start..gap_end).contains(&frame)
                 || (pause2_start..pause2_end).contains(&frame)
             {
-                0
+                0.0
             } else {
-                ramp_amp(frame, ramp_end, 150, post_amp)
+                ramp_amp(frame, ramp_end, 150.0 / 32767.0, post_amp)
             };
             write_frame(&mut b, ch, frame, amp);
         }
         if gap_start > 0 {
-            write_frame(&mut b, ch, gap_start - 1, post_amp / 2);
+            write_frame(&mut b, ch, gap_start - 1, post_amp / 2.0);
         }
         if pause2_start > 0 {
-            write_frame(&mut b, ch, pause2_start - 1, post_amp / 2);
+            write_frame(&mut b, ch, pause2_start - 1, post_amp / 2.0);
         }
     } else {
         b = a.clone();
         for frame in pause2_start..pause2_end {
-            write_frame(&mut b, ch, frame, 0);
+            write_frame(&mut b, ch, frame, 0.0);
         }
     }
 
@@ -1227,8 +1227,8 @@ fn build_f3_drone_with_total_secs(
     let total_frames = secs_to_frames(total_secs, sample_rate);
     let current_frames = fixture.a_samples.len() / ch;
     for frame in current_frames..total_frames {
-        write_frame(&mut fixture.a_samples, ch, frame, 6_000);
-        write_frame(&mut fixture.b_samples, ch, frame, 6_000);
+        write_frame(&mut fixture.a_samples, ch, frame, 6_000.0_f32 / 32767.0);
+        write_frame(&mut fixture.b_samples, ch, frame, 6_000.0_f32 / 32767.0);
     }
     if let Some(spec) = spec {
         fixture.context_frames = spec.context_frames(sample_rate, total_frames);
@@ -1271,8 +1271,8 @@ pub fn build_f4_decoy_production(
     let context = spec.context_frames(sample_rate, total_frames);
     let gap = spec.min_gap_frames(sample_rate).max(bin * 2);
     let inner = bin * 4; // identical immediate border → waveform-neutral
-    let hi = 8_000i16;
-    let lo = 3_000i16; // stays above the silence floor → still "active" for bool
+    let hi = 8_000.0_f32 / 32767.0;
+    let lo = 3_000.0_f32 / 32767.0; // stays above the silence floor → still "active" for bool
 
     // Decoy sits at the A-aligned nominal; the true pause is shifted forward in B so the decoy's
     // post context and the true pause's pre context do not overlap, and the shift stays inside
@@ -1287,15 +1287,15 @@ pub fn build_f4_decoy_production(
     let truth_start = decoy_start + shift;
     let truth_end = truth_start + gap;
 
-    let write_ramp = |samples: &mut Vec<i16>, start: usize, end: usize, from: i16, to: i16| {
-        let span = end.saturating_sub(start).max(1) as i32;
+    let write_ramp = |samples: &mut Vec<f32>, start: usize, end: usize, from: f32, to: f32| {
+        let span = end.saturating_sub(start).max(1) as f32;
         for f in start..end {
-            let t = (f - start) as i32;
-            let amp = i32::from(from) + (i32::from(to) - i32::from(from)) * t / span;
-            write_frame(samples, ch, f, amp as i16);
+            let t = (f - start) as f32;
+            let amp = from + (to - from) * t / span;
+            write_frame(samples, ch, f, amp);
         }
     };
-    let write_const = |samples: &mut Vec<i16>, start: usize, end: usize, amp: i16| {
+    let write_const = |samples: &mut Vec<f32>, start: usize, end: usize, amp: f32| {
         for f in start..end {
             write_frame(samples, ch, f, amp);
         }
@@ -1304,7 +1304,7 @@ pub fn build_f4_decoy_production(
     // Shared pause shape: ramped outer pre → steady inner border → silent gap → shared post
     // contour. `descending` flips only the outer pre ramp (decoy), keeping the inner border,
     // gap, and post identical so the bool pattern matches but the energy contour does not.
-    let write_pause = |samples: &mut Vec<i16>, g_start: usize, g_end: usize, descending: bool| {
+    let write_pause = |samples: &mut Vec<f32>, g_start: usize, g_end: usize, descending: bool| {
         let pre_start = g_start - context;
         let inner_start = g_start - inner;
         if descending {
@@ -1313,16 +1313,16 @@ pub fn build_f4_decoy_production(
             write_ramp(samples, pre_start, inner_start, lo, hi);
         }
         write_const(samples, inner_start, g_start, hi); // identical inner border
-        write_const(samples, g_start, g_end, 0); // silent gap
+        write_const(samples, g_start, g_end, 0.0); // silent gap
         write_ramp(samples, g_end, g_end + context, hi, lo); // shared post contour
     };
 
     // A: content baseline with a single dropout at the decoy time (rising pre contour).
-    let mut a = vec![hi; total_frames * ch];
+    let mut a = vec![hi; total_frames * ch];  // f32 hi
     write_pause(&mut a, decoy_start, decoy_end, false);
 
     // B: content baseline with the decoy (descending pre) and the true pause (rising pre).
-    let mut b = vec![hi; total_frames * ch];
+    let mut b = vec![hi; total_frames * ch];  // f32 hi
     write_pause(&mut b, decoy_start, decoy_end, true);
     write_pause(&mut b, truth_start, truth_end, false);
 
@@ -1348,7 +1348,7 @@ pub fn build_f4_decoy_production(
 }
 
 /// Write interleaved PCM to a WAV file.
-pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, samples: &[i16]) {
+pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, samples: &[f32]) {
     use hound::{SampleFormat, WavSpec, WavWriter};
 
     let spec = WavSpec {
@@ -1359,7 +1359,8 @@ pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, 
     };
     let mut writer = WavWriter::create(path, spec).expect("create wav");
     for &s in samples {
-        writer.write_sample(s).expect("write sample");
+        let v = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        writer.write_sample(v).expect("write sample");
     }
     writer.finalize().expect("finalize wav");
 }

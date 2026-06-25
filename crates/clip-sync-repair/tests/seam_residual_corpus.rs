@@ -532,14 +532,14 @@ fn build_broadband_with(rate: u32, noise_amp: f64, b_shift: f64) -> EnergySignat
     let mut seed_a = 0x1111_2222_3333_4444u64;
     let mut seed_b = 0x5555_6666_7777_8888u64;
 
-    let mut a = vec![0i16; total];
-    let mut b = vec![0i16; total];
+    let mut a = vec![0.0f32; total];
+    let mut b = vec![0.0f32; total];
     for f in 0..total {
         let in_gap = (gap_start..gap_end).contains(&f);
         let a_val = if in_gap { 0.0 } else { master[f] + lcg(&mut seed_a) * noise_amp };
         let b_val = interp(&master, f as f64 - b_shift) + lcg(&mut seed_b) * noise_amp;
-        a[f] = a_val.round().clamp(-32768.0, 32767.0) as i16;
-        b[f] = b_val.round().clamp(-32768.0, 32767.0) as i16;
+        a[f] = (a_val / 32767.0).clamp(-1.0, 1.0) as f32;
+        b[f] = (b_val / 32767.0).clamp(-1.0, 1.0) as f32;
     }
 
     let bin_frames = ((0.05 * rate as f64).round() as usize).max(1);
@@ -550,7 +550,7 @@ fn build_broadband_with(rate: u32, noise_amp: f64, b_shift: f64) -> EnergySignat
         fill_length_slack_frames: 0,
         max_fine_adjustment_frames: 0,
         silence_peak_fraction: 0.01,
-        absolute_silence_rms: 33.0,
+        absolute_silence_rms: 33.0 / 32767.0,
     };
 
     EnergySignatureFixture {

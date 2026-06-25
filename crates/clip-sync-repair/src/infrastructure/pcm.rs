@@ -13,7 +13,7 @@ pub fn pcm_data_bytes(audio: &MultiChannelPcm) -> u64 {
     audio.samples.len() as u64 * 2
 }
 
-/// Ensures interleaved `i16` samples form complete frames.
+/// Ensures interleaved `f32` samples form complete frames.
 pub fn validate_pcm_layout(audio: &MultiChannelPcm) -> Result<(), RepairError> {
     let channels = audio.channels.max(1) as usize;
     let remainder = audio.samples.len() % channels;
@@ -41,40 +41,17 @@ pub fn validate_pcm_for_wav(audio: &MultiChannelPcm) -> Result<(), RepairError> 
     Ok(())
 }
 
-/// Writes interleaved signed 16-bit little-endian PCM.
-pub fn write_pcm_s16le<W: Write>(writer: &mut W, samples: &[i16]) -> io::Result<()> {
-    if samples.is_empty() {
-        return Ok(());
-    }
-
-    #[cfg(target_endian = "little")]
-    {
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                samples.as_ptr().cast::<u8>(),
-                samples
-                    .len()
-                    .checked_mul(2)
-                    .expect("PCM byte length overflow"),
-            )
-        };
-        for chunk in bytes.chunks(PCM_WRITE_CHUNK_BYTES) {
-            writer.write_all(chunk)?;
+/// Writes `f32` samples as signed 16-bit little-endian PCM.
+pub fn write_pcm_s16le<W: Write>(writer: &mut W, samples: &[f32]) -> io::Result<()> {
+    for chunk in samples.chunks(PCM_WRITE_CHUNK_BYTES / 2) {
+        let mut buf = Vec::with_capacity(chunk.len() * 2);
+        for &s in chunk {
+            let v = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+            buf.extend_from_slice(&v.to_le_bytes());
         }
-        Ok(())
+        writer.write_all(&buf)?;
     }
-
-    #[cfg(not(target_endian = "little"))]
-    {
-        for chunk in samples.chunks(PCM_WRITE_CHUNK_BYTES / 2) {
-            let mut buf = Vec::with_capacity(chunk.len() * 2);
-            for &sample in chunk {
-                buf.extend_from_slice(&sample.to_le_bytes());
-            }
-            writer.write_all(&buf)?;
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -86,10 +63,11 @@ mod tests {
         MultiChannelPcm {
             sample_rate: 48_000,
             channels,
-            samples: vec![0i16; sample_count],
+            samples: vec![0.0f32; sample_count],
             decode_error_skips: 0,
             decoded_frame_count: None,
             compressed_bytes: None,
+            source_bit_depth: None,
         }
     }
 
@@ -116,7 +94,7 @@ mod tests {
 
     #[test]
     fn write_pcm_s16le_round_trips_bytes() {
-        let samples = vec![0i16, 1i16, -1i16, i16::MAX];
+        let samples = vec![0.0f32, 1.0 / 32767.0, -1.0 / 32767.0, 1.0];
         let mut buf = Vec::new();
         write_pcm_s16le(&mut buf, &samples).expect("write");
         assert_eq!(buf.len(), samples.len() * 2);

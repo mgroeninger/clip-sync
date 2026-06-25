@@ -265,7 +265,7 @@ const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 // Collected B segment ready to splice into A.
 struct RegionPatch {
-    b_samples: Vec<i16>,
+    b_samples: Vec<f32>,
     gain: f32,
     a_start_frame: usize,
     a_end_frame: usize,
@@ -535,14 +535,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
             for (index, patch) in patches.iter().enumerate() {
                 self.progress.progress("patch-splice", index as u64 + 1, patch_count);
-                let b_gained: Vec<i16> = patch
+                let b_gained: Vec<f32> = patch
                     .b_samples
                     .iter()
-                    .map(|&s| {
-                        (s as f32 * patch.gain)
-                            .round()
-                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-                    })
+                    .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
                     .collect();
 
                 splice_into_a(
@@ -831,7 +827,7 @@ struct AnchoredRetryState<'a> {
 }
 
 struct RegionPatchMedia<'a> {
-    b_samples_full: &'a [i16],
+    b_samples_full: &'a [f32],
     a_pcm: &'a MultiChannelPcm,
 }
 
@@ -1890,12 +1886,12 @@ fn correlate_frames_for_gap(
 }
 
 fn slice_b_segment(
-    b_samples: &[i16],
+    b_samples: &[f32],
     channels: usize,
     sample_rate: u32,
     start_secs: f64,
     end_secs: f64,
-) -> Option<&[i16]> {
+) -> Option<&[f32]> {
     let channels = channels.max(1);
     let start_frame = (start_secs * sample_rate as f64).round() as usize;
     let end_frame = ((end_secs * sample_rate as f64).round() as usize)
@@ -1938,7 +1934,7 @@ fn compute_a_border_rms(
         .iter()
         .chain(post_samples.iter())
         .map(|&s| {
-            let v = f64::from(s);
+            let v = s as f64;
             v * v
         })
         .sum();
@@ -1949,8 +1945,8 @@ fn compute_a_border_rms(
 
 /// Splice B samples into A's interleaved sample buffer at the gap location.
 fn splice_into_a(
-    a_samples: &mut [i16],
-    b_samples: &[i16],
+    a_samples: &mut [f32],
+    b_samples: &[f32],
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
@@ -2120,23 +2116,25 @@ mod tests {
     fn fit_fill_trims_tail_without_resampling() {
         let channels = 2usize;
         let mut samples = Vec::new();
-        for frame in 0..10i16 {
-            samples.push(frame * 100);
-            samples.push(frame * 100);
+        for frame in 0..10i32 {
+            samples.push(frame as f32 * 100.0 / 32767.0);
+            samples.push(frame as f32 * 100.0 / 32767.0);
         }
         let fitted = fit_fill_to_gap_frames(&samples, channels, 6);
         assert_eq!(fitted.len(), 12);
-        assert_eq!(fitted[0], 0);
-        assert_eq!(fitted[1], 0);
-        assert_eq!(fitted[10], 500);
-        assert_eq!(fitted[11], 500);
+        assert!((fitted[0] - 0.0).abs() < 1e-6);
+        assert!((fitted[1] - 0.0).abs() < 1e-6);
+        assert!((fitted[10] - 500.0 / 32767.0).abs() < 1e-5);
+        assert!((fitted[11] - 500.0 / 32767.0).abs() < 1e-5);
     }
 
     #[test]
     fn fit_fill_zero_pads_short_source() {
-        let samples = vec![1000i16, 1000, 2000, 2000];
+        let v1 = 1000.0_f32 / 32767.0;
+        let v2 = 2000.0_f32 / 32767.0;
+        let samples = vec![v1, v1, v2, v2];
         let fitted = fit_fill_to_gap_frames(&samples, 2, 4);
-        assert_eq!(fitted, vec![1000, 1000, 2000, 2000, 0, 0, 0, 0]);
+        assert_eq!(fitted, vec![v1, v1, v2, v2, 0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]

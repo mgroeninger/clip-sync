@@ -515,7 +515,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
 
     let channels_hint = (track.channels > 0).then_some(track.channels as usize);
     let mut scratch = Vec::<f32>::new();
-    let mut bucket_buf = Vec::<i16>::new();
+    let mut bucket_buf = Vec::<f32>::new();
     let mut resolved_rate = None::<u32>;
     let mut channels = channels_hint;
     let mut bucket_frame_capacity = None::<usize>;
@@ -530,7 +530,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
         })
     });
 
-    let emit_full_bucket = |buf: &mut Vec<i16>,
+    let emit_full_bucket = |buf: &mut Vec<f32>,
                             frame_capacity: usize,
                             ch: usize,
                             index: &mut u64,
@@ -540,7 +540,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
      -> Result<(), MediaError> {
         let sample_capacity = frame_capacity.saturating_mul(ch);
         while buf.len() >= sample_capacity {
-            let samples: Vec<i16> = buf.drain(..sample_capacity).collect();
+            let samples: Vec<f32> = buf.drain(..sample_capacity).collect();
             let start_secs = *index as f64 * bucket_secs;
             let end_secs = start_secs + bucket_secs;
             *index += 1;
@@ -554,6 +554,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
                     decode_error_skips: skips,
                     decoded_frame_count: None,
                     compressed_bytes: None,
+                    source_bit_depth: None,
                 },
             })?;
         }
@@ -750,6 +751,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
                 decode_error_skips,
                 decoded_frame_count: None,
                 compressed_bytes: None,
+                source_bit_depth: None,
             },
         })?;
     }
@@ -805,14 +807,14 @@ pub(crate) struct InterleavedCollectContext<'a> {
     pub packet_start_frame: u64,
     pub window_start_frame: u64,
     pub trim_start_frames: u32,
-    pub out: &'a mut Vec<i16>,
+    pub out: &'a mut Vec<f32>,
     pub channels: usize,
     pub target_frames: usize,
 }
 
-/// Appends in-window frames to `ctx.out` as interleaved `i16`, fixed at `ctx.channels` per frame.
-/// Packets with more source channels are truncated; fewer are zero-padded. Returns `true` when the
-/// target frame count is reached.
+/// Appends in-window frames to `ctx.out` as interleaved `f32` in `[-1.0, 1.0]`, fixed at
+/// `ctx.channels` per frame. Packets with more source channels are truncated; fewer are
+/// zero-padded. Returns `true` when the target frame count is reached.
 ///
 /// `scratch` is a caller-owned buffer reused across packets to avoid per-call heap allocation;
 /// its contents on entry are irrelevant and will be overwritten.
@@ -847,17 +849,17 @@ pub(crate) fn append_interleaved_frames_in_window(
         let frame = &interleaved[frame_start..frame_start + source_channels];
         for channel in 0..ctx.channels {
             let sample = frame.get(channel).copied().unwrap_or(0.0);
-            ctx.out.push(float_to_i16(sample));
+            ctx.out.push(sample.clamp(-1.0, 1.0));
         }
     }
 
     false
 }
 
-/// Append all frames from a decoded packet as interleaved `i16` (decode order).
+/// Append all frames from a decoded packet as interleaved `f32` in `[-1.0, 1.0]` (decode order).
 pub(crate) fn append_interleaved_frames_sequential(
     decoded: GenericAudioBufferRef<'_>,
-    out: &mut Vec<i16>,
+    out: &mut Vec<f32>,
     channels: usize,
     scratch: &mut Vec<f32>,
     trim_start_frames: u32,
@@ -879,7 +881,7 @@ pub(crate) fn append_interleaved_frames_sequential(
         let frame = &interleaved[frame_start..frame_start + source_channels];
         for channel in 0..channels {
             let sample = frame.get(channel).copied().unwrap_or(0.0);
-            out.push(float_to_i16(sample));
+            out.push(sample.clamp(-1.0, 1.0));
         }
     }
 }

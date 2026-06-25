@@ -1777,6 +1777,7 @@ mod tests {
                     sample_rate: 44_100,
                     duration: None,
                     decodable: true,
+                    bit_depth: None,
                 }]),
             )
             .with_session("b.wav", FakeMediaSession::with_duration(mins(3)));
@@ -2436,6 +2437,7 @@ mod tests {
                     sample_rate: 44_100,
                     duration: Some(duration),
                     decodable: true,
+                    bit_depth: None,
                 },
                 crate::domain::AudioTrack {
                     index: 1,
@@ -2444,6 +2446,7 @@ mod tests {
                     sample_rate: 44_100,
                     duration: Some(duration),
                     decodable: true,
+                    bit_depth: None,
                 },
             ])
         };

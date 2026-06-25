@@ -62,7 +62,7 @@ impl Default for GapCorpusDefaults {
 
 fn default_scan_block_ms() -> u64 { 250 }
 fn default_silence_peak_fraction() -> f32 { 0.01 }
-fn default_absolute_silence_floor() -> f32 { 33.0 }
+fn default_absolute_silence_floor() -> f32 { 33.0_f32 / 32767.0 }
 fn default_min_gap_ms() -> u64 { 1_000 }
 fn default_silence_hold_ms() -> u64 { 500 }
 fn default_tolerance_secs() -> f64 { 0.3 }
