@@ -121,7 +121,6 @@ fn append_frames_in_window_downmixes_stereo() {
         &mut WindowCollectContext {
             packet_start_sample: 0,
             window_start_sample: 0,
-            window_end_sample: 2,
             trim_start_frames: 0,
             mono_samples: &mut mono,
             target_samples: 2,
@@ -149,7 +148,6 @@ fn append_frames_in_window_skips_before_window_start() {
         &mut WindowCollectContext {
             packet_start_sample: 9,
             window_start_sample: 10,
-            window_end_sample: 20,
             trim_start_frames: 0,
             mono_samples: &mut mono,
             target_samples: 1,
@@ -159,6 +157,38 @@ fn append_frames_in_window_skips_before_window_start() {
 
     assert_eq!(mono.len(), 1);
     assert!(mono[0] > 0);
+}
+
+#[test]
+fn append_frames_collects_by_sample_count_after_landing_not_pts_end() {
+    let spec = AudioSpec::new(44_100, layouts::CHANNEL_LAYOUT_MONO);
+    let mut buffer = AudioBuffer::<f32>::new(spec, 5);
+    buffer.render_silence(Some(5));
+    for index in 0..5 {
+        buffer.plane_mut(0).unwrap()[index] = (index + 1) as f32;
+    }
+
+    let mut mono = Vec::new();
+    let mut scratch = Vec::new();
+    append_frames_in_window(
+        GenericAudioBufferRef::F32(&buffer),
+        &mut WindowCollectContext {
+            packet_start_sample: 0,
+            window_start_sample: 0,
+            trim_start_frames: 0,
+            mono_samples: &mut mono,
+            target_samples: 4,
+        },
+        &mut scratch,
+    );
+
+    assert_eq!(
+        mono.len(),
+        4,
+        "should collect four samples from landing, ignoring PTS window end"
+    );
+    assert_eq!(mono[0], float_to_i16(1.0));
+    assert_eq!(mono[3], float_to_i16(4.0));
 }
 
 #[test]
@@ -601,7 +631,6 @@ fn append_interleaved_frames_in_window_keeps_channels() {
         &mut InterleavedCollectContext {
             packet_start_frame: 0,
             window_start_frame: 0,
-            window_end_frame: 2,
             trim_start_frames: 0,
             out: &mut out,
             channels: 2,

@@ -177,6 +177,14 @@ See [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 # Extra SymphoniaMediaReader tests (MP4/MKV round-trips, codec probes)
 cargo test -p clip-sync --features ffmpeg-tests,he-aac,ac3
 
+# Extract-window regression matrix (split-tone oracle: start / interior / end windows)
+# WAV rows run in default CI; encoded rows need ffmpeg + --features ffmpeg-tests
+cargo test -p clip-sync extract_window_regression
+cargo test -p clip-sync --features ffmpeg-tests extract_window_regression
+
+# MKV/AAC anchored-end align + long backward-seek end extract
+cargo test -p clip-sync --features ffmpeg-tests unequal_mkv_aac mkv_aac_anchored
+
 # Repair: AC-3 dual-track scan smoke (generates dual-track MP4 via ffmpeg)
 cargo test -p clip-sync-repair --features ac3,ffmpeg-tests ac3_dual_track
 
@@ -261,11 +269,12 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | `mux_writes_video` | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
 | `mux_writes_video` (integration) | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
 
-Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
+Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 
-**Optional CI step** for container-specific seek regressions (see [scripts/test-container-seek.ps1](../scripts/test-container-seek.ps1)):
+**Optional local step** for container seek + extract regressions (see [scripts/test-container-seek.ps1](../scripts/test-container-seek.ps1)):
 
 ```powershell
 .\scripts\test-container-seek.ps1
-# or: cargo test -p clip-sync --features ffmpeg-tests backward_seek track_decodable_extent
+# or manually:
+# cargo test -p clip-sync --features ffmpeg-tests backward_seek track_decodable_extent extract_window_regression
 ```

@@ -217,6 +217,7 @@ fn parse_encode_format(format: &str) -> Option<EncodeFormat> {
         "mp4" => Some(EncodeFormat::Mp4Aac),
         "mp4_stereo" => Some(EncodeFormat::Mp4AacStereo),
         "mkv" => Some(EncodeFormat::MkvFlac),
+        "mkv_aac" => Some(EncodeFormat::MkvAac),
         #[cfg(feature = "he-aac")]
         "mp4_he_aac" => Some(EncodeFormat::Mp4HeAac),
         "wav" | "cross_mp3_mp4" => None,
@@ -228,7 +229,7 @@ fn extension_for_format(format: &str) -> &'static str {
     match format {
         "mp3" | "mp3_no_duration" => "mp3",
         "mp4" | "mp4_stereo" | "mp4_he_aac" => "mp4",
-        "mkv" | "mkv_padded_duration" => "mkv",
+        "mkv" | "mkv_aac" | "mkv_padded_duration" => "mkv",
         _ => "wav",
     }
 }

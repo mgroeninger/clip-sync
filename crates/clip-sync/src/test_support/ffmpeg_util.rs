@@ -8,6 +8,7 @@ pub enum EncodeFormat {
     Mp4Aac,
     Mp4AacStereo,
     MkvFlac,
+    MkvAac,
     #[cfg(feature = "he-aac")]
     Mp4HeAac,
 }
@@ -117,6 +118,9 @@ pub fn encode_audio(input_wav: &Path, output: &Path, format: EncodeFormat) -> bo
         EncodeFormat::MkvFlac => {
             command.args(["-c:a", "flac"]);
         }
+        EncodeFormat::MkvAac => {
+            command.args(["-c:a", "aac", "-b:a", "128k"]);
+        }
         #[cfg(feature = "he-aac")]
         EncodeFormat::Mp4HeAac => {}
     }
@@ -129,7 +133,7 @@ pub fn encode_audio(input_wav: &Path, output: &Path, format: EncodeFormat) -> bo
         EncodeFormat::Mp4HeAac => {
             return encode_he_aac_mp4_from_wav(input_wav, output);
         }
-        EncodeFormat::MkvFlac => {
+        EncodeFormat::MkvFlac | EncodeFormat::MkvAac => {
             command.arg("-f").arg("matroska");
         }
         EncodeFormat::Mp3 | EncodeFormat::Mp3NoDurationTag => {}

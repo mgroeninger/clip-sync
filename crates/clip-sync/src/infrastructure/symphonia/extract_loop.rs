@@ -249,6 +249,10 @@ const MAX_EXTRACT_ATTEMPTS_NONZERO_START: usize =
 
 /// Shared seek/retry/decode/progress driver. Steps 1–10 of the duplication map are owned here;
 /// per-mode differences (buffer, target unit, finalize order) are delegated to `sink`.
+///
+/// Window **planning** stays in wall-clock seconds (`ClipWindow`). **Collection** is
+/// PCM-authoritative after the first kept frame: append until `target_*` samples/frames,
+/// not until packet PTS crosses a precomputed `window_end_sample` (see `append_*_in_window`).
 pub(super) fn run_extract_decode_loop<S: ExtractSink>(
     params: ExtractLoopParams<'_>,
     sink: &mut S,
@@ -348,9 +352,18 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 window,
             ) {
                 PacketWindowPos::Before => continue,
-                PacketWindowPos::Past => {
+                PacketWindowPos::Past if sink.target_reached() => {
                     allow_tail_padding = true;
                     break;
+                }
+                PacketWindowPos::Past => {
+                    debug!(
+                        path = %path.display(),
+                        track = track.index,
+                        collected = sink.collected_units(),
+                        target = sink.target_units().unwrap_or(0),
+                        "packet PTS past window end but PCM shortfall; continuing decode"
+                    );
                 }
                 PacketWindowPos::Within => {}
             }
@@ -621,13 +634,12 @@ impl ExtractSink for MonoExtractSink {
     ) -> bool {
         let rate = self.resolved_rate.unwrap_or(0);
         let target = self.target_samples.unwrap_or(0);
-        let (start_sample, end_sample) = window_sample_bounds(window, rate);
+        let (start_sample, _) = window_sample_bounds(window, rate);
         append_frames_in_window(
             decoded,
             &mut WindowCollectContext {
                 packet_start_sample: packet_start_unit,
                 window_start_sample: start_sample,
-                window_end_sample: end_sample,
                 trim_start_frames,
                 mono_samples: &mut self.mono_samples,
                 target_samples: target,
@@ -912,13 +924,12 @@ impl ExtractSink for InterleavedExtractSink {
         let rate = self.resolved_rate.unwrap_or(0);
         let ch = self.channels.unwrap_or(1);
         let target = self.target_frames.unwrap_or(0);
-        let (start_sample, end_sample) = window_sample_bounds(window, rate);
+        let (start_sample, _) = window_sample_bounds(window, rate);
         append_interleaved_frames_in_window(
             decoded,
             &mut InterleavedCollectContext {
                 packet_start_frame: packet_start_unit,
                 window_start_frame: start_sample,
-                window_end_frame: end_sample,
                 trim_start_frames,
                 out: &mut self.out,
                 channels: ch,

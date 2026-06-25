@@ -3044,6 +3044,111 @@ mod tests {
         assert_eq!(result.end_aligned, Some(true));
     }
 
+    /// Full 2-clip align on MKV/AAC unequal-length pair (shared-timeline end anchor).
+    /// Clip length is 120 s so seek-boundary shortfall stays within the 95 % pad threshold.
+    #[cfg(feature = "ffmpeg-tests")]
+    #[test]
+    fn symmetric_shared_timeline_end_clips_agree_on_unequal_mkv_aac_pair() {
+        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
+        use crate::application::config::ChromaprintPreset;
+        use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
+        use crate::infrastructure::symphonia::SymphoniaMediaReader;
+        use crate::test_support::ffmpeg_util::{self, EncodeFormat};
+
+        if !ffmpeg_util::ffmpeg_available() {
+            eprintln!("skipping MKV/AAC anchored end alignment: ffmpeg unavailable");
+            return;
+        }
+
+        const SHARED_SECS: u32 = 240;
+        const LONG_SECS: u32 = 360;
+        const OFFSET_SECS: u32 = 12;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (wav_a, wav_b) = write_anchored_end_symmetric_pair(
+            temp.path(),
+            11_025,
+            SHARED_SECS,
+            LONG_SECS,
+            OFFSET_SECS,
+        );
+        let path_a = temp.path().join("a.mkv");
+        let path_b = temp.path().join("b.mkv");
+        assert!(
+            ffmpeg_util::encode_audio(&wav_a, &path_a, EncodeFormat::MkvAac),
+            "encode a.mkv failed"
+        );
+        assert!(
+            ffmpeg_util::encode_audio(&wav_b, &path_b, EncodeFormat::MkvAac),
+            "encode b.mkv failed"
+        );
+
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &RubatoResampler,
+            &FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
+            &progress,
+        );
+        let mut config = anchored_end_chromaprint_config(
+            2,
+            EndClipAnchor::SharedTimeline,
+            AlignmentMode::Symmetric,
+        );
+        config.clip.clip_length = Duration::from_secs(120);
+        let response = use_case
+            .execute(AlignVideosRequest {
+                video_a: path_a,
+                video_b: path_b,
+                config,
+            })
+            .expect("MKV/AAC anchored end chirp execute");
+
+        let result = &response.result;
+        assert_eq!(result.clips.len(), 2);
+        let start = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::Start)
+            .expect("start clip");
+        let end = result
+            .clips
+            .iter()
+            .find(|c| c.label == ClipLabel::End)
+            .expect("end clip");
+        assert!(
+            start.aligned && end.aligned,
+            "both clips should align on MKV/AAC (start={} end={})",
+            start.aligned,
+            end.aligned
+        );
+        assert!(
+            start.confidence >= 0.5 && end.confidence >= 0.5,
+            "start={:.2} end={:.2}",
+            start.confidence,
+            end.confidence
+        );
+        let start_off = start.offset_secs.expect("start offset");
+        let end_off = end.offset_secs.expect("end offset");
+        assert!(
+            (start_off - end_off).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS,
+            "start={start_off} end={end_off}"
+        );
+        assert!(
+            (start_off - f64::from(OFFSET_SECS)).abs() < 2.0,
+            "start offset {start_off} expected ~{OFFSET_SECS}"
+        );
+        assert!(result.offsets_consistent);
+        assert_eq!(result.end_aligned, Some(true));
+    }
+
     #[test]
     fn symmetric_file_tail_end_clip_disagrees_on_unequal_pair() {
         const SHARED_SECS: u32 = 120;

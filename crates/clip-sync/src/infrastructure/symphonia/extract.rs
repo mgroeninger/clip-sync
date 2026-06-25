@@ -796,7 +796,6 @@ pub(crate) fn extract_interleaved_with_state(
 pub(crate) struct WindowCollectContext<'a> {
     pub packet_start_sample: u64,
     pub window_start_sample: u64,
-    pub window_end_sample: u64,
     pub trim_start_frames: u32,
     pub mono_samples: &'a mut Vec<i16>,
     pub target_samples: usize,
@@ -805,7 +804,6 @@ pub(crate) struct WindowCollectContext<'a> {
 pub(crate) struct InterleavedCollectContext<'a> {
     pub packet_start_frame: u64,
     pub window_start_frame: u64,
-    pub window_end_frame: u64,
     pub trim_start_frames: u32,
     pub out: &'a mut Vec<i16>,
     pub channels: usize,
@@ -841,10 +839,7 @@ pub(crate) fn append_interleaved_frames_in_window(
         }
 
         let frame_index = ctx.packet_start_frame + (frame_idx - trim_start) as u64;
-        if frame_index >= ctx.window_end_frame {
-            return true;
-        }
-        if frame_index < ctx.window_start_frame {
+        if ctx.out.is_empty() && frame_index < ctx.window_start_frame {
             continue;
         }
 
@@ -943,10 +938,9 @@ pub(crate) fn append_frames_in_window(
         }
 
         let sample_index = ctx.packet_start_sample + (frame_idx - trim_start) as u64;
-        if sample_index >= ctx.window_end_sample {
-            return true;
-        }
-        if sample_index < ctx.window_start_sample {
+        // Land on the planned wall-clock start using packet PTS; after the first kept
+        // sample, collect by PCM count only (see extract_loop packet handling).
+        if ctx.mono_samples.is_empty() && sample_index < ctx.window_start_sample {
             continue;
         }
 

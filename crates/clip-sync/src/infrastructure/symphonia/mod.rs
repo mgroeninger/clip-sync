@@ -15,6 +15,9 @@ mod oxideav_ac3;
 #[cfg(test)]
 mod media_reader_tests;
 
+#[cfg(test)]
+mod extract_window_regression;
+
 #[cfg(all(test, feature = "ac3", feature = "ffmpeg-tests"))]
 mod ac3_oxideav_characterization_tests;
 
