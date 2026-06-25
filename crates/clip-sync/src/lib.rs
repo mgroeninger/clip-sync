@@ -36,7 +36,7 @@ pub use domain::{
 };
 pub use domain::policies::{
     attach_symmetric_planning_report_metadata, select_best_track, select_track_for_reference,
-    EndClipAnchor, clip_windows_paired,
+    order_track_pairs_for_alignment, EndClipAnchor, clip_windows_paired,
 };
 pub use application::offset_refinement::normalized_correlation;
 

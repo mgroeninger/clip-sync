@@ -11,3 +11,56 @@ pub struct AudioTrack {
     /// Whether Symphonia can construct a decoder for this track at probe time.
     pub decodable: bool,
 }
+
+/// Human-readable channel layout for logging (e.g. `stereo`, `5.1`).
+pub fn channel_layout_label(channels: u16) -> String {
+    match channels {
+        1 => "mono".into(),
+        2 => "stereo".into(),
+        3 => "3.0".into(),
+        4 => "4.0".into(),
+        5 => "5.0".into(),
+        6 => "5.1".into(),
+        7 => "6.1".into(),
+        8 => "7.1".into(),
+        n => format!("{n}ch"),
+    }
+}
+
+impl AudioTrack {
+    /// Codec, rate, channel layout, and decodability for stderr / verbose reports.
+    pub fn format_description(&self) -> String {
+        format!(
+            "{} @ {} Hz, {} ({})",
+            self.codec,
+            self.sample_rate,
+            channel_layout_label(self.channels),
+            if self.decodable {
+                "decodable"
+            } else {
+                "not decodable"
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_description_includes_codec_and_layout() {
+        let track = AudioTrack {
+            index: 2,
+            codec: "ac3".into(),
+            channels: 6,
+            sample_rate: 48_000,
+            duration: None,
+            decodable: true,
+        };
+        assert_eq!(
+            track.format_description(),
+            "ac3 @ 48000 Hz, 5.1 (decodable)"
+        );
+    }
+}

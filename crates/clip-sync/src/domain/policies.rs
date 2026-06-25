@@ -47,6 +47,26 @@ pub fn select_track_for_reference<'a>(
         .ok_or(DomainError::NoDecodableAudioTracks)
 }
 
+/// Order decodable A×B track pairs for `try_all_tracks`: channel-matched layouts first.
+pub fn order_track_pairs_for_alignment<'a>(
+    decodable_a: &[&'a AudioTrack],
+    decodable_b: &[&'a AudioTrack],
+) -> Vec<(&'a AudioTrack, &'a AudioTrack)> {
+    let mut pairs: Vec<(&'a AudioTrack, &'a AudioTrack)> = decodable_a
+        .iter()
+        .flat_map(|track_a| decodable_b.iter().map(move |track_b| (*track_a, *track_b)))
+        .collect();
+    pairs.sort_by(|(a1, b1), (a2, b2)| {
+        let matched1 = a1.channels == b1.channels;
+        let matched2 = a2.channels == b2.channels;
+        matched2
+            .cmp(&matched1)
+            .then_with(|| a1.index.cmp(&a2.index))
+            .then_with(|| b1.index.cmp(&b2.index))
+    });
+    pairs
+}
+
 /// How symmetric multi-clip planning anchors the end window (and interior when `num_clips > 2`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -933,6 +953,17 @@ mod tests {
             select_track_for_reference(&a, &tracks),
             Err(DomainError::NoDecodableAudioTracks)
         );
+    }
+
+    #[test]
+    fn order_track_pairs_for_alignment_prefers_channel_matched_pairs() {
+        let a6 = track(2, 6, true);
+        let b2 = track(1, 2, true);
+        let b6 = track(2, 6, true);
+        let pairs = order_track_pairs_for_alignment(&[&a6], &[&b2, &b6]);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0], (&a6, &b6));
+        assert_eq!(pairs[1], (&a6, &b2));
     }
 
     #[test]

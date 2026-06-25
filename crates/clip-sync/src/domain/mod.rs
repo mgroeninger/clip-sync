@@ -58,4 +58,5 @@ pub use policies::{
     parallel_holdout_window_candidates, resolve_holdout_candidates,
     should_use_query_mode, truncate_padded_tail,
     ClipPlanningOptions, EndClipAnchor, INTERIOR_OVERLAP_TOLERANCE, select_best_track,
+    select_track_for_reference, order_track_pairs_for_alignment,
 };

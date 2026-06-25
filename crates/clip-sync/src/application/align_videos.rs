@@ -24,6 +24,7 @@ use crate::domain::{
     end_clip_extract_unreliable, expand_window_for_slide,
     prepare_clip_for_fingerprint, select_aligned_subclip_pair,
     select_best_track, attach_symmetric_planning_report_metadata,
+    select_track_for_reference, order_track_pairs_for_alignment,
     set_offset_ambiguous_mod_from_start_clip,
     should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
     AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
@@ -204,6 +205,7 @@ where
             &plan,
             &request.config,
             None,
+            None,
         ) {
             Ok(resolved) => resolved,
             Err(_) => return Ok(None),
@@ -213,6 +215,7 @@ where
             &plan,
             &request.config,
             None,
+            Some(&track_a),
         ) {
             Ok(resolved) => resolved,
             Err(_) => return Ok(None),
@@ -245,17 +248,27 @@ where
     }
 
     /// Lightweight track + extent resolution for the mode decision (mirrors `extract_clips`).
+    ///
+    /// When `channel_reference` is set and `track` is `None`, picks the best decodable B track
+    /// whose channel count matches the reference (falls back to first decodable in mux order).
     fn resolve_track_extent(
         &self,
         session: &mut MR::Session,
         plan: &crate::domain::ClipPlan,
         config: &AlignConfig,
         track: Option<&AudioTrack>,
+        channel_reference: Option<&AudioTrack>,
     ) -> Result<(AudioTrack, MediaExtent), AppError> {
         let tracks = session.list_tracks()?;
         let track = match track {
             Some(track) => track.clone(),
-            None => select_best_track(&tracks)?.clone(),
+            None => {
+                if let Some(reference) = channel_reference {
+                    select_track_for_reference(reference, &tracks)?.clone()
+                } else {
+                    select_best_track(&tracks)?.clone()
+                }
+            }
         };
         let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
             AppError::Domain(crate::domain::DomainError::InvalidDuration),
@@ -269,15 +282,49 @@ where
         Ok((track, extent))
     }
 
-    fn log_selected_track(&self, label: &str, track: &AudioTrack) {
+    fn log_available_tracks(&self, label: &str, tracks: &[AudioTrack]) {
+        if tracks.is_empty() {
+            return;
+        }
+        self.progress.phase_verbose(&format!("Audio tracks on {label}:"));
+        for track in tracks {
+            self.progress.phase_verbose(&format!(
+                "  track {}: {}",
+                track.index,
+                track.format_description()
+            ));
+        }
+    }
+
+    fn log_selected_track(&self, label: &str, track: &AudioTrack, note: Option<&str>) {
+        let suffix = note.map(|value| format!(" ({value})")).unwrap_or_default();
         self.progress.phase_verbose(&format!(
-            "Selected track {} ({} Hz, {} channel{}, {}decodable) [{label}]",
+            "Selected track {}: {}{} [{label}]",
             track.index,
-            track.sample_rate,
-            track.channels,
-            if track.channels == 1 { "" } else { "s" },
-            if track.decodable { "" } else { "not " }
+            track.format_description(),
+            suffix
         ));
+    }
+
+    fn b_track_selection_note(
+        reference: &AudioTrack,
+        selected: &AudioTrack,
+        tracks: &[AudioTrack],
+    ) -> Option<String> {
+        if selected.channels != reference.channels {
+            return Some(format!(
+                "no {}ch track; using first decodable",
+                reference.channels
+            ));
+        }
+        let first = select_best_track(tracks).ok()?;
+        if first.index != selected.index {
+            return Some(format!(
+                "channel-matched to A ({}ch)",
+                reference.channels
+            ));
+        }
+        None
     }
 
     fn log_decodable_extent(&self, label: &str, extent: &MediaExtent) {
@@ -376,12 +423,20 @@ where
         let plan = request.config.clip.as_plan();
         let planning = request.config.alignment.clip_planning_options();
 
+        let tracks_a = session_a.list_tracks()?;
+        self.log_available_tracks("video A", &tracks_a);
         let (track_a, extent_a) =
-            self.resolve_track_extent(session_a, &plan, &request.config, None)?;
+            self.resolve_track_extent(session_a, &plan, &request.config, None, None)?;
+        self.log_selected_track("video A", &track_a, None);
+        let tracks_b = session_b.list_tracks()?;
+        self.log_available_tracks("video B", &tracks_b);
         let (track_b, extent_b) =
-            self.resolve_track_extent(session_b, &plan, &request.config, None)?;
-        self.log_selected_track("video A", &track_a);
-        self.log_selected_track("video B", &track_b);
+            self.resolve_track_extent(session_b, &plan, &request.config, None, Some(&track_a))?;
+        self.log_selected_track(
+            "video B",
+            &track_b,
+            Self::b_track_selection_note(&track_a, &track_b, &tracks_b).as_deref(),
+        );
         self.log_decodable_extent("video A", &extent_a);
         self.log_decodable_extent("video B", &extent_b);
 
@@ -448,6 +503,9 @@ where
             return Err(crate::domain::DomainError::NoDecodableAudioTracks.into());
         }
 
+        self.log_available_tracks("video A", &tracks_a);
+        self.log_available_tracks("video B", &tracks_b);
+
         let plan = request.config.clip.as_plan();
 
         // Disable repetition during the track search to avoid running it for every track pair.
@@ -463,79 +521,119 @@ where
         let mut best: Option<(AlignmentOutcome, ExtractedClips, ExtractedClips, f32)> = None;
         let extraction = ExtractionProgressScope::new(self.progress);
 
-        for track_a in &decodable_a {
-            for track_b in &decodable_b {
-                self.progress.phase_verbose(&format!(
-                    "Trying track pair A:{} / B:{}",
-                    track_a.index, track_b.index
-                ));
-                let (resolved_a, extent_a) = self.resolve_track_extent(
-                    session_a,
-                    &plan,
-                    &request.config,
-                    Some(track_a),
-                )?;
-                let (resolved_b, extent_b) = self.resolve_track_extent(
-                    session_b,
-                    &plan,
-                    &request.config,
-                    Some(track_b),
-                )?;
-                let planning = request.config.alignment.clip_planning_options();
-                let (windows_a, windows_b) =
-                    clip_windows_paired(&extent_a, &extent_b, &plan, planning)?;
-                let plan_ctx = ClipPlanFormatContext {
-                    end_clip_anchor: planning.end_clip_anchor,
-                };
-                let extracted_a = self.extract_clips_at_windows(
-                    session_a,
-                    &resolved_a,
-                    &extent_a,
-                    &windows_a,
-                    &request.config,
-                    &ClipExtractionSideContext {
-                        label: "video A",
-                        timeline_end: extent_a.effective(),
-                        plan: &plan_ctx,
-                        progress: &extraction,
-                    },
-                )?;
-                let extracted_b = self.extract_clips_at_windows(
-                    session_b,
-                    &resolved_b,
-                    &extent_b,
-                    &windows_b,
-                    &request.config,
-                    &ClipExtractionSideContext {
-                        label: "video B",
-                        timeline_end: extent_b.effective(),
-                        plan: &plan_ctx,
-                        progress: &extraction,
-                    },
-                )?;
-                let result =
-                    self.align_extracted_pair(&extracted_a, &extracted_b, &search_config)?;
-                let score =
-                    mean_aligned_confidence(&result, request.config.alignment.min_match_score);
-                let outcome = AlignmentOutcome {
-                    result,
-                    track_a: extracted_a.track.clone(),
-                    track_b: extracted_b.track.clone(),
-                    discovery_windows: extracted_a.windows.clone(),
-                    extent_a: extracted_a.extent,
-                    extent_b: extracted_b.extent,
-                };
-                if best.as_ref().is_none_or(|(_, _, _, best_score)| score > *best_score) {
-                    best = Some((outcome, extracted_a, extracted_b, score));
+        let pairs = order_track_pairs_for_alignment(&decodable_a, &decodable_b);
+        let mut pair_failures: Vec<String> = Vec::new();
+        for (track_a, track_b) in pairs {
+            self.progress.phase_verbose(&format!(
+                "Trying track pair A:{} ({}) / B:{} ({})",
+                track_a.index,
+                track_a.format_description(),
+                track_b.index,
+                track_b.format_description(),
+            ));
+            let pair_outcome = (|| -> Result<
+                (AlignmentOutcome, ExtractedClips, ExtractedClips, f32),
+                AppError,
+            > {
+            let (resolved_a, extent_a) = self.resolve_track_extent(
+                session_a,
+                &plan,
+                &request.config,
+                Some(track_a),
+                None,
+            )?;
+            let (resolved_b, extent_b) = self.resolve_track_extent(
+                session_b,
+                &plan,
+                &request.config,
+                Some(track_b),
+                None,
+            )?;
+            let planning = request.config.alignment.clip_planning_options();
+            let (windows_a, windows_b) =
+                clip_windows_paired(&extent_a, &extent_b, &plan, planning)?;
+            let plan_ctx = ClipPlanFormatContext {
+                end_clip_anchor: planning.end_clip_anchor,
+            };
+            let extracted_a = self.extract_clips_at_windows(
+                session_a,
+                &resolved_a,
+                &extent_a,
+                &windows_a,
+                &request.config,
+                &ClipExtractionSideContext {
+                    label: "video A",
+                    timeline_end: extent_a.effective(),
+                    plan: &plan_ctx,
+                    progress: &extraction,
+                },
+            )?;
+            let extracted_b = self.extract_clips_at_windows(
+                session_b,
+                &resolved_b,
+                &extent_b,
+                &windows_b,
+                &request.config,
+                &ClipExtractionSideContext {
+                    label: "video B",
+                    timeline_end: extent_b.effective(),
+                    plan: &plan_ctx,
+                    progress: &extraction,
+                },
+            )?;
+            let result =
+                self.align_extracted_pair(&extracted_a, &extracted_b, &search_config)?;
+            let score =
+                mean_aligned_confidence(&result, request.config.alignment.min_match_score);
+            let outcome = AlignmentOutcome {
+                result,
+                track_a: extracted_a.track.clone(),
+                track_b: extracted_b.track.clone(),
+                discovery_windows: extracted_a.windows.clone(),
+                extent_a: extracted_a.extent,
+                extent_b: extracted_b.extent,
+            };
+            Ok((outcome, extracted_a, extracted_b, score))
+            })();
+
+            match pair_outcome {
+                Ok(candidate) => {
+                    let score = candidate.3;
+                    if best.as_ref().is_none_or(|(_, _, _, best_score)| score > *best_score) {
+                        best = Some(candidate);
+                    }
+                }
+                Err(error) => {
+                    let detail = error.to_string();
+                    pair_failures.push(format!(
+                        "A:{} / B:{}: {detail}",
+                        track_a.index, track_b.index
+                    ));
+                    self.progress.phase_verbose(&format!(
+                        "Track pair A:{} / B:{} skipped: {detail}",
+                        track_a.index, track_b.index
+                    ));
                 }
             }
         }
 
         let (mut outcome, winning_a, winning_b, _) = best.ok_or_else(|| {
+            let tried = pair_failures.join("; ");
             AppError::Alignment(crate::application::error::AlignmentError::EngineFailed(
-                "no track pair produced an alignment".into(),
+                if tried.is_empty() {
+                    "no track pair produced an alignment".into()
+                } else {
+                    format!("no track pair produced an alignment ({tried})")
+                },
             ))
         })?;
+
+        self.log_selected_track("video A", &outcome.track_a, None);
+        self.log_selected_track(
+            "video B",
+            &outcome.track_b,
+            Self::b_track_selection_note(&outcome.track_a, &outcome.track_b, &tracks_b).as_deref(),
+        );
 
         // Run repetition check on the winning pair only.
         if request.config.validation.check_clip_repetition {
