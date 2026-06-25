@@ -6,7 +6,10 @@ use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
 
 use clip_sync_repair::application::PatchAudio;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
+use clip_sync_repair::domain::{
+    gap_tags::ResidualBand, GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode,
+};
+use clip_sync_repair::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f1_production_at, build_f2_production, build_f4_decoy_production,
@@ -254,9 +257,11 @@ fn f2_production_weights_diagnostic() {
     );
 }
 
-/// **EC-6 + residual veto:** bool mode patches the F4 decoy without the gate; with
-/// `residual_gate = veto` the informative high-headroom decoy skips via
-/// `ResidualHeadroomExceeded`. Energy mode still patches the true pause. Ignored: ~72 s in debug.
+/// **EC-6 + residual veto (pipeline):** bool mode lands on the F4 decoy nominal; with
+/// `residual_gate = veto` the gate **abstains** (nominal floor anchor → headroom ≈ 0 at decoy) —
+/// not a residual skip. Score-level F4 veto with truth-anchored floor:
+/// `f4_decoy_placement_informative_with_high_headroom` / `seam_residual_disagreement_oracles`.
+/// Energy mode still patches the true pause under veto. Ignored: ~72 s in debug.
 #[test]
 #[ignore = "ec6: cargo test -p clip-sync-repair f4_decoy_residual_gate_vetoes_bool -- --ignored --nocapture"]
 fn f4_decoy_residual_gate_vetoes_bool() {
@@ -276,16 +281,36 @@ fn f4_decoy_residual_gate_vetoes_bool() {
         )
         .expect("F4 bool+veto patch");
     assert_eq!(
-        bool_result.summary.skipped_count, 1,
-        "bool+veto should skip the decoy fill: {:?}",
+        bool_result.summary.patched_count, 1,
+        "bool+veto: nominal-floor headroom ≈ 0 at decoy → Pearson decides (patch): {:?}",
         bool_result.summary.gaps,
     );
-    match &bool_result.summary.gaps[0].status {
-        GapPatchStatus::Skipped {
-            reason: GapPatchSkipReason::ResidualHeadroomExceeded { .. },
-        } => {}
-        other => panic!("bool+veto: expected residual skip, got {other:?}"),
+    let bool_gap = &bool_result.summary.gaps[0];
+    match &bool_gap.status {
+        GapPatchStatus::Patched {
+            align_adjustment_secs,
+            headroom_db,
+            ..
+        } => {
+            assert!(
+                align_adjustment_secs.abs() <= 0.05,
+                "bool should stay at decoy nominal (slide {align_adjustment_secs:.3}s)",
+            );
+            let headroom = headroom_db
+                .or_else(|| bool_gap.residual.map(|v| v.worst_headroom_db()))
+                .expect("residual measured under veto");
+            assert!(
+                headroom <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+                "bool+veto headroom {headroom:.1} dB should be within margin (abstain, not veto)",
+            );
+        }
+        other => panic!("bool+veto: expected patched decoy, got {other:?}"),
     }
+    assert_eq!(
+        bool_gap.tags.residual_band,
+        Some(ResidualBand::Cancels),
+        "informative floor + low headroom at nominal decoy placement",
+    );
 
     let mut energy_repair = production_repair_config(GapSignatureMode::Energy, 3.0);
     energy_repair.residual_gate = ResidualGateMode::Veto;
