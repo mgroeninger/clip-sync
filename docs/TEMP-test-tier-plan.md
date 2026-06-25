@@ -35,7 +35,7 @@
 
 - Replacing `#[test]` / libtest with a custom harness.
 - Using `examples/` for contract validation.
-- Mandatory validation crate in v1 (defer unless Phase 4 is insufficient).
+- Mandatory validation crate in v1 (defer unless Phase 5 is insufficient).
 - Renaming every existing test in one pass — new/edited tests follow
   [test-acceptance-glossary.md](test-acceptance-glossary.md); full SD/SP/EC/RG rename is not a
   tier-plan phase.
@@ -237,6 +237,14 @@ name = "integration_floor_oracle_smoke"
 path = "tests/integration_floor_oracle_smoke.rs"   # manifest_loads, gap_frames smoke (from floor_oracle_integration.rs)
 
 [[test]]
+name = "integration_energy_smoke"
+path = "tests/integration_energy_smoke.rs"           # corpus_scan_patch_smoke (PR tripwire)
+
+[[test]]
+name = "integration_residual_gate_smoke"
+path = "tests/integration_residual_gate_smoke.rs"   # RG04 off_no_regression_baseline (PR)
+
+[[test]]
 name = "cli_mux_integration"
 path = "tests/cli_mux_integration.rs"
 required-features = ["ffmpeg-mux"]
@@ -255,7 +263,7 @@ path = "tests/seam_residual_oracle.rs"
 name = "seam_residual_corpus"
 path = "tests/seam_residual_corpus.rs"             # non-ignored oracle rows; diag fns move out or stay #[ignore]
 
-# Optional: gate slow oracle compile on PR machines that only run pr-repair --lib + fast integration
+# Optional: gate slow oracle compile — deferred (oracle-tests not used in v1)
 # [[test]]
 # name = "seam_residual_oracle"
 # path = "tests/seam_residual_oracle.rs"
@@ -293,8 +301,8 @@ required-features = ["diagnostic-tests"]
 | **unit** | always | `cargo test -p clip-sync-repair --lib` |
 | **integration** | always | `cargo test -p clip-sync-repair --test patch_audio_integration` (etc.; script lists all default binaries, no `--lib`) |
 | **oracle** | always, or `oracle-tests` if gated | `cargo test -p clip-sync-repair --test oracle_energy --test seam_residual_oracle` |
-| **validation** | `validation-tests` | `cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle -- --ignored` |
-| **diagnostic** | `diagnostic-tests` | `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --ignored --nocapture` |
+| **validation** | `validation-tests` | `cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle` |
+| **diagnostic** | `diagnostic-tests` | `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture` |
 
 **Notes:**
 
@@ -317,10 +325,10 @@ required-features = ["diagnostic-tests"]
 | `query_reference_integration.rs` | `query_reference_integration` | integration | — |
 | `cli_wav_integration.rs` | `cli_wav_integration` | integration | — |
 | `cli_mux_integration.rs` | `cli_mux_integration` | integration | `ffmpeg-mux` |
-| `energy_signature_production.rs` | split → `oracle_energy` + `diag_energy_matrix` | oracle / diagnostic | diag: `diagnostic-tests` |
+| `energy_signature_production.rs` | split → `integration_energy_smoke` + `oracle_energy` + `diag_energy_matrix` + EC6 in `validate_residual_gate` | integration / oracle / diagnostic / validation | diag: `diagnostic-tests`; EC6: `validation-tests` |
 | `floor_oracle_integration.rs` | split → `integration_floor_oracle_smoke` + `validate_floor_oracle` | integration / validation | validation: `validation-tests` |
-| `residual_gate_integration.rs` | `validate_residual_gate` | validation | `validation-tests` |
-| `seam_residual_oracle.rs` | `seam_residual_oracle` | oracle | optional `oracle-tests` |
+| `residual_gate_integration.rs` | split → `integration_residual_gate_smoke` + `validate_residual_gate` | integration / validation | validation: `validation-tests` |
+| `seam_residual_oracle.rs` | `seam_residual_oracle` | oracle | — (see [Resolved decisions](#resolved-decisions)) |
 | `seam_residual_corpus.rs` | `seam_residual_corpus` + `diag_seam_residual` | oracle / diagnostic | diag: `diagnostic-tests` |
 
 ---
@@ -339,6 +347,166 @@ existing corpus filters until Phase 2b.
 
 ---
 
+## PR contract (required CI gates)
+
+Explicit list of what **must pass on every PR**. Wall times are debug builds on a typical dev
+machine (2026-06-25); treat as budgets, not SLAs. See [CI migration](#ci-migration) for when each
+row lands in GitHub Actions.
+
+### Composite `pr` tier
+
+`test-tier.ps1 -Tier pr` runs **`pr-align` + `pr-repair` + `clip-sync-cli`** in sequence; fail fast
+on first non-zero exit. Individual crate tiers remain callable alone.
+
+### `clip-sync-repair` — `pr-repair`
+
+| Phase | What runs | Wall budget (debug) |
+|-------|-----------|---------------------|
+| **1 (interim)** | `--lib` with `--skip p1_/p2_/p4_/integration_/f1_production_haystack` + `gap_corpus_committed` + `seam_residual_disagreement_oracles` + `--test config_roundtrip scan_gaps_integration` (+ `cli_mux_integration` if `ffmpeg-mux` built) | ~2–4 min |
+| **2 (target)** | `--lib` (units only, &lt;15s) + binaries below | ~3–5 min |
+| **3 (target)** | Same as Phase 2; validation/diagnostic binaries not compiled unless features passed | ~3–5 min |
+
+**Required test fns / binaries (target, post–Phase 2):**
+
+| Kind | Name | Tier | Notes |
+|------|------|------|-------|
+| lib filter | all unit modules | unit | no SD/EC oracle rows |
+| `--test` | `config_roundtrip` | integration | |
+| `--test` | `scan_gaps_integration` | integration | |
+| `--test` | `cli_wav_integration` | integration | |
+| `--test` | `query_reference_integration` | integration | query-mode repair smoke |
+| `--test` | `integration_floor_oracle_smoke` | integration | manifest + gap_frames |
+| `--test` | `integration_energy_smoke` | integration | `corpus_scan_patch_smoke` (from `energy_signature_production.rs`) |
+| `--test` | `integration_residual_gate_smoke` | integration | `off_no_regression_baseline` (RG04 only; see [Resolved decisions](#resolved-decisions)) |
+| `--test` | `integration_gap_corpus` | integration | `gap_corpus_committed` (Phase 2 follow-up) |
+| `--test` | `oracle_energy` | oracle | SD U1–U8 + EC domain rows (from lib acceptance) |
+| `--test` | `seam_residual_corpus` | oracle | `f4_decoy_placement_informative_with_high_headroom`, `seam_residual_disagreement_oracles` |
+| fn filter | `gap_corpus_committed` | integration | **until** `integration_gap_corpus` lands |
+
+**Explicitly not on default PR** (nightly / manual / extended):
+
+| Name | Tier | Run via |
+|------|------|---------|
+| `off_no_regression_baseline` siblings / future RG rows | validation | `validation-tests` + `validate_residual_gate` |
+| `patch_audio_integration` (full) | integration | `pr-repair-extended` or `-Tier integration` |
+| `i1_` / `i2_` / `i3_` / `i4_` (SP01–SP04) | integration | optional in extended profile (~15 min) |
+| `floor_oracle_*` ignored, `source_gap_oracle_*` | validation | nightly |
+| `energy_signature_mode_matrix`, EC6 smokes, F4 sweeps | diagnostic / validation | `--features diagnostic-tests` or manual |
+| `seam_residual_*_csv`, `diag_*` | diagnostic | manual |
+
+**`pr-repair-extended` (optional, path filters):** `pr-repair` + `patch_audio_integration` with
+`--skip i1_ --skip i2_ --skip i3_` (sine seam grid only, ~minutes not ~15 min).
+
+### `clip-sync` — `pr-align`
+
+| Phase | What runs | Wall budget (debug) |
+|-------|-----------|---------------------|
+| **Until 2b** | `cargo test -p clip-sync corpus_committed` (name filter on lib) | ~10–30s |
+| **2b (target)** | `--lib` + `integration_corpus` + `integration_extract_window` + `integration_media_reader` + `oracle_anchored_end` | ~1–3 min (dominated by `--lib` until Phase 2c) |
+| **2c note** | `align_videos` still in `--lib` until moved | budget may stay high |
+
+**Required (target, post–2b):**
+
+| Name | Tier |
+|------|------|
+| `corpus_committed_cases` | integration (`integration_corpus`) |
+| `corpus_manifest_loads`, `corpus_verify_offset_pass`, `corpus_verify_option_a_false_pass_probe`, ambiguity-flag probes, `corpus_query_reference_b_longer_fast` | integration |
+| WAV rows in `integration_extract_window`, `integration_media_reader` | integration |
+| `oracle_anchored_end` rows | oracle |
+
+### `clip-sync-cli`
+
+| Name | Tier |
+|------|------|
+| `cargo test -p clip-sync-cli` | integration (adapter; 2 binaries today) |
+
+Included in composite `-Tier pr`.
+
+---
+
+## Per-file test inventory (repair binaries)
+
+Target tier for each `#[test]` when splitting. Acceptance IDs from
+[test-acceptance-glossary.md](test-acceptance-glossary.md).
+
+### `energy_signature_production.rs` → split across three binaries
+
+| Test fn | Today | Target binary | Tier | `#[ignore]` after split? |
+|---------|-------|---------------|------|--------------------------|
+| `corpus_scan_patch_smoke` | default CI | `integration_energy_smoke.rs` | integration | no |
+| `energy_signature_mode_matrix` | ignore | `diag_energy_matrix.rs` | diagnostic | no (binary gated) |
+| `f1_production_scan_patch_smoke` | ignore | `diag_energy_matrix.rs` or `validate_energy_corpus.rs` | diagnostic / validation | no |
+| `f1_production_oracle_patch_control` | ignore | `oracle_energy.rs` | oracle | no |
+| `f2_production_oracle_patch_smoke` | ignore | `oracle_energy.rs` | oracle | no |
+| `f2_production_weights_diagnostic` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
+| `f4_decoy_residual_gate_vetoes_bool` | ignore (ec6) | `validate_residual_gate.rs` or `oracle_energy.rs` | validation / oracle | no |
+| `f4_decoy_patch_discrimination` | ignore (ec6) | same | validation / oracle | no |
+| `f4_decoy_mode_coupled_bias` | ignore (ec6) | same | validation / oracle | no |
+| `f4_decoy_energy_recovers_at_low_bias` | ignore (ec6) | same | validation / oracle | no |
+| `f4_decoy_weight_sweep` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
+| `f4_decoy_bias_boundary` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
+| `f4_decoy_patch_diagnostic` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
+
+**Decision:** EC6 contract rows (`f4_decoy_*` gate tests) land in **`validate_residual_gate.rs`**
+behind `validation-tests`; oracle smokes (`f1/f2_production_oracle_patch_*`) in **`oracle_energy.rs`**.
+
+Add `integration_energy_smoke.rs` to repair `[[test]]` sketch (not in original list).
+
+### `residual_gate_integration.rs`
+
+| Test fn | Today | Target binary | Tier | PR? |
+|---------|-------|---------------|------|-----|
+| `off_no_regression_baseline` | default CI (~82s) | `integration_residual_gate_smoke.rs` | integration | **yes** |
+| (future RG01–RG03, RG05 rows) | — | `validate_residual_gate.rs` | validation | no |
+
+`residual_gate_integration.rs` is **renamed/split**, not moved wholesale behind `validation-tests`.
+
+### `patch_audio_integration.rs`
+
+| Group | Tests | Tier | PR default? |
+|-------|-------|------|-------------|
+| Sine seam / fit / anchored-retry grid | `patch_audio_fills_gap_*` … `patch_audio_anchored_retry_*` (22 tests) | integration | extended only |
+| SP01–SP04 energy signature | `i1_f1_*`, `i2_f1_*`, `i3_f2_*`, `i4_f3_*` (4 tests) | integration (SP) | extended only (heavy) |
+| Production smoke | `patch_audio_fit_production_defaults_smoke` | validation | no (`#[ignore]` → validation or manual) |
+| CSV / debug dumps | `i1_f1_patch_diagnostic`, `i3_f2_patch_diagnostic` | diagnostic | no → `diag_patch_audio.rs` (Phase 2 follow-up) |
+
+Mixed-tier tests may stay in one binary short term; **diagnostic fns move to `diag_patch_audio.rs`**
+when touched (same rule as `diag_seam_residual`).
+
+### `query_reference_integration.rs`
+
+| Test fn | Tier | PR? |
+|---------|------|-----|
+| `repair_auto_no_clip_count_mismatch_error` | integration | yes |
+| `repair_query_gap_inside_region_fillable` | integration | yes |
+| `repair_b_longer_query_gap_inside_region_patched_with_donor_audio` | integration | yes |
+| `repair_query_gap_outside_region_skipped` | integration | yes |
+
+Stays one binary: `query_reference_integration` (integration tier). No split planned.
+
+### `seam_residual_corpus.rs` → oracle + diagnostic
+
+| Test fn | Today | Target binary | Tier | PR? |
+|---------|-------|---------------|------|-----|
+| `f4_decoy_placement_informative_with_high_headroom` | default CI | `seam_residual_corpus.rs` | oracle | yes |
+| `seam_residual_disagreement_oracles` | default CI | `seam_residual_corpus.rs` | oracle | yes |
+| `seam_residual_broadband_csv` | ignore | `diag_seam_residual.rs` | diagnostic | no |
+| `seam_residual_alignment_sweep_csv` | ignore | `diag_seam_residual.rs` | diagnostic | no |
+| `seam_residual_truth_decoy_csv` | ignore | `diag_seam_residual.rs` | diagnostic | no |
+| `seam_residual_disagreement_csv` | ignore | `diag_seam_residual.rs` | diagnostic | no |
+
+### Lib modules (repair) — Phase 2 / follow-up
+
+| Module | Tests to move | Target |
+|--------|---------------|--------|
+| `test_support/energy_signature_acceptance.rs` | all `#[test]` | `oracle_energy.rs` |
+| `test_support/energy_signature_production.rs` | `f1_production_haystack_scan_vs_oracle` | `oracle_energy.rs` |
+| `application/testing/gap_corpus_fixtures.rs` | `gap_corpus_committed` | `integration_gap_corpus.rs` |
+| same | generated/external/patch_timing/regenerate | validation / diagnostic binaries or stay ignored in gap binary |
+| `infrastructure/cli/output.rs` | `write_full_surface_repair_golden` | `diag_repair_golden.rs` (diagnostic; defer) |
+
+---
+
 ## Phase 1 — Convention + script + docs (no file moves)
 
 **Deliverables:**
@@ -353,17 +521,22 @@ existing corpus filters until Phase 2b.
 
 ```powershell
 param(
-  [ValidateSet('unit','integration','oracle','validation','diagnostic','pr','pr-repair','pr-align')] $Tier,
+  [ValidateSet(
+    'unit','integration','oracle','validation','diagnostic',
+    'pr','pr-repair','pr-repair-extended','pr-align',
+    'validation-align','diagnostic-align'
+  )] $Tier,
+  [ValidateSet('clip-sync-repair','clip-sync','clip-sync-cli','workspace')] $Package = 'workspace',
   [switch] $Nocapture
 )
 
-# unit        — repair: --lib with skips (until Phase 2); align: --lib only (until Phase 2b)
-# integration — repair: --test *_integration binaries; align: Phase 2b integration_* binaries
-# oracle      — repair: disagreement_oracles + EC/SD; align: oracle_anchored_end (Phase 2b)
-# validation  — repair: floor/residual --ignored; align: validate_alignment_corpus (Phase 2b)
-# diagnostic  — repair: diag_* --ignored; align: diag_* (Phase 2b)
-# pr-repair   — composed fast gate for clip-sync-repair
-# pr-align    — composed fast gate for clip-sync (Phase 2b; until then: corpus_committed filter)
+# Fail fast: exit non-zero on first failing cargo test invocation.
+# unit / integration / oracle / validation / diagnostic — per [PR contract](#pr-contract-required-ci-gates)
+# pr                  — pr-align + pr-repair + clip-sync-cli
+# pr-repair           — repair PR contract (interim → target per phase column)
+# pr-repair-extended  — pr-repair + patch_audio sine grid (--skip i1_/i2_/i3_)
+# pr-align            — align PR contract (corpus_committed until 2b)
+# validation-align / diagnostic-align — clip-sync nightly/manual subsets (Phase 2b)
 ```
 
 **`pr-repair` composition (initial):**
@@ -404,7 +577,10 @@ all tiers with wall-time expectations.
 | From | To |
 |------|-----|
 | `energy_signature_production.rs` ignored matrix/sweeps | `tests/diag_energy_matrix.rs` |
-| `seam_residual_corpus.rs` `*_csv` tests | keep file; ensure `diag_` prefix + `tier:diagnostic` |
+| `energy_signature_production.rs` | `tests/integration_energy_smoke.rs` (`corpus_scan_patch_smoke`) |
+| `residual_gate_integration.rs` | `tests/integration_residual_gate_smoke.rs` (RG04 only) + `tests/validate_residual_gate.rs` (future RG rows) |
+| `seam_residual_corpus.rs` `*_csv` tests | `tests/diag_seam_residual.rs` (see [Resolved decisions](#resolved-decisions)) |
+| `patch_audio_integration.rs` `i1_/i3_` diagnostic | defer `tests/diag_patch_audio.rs` |
 
 **Rename catalog folder:** `tests/residual_gate/` → `tests/residual_gate_catalog/`; update
 references in `residual_gate_integration.rs`, `floor_oracle_integration.rs`, findings doc.
@@ -613,10 +789,10 @@ cargo test -p clip-sync --test integration_media_reader
 cargo test -p clip-sync --test oracle_anchored_end
 
 # validation — nightly; needs ffmpeg, optional he-aac / corpus env
-cargo test -p clip-sync --features test-utils,validation-tests,he-aac --test validate_alignment_corpus -- --ignored
+cargo test -p clip-sync --features test-utils,validation-tests,he-aac --test validate_alignment_corpus
 
 # diagnostic
-cargo test -p clip-sync --features test-utils,diagnostic-tests --test diag_regenerate_corpus -- --ignored --nocapture
+cargo test -p clip-sync --features test-utils,diagnostic-tests --test diag_regenerate_corpus -- --nocapture
 ```
 
 Update **PR workspace** CI profile to `pr-align` + `pr-repair` once both scripts exist.
@@ -671,9 +847,11 @@ binaries only (no `validation-tests` / `diagnostic-tests`).
 **Nightly / local:**
 
 ```powershell
-cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle --test validate_residual_gate -- --ignored
-cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --ignored --nocapture
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle --test validate_residual_gate
+cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix --test diag_seam_residual -- --nocapture
 ```
+
+(No `--ignored` once tests live only in feature-gated binaries.)
 
 **Done when:** default `cargo test -p clip-sync-repair` does not compile validation or diagnostic
 binaries; `development.md` documents features and explicit `--test` names from the table above.
@@ -719,10 +897,75 @@ cargo nextest run --profile validation -p clip-sync-repair
 
 | Profile | Tiers | When |
 |---------|-------|------|
-| **PR workspace** | `pr-align` + `pr-repair` | every PR (align: `corpus_committed` until Phase 2b) |
-| **PR repair extended** | + `integration` (full `patch_audio` sine tests) | optional / path filters |
-| **Nightly** | + `validation` (`--ignored`, ffmpeg + corpus fetch) | scheduled |
-| **Manual** | `diagnostic` | tuning / CSV baselines |
+| **PR workspace** | `pr` (= `pr-align` + `pr-repair` + `clip-sync-cli`) | every PR |
+| **PR repair extended** | `pr-repair-extended` | optional / path filters on `clip-sync-repair/**` |
+| **Nightly** | `validation` + `validation-align` for both crates | scheduled; ffmpeg on runner |
+| **Manual** | `diagnostic` + `diagnostic-align` | tuning / CSV baselines |
+
+See [PR contract](#pr-contract-required-ci-gates) for per-fn detail and wall budgets.
+
+---
+
+## CI migration
+
+How GitHub Actions evolves as phases land. Today:
+
+```yaml
+# .github/workflows/ci.yml (current)
+- run: cargo test --workspace
+```
+
+| Stage | Trigger | Workflow change | Notes |
+|-------|---------|-----------------|-------|
+| **0 — today** | — | `cargo test --workspace` | Runs full lib + all integration binaries; no ffmpeg; ~65s repair lib + integration compile cost |
+| **1 — Phase 1 lands** | `test-tier.ps1` exists | `run: ./scripts/test-tier.ps1 -Tier pr` | Replace workspace blanket test; same Windows runner; no ffmpeg yet |
+| **2 — Phase 2 lands** | repair lib &lt;15s | keep `-Tier pr`; document extended profile optional | `pr-repair` no longer needs `--skip` oracle filters |
+| **3 — repair Phase 3** | feature gates | `pr` does **not** pass `validation-tests` / `diagnostic-tests` | Nightly job added (below) |
+| **4 — Phase 2b** | align `tests/` binaries | `pr-align` in script; `pr` uses it instead of `corpus_` filter | align lib still heavy until 2c |
+| **5 — optional nextest** | script pain | `cargo nextest run --profile pr` | script remains fallback |
+
+### Nightly job (target, post–Phase 3 + 2b)
+
+Separate workflow or `workflow_dispatch` / `schedule` job:
+
+```yaml
+# sketch — not shipped with Phase 1
+jobs:
+  nightly-validation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: choco install ffmpeg -y   # or equivalent; document in development.md
+      - run: ./scripts/test-tier.ps1 -Tier validation -Package clip-sync-repair
+      - run: ./scripts/test-tier.ps1 -Tier validation-align -Package clip-sync
+```
+
+Env (optional): `CLIP_SYNC_CORPUS`, `CLIP_SYNC_GAP_CORPUS` as repo/org variables for external
+tiers — skip step when unset (tests already no-op).
+
+### `cargo test --workspace` after tiers ship
+
+**Decision:** not the PR gate. Document in `development.md` as “full local compile check” only.
+Default `cargo test -p <crate>` per crate still runs that crate’s lib + default integration
+binaries (respecting `autotests = false` + no validation features).
+
+---
+
+## Resolved decisions
+
+Closes gaps called out in plan review (2026-06-25).
+
+| Topic | Decision |
+|-------|----------|
+| **RG04 on PR** | `off_no_regression_baseline` stays on PR in **`integration_residual_gate_smoke.rs`** (integration tier). Do not move the only default-CI RG test behind `validation-tests`. |
+| **`corpus_scan_patch_smoke` on PR** | Moves to **`integration_energy_smoke.rs`** (integration), not oracle/diagnostic. |
+| **`seam_residual_corpus` CSV tests** | Split to **`diag_seam_residual.rs`** with `diagnostic-tests`; oracle binary keeps score/oracle fns only. Replaces earlier “keep file” wording. |
+| **`#[ignore]` after feature-gated binaries** | **Remove** `#[ignore]` when the test lives in a `required-features` binary (validation/diagnostic). Keep `tier:` in comments or module docs if useful. Use `#[ignore]` only for tests still in a shared binary that mixes default + manual rows. |
+| **`oracle-tests` feature** | **Not used in v1.** Oracle binaries compile on default `cargo test`; PR selects subset via script. Revisit if oracle compile time hurts. |
+| **Composite `pr` tier** | `pr-align` + `pr-repair` + `cargo test -p clip-sync-cli`. |
+| **Validation command `--ignored`** | Required only while tests remain in lib/default binaries. After Phase 3 / 2b-3, run `cargo test --features validation-tests --test validate_*` **without** `--ignored`. |
+| **Non-goals Phase 5 typo** | Validation crate deferral refers to **Phase 5**, not Phase 4 (nextest). |
 
 ---
 
@@ -738,6 +981,11 @@ cargo nextest run --profile validation -p clip-sync-repair
 | Workspace scope | Phase 1–2 repair-first; **Phase 2b** = `clip-sync` corpus + symphonia splits; **Phase 2c** = `align_videos` defer |
 | libtest `--skip` | Acceptable in Phase 1; reduce reliance after Phase 2 moves oracles |
 | Harness layout | Fixtures in `test_support/`; runners in `tests/common/`; catalogs data-only; thin `#[test]` in tier binaries — see [Harness organization](#harness-organization-fixtures-runners-catalogs) |
+| PR contract | [PR contract](#pr-contract-required-ci-gates) is source of truth for CI; per-file splits in [inventory](#per-file-test-inventory-repair-binaries) |
+| Oracle on PR | **Yes** for `seam_residual_disagreement_oracles` + `oracle_energy` SD rows; not all oracle binaries |
+| RG04 / energy smoke on PR | **integration** smokes (`integration_residual_gate_smoke`, `integration_energy_smoke`), not validation feature |
+| `#[ignore]` vs feature gates | Remove ignore when binary is feature-gated; see [Resolved decisions](#resolved-decisions) |
+| `cargo test --workspace` | Dev convenience only after Phase 1; not CI PR gate |
 
 ---
 
@@ -756,25 +1004,26 @@ cargo nextest run --profile validation -p clip-sync-repair
 
 ```powershell
 # After Phase 1
-.\scripts\test-tier.ps1 -Tier unit
-.\scripts\test-tier.ps1 -Tier integration
-.\scripts\test-tier.ps1 -Tier oracle
-.\scripts\test-tier.ps1 -Tier validation    # needs ffmpeg + corpus
+.\scripts\test-tier.ps1 -Tier pr                    # full workspace PR gate
 .\scripts\test-tier.ps1 -Tier pr-repair
+.\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # needs ffmpeg + corpus
 
 # After Phase 2
 cargo test -p clip-sync-repair --lib          # should be much faster
 cargo test -p clip-sync-repair --test oracle_energy
+cargo test -p clip-sync-repair --test integration_energy_smoke
+cargo test -p clip-sync-repair --test integration_residual_gate_smoke
 
-# After Phase 3 (validation compile-gated)
-cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle -- --ignored
+# After Phase 3 (validation compile-gated; no --ignored)
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
 
 # After Phase 2b
 .\scripts\test-tier.ps1 -Tier pr-align
 cargo test -p clip-sync --test integration_corpus
 
 # After Phase 2b-3
-cargo test -p clip-sync --features validation-tests --test validate_alignment_corpus -- --ignored
+cargo test -p clip-sync --features validation-tests --test validate_alignment_corpus
 ```
 
 ---
