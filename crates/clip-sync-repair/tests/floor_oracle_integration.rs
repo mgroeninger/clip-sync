@@ -3,6 +3,7 @@
 //! Run: `scripts/fetch_corpus_sources.ps1`
 //!      `cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture`
 //!      `cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture`
+//!      `cargo test -p clip-sync-repair floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture`
 
 mod common;
 
@@ -12,6 +13,7 @@ use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
+use clip_sync_repair::domain::gap_fill_fit::FillConfidence;
 use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_production::{
@@ -30,6 +32,7 @@ struct FloorOracleRun {
     structure_ok: bool,
     residual: Option<clip_sync_repair::domain::policies::SeamResidualVerdict>,
     align_adjustment_secs: f64,
+    confidence: Option<FillConfidence>,
 }
 
 fn floor_oracle_repair_config(residual_gate: ResidualGateMode) -> RepairConfig {
@@ -105,6 +108,10 @@ fn run_built_floor_oracle(
         } => *align_adjustment_secs,
         _ => f64::NAN,
     };
+    let confidence = match &gap.status {
+        GapPatchStatus::Patched { confidence, .. } => Some(*confidence),
+        _ => None,
+    };
 
     FloorOracleRun {
         status,
@@ -112,6 +119,7 @@ fn run_built_floor_oracle(
         structure_ok,
         residual: gap.residual,
         align_adjustment_secs,
+        confidence,
     }
 }
 
@@ -216,13 +224,31 @@ fn assert_truth_patches(case_id: &str, run: &FloorOracleRun, gate: ResidualGateM
     );
 }
 
+/// On real-codec truth gaps, `veto_rescue` must not widen patching vs `veto` when Pearson already
+/// passes (no dead-zone rescue flip). H2-B dead-zone rescue remains on synthetic broadband only.
+fn assert_veto_rescue_matches_veto_on_truth(case_id: &str, built: &BuiltFloorOracle) {
+    let veto = run_built_floor_oracle(built, ResidualGateMode::Veto);
+    let rescue = run_built_floor_oracle(built, ResidualGateMode::VetoRescue);
+    assert_truth_patches(case_id, &veto, ResidualGateMode::Veto);
+    assert_truth_patches(case_id, &rescue, ResidualGateMode::VetoRescue);
+    assert_eq!(
+        veto.status, rescue.status,
+        "{case_id}: veto_rescue status should match veto on real-codec truth (veto skip={}, rescue skip={})",
+        veto.skip_reason, rescue.skip_reason
+    );
+    assert_eq!(
+        veto.confidence, rescue.confidence,
+        "{case_id}: veto_rescue confidence should match veto when Pearson passes (no dead-zone rescue)"
+    );
+}
+
 #[test]
 fn floor_oracle_manifest_loads() {
     let manifest = load_manifest();
     assert!(manifest.version >= 1);
     assert!(
-        manifest.case.len() >= 12,
-        "expected speech+ambient wav/aac/mp3 matrix, aac_64k, and two_mic case"
+        manifest.case.len() >= 18,
+        "expected speech+ambient+music wav/aac/vorbis matrix, dual encodes, and two_mic case"
     );
 }
 
@@ -437,5 +463,46 @@ fn floor_oracle_residual_gate_real_codec() {
             "veto must not skip when gate off patches unrelated two-mic (skip={})",
             veto.skip_reason
         );
+    }
+}
+
+/// Real-codec `veto_rescue` on broadband (music) and dual-bitrate Vorbis truth gaps.
+///
+/// Real Wikimedia/Musopen masters do not hit the synthetic H2-B Pearson dead zone at truth
+/// placement — Pearson passes and `veto_rescue` must match `veto` (no extra marginal patches).
+/// Dead-zone rescue proof stays on `broadband_oracle_veto_rescue_patches_marginal`
+/// (`seam_residual_oracle.rs`). This test ties rescue safety to the same corpus as FLOOR_OK.
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture"]
+fn floor_oracle_veto_rescue_real_broadband_codec() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skip floor_oracle_veto_rescue_real_broadband_codec: ffmpeg unavailable");
+        return;
+    }
+
+    let manifest = load_manifest();
+    let cases = [
+        manifest_case(&manifest, "cc_music_gap_oracle_vorbis_128k"),
+        manifest_case(&manifest, "cc_music_gap_oracle_vorbis_dual"),
+        manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_dual"),
+        manifest_case(&manifest, "cc_ambient_gap_oracle_vorbis_dual"),
+    ];
+
+    for case in cases {
+        if !case_sources_ready(case) {
+            eprintln!(
+                "skip floor_oracle_veto_rescue_real_broadband_codec: run scripts/fetch_corpus_sources.ps1"
+            );
+            return;
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    for case in cases {
+        let built =
+            build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+        assert_veto_rescue_matches_veto_on_truth(&case.id, &built);
+        let rescue = run_built_floor_oracle(&built, ResidualGateMode::VetoRescue);
+        assert_floor_expectations(&case.id, &built, &rescue);
     }
 }

@@ -118,6 +118,9 @@ fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairCo
 /// dead zone to `FillConfidence::Marginal`. With the gate off, the same placement path skips.
 /// The rescued arm also asserts `align_adjustment_secs` is within ~one energy bin of the true
 /// slide so rescue is not masking a wrong placement.
+///
+/// Real Wikimedia/Musopen Vorbis truth gaps pass Pearson — rescue matches `veto` there; see
+/// `floor_oracle_veto_rescue_real_broadband_codec`.
 #[test]
 #[ignore = "slow (~100s): cargo test -p clip-sync-repair broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture"]
 fn broadband_oracle_veto_rescue_patches_marginal() {

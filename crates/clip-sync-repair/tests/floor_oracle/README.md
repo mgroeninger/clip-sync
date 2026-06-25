@@ -17,6 +17,7 @@ Requires **ffmpeg** on PATH.
 ```powershell
 cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture
 cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture
+cargo test -p clip-sync-repair floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture
 cargo test -p clip-sync-repair floor_oracle_manifest_loads
 ```
 

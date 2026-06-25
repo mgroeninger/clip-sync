@@ -123,6 +123,17 @@ bitrate_b = "64k"
 # Search may slide ~12 ms off truth (> residual_lag); gate abstains beyond reach (M5 fixed).
 expect_informative_floor = true
 
+[[case]]
+id = "cc_speech_gap_oracle_vorbis_dual"
+source_id = "wikimedia_martin_amis_interview_1990"
+oracle_variant = "same_master"
+format_a = "vorbis"
+format_b = "vorbis"
+bitrate_a = "128k"
+bitrate_b = "192k"
+# Calibrated: informative independent-encode floors (pre -25.1, post -20.3); not same-bitrate artifact.
+expect_informative_floor = true
+
 # ── ambient ──────────────────────────────────────────────────────────────────
 [[case]]
 id = "cc_ambient_gap_oracle_wav"
@@ -172,6 +183,17 @@ format_b = "vorbis"
 bitrate_a = "128k"
 bitrate_b = "128k"
 # PROVISIONAL — Vorbis ambient calibration point.
+expect_informative_floor = true
+
+[[case]]
+id = "cc_ambient_gap_oracle_vorbis_dual"
+source_id = "wikimedia_schiphol_restaurant_ambience"
+oracle_variant = "same_master"
+format_a = "vorbis"
+format_b = "vorbis"
+bitrate_a = "128k"
+bitrate_b = "192k"
+# Calibrated: informative (pre -21.5, post -21.5).
 expect_informative_floor = true
 
 # ── music (Grieg / Musopen Symphony, PD — lossless modern full-bandwidth master) ─────────────
@@ -227,6 +249,17 @@ format_b = "vorbis"
 bitrate_a = "128k"
 bitrate_b = "128k"
 # PROVISIONAL — music Vorbis point.
+expect_informative_floor = true
+
+[[case]]
+id = "cc_music_gap_oracle_vorbis_dual"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "vorbis"
+format_b = "vorbis"
+bitrate_a = "128k"
+bitrate_b = "64k"
+# Calibrated: broadband music informative (pre -22.4, post -23.6); independent 128k/64k encode.
 expect_informative_floor = true
 
 # ── negative control ─────────────────────────────────────────────────────────
