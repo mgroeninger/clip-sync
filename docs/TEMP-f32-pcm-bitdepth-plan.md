@@ -29,14 +29,16 @@
   `clip-sync` and `clip-sync-repair` domain/application code.
 - Probe captures source bit depth / sample format per track.
 - WAV (and, if `ffmpeg-mux` is enabled, the mux pipe) write at a bit depth derived from the
-  source: 32-bit float if the source was float (e.g. WAV/FLAC float, some ALAC), 24-bit int if
-  source `bits_per_sample > 16`, else 16-bit int. No upsampling claims — output depth is `min`
-  of "what the source actually had" and what's useful (we don't manufacture precision a lossy
-  codec like AAC/AC-3 never had).
+  source, **capped at 24-bit int**: source `bits_per_sample > 16` (including 32-bit float
+  sources) → 24-bit int output; else 16-bit int (today's behavior, unchanged). We do not write
+  32-bit float WAV output in v1 — 24-bit int is the ceiling regardless of source format, since
+  it's universally supported by players/editors and float WAV support is inconsistent.
 
 **Non-goals (v1):**
+- 32-bit float WAV output — explicitly out of scope; 24-bit int is the max output depth even for
+  float sources.
 - Per-channel or per-track mixed bit depth in a single output file.
-- Dithering when truncating to a lower output depth (e.g. 24-bit float source → 16-bit WAV by
+- Dithering when truncating to a lower output depth (e.g. 24-bit/float source → 16-bit WAV by
   user choice/flag) — straight truncation/round is acceptable for v1.
 - Preserving bit depth through lossy codecs (AAC/MP3/AC-3/Opus) beyond whatever Symphonia reports
   as the decoder's native output format — these have no real "source bit depth" and will fall
@@ -76,9 +78,9 @@
 | **Resample boundary** | `rubato.rs` already runs `FftFixedIn<f32>` internally — delete the i16↔f32 conversions at lines 45 and 68-75; pass/return `Vec<f32>` straight through. Fixes the existing raw-vs-normalized scale mismatch as a side effect. |
 | **Repair domain math** | `policies.rs::interleaved_to_mono/channels` currently widen `&[i16]` to `Vec<f64>` for downmix/correlation math. With `f32` input already at full mantissa precision relative to any real source, widen to `f64` only where an existing algorithm specifically needs it (e.g. long correlation sums where f32 accumulation error matters) — otherwise keep `f32` throughout to avoid needless alloc/copy. Decide per call site during Phase 1 implementation; default to f32 unless a test regresses. |
 | **Bit-depth detection source** | Read `AudioCodecParameters::bits_per_sample` and `sample_format` (Symphonia, confirmed present in `symphonia-core` 0.6.0) at probe time. Add `AudioTrack.bit_depth: Option<BitDepth>` where `BitDepth` is a small enum (`Int16`, `Int24`, `Int32`, `Float32`, `Other(u32)`) derived from `(bits_per_sample, sample_format)`. `None` when Symphonia reports neither (typical for lossy codecs: AAC/MP3/AC-3/Opus/Vorbis) — these fall back to the existing 16-bit default. |
-| **Output depth resolution** | New pure function `resolve_output_bit_depth(source: Option<BitDepth>) -> WavBitDepth` (`WavBitDepth::{Int16, Int24, Float32}`): `Float32` source → `Float32` out; `Int24`/`Int32` source → `Int24` out (no need to claim 32-bit int, which `hound`/most players handle poorly); `Int16` or `None` → `Int16` out (today's behavior, unchanged for lossy-codec sources). *Rejected:* a CLI flag to force depth in v1 — detect-and-use is the explicit ask; a future `--bit-depth` override flag is a natural follow-up, not required now. |
-| **f32 → output-depth conversion** | New `infrastructure/pcm_depth.rs` (or extend `infrastructure/pcm.rs`) with `f32_to_i16`, `f32_to_i24_bytes` (hound has no native i24 sample type — write as 3 packed bytes per `hound::WavWriter::write_sample` for `i32` with `bits_per_sample: 24`, confirming hound's documented convention), and a no-op passthrough for `Float32`. Centralize so `wav_writer.rs` and (if enabled) `ffmpeg_mux.rs`/`pcm.rs` share one conversion, not two independently-maintained roundings. |
-| **`write_pcm_s16le`** | Rename/generalize to `write_pcm_le(writer, samples: &[f32], depth: WavBitDepth)` in `pcm.rs`; mux pipe format string (`-f s16le` / `-f s24le` / `-f f32le`) selected to match. |
+| **Output depth resolution** | New pure function `resolve_output_bit_depth(source: Option<BitDepth>) -> WavBitDepth` (`WavBitDepth::{Int16, Int24}` — no `Float32` variant; output caps at 24-bit int per the Goal/Non-goals above): `Int24`, `Int32`, **or `Float32`** source → `Int24` out; `Int16` or `None` → `Int16` out (today's behavior, unchanged for lossy-codec sources). *Rejected:* 32-bit float output — explicit non-goal. *Rejected:* a CLI flag to force depth in v1 — detect-and-use is the explicit ask; a future `--bit-depth` override flag is a natural follow-up, not required now. |
+| **f32 → output-depth conversion** | New `infrastructure/pcm_depth.rs` (or extend `infrastructure/pcm.rs`) with `f32_to_i16` and `f32_to_i24`. **Confirmed via `hound` 3.5.1 source (`hound-3.5.1/src/write.rs`):** for `bits_per_sample: 24`, `WavWriter::write_sample` takes an `i32` in the *true* 24-bit signed range `-8_388_608..=8_388_607` (i.e. scale by `2^23`, not `i32::MAX`/left-justified) — out-of-range values are a hard write error. hound packs each sample as 3 raw bytes on disk (`bytes_per_sample = 3`), no 4-byte padding. So `f32_to_i24(s: f32) -> i32 { (s.clamp(-1.0, 1.0) * 8_388_607.0).round() as i32 }`. Centralize so `wav_writer.rs` and (if enabled) `ffmpeg_mux.rs`/`pcm.rs` share one conversion, not two independently-maintained roundings. |
+| **`write_pcm_s16le`** | Rename/generalize to `write_pcm_le(writer, samples: &[f32], depth: WavBitDepth)` in `pcm.rs`; mux pipe format string (`-f s16le` / `-f s24le`) selected to match. |
 | **MultiChannelPcm/MonoPcmClip metadata** | Add `source_bit_depth: Option<BitDepth>` to `MultiChannelPcm` (carried from the `AudioTrack` used to decode it) so the writer doesn't need a second lookup. `MonoPcmClip` (fingerprint-rate, lossy-tolerant use only) does **not** need this field — nothing downstream writes a `MonoPcmClip` to a file. |
 | **Existing test fixtures using `hound` at 16-bit** | Untouched — they construct *input* WAVs for tests, independent of the production writer's output decision. No change required unless a test specifically wants to assert 24-bit/float round-tripping (new tests, Phase 3). |
 
@@ -105,18 +107,18 @@
 ### Phase 2 — source-driven output bit depth
 
 - [ ] `domain/bit_depth.rs`: `BitDepth` enum + `resolve_output_bit_depth(Option<BitDepth>) -> WavBitDepth` pure function (unit-testable in isolation, per Decisions table).
-- [ ] `infrastructure/pcm_depth.rs` (new) or extend `infrastructure/pcm.rs`: `f32_to_i16`, `f32_to_i24_packed`, float passthrough; shared by writer and mux.
+- [ ] `infrastructure/pcm_depth.rs` (new) or extend `infrastructure/pcm.rs`: `f32_to_i16`, `f32_to_i24`; shared by writer and mux.
 - [ ] `infrastructure/wav_writer.rs`: resolve `WavSpec` from `audio.source_bit_depth` via `resolve_output_bit_depth`; write via the shared conversion helpers instead of hardcoding `bits_per_sample: 16`.
 - [ ] `infrastructure/pcm.rs::write_pcm_s16le` → `write_pcm_le(writer, samples: &[f32], depth: WavBitDepth)`.
 - [ ] `infrastructure/ffmpeg_mux.rs` (under `ffmpeg-mux` feature): pipe format string follows resolved depth (`-f s16le` / `-f s24le` / `-f f32le`); confirm ffmpeg's AAC encoder accepts all three as input (it does — encoder input format is independent of AAC's own bit depth).
-- [ ] `validate_pcm_for_wav` (`infrastructure/pcm.rs`, referenced from `wav_writer.rs:10`): confirm its multiple-of-channels / non-empty checks are depth-agnostic; add depth to any size/overflow checks if needed (24-bit triples 4 GiB-limit math differently than 16-bit — recheck the existing "exceeds 4 GiB" `--mux` hint in `wav_writer.rs:37-42` against the new byte-per-sample width).
+- [ ] `validate_pcm_for_wav` (`infrastructure/pcm.rs`, referenced from `wav_writer.rs:10`): confirm its multiple-of-channels / non-empty checks are depth-agnostic; add depth to any size/overflow checks if needed (24-bit uses 3 bytes/sample vs 2, so the 4 GiB WAV limit is reached at ⅔ the frame count — recheck the existing "exceeds 4 GiB" `--mux` hint in `wav_writer.rs:37-42` against this).
 - [ ] CLI/progress text: if `--verbose`, log resolved output depth alongside the existing source/codec info (mirrors `format_description()` pattern in `audio_track.rs`).
 
 ### Phase 3 — tests + docs
 
 - [ ] Unit tests: `resolve_output_bit_depth` for every `BitDepth` input including `None`.
 - [ ] Integration test: WAV/FLAC 24-bit int source fixture → repaired output is 24-bit WAV; assert via `hound::WavReader` spec on the output.
-- [ ] Integration test: 32-bit float WAV source fixture → repaired output is `SampleFormat::Float` 32-bit WAV.
+- [ ] Integration test: 32-bit float WAV source fixture → repaired output is **24-bit int** WAV (capped, not float-out).
 - [ ] Integration test: lossy source (existing AAC/AC-3 fixtures) → output stays 16-bit (no behavior change, regression guard).
 - [ ] Existing fixed-16-bit fixtures/tests (`cli_wav_integration.rs`, `patch_audio_integration.rs`, `scan_gaps_integration.rs`, etc.) re-verified green — they construct synthetic 16-bit *input* WAVs, so expected output stays 16-bit; no fixture changes required, but worth a pass to confirm none silently relied on i16 internal representation leaking through an assertion.
 - [ ] `docs/pipeline.md`, `docs/gap-repair-guide.md`: document bit-depth detection and the f32 internal representation.
@@ -148,8 +150,6 @@
 
 ## Open questions
 
-- **24-bit packing via hound:** confirm hound's documented convention for `bits_per_sample: 24` with `SampleFormat::Int` (left-justified in `i32`, or right-justified 3-byte write) before implementing `f32_to_i24_packed` — get this from hound's own source/tests in the registry cache rather than assuming.
-- **f32 WAV + downstream players:** some tools handle `IEEE_FLOAT` WAV poorly; consider whether 32-bit-float sources should map to 24-bit int instead of float-out, to maximize compatibility — leaning toward float-out (matches source exactly) but flag as a decision to revisit with the user before Phase 2 lands.
 - **`MonoPcmClip` f64 correlation paths:** `offset_refinement.rs` and chromaprint fingerprinting were tuned/thresholded against i16-quantized input; verify existing correlation/offset test tolerances still pass with full f32 precision (should only get *more* accurate, but confirm no test hardcodes an i16-quantization-dependent expected value).
 
 ## References
