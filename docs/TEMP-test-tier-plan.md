@@ -1,9 +1,10 @@
 # Temporary plan: test tiers (unit / integration / oracle / validation / diagnostic)
 
 > **Status:** Draft (2026-06-25). Motivated by confusion between CI-fast tests, integration
-> tests, domain oracles, and validation/contract work (e.g. residual gate C1–C5, floor oracle,
-> energy acceptance). Cargo exposes a single `cargo test` surface; `clip-sync-repair --lib`
-> already runs ~65s with 8 `#[ignore]` tests while mixing true units with P1/P4 oracles.
+> tests, domain oracles, and validation/contract work (e.g. residual gate **RG01–RG05**, floor
+> oracle, energy acceptance **SD** / **EC**). Cargo exposes a single `cargo test` surface;
+> `clip-sync-repair --lib` already runs ~65s with 8 `#[ignore]` tests while mixing true units
+> with **EC01** / **EC06** domain oracles (legacy `p1_` / `p4_` test names).
 > Integration binaries add ~20 min (dominated by `patch_audio_integration`). There is no way to
 > run “integration only” or “validation only” without knowing per-file `--test` flags.
 >
@@ -35,8 +36,9 @@
 - Replacing `#[test]` / libtest with a custom harness.
 - Using `examples/` for contract validation.
 - Mandatory validation crate in v1 (defer unless Phase 4 is insufficient).
-- Renaming every existing test in one pass (convention applies to new/edited tests;
-  migrate opportunistically).
+- Renaming every existing test in one pass — new/edited tests follow
+  [test-acceptance-glossary.md](test-acceptance-glossary.md); full SD/SP/EC/RG rename is not a
+  tier-plan phase.
 - Workspace-wide rollout to `clip-sync` / `clip-sync-cli` in Phase 1 (repair crate first).
 
 ---
@@ -47,8 +49,8 @@
 |------|---------|-------------|------------------|-----------------|
 | **unit** | Pure logic: policies, config, CLI parse, small fakes | yes | `src/**` `#[test]` | ms–s |
 | **integration** | Patch/scan/CLI on synthetic WAV; seam behavior | yes (subset) | `tests/*_integration.rs` | s–min |
-| **oracle** | Domain acceptance: U*, P*, F*, score harness rows | optional PR | `tests/oracle_*.rs` (target); today also `--lib` | s–min |
-| **validation** | Real codec / corpus / contract (C1–C5, FLOOR_OK, Run B) | no (`#[ignore]`) | `tests/validate_*.rs` (target); today `floor_oracle_integration.rs` | min+; needs ffmpeg/corpus |
+| **oracle** | Domain acceptance: **SD***, **EC*** domain, **F*** fixtures, score harness | optional PR | `tests/oracle_*.rs` (target); today also `--lib` | s–min |
+| **validation** | Real codec / corpus / contract (**RG01–RG05**, FLOOR_OK, Run B) | no (`#[ignore]`) | `tests/validate_*.rs` (target); today `floor_oracle_integration.rs` | min+; needs ffmpeg/corpus |
 | **diagnostic** | CSV dumps, sweeps, golden generators | never | same files as validation/oracle | manual only |
 
 **Mapping to Cargo:**
@@ -68,10 +70,10 @@
 
 | Command | Wall time (debug) | Notes |
 |---------|-------------------|-------|
-| `cargo test -p clip-sync-repair --lib` | ~65s | 269 tests, 8 ignored; includes P1/P4 oracles, `gap_corpus_committed`, `f1_production_haystack_scan_vs_oracle` |
+| `cargo test -p clip-sync-repair --lib` | ~65s | 269 tests, 8 ignored; includes EC01/EC06 oracles (`p1_`/`p4_`), `gap_corpus_committed`, `f1_production_haystack_scan_vs_oracle` |
 | `cargo test -p clip-sync-repair --tests` | ~21 min | **Also runs `--lib`**; not integration-only |
-| `--test patch_audio_integration` | ~15.5 min | 28 pass; I1/I2/I3 energy fixtures dominate |
-| `--test residual_gate_integration` | ~82s | C4 `off_no_regression_baseline` |
+| `--test patch_audio_integration` | ~15.5 min | 28 pass; SP01/SP02/SP03 rows (`i1_`/`i2_`/`i3_`) dominate |
+| `--test residual_gate_integration` | ~82s | RG04 `off_no_regression_baseline` |
 | `--test floor_oracle_integration` | &lt;1s default | 7/9 tests `#[ignore]` (validation) |
 | `--test seam_residual_corpus` | ~21s | 2 pass; 4 diagnostic `#[ignore]` |
 
@@ -79,7 +81,10 @@
 `p4_f4_decoy_unified_search_diverges`, `write_full_surface_repair_golden`.
 
 **Catalog (not tests):** `crates/clip-sync-repair/tests/residual_gate/` — matrix + README;
-maps scattered tests to C1–C5.
+maps scattered tests to **RG01–RG05** (legacy `C1–C5` in `claims` until matrix is edited).
+
+**Acceptance IDs:** [test-acceptance-glossary.md](test-acceptance-glossary.md) — SD/SP/EC/RG/PL/GK/CS;
+tiers (this doc) vs behavioral families (glossary).
 
 ---
 
@@ -145,8 +150,8 @@ param(
 )
 
 # unit        — --lib with skips for known oracles (until Phase 2)
-# integration — --test *_integration binaries; --skip i1_/i2_/i3_ heavy rows
-# oracle      — seam_residual_disagreement_oracles, p1_/p2_/p4_/u* filters on --lib + oracle binary
+# integration — --test *_integration binaries; --skip i1_/i2_/i3_ (SP01–SP03) heavy rows
+# oracle      — disagreement_oracles; EC01/EC06 + SD* on --lib (legacy p1_/p4_/u* filters)
 # validation  — floor_oracle, source_gap_oracle, gate_real_codec, deadzone — --ignored
 # diagnostic  — diag_, *_csv, energy_signature_mode — --ignored --nocapture
 # pr-repair   — composed fast gate for clip-sync-repair
@@ -155,6 +160,7 @@ param(
 **`pr-repair` composition (initial):**
 
 ```powershell
+# Legacy name filters until EC/SD tests move or rename (see test-acceptance-glossary.md)
 cargo test -p clip-sync-repair --lib -- --skip p1_ --skip p2_ --skip p4_ --skip integration_ --skip f1_production_haystack
 cargo test -p clip-sync-repair gap_corpus_committed
 cargo test -p clip-sync-repair seam_residual_disagreement_oracles
@@ -319,7 +325,8 @@ cargo test -p clip-sync-repair --test oracle_energy
 
 ## Related docs
 
+- [test-acceptance-glossary.md](test-acceptance-glossary.md) — SD/SP/EC/RG/PL/GK/CS IDs (permanent)
 - [development.md](development.md) — build/test commands (update in Phase 1)
 - [corpus-validation.md](corpus-validation.md) — alignment corpus tiers (parallel pattern)
-- [crates/clip-sync-repair/tests/residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) — C1–C5 contract catalog
+- [crates/clip-sync-repair/tests/residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) — RG contract catalog (legacy C1–C5)
 - [residual-gate-findings.md](residual-gate-findings.md) — shipped gate findings
