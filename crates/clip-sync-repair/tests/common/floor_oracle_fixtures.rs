@@ -125,6 +125,23 @@ pub struct FloorOracleCase {
     pub gap_duration_secs: Option<f64>,
     #[serde(default)]
     pub gap_signature_context_secs: Option<f64>,
+    /// Absolute gap-anchor position (seconds from start). When set, overrides the default
+    /// `gap_anchor_secs(spec)` mid-window placement — used to anchor the gap on a chosen region
+    /// (e.g. a loud broadband transient) for the dead-zone probe (Run B).
+    #[serde(default)]
+    pub gap_anchor_secs: Option<f64>,
+    /// Per-case override of `gap_interior_peak_max`. Loud-border inject-then-encode cases bleed
+    /// MDCT energy into the silenced interior, so the default (500) would false-fail validation;
+    /// the borders (not the interior) drive the seam, so a relaxed cap is acceptable there.
+    #[serde(default)]
+    pub gap_interior_peak_max: Option<i16>,
+    /// **Punch-after-encode geometry** (same-master only). A is encoded from the *full* master,
+    /// decoded, then the gap is zeroed in PCM — so A's borders are *native* lossy-decoded audio
+    /// (no inject-then-encode MDCT ringing) and the gap interior is genuinely clean. This removes
+    /// the floor-corruption confound that makes loud-border inject-then-encode cases read an
+    /// uninformative (NaN) floor (G5). A is fed to the pipeline as WAV; B is the independent encode.
+    #[serde(default)]
+    pub punch_after_encode: bool,
     #[serde(default)]
     pub b_encode_delay_ms: Option<u32>,
     #[serde(default)]
@@ -158,6 +175,8 @@ pub struct SourceGapOracleMeta {
     pub gap_start_frame: usize,
     pub gap_end_frame: usize,
     pub expect_informative_floor: bool,
+    /// Resolved post-encode interior silence cap (per-case override or default).
+    pub gap_interior_peak_max: i16,
 }
 
 pub struct BuiltFloorOracle {
@@ -204,8 +223,11 @@ pub fn gap_frames_for_case(case: &FloorOracleCase, defaults: &FloorOracleDefault
     let gap_duration = case.gap_duration_secs.unwrap_or(defaults.gap_duration_secs);
     let sample_rate = case.sample_rate.unwrap_or(defaults.sample_rate);
 
-    let spec = ProductionScenarioSpec::production_standard(total_secs, context_secs);
-    let gap_start = secs_to_frames(gap_anchor_secs(&spec), sample_rate);
+    let anchor_secs = case.gap_anchor_secs.unwrap_or_else(|| {
+        let spec = ProductionScenarioSpec::production_standard(total_secs, context_secs);
+        gap_anchor_secs(&spec)
+    });
+    let gap_start = secs_to_frames(anchor_secs, sample_rate);
     let gap_end = gap_start + secs_to_frames(gap_duration, sample_rate);
     (gap_start, gap_end)
 }
@@ -380,9 +402,32 @@ pub fn build_floor_oracle_pair(
     let master_a = resolve_source_master(dir, &case.source_id, sample_rate, total_secs);
     let (gap_start, gap_end) = gap_frames_for_case(case, defaults);
 
+    // A-side source PCM with the gap. Inject-then-encode: zero the master, then encode (the encoder
+    // sees the silence → MDCT ringing at the loud borders). Punch-after-encode: encode the *full*
+    // master, decode, then zero — A's borders are native, the gap interior is clean.
     let a_pregap = dir.join("a_pregap.wav");
-    std::fs::copy(&master_a, &a_pregap).expect("copy master to a_pregap");
-    zero_mono_frame_range(&a_pregap, gap_start, gap_end);
+    if case.punch_after_encode {
+        assert!(
+            matches!(variant, OracleVariant::SameMaster),
+            "punch_after_encode is same-master only (case {})",
+            case.id
+        );
+        let a_native_enc = output_path(dir, "a_native_enc", format_a);
+        assert!(
+            encode_with_format(&master_a, &a_native_enc, format_a, bitrate_a),
+            "punch_after_encode: encode A (full master) failed for case {}",
+            case.id
+        );
+        assert!(
+            decode_to_mono_wav_at(&a_native_enc, &a_pregap, sample_rate, None),
+            "punch_after_encode: decode A failed for case {}",
+            case.id
+        );
+        zero_mono_frame_range(&a_pregap, gap_start, gap_end);
+    } else {
+        std::fs::copy(&master_a, &a_pregap).expect("copy master to a_pregap");
+        zero_mono_frame_range(&a_pregap, gap_start, gap_end);
+    }
 
     let b_full = dir.join("b_full.wav");
     match (&case.donor_source_id, variant) {
@@ -405,13 +450,20 @@ pub fn build_floor_oracle_pair(
         std::fs::copy(&delayed, &b_full).expect("copy delayed b");
     }
 
-    let path_a = output_path(dir, "a", format_a);
+    // Punch-after-encode: A already carries its codec round-trip + clean punched gap, so feed the
+    // WAV directly — re-encoding here would re-introduce the inject-then-encode ringing we removed.
+    let path_a = if case.punch_after_encode {
+        a_pregap.clone()
+    } else {
+        let p = output_path(dir, "a", format_a);
+        assert!(
+            encode_with_format(&a_pregap, &p, format_a, bitrate_a),
+            "encode A failed for case {}",
+            case.id
+        );
+        p
+    };
     let path_b = output_path(dir, "b", format_b);
-    assert!(
-        encode_with_format(&a_pregap, &path_a, format_a, bitrate_a),
-        "encode A failed for case {}",
-        case.id
-    );
     assert!(
         encode_with_format(&b_full, &path_b, format_b, bitrate_b),
         "encode B failed for case {}",
@@ -432,6 +484,9 @@ pub fn build_floor_oracle_pair(
             gap_start_frame: gap_start,
             gap_end_frame: gap_end,
             expect_informative_floor: case.expect_informative(),
+            gap_interior_peak_max: case
+                .gap_interior_peak_max
+                .unwrap_or(defaults.gap_interior_peak_max),
         },
     };
 
@@ -490,10 +545,10 @@ pub fn validate_built_oracle(
         .map(|s| s.unsigned_abs())
         .max()
         .unwrap_or(0);
-    if peak > defaults.gap_interior_peak_max as u16 {
+    if peak > built.meta.gap_interior_peak_max as u16 {
         return Err(format!(
             "gap interior peak {peak} exceeds max {} after encode",
-            defaults.gap_interior_peak_max
+            built.meta.gap_interior_peak_max
         ));
     }
 

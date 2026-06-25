@@ -262,6 +262,93 @@ bitrate_b = "64k"
 # Calibrated: broadband music informative (pre -22.4, post -23.6); independent 128k/64k encode.
 expect_informative_floor = true
 
+# ── transient / broadband-border dead-zone probe (Run B) ───────────────────────
+# Question: can a REAL same-master codec seam hit the Pearson dead zone at truth while the residual
+# floor stays informative (the `veto_rescue` trigger)? The existing cases anchor the gap mid-content
+# (~30 s, benign) where Pearson passes. These anchor it on the Grieg fff finale — the corpus's loudest
+# broadband orchestral tutti + percussion (~148.5 s; secondary loud passage ~102.6 s) — the region
+# most likely to decorrelate two independent encodes at the seam. Lossy + dual-bitrate maximize that.
+# `gap_interior_peak_max` relaxed: inject-then-encode MDCT spread from the loud borders bleeds into the
+# silenced interior (expected — the borders, not the interior, drive the seam). Exploratory: no
+# `expect_informative_floor` assertion; `source_gap_oracle_transient_csv` only prints the matrix.
+[[case]]
+id = "cc_music_transient_aac_same"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+bitrate_a = "128k"
+bitrate_b = "128k"
+total_secs = 153
+gap_anchor_secs = 148.5
+gap_interior_peak_max = 8000
+
+[[case]]
+id = "cc_music_transient_aac_dual"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+bitrate_a = "128k"
+bitrate_b = "192k"
+total_secs = 153
+gap_anchor_secs = 148.5
+gap_interior_peak_max = 8000
+
+[[case]]
+id = "cc_music_transient_vorbis_same"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "vorbis"
+format_b = "vorbis"
+bitrate_a = "128k"
+bitrate_b = "128k"
+total_secs = 153
+gap_anchor_secs = 148.5
+gap_interior_peak_max = 8000
+
+[[case]]
+id = "cc_music_transient2_aac_dual"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+bitrate_a = "128k"
+bitrate_b = "192k"
+total_secs = 110
+gap_anchor_secs = 102.6
+gap_interior_peak_max = 8000
+
+# ── punch-after-encode dead-zone probe (G5 confirmation) ───────────────────────
+# Same finale anchor as the inject-then-encode transient cases, but A is encoded from the FULL master,
+# decoded, then the gap is punched in PCM — so A's borders are NATIVE (no inject-then-encode MDCT ring)
+# and the gap interior is clean (default peak cap, no relaxation). Removes the NaN-floor confound: this
+# is the decisive test of whether a real INDEPENDENT-encode floor can be informative at a dead-Pearson
+# seam. `_dual` (128k/192k) is the production-realistic independent encode; `_same` is the comparison.
+[[case]]
+id = "cc_music_punch_finale_aac_dual"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+bitrate_a = "128k"
+bitrate_b = "192k"
+total_secs = 153
+gap_anchor_secs = 148.5
+punch_after_encode = true
+
+[[case]]
+id = "cc_music_punch_finale_aac_same"
+source_id = "musopen_grieg_mountain_king"
+oracle_variant = "same_master"
+format_a = "mp4_aac"
+format_b = "mp4_aac"
+bitrate_a = "128k"
+bitrate_b = "128k"
+total_secs = 153
+gap_anchor_secs = 148.5
+punch_after_encode = true
+
 # ── negative control ─────────────────────────────────────────────────────────
 [[case]]
 id = "cc_speech_ambient_two_mic"

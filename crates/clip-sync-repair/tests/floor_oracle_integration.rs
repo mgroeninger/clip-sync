@@ -33,6 +33,34 @@ struct FloorOracleRun {
     residual: Option<clip_sync_repair::domain::policies::SeamResidualVerdict>,
     align_adjustment_secs: f64,
     confidence: Option<FillConfidence>,
+    /// Seam Pearson at the decided placement (`NaN` if the gap never reached the seam tier).
+    seam_pre: f64,
+    seam_post: f64,
+}
+
+/// Seam Pearson carried on a patched outcome or a seam-tier skip reason (`NaN` otherwise).
+fn seam_pre_post(status: &GapPatchStatus) -> (f64, f64) {
+    match status {
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            ..
+        } => (*pre_correlation, *post_correlation),
+        GapPatchStatus::Skipped {
+            reason:
+                GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation,
+                    post_correlation,
+                    ..
+                }
+                | GapPatchSkipReason::ResidualHeadroomExceeded {
+                    pre_correlation,
+                    post_correlation,
+                    ..
+                },
+        } => (*pre_correlation, *post_correlation),
+        _ => (f64::NAN, f64::NAN),
+    }
 }
 
 fn floor_oracle_repair_config(residual_gate: ResidualGateMode) -> RepairConfig {
@@ -70,6 +98,16 @@ fn run_built_floor_oracle(
     built: &BuiltFloorOracle,
     residual_gate: ResidualGateMode,
 ) -> FloorOracleRun {
+    run_built_floor_oracle_cfg(built, &floor_oracle_repair_config(residual_gate))
+}
+
+/// Like [`run_built_floor_oracle`] but with an explicit repair config — lets the transient probe
+/// (Run B) use the **production fit-mode gate** (real `min_fill_correlation`/floor + waveform
+/// weighting) instead of the relaxed structure-isolation calibration config.
+fn run_built_floor_oracle_cfg(
+    built: &BuiltFloorOracle,
+    repair: &RepairConfig,
+) -> FloorOracleRun {
     let dir = built.path_a.parent().expect("path_a parent");
     let decoded_a = dir.join("patch_a.wav");
     assert!(decode_to_mono_wav_at(
@@ -89,8 +127,7 @@ fn run_built_floor_oracle(
         built.meta.gap_end_frame,
     );
 
-    let repair = floor_oracle_repair_config(residual_gate);
-    let mut request = patch_request_from_repair(report, &repair);
+    let mut request = patch_request_from_repair(report, repair);
     request.measure_residual = true;
 
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
@@ -112,6 +149,7 @@ fn run_built_floor_oracle(
         GapPatchStatus::Patched { confidence, .. } => Some(*confidence),
         _ => None,
     };
+    let (seam_pre, seam_post) = seam_pre_post(&gap.status);
 
     FloorOracleRun {
         status,
@@ -120,6 +158,8 @@ fn run_built_floor_oracle(
         residual: gap.residual,
         align_adjustment_secs,
         confidence,
+        seam_pre,
+        seam_post,
     }
 }
 
@@ -270,6 +310,9 @@ fn floor_oracle_gap_frames_use_production_anchor() {
         sample_rate: Some(48_000),
         gap_duration_secs: Some(1.0),
         gap_signature_context_secs: Some(3.0),
+        gap_anchor_secs: None,
+        gap_interior_peak_max: None,
+        punch_after_encode: false,
         b_encode_delay_ms: None,
         expect_informative_floor: None,
         ignore: false,
@@ -277,6 +320,16 @@ fn floor_oracle_gap_frames_use_production_anchor() {
     let (start, end) = gap_frames_for_case(&case, &defaults);
     assert_eq!(start, 14 * 48_000);
     assert_eq!(end - start, 48_000);
+
+    // gap_anchor_secs override (Run B): places the gap at the requested absolute position.
+    let anchored = FloorOracleCase {
+        gap_anchor_secs: Some(148.5),
+        total_secs: Some(153),
+        ..case
+    };
+    let (astart, aend) = gap_frames_for_case(&anchored, &defaults);
+    assert_eq!(astart, (148.5 * 48_000.0) as usize);
+    assert_eq!(aend - astart, 48_000);
 }
 
 #[test]
@@ -504,5 +557,99 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
         assert_veto_rescue_matches_veto_on_truth(&case.id, &built);
         let rescue = run_built_floor_oracle(&built, ResidualGateMode::VetoRescue);
         assert_floor_expectations(&case.id, &built, &rescue);
+    }
+}
+
+/// Run B — transient/broadband dead-zone probe (exploratory, no assertions).
+///
+/// Anchors the gap on the Grieg fff finale (loudest broadband orchestral tutti in the corpus) and
+/// re-encodes A/B same-master, then prints, for each gate, the seam Pearson at truth, the floor
+/// verdict, and the headroom. The open question (does `veto_rescue` ever fire usefully on real
+/// media?) is answered by the `rescue_trigger` column: TRUE iff Pearson is in the dead zone
+/// (`min(pre,post) < min_fill_correlation`) AND the floor is informative AND `headroom ≤ margin`.
+/// The first transient case is preceded by the benign mid-content `cc_music_gap_oracle_aac_128k`
+/// control (where Pearson is known to pass), so the matrix shows both regimes side by side.
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture"]
+fn source_gap_oracle_transient_csv() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skip source_gap_oracle_transient_csv: ffmpeg unavailable");
+        return;
+    }
+
+    let manifest = load_manifest();
+    let ids = [
+        "cc_music_gap_oracle_aac_128k", // benign mid-content control
+        "cc_music_transient_aac_same",
+        "cc_music_transient_aac_dual",
+        "cc_music_transient_vorbis_same",
+        "cc_music_transient2_aac_dual",
+        // Punch-after-encode (G5 confirmation): native A borders, clean gap.
+        "cc_music_punch_finale_aac_same",
+        "cc_music_punch_finale_aac_dual",
+    ];
+
+    let defaults_repair = RepairConfig::default();
+    let margin_db = defaults_repair.residual_headroom_margin_db;
+    let min_fill = f64::from(defaults_repair.min_fill_correlation);
+
+    // Production fit-mode gate (real floors + waveform weighting), NOT the relaxed structure-
+    // isolation calibration config — so the patch/skip decision reflects shipped behavior.
+    let fit_config = |gate: ResidualGateMode| RepairConfig {
+        gap_signature_mode: GapSignatureMode::Energy,
+        gap_signature_context_secs: 3.0,
+        residual_gate: gate,
+        ..RepairConfig::default()
+    };
+
+    println!(
+        "case_id,format_a,format_b,gate,status,skip_reason,seam_pre,seam_post,pearson_min,\
+         informative,floor_pre_db,floor_post_db,headroom_db,align_secs,rescue_trigger"
+    );
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    for id in ids {
+        let case = manifest_case(&manifest, id);
+        if case.ignore {
+            continue;
+        }
+        if !case_sources_ready(case) {
+            eprintln!("skip source_gap_oracle_transient_csv: run scripts/fetch_corpus_sources.ps1");
+            return;
+        }
+        let built = build_floor_oracle_pair(&temp.path().join(id), case, &manifest.defaults);
+        for gate in [
+            ResidualGateMode::Off,
+            ResidualGateMode::Veto,
+            ResidualGateMode::VetoRescue,
+        ] {
+            let run = run_built_floor_oracle_cfg(&built, &fit_config(gate));
+            let pearson_min = run.seam_pre.min(run.seam_post);
+            let informative = run.residual.map(|v| v.informative).unwrap_or(false);
+            let floor_pre = run.residual.map(|v| v.floor_pre_db).unwrap_or(f64::NAN);
+            let floor_post = run.residual.map(|v| v.floor_post_db).unwrap_or(f64::NAN);
+            let headroom = run
+                .residual
+                .map(|v| v.worst_headroom_db())
+                .unwrap_or(f64::NAN);
+            let rescue_trigger = pearson_min.is_finite()
+                && pearson_min < min_fill
+                && informative
+                && headroom.is_finite()
+                && headroom <= margin_db;
+            println!(
+                "{},{},{},{:?},{},{},{:.3},{:.3},{:.3},{informative},{floor_pre:.1},{floor_post:.1},{headroom:.1},{:.4},{rescue_trigger}",
+                built.meta.case_id,
+                format_label(built.meta.format_a),
+                format_label(built.meta.format_b),
+                gate,
+                run.status,
+                run.skip_reason,
+                run.seam_pre,
+                run.seam_post,
+                pearson_min,
+                run.align_adjustment_secs,
+            );
+        }
     }
 }

@@ -18,7 +18,7 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 |----|-----|------|----------------|
 | **H1** | high | **Reference asymmetry.** Trimmed seam template vs raw floor window → spurious headroom. | `seam_chosen_and_floor` on same raw window; tests `seam_chosen_and_floor_*`. |
 | **M1** | med | **Lag radii not unified.** | Single `max_lag_frames` from `residual_lag_secs`. |
-| **H2-B** | high | **Broadband Pearson dead zone.** | `veto_rescue` + oracle tests; real-codec validation. |
+| **H2-B** | high | **Broadband Pearson dead zone.** | `veto_rescue` + oracle tests (synthetic). **Real-media rescue value still unproven — see G5.** |
 | **M5** | med | **Real-codec reach false-veto.** | Lag-centered probe + `beyond_lag_reach()` abstention. |
 | **M2** | med | **`FLOOR_OK` uncalibrated.** | Calibrated AAC/Vorbis/music + Vorbis dual; `FLOOR_OK = −15`. |
 | **G3** | gap | **Real-codec calibration corpus.** | `floor_oracle_integration` matrix green. |
@@ -63,6 +63,7 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 | **G1** | gap | **No JSON residual on skipped gaps.** | `seam_residual_disagreement_csv` covers analysis. |
 | **G2** | gap | **`peak_normalize_f64` no-op in Pearson.** | Doc fixed; code remove when convenient. |
 | **G4** | gap | **Channel-following residual.** | Overlaps L2. |
+| **G5** | gap | **`veto_rescue` real-media value unproven on a genuine codec-noise floor.** Run B (transient-anchored real-codec probe) shows that on genuinely-independent real encodes the floor goes *uninformative* exactly where Pearson dies, so rescue does not fire. | See **Rescue real-media reality (Run B)** below. Punch-after-encode AAC-dual is the open confirmation. |
 
 ## Regressions
 
@@ -88,10 +89,51 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 
 **Not required for FD-1:** Changing Pearson seam scoring, joint grid, or `SeamResidualVerdict` schema (unless reporting `frac_lag`).
 
+## Rescue real-media reality (Run B — G5)
+
+**Question:** does the `veto_rescue` trigger (Pearson in the dead zone *at truth* **and** an informative,
+low-headroom floor) ever occur on real media — i.e. does rescue recover gaps that real production would
+otherwise skip? Prior tests (`broadband_oracle_veto_rescue_patches_marginal`) proved the *mechanism* only
+on a synthetic chirp+LCG-noise oracle. Run B (`source_gap_oracle_transient_csv`) anchors the gap on the
+**Grieg fff finale** — the corpus's loudest broadband orchestral tutti (~148.5 s) — and runs the real
+encodes through the **production fit-mode gate** (`min_fill 0.35`, real floor, waveform weight 0.65), not
+the relaxed calibration config.
+
+**Result (production fit-mode):**
+
+| case (Grieg finale, truth placement) | off / veto | veto_rescue | seam min | floor | note |
+|--------------------------------------|------------|-------------|----------|-------|------|
+| AAC **same** 128k | skip | **skip** | 0.021 | uninformative (NaN) | rescue inert — no floor |
+| AAC **dual** 128k/192k (independent) | skip | **skip** | 0.021 | uninformative (NaN) | the production-realistic case; rescue inert |
+| Vorbis **same** 128k | skip | **patch** | 0.021 | informative −120/−120 | rescue *fires*, but floor is the **deterministic bit-identical-border** artifact (M2 caveat), not codec noise |
+| AAC 102 s dual | skip | skip | 0.181 | uninformative (NaN) | — |
+| benign control (14 s) | patch | patch | 0.300 | — (slid 33 ms) | escapes dead zone by sliding past the seam; slide > reach → residual **abstains** (M5), so 118 dB headroom does not veto |
+
+**Findings:**
+1. **Real same-master music seam Pearson at truth is in the dead zone** (0.02 at the finale, 0.30 at the
+   benign anchor — both below `min_fill 0.35`). This **corrects** the earlier framing (H2-B /
+   `floor_oracle_veto_rescue_real_broadband_codec`) that "real masters pass Pearson at truth." They do not;
+   prior calibration runs *looked* like they passed only because the relaxed calibration config
+   (`min_fill 0.0`, `fill_absolute_floor −0.05`) patches everything regardless of the seam.
+2. **On genuinely-independent real encodes (AAC same + dual), rescue does not fire** — the floor goes
+   *uninformative* (unmeasurable / NaN) at the dead-Pearson placement, so all three modes skip. Rescue is
+   correctly inert; this is the safe outcome but means **no recovery**.
+3. **The one real rescue flip (Vorbis same-bitrate) rides a −120 dB deterministic-encoder floor**
+   (libvorbis → bit-identical borders, the M2 caveat), not lossy codec-noise cancellation — so it is not
+   evidence that rescue recovers a *genuine* lossy seam.
+4. **Net:** rescue's real-world *value* remains unproven on a genuine codec-noise floor; `veto`'s real-world
+   inertness here is reassuring (it never false-vetoed a truth gap). Rescue stays correctly **non-default**.
+
+**Open confirmation (in progress):** **punch-after-encode** AAC-dual at the finale — encode first, *then*
+remove the gap so A's borders are *native* (no inject-then-encode MDCT corruption of the floor). This
+removes the NaN-floor confound and would show whether a real *independent-encode* floor can ever be
+informative at a dead-Pearson seam. If it still cannot, rescue is empirically a synthetic-only path and
+should be documented as such.
+
 ## Validation infrastructure
 
 - **`tests/seam_residual_corpus.rs`** — direct-scoring harness.
 - **`tests/seam_residual_oracle.rs`** — pipeline oracle + H2-B rescue.
-- **`tests/floor_oracle_integration.rs`** — real-codec FLOOR_OK + gate + `veto_rescue` safety.
+- **`tests/floor_oracle_integration.rs`** — real-codec FLOOR_OK + gate + `veto_rescue` safety; `source_gap_oracle_transient_csv` (Run B, G5: transient-anchored dead-zone probe under production fit-mode gate).
 - **`tests/energy_signature_production.rs`** — F4 bool+veto pipeline.
 - **Disagreement table** — `seam_residual_disagreement_oracles` (CI-fast).
