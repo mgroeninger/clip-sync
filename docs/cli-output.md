@@ -98,7 +98,7 @@ Examples (both tools where applicable):
 - Per-clip offset: `start clip [0:00–15:00]: offset +12.340s (confidence: 0.94)`; end clip may show `(refined ±5s around start)` when PCM constrained or agreed refine ran
 - Mid-run alignment summary: `Recommended offset: …` with source label (`clip offsets agree`, `confidence-weighted fusion`, `using start clip`, …), overlap windows, drift
 - `High-rate offset refinement...`
-- Per-gap patch: `gap i/n: A t0 – t1`; indented fill timeline (`fill offset`, optional `offset anchor` on `anchored_retry` pass 2, `A gap (refined)` when edges moved, `B gap (mapped)`, `B search window`; on success `B fill source` with `structure slide` and `waveform slide` when non-zero in fit mode, plus `fit path: baseline only` or `baseline only (marginal, pre=… post=…)` or `boundary grid (N cells, haystack Xs)`)
+- Per-gap patch: `gap i/n: A t0 – t1`; indented fill timeline (`fill offset`, `signature_mode=…` (fit only; see below), optional `offset anchor` on `anchored_retry` pass 2, `A gap (refined)` when edges moved, `B gap (mapped)`, `B search window`; on success `B fill source` with `structure slide` and `waveform slide` when non-zero in fit mode, plus `fit path: baseline only` or `baseline only (marginal, pre=… post=…)` or `boundary grid (N cells, haystack Xs)`)
 - Patch phase header: `repair profile: … (fit_boundary_search=…, fill_border_search_secs=…)`; optional `+ override: …` when CLI/TOML fields differ from the profile bundle; optional `repair note: …` when stored flags are inactive for this run (e.g. extension knobs under `baseline_only`, gate-only flags under `fit`)
 - `anchored_retry` pass 1 capstone: `anchored: N offset anchor(s) from gap #i, …` (when at least one eligible anchor)
 - Mux AAC target (repair, when `--mux`): `Mux AAC bitrate 256k (A 256 kbps, B 384 kbps, policy match_min)` — `phase_verbose` only
@@ -345,6 +345,16 @@ Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two i
 **stderr (default):** `tracing::warn` — `gap N/M (range): …` when a fill is skipped mid-run. **`--verbose`:** indented `skipped: …` via `phase_verbose` (same text as stdout status column); no `tracing::warn` for per-gap skips. `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).
 
 **Verbose stdout patch lines:** under `fit`, `patched (pre=… post=… slide=…)` with optional `(wf …)` when waveform slide ≠ 0; under `gate`, `patched (struct pre→post)` when structure-trusted; skipped rows show full skip reason in the status column.
+
+**Structure signature mode (`fit` only):** the verbose fill-plan block prints
+`signature_mode=bool` or `signature_mode=energy` (`format_gap_fill_plan_lines`,
+`GapSignature::mode_label()`). This is the **resolved** structure tier used for placement, not the
+config value — under `gap_signature_mode = auto` the engine picks `energy` when both pre/post
+context halves have contour and falls back to `bool` on flat/near-silent envelopes. Emitted only
+when `fill_mode = fit` and the gap has a positive refined frame count; `gate` mode always uses bool
+structure and does not print this field. The same resolved value appears as the `signature_mode` tag
+on each `GapPatchOutcome` in `--format json`. Classification and tuning guidance:
+[gap-repair-guide.md](gap-repair-guide.md) § Layer 4.
 
 ---
 
