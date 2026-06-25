@@ -109,27 +109,27 @@
 
 **Scope: `MultiChannelPcm` only. `MonoPcmClip`, mono extract path, rubato mono resample, and `offset_refinement.rs` are all out of scope (see Decisions).**
 
-- [ ] `domain/multichannel_pcm.rs`: `samples: Vec<i16>` → `Vec<f32>`; add `source_bit_depth: Option<BitDepth>`.
-- [ ] `domain/audio_track.rs`: add `bit_depth: Option<BitDepth>` (new small enum in `domain/`, e.g. `domain/bit_depth.rs`).
-- [ ] `infrastructure/symphonia/probe.rs`: populate `AudioTrack.bit_depth` from `AudioCodecParameters::{bits_per_sample, sample_format}` in `probe_from_format`.
-- [ ] `infrastructure/symphonia/extract.rs`: delete `float_to_i16` call sites at `:850,882` only (interleaved path); push `f32` directly. Leave `:913,954` (mono path feeding `MonoPcmClip`) unchanged.
-- [ ] `infrastructure/symphonia/extract_loop.rs`: change `InterleavedCollectContext.out: Vec<i16>` → `Vec<f32>` only; leave `MonoExtractSink.mono_samples` as `Vec<i16>`.
-- [ ] `infrastructure/resample/rubato.rs`: `resample_interleaved(samples: &[i16], ...) -> Vec<i16>` → `(&[f32], ...) -> Vec<f32>`; deinterleave to `Vec<f32>` per channel and run rubato directly (no `MonoPcmClip` intermediate — that would require i16 round-trip). Leave `resample_mono_pcm` and `linear_resample_fallback` unchanged.
-- [ ] `clip-sync-repair/src/domain/policies.rs`: `is_silent`, `rms_i16` → `rms_f32`, `rms_interleaved`, `interleaved_to_mono/channels` operate on `&[f32]`; drop the `Vec<f64>` widen unless a specific test demands it.
-- [ ] `clip-sync-repair/src/domain/policies.rs` — **scale audit**: find every call site passing a hardcoded `absolute_rms_floor` value and convert from i16-scale to normalized (`old_value / 32767.0`). Confirm `compute_fill_gain` is unaffected (takes two same-scale RMS values as a ratio).
-- [ ] `clip-sync-repair/src/domain/gap_energy.rs`, `gap_fill_fit.rs`: `&[i16]`/`Vec<i16>` → `&[f32]`/`Vec<f32>`; audit any hardcoded amplitude constants for i16-scale assumptions.
-- [ ] `clip-sync-repair/src/domain/gap_signature.rs`: `build_gap_signature` (line 73) and `effective_mode` (line 124) — `samples: &[i16]` → `&[f32]`.
-- [ ] `clip-sync-repair/src/domain/gap_structure.rs`: `build` (line 39), `build_gap_context_signature` (line 75), `match_gap_structure_in_b` (line 118), `activity_bins` (line 519) — `samples: &[i16]` → `&[f32]`; `write_frame` test helper at line 573 likewise.
-- [ ] `clip-sync-repair/src/application/patch_region.rs`: `SeamGateParams.b_samples: &'a [i16]` → `&'a [f32]`; propagates through all ~18 functions in that file that receive `params: &SeamGateParams<'_>`.
-- [ ] `clip-sync-repair/src/application/patch_audio.rs`:
-  - `b_samples: Vec<i16>` (line 268) → `Vec<f32>`
-  - `b_gained` gain application (line 538-544): remove i16 clamp; clamp to `[-1.0, 1.0]` instead
-  - `slice_b_segment` (line 1892): `&[i16]` → `&[f32]`
-  - `splice_into_a` (line 1952): `&mut [i16]`, `&[i16]` → `&mut [f32]`, `&[f32]`
-  - `compute_a_border_rms` (line 1913): replace `f64::from(s: i16)` with `s as f64` on `f32` samples
-- [ ] `clip-sync-repair/src/infrastructure/pcm.rs`: `write_pcm_s16le` keeps writing s16le for now (converts `f32` → `i16` at this single boundary) — full generalization deferred to Phase 2 so Phase 1 has zero output-format change to verify against.
-- [ ] Update every test that constructs `MultiChannelPcm` literals with `Vec<i16>` samples (`policies.rs` tests, `gap_energy.rs` tests, `gap_structure.rs` tests, `patch_audio.rs` tests, `scan_gaps.rs` inline test data at lines 388/427/538/739, etc.) to `Vec<f32>` in the normalized `[-1.0, 1.0]` range. `MonoPcmClip` test literals are unchanged.
-- [ ] `cargo test --workspace` green with byte-for-byte identical WAV output to pre-refactor (16-bit, same samples) — this phase is a pure internal representation change.
+- [x] `domain/multichannel_pcm.rs`: `samples: Vec<i16>` → `Vec<f32>`; add `source_bit_depth: Option<BitDepth>`.
+- [x] `domain/audio_track.rs`: add `bit_depth: Option<BitDepth>` (new small enum in `domain/`, e.g. `domain/bit_depth.rs`).
+- [x] `infrastructure/symphonia/probe.rs`: populate `AudioTrack.bit_depth` from `AudioCodecParameters::{bits_per_sample, sample_format}` in `probe_from_format`.
+- [x] `infrastructure/symphonia/extract.rs`: delete `float_to_i16` call sites at `:850,882` only (interleaved path); push `f32` directly. Leave `:913,954` (mono path feeding `MonoPcmClip`) unchanged.
+- [x] `infrastructure/symphonia/extract_loop.rs`: change `InterleavedCollectContext.out: Vec<i16>` → `Vec<f32>` only; leave `MonoExtractSink.mono_samples` as `Vec<i16>`.
+- [x] `infrastructure/resample/rubato.rs`: `resample_interleaved(samples: &[i16], ...) -> Vec<i16>` → `(&[f32], ...) -> Vec<f32>`; deinterleave to `Vec<f32>` per channel and run rubato directly (no `MonoPcmClip` intermediate — that would require i16 round-trip). Leave `resample_mono_pcm` and `linear_resample_fallback` unchanged.
+- [x] `clip-sync-repair/src/domain/policies.rs`: `is_silent`, `rms_i16` → `rms_f32`, `rms_interleaved`, `interleaved_to_mono/channels` operate on `&[f32]`; drop the `Vec<f64>` widen unless a specific test demands it.
+- [x] `clip-sync-repair/src/domain/policies.rs` — **scale audit**: every hardcoded `absolute_rms_floor` value converted from i16-scale to normalized (`old_value / 32767.0`). `compute_fill_gain` confirmed unaffected (ratio consumer).
+- [x] `clip-sync-repair/src/domain/gap_energy.rs`, `gap_fill_fit.rs`: `&[i16]`/`Vec<i16>` → `&[f32]`/`Vec<f32>`; amplitude constants rescaled.
+- [x] `clip-sync-repair/src/domain/gap_signature.rs`: `build_gap_signature` and `effective_mode` — `samples: &[i16]` → `&[f32]`.
+- [x] `clip-sync-repair/src/domain/gap_structure.rs`: `build`, `build_gap_context_signature`, `match_gap_structure_in_b`, `activity_bins` — `samples: &[i16]` → `&[f32]`; `write_frame` test helper likewise.
+- [x] `clip-sync-repair/src/application/patch_region.rs`: `SeamGateParams.b_samples: &'a [i16]` → `&'a [f32]`.
+- [x] `clip-sync-repair/src/application/patch_audio.rs`:
+  - `b_samples: Vec<i16>` → `Vec<f32>`
+  - `b_gained` gain application: clamp to `[-1.0, 1.0]` instead of i16 range
+  - `slice_b_segment`: `&[i16]` → `&[f32]`
+  - `splice_into_a`: `&mut [i16]`, `&[i16]` → `&mut [f32]`, `&[f32]`
+  - `compute_a_border_rms`: `f64::from(s: i16)` → `s as f64` on `f32` samples
+- [x] `clip-sync-repair/src/infrastructure/pcm.rs`: `write_pcm_s16le` converts `f32` → `i16` at this single boundary; full generalization deferred to Phase 2.
+- [x] All tests updated to `Vec<f32>` normalized `[-1.0, 1.0]`; all threshold constants rescaled including `tests/gap_corpus/manifest.toml` (`absolute_silence_floor: 33.0` → `0.001007`) and `gap_corpus_fixtures.rs` default.
+- [x] `cargo test --workspace` green (261 lib + 28 patch_audio integration + all other suites).
 
 ### Phase 2 — source-driven output bit depth
 
