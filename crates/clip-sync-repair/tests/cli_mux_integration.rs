@@ -8,6 +8,15 @@ use std::path::Path;
 #[cfg(feature = "ffmpeg-mux")]
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
+#[cfg(feature = "ffmpeg-mux")]
+use clip_sync::{BitDepth, MultiChannelPcm};
+#[cfg(feature = "ffmpeg-mux")]
+use clip_sync::testing::fakes::FakeProgressReporter;
+#[cfg(feature = "ffmpeg-mux")]
+use clip_sync_repair::application::ports::{MediaMuxer, MuxOptions};
+#[cfg(feature = "ffmpeg-mux")]
+use clip_sync_repair::infrastructure::ffmpeg_mux::FfmpegMediaMuxer;
+
 const SAMPLE_RATE: u32 = 44_100;
 const TOTAL_SECS: u32 = 120;
 const OFFSET_SECS: u32 = 3;
@@ -182,5 +191,90 @@ scan_both = false
     assert!(
         out_mp4.metadata().expect("stat").len() > 1024,
         "muxed MP4 should be non-trivial size"
+    );
+}
+
+/// Verifies that the mux pipe path (stdin PCM write) completes successfully when the
+/// source `MultiChannelPcm` carries a 24-bit depth, i.e. that `write_pcm_le` is called
+/// with `WavBitDepth::Int24` and ffmpeg accepts s24le input without error.
+#[cfg(feature = "ffmpeg-mux")]
+#[test]
+#[ignore = "requires ffmpeg on PATH and disk I/O; run with --include-ignored"]
+fn mux_24bit_source_pipe_completes_successfully() {
+    if !ffmpeg_available() {
+        eprintln!("skipping mux_24bit_source_pipe_completes_successfully: ffmpeg unavailable");
+        return;
+    }
+
+    const SECS: u32 = 10;
+    const RATE: u32 = 48_000;
+    const CHANNELS: u16 = 2;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+
+    // Build a short silent WAV to wrap into an MP4 source
+    let wav_path = temp.path().join("source.wav");
+    {
+        let spec = WavSpec {
+            channels: CHANNELS,
+            sample_rate: RATE,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(&wav_path, spec).expect("write wav");
+        for _ in 0..(SECS as usize * RATE as usize * CHANNELS as usize) {
+            writer.write_sample(0i16).expect("write sample");
+        }
+        writer.finalize().expect("finalize");
+    }
+
+    let mp4_path = temp.path().join("source.mp4");
+    let ok = Command::new("ffmpeg")
+        .args([
+            "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", &format!("color=c=black:s=320x240:d={SECS}"),
+            "-i", wav_path.to_str().expect("wav utf8"),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest", "-movflags", "+faststart",
+            mp4_path.to_str().expect("mp4 utf8"),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    assert!(ok, "failed to create source MP4 for mux test");
+
+    // Construct PCM with 24-bit source depth — triggers s24le pipe path
+    let pcm = MultiChannelPcm {
+        sample_rate: RATE,
+        channels: CHANNELS,
+        samples: vec![0.0f32; SECS as usize * RATE as usize * CHANNELS as usize],
+        decode_error_skips: 0,
+        decoded_frame_count: None,
+        compressed_bytes: None,
+        source_bit_depth: Some(BitDepth::Int24),
+    };
+
+    let out_mp4 = temp.path().join("out.mp4");
+    let options = MuxOptions {
+        video_codec: "copy".into(),
+        audio_codec: "aac".into(),
+        audio_bitrate: None,
+    };
+
+    FfmpegMediaMuxer
+        .mux_video_with_replaced_audio(
+            &mp4_path,
+            &pcm,
+            &out_mp4,
+            &options,
+            &FakeProgressReporter,
+        )
+        .expect("mux should succeed with 24-bit source");
+
+    assert!(out_mp4.exists(), "output MP4 should exist");
+    assert!(
+        out_mp4.metadata().expect("stat").len() > 1024,
+        "output MP4 should be non-trivial size"
     );
 }

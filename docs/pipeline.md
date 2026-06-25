@@ -66,14 +66,16 @@ For each fillable gap (`application/patch_region.rs`):
 
 In write mode the patched A audio is emitted:
 
-- **`--wav`** — lossless 16-bit PCM (no re-encode).
-- **`--mux`** — copies A's video and re-encodes the patched audio track into A's container via ffmpeg. Bitrate defaults to `mux_audio_bitrate = "match_min"` (the lower of A and B's measured rates, so output isn't upsampled). A **mux preflight** checks duration and PTS-vs-sample-clock skew before writing.
+- **`--wav`** — lossless PCM (no re-encode). Output bit depth is **source-driven**: if A's source track reports 24-bit, 32-bit int, or 32-bit float depth, the WAV is written at **24-bit int**; otherwise 16-bit int. Lossy codecs (AAC, AC-3, MP3, Opus) carry no depth, so they output 16-bit.
+- **`--mux`** — copies A's video and re-encodes the patched audio track into A's container via ffmpeg. The PCM pipe format matches the resolved output depth (`-f s16le` or `-f s24le`). Bitrate defaults to `mux_audio_bitrate = "match_min"` (the lower of A and B's measured rates, so output isn't upsampled). A **mux preflight** checks duration and PTS-vs-sample-clock skew before writing.
+
+**Internal representation:** all patched audio is held as normalized `f32` samples in `[-1.0, 1.0]` inside `MultiChannelPcm`. Conversion to output integers happens at write time: `f32 × 32767 → i16` (16-bit path) or `f32 × 8_388_607 → i32` (24-bit path). The source bit depth (`AudioTrack.bit_depth`, populated at Symphonia probe time) is carried through `MultiChannelPcm.source_bit_depth` and resolved by `resolve_output_bit_depth()` to one of `WavBitDepth::Int16` or `WavBitDepth::Int24`. `MonoPcmClip` (used by the chromaprint fingerprinter) remains `Vec<i16>` — it is not affected by this representation.
 
 Report-only mode (default `dry_run = true`) writes nothing.
 
 - **Config:** `dry_run`, output paths, `audio_codec`, `mux_audio_bitrate`, `normalize_fill`, `crossfade_ms`.
 - **References:** README § Write output, [cli-output.md](cli-output.md) § Timeline / duration warnings, [json-output.md](json-output.md).
-- **Code:** `application/repair_videos.rs`, `application/mux_bitrate.rs`, `infrastructure/ffmpeg_mux.rs`.
+- **Code:** `application/repair_videos.rs`, `application/mux_bitrate.rs`, `infrastructure/ffmpeg_mux.rs`, `infrastructure/wav_writer.rs`, `infrastructure/pcm.rs`.
 
 ---
 

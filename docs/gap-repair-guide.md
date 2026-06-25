@@ -375,6 +375,7 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | `fill_border_search_secs` | 10 | B slide radius — larger = more CPU, helps edge-clamped matches |
 | `gap_signature_context_secs` | 3.0 | Structure context; raise for ambiguous long gaps |
 | Scan: `silence_fraction`, `absolute_silence_rms` | 0.01, 33 | Affects P5 vs P7 |
+| Output bit depth | automatic | `--wav` output is 24-bit int when A's source track is 24/32-bit or float; otherwise 16-bit int. Lossy sources (AAC, AC-3) have no detectable depth → always 16-bit. Shown in track info as `(decodable, 16-bit out)` / `(decodable, 24-bit out)`. See [pipeline.md](pipeline.md) § 5. |
 
 ---
 

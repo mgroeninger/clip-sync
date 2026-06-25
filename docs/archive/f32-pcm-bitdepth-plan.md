@@ -198,7 +198,7 @@ Items not anticipated in the original checklist that were discovered during impl
 - [ ] Integration test: 32-bit float WAV source fixture → repaired output is **24-bit int** WAV (capped, not float-out).
   - Synthesize with `WavSpec { bits_per_sample: 32, sample_format: SampleFormat::Float, .. }`. Symphonia will report `SampleFormat::F32` → `BitDepth::Float32` → `WavBitDepth::Int24`.
 - [ ] Integration test: lossy source (existing AAC/AC-3 fixtures) → output stays 16-bit (no behavior change, regression guard).
-- [ ] Mux path: the unit test `ffmpeg_arg_construction_s24le_uses_correct_format` covers arg construction; a full end-to-end mux integration test for 24-bit source → s24le pipe requires ffmpeg present at test time. **Decision needed:** gate behind `#[cfg(feature = "integration")]` and mark `#[ignore]` by default, or treat the unit test + WAV integration test as sufficient coverage and skip the mux end-to-end. Calling it out explicitly so this doesn't get silently deferred.
+- [ ] Mux path: write an end-to-end mux integration test for 24-bit source → s24le pipe. Gate behind `#[cfg(feature = "integration")]` and mark `#[ignore]` by default so it only runs when ffmpeg is present. The unit test `ffmpeg_arg_construction_s24le_uses_correct_format` covers arg construction; this test covers the full pipe write path.
 - [ ] `format_description` now outputs `"(decodable, 16-bit out)"` / `"(decodable, 24-bit out)"`. If any CLI integration test or log capture test asserts on this string verbatim, it will break. Grep for `"decodable"` in test files before writing new Phase 3 integration tests.
 - [ ] `docs/pipeline.md`, `docs/gap-repair-guide.md`: document bit-depth detection and the f32 internal representation.
 - [ ] `BACKLOG.md`: add completed row.
