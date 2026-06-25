@@ -131,23 +131,75 @@
 - [x] All tests updated to `Vec<f32>` normalized `[-1.0, 1.0]`; all threshold constants rescaled including `tests/gap_corpus/manifest.toml` (`absolute_silence_floor: 33.0` → `0.001007`) and `gap_corpus_fixtures.rs` default.
 - [x] `cargo test --workspace` green (261 lib + 28 patch_audio integration + all other suites).
 
+### Phase 1 — implementation notes / plan gaps
+
+Items not anticipated in the original checklist that were discovered during implementation. Recorded so the Phase 2 plan can be written with fuller scope coverage.
+
+1. **Integration test helper signatures not covered by the "update every test that constructs `MultiChannelPcm` literals" item.** Three test-local helpers carried `i16` through their API independently of struct literals and each needed its own update:
+   - `rms_region(&[i16], ...) -> f32` in `tests/patch_audio_integration.rs` — changed to `&[f32]`
+   - `mono_region(&[i16], ...) -> Vec<i16>` in `tests/query_reference_integration.rs` — changed to `&[f32]`/`Vec<f32>`
+   - `patch_to_samples(...) -> (Vec<i16>, ...)` in `tests/patch_audio_integration.rs` — reads the written WAV back via hound; changed to divide by 32767.0 and return `Vec<f32>`
+
+2. **Roundtrip assertion thresholds.** `patch_to_samples` reads the output WAV via hound then passes samples to `rms_region`. After both helpers switched to f32, all downstream `> 100.0` / `pre_last > 100.0` / `post_first > 100.0` assertions compared a normalized f32 RMS value against an i16-scale constant, always evaluating false. Each needed `/ 32767.0`. The plan's scale audit was explicitly scoped to `policies.rs` call sites and did not anticipate this category of assertion.
+
+3. **TOML manifest threshold not covered by code-level scale audit.** `tests/gap_corpus/manifest.toml` has `[defaults] absolute_silence_floor = 33.0` which is loaded by serde and overrides the Rust default function entirely. The Rust-side `default_absolute_silence_floor()` function is only used when the field is absent from TOML. Both needed updating: manifest to `0.001007` (≈ 33/32767) and the Rust default to `33.0_f32 / 32767.0` for consistency. Neither was called out in the plan.
+
+4. **Inline sample builders in seam residual test files.** `tests/seam_residual_corpus.rs` and `tests/seam_residual_oracle.rs` build samples via hand-rolled loops assigning `i16` values (`a[f] = val.clamp(-32768, 32767) as i16`), then pass them into `EnergySignatureFixture { a_samples, b_samples, ... }`. These are not `MultiChannelPcm` struct literals so the plan's literal-update item did not cover them. Both needed: loop body changed to f32 (`/ 32767.0`), `absolute_silence_rms` literals inside the same function scaled.
+
+5. **`residual_gate_runner.rs` roundtrip via `read_mono_wav`.** `read_mono_wav()` returns `(u32, Vec<i16>)` from a hound reader. The plan covered updating `gap_report_from_floor_oracle`'s signature to `&[f32]` but not the call site in `tests/common/residual_gate_runner.rs` that feeds the `Vec<i16>` directly into it. Required an inline conversion at the call site: `decoded_a_mono_i16.iter().map(|&s| s as f32 / 32767.0).collect()`.
+
+6. **`extract_window_regression.rs` dual-type `peak_abs` usage.** `peak_abs` was updated to `&[f32]` to handle `MultiChannelPcm.samples`. Line 264 in the same file calls it on `clip.samples` where `clip` is a `MonoPcmClip` (`Vec<i16>`). Required a separate `peak_abs_i16(&[i16]) -> f32` helper alongside the existing one. Not anticipated because the plan treated `MonoPcmClip` usage as "no change" without checking whether any shared test helpers were used for both types.
+
+7. **`repair_videos.rs` test `MultiChannelPcm` literal missed.** The plan enumerated `policies.rs`, `gap_energy.rs`, `gap_structure.rs`, `patch_audio.rs`, and `scan_gaps.rs` inline test data as targets for the literal update, but `src/application/repair_videos.rs` also contained a `MultiChannelPcm { samples: vec![1_000; 100], .. }` in a test helper that was not listed.
+
+**Lesson for Phase 2 scope:** The scale audit must explicitly cover (a) any TOML/config file with hardcoded amplitude or threshold values, (b) test helpers that pass PCM data through a function boundary (not just struct constructors), and (c) assertion thresholds derived from reading back written output (which now goes through a 32767 scale at the WAV boundary).
+
 ### Phase 2 — source-driven output bit depth
 
-- [ ] `domain/bit_depth.rs`: `BitDepth` enum + `resolve_output_bit_depth(Option<BitDepth>) -> WavBitDepth` pure function (unit-testable in isolation, per Decisions table).
-- [ ] `infrastructure/pcm_depth.rs` (new) or extend `infrastructure/pcm.rs`: `f32_to_i16`, `f32_to_i24`; shared by writer and mux.
-- [ ] `infrastructure/wav_writer.rs`: resolve `WavSpec` from `audio.source_bit_depth` via `resolve_output_bit_depth`; write via the shared conversion helpers instead of hardcoding `bits_per_sample: 16`.
-- [ ] `infrastructure/pcm.rs::write_pcm_s16le` → `write_pcm_le(writer, samples: &[f32], depth: WavBitDepth)`.
-- [ ] `infrastructure/ffmpeg_mux.rs` (under `ffmpeg-mux` feature): pipe format string follows resolved depth (`-f s16le` / `-f s24le` only — no float pipe, consistent with the 24-bit int output cap); confirm ffmpeg's AAC encoder accepts both as input (it does).
-- [ ] `validate_pcm_for_wav` (`infrastructure/pcm.rs`, referenced from `wav_writer.rs:10`): confirm its multiple-of-channels / non-empty checks are depth-agnostic; add depth to any size/overflow checks if needed (24-bit uses 3 bytes/sample vs 2, so the 4 GiB WAV limit is reached at ⅔ the frame count — recheck the existing "exceeds 4 GiB" `--mux` hint in `wav_writer.rs:37-42` against this).
-- [ ] CLI/progress text: if `--verbose`, log resolved output depth alongside the existing source/codec info (mirrors `format_description()` pattern in `audio_track.rs`).
+**Prerequisite state (confirmed after Phase 1):**
+- `BitDepth` enum already exists at `clip-sync/src/domain/bit_depth.rs` (Int16, Int24, Int32, Float32, Other(u32))
+- `AudioTrack.bit_depth: Option<BitDepth>` already populated from Symphonia at probe time
+- `MultiChannelPcm.source_bit_depth: Option<BitDepth>` already carried from decode
+- `wav_writer.rs` still hardcodes `bits_per_sample: 16`; f32→i16 conversion already correct at line 30
+- `write_pcm_s16le` in `pcm.rs` still s16le-only; used by the `ffmpeg-mux` pipe
+
+**Tasks:**
+- [x] `domain/bit_depth.rs`: add `resolve_output_bit_depth(source: Option<BitDepth>) -> WavBitDepth` pure function. `WavBitDepth` is a local enum `{ Int16, Int24 }` (no Float32 output per Non-goals). Rule: `Int24 | Int32 | Float32 | Other(>16)` → `Int24`; `Int16 | None | Other(≤16)` → `Int16`.
+- [x] `infrastructure/pcm.rs`: add `f32_to_i24(s: f32) -> i32` helper (scale by `8_388_607.0`, clamp to true 24-bit range); generalize `write_pcm_s16le` → `write_pcm_le(writer, samples: &[f32], depth: WavBitDepth)` (dispatches to s16le or s24le branch). Both writer and mux pipe share this.
+- [x] `infrastructure/wav_writer.rs`: resolve `WavBitDepth` from `audio.source_bit_depth`; set `WavSpec.bits_per_sample` and `sample_format` from it; write samples via `f32_to_i16` (existing) or `f32_to_i24` (new). Update the 4 GiB hint at line 37–42: 24-bit uses 3 bytes/sample so the limit is hit at ⅔ the frame count of a 16-bit file.
+- [x] `infrastructure/ffmpeg_mux.rs` (under `ffmpeg-mux` feature): replace hardcoded `-f s16le` with depth-resolved format string (`-f s16le` or `-f s24le`) derived from `audio.source_bit_depth`. Confirm ffmpeg accepts s24le PCM as AAC encoder input (it does — `-f s24le` is standard).
+- [x] CLI/progress text: log resolved output depth in `format_description()` / verbose output alongside codec info.
+
+**Existing tests safe to leave unchanged in Phase 2:**
+- `cli_wav_integration.rs`, `scan_gaps_integration.rs`, `patch_audio_integration.rs`, `query_reference_integration.rs` all write 16-bit input WAVs (`WavSpec { bits_per_sample: 16 }`). Output will remain 16-bit under Phase 2's resolution logic (`Int16 | None → Int16`). Tests that read back via `reader.samples::<i16>()` and compare against i16-scale thresholds (`> 100.0`) remain correct. No changes needed here; Phase 3 adds new tests for 24-bit source paths.
+- [x] `pcm_data_bytes` in `pcm.rs:13` hardcodes `* 2` (2 bytes per 16-bit sample). This function is used by `validate_pcm_for_wav` to enforce the 4 GiB classic WAV limit. For 24-bit output the multiplier is `3`, so the limit is hit at ⅔ the frame count. Change signature to `pcm_data_bytes(audio: &MultiChannelPcm, depth: WavBitDepth) -> u64`; update `validate_pcm_for_wav` to take and pass `depth`; update the `validate_pcm_for_wav_rejects_payload_over_limit` test to pass `WavBitDepth::Int16` (existing behavior) and add a companion assertion at `/ 3 + 1` for `Int24`.
+
+### Phase 2 — implementation notes / plan gaps
+
+Items not anticipated in the original checklist that were discovered during implementation.
+
+1. **`build_ffmpeg_mux_args` signature change cascaded to test call sites.** The plan said "replace hardcoded `-f s16le` with depth-resolved format string" but framed it as an in-body substitution. The actual change required adding a `pcm_format: &str` parameter to `build_ffmpeg_mux_args` (since the depth isn't available at the arg-building site — it's computed from PCM metadata), which cascaded to updating all three existing test call sites in the same file. Not anticipated.
+
+2. **`run_ffmpeg_mux_with_progress` needed `depth` threaded through as a parameter.** The plan identified that `write_pcm_s16le` → `write_pcm_le` needed to happen in the mux pipe, but did not note that `run_ffmpeg_mux_with_progress` is a separate private function that takes `args` and `pcm` but not the resolved depth — so depth had to be added as a parameter and threaded from the `MediaMuxer` impl through to the write call. Two sites changed: the function definition and its sole call site.
+
+3. **`write_pcm_s16le` going from `pub` to private required an import update in `ffmpeg_mux.rs`.** The plan described `write_pcm_le` as a generalization of `write_pcm_s16le`, but once `write_pcm_le` became the public interface and `write_pcm_s16le` became a private helper, the existing `use crate::infrastructure::pcm::{..., write_pcm_s16le}` import in `ffmpeg_mux.rs` had to be updated to `write_pcm_le`. Small but easy to overlook.
+
+4. **Existing `format_description` test assertion broke on format string change.** The plan said "log resolved output depth in `format_description()`" but did not flag that this changes an existing output format and breaks the existing test that asserts `"ac3 @ 48000 Hz, 5.1 (decodable)"`. The test needed to be renamed and updated to `"ac3 @ 48000 Hz, 5.1 (decodable, 16-bit out)"`, and a second test added for the 24-bit source case. **Lesson for Phase 3:** any plan item that changes a human-readable string used in an existing assertion should explicitly note that the test will break.
+
+**Lesson for Phase 3 scope:** When a function that is called in multiple places changes its signature (even by adding one parameter), enumerate call sites explicitly in the plan rather than relying on "update call sites" as implied. The compiler will catch them, but enumerating them in the plan prevents mid-implementation surprise.
 
 ### Phase 3 — tests + docs
 
-- [ ] Unit tests: `resolve_output_bit_depth` for every `BitDepth` input including `None`.
+- [x] Unit tests: `resolve_output_bit_depth` for every `BitDepth` input including `None`. *(Done in Phase 2 — `bit_depth.rs` tests cover all variants.)*
+- [x] Existing fixed-16-bit fixtures/tests re-verified green. *(Done — `cargo test --workspace` passes as of Phase 2 completion.)*
 - [ ] Integration test: WAV/FLAC 24-bit int source fixture → repaired output is 24-bit WAV; assert via `hound::WavReader` spec on the output.
+  - Synthesize the fixture programmatically inside the test using `hound::WavWriter` with `WavSpec { bits_per_sample: 24, sample_format: SampleFormat::Int, .. }` — no committed binary fixture needed.
+  - Set `source_bit_depth: Some(BitDepth::Int24)` on the `MultiChannelPcm` after decode (or wire a real 24-bit decode path if the corpus has one).
 - [ ] Integration test: 32-bit float WAV source fixture → repaired output is **24-bit int** WAV (capped, not float-out).
+  - Synthesize with `WavSpec { bits_per_sample: 32, sample_format: SampleFormat::Float, .. }`. Symphonia will report `SampleFormat::F32` → `BitDepth::Float32` → `WavBitDepth::Int24`.
 - [ ] Integration test: lossy source (existing AAC/AC-3 fixtures) → output stays 16-bit (no behavior change, regression guard).
-- [ ] Existing fixed-16-bit fixtures/tests (`cli_wav_integration.rs`, `patch_audio_integration.rs`, `scan_gaps_integration.rs`, etc.) re-verified green — they construct synthetic 16-bit *input* WAVs, so expected output stays 16-bit; no fixture changes required, but worth a pass to confirm none silently relied on i16 internal representation leaking through an assertion.
+- [ ] Mux path: the unit test `ffmpeg_arg_construction_s24le_uses_correct_format` covers arg construction; a full end-to-end mux integration test for 24-bit source → s24le pipe requires ffmpeg present at test time. **Decision needed:** gate behind `#[cfg(feature = "integration")]` and mark `#[ignore]` by default, or treat the unit test + WAV integration test as sufficient coverage and skip the mux end-to-end. Calling it out explicitly so this doesn't get silently deferred.
+- [ ] `format_description` now outputs `"(decodable, 16-bit out)"` / `"(decodable, 24-bit out)"`. If any CLI integration test or log capture test asserts on this string verbatim, it will break. Grep for `"decodable"` in test files before writing new Phase 3 integration tests.
 - [ ] `docs/pipeline.md`, `docs/gap-repair-guide.md`: document bit-depth detection and the f32 internal representation.
 - [ ] `BACKLOG.md`: add completed row.
 - [ ] Archive this plan.

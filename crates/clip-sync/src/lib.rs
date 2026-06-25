@@ -33,6 +33,7 @@ pub use domain::{
     HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm, OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome,
     RepetitionFinding, TimelineOverlap, AudioTimelineSkew,
+    BitDepth, WavBitDepth, resolve_output_bit_depth,
 };
 pub use domain::policies::{
     attach_symmetric_planning_report_metadata, select_best_track, select_track_for_reference,

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::domain::BitDepth;
+use crate::domain::{BitDepth, resolve_output_bit_depth};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioTrack {
@@ -35,16 +35,17 @@ pub fn channel_layout_label(channels: u16) -> String {
 impl AudioTrack {
     /// Codec, rate, channel layout, and decodability for stderr / verbose reports.
     pub fn format_description(&self) -> String {
+        let depth_label = match resolve_output_bit_depth(self.bit_depth) {
+            crate::domain::WavBitDepth::Int16 => "16-bit",
+            crate::domain::WavBitDepth::Int24 => "24-bit",
+        };
         format!(
-            "{} @ {} Hz, {} ({})",
+            "{} @ {} Hz, {} ({}, {} out)",
             self.codec,
             self.sample_rate,
             channel_layout_label(self.channels),
-            if self.decodable {
-                "decodable"
-            } else {
-                "not decodable"
-            }
+            if self.decodable { "decodable" } else { "not decodable" },
+            depth_label,
         )
     }
 }
@@ -54,7 +55,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_description_includes_codec_and_layout() {
+    fn format_description_lossy_source_shows_16bit_out() {
         let track = AudioTrack {
             index: 2,
             codec: "ac3".into(),
@@ -66,7 +67,24 @@ mod tests {
         };
         assert_eq!(
             track.format_description(),
-            "ac3 @ 48000 Hz, 5.1 (decodable)"
+            "ac3 @ 48000 Hz, 5.1 (decodable, 16-bit out)"
+        );
+    }
+
+    #[test]
+    fn format_description_24bit_source_shows_24bit_out() {
+        let track = AudioTrack {
+            index: 0,
+            codec: "flac".into(),
+            channels: 2,
+            sample_rate: 96_000,
+            duration: None,
+            decodable: true,
+            bit_depth: Some(BitDepth::Int24),
+        };
+        assert_eq!(
+            track.format_description(),
+            "flac @ 96000 Hz, stereo (decodable, 24-bit out)"
         );
     }
 }

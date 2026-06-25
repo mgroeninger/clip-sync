@@ -10,7 +10,9 @@ use crate::application::error::RepairError;
 use crate::application::ports::{MediaMuxer, MuxOptions};
 use crate::domain::diagnostics::format_mux_duration_error;
 use crate::domain::diagnostics::MUX_DURATION_ERROR_SECS;
-use crate::infrastructure::pcm::{validate_pcm_layout, write_pcm_s16le};
+use clip_sync::resolve_output_bit_depth;
+
+use crate::infrastructure::pcm::{validate_pcm_layout, write_pcm_le};
 
 /// Build ffmpeg argv for remuxing `source_video` with replacement audio from stdin (`pipe:0`).
 pub fn build_ffmpeg_mux_args(
@@ -19,6 +21,7 @@ pub fn build_ffmpeg_mux_args(
     options: &MuxOptions,
     sample_rate: u32,
     channels: u16,
+    pcm_format: &str,
 ) -> Vec<String> {
     let mut args = vec![
         "-y".into(),
@@ -27,7 +30,7 @@ pub fn build_ffmpeg_mux_args(
         "-i".into(),
         source_video.display().to_string(),
         "-f".into(),
-        "s16le".into(),
+        pcm_format.into(),
         "-ar".into(),
         sample_rate.to_string(),
         "-ac".into(),
@@ -162,6 +165,7 @@ fn mux_duration_ms(source_video: &Path, pcm: &MultiChannelPcm) -> Option<u64> {
 fn run_ffmpeg_mux_with_progress(
     args: &[String],
     pcm: &MultiChannelPcm,
+    depth: clip_sync::WavBitDepth,
     progress: &dyn ProgressReporter,
     duration_ms: Option<u64>,
 ) -> Result<(), RepairError> {
@@ -191,7 +195,7 @@ fn run_ffmpeg_mux_with_progress(
     thread::scope(|scope| {
         scope.spawn(|| {
             let mut stdin = stdin;
-            let result = write_pcm_s16le(&mut stdin, &pcm.samples).and_then(|()| stdin.flush());
+            let result = write_pcm_le(&mut stdin, &pcm.samples, depth).and_then(|()| stdin.flush());
             let _ = pcm_tx.send(result);
         });
 
@@ -282,12 +286,14 @@ impl MediaMuxer for FfmpegMediaMuxer {
         validate_pcm_layout(replacement_audio)?;
         validate_mux_duration(replacement_audio, source_video)?;
 
+        let depth = resolve_output_bit_depth(replacement_audio.source_bit_depth);
         let mut args = build_ffmpeg_mux_args(
             source_video,
             output,
             options,
             replacement_audio.sample_rate,
             replacement_audio.channels,
+            depth.ffmpeg_format(),
         );
         append_mux_progress_args(&mut args);
 
@@ -302,7 +308,7 @@ impl MediaMuxer for FfmpegMediaMuxer {
 
         progress.phase("Muxing video with patched audio...");
         let duration_ms = mux_duration_ms(source_video, replacement_audio);
-        run_ffmpeg_mux_with_progress(&args, replacement_audio, progress, duration_ms)
+        run_ffmpeg_mux_with_progress(&args, replacement_audio, depth, progress, duration_ms)
     }
 }
 
@@ -347,7 +353,7 @@ mod tests {
             audio_bitrate: Some("247k".into()),
         };
 
-        let args = build_ffmpeg_mux_args(&source, &out, &options, 48_000, 6);
+        let args = build_ffmpeg_mux_args(&source, &out, &options, 48_000, 6, "s16le");
 
         assert_eq!(
             args,
@@ -384,6 +390,20 @@ mod tests {
     }
 
     #[test]
+    fn ffmpeg_arg_construction_s24le_uses_correct_format() {
+        let source = PathBuf::from("video_a.mp4");
+        let out = PathBuf::from("repaired.mp4");
+        let options = MuxOptions {
+            video_codec: "copy".into(),
+            audio_codec: "aac".into(),
+            audio_bitrate: None,
+        };
+        let args = build_ffmpeg_mux_args(&source, &out, &options, 48_000, 2, "s24le");
+        let f_idx = args.iter().position(|a| a == "-f").expect("-f flag");
+        assert_eq!(args[f_idx + 1], "s24le");
+    }
+
+    #[test]
     fn ffmpeg_arg_construction_omits_bitrate_when_unset() {
         let options = MuxOptions {
             video_codec: "copy".into(),
@@ -396,6 +416,7 @@ mod tests {
             &options,
             48_000,
             2,
+            "s16le",
         );
         assert!(!args.contains(&"-b:a".to_string()));
     }
@@ -413,6 +434,7 @@ mod tests {
             &options,
             44_100,
             2,
+            "s16le",
         );
 
         assert!(!args.contains(&"-movflags".to_string()));

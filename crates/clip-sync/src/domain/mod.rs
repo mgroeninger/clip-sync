@@ -33,7 +33,7 @@ pub use alignment::{
 };
 pub use audio_timeline::AudioTimelineSkew;
 pub use audio_track::AudioTrack;
-pub use bit_depth::BitDepth;
+pub use bit_depth::{resolve_output_bit_depth, BitDepth, WavBitDepth};
 pub use clip_plan::ClipPlan;
 pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
