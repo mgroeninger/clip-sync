@@ -6,8 +6,8 @@ config/CLI, `ResidualHeadroomExceeded` skip reason, residual scalars on `Patched
 per-gap tag, `donor_relation` run diagnostic, real-codec gate oracle (AAC + Vorbis 128k). Not yet:
 `veto_rescue` as default; MP3 calibration (M4 deferred).
 
-Builds on the report-only prototype (`policies::seam_residual_diagnostics`,
-`policies::seam_floor_probe`) and the corpus experiments in `tests/seam_residual_corpus.rs`.
+Builds on the floor/residual primitives in `policies.rs` (`seam_chosen_and_floor`,
+`seam_floor_probe`) and the corpus experiments in `tests/seam_residual_corpus.rs`.
 
 Companions: [seam-scoring.md](seam-scoring.md) (seam mechanics), [gap-fill-modes.md](gap-fill-modes.md)
 (fit/gate, tiers), [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) (the floor's other use).
@@ -68,9 +68,9 @@ permanent by design, not a bug. See [residual-gate-findings.md](residual-gate-fi
 
 | # | Location | Role today | Change |
 |---|----------|------------|--------|
-| A | `application/patch_region.rs::evaluate_seam_gate_fit_candidate` (≈365–562) | computes structure gate + `classify_fill_waveform_confidence`; already builds `templates`, `cache.b_mono`, `offset_nominal_start`, the seam windows, and (in the DEBUG block) `seam_residual_diagnostics` + `seam_floor_probe` | **primary site**: compute residual/floor unconditionally (not just under DEBUG), apply the gate, populate new outcome fields |
+| A | `application/patch_region.rs::evaluate_seam_gate_fit_candidate` (≈365–562) | structure gate + Pearson tier + residual verdict | compute `SeamResidualVerdict`, apply gate, populate outcome fields |
 | B | `domain/gap_fill_fit.rs::classify_fill_waveform_confidence` (47–70) | maps `min(pre,post)` Pearson → High/Marginal/Err | add a sibling that composes the Pearson tier with the residual verdict (pure fn, unit-testable) |
-| C | `domain/policies.rs` (`seam_residual_diagnostics`, `seam_floor_probe`, `SEAM_RESIDUAL_MAX_LAG`, `SEAM_FLOOR_MAX_LAG`) | report-only primitives | unify lag radius (constraint 3); add one combined evaluator returning per-side `residual_db`, `floor_db`, `headroom`, `floor_source`, `informative` |
+| C | `domain/policies.rs` (`seam_chosen_and_floor`, `seam_floor_probe`, lag search) | floor + chosen probes | unified lag radius; combined `SeamResidualVerdict` with `informative` |
 | D | `application/patch_region.rs::SeamGateParams` (49–89) + `SeamGateOutcome` (30–47) + `SeamGateFailure` (91–103) | gate inputs/outputs | add residual config to params; add residual fields to outcome; add a `ResidualHeadroomExceeded` failure |
 | E | `application/patch_audio.rs` (≈1431 `SeamGateParams { … }`) | builds params from `RepairConfig` | thread new config fields + computed lag-radius frames |
 | F | `infrastructure/config.rs` (`RepairConfig`, `default_*`, validation, CLI mirror) | config surface | add knobs (§6) |
@@ -253,9 +253,10 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
   codec-specific code; acting-branch behavior and libmp3lame same-encoder determinism floor
   unverified — see [residual-gate-findings.md](residual-gate-findings.md) M4. Parked behind
   punch-after-encode oracle + `veto_rescue`-on-MP3 run.
-- **Fractional-delay ceiling.** Integer-only lag caps absolute cancellation (−16 dB at 0.5 sample);
-  headroom hides it within reach (lag-centered chosen probe, **M5**); beyond reach the gate abstains.
-  Mitigation: parabolic/fractional resample before subtraction (deferred).
+- **Fractional-delay ceiling (FD-1, deferred).** Integer-only lag caps absolute cancellation (−16 dB at
+  0.5 sample); headroom hides it within reach (lag-centered chosen probe, **M5**); beyond reach the
+  gate abstains. **L10 cleanup removed** unused parabolic `frac_lag`; shipping FD-1 needs fractional
+  B resample before LSQ — see findings **FD-1** table.
 - **Cost.** Unified lag at 10 ms × seam window × gaps (L3: one probe per accepted gap on joint grid, not per cell).
   L11: lag search borrows B haystack slices — no per-lag `Vec` allocation.
 - **Interaction with `anchored_retry`.** Residual verdict could feed anchor eligibility (a
@@ -268,5 +269,5 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
 - [gap-fill-modes.md](gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
 - [gap-repair-guide.md](gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
 - [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) — the floor's multi-donor use
-- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1/M5 fixed; M4 deferred; L3/L11 fixed; L1–L13 open)
+- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (L9–L13 fixed; fractional-delay deferred)
 - `tests/seam_residual_corpus.rs` — the experiments grounding §2 and §4e
