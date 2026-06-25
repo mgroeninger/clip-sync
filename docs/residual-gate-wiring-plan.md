@@ -168,8 +168,8 @@ In `evaluate_seam_gate_fit_candidate`, after `classify_fill_waveform_confidence`
 
 This sits inside the joint-grid candidate loop, so a vetoed baseline candidate naturally drives the
 grid search exactly as a Pearson failure does today (`record_fit_joint_candidate`) — no control-flow
-redesign. Cost: one residual + one floor probe per evaluated candidate; gate it behind
-`residual_gate != off` so default runs that disable it pay nothing.
+redesign. Cost: one residual + one floor probe per **accepted** gap after pearson-ranked finalize
+(L3); gate it behind `residual_gate != off` so runs that disable it pay nothing.
 
 ### 4d. `donor_relation` (derived, not required)
 
@@ -257,7 +257,8 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
   headroom hides it within reach (lag-centered chosen probe, **M5**); beyond reach the gate abstains.
   Mitigation: parabolic/fractional resample before subtraction (deferred).
 - **Cost.** Unified lag at 10 ms × seam window × candidates × gaps. Keep behind the off-by-default
-  flag; profile in P1.
+  flag; profile in P1. **L3 fixed:** joint grid defers the floor probe to pearson-ranked finalize
+  (one probe per accepted gap in the common case, not per grid cell).
 - **Interaction with `anchored_retry`.** Residual verdict could feed anchor eligibility (a
   headroom-clean patch is a stronger anchor) — out of scope here, noted for later.
 
