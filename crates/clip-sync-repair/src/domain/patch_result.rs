@@ -61,6 +61,62 @@ pub enum GapPatchSkipReason {
     },
 }
 
+/// Human-readable skip reason for stdout gap tables and verbose stderr (`-v`).
+pub fn format_gap_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
+    match reason {
+        GapPatchSkipReason::BExtractFailed => "B audio extraction failed".into(),
+        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary alignment failed".into(),
+        GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation,
+            post_correlation,
+            min_correlation,
+        } => format!(
+            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+        ),
+        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
+        GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
+        GapPatchSkipReason::ResidualHeadroomExceeded {
+            pre_correlation,
+            post_correlation,
+            headroom_db,
+            floor_pre_db,
+            floor_post_db,
+            margin_db,
+        } => format!(
+            "residual headroom exceeded (pre={pre_correlation:.2} post={post_correlation:.2} \
+             headroom={headroom_db:.1} dB floor_pre={floor_pre_db:.1} floor_post={floor_post_db:.1} \
+             margin={margin_db:.1} dB)"
+        ),
+    }
+}
+
+/// Short skip reason for default-mode `tracing::warn` mid-run notifications.
+pub fn format_gap_patch_skip_warn_reason(reason: &GapPatchSkipReason) -> String {
+    match reason {
+        GapPatchSkipReason::BExtractFailed => "B audio slice out of range".into(),
+        GapPatchSkipReason::BoundaryAlignmentFailed => "structure alignment failed".into(),
+        GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation,
+            post_correlation,
+            min_correlation,
+        } => format!(
+            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+        ),
+        GapPatchSkipReason::ResidualHeadroomExceeded { .. } => {
+            "residual headroom exceeded (anti-echo veto)".into()
+        }
+        other => format_gap_patch_skip_reason(other),
+    }
+}
+
+/// Verbose stderr line (`-v`) aligned with per-gap fill plan indentation.
+pub fn format_gap_fill_skip_verbose_line(reason: &GapPatchSkipReason) -> String {
+    format!(
+        "           skipped: {}",
+        format_gap_patch_skip_reason(reason)
+    )
+}
+
 /// Per-gap outcome after a patch pass (scan gaps in report order).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GapPatchOutcome {
@@ -213,5 +269,35 @@ impl PatchSummary {
             self.patch_anchors_used = Some(anchors);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn gap_fill_skip_verbose_line_matches_stdout_status() {
+        let reason = GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation: 0.23,
+            post_correlation: 0.21,
+            min_correlation: 0.35,
+        };
+        assert_eq!(
+            format_gap_fill_skip_verbose_line(&reason),
+            "           skipped: boundary correlation below threshold (pre=0.23 post=0.21 min=0.35)"
+        );
+    }
+
+    #[test]
+    fn gap_patch_skip_warn_reason_keeps_legacy_short_phrases() {
+        assert_eq!(
+            format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BoundaryAlignmentFailed),
+            "structure alignment failed"
+        );
+        assert_eq!(
+            format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BExtractFailed),
+            "B audio slice out of range"
+        );
     }
 }

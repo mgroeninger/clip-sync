@@ -36,6 +36,7 @@ use crate::domain::{
         PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
     },
     patch_result::{
+        format_gap_fill_skip_verbose_line, format_gap_patch_skip_warn_reason,
         residual_summary_scalar_fields, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
         GapPatchStatus, PatchSummary,
     },
@@ -1051,18 +1052,27 @@ pub(crate) fn format_skip_gap_fill_log(
     }
 }
 
-fn warn_skip_gap_fill(
+fn log_skip_gap_fill(
     progress: &dyn ProgressReporter,
     gaps: &[Gap],
     a_start_secs: f64,
     a_end_secs: f64,
-    reason: &str,
+    reason: &GapPatchSkipReason,
 ) {
     progress.flush_progress();
-    tracing::warn!(
-        "{}",
-        format_skip_gap_fill_log(gaps, a_start_secs, a_end_secs, reason)
-    );
+    if progress.detailed_extraction_progress() {
+        progress.phase_verbose(&format_gap_fill_skip_verbose_line(reason));
+    } else {
+        tracing::warn!(
+            "{}",
+            format_skip_gap_fill_log(
+                gaps,
+                a_start_secs,
+                a_end_secs,
+                &format_gap_patch_skip_warn_reason(reason),
+            )
+        );
+    }
 }
 
 fn outcomes_in_report_order(
@@ -1201,87 +1211,56 @@ fn seam_failure_outcome(
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
-    match fail {
+    let (reason, residual) = match fail {
         SeamGateFailure::StructureAlignmentFailed => {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "structure alignment failed",
-            );
-            (
-                None,
-                skipped_patch(GapPatchSkipReason::BoundaryAlignmentFailed),
-                tag_ctx,
-            )
+            (GapPatchSkipReason::BoundaryAlignmentFailed, None)
         }
-        SeamGateFailure::StructureBelowThreshold { pre, post } => {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "structure match below threshold",
-            );
-            (
-                None,
-                skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
-                    pre_correlation: pre,
-                    post_correlation: post,
-                    min_correlation: min_structure_match_score,
-                }),
-                tag_ctx,
-            )
-        }
-        SeamGateFailure::WaveformBelowThreshold { pre, post, min } => {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "waveform seam correlation below threshold",
-            );
-            (
-                None,
-                skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
-                    pre_correlation: pre,
-                    post_correlation: post,
-                    min_correlation: min,
-                }),
-                tag_ctx,
-            )
-        }
+        SeamGateFailure::StructureBelowThreshold { pre, post } => (
+            GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: pre,
+                post_correlation: post,
+                min_correlation: min_structure_match_score,
+            },
+            None,
+        ),
+        SeamGateFailure::WaveformBelowThreshold { pre, post, min } => (
+            GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: pre,
+                post_correlation: post,
+                min_correlation: min,
+            },
+            None,
+        ),
         SeamGateFailure::ResidualHeadroomExceeded {
             pre,
             post,
             residual,
             margin_db,
-        } => {
-            warn_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                "residual headroom exceeded (anti-echo veto)",
-            );
-            (
-                None,
-                skipped_patch_with_residual(
-                    GapPatchSkipReason::ResidualHeadroomExceeded {
-                        pre_correlation: pre,
-                        post_correlation: post,
-                        headroom_db: residual.worst_headroom_db(),
-                        floor_pre_db: residual.floor_pre_db,
-                        floor_post_db: residual.floor_post_db,
-                        margin_db,
-                    },
-                    Some(residual),
-                ),
-                tag_ctx,
-            )
-        }
-    }
+        } => (
+            GapPatchSkipReason::ResidualHeadroomExceeded {
+                pre_correlation: pre,
+                post_correlation: post,
+                headroom_db: residual.worst_headroom_db(),
+                floor_pre_db: residual.floor_pre_db,
+                floor_post_db: residual.floor_post_db,
+                margin_db,
+            },
+            Some(residual),
+        ),
+    };
+    log_skip_gap_fill(
+        progress,
+        &request.report.gaps,
+        region.a_start_secs,
+        region.a_end_secs,
+        &reason,
+    );
+    let outcome = if let Some(residual) = residual {
+        skipped_patch_with_residual(reason, Some(residual))
+    } else {
+        skipped_patch(reason)
+    };
+    (None, outcome, tag_ctx)
 }
 
 fn prepare_region_patch(
@@ -1490,16 +1469,17 @@ fn prepare_region_patch(
     ) {
         Some(samples) => samples,
         None => {
-            warn_skip_gap_fill(
+            let reason = GapPatchSkipReason::BExtractFailed;
+            log_skip_gap_fill(
                 progress,
                 &request.report.gaps,
                 region.a_start_secs,
                 region.a_end_secs,
-                "B audio slice out of range",
+                &reason,
             );
             return (
                 None,
-                skipped_patch(GapPatchSkipReason::BExtractFailed),
+                skipped_patch(reason),
                 tag_ctx,
             );
         }
@@ -1665,16 +1645,17 @@ fn prepare_region_patch(
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
-        warn_skip_gap_fill(
+        let reason = GapPatchSkipReason::AlignedSegmentOutOfRange;
+        log_skip_gap_fill(
             progress,
             &request.report.gaps,
             region.a_start_secs,
             region.a_end_secs,
-            "aligned B segment out of range",
+            &reason,
         );
         return (
             None,
-            skipped_patch(GapPatchSkipReason::AlignedSegmentOutOfRange),
+            skipped_patch(reason),
             tag_ctx,
         );
     }
@@ -2227,6 +2208,8 @@ mod tests {
 
     #[test]
     fn skip_gap_fill_log_matches_stdout_gap_number() {
+        use crate::domain::format_gap_patch_skip_warn_reason;
+
         let gaps = vec![
             Gap {
                 video_a_start_secs: 0.0,
@@ -2245,7 +2228,12 @@ mod tests {
         ];
 
         assert_eq!(
-            super::format_skip_gap_fill_log(&gaps, 6128.25, 6360.0, "structure alignment failed"),
+            super::format_skip_gap_fill_log(
+                &gaps,
+                6128.25,
+                6360.0,
+                &format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BoundaryAlignmentFailed),
+            ),
             "gap 2/2 (1:42:08 – 1:46:00): structure alignment failed"
         );
     }

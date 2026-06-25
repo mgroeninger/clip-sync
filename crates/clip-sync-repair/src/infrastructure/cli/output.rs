@@ -11,9 +11,9 @@ use crate::application::error::RepairError;
 use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
-    CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
-    GapPatchStatus, GapReport, PatchSummary, TrackCompatibility,
-    diagnostics::collect_repair_warnings,
+    CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport,
+    PatchSummary, TrackCompatibility, diagnostics::collect_repair_warnings,
+    format_gap_patch_skip_reason,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -473,7 +473,7 @@ fn format_unified_gap_status(
             }
         }
         GapPatchStatus::Skipped { reason } => {
-            format!("skipped: {}", format_patch_skip_reason(reason))
+            format!("skipped: {}", format_gap_patch_skip_reason(reason))
         }
         GapPatchStatus::NotPlanned { reason } => match reason {
             GapFillSkipReason::NotFillable => "unfillable".into(),
@@ -648,7 +648,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 }
             }
             GapPatchStatus::Skipped { reason } => {
-                format!("skipped: {}", format_patch_skip_reason(reason))
+                format!("skipped: {}", format_gap_patch_skip_reason(reason))
             }
             GapPatchStatus::NotPlanned { reason } => {
                 format!("not planned: {}", format_fill_skip_reason(reason))
@@ -665,34 +665,6 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
     }
 
     out
-}
-
-fn format_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
-    match reason {
-        GapPatchSkipReason::BExtractFailed => "B audio extraction failed".into(),
-        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary alignment failed".into(),
-        GapPatchSkipReason::CorrelationBelowThreshold {
-            pre_correlation,
-            post_correlation,
-            min_correlation,
-        } => format!(
-            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
-        ),
-        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
-        GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
-        GapPatchSkipReason::ResidualHeadroomExceeded {
-            pre_correlation,
-            post_correlation,
-            headroom_db,
-            floor_pre_db,
-            floor_post_db,
-            margin_db,
-        } => format!(
-            "residual headroom exceeded (pre={pre_correlation:.2} post={post_correlation:.2} \
-             headroom={headroom_db:.1} dB floor_pre={floor_pre_db:.1} floor_post={floor_post_db:.1} \
-             margin={margin_db:.1} dB)"
-        ),
-    }
 }
 
 fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
