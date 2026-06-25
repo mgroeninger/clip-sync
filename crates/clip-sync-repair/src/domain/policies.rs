@@ -2095,7 +2095,10 @@ mod tests {
         let gap_start = 4usize;
         let gap_end = 6usize;
         // A: ramp into gap; B fill matches the pre/post windows at splice time.
-        let a_samples: Vec<f32> = vec![100.0, 200.0, 300.0, 400.0, 0.0, 0.0, 500.0, 600.0, 0.0, 0.0].iter().map(|&v| v / 32767.0).collect();
+        let a_samples: Vec<f32> = [100.0, 200.0, 300.0, 400.0, 0.0, 0.0, 500.0, 600.0, 0.0, 0.0]
+            .iter()
+            .map(|&v| v / 32767.0)
+            .collect();
         let fill = vec![300.0, 400.0, 0.0, 0.0, 500.0, 600.0];
         let a_pre = vec![1.0, 0.5];
         let a_post = vec![0.8, -0.6];

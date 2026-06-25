@@ -155,7 +155,7 @@ validation/diagnostic rows.
 
 # Per-crate PR slices
 .\scripts\test-tier.ps1 -Tier pr-align
-.\scripts\test-tier.ps1 -Tier pr-repair
+.\scripts\test-tier.ps1 -Tier pr-repair   # includes oracle_energy SD rows (skips slow patch smokes)
 
 # Execution tiers (repair crate)
 .\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair

@@ -14,9 +14,7 @@ use clip_sync_repair::domain::{
     residual_max_lag_frames, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
-    build_f1_production, build_f2_production, build_f4_decoy_production, EnergySignatureFixture,
-};
+use clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture;
 
 // Production defaults mirrored from infrastructure/config.rs + application/patch_audio.rs so the
 // harness windows match `evaluate_seam_gate_fit_candidate` exactly.

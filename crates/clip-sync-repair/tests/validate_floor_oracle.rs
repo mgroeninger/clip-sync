@@ -8,9 +8,8 @@ use clip_sync_repair::domain::ResidualGateMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;
 
 use common::floor_oracle_fixtures::{
-    build_floor_oracle_pair, case_sources_ready, format_label, gap_frames_for_case,
-    load_manifest, BuiltFloorOracle, FloorOracleCase, FloorOracleDefaults, FloorOracleManifest,
-    OracleVariant,
+    build_floor_oracle_pair, case_sources_ready, format_label, load_manifest, BuiltFloorOracle,
+    FloorOracleCase, FloorOracleManifest, OracleVariant,
 };
 use common::residual_gate_runner::{
     assert_deadzone_punch_inert, assert_floor_expectations,
