@@ -10,6 +10,10 @@ that relates to **where** tests run (CI tiers — see [TEMP-test-tier-plan.md](T
 3. New tests and edited docs use the prefixes below; rename code opportunistically (no big-bang pass).
 4. **F*** fixture IDs are geometry, not acceptance tier.
 
+**Harness vs acceptance IDs:** SD/SP/EC/RG name *what* a row proves; harness code is split —
+fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/*_catalog/`,
+`#[test]` in tier binaries. See [TEMP-test-tier-plan.md § Harness organization](TEMP-test-tier-plan.md#harness-organization-fixtures-runners-catalogs).
+
 ---
 
 ## Prefix overview
@@ -25,6 +29,15 @@ that relates to **where** tests run (CI tiers — see [TEMP-test-tier-plan.md](T
 | **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
 | **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) |
+
+### Where acceptance code lives (harness)
+
+| Layer | Path | Holds |
+|-------|------|-------|
+| Fixtures | `clip-sync-repair/src/test_support/` | F* builders, production helpers — no `#[test]` |
+| Runners | `clip-sync-repair/tests/common/` | Shared pipeline drivers (floor oracle, residual gate) |
+| Catalogs | `tests/residual_gate_catalog/`, `tests/floor_oracle/`, `tests/gap_corpus/` | `matrix.toml`, manifests, baselines — not binaries |
+| Tests | `tests/<tier>_*.rs` | Thin `#[test]` asserting SD/SP/EC/RG rows |
 
 **CI tiers** (unit / integration / oracle / validation / diagnostic) describe **when** tests run, not
 acceptance ID families. Rough mapping:
