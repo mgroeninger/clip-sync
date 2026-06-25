@@ -45,6 +45,25 @@ From steps 1–2 and the alignment sweep (`tests/seam_residual_corpus.rs`):
 6. **F4 is the value case:** decoy `seam_pre` 0.84 (Pearson nearly accepts) vs residual headroom
    108 dB (residual rejects). The veto fires exactly here.
 
+**Why the two signals disagree (the root invariant).** Pearson endpoint identification and the
+residual gate measure *different things on different template bases*, and that is precisely why they
+diverge on broadband (noise-like) seams:
+
+- **Pearson** (`fill_seam_correlations` → `seam_pearson`) scores **waveform-shape similarity** on the
+  **trimmed** border template, peak-normalized. On broadband content there is no distinctive shape to
+  match — both sides are noise that differs sample-to-sample even between two encodes of the same
+  master — so Pearson reads ~0 *even at the correct placement* (H2-B: 0.099/0.100, below
+  `fill_absolute_floor`).
+- **Residual** (`seam_chosen_and_floor`) scores **whether A can actually be subtracted from B** on the
+  **raw** window. A same-master broadband seam cancels → residual ≈ floor → headroom ≈ 0.
+
+So on a *correct* same-master broadband fill, Pearson says reject (dead zone) while residual says
+accept (headroom ≈ 0). Two consequences flow from this single fact: the **rescue** path exists to
+recover those Pearson false-skips (constraint 4b dead-zone row), and the **veto** path exists for the
+mirror case where Pearson accepts a decoy that residual rejects (constraint 6 / F4). Unifying the
+residual side onto the *raw* window was H1; the trimmed-vs-raw asymmetry between the two systems is
+permanent by design, not a bug. See [residual-gate-findings.md](residual-gate-findings.md) H1/H2-B.
+
 ## 3. Current integration points (exact)
 
 | # | Location | Role today | Change |
@@ -77,11 +96,20 @@ pub struct SeamResidualVerdict {
     pub floor_source_pre: SeamFloorSource,  // Border | Walked | None
     pub floor_source_post: SeamFloorSource,
     pub informative: bool,             // every measured side: floor_db ≤ FLOOR_OK
+    pub placement_slide_frames: u64,   // |chosen_delta − nominal_delta|; drives reach abstention
+    pub max_lag_frames: i64,           // unified lag radius for this verdict (0 = reach check off)
 }
 impl SeamResidualVerdict {
     pub fn worst_headroom_db(&self) -> f64; // max over sides of (chosen − floor), non-finite filtered
+    pub fn worst_chosen_db(&self) -> f64;   // worst-side chosen residual (higher = less cancellation)
+    pub fn beyond_lag_reach(&self) -> bool; // slide > max_lag_frames → gate abstains (M5)
 }
 ```
+
+`placement_slide_frames` + `max_lag_frames` are what power the reach-abstention row of the §4b table:
+`beyond_lag_reach()` is `max_lag_frames > 0 && placement_slide_frames > max_lag_frames`. They are
+populated by `from_parts_with_placement`; the harness/`from_parts` constructors leave them `0`
+(reach check disabled), which is why both serialize with `skip_serializing_if`.
 
 - **Lag radius unification (constraint 3) — shipped:** one `max_lag_frames` on `SeamFloorParams`,
   computed by `residual_gate::residual_max_lag_frames(rate, residual_lag_secs)` (10 ms default), used
@@ -185,8 +213,10 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
 ## 7. Reporting & vocabulary (points G, H)
 
 - `GapPatchStatus::Patched`: add `residual_db`, `floor_db`, `headroom_db` (Option, `skip_serializing_if`).
-- New skip reason `ResidualHeadroomExceeded { headroom_db, floor_db, margin_db }` (or extend
-  `CorrelationBelowThreshold`); surfaced in `cli-output.md` skip strings + `json-output.md`.
+- New skip reason — **as shipped**, `SeamGateFailure::ResidualHeadroomExceeded { pre, post, residual,
+  margin_db }` (`patch_region.rs`), where `residual` is the full `SeamResidualVerdict` (carries
+  `chosen_*`/`floor_*`/headroom, so `headroom_db` and `floor_db` are derived from it rather than stored
+  flat); surfaced in `cli-output.md` skip strings + `json-output.md`.
 - `gap_tags.rs`: new axes —
   - `residual_band ∈ {cancels, correlates_only, no_floor}` from headroom vs margin + informative;
   - `donor_relation ∈ {same_master, mixed, diff_capture}` (run-level, derived).
