@@ -39,15 +39,16 @@ fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/
 | Catalogs | `tests/residual_gate_catalog/`, `tests/floor_oracle/`, `tests/gap_corpus/` | `matrix.toml`, manifests, baselines — not binaries |
 | Tests | `tests/<tier>_*.rs` | Thin `#[test]` asserting SD/SP/EC/RG rows |
 
-**CI tiers** (unit / integration / oracle / validation / diagnostic) describe **when** tests run, not
-acceptance ID families. Rough mapping:
+**CI tiers** (unit / integration / validation / diagnostic) describe **when** tests run, not
+acceptance ID families. "oracle" is a *label* (the `oracle_` name prefix for domain-acceptance
+rows), not a tier — those rows schedule as integration. See
+[TEMP-test-tier-plan.md](TEMP-test-tier-plan.md). Rough mapping:
 
 | Tier | Acceptance families |
 |------|---------------------|
 | unit | SD (in domain modules), pure GK/CS tag logic |
-| integration | SP, gap_corpus, patch sine rows |
-| oracle | SD, EC domain, seam score harness |
-| validation | RG, floor oracle, real codec |
+| integration | SP, gap_corpus, patch sine rows; **oracle label** — SD, EC domain, seam score harness |
+| validation | RG, EC6, floor oracle, real codec |
 | diagnostic | RG05 CSV, energy mode matrix, golden generators |
 
 ---

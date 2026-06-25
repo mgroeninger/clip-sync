@@ -90,46 +90,118 @@ ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channel
 
 ## Test overview
 
-Tests fall into four buckets:
+Tests are grouped into **execution tiers** (when CI runs them). Acceptance row IDs (SD, SP, EC,
+RG, …) describe **what** a test proves — see [test-acceptance-glossary.md](test-acceptance-glossary.md).
+Tier machinery is documented in [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md).
 
-| Bucket | Runs with `cargo test --workspace`? | Notes |
-|--------|-------------------------------------|-------|
-| Unit + adapter | yes | Domain, application (fakes), infrastructure |
-| Corpus committed | yes | Pre-generated WAV fixtures under `tests/corpus/wav/` |
-| Corpus generated / external | **no** (`#[ignore]`) | Built at test time; needs `--ignored` |
-| FFmpeg / mux / slow PCM | **no** (`#[ignore]` or feature-gated) | Needs features, ffmpeg, and/or `--ignored` |
+There are **four** execution tiers. "**oracle**" is *not* a tier — it is a label (the `oracle_`
+file/test-name prefix) for domain-acceptance tests that assert against a computed ground-truth;
+those schedule as **integration** (repo-only) or **validation** (external dep / exhaustive
+contract). Select oracle tests by name (`cargo test oracle_`) or acceptance ID.
 
-`cargo test --workspace` is the **default PR gate**. It does **not** run ignored tests.
+| Tier | Purpose | Default PR (`test-tier.ps1`)? | Typical location |
+|------|---------|-------------------------------|------------------|
+| **unit** | Pure logic, policies, small fakes | yes (`pr` → repair lib with `oracle_`-label skips) | `src/**` `#[test]` |
+| **integration** | Patch/scan/CLI on synthetic WAV; seam behavior; repo-only domain-acceptance (`oracle_` label) | yes (subset via `pr-repair`) | `tests/*_integration.rs`, `tests/oracle_*.rs` |
+| **validation** | External dep (real codec / ffmpeg / corpus / env) **or** exhaustive off-PR contract (RG, EC6, floor oracle) | no (`#[ignore]` or manual) | `tests/`, lib ignores |
+| **diagnostic** | CSV dumps, sweeps, golden generators (emit data, no assertion) | never | manual only |
+
+### Tier decision rule
+
+To place a new (or moved) test, ask these questions **in order**; the first match wins. This
+replaces asking "is this an oracle or a validation test?" — that conflated two questions and
+produced ambiguous bins.
+
+1. **Does it emit data for humans** (CSV, sweep, golden generator) with no meaningful pass/fail
+   assertion? → **diagnostic**.
+2. **Does it need an external resource** (ffmpeg binary, downloaded/external corpus, real codec,
+   env var) **or** is it a slow exhaustive acceptance/contract matrix run off-PR (RG catalog,
+   EC6 sweeps)? → **validation**.
+3. **Does it exercise a single module in isolation**, repo-only, deterministic, fast? → **unit**.
+4. **Otherwise** (repo-only, deterministic, asserts pass/fail across modules/binaries) →
+   **integration**. This includes **oracle** tests — they keep the `oracle_` name prefix as a
+   selection label but schedule as integration.
+
+**Speed is not a tier.** A slow repo-only test (e.g. `patch_audio_integration` SP rows) stays
+*integration*; it is kept off the default PR via script selection (`pr-repair-extended`, name
+filters), not by relabeling it. Only external-dependency or exhaustive-contract work becomes
+*validation*. Full machinery: [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) § Tier decision rule.
+
+**PR gate:** `.\scripts\test-tier.ps1 -Tier pr` (alignment committed corpus + repair smoke +
+CLI adapter tests). Does **not** run full `patch_audio_integration` (~15 min) or ignored
+validation/diagnostic rows.
+
+`cargo test --workspace` is a **local convenience** compile check only — not the CI PR gate.
+
+### Wall-time budgets (debug, typical dev machine)
+
+| Profile | Budget |
+|---------|--------|
+| `pr` | ~4–6 min |
+| `pr-align` | ~10–30 s |
+| `pr-repair` | ~4–6 min |
+| `pr-repair-extended` | +~3–8 min (sine seam grid, skips SP rows) |
+| `unit` (repair lib, `oracle_`-label skips) | ~30–60 s |
+| `integration` (repair, all `--test` binaries) | ~20+ min (includes full `patch_audio`) |
+| `validation` | minutes+; ffmpeg + optional corpus env |
 
 ---
 
 ## Default / CI commands
 
 ```powershell
-# Full workspace (unit + adapter + committed corpus + CLI adapter tests)
-cargo test --workspace
+# PR gate (same as GitHub Actions)
+.\scripts\test-tier.ps1 -Tier pr
 
-# Library only
-cargo test -p clip-sync
+# Per-crate PR slices
+.\scripts\test-tier.ps1 -Tier pr-align
+.\scripts\test-tier.ps1 -Tier pr-repair
 
-# Committed alignment corpus only (fast; no ffmpeg required)
-cargo test -p clip-sync corpus_committed
+# Execution tiers (repair crate)
+.\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
+.\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
+.\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # convenience: oracle-label rows (integration tier)
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # needs ffmpeg
+.\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
 
-# Analyzer CLI adapter tests
-cargo test -p clip-sync-cli
-
-# Repair: committed gap corpus + unit tests
-cargo test -p clip-sync-repair gap_corpus_committed
-
-# Repair: patch seam integration (fill offset, fill_mode fit/gate, extension retries)
-cargo test -p clip-sync-repair --test patch_audio_integration
+# Extended repair (pr-repair + patch_audio sine grid, skips i1_/i2_/i3_)
+.\scripts\test-tier.ps1 -Tier pr-repair-extended
 ```
 
-**Recommended PR check** (alignment committed tier):
+**Integration-only** (repair integration binaries, **no `--lib`**):
+
+```powershell
+.\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
+```
+
+Do **not** use `cargo test --tests` for integration-only — Cargo still runs `--lib` with
+`--tests`. Use the script or an explicit `--test <binary>` list (see
+[TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) Phase 1).
+
+**Local full workspace compile check** (not CI):
+
+```powershell
+cargo test --workspace
+```
+
+Legacy filters (still valid for ad-hoc runs):
 
 ```powershell
 cargo test -p clip-sync corpus_committed
+cargo test -p clip-sync-cli
+cargo test -p clip-sync-repair gap_corpus_committed
+cargo test -p clip-sync-repair --test patch_audio_integration
 ```
+
+### `#[ignore]` convention (new / edited tests)
+
+```rust
+#[ignore = "tier:validation — needs ffmpeg + fetch_corpus_sources"]
+#[ignore = "tier:diagnostic — CSV export; test-tier.ps1 -Tier diagnostic"]
+```
+
+Phase 1 validation/diagnostic tiers in the script still match many legacy ignore reason strings
+(`diagnostic:`, `needs fetch_corpus_sources`, etc.) until prefixes are updated opportunistically.
 
 ---
 
@@ -217,10 +289,13 @@ These exercise 60 s synthetic clips; several minutes wall time.
 Requires ffmpeg on `PATH`. External corpus tiers are optional (set env vars or skip those lines).
 
 ```powershell
+.\scripts\test-tier.ps1 -Tier pr
+.\scripts\test-tier.ps1 -Tier validation -Package workspace
+.\scripts\test-tier.ps1 -Tier diagnostic -Package workspace -Nocapture
+# or legacy workspace blanket:
 cargo test --workspace
 cargo test -p clip-sync --features he-aac,test-utils,ffmpeg-tests,ac3 -- --ignored
 cargo test -p clip-sync-repair --features ac3,ffmpeg-mux,ffmpeg-tests -- --ignored
-cargo test -p clip-sync-cli --features he-aac,ac3
 ```
 
 ---
@@ -258,7 +333,6 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | Test / filter | Crate | Trigger |
 |---------------|-------|---------|
 | `corpus_generated_cases` | `clip-sync` | `--ignored`; ffmpeg for container cases |
-| `corpus_query_reference_45min_anchor` | `clip-sync` | `--ignored`; 60 min query-reference oracle |
 | `corpus_query_reference_45min_anchor` | `clip-sync` | `--ignored`; 60 min query-reference oracle (~minutes) |
 | `corpus_external_cases` | `clip-sync` | `--ignored`; `CLIP_SYNC_CORPUS` |
 | `regenerate_committed_wav_fixtures` | `clip-sync` | `--ignored`; overwrites committed WAVs |
