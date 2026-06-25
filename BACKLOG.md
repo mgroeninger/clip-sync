@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-23.
+Last updated: 2026-06-25.
 
 **How this doc works**
 
@@ -18,10 +18,9 @@ Last updated: 2026-06-23.
 | Plan | Covers |
 |------|--------|
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
-| [TEMP-energy-signature-plan.md](docs/TEMP-energy-signature-plan.md) | Gated loudness envelope for gap structure matching (Phases 0–2 shipped; Phase 3 corpus complete; optional Phase 4 open) |
 | [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
 
-**Recently shipped:** f32 internal PCM + source-driven output bit depth (2026-06-25) — `MultiChannelPcm.samples` is now normalized `Vec<f32>` throughout the repair/write path; `WavPatchedAudioWriter` and the ffmpeg mux pipe resolve output depth from `source_bit_depth` (`Int24 | Int32 | Float32 → 24-bit int WAV / s24le pipe`; lossy / 16-bit stays 16-bit); `MonoPcmClip` (chromaprint) remains `Vec<i16>`. Prior: energy-aware seam channel selection (2026-06-23) — `fill_seam_correlations` / splice scorer now follow the channel(s) carrying signal (within ~20 dB of the loudest) instead of hardcoded front L/R, so center-dominant 5.1 mixes are scored on the center channel; previously front-L/R noise produced ~0 pre/post seams and made fit mode skip patchable gaps (`policies.rs`, `seam_score_channel_indices`). Prior: [energy signature production corpus](docs/archive/energy-corpus-plan.md) (2026-06-23) — F1/F2/F3-long + F4-decoy synthetic fixtures, mode matrix, **EC-1–EC-6**, mode-coupled `fill_fit_energy_nominal_bias_scale`, committed scan→patch CI smoke (Phase F profile→synthesize dropped as not decision-relevant). Prior: [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade.
+**Recently shipped:** [energy-signature gap structure matching](docs/archive/energy-signature-plan.md) (2026-06-25) — gated log-RMS energy envelope as the `fit`-path structure tier (`gap_signature_mode = auto` default), `GapSignature { Bool, Energy }`, flat-envelope fallback, `--gap-signature-mode` / `--gap-signature-context-secs` flags, corpus tuning **EC-1–EC-6** + mode-coupled `nominal_bias`; Phase 4 FFT/landmarks closed won't-do, adaptive context parked (see Repair R6 follow-ups). Prior: f32 internal PCM + source-driven output bit depth (2026-06-25) — `MultiChannelPcm.samples` is now normalized `Vec<f32>` throughout the repair/write path; `WavPatchedAudioWriter` and the ffmpeg mux pipe resolve output depth from `source_bit_depth` (`Int24 | Int32 | Float32 → 24-bit int WAV / s24le pipe`; lossy / 16-bit stays 16-bit); `MonoPcmClip` (chromaprint) remains `Vec<i16>`. Prior: energy-aware seam channel selection (2026-06-23) — `fill_seam_correlations` / splice scorer now follow the channel(s) carrying signal (within ~20 dB of the loudest) instead of hardcoded front L/R, so center-dominant 5.1 mixes are scored on the center channel; previously front-L/R noise produced ~0 pre/post seams and made fit mode skip patchable gaps (`policies.rs`, `seam_score_channel_indices`). Prior: [energy signature production corpus](docs/archive/energy-corpus-plan.md) (2026-06-23) — F1/F2/F3-long + F4-decoy synthetic fixtures, mode matrix, **EC-1–EC-6**, mode-coupled `fill_fit_energy_nominal_bias_scale`, committed scan→patch CI smoke (Phase F profile→synthesize dropped as not decision-relevant). Prior: [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade.
 
 ## Open work
 
@@ -51,6 +50,7 @@ From [archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md)
 | `--dry-run` / `--write` | Explicit CLI flags; today write mode is implied by `--wav` / `--mux` or TOML `dry_run = false` |
 | Scratch-buffer regression test | Dedicated unit test for patch PCM path |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM |
+| Adaptive gap-signature context (low priority) | Widen `gap_signature_context_secs` per-gap only when the score at the nominal map is below floor, instead of decoding wide B context for every gap. From [energy-signature-plan.md](docs/archive/energy-signature-plan.md) Phase 4; low value since mode-coupled `nominal_bias` already handles drift at the 3 s default |
 
 ---
 

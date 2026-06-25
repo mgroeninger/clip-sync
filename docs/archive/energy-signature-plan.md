@@ -238,8 +238,8 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 - [x] Adjust `min_structure_match_score` default — **no change.** The F4 weight sweep shows energy-vs-bool placement is masked by `fill_fit_nominal_bias_scale` (default `1.0`), not by a structure-score floor; `min_structure_match_score` is orthogonal. Energy recovers a 7 s-off true pause at production weights (0.35/0.65) once `nominal_bias ≤ ~0.25`. See [energy-corpus-plan.md](archive/energy-corpus-plan.md) Tuning record (2026-06-23 e).
 - [x] Default `gap_signature_mode` → `auto`.
 - [x] Structure signature guidance (energy vs bool, context length) — landed in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4 (resolved `signature_mode=` verbose line documented there). No separate README subsection added.
-- [ ] `docs/cli-output.md` — verbose `signature_mode` (currently only in `gap-repair-guide.md`; not yet in `cli-output.md`).
-- [ ] Example `[repair]` block in README with optional `gap_signature_context_secs = 15.0` for hard gaps (README block has `= 3.0` default only).
+- [x] `docs/cli-output.md` — verbose `signature_mode` documented (Gap patch gate section, "Structure signature mode (`fit` only)"; also noted in the per-gap verbose field list).
+- [x] Example `[repair]` block in README — `gap_signature_context_secs` line now documents raising to 10–30 s (e.g. 15.0) for hard gaps.
 - [x] CLI flags `--gap-signature-mode` / `--gap-signature-context-secs` shipped (`args.rs`; README flag table).
 - [x] (Optional) F2 integration fixture: align post-seam at pause₁ — done for **F2-long** production geometry; I3 still uses integration floor `-0.05`.
 
