@@ -110,6 +110,7 @@ pub(crate) fn shortfall_disposition(
             window_end_secs,
             track_duration_secs,
         )
+        && !seek_boundary_partial_acceptable(decoded, target, allow_tail_padding)
     {
         let near_track_end = track_duration_secs
             .map(|duration| window_end_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS)
@@ -139,6 +140,19 @@ pub(super) fn tail_partial_clip_acceptable(
         return false;
     }
     decoded_count * 100 >= target_count * TAIL_CLIP_MIN_DECODE_PERCENT
+}
+
+/// MKV/AAC long seeks often stop a few seconds short of the window end even when the
+/// container has the samples. When the decode loop already signalled tail padding (EOF /
+/// past-window) and most of the window decoded, pad the remainder for fingerprinting.
+pub(super) fn seek_boundary_partial_acceptable(
+    decoded_count: usize,
+    target_count: usize,
+    allow_tail_padding: bool,
+) -> bool {
+    allow_tail_padding
+        && target_count > 0
+        && decoded_count * 100 >= target_count * TAIL_CLIP_MIN_DECODE_PERCENT
 }
 
 pub(crate) fn extract_mono_with_state(
@@ -1201,13 +1215,36 @@ mod tail_clip_tests {
     }
 
     #[test]
-    fn rejects_midfile_partial_even_when_eof_flag_set() {
+    fn rejects_midfile_partial_when_padding_not_allowed() {
         assert!(!tail_partial_clip_acceptable(
             44_454_896,
             44_640_000,
             true,
             3000.0,
             Some(6180.0),
+        ));
+    }
+
+    #[test]
+    fn seek_boundary_partial_accepts_high_percent_shortfall_after_seek() {
+        // blah.mkv end clip: ~99.7% of 15m window after seek to ~1:25, B-shorter shared anchor.
+        let disposition = super::shortfall_disposition(
+            44_515_376,
+            44_640_000,
+            true,
+            6000.984,
+            Some(6240.033),
+            48_000,
+        );
+        assert!(matches!(disposition, super::ShortfallDisposition::Pad { .. }));
+    }
+
+    #[test]
+    fn seek_boundary_partial_rejects_when_too_little_decoded() {
+        assert!(!super::seek_boundary_partial_acceptable(
+            20_000_000,
+            44_640_000,
+            true,
         ));
     }
 
