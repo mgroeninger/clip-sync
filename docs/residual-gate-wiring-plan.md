@@ -256,9 +256,8 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
 - **Fractional-delay ceiling.** Integer-only lag caps absolute cancellation (−16 dB at 0.5 sample);
   headroom hides it within reach (lag-centered chosen probe, **M5**); beyond reach the gate abstains.
   Mitigation: parabolic/fractional resample before subtraction (deferred).
-- **Cost.** Unified lag at 10 ms × seam window × candidates × gaps. Keep behind the off-by-default
-  flag; profile in P1. **L3 fixed:** joint grid defers the floor probe to pearson-ranked finalize
-  (one probe per accepted gap in the common case, not per grid cell).
+- **Cost.** Unified lag at 10 ms × seam window × gaps (L3: one probe per accepted gap on joint grid, not per cell).
+  L11: lag search borrows B haystack slices — no per-lag `Vec` allocation.
 - **Interaction with `anchored_retry`.** Residual verdict could feed anchor eligibility (a
   headroom-clean patch is a stronger anchor) — out of scope here, noted for later.
 
@@ -269,5 +268,5 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
 - [gap-fill-modes.md](gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
 - [gap-repair-guide.md](gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
 - [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) — the floor's multi-donor use
-- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1/M5 fixed; M4 deferred; L1–L12 open)
+- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (H1/M1/M5 fixed; M4 deferred; L3/L11 fixed; L1–L13 open)
 - `tests/seam_residual_corpus.rs` — the experiments grounding §2 and §4e

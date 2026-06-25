@@ -1305,19 +1305,21 @@ fn lsq_residual_ratio(a: &[f64], b: &[f64]) -> Option<(f64, f64)> {
     Some((g, (res / aa).max(0.0)))
 }
 
-/// Search integer lags for the minimum normalized residual of `a_win` against B windows supplied
-/// by `b_at_lag`, then parabolically refine the sub-sample offset.
+/// Search integer lags for the minimum normalized residual of `a_win` against B windows in
+/// `b_haystack` at offsets returned by `b_window_bounds`, then parabolically refine the sub-sample
+/// offset.
 ///
 /// `lag_center` shifts the search window (e.g. `floor.best_lag + nominal_delta − chosen_delta`
 /// when placement slide is within reach).
 fn seam_residual_for_side<F>(
     a_win: &[f64],
-    b_at_lag: F,
+    b_haystack: &[f64],
+    b_window_bounds: F,
     max_lag: i64,
     lag_center: i64,
 ) -> Option<SeamResidual>
 where
-    F: Fn(i64) -> Option<Vec<f64>>,
+    F: Fn(i64) -> Option<(usize, usize)>,
 {
     let w = a_win.len();
     if w == 0 {
@@ -1334,10 +1336,14 @@ where
     let mut best_idx: Option<usize> = None;
     let mut best_gain = 0.0;
     for lag in (lag_center - max_lag)..=(lag_center + max_lag) {
-        let Some(b_win) = b_at_lag(lag) else {
+        let Some((lo, hi)) = b_window_bounds(lag) else {
             continue;
         };
-        let Some((g, ratio)) = lsq_residual_ratio(a_win, &b_win) else {
+        if hi - lo != w {
+            continue;
+        }
+        let b_win = &b_haystack[lo..hi];
+        let Some((g, ratio)) = lsq_residual_ratio(a_win, b_win) else {
             continue;
         };
         let idx = (lag - (lag_center - max_lag)) as usize;
@@ -1388,8 +1394,9 @@ where
 /// Residual-cancellation diagnostic at a placement, mirroring the windows of
 /// [`fill_seam_correlations`] but measuring how cleanly B *cancels* A's border (mono only).
 ///
-/// Prototype for the same-master repair case — see [`SeamResidual`]. Allocates per lag; call only
-/// behind a `tracing::enabled!(DEBUG)` guard.
+/// Prototype for the same-master repair case — see [`SeamResidual`]. Call only behind a
+/// `tracing::enabled!(DEBUG)` guard (test-only in practice; production uses
+/// [`seam_chosen_and_floor`]).
 pub fn seam_residual_diagnostics(
     templates: &SeamTemplates<'_>,
     placement: SeamPlacement,
@@ -1401,13 +1408,13 @@ pub fn seam_residual_diagnostics(
 
     let pre = if pre_window > 0 && a_pre.len() >= pre_window {
         let a_win = &a_pre[a_pre.len() - pre_window..];
-        seam_residual_for_side(a_win, |lag| {
+        seam_residual_for_side(a_win, b_mono, |lag| {
             let lo = start as i64 - pre_window as i64 + lag;
             let hi = start as i64 + lag;
             if lo < 0 || hi > len || hi <= lo {
                 return None;
             }
-            Some(b_mono[lo as usize..hi as usize].to_vec())
+            Some((lo as usize, hi as usize))
         }, max_lag, 0)
     } else {
         None
@@ -1416,13 +1423,13 @@ pub fn seam_residual_diagnostics(
     let post = if post_window > 0 && a_post.len() >= post_window {
         let a_win = &a_post[..post_window];
         let tail = (start + gap_frames) as i64;
-        seam_residual_for_side(a_win, |lag| {
+        seam_residual_for_side(a_win, b_mono, |lag| {
             let lo = tail + lag;
             let hi = tail + post_window as i64 + lag;
             if lo < 0 || hi > len {
                 return None;
             }
-            Some(b_mono[lo as usize..hi as usize].to_vec())
+            Some((lo as usize, hi as usize))
         }, max_lag, 0)
     } else {
         None
@@ -1591,13 +1598,14 @@ fn measure_window_at_delta(
     let b_start0 = window.a_lo as i64 + delta;
     let probe = seam_residual_for_side(
         &window.a_win,
+        b_mono,
         |lag| {
             let lo = b_start0 + lag;
             let hi = lo + w;
             if lo < 0 || hi > b_len {
                 return None;
             }
-            Some(b_mono[lo as usize..hi as usize].to_vec())
+            Some((lo as usize, hi as usize))
         },
         max_lag,
         lag_center,
@@ -1621,7 +1629,7 @@ fn measure_window_at_delta(
 /// Measure the per-gap noise floor: slide a clean, energetic A reference window against B at the
 /// nominal offset (wide lag search). Starts at the immediate border, walks outward if it is quiet.
 ///
-/// Report-only — allocates per lag; call behind a `tracing::enabled!(DEBUG)` guard.
+/// Report-only — call behind a `tracing::enabled!(DEBUG)` guard (test-only in practice).
 pub fn seam_floor_probe(
     params: &SeamFloorParams<'_>,
     side: SeamSide,
