@@ -4,164 +4,30 @@
 //!      `cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture`
 //!      `cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture`
 //!      `cargo test -p clip-sync-repair floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture`
+//!      `cargo test -p clip-sync-repair deadzone_punch_assert -- --ignored --nocapture`
+//!      `cargo test -p clip-sync-repair gate_real_codec_production_fit -- --ignored --nocapture`
 
 mod common;
 
-use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::testing::ffmpeg_util;
-use clip_sync::SymphoniaMediaReader;
 
-use clip_sync_repair::application::PatchAudio;
-use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
-use clip_sync_repair::domain::gap_fill_fit::FillConfidence;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
+use clip_sync_repair::domain::ResidualGateMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_floor_oracle, patch_request_from_repair, production_repair_config,
-};
 
 use common::floor_oracle_fixtures::{
-    build_floor_oracle_pair, case_sources_ready, decode_to_mono_wav_at, format_label,
-    load_manifest, read_mono_wav, BuiltFloorOracle, FloorOracleCase, FloorOracleDefaults,
-    FloorOracleManifest, OracleVariant,
+    build_floor_oracle_pair, case_sources_ready, format_label, gap_frames_for_case,
+    load_manifest, BuiltFloorOracle, FloorOracleCase, FloorOracleDefaults, FloorOracleManifest,
+    OracleVariant,
 };
-
-struct FloorOracleRun {
-    status: &'static str,
-    skip_reason: String,
-    structure_ok: bool,
-    residual: Option<clip_sync_repair::domain::policies::SeamResidualVerdict>,
-    align_adjustment_secs: f64,
-    confidence: Option<FillConfidence>,
-    /// Seam Pearson at the decided placement (`NaN` if the gap never reached the seam tier).
-    seam_pre: f64,
-    seam_post: f64,
-}
-
-/// Seam Pearson carried on a patched outcome or a seam-tier skip reason (`NaN` otherwise).
-fn seam_pre_post(status: &GapPatchStatus) -> (f64, f64) {
-    match status {
-        GapPatchStatus::Patched {
-            pre_correlation,
-            post_correlation,
-            ..
-        } => (*pre_correlation, *post_correlation),
-        GapPatchStatus::Skipped {
-            reason:
-                GapPatchSkipReason::CorrelationBelowThreshold {
-                    pre_correlation,
-                    post_correlation,
-                    ..
-                }
-                | GapPatchSkipReason::ResidualHeadroomExceeded {
-                    pre_correlation,
-                    post_correlation,
-                    ..
-                },
-        } => (*pre_correlation, *post_correlation),
-        _ => (f64::NAN, f64::NAN),
-    }
-}
-
-fn floor_oracle_repair_config(residual_gate: ResidualGateMode) -> RepairConfig {
-    let mut repair = production_repair_config(GapSignatureMode::Energy, 3.0);
-    repair.residual_gate = residual_gate;
-    repair
-}
-
-fn gap_status_label(status: &GapPatchStatus) -> (&'static str, String) {
-    match status {
-        GapPatchStatus::Patched { .. } => ("patched", String::new()),
-        GapPatchStatus::Skipped { reason } => ("skipped", skip_reason_label(reason)),
-        GapPatchStatus::NotPlanned { reason } => ("not_planned", format!("{reason:?}")),
-    }
-}
-
-fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
-    match reason {
-        GapPatchSkipReason::CorrelationBelowThreshold {
-            pre_correlation,
-            post_correlation,
-            min_correlation,
-        } => format!(
-            "correlation_below(pre={pre_correlation:.4},post={post_correlation:.4},min={min_correlation})"
-        ),
-        GapPatchSkipReason::ResidualHeadroomExceeded { .. } => "residual_headroom".into(),
-        GapPatchSkipReason::BExtractFailed => "b_extract_failed".into(),
-        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary_alignment_failed".into(),
-        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range".into(),
-        GapPatchSkipReason::ZeroLengthGap => "zero_length_gap".into(),
-    }
-}
-
-fn run_built_floor_oracle(
-    built: &BuiltFloorOracle,
-    residual_gate: ResidualGateMode,
-) -> FloorOracleRun {
-    run_built_floor_oracle_cfg(built, &floor_oracle_repair_config(residual_gate))
-}
-
-/// Like [`run_built_floor_oracle`] but with an explicit repair config — lets the transient probe
-/// (Run B) use the **production fit-mode gate** (real `min_fill_correlation`/floor + waveform
-/// weighting) instead of the relaxed structure-isolation calibration config.
-fn run_built_floor_oracle_cfg(
-    built: &BuiltFloorOracle,
-    repair: &RepairConfig,
-) -> FloorOracleRun {
-    let dir = built.path_a.parent().expect("path_a parent");
-    let decoded_a = dir.join("patch_a.wav");
-    assert!(decode_to_mono_wav_at(
-        &built.path_a,
-        &decoded_a,
-        built.meta.sample_rate,
-        None,
-    ));
-    let (_, decoded_a_mono) = read_mono_wav(&decoded_a);
-
-    let report = gap_report_from_floor_oracle(
-        &built.path_a,
-        &built.path_b,
-        &decoded_a_mono,
-        built.meta.sample_rate,
-        built.meta.gap_start_frame,
-        built.meta.gap_end_frame,
-    );
-
-    let mut request = patch_request_from_repair(report, repair);
-    request.measure_residual = true;
-
-    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
-    let result = patch
-        .execute(request, RepairConfig::default().crossfade_ms)
-        .expect("floor oracle patch");
-
-    let gap = result.summary.gaps.first().expect("one gap");
-    let (status, skip_reason) = gap_status_label(&gap.status);
-    let structure_ok = status == "patched" || !skip_reason.contains("structure");
-    let align_adjustment_secs = match &gap.status {
-        GapPatchStatus::Patched {
-            align_adjustment_secs,
-            ..
-        } => *align_adjustment_secs,
-        _ => f64::NAN,
-    };
-    let confidence = match &gap.status {
-        GapPatchStatus::Patched { confidence, .. } => Some(*confidence),
-        _ => None,
-    };
-    let (seam_pre, seam_post) = seam_pre_post(&gap.status);
-
-    FloorOracleRun {
-        status,
-        skip_reason,
-        structure_ok,
-        residual: gap.residual,
-        align_adjustment_secs,
-        confidence,
-        seam_pre,
-        seam_post,
-    }
-}
+use common::residual_gate_runner::{
+    assert_deadzone_punch_inert, assert_floor_expectations,
+    assert_production_fit_gate_no_worse_than_off_baseline,
+    assert_production_fit_pearson_deadzone,
+    assert_production_fit_veto_rescue_matches_veto_baseline, assert_truth_patches,
+    assert_veto_rescue_matches_veto_on_truth, check_floor_expectations, production_fit_repair_config,
+    rescue_trigger, run_built_floor_oracle, run_built_floor_oracle_cfg,
+    run_built_floor_oracle_production_fit, run_pearson_min, FloorOracleRun,
+};
 
 fn variant_label(variant: OracleVariant) -> &'static str {
     match variant {
@@ -210,78 +76,6 @@ fn print_csv_row(built: &BuiltFloorOracle, run: &FloorOracleRun) {
     );
 }
 
-/// Returns `Err(description)` when the measured floor disagrees with the case's expectation, so the
-/// calibration loop can print the whole CSV and report all mismatches at once instead of aborting on
-/// the first. (`expect_informative_floor` for lossy same-master cases is the calibration *output*.)
-fn check_floor_expectations(
-    case_id: &str,
-    built: &BuiltFloorOracle,
-    run: &FloorOracleRun,
-) -> Result<(), String> {
-    let Some(residual) = run.residual else {
-        return if built.meta.expect_informative_floor {
-            Err(format!(
-                "{case_id}: no residual (status={}, skip={}) — expected patch + informative floor",
-                run.status, run.skip_reason
-            ))
-        } else {
-            // No residual on an expected-uninformative case = skip/abstain, the safe outcome.
-            Ok(())
-        };
-    };
-    match (built.meta.expect_informative_floor, residual.informative) {
-        (true, false) => Err(format!(
-            "{case_id}: expected informative floor, got uninformative (pre={:.1} post={:.1}, FLOOR_OK={DEFAULT_RESIDUAL_FLOOR_OK_DB})",
-            residual.floor_pre_db, residual.floor_post_db
-        )),
-        (false, true) => Err(format!(
-            "{case_id}: expected uninformative floor, got informative (pre={:.1} post={:.1})",
-            residual.floor_pre_db, residual.floor_post_db
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn assert_floor_expectations(case_id: &str, built: &BuiltFloorOracle, run: &FloorOracleRun) {
-    if let Err(e) = check_floor_expectations(case_id, built, run) {
-        panic!("{e}");
-    }
-}
-
-fn assert_truth_patches(case_id: &str, run: &FloorOracleRun, gate: ResidualGateMode) {
-    assert_eq!(
-        run.status, "patched",
-        "{case_id} with {:?} should patch at truth (skip={})",
-        gate, run.skip_reason
-    );
-    let residual = run
-        .residual
-        .expect("truth same-master should carry residual verdict");
-    assert!(
-        residual.informative,
-        "{case_id} {:?}: floor should be informative at truth",
-        gate
-    );
-}
-
-/// On real-codec truth gaps, `veto_rescue` must not widen patching vs `veto` when Pearson already
-/// passes (no dead-zone rescue flip). H2-B dead-zone rescue remains on synthetic broadband only.
-fn assert_veto_rescue_matches_veto_on_truth(case_id: &str, built: &BuiltFloorOracle) {
-    let veto = run_built_floor_oracle(built, ResidualGateMode::Veto);
-    let rescue = run_built_floor_oracle(built, ResidualGateMode::VetoRescue);
-    assert_truth_patches(case_id, &veto, ResidualGateMode::Veto);
-    assert_truth_patches(case_id, &rescue, ResidualGateMode::VetoRescue);
-    assert_eq!(
-        veto.status, rescue.status,
-        "{case_id}: veto_rescue status should match veto on real-codec truth (veto skip={}, rescue skip={})",
-        veto.skip_reason, rescue.skip_reason
-    );
-    assert_eq!(
-        veto.confidence, rescue.confidence,
-        "{case_id}: veto_rescue confidence should match veto when Pearson passes (no dead-zone rescue)"
-    );
-}
-
 #[test]
 fn floor_oracle_manifest_loads() {
     let manifest = load_manifest();
@@ -294,8 +88,6 @@ fn floor_oracle_manifest_loads() {
 
 #[test]
 fn floor_oracle_gap_frames_use_production_anchor() {
-    use common::floor_oracle_fixtures::{gap_frames_for_case, FloorOracleCase};
-
     let defaults = FloorOracleDefaults::default();
     let case = FloorOracleCase {
         id: "geom".into(),
@@ -363,8 +155,6 @@ fn source_gap_oracle_floor_csv() {
         let built = build_floor_oracle_pair(&case_dir, case, &manifest.defaults);
         let run = run_built_floor_oracle(&built, ResidualGateMode::Off);
         print_csv_row(&built, &run);
-        // Collect, don't abort: one run prints the whole matrix, then reports every cell whose
-        // measured floor disagrees with the manifest — the values to flip during calibration.
         if let Err(e) = check_floor_expectations(&case.id, &built, &run) {
             mismatches.push(e);
         }
@@ -500,7 +290,6 @@ fn floor_oracle_residual_gate_real_codec() {
         !rescue.residual.is_some_and(|v| v.informative),
         "two_mic floor must stay uninformative under veto_rescue"
     );
-    // Over-patch safety: rescue must not upgrade a Pearson skip into a patch.
     if off.status != "patched" {
         assert_ne!(
             rescue.status, "patched",
@@ -508,7 +297,6 @@ fn floor_oracle_residual_gate_real_codec() {
             off.skip_reason
         );
     }
-    // Veto must not false-veto when off already patches.
     if off.status == "patched" {
         let veto = run_built_floor_oracle(&two_mic_built, ResidualGateMode::Veto);
         assert_eq!(
@@ -560,6 +348,186 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
     }
 }
 
+/// Real-codec residual gate under **production_fit** (shipped floors + waveform weighting).
+///
+/// Mirrors the calibration [`floor_oracle_residual_gate_real_codec`] corpus but with
+/// production-fit expectations: shaped speech/ambient gaps may skip (Pearson tier) — the gate must
+/// not rescue-patch when `off` skips; music mid-content control must patch (C3 positive, Run B
+/// baseline); broadband finale gaps skip in the Pearson dead zone with uninformative floor; two-mic
+/// must abstain (C2).
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair gate_real_codec_production_fit -- --ignored --nocapture"]
+fn gate_real_codec_production_fit() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skip gate_real_codec_production_fit: ffmpeg unavailable");
+        return;
+    }
+
+    let manifest = load_manifest();
+    let shaped_speech_ambient = [
+        manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same"),
+        manifest_case(&manifest, "cc_speech_gap_oracle_aac_same"),
+        manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_128k"),
+        manifest_case(&manifest, "cc_ambient_gap_oracle_vorbis_128k"),
+    ];
+    let music_control = manifest_case(&manifest, "cc_music_gap_oracle_aac_128k");
+    let two_mic = manifest_case(&manifest, "cc_speech_ambient_two_mic");
+    let finale_deadzone = manifest_case(&manifest, "cc_music_transient_aac_same");
+
+    for case in shaped_speech_ambient
+        .into_iter()
+        .chain([music_control, two_mic, finale_deadzone])
+    {
+        if !case_sources_ready(case) {
+            eprintln!("skip gate_real_codec_production_fit: run scripts/fetch_corpus_sources.ps1");
+            return;
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+
+    for case in shaped_speech_ambient {
+        eprintln!("gate_real_codec_production_fit: {}", case.id);
+        let built =
+            build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+        let off = run_built_floor_oracle_production_fit(&built, ResidualGateMode::Off);
+        let veto = run_built_floor_oracle_production_fit(&built, ResidualGateMode::Veto);
+        let rescue = run_built_floor_oracle_production_fit(&built, ResidualGateMode::VetoRescue);
+        for (gate, run) in [
+            (ResidualGateMode::Veto, &veto),
+            (ResidualGateMode::VetoRescue, &rescue),
+        ] {
+            assert_production_fit_gate_no_worse_than_off_baseline(&case.id, &off, run, gate);
+        }
+        if off.status == "patched" {
+            assert_production_fit_veto_rescue_matches_veto_baseline(&case.id, &veto, &rescue);
+        }
+    }
+
+    eprintln!("gate_real_codec_production_fit: {}", music_control.id);
+    let control_built = build_floor_oracle_pair(
+        &temp.path().join(&music_control.id),
+        music_control,
+        &manifest.defaults,
+    );
+    let control_off =
+        run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::Off);
+    let control_veto =
+        run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::Veto);
+    let control_rescue =
+        run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::VetoRescue);
+    assert_eq!(
+        control_off.status, "patched",
+        "{}: music mid-content control must patch under production_fit (Run B baseline)",
+        music_control.id
+    );
+    for (gate, run) in [
+        (ResidualGateMode::Off, &control_off),
+        (ResidualGateMode::Veto, &control_veto),
+        (ResidualGateMode::VetoRescue, &control_rescue),
+    ] {
+        assert_truth_patches(&music_control.id, run, gate);
+        if gate != ResidualGateMode::Off {
+            assert_production_fit_gate_no_worse_than_off_baseline(
+                &music_control.id,
+                &control_off,
+                run,
+                gate,
+            );
+        }
+    }
+    assert_production_fit_veto_rescue_matches_veto_baseline(
+        &music_control.id,
+        &control_veto,
+        &control_rescue,
+    );
+
+    eprintln!("gate_real_codec_production_fit: {}", two_mic.id);
+    let two_mic_built =
+        build_floor_oracle_pair(&temp.path().join(&two_mic.id), two_mic, &manifest.defaults);
+    let off = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::Off);
+    let veto = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::Veto);
+    let rescue = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::VetoRescue);
+    for (gate, run) in [
+        (ResidualGateMode::Veto, &veto),
+        (ResidualGateMode::VetoRescue, &rescue),
+    ] {
+        assert_production_fit_gate_no_worse_than_off_baseline(&two_mic.id, &off, run, gate);
+    }
+    assert_floor_expectations(&two_mic.id, &two_mic_built, &off);
+    assert_floor_expectations(&two_mic.id, &two_mic_built, &rescue);
+    assert!(
+        !off.residual.is_some_and(|v| v.informative),
+        "two_mic floor must be uninformative under production_fit (gate off)"
+    );
+    assert!(
+        !rescue.residual.is_some_and(|v| v.informative),
+        "two_mic floor must stay uninformative under veto_rescue + production_fit"
+    );
+    if off.status != "patched" {
+        assert_ne!(
+            rescue.status, "patched",
+            "veto_rescue must not rescue unrelated two-mic content (off skip={})",
+            off.skip_reason
+        );
+    }
+
+    eprintln!("gate_real_codec_production_fit: {}", finale_deadzone.id);
+    let finale_built = build_floor_oracle_pair(
+        &temp.path().join(&finale_deadzone.id),
+        finale_deadzone,
+        &manifest.defaults,
+    );
+    for gate in [
+        ResidualGateMode::Off,
+        ResidualGateMode::Veto,
+        ResidualGateMode::VetoRescue,
+    ] {
+        let gate_repair = production_fit_repair_config(gate);
+        let run = run_built_floor_oracle_cfg(&finale_built, &gate_repair);
+        assert_production_fit_pearson_deadzone(&finale_deadzone.id, &run, gate, &gate_repair);
+    }
+}
+
+/// G5 assert — punch-after-encode finale gaps skip under all gates with uninformative floor.
+///
+/// Locks the Run B finding that `veto_rescue` is inert on real codec broadband noise when native
+/// A borders remove the inject-then-encode confound. Baseline:
+/// `tests/residual_gate/baseline_run_b_transient.csv`.
+#[test]
+#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair deadzone_punch_assert -- --ignored --nocapture"]
+fn deadzone_punch_assert() {
+    if !ffmpeg_util::ffmpeg_available() {
+        eprintln!("skip deadzone_punch_assert: ffmpeg unavailable");
+        return;
+    }
+
+    let manifest = load_manifest();
+    let ids = [
+        "cc_music_punch_finale_aac_same",
+        "cc_music_punch_finale_aac_dual",
+    ];
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    for id in ids {
+        let case = manifest_case(&manifest, id);
+        if !case_sources_ready(case) {
+            eprintln!("skip deadzone_punch_assert: run scripts/fetch_corpus_sources.ps1");
+            return;
+        }
+        let built = build_floor_oracle_pair(&temp.path().join(id), case, &manifest.defaults);
+        for gate in [
+            ResidualGateMode::Off,
+            ResidualGateMode::Veto,
+            ResidualGateMode::VetoRescue,
+        ] {
+            let gate_repair = production_fit_repair_config(gate);
+            let run = run_built_floor_oracle_cfg(&built, &gate_repair);
+            assert_deadzone_punch_inert(id, &run, gate, &gate_repair);
+        }
+    }
+}
+
 /// Run B — transient/broadband dead-zone probe (exploratory, no assertions).
 ///
 /// Anchors the gap on the Grieg fff finale (loudest broadband orchestral tutti in the corpus) and
@@ -590,17 +558,6 @@ fn source_gap_oracle_transient_csv() {
     ];
 
     let defaults_repair = RepairConfig::default();
-    let margin_db = defaults_repair.residual_headroom_margin_db;
-    let min_fill = f64::from(defaults_repair.min_fill_correlation);
-
-    // Production fit-mode gate (real floors + waveform weighting), NOT the relaxed structure-
-    // isolation calibration config — so the patch/skip decision reflects shipped behavior.
-    let fit_config = |gate: ResidualGateMode| RepairConfig {
-        gap_signature_mode: GapSignatureMode::Energy,
-        gap_signature_context_secs: 3.0,
-        residual_gate: gate,
-        ..RepairConfig::default()
-    };
 
     println!(
         "case_id,format_a,format_b,gate,status,skip_reason,seam_pre,seam_post,pearson_min,\
@@ -623,8 +580,8 @@ fn source_gap_oracle_transient_csv() {
             ResidualGateMode::Veto,
             ResidualGateMode::VetoRescue,
         ] {
-            let run = run_built_floor_oracle_cfg(&built, &fit_config(gate));
-            let pearson_min = run.seam_pre.min(run.seam_post);
+            let run = run_built_floor_oracle_cfg(&built, &production_fit_repair_config(gate));
+            let pearson_min = run_pearson_min(&run);
             let informative = run.residual.map(|v| v.informative).unwrap_or(false);
             let floor_pre = run.residual.map(|v| v.floor_pre_db).unwrap_or(f64::NAN);
             let floor_post = run.residual.map(|v| v.floor_post_db).unwrap_or(f64::NAN);
@@ -632,11 +589,7 @@ fn source_gap_oracle_transient_csv() {
                 .residual
                 .map(|v| v.worst_headroom_db())
                 .unwrap_or(f64::NAN);
-            let rescue_trigger = pearson_min.is_finite()
-                && pearson_min < min_fill
-                && informative
-                && headroom.is_finite()
-                && headroom <= margin_db;
+            let rescue_trigger = rescue_trigger(&run, &defaults_repair);
             println!(
                 "{},{},{},{:?},{},{},{:.3},{:.3},{:.3},{informative},{floor_pre:.1},{floor_post:.1},{headroom:.1},{:.4},{rescue_trigger}",
                 built.meta.case_id,

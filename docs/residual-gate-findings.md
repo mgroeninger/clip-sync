@@ -63,11 +63,11 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 | **G1** | gap | **No JSON residual on skipped gaps.** | `seam_residual_disagreement_csv` covers analysis. |
 | **G2** | gap | **`peak_normalize_f64` no-op in Pearson.** | Doc fixed; code remove when convenient. |
 | **G4** | gap | **Channel-following residual.** | Overlaps L2. |
-| **G5** | gap | **`veto_rescue` real-media value unproven on a genuine codec-noise floor.** Run B (transient-anchored real-codec probe) shows that on genuinely-independent real encodes the floor goes *uninformative* exactly where Pearson dies, so rescue does not fire. | See **Rescue real-media reality (Run B)** below. Punch-after-encode AAC-dual is the open confirmation. |
+| **G5** | gap | **`veto_rescue` real-media value actively unsupported (resolved).** Run B (production fit-mode, finale) shows real broadband seams sit in the Pearson dead zone while the floor goes *uninformative* — both under inject-then-encode **and** punch-after-encode (native borders), so the NaN floor is genuine, not an oracle artifact. Rescue never fires on real codec noise; the one flip rode an M2 deterministic floor. | Rescue is **synthetic-only** on current evidence → correctly non-default. See **Rescue real-media reality (Run B)** below. Remaining sub-question: *why* NaN (cancellation failure vs probe abstention, M3-adjacent). |
 
 ## Regressions
 
-**None found** with `--residual-gate off`. Default **`veto`**.
+**None found** with `--residual-gate off`. Covered by `off_no_regression_baseline` (fast F1 in-memory).
 
 ## Fractional-delay review (FD-1 — deferred)
 
@@ -101,13 +101,15 @@ the relaxed calibration config.
 
 **Result (production fit-mode):**
 
-| case (Grieg finale, truth placement) | off / veto | veto_rescue | seam min | floor | note |
-|--------------------------------------|------------|-------------|----------|-------|------|
-| AAC **same** 128k | skip | **skip** | 0.021 | uninformative (NaN) | rescue inert — no floor |
-| AAC **dual** 128k/192k (independent) | skip | **skip** | 0.021 | uninformative (NaN) | the production-realistic case; rescue inert |
-| Vorbis **same** 128k | skip | **patch** | 0.021 | informative −120/−120 | rescue *fires*, but floor is the **deterministic bit-identical-border** artifact (M2 caveat), not codec noise |
-| AAC 102 s dual | skip | skip | 0.181 | uninformative (NaN) | — |
-| benign control (14 s) | patch | patch | 0.300 | — (slid 33 ms) | escapes dead zone by sliding past the seam; slide > reach → residual **abstains** (M5), so 118 dB headroom does not veto |
+| case (Grieg finale, truth placement) | encode geometry | off / veto | veto_rescue | seam min | floor | note |
+|--------------------------------------|-----------------|------------|-------------|----------|-------|------|
+| AAC **same** 128k | inject+encode | skip | **skip** | 0.021 | uninformative (NaN) | rescue inert — no floor |
+| AAC **dual** 128k/192k (independent) | inject+encode | skip | **skip** | 0.021 | uninformative (NaN) | the production-realistic case; rescue inert |
+| AAC **same** 128k | **punch-after-encode** | skip | **skip** | 0.022 | uninformative (NaN) | native borders; floor *still* uninformative |
+| AAC **dual** 128k/192k | **punch-after-encode** | skip | **skip** | 0.022 | uninformative (NaN) | **decisive case** — native borders + independent encodes; floor *still* uninformative |
+| Vorbis **same** 128k | inject+encode | skip | **patch** | 0.021 | informative −120/−120 | rescue *fires*, but floor is the **deterministic bit-identical-border** artifact (M2 caveat), not codec noise |
+| AAC 102 s dual | inject+encode | skip | skip | 0.181 | uninformative (NaN) | — |
+| benign control (14 s) | inject+encode | patch | patch | 0.300 | — (slid 33 ms) | escapes dead zone by sliding past the seam; slide > reach → residual **abstains** (M5), so 118 dB headroom does not veto |
 
 **Findings:**
 1. **Real same-master music seam Pearson at truth is in the dead zone** (0.02 at the finale, 0.30 at the
@@ -118,17 +120,30 @@ the relaxed calibration config.
 2. **On genuinely-independent real encodes (AAC same + dual), rescue does not fire** — the floor goes
    *uninformative* (unmeasurable / NaN) at the dead-Pearson placement, so all three modes skip. Rescue is
    correctly inert; this is the safe outcome but means **no recovery**.
-3. **The one real rescue flip (Vorbis same-bitrate) rides a −120 dB deterministic-encoder floor**
+3. **The NaN floor is genuine, not an inject-then-encode artifact (punch-after-encode confirms).** The
+   confound hypothesis was that injecting silence *before* encode corrupts A's borders (MDCT spread) and
+   poisons the floor. The **punch-after-encode** geometry removes that — A is encoded from the *full*
+   master, decoded, then the gap is zeroed in PCM, so A's borders are *native* and the gap interior is
+   clean. Result: the floor is **still uninformative (NaN)** at the dead-Pearson finale seam for both
+   same- and dual-bitrate AAC. So the uninformative floor is a *real* property of the broadband seam, not
+   an oracle artifact — the confound hypothesis is **refuted**.
+4. **The one real rescue flip (Vorbis same-bitrate) rides a −120 dB deterministic-encoder floor**
    (libvorbis → bit-identical borders, the M2 caveat), not lossy codec-noise cancellation — so it is not
    evidence that rescue recovers a *genuine* lossy seam.
-4. **Net:** rescue's real-world *value* remains unproven on a genuine codec-noise floor; `veto`'s real-world
-   inertness here is reassuring (it never false-vetoed a truth gap). Rescue stays correctly **non-default**.
+5. **Net (G5 resolved):** across both inject-then-encode *and* punch-after-encode, on genuine real codec
+   noise the rescue-trigger condition (dead Pearson **and** informative low-headroom floor) **does not
+   occur** — the floor is uninformative exactly where Pearson dies. `veto_rescue` is, on current evidence,
+   a **synthetic-only path**: keeping it non-default is correct, and its real-media value is now *actively
+   unsupported*, not merely unproven. `veto`'s inertness (never false-vetoed a truth gap) remains
+   reassuring.
 
-**Open confirmation (in progress):** **punch-after-encode** AAC-dual at the finale — encode first, *then*
-remove the gap so A's borders are *native* (no inject-then-encode MDCT corruption of the floor). This
-removes the NaN-floor confound and would show whether a real *independent-encode* floor can ever be
-informative at a dead-Pearson seam. If it still cannot, rescue is empirically a synthetic-only path and
-should be documented as such.
+**Caveat / follow-up:** the floor came back **NaN** (unmeasurable), not merely "high." Whether that is
+genuine cancellation failure on broadband content or the floor probe *abstaining* at this geometry
+(M3-adjacent: reference-window selection / B-mapping at the loud finale) is unresolved. It does not change
+the product conclusion (no informative floor → no rescue), but a targeted probe of *why* the floor is NaN
+at the finale would close it. **Scope:** one corpus master (Grieg) + mid-content control; other content or
+lower bitrates (higher codec noise) could differ, but the strongest available test — native borders,
+independent encodes, loudest broadband region — shows no rescue trigger.
 
 ## Validation infrastructure
 

@@ -69,7 +69,7 @@ trait ProgressReporter {
 | `phase_verbose()` | Operational detail (open, track select, clip plan, per-clip offset, mid-run summary) | no | yes | no |
 | `progress()` | Long-running sub-steps (extract, scan-a/b, patch-a/b, mux) | TTY bar only | TTY bar + off-TTY `%` | no |
 
-**Before every `phase()` / `phase_verbose()` write**, the reporter finishes any active TTY progress line so stderr lines do not glue to `%` output. Gap-fill skip warnings call `flush_progress()` for the same reason before `tracing::warn`.
+**Before every `phase()` / `phase_verbose()` write**, the reporter finishes any active TTY progress line so stderr lines do not glue to `%` output. Gap-fill skip notifications call `flush_progress()` for the same reason; in **`--verbose`** they use `phase_verbose` (`skipped: …` with pre/post/min), not `tracing::warn`.
 
 **Extraction progress:** `detailed_extraction_progress()` returns true only in Verbose mode. Auto mode uses aggregated extraction progress (no per-clip extraction labels on stderr).
 
@@ -342,7 +342,7 @@ Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two i
 | `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
 | `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |
 
-**stderr (`tracing::warn`):** `gap N/M (range): waveform seam correlation below threshold` (and similar) when a fill is skipped; `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).
+**stderr (default):** `tracing::warn` — `gap N/M (range): …` when a fill is skipped mid-run. **`--verbose`:** indented `skipped: …` via `phase_verbose` (same text as stdout status column); no `tracing::warn` for per-gap skips. `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).
 
 **Verbose stdout patch lines:** under `fit`, `patched (pre=… post=… slide=…)` with optional `(wf …)` when waveform slide ≠ 0; under `gate`, `patched (struct pre→post)` when structure-trusted; skipped rows show full skip reason in the status column.
 

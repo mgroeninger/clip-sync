@@ -1,0 +1,26 @@
+# Run B baseline — source_gap_oracle_transient_csv (production_fit)
+# Captured: 2026-06-24, ~20 min encode+patch run
+# Command: cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture
+# Shipped thresholds: min_fill_correlation=0.35, fill_absolute_floor=0.12 (hard floor = min(0.35,0.12)=0.12, the skip_reason `min`), residual_headroom_margin_db=6.0
+case_id,format_a,format_b,gate,status,skip_reason,seam_pre,seam_post,pearson_min,informative,floor_pre_db,floor_post_db,headroom_db,align_secs,rescue_trigger
+cc_music_gap_oracle_aac_128k,mp4_aac,mp4_aac,Off,patched,,0.300,0.342,0.300,true,-120.0,-44.4,118.4,0.0333,false
+cc_music_gap_oracle_aac_128k,mp4_aac,mp4_aac,Veto,patched,,0.300,0.342,0.300,true,-120.0,-44.4,118.4,0.0333,false
+cc_music_gap_oracle_aac_128k,mp4_aac,mp4_aac,VetoRescue,patched,,0.300,0.342,0.300,true,-120.0,-44.4,118.4,0.0333,false
+cc_music_transient_aac_same,mp4_aac,mp4_aac,Off,skipped,correlation_below(pre=0.0211,post=0.1175,min=0.12),0.021,0.118,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_aac_same,mp4_aac,mp4_aac,Veto,skipped,correlation_below(pre=0.0211,post=0.1175,min=0.12),0.021,0.118,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_aac_same,mp4_aac,mp4_aac,VetoRescue,skipped,correlation_below(pre=0.0211,post=0.1175,min=0.12),0.021,0.118,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_aac_dual,mp4_aac,mp4_aac,Off,skipped,correlation_below(pre=0.0210,post=0.1175,min=0.12),0.021,0.117,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_aac_dual,mp4_aac,mp4_aac,Veto,skipped,correlation_below(pre=0.0210,post=0.1175,min=0.12),0.021,0.117,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_aac_dual,mp4_aac,mp4_aac,VetoRescue,skipped,correlation_below(pre=0.0210,post=0.1175,min=0.12),0.021,0.117,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_vorbis_same,vorbis,vorbis,Off,skipped,correlation_below(pre=0.0208,post=0.0261,min=0.12),0.021,0.026,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_vorbis_same,vorbis,vorbis,Veto,skipped,correlation_below(pre=0.0208,post=0.0261,min=0.12),0.021,0.026,0.021,false,NaN,NaN,NaN,NaN,false
+cc_music_transient_vorbis_same,vorbis,vorbis,VetoRescue,patched,,0.021,0.026,0.021,true,-120.0,-120.0,0.0,0.0037,true
+cc_music_transient2_aac_dual,mp4_aac,mp4_aac,Off,skipped,correlation_below(pre=0.1823,post=0.1810,min=0.12),0.182,0.181,0.181,false,NaN,NaN,NaN,NaN,false
+cc_music_transient2_aac_dual,mp4_aac,mp4_aac,Veto,skipped,correlation_below(pre=0.1823,post=0.1810,min=0.12),0.182,0.181,0.181,false,NaN,NaN,NaN,NaN,false
+cc_music_transient2_aac_dual,mp4_aac,mp4_aac,VetoRescue,skipped,correlation_below(pre=0.1823,post=0.1810,min=0.12),0.182,0.181,0.181,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_same,mp4_aac,mp4_aac,Off,skipped,correlation_below(pre=0.0222,post=0.0271,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_same,mp4_aac,mp4_aac,Veto,skipped,correlation_below(pre=0.0222,post=0.0271,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_same,mp4_aac,mp4_aac,VetoRescue,skipped,correlation_below(pre=0.0222,post=0.0271,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_dual,mp4_aac,mp4_aac,Off,skipped,correlation_below(pre=0.0223,post=0.0270,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_dual,mp4_aac,mp4_aac,Veto,skipped,correlation_below(pre=0.0223,post=0.0270,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false
+cc_music_punch_finale_aac_dual,mp4_aac,mp4_aac,VetoRescue,skipped,correlation_below(pre=0.0223,post=0.0270,min=0.12),0.022,0.027,0.022,false,NaN,NaN,NaN,NaN,false

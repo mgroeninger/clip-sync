@@ -1,0 +1,195 @@
+# Residual gate validation catalog — implemented instances only.
+#
+# Scope:
+#   - Rows here = tests that exist today (inventory + metadata).
+#   - README backlog = planned tests not yet implemented.
+#   - Not every row will move under tests/residual_gate_integration.rs — see README § Implementation.
+#
+# Fields:
+#   id, layer, placement, config_profile, tier, assertion, location, fixture_ref, proves, claims
+#
+# config_profile: calibration | production_fit | production_like_synthetic
+# tier: fast | ignored | diagnostic
+# assertion: hard_assert | diagnostic_csv | floor_calibration
+#
+# claims: which validity-contract clause(s) the row serves
+#   (see README § "What this suite must establish"):
+#     C1 veto_fires            — veto rejects echo/decoy Pearson would accept
+#     C2 abstain_out_of_regime — two-mic / diff-capture → uninformative → no opinion
+#     C3 no_false_veto_truth   — correct same-master fill never vetoed
+#     C4 off_no_regression     — residual_gate = off is a true no-op
+#     C5 rescue_real_value     — does veto_rescue recover real gaps?   (resolved: no)
+#     support                  — calibrates inputs a claim depends on (e.g. FLOOR_OK), not a claim itself
+
+version = 1
+
+# --- Layer B (score harness) — stays in seam_residual_corpus.rs ---
+
+[[instance]]
+id = "disagreement_oracles"
+layer = "B"
+placement = "P0"
+config_profile = "production_fit"
+tier = "fast"
+assertion = "hard_assert"
+location = "tests/seam_residual_corpus.rs::seam_residual_disagreement_oracles"
+fixture_ref = ["f4_decoy", "f1_truth", "broadband_codec_noise"]
+proves = "F4 veto; H2-B rescue at truth (score-level)"
+claims = ["C1", "C5"]  # score-level only (layer B); not pipeline proof
+
+# --- Layer C (pipeline) — C4 off regression (fast in-memory) ---
+
+[[instance]]
+id = "off_no_regression_baseline"
+layer = "C"
+placement = "P2"
+config_profile = "calibration"
+tier = "fast"
+assertion = "hard_assert"
+location = "tests/residual_gate_integration.rs::off_no_regression_baseline"
+fixture_ref = ["f1_production_16k_32s", "f4_decoy_production_16k_32s"]
+proves = "residual_gate=off matches pre-gate on F1+F4; patch+forced-skip; calibration+production_fit; diagnostics do not affect gating or PCM"
+claims = ["C4"]
+
+# --- Layer C (pipeline) — production_fit / production_like_synthetic ---
+
+[[instance]]
+id = "rescue_bb_synthetic"
+layer = "C"
+placement = "P2"
+config_profile = "production_like_synthetic"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/seam_residual_oracle.rs::broadband_oracle_veto_rescue_patches_marginal"
+fixture_ref = "in_memory_broadband_lcg"
+proves = "H2-B rescue mechanism (synthetic)"
+claims = ["C5"]  # mechanism only — synthetic, not real-media value
+
+[[instance]]
+id = "deadzone_finale_run_b"
+layer = "C"
+placement = "P2"
+config_profile = "production_fit"
+tier = "diagnostic"
+assertion = "diagnostic_csv"
+location = "tests/floor_oracle_integration.rs::source_gap_oracle_transient_csv"
+fixture_ref = [
+  "cc_music_gap_oracle_aac_128k",
+  "cc_music_transient_aac_same",
+  "cc_music_transient_aac_dual",
+  "cc_music_transient_vorbis_same",
+  "cc_music_transient2_aac_dual",
+  "cc_music_punch_finale_aac_same",
+  "cc_music_punch_finale_aac_dual",
+]
+proves = "G5 rescue_trigger CSV under shipped config"
+claims = ["C5"]  # diagnostic; hard assert in deadzone_punch_assert
+
+[[instance]]
+id = "deadzone_punch_assert"
+layer = "C"
+placement = "P2"
+config_profile = "production_fit"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/floor_oracle_integration.rs::deadzone_punch_assert"
+fixture_ref = [
+  "cc_music_punch_finale_aac_same",
+  "cc_music_punch_finale_aac_dual",
+]
+proves = "Punch finale skips under shipped floors; floor uninformative; rescue inert (G5 lock)"
+claims = ["C5"]
+
+[[instance]]
+id = "gate_real_codec_production_fit"
+layer = "C"
+placement = "P2"
+config_profile = "production_fit"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/floor_oracle_integration.rs::gate_real_codec_production_fit"
+fixture_ref = [
+  "cc_ambient_gap_oracle_aac_same",
+  "cc_speech_gap_oracle_aac_same",
+  "cc_speech_gap_oracle_vorbis_128k",
+  "cc_ambient_gap_oracle_vorbis_128k",
+  "cc_music_gap_oracle_aac_128k",
+  "cc_speech_ambient_two_mic",
+  "cc_music_transient_aac_same",
+]
+proves = "Shaped gaps: gate no-worse-than-off; music control patches (C3); finale dead-zone skip; two_mic abstains"
+claims = ["C2", "C3"]
+
+# --- Layer C — calibration (NOT production_fit) ---
+
+[[instance]]
+id = "floor_calibration_csv"
+layer = "C"
+placement = "P1"
+config_profile = "calibration"
+tier = "diagnostic"
+assertion = "floor_calibration"
+location = "tests/floor_oracle_integration.rs::source_gap_oracle_floor_csv"
+fixture_ref = "manifest FLOOR_OK rows"
+proves = "FLOOR_OK / expect_informative_floor calibration"
+claims = ["support"]  # calibrates FLOOR_OK that C2/C3 informative depends on
+
+[[instance]]
+id = "gate_real_codec"
+layer = "C"
+placement = "P2"
+config_profile = "calibration"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/floor_oracle_integration.rs::floor_oracle_residual_gate_real_codec"
+fixture_ref = [
+  "cc_ambient_gap_oracle_aac_same",
+  "cc_speech_gap_oracle_aac_same",
+  "cc_speech_gap_oracle_vorbis_128k",
+  "cc_ambient_gap_oracle_vorbis_128k",
+  "cc_speech_ambient_two_mic",
+]
+proves = "Truth patches under relaxed floors; two_mic not rescued (calibration only)"
+claims = ["C2", "C3"]  # calibration-only — does NOT prove production_fit behavior
+
+[[instance]]
+id = "rescue_real_mid_safety"
+layer = "C"
+placement = "P2"
+config_profile = "calibration"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/floor_oracle_integration.rs::floor_oracle_veto_rescue_real_broadband_codec"
+fixture_ref = "music/speech mid-content manifest rows"
+proves = "veto_rescue matches veto under relaxed floors (not shipped Pearson pass)"
+claims = ["C5"]  # rescue safety (no over-patch), calibration-only
+
+[[instance]]
+id = "vorbis_64k_no_false_veto"
+layer = "C"
+placement = "P2"
+config_profile = "calibration"
+tier = "ignored"
+assertion = "hard_assert"
+location = "tests/floor_oracle_integration.rs::floor_oracle_vorbis_64k_veto_no_false_veto"
+fixture_ref = "cc_speech_gap_oracle_vorbis_64k"
+proves = "Veto inert when off patches (calibration)"
+claims = ["C3"]  # no false-veto, calibration-only
+
+# Claim coverage (see README § "What this suite must establish"):
+#   C1 veto_fires            — score-level only (disagreement_oracles). Pipeline decoy veto = GAP
+#                              (only out-of-matrix f4_decoy_residual_gate_vetoes_bool, calibration).
+#                              No production_fit pipeline test exercises a veto actually firing.
+#   C2 abstain_out_of_regime — gate_real_codec (calibration) + gate_real_codec_production_fit (two_mic).
+#   C3 no_false_veto_truth   — gate_real_codec_production_fit (music control patches + gate
+#                              no-worse-than-off) + vorbis_64k (calibration) + M5 units.
+#   C4 off_no_regression     — off_no_regression_baseline (fast F1; calibration + production_fit arms).
+#   C5 rescue_real_value     — resolved (synthetic-only); deadzone_finale_run_b diagnostic + deadzone_punch_assert.
+# Highest-value gap: C1 production_fit pipeline veto.
+#
+# Out of matrix scope (documented in README only):
+#   - Layer A unit tests (policies.rs)
+#   - Layer B diagnostic CSVs (seam_residual_*_csv)
+#   - seam_residual_oracle CSV / h2 experiment (migrate-candidate, not cataloged yet)
+#   - f4_decoy_residual_gate_vetoes_bool (calibration; signature-adjacent) — the only C1 pipeline test
+#   - floor_oracle manifest smokes (fast, calibration-adjacent)
