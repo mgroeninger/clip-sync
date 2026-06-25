@@ -359,6 +359,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 duration_secs = duration_a.as_secs_f64(),
                 channels = track_a.channels,
                 sample_rate = track_a.sample_rate,
+                bit_depth = ?track_a.bit_depth,
             )
             .entered();
             session_a
@@ -388,6 +389,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 duration_secs = duration_b.as_secs_f64(),
                 channels = track_b.channels,
                 sample_rate = track_b.sample_rate,
+                bit_depth = ?track_b.bit_depth,
             )
             .entered();
             session_b

@@ -303,6 +303,7 @@ impl MediaMuxer for FfmpegMediaMuxer {
             sample_rate = replacement_audio.sample_rate,
             channels = replacement_audio.channels,
             frames = replacement_audio.frames(),
+            pcm_format = depth.ffmpeg_format(),
             "muxing video with patched audio via ffmpeg (stdin PCM)"
         );
 

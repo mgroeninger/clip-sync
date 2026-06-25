@@ -16,6 +16,15 @@ impl PatchedAudioWriter for WavPatchedAudioWriter {
         let depth = resolve_output_bit_depth(audio.source_bit_depth);
         validate_pcm_for_wav(audio, depth)?;
 
+        tracing::debug!(
+            path = %path.display(),
+            bits_per_sample = match depth { WavBitDepth::Int16 => 16u32, WavBitDepth::Int24 => 24 },
+            sample_rate = audio.sample_rate,
+            channels = audio.channels,
+            frames = audio.frames(),
+            "writing patched WAV"
+        );
+
         let spec = WavSpec {
             channels: audio.channels,
             sample_rate: audio.sample_rate,
