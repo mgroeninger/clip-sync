@@ -565,6 +565,19 @@ fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> 
     (0..n).filter(|&ch| energy[ch] >= threshold).collect()
 }
 
+/// Energy-selected seam channels for a gap, computed from the same per-channel border templates
+/// Pearson scores — the single entry point so residual/floor measurement follows the *same*
+/// channels as seam scoring (see `seam-scoring.md`). Returns empty when every channel is
+/// near-silent, so the caller falls back to the mono downmix.
+pub(crate) fn selected_seam_channels(
+    a_samples: &[f32],
+    channels: usize,
+    spec: &GapBorderSpec,
+) -> Vec<usize> {
+    let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, channels, spec);
+    seam_score_channel_indices(&a_pre_ch, &a_post_ch)
+}
+
 fn peak_normalize_f64(samples: &[f64]) -> Vec<f64> {
     let peak = samples.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
     if peak <= f64::EPSILON {
@@ -1439,14 +1452,25 @@ struct ReferenceWindow {
     source: SeamFloorSource,
 }
 
-/// Walk outward from the gap edge to the first energetic raw A window (energy gate only — B-side
-/// availability is checked at measurement time so the same window can be measured at multiple deltas).
-fn select_reference_window(
+/// Frame range and source of a reference window, decoupled from channel extraction so the same
+/// raw range can feed either the mono downmix or per-channel residual measurement (§ channel
+/// alignment in `seam-scoring.md`).
+struct ReferenceFrames {
+    a_lo: usize,
+    a_hi: usize,
+    source: SeamFloorSource,
+}
+
+/// Walk outward from the gap edge to the first reference window that passes `energetic` (the energy
+/// gate — B-side availability is checked at measurement time so the same window can be measured at
+/// multiple deltas). `energetic(a_lo, a_hi)` decides whether a candidate range carries usable audio.
+fn walk_reference_frames(
     params: &SeamFloorParams<'_>,
     side: SeamSide,
     gap_start_frame: usize,
     gap_end_frame: usize,
-) -> Option<ReferenceWindow> {
+    energetic: impl Fn(usize, usize) -> bool,
+) -> Option<ReferenceFrames> {
     let channels = params.channels.max(1);
     let w = params.window;
     if w == 0 {
@@ -1454,7 +1478,6 @@ fn select_reference_window(
     }
     let a_total = params.a_samples.len() / channels;
     let step = params.step_frames.max(1);
-    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
 
     let mut k = 0usize;
     loop {
@@ -1474,35 +1497,70 @@ fn select_reference_window(
             }
         };
         let (a_lo, a_hi) = window?;
-        let a_win = mono_window(params.a_samples, channels, a_lo, a_hi);
-        let peak = a_win.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
-        if peak >= energy_floor {
+        if energetic(a_lo, a_hi) {
             let source = if k == 0 {
                 SeamFloorSource::Border
             } else {
                 SeamFloorSource::Walked
             };
-            return Some(ReferenceWindow { a_win, a_lo, source });
+            return Some(ReferenceFrames { a_lo, a_hi, source });
         }
         k += 1;
     }
 }
 
-/// Cancel a selected raw window against B at `delta` (`b_frame = a_frame + delta`) with `max_lag`
-/// around `lag_center`.
-fn measure_window_at_delta(
-    window: &ReferenceWindow,
-    b_mono: &[f64],
+/// Energy gate for the mono downmix path: the downmixed window peak must clear the silence floor.
+fn mono_window_energetic<'a>(
+    a_samples: &'a [f32],
+    channels: usize,
+    energy_floor: f64,
+) -> impl Fn(usize, usize) -> bool + 'a {
+    move |a_lo, a_hi| {
+        let win = mono_window(a_samples, channels, a_lo, a_hi);
+        win.iter().map(|s| s.abs()).fold(0.0f64, f64::max) >= energy_floor
+    }
+}
+
+/// Walk outward from the gap edge to the first energetic raw A window (mono downmix energy gate).
+fn select_reference_window(
+    params: &SeamFloorParams<'_>,
+    side: SeamSide,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+) -> Option<ReferenceWindow> {
+    let channels = params.channels.max(1);
+    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
+    let frames = walk_reference_frames(
+        params,
+        side,
+        gap_start_frame,
+        gap_end_frame,
+        mono_window_energetic(params.a_samples, channels, energy_floor),
+    )?;
+    Some(ReferenceWindow {
+        a_win: mono_window(params.a_samples, channels, frames.a_lo, frames.a_hi),
+        a_lo: frames.a_lo,
+        source: frames.source,
+    })
+}
+
+/// Cancel a raw A window against B at `delta` (`b_frame = a_frame + delta`) with `max_lag` around
+/// `lag_center`. `source` is stamped on the resulting probe.
+fn measure_a_win_at_delta(
+    a_win: &[f64],
+    a_lo: usize,
+    source: SeamFloorSource,
+    b: &[f64],
     delta: i64,
     max_lag: i64,
     lag_center: i64,
 ) -> SeamFloorProbe {
-    let w = window.a_win.len() as i64;
-    let b_len = b_mono.len() as i64;
-    let b_start0 = window.a_lo as i64 + delta;
+    let w = a_win.len() as i64;
+    let b_len = b.len() as i64;
+    let b_start0 = a_lo as i64 + delta;
     let probe = seam_residual_for_side(
-        &window.a_win,
-        b_mono,
+        a_win,
+        b,
         |lag| {
             let lo = b_start0 + lag;
             let hi = lo + w;
@@ -1516,18 +1574,52 @@ fn measure_window_at_delta(
     );
     match probe {
         Some(r) => SeamFloorProbe {
-            source: window.source,
+            source,
             residual_db: r.residual_db,
             gain: r.gain,
             best_lag: r.best_lag,
         },
         None => SeamFloorProbe {
-            source: window.source,
+            source,
             residual_db: f64::NAN,
             gain: f64::NAN,
             best_lag: 0,
         },
     }
+}
+
+fn measure_window_at_delta(
+    window: &ReferenceWindow,
+    b_mono: &[f64],
+    delta: i64,
+    max_lag: i64,
+    lag_center: i64,
+) -> SeamFloorProbe {
+    measure_a_win_at_delta(&window.a_win, window.a_lo, window.source, b_mono, delta, max_lag, lag_center)
+}
+
+/// Measure `(chosen, floor)` for one raw window against one B timeline: floor at the nominal mapping
+/// (wide lag), chosen at `chosen_delta` with its lag search centered on the floor's best lag when the
+/// placement slide is within reach (so headroom is a pure where-on-B difference). Shared by the mono
+/// and per-channel paths.
+fn chosen_and_floor_on_window(
+    a_win: &[f64],
+    a_lo: usize,
+    source: SeamFloorSource,
+    b: &[f64],
+    nominal_delta: i64,
+    chosen_delta: i64,
+    max_lag: i64,
+) -> (SeamFloorProbe, SeamFloorProbe) {
+    let floor = measure_a_win_at_delta(a_win, a_lo, source, b, nominal_delta, max_lag, 0);
+    let placement_error = chosen_delta - nominal_delta;
+    let lag_center = if placement_error.abs() <= max_lag && floor.residual_db.is_finite() {
+        floor.best_lag + nominal_delta - chosen_delta
+    } else {
+        0
+    };
+    let chosen = measure_a_win_at_delta(a_win, a_lo, source, b, chosen_delta, max_lag, lag_center);
+    (chosen, floor)
 }
 
 /// Measure the per-gap noise floor: slide a clean, energetic A reference window against B at the
@@ -1564,33 +1656,108 @@ pub fn seam_chosen_and_floor(
     chosen_delta: i64,
 ) -> (SeamFloorProbe, SeamFloorProbe) {
     match select_reference_window(params, side, gap_start_frame, gap_end_frame) {
-        Some(window) => {
-            let floor = measure_window_at_delta(
-                &window,
-                params.b_mono,
-                params.a_to_b_delta,
-                params.max_lag_frames,
-                0,
-            );
-            let placement_error = chosen_delta - params.a_to_b_delta;
-            let lag_center = if placement_error.abs() <= params.max_lag_frames
-                && floor.residual_db.is_finite()
-            {
-                floor.best_lag + params.a_to_b_delta - chosen_delta
-            } else {
-                0
-            };
-            let chosen = measure_window_at_delta(
-                &window,
-                params.b_mono,
-                chosen_delta,
-                params.max_lag_frames,
-                lag_center,
-            );
-            (chosen, floor)
-        }
+        Some(window) => chosen_and_floor_on_window(
+            &window.a_win,
+            window.a_lo,
+            window.source,
+            params.b_mono,
+            params.a_to_b_delta,
+            chosen_delta,
+            params.max_lag_frames,
+        ),
         None => (SeamFloorProbe::none(), SeamFloorProbe::none()),
     }
+}
+
+/// One selected channel's chosen-placement residual and nominal floor on the same raw reference
+/// window (per-channel analog of [`seam_chosen_and_floor`]; see § residual channel policy).
+#[derive(Debug, Clone, Copy)]
+pub struct SeamChannelResidual {
+    pub channel: usize,
+    pub chosen: SeamFloorProbe,
+    pub floor: SeamFloorProbe,
+}
+
+/// Per-channel chosen/floor for one gap side, measured on the **same** energy-selected channels as
+/// Pearson seam scoring. Each selected channel is cancelled against its own `b_ch[ch]` timeline on a
+/// shared raw reference window (frame range chosen by a per-channel energy gate). Returns one entry
+/// per usable selected channel; when `score_channels` is empty or no channel is usable (e.g. B has
+/// fewer channels), falls back to a single mono-downmix entry so callers get uniform handling.
+///
+/// `score_channels` must already be filtered to the channels of interest; indices `>= b_ch.len()`
+/// are skipped (A/B channel-count mismatch, Risk §8).
+pub fn seam_chosen_and_floor_multichannel(
+    params: &SeamFloorParams<'_>,
+    b_ch: &[Vec<f64>],
+    score_channels: &[usize],
+    side: SeamSide,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    chosen_delta: i64,
+) -> Vec<SeamChannelResidual> {
+    let channels = params.channels.max(1);
+    let usable: Vec<usize> = score_channels
+        .iter()
+        .copied()
+        .filter(|&ch| ch < b_ch.len() && ch < channels)
+        .collect();
+
+    if usable.is_empty() {
+        // Mono downmix fallback — one entry, identical signal path to `seam_chosen_and_floor`.
+        let (chosen, floor) =
+            seam_chosen_and_floor(params, side, gap_start_frame, gap_end_frame, chosen_delta);
+        return vec![SeamChannelResidual { channel: 0, chosen, floor }];
+    }
+
+    // Shared frame range: walk outward until *any* selected channel carries usable audio, so quiet
+    // surrounds can't push the window past energetic center content (§4c energy gate).
+    let energy_floor = f64::from(params.absolute_silence_rms) * SEAM_FLOOR_ENERGY_MARGIN;
+    let energetic = |a_lo: usize, a_hi: usize| {
+        usable.iter().any(|&ch| {
+            interleaved_channel_timeline_f64(params.a_samples, channels, ch, a_lo, a_hi)
+                .iter()
+                .map(|s| s.abs())
+                .fold(0.0f64, f64::max)
+                >= energy_floor
+        })
+    };
+
+    let Some(frames) =
+        walk_reference_frames(params, side, gap_start_frame, gap_end_frame, energetic)
+    else {
+        // No energetic window for any selected channel within the horizon.
+        return usable
+            .into_iter()
+            .map(|ch| SeamChannelResidual {
+                channel: ch,
+                chosen: SeamFloorProbe::none(),
+                floor: SeamFloorProbe::none(),
+            })
+            .collect();
+    };
+
+    usable
+        .into_iter()
+        .map(|ch| {
+            let a_win = interleaved_channel_timeline_f64(
+                params.a_samples,
+                channels,
+                ch,
+                frames.a_lo,
+                frames.a_hi,
+            );
+            let (chosen, floor) = chosen_and_floor_on_window(
+                &a_win,
+                frames.a_lo,
+                frames.source,
+                &b_ch[ch],
+                params.a_to_b_delta,
+                chosen_delta,
+                params.max_lag_frames,
+            );
+            SeamChannelResidual { channel: ch, chosen, floor }
+        })
+        .collect()
 }
 
 /// Default `floor_db` ceiling for an established same-master cancellation floor.
@@ -1718,6 +1885,42 @@ impl SeamResidualVerdict {
         }
     }
 
+    /// Assemble from per-channel residuals (energy-selected channels; see
+    /// [`seam_chosen_and_floor_multichannel`]). The scalar side summaries report the **worst-headroom
+    /// channel** on each side (so `worst_headroom_db()` is the conservative max over channels × sides
+    /// for the veto, and the skip message names the channel that drove it), while `informative`
+    /// follows the **best-cancelling (min-floor) channel** per side — a noisy surround must not flip
+    /// the same-master regime off (Non-goal §2, residual-channel-alignment-plan §4d/§4e).
+    pub fn from_channel_residuals(
+        pre: &[SeamChannelResidual],
+        post: &[SeamChannelResidual],
+        floor_ok_db: f64,
+        placement_slide_frames: u64,
+        max_lag_frames: i64,
+    ) -> Self {
+        let (chosen_pre_db, floor_pre_db, floor_source_pre) = side_worst_headroom_summary(pre);
+        let (chosen_post_db, floor_post_db, floor_source_post) = side_worst_headroom_summary(post);
+
+        let pre_inf = side_floor_informative(pre, floor_ok_db);
+        let post_inf = side_floor_informative(post, floor_ok_db);
+        let informative = match (pre_inf, post_inf) {
+            (None, None) => false,
+            _ => pre_inf.unwrap_or(true) && post_inf.unwrap_or(true),
+        };
+
+        Self {
+            chosen_pre_db,
+            chosen_post_db,
+            floor_pre_db,
+            floor_post_db,
+            floor_source_pre,
+            floor_source_post,
+            informative,
+            placement_slide_frames,
+            max_lag_frames,
+        }
+    }
+
     /// Placement slide exceeds the unified lag radius — residual gate abstains.
     pub fn beyond_lag_reach(&self) -> bool {
         self.max_lag_frames > 0 && self.placement_slide_frames as i64 > self.max_lag_frames
@@ -1761,6 +1964,34 @@ fn worst_finite_max(values: [f64; 2]) -> f64 {
                 acc.max(v)
             }
         })
+}
+
+/// Side summary for the scalar verdict fields: the worst-headroom channel's `(chosen_db, floor_db,
+/// source)`. Ignores channels where headroom is non-finite; `(NaN, NaN, None)` when the side has no
+/// channel with both probes measured.
+fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamFloorSource) {
+    let mut best: Option<(f64, &SeamChannelResidual)> = None;
+    for c in side {
+        let headroom = c.chosen.residual_db - c.floor.residual_db;
+        if headroom.is_finite() && best.map_or(true, |(h, _)| headroom > h) {
+            best = Some((headroom, c));
+        }
+    }
+    match best {
+        Some((_, c)) => (c.chosen.residual_db, c.floor.residual_db, c.floor.source),
+        None => (f64::NAN, f64::NAN, SeamFloorSource::None),
+    }
+}
+
+/// Whether a side's **best-cancelling** (min-floor) selected channel established same-master
+/// cancellation (`floor_db ≤ floor_ok_db`). `None` when the side was not measured (no channel with a
+/// finite, sourced floor) — so an unmeasured side neither asserts nor blocks `informative`.
+fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Option<bool> {
+    side.iter()
+        .filter(|c| c.floor.source != SeamFloorSource::None && c.floor.residual_db.is_finite())
+        .map(|c| c.floor.residual_db)
+        .reduce(f64::min)
+        .map(|best_floor| best_floor <= floor_ok_db)
 }
 
 /// Drop quiet tail samples (e.g. fade into a dropout) so seam templates use full-level audio.
@@ -2786,6 +3017,229 @@ mod tests {
             verdict.worst_headroom_db()
         );
         assert!(verdict.informative, "floor still cancels at nominal");
+    }
+
+    // ---- Per-channel (multichannel) residual ----------------------------------------------------
+
+    /// Build interleaved f32 A samples (normalized) from per-channel f64 timelines (raw level).
+    fn interleave_a(channels_f64: &[Vec<f64>], norm: f64) -> Vec<f32> {
+        let channels = channels_f64.len();
+        let total = channels_f64[0].len();
+        let mut out = vec![0.0f32; total * channels];
+        for frame in 0..total {
+            for (ch, timeline) in channels_f64.iter().enumerate() {
+                out[frame * channels + ch] = (timeline[frame] / norm) as f32;
+            }
+        }
+        out
+    }
+
+    fn probe_at(db: f64) -> SeamFloorProbe {
+        SeamFloorProbe { source: SeamFloorSource::Border, residual_db: db, gain: 1.0, best_lag: 0 }
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise() {
+        // Center-dominant 5.1-style: FC carries same-master signal; FL/FR carry noise that does NOT
+        // cancel against B's (different) FL/FR noise. Per-channel residual on the selected center
+        // cancels deeply; the mono downmix is polluted by the surrounds and cancels far worse.
+        let total = 2000usize;
+        let channels = 3usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let fc_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+            .collect();
+        let fl_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.53).sin() * 2000.0).collect();
+        let fr_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.91).cos() * 2000.0).collect();
+        let b_ch = vec![fl_b.clone(), fr_b.clone(), fc_b.clone()];
+        let b_mono: Vec<f64> =
+            (0..total).map(|i| (fl_b[i] + fr_b[i] + fc_b[i]) / 3.0).collect();
+
+        // A: FC is B's center at half level (same master). FL/FR are *different* noise.
+        let fc_a: Vec<f64> = fc_b.iter().map(|s| s * 0.5).collect();
+        let fl_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.37).cos() * 2000.0).collect();
+        let fr_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.71).sin() * 2000.0).collect();
+        let a_samples = interleave_a(&[fl_a, fr_a, fc_a], 4000.0);
+
+        let params = |window: usize| SeamFloorParams {
+            a_samples: &a_samples,
+            channels,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window.max(1),
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0 / 32767.0,
+            max_lag_frames: 512,
+        };
+
+        // Selection follows the center (FL/FR noise is >20 dB below FC), as Pearson would score it.
+        let a_pre_ch = vec![
+            vec![0.01; window],
+            vec![0.01; window],
+            (0..window).map(|i| i as f64 + 1.0).collect(),
+        ];
+        assert_eq!(
+            seam_score_channel_indices(&a_pre_ch, &a_pre_ch),
+            vec![2],
+            "center channel should be the only selected channel"
+        );
+
+        let mc_pre = seam_chosen_and_floor_multichannel(
+            &params(window), &b_ch, &[2], SeamSide::Pre, gap_start, gap_end, 0,
+        );
+        let mc_post = seam_chosen_and_floor_multichannel(
+            &params(window), &b_ch, &[2], SeamSide::Post, gap_start, gap_end, 0,
+        );
+        let mc = SeamResidualVerdict::from_channel_residuals(
+            &mc_pre, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512,
+        );
+
+        let (chosen_pre, floor_pre) =
+            seam_chosen_and_floor(&params(window), SeamSide::Pre, gap_start, gap_end, 0);
+        let (chosen_post, floor_post) =
+            seam_chosen_and_floor(&params(window), SeamSide::Post, gap_start, gap_end, 0);
+        let mono = SeamResidualVerdict::from_parts(&chosen_pre, &chosen_post, &floor_pre, &floor_post);
+
+        assert!(
+            mc.worst_floor_db() < -40.0,
+            "center channel should cancel deeply, got {}",
+            mc.worst_floor_db()
+        );
+        assert!(
+            mono.worst_floor_db() > mc.worst_floor_db() + 20.0,
+            "mono downmix should cancel far worse than the center channel (mono={}, mc={})",
+            mono.worst_floor_db(),
+            mc.worst_floor_db()
+        );
+        assert!(mc.informative, "center cancellation establishes the same-master regime");
+        assert!(
+            mc.worst_headroom_db().abs() < 1.0,
+            "headroom at truth should be ~0, got {}",
+            mc.worst_headroom_db()
+        );
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_multichannel_stereo_equal_matches_mono() {
+        // Stereo, both channels same-master and equal energy → both selected, and the per-channel
+        // result matches the mono-downmix path (both cancel deeply, headroom ≈ 0).
+        let total = 2000usize;
+        let channels = 2usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let l_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 4000.0).collect();
+        let r_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.4).cos() * 4000.0).collect();
+        let b_ch = vec![l_b.clone(), r_b.clone()];
+        let b_mono: Vec<f64> = (0..total).map(|i| (l_b[i] + r_b[i]) / 2.0).collect();
+        let a_samples = interleave_a(
+            &[l_b.iter().map(|s| s * 0.5).collect(), r_b.iter().map(|s| s * 0.5).collect()],
+            4000.0,
+        );
+
+        let params = |window: usize| SeamFloorParams {
+            a_samples: &a_samples,
+            channels,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window.max(1),
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0 / 32767.0,
+            max_lag_frames: 512,
+        };
+
+        let mc_pre = seam_chosen_and_floor_multichannel(
+            &params(window), &b_ch, &[0, 1], SeamSide::Pre, gap_start, gap_end, 0,
+        );
+        let mc_post = seam_chosen_and_floor_multichannel(
+            &params(window), &b_ch, &[0, 1], SeamSide::Post, gap_start, gap_end, 0,
+        );
+        let mc = SeamResidualVerdict::from_channel_residuals(
+            &mc_pre, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512,
+        );
+        assert_eq!(mc_pre.len(), 2, "both stereo channels measured");
+
+        let (cp, fp) = seam_chosen_and_floor(&params(window), SeamSide::Pre, gap_start, gap_end, 0);
+        let (cq, fq) = seam_chosen_and_floor(&params(window), SeamSide::Post, gap_start, gap_end, 0);
+        let mono = SeamResidualVerdict::from_parts(&cp, &cq, &fp, &fq);
+
+        assert!(mc.worst_floor_db() < -40.0, "per-channel cancels: {}", mc.worst_floor_db());
+        assert!(mono.worst_floor_db() < -40.0, "mono cancels: {}", mono.worst_floor_db());
+        assert!(mc.worst_headroom_db().abs() < 1.0, "mc headroom ~0: {}", mc.worst_headroom_db());
+        assert!(mono.worst_headroom_db().abs() < 1.0, "mono headroom ~0: {}", mono.worst_headroom_db());
+        assert!(mc.informative && mono.informative);
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_multichannel_empty_selection_is_mono_fallback() {
+        // Empty selection → single mono-downmix entry identical to `seam_chosen_and_floor`.
+        let total = 2000usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+            .collect();
+        let a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
+        let b_ch = vec![b_mono.clone()];
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 1,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0 / 32767.0,
+            max_lag_frames: 512,
+        };
+
+        let mc = seam_chosen_and_floor_multichannel(
+            &params, &b_ch, &[], SeamSide::Pre, gap_start, gap_end, 0,
+        );
+        let (chosen, floor) = seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, 0);
+
+        assert_eq!(mc.len(), 1, "empty selection collapses to one mono entry");
+        assert!((mc[0].floor.residual_db - floor.residual_db).abs() < 1e-9);
+        assert!((mc[0].chosen.residual_db - chosen.residual_db).abs() < 1e-9);
+        assert_eq!(mc[0].floor.source, floor.source);
+    }
+
+    #[test]
+    fn from_channel_residuals_worst_headroom_and_best_floor_informative() {
+        // Aggregation: a well-cancelling channel and a channel that cancels at nominal (low floor)
+        // but not at the chosen placement (high chosen) → the bad channel drives `worst_headroom_db`.
+        let good = SeamChannelResidual { channel: 0, chosen: probe_at(-50.0), floor: probe_at(-50.0) };
+        let bad = SeamChannelResidual { channel: 2, chosen: probe_at(-2.0), floor: probe_at(-45.0) };
+        let v = SeamResidualVerdict::from_channel_residuals(&[good, bad], &[good, bad], -15.0, 0, 0);
+        assert!(
+            (v.worst_headroom_db() - 43.0).abs() < 0.5,
+            "worst channel should drive headroom, got {}",
+            v.worst_headroom_db()
+        );
+
+        // Decoupling: a noisy surround whose floor never cancels (−3 dB > floor_ok) must NOT flip
+        // `informative` off when another selected channel established the regime (best floor −50 dB).
+        let center = SeamChannelResidual { channel: 2, chosen: probe_at(-50.0), floor: probe_at(-50.0) };
+        let surround = SeamChannelResidual { channel: 4, chosen: probe_at(-3.0), floor: probe_at(-3.0) };
+        let v2 = SeamResidualVerdict::from_channel_residuals(
+            &[center, surround], &[center, surround], -15.0, 0, 0,
+        );
+        assert!(
+            v2.informative,
+            "best-floor channel establishes the regime; a noisy surround must not veto informative"
+        );
     }
 
     #[test]

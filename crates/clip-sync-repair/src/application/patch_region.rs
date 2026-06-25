@@ -271,19 +271,25 @@ fn record_fit_joint_candidate_to_pool(
     }
 }
 
-fn fit_residual_geometry(
-    refined: RefinedGapFrames,
-    baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-) -> (usize, usize, usize) {
-    let border_spec = GapBorderSpec {
+/// The border spec for a gap at `refined` frames (shared by seam scoring, residual measurement, and
+/// channel selection so they all see the same border window).
+fn gap_border_spec(params: &SeamGateParams<'_>, refined: RefinedGapFrames) -> GapBorderSpec {
+    GapBorderSpec {
         gap_start_frame: refined.start_frame,
         gap_end_frame: refined.end_frame,
         border_frames: params.border_frames,
         border_standoff_frames: params.border_standoff_frames,
         silence_peak_fraction: params.silence_peak_fraction,
         absolute_rms_floor: params.absolute_silence_rms,
-    };
+    }
+}
+
+fn fit_residual_geometry(
+    refined: RefinedGapFrames,
+    baseline: RefinedGapFrames,
+    params: &SeamGateParams<'_>,
+) -> (usize, usize, usize) {
+    let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
         policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
@@ -783,40 +789,95 @@ fn measure_fit_residual_verdict(
         absolute_silence_rms: params.absolute_silence_rms,
         max_lag_frames: params.residual_max_lag_frames,
     };
-    let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
-        &floor_common(waveform_gate_frames),
-        policies::SeamSide::Pre,
-        refined.start_frame,
-        refined.end_frame,
-        chosen_delta,
-    );
-    let (chosen_post, floor_post) = if post_gate_frames == 0 {
-        // Window 0 → `select_reference_window` abstains; skip spurious 1-frame post fit (L7).
-        policies::seam_chosen_and_floor(
-            &floor_common(0),
-            policies::SeamSide::Post,
+    let placement_slide = alignment_start_frame.abs_diff(offset_nominal_start) as u64;
+
+    // Follow the same energy-selected channels as Pearson seam scoring so residual/floor is measured
+    // on the channels that carry content (e.g. center-dominant 5.1), not a downmix diluted by quiet
+    // surrounds. Selection is a pure function of (params, refined) — recomputed here, same border
+    // spec Pearson uses (residual-channel-alignment-plan §4b). Empty ⇒ mono downmix path.
+    let border_spec = gap_border_spec(params, refined);
+    let selected: Vec<usize> =
+        policies::selected_seam_channels(&params.a_pcm.samples, params.channels, &border_spec)
+            .into_iter()
+            .filter(|&ch| ch < cache.b_ch.len())
+            .collect();
+
+    if selected.is_empty() {
+        let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
+            &floor_common(waveform_gate_frames),
+            policies::SeamSide::Pre,
             refined.start_frame,
             refined.end_frame,
             chosen_delta,
-        )
-    } else {
-        policies::seam_chosen_and_floor(
+        );
+        // Window 0 → `select_reference_window` abstains; skip spurious 1-frame post fit (L7).
+        let (chosen_post, floor_post) = policies::seam_chosen_and_floor(
             &floor_common(post_gate_frames),
             policies::SeamSide::Post,
             refined.start_frame,
             refined.end_frame,
             chosen_delta,
-        )
-    };
-    Some(policies::SeamResidualVerdict::from_parts_with_placement(
-        &chosen_pre,
-        &chosen_post,
-        &floor_pre,
-        &floor_post,
+        );
+        return Some(policies::SeamResidualVerdict::from_parts_with_placement(
+            &chosen_pre,
+            &chosen_post,
+            &floor_pre,
+            &floor_post,
+            params.residual_floor_ok_db,
+            placement_slide,
+            params.residual_max_lag_frames,
+        ));
+    }
+
+    let pre = policies::seam_chosen_and_floor_multichannel(
+        &floor_common(waveform_gate_frames),
+        &cache.b_ch,
+        &selected,
+        policies::SeamSide::Pre,
+        refined.start_frame,
+        refined.end_frame,
+        chosen_delta,
+    );
+    let post = policies::seam_chosen_and_floor_multichannel(
+        &floor_common(post_gate_frames),
+        &cache.b_ch,
+        &selected,
+        policies::SeamSide::Post,
+        refined.start_frame,
+        refined.end_frame,
+        chosen_delta,
+    );
+    log_residual_channel_breakdown(refined.start_frame, &selected, &pre, &post);
+    Some(policies::SeamResidualVerdict::from_channel_residuals(
+        &pre,
+        &post,
         params.residual_floor_ok_db,
-        alignment_start_frame.abs_diff(offset_nominal_start) as u64,
+        placement_slide,
         params.residual_max_lag_frames,
     ))
+}
+
+/// Debug-log per-channel residual headroom so surround/center mixes show which channels cancelled
+/// (RUST_LOG=debug). Mirrors the `fill seam channel diagnostics` log on the scoring side.
+fn log_residual_channel_breakdown(
+    gap_start_frame: usize,
+    selected: &[usize],
+    pre: &[policies::SeamChannelResidual],
+    post: &[policies::SeamChannelResidual],
+) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+    let headroom = |c: &policies::SeamChannelResidual| (c.channel, c.chosen.residual_db - c.floor.residual_db);
+    let pre_headroom: Vec<(usize, f64)> = pre.iter().map(headroom).collect();
+    let post_headroom: Vec<(usize, f64)> = post.iter().map(headroom).collect();
+    tracing::debug!(
+        gap_start = gap_start_frame,
+        selected_channels = ?selected,
+        pre_channel_headroom_db = ?pre_headroom,
+        post_channel_headroom_db = ?post_headroom,
+        "fill residual channel breakdown"
+    );
 }
 
 fn evaluate_seam_gate_fit_candidate(
@@ -831,14 +892,7 @@ fn evaluate_seam_gate_fit_candidate(
         return Err(SeamGateFailure::StructureAlignmentFailed);
     }
 
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: params.border_frames,
-        border_standoff_frames: params.border_standoff_frames,
-        silence_peak_fraction: params.silence_peak_fraction,
-        absolute_rms_floor: params.absolute_silence_rms,
-    };
+    let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
         policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
     let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
@@ -1095,14 +1149,7 @@ fn evaluate_seam_gate_legacy(
     }
 
     let gap_secs = gap_frames as f64 / params.sample_rate as f64;
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: params.border_frames,
-        border_standoff_frames: params.border_standoff_frames,
-        silence_peak_fraction: params.silence_peak_fraction,
-        absolute_rms_floor: params.absolute_silence_rms,
-    };
+    let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
         policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
     let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(

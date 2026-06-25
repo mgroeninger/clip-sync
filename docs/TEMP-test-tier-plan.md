@@ -28,7 +28,7 @@
 | **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** — see [acceptance criteria](#acceptance-criteria) |
 | **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
 | **2c** | `align_videos` integration move | Deferred |
-| **3** | Feature-gated tiers (`autotests = false`, `required-features`) | Pending |
+| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | Pending |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 
@@ -210,8 +210,10 @@ tests/  (integration binaries only)
 
 **Rules:**
 
-1. **`tests/common/`** — modules imported by multiple integration binaries (`mod common;`). Never
-   a `[[test]]` target. Cargo does not compile `tests/common/*.rs` on its own.
+1. **`tests/common/`** — shared runner sources (not a `[[test]]` target). **Phase 2:** `mod common;`
+   from each consumer (compiles all submodules per binary). **Phase 3:** drop monolithic
+   `mod common`; each `tests/<tier>_*.rs` binary includes only the units it needs — see
+   [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy).
 2. **`test_support`** stays on the repair lib so integration binaries can call builders. Do not add
    new acceptance/oracle/integration `#[test]` modules there (fixture-builder unit tests OK); optional later: `test-support` feature or Phase 5 validate crate
    for heavy runners.
@@ -229,7 +231,7 @@ tests/  (integration binaries only)
 | 2 | No new acceptance/oracle/integration `#[test]` in `test_support/` (fixture-builder unit tests OK); extract shared runners to `common/`; finish runner use in `validate_*` splits; rename catalog folder; update `test-tier.ps1` |
 | 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` — **required** if `--lib` still exceeds 15s after main splits |
 | 2b | `clip-sync` corpus + symphonia regressions → `tests/` binaries; `pr-align` script tier — see [Phase 2b](#phase-2b--physical-separation-clip-sync) |
-| 3 | `autotests = false` — catalog folders unchanged |
+| 3 | `autotests = false`; per-binary `tests/common/` includes; tier `required-features`; Clippy clean on default features — see [Phase 3](#phase-3--feature-gated-tiers-optional) |
 | 5 | Optional matrix driver + `clip-sync-repair-validate` owns validate-tier runners |
 
 ### Target `Cargo.toml` layout (`[[test]]`)
@@ -352,8 +354,9 @@ required-features = ["diagnostic-tests"]
 
 **Notes:**
 
-- `tests/common/` stays a module tree (`mod residual_gate_runner;` from validate binaries); only
-  top-level `tests/*.rs` become `[[test]]` targets.
+- `tests/common/` stays **source files** under `tests/common/*.rs` (not `[[test]]` targets). Phase 3
+  stops using a shared `tests/common/mod.rs` pulled in via `mod common;` — each consumer binary
+  includes only the units it needs (see [harness + Clippy](#phase-3--testscommon-and-clippy)).
 - `autotests = false` prevents Cargo from auto-discovering a stray `tests/foo.rs` without an
   explicit entry — renames and splits must update `Cargo.toml` in the same PR.
 - `cli_mux_integration` already needs `ffmpeg-mux`; `required-features` replaces scattered
@@ -417,7 +420,7 @@ on first non-zero exit. Individual crate tiers remain callable alone.
 
 | Kind | Name | Tier | Notes |
 |------|------|------|-------|
-| lib filter | all unit modules | unit | no SD/EC oracle rows |
+| lib filter | all unit modules + `gap_corpus_committed` | unit / integration | oracle rows moved out of lib |
 | `--test` | `config_roundtrip` | integration | |
 | `--test` | `scan_gaps_integration` | integration | |
 | `--test` | `cli_wav_integration` | integration | |
@@ -427,9 +430,10 @@ on first non-zero exit. Individual crate tiers remain callable alone.
 | `--test` | `integration_energy_smoke` | integration | `corpus_scan_patch_smoke` + lib scan/domain smokes (see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_residual_gate_smoke` | integration | `off_no_regression_baseline` (RG04 only; see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_gap_corpus` | integration | `gap_corpus_committed` (Phase 2 follow-up) |
-| `--test` | `oracle_energy` | integration (oracle label) | SD U1–U8 + EC domain rows (from lib acceptance) |
+| `--test` | `oracle_energy` | integration (oracle label) | SD U1–U8 + EC `p3_`/`p4_` (skips slow `p1_`/`p2_`/haystack/patch smokes on PR) |
 | `--test` | `seam_residual_corpus` | integration (oracle label) | `f4_decoy_placement_informative_with_high_headroom`, `seam_residual_disagreement_oracles` |
-| fn filter | `gap_corpus_committed` | integration | **until** `integration_gap_corpus` lands |
+
+`gap_corpus_committed` runs via `--lib` only (no duplicate name filter on PR).
 
 **Explicitly not on default PR** (nightly / manual / extended):
 
@@ -1012,7 +1016,10 @@ Wire the [target `[[test]]` layout](#target-cargotoml-layout-test) into
    `oracle_*` binaries are integration tier and always compile.
 3. Declare every binary with `[[test]]`; put `required-features` on validation, diagnostic, and
    existing `ffmpeg-mux` targets.
-4. Do **not** use `#![cfg(feature)]` at file tops — `required-features` is sufficient.
+4. Do **not** use `#![cfg(feature)]` at file tops — `required-features` on `[[test]]` is
+   sufficient for skipping whole binaries.
+5. Refactor `tests/common/` consumers per [harness + Clippy](#phase-3--testscommon-and-clippy) (same
+   PR or immediately after step 1–3).
 
 **CI fast path:** default `cargo test -p clip-sync-repair` compiles unit + integration binaries
 only (oracle_* are integration; no `validation-tests` / `diagnostic-tests`).
@@ -1024,10 +1031,81 @@ cargo test -p clip-sync-repair --features validation-tests --test validate_floor
 cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix --test diag_seam_residual -- --nocapture
 ```
 
+Update `scripts/test-tier.ps1` `Invoke-RepairValidation` / `Invoke-RepairDiagnostic` to pass
+`--features validation-tests` / `--features diagnostic-tests` and drop `--ignored` for binaries
+that are feature-gated only.
+
 (No `--ignored` once tests live only in feature-gated binaries.)
 
+### Phase 3 — `tests/common/` and Clippy
+
+**Problem (2026-06):** `cargo clippy --workspace --all-targets -- -D warnings` fails on
+`clip-sync-repair` integration binaries. Each `tests/*.rs` file is a **separate crate root**; Phase
+2's `mod common;` compiles all four runner modules in every consumer, but each binary uses only one
+or two — rustc reports `dead_code` / `unused_imports` on the rest. This is a false positive caused
+by integration-test layout, not unused harness code.
+
+**Units (already the right split — do not re-merge):**
+
+| Module | Depends on | Consumers |
+|--------|------------|-----------|
+| `floor_oracle_fixtures` | — | `integration_floor_oracle_smoke`, `validate_floor_oracle` |
+| `residual_gate_runner` | `floor_oracle_fixtures` | `validate_floor_oracle` only |
+| `seam_residual_scoring` | — | `seam_residual_corpus`, `diag_seam_residual` |
+| `energy_signature_matrix` | — | `diag_energy_matrix` only |
+
+**What tier features fix:** `required-features` on `validate_*` / `diag_*` binaries stops compiling
+validation/diagnostic **binaries** (and their runner modules) on PR / default `cargo clippy`. That
+removes roughly half of today's Clippy noise.
+
+**What tier features do *not* fix:** features are **crate-wide**. On PR, two integration binaries
+still overlap — `integration_floor_oracle_smoke` needs `floor_oracle_fixtures` while
+`seam_residual_corpus` needs `seam_residual_scoring`, but `mod common` would still compile both in
+each binary. No `validation-tests` / `diagnostic-tests` boundary separates always-on integration
+consumers.
+
+**Decision (Phase 3 harness):**
+
+1. **Drop `mod common` and `tests/common/mod.rs`.** Each consumer declares only the modules it
+   needs, sibling to the test root:
+
+   ```rust
+   mod floor_oracle_fixtures {
+       include!("common/floor_oracle_fixtures.rs");
+   }
+   ```
+
+   Refactor `residual_gate_runner.rs`: `super::floor_oracle_fixtures` → `crate::floor_oracle_fixtures`.
+
+2. **Do not use `#[path = "..."]`** — same brittleness as `include!`, but `include!` is the
+   documented pattern for shared integration sources when `autotests = false` and there is no
+   `tests/common/mod.rs` entry.
+
+3. **Do not rely on `#[cfg(feature)]` inside a shared `common/mod.rs`** to subset modules — it does
+   not give per-binary dependency sets and still leaves integration↔integration overlap on PR.
+
+4. **Workspace micro-crates** (`clip-sync-repair-test-floor-oracle`, etc.) — defer unless Phase 2b
+   align harness growth makes `include!` repetition painful; not required for repair Phase 3.
+
+5. **`#[allow(dead_code)]` on shared modules** — fallback only if per-binary includes are deferred;
+   prefer includes so `-D warnings` stays meaningful inside each runner file.
+
+**Clippy expectations after Phase 3:**
+
+| Command | Compiles |
+|---------|----------|
+| `cargo clippy -p clip-sync-repair --all-targets -- -D warnings` (PR) | lib + integration `[[test]]` binaries only |
+| `+ --features validation-tests` | + `validate_*` |
+| `+ --features diagnostic-tests` | + `diag_*` |
+| Full local / nightly | both tier features (+ `ffmpeg-mux` / `ffmpeg-tests` as needed) |
+
+Document in `development.md`; optional CI nightly row runs validation tier features before merge
+to main.
+
 **Done when:** default `cargo test -p clip-sync-repair` does not compile validation or diagnostic
-binaries; `development.md` documents features and explicit `--test` names from the table above.
+binaries; `cargo clippy -p clip-sync-repair --all-targets -- -D warnings` passes without tier
+features; `development.md` documents features, explicit `--test` names, and the Clippy command
+variants above.
 
 ---
 
@@ -1161,6 +1239,7 @@ Closes gaps called out in plan review (2026-06-25).
 | Oracle (label) on PR | **Yes** for `seam_residual_disagreement_oracles` + `oracle_energy` SD rows (integration tier); not all `oracle_*` rows |
 | RG04 / energy smoke on PR | **integration** smokes (`integration_residual_gate_smoke`, `integration_energy_smoke`), not validation feature |
 | `#[ignore]` vs feature gates | Remove ignore when binary is feature-gated; see [Resolved decisions](#resolved-decisions) |
+| `tests/common/` harness (Phase 3) | Drop `mod common`; per-binary `include!("common/….rs")`; tier features gate binaries not integration overlap — see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy) |
 | `cargo test --workspace` | Dev convenience only after Phase 1; not CI PR gate |
 | `test_support/` tests | Builders only for acceptance/oracle/integration; fixture-builder unit tests OK — see [Resolved decisions](#resolved-decisions) |
 | `validate_residual_gate` scope | `f1_production_scan_patch_smoke` + EC6 `f4_decoy_*` + future RG rows; no `validate_energy_corpus` crate/binary |

@@ -47,6 +47,10 @@ The result is the loudest, gap-adjacent A audio available on each side. Template
 
 This is why a 5.1 mix with dialogue in the center and quiet fronts is scored on the **center** channel rather than front-channel noise. Mono/stereo content is unaffected — all channels carry signal, so all are scored. (See [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.)
 
+### Residual channel policy
+
+Residual/floor cancellation (fit mode) follows the **same** selection. `selected_seam_channels` recomputes `seam_score_channel_indices` from the identical border spec, so `seam_chosen_and_floor_multichannel` measures cancellation per selected channel against each `b_ch[ch]` instead of a mono downmix that quiet surrounds would dilute. Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md).
+
 ## 3. Seam correlation (peak-normalized Pearson)
 
 `seam_pearson` correlates two equal-length windows. **Pearson correlation is itself scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. (The `peak_normalize_f64` call in this path is therefore a no-op — it cannot change the correlation — and is dead work; see [residual-gate-findings.md](residual-gate-findings.md) G2. The level-invariance is a property of Pearson, not of that call.) It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) §2).
@@ -98,6 +102,8 @@ $env:RUST_LOG = ""
 ```
 
 Each line reports `start_frame`, `seam_pre`/`seam_post`, `structure_pre`/`structure_post`, the resolved `signature`, `selected_channels`, `per_channel` `(pre, post)` for every channel (`NaN` where the window didn't fit), and the `mono` fallback. Use it to tell a real content mismatch from a channel-selection artifact (e.g. low front-channel scores but a high center-channel score).
+
+A companion `fill residual channel breakdown` line (same debug target) reports `selected_channels` and per-channel `(channel, headroom_db)` for the residual/floor measurement, so you can see which channel drove a residual headroom veto.
 
 ## Config knobs that shape seams
 
