@@ -219,7 +219,7 @@ tests/  (integration binaries only)
    it). Do not copy `run_built_floor_oracle` / patch loops into a test file.
 4. **Catalog ≠ runner ≠ test** — `matrix.toml` inventories instances; runners live in `common/` or
    `test_support/`; `#[test]` fns only assert. Matrix-driven execution stays deferred (Phase 5).
-5. **Runner extraction** — follow [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) § Implementation when splitting floor/residual binaries; tier plan does not duplicate that runbook.
+5. **Runner extraction** — follow [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) § Implementation when splitting floor/residual binaries; tier plan does not duplicate that runbook.
 
 **Phase hooks:**
 
@@ -1211,5 +1211,5 @@ cargo test -p clip-sync --features validation-tests --test validate_alignment_co
 - [test-acceptance-glossary.md](test-acceptance-glossary.md) — SD/SP/EC/RG/PL/GK/CS IDs (permanent)
 - [development.md](development.md) — build/test commands (update in Phase 1)
 - [corpus-validation.md](corpus-validation.md) — alignment corpus tiers (parallel pattern)
-- [crates/clip-sync-repair/tests/residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) — RG contract catalog (legacy C1–C5)
+- [crates/clip-sync-repair/tests/residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) — RG contract catalog (legacy C1–C5)
 - [residual-gate-findings.md](residual-gate-findings.md) — shipped gate findings

@@ -53,7 +53,7 @@ The same manifest case can **pass Pearson under calibration** and sit in the **d
 
 | Profile | How to recognize it | Pearson / fit | Used for |
 |---------|---------------------|---------------|----------|
-| **`calibration`** | `production_repair_config` or `floor_oracle_repair_config` in `floor_oracle_integration.rs` | `min_fill 0`, `fill_absolute_floor −0.05`, `waveform_weight 0` | FLOOR_OK measurement, structure-isolated gate checks |
+| **`calibration`** | `production_repair_config` or `floor_oracle_repair_config` in `validate_floor_oracle.rs` | `min_fill 0`, `fill_absolute_floor −0.05`, `waveform_weight 0` | FLOOR_OK measurement, structure-isolated gate checks |
 | **`production_fit`** | `RepairConfig::default()` (optionally override `gap_signature_mode` / `residual_gate`) | Shipped floors (`min_fill 0.35`, etc.) | Run B, anything claiming shipped patch behavior |
 | **`production_like_synthetic`** | `RepairConfig { ..Default::default() }` on in-memory fixtures | Production floors + default weights | `broadband_oracle_veto_rescue_patches_marginal` |
 
@@ -218,7 +218,7 @@ when you add a planned test, put it in **Backlog** below (not in the matrix unti
 | `config_profile` | `calibration` \| `production_fit` \| `production_like_synthetic` |
 | `tier` | `fast` \| `ignored` \| `diagnostic` |
 | `assertion` | `hard_assert` \| `diagnostic_csv` \| `floor_calibration` |
-| `location` | `tests/<file>.rs::<test_fn>` today; may become `residual_gate_integration.rs` after migration |
+| `location` | `tests/<file>.rs::<test_fn>` (see `matrix.toml`) |
 | `fixture_ref` | Manifest case id(s) or harness fixture name |
 | `proves` | One-line epistemic claim (must match actual `config_profile`) |
 | `claims` | Which contract clause(s) the row serves: `C1`–`C5` or `support` (see § What this suite must establish) |
@@ -242,38 +242,38 @@ profiles** first.
 | Matrix row | Re-home under `residual_gate_integration.rs`? | Reason |
 |------------|-----------------------------------------------|--------|
 | `disagreement_oracles` | **No** | Layer B — stays in `seam_residual_corpus.rs` |
-| `floor_calibration_csv` | **No** | Calibration home — stays in `floor_oracle_integration.rs` |
+| `floor_calibration_csv` | **No** | Calibration home — stays in `validate_floor_oracle.rs` |
 | `deadzone_finale_run_b` | **Optional** | Good candidate — uses production_fit runner |
 | `gate_real_codec`, `rescue_real_mid_safety`, `vorbis_64k_no_false_veto` | **Optional** | Gate tests; share runner with Run B |
 | `rescue_bb_synthetic` | **Optional** | Synthetic pipeline — could move from `seam_residual_oracle.rs` |
 
 **Never migrate:** `seam_residual_corpus.rs`, `source_gap_oracle_floor_csv`, `policies.rs` units,
-F4 decoy tuning tests in `energy_signature_production.rs`.
+F4 decoy tuning tests in `validate_residual_gate.rs` / `diag_energy_matrix.rs`.
 
 **Eventually:** a matrix-driven runner may *execute* rows by `id` without moving every test file —
 only layer C pipeline drivers benefit from a shared harness.
 
 ### Cargo layout (important)
 
-Integration tests are **`tests/*.rs` at the crate root**, not files under `tests/residual_gate/`.
+Integration tests are **`tests/*.rs` at the crate root**, not files under `tests/residual_gate_catalog/`.
 This directory holds **docs + `matrix.toml` only** until you add:
 
 ```text
 tests/
   common/
-    mod.rs                      # add: pub mod residual_gate_runner;
-    floor_oracle_fixtures.rs    # unchanged — encode/build pairs
-    residual_gate_runner.rs     # extract target (phase 1)
-  floor_oracle_integration.rs   # keeps calibration CSV + smokes (phase 2 trim)
-  residual_gate_integration.rs  # new: migrated gate tests + matrix driver (phase 2, optional)
-  residual_gate/
+    residual_gate_runner.rs     # landed (phase 2)
+  integration_floor_oracle_smoke.rs
+  integration_residual_gate_smoke.rs
+  validate_floor_oracle.rs
+  validate_residual_gate.rs
+  residual_gate_catalog/
     README.md
     matrix.toml
 ```
 
 ### Phase 1 — extract runner (no test moves)
 
-Move from `floor_oracle_integration.rs` into `tests/common/residual_gate_runner.rs`:
+Move from `validate_floor_oracle.rs` into `tests/common/residual_gate_runner.rs`:
 
 | Symbol | Role |
 |--------|------|
@@ -299,31 +299,22 @@ pub fn production_fit_repair_config(gate: ResidualGateMode) -> RepairConfig {
 }
 ```
 
-`floor_oracle_integration.rs` re-exports or calls these; behavior unchanged.
+`validate_floor_oracle.rs` imports these; behavior unchanged.
 
 **Runner contract:** one gap per `BuiltFloorOracle`, `measure_residual = true`, decode A to mono for
 `gap_report_from_floor_oracle` (see existing `run_built_floor_oracle_cfg`).
 
-### Phase 2 — migrate gate tests (optional)
+### Phase 2 — migrate gate tests (landed)
 
-Create `tests/residual_gate_integration.rs`:
+Split binaries (see [test-tier plan](../../../docs/TEMP-test-tier-plan.md)):
 
-```rust
-mod common;
-use common::residual_gate_runner::*;
-use common::floor_oracle_fixtures::*;
-// #[test] fn deadzone_punch_assert() { ... production_fit_repair_config ... }
-```
+- `integration_floor_oracle_smoke.rs` — manifest + gap_frames PR smokes
+- `integration_residual_gate_smoke.rs` — `off_no_regression_baseline` (RG04 PR)
+- `validate_floor_oracle.rs` — ffmpeg/corpus gate rows + calibration CSV
+- `validate_residual_gate.rs` — `f1_production_scan_patch_smoke` + EC6 `f4_decoy_*`
 
-Move (or duplicate-then-delete) from `floor_oracle_integration.rs`:
-
-- `source_gap_oracle_transient_csv`
-- `floor_oracle_residual_gate_real_codec`
-- `floor_oracle_veto_rescue_real_broadband_codec`
-- `floor_oracle_vorbis_64k_veto_no_false_veto`
-
-**Leave in** `floor_oracle_integration.rs`: `source_gap_oracle_floor_csv`, `floor_oracle_manifest_loads`,
-`floor_oracle_gap_frames_use_production_anchor`.
+**Leave in** `validate_floor_oracle.rs`: `source_gap_oracle_floor_csv` (calibration CSV).
+PR smokes: `integration_floor_oracle_smoke.rs`.
 
 From `seam_residual_oracle.rs` (optional): `broadband_oracle_veto_rescue_patches_marginal` only.
 
@@ -331,15 +322,14 @@ Update `matrix.toml` `location` fields when fns move.
 
 ### Phase 3 — matrix driver (optional, later)
 
-`residual_gate_integration.rs::residual_gate_matrix` reads `tests/residual_gate/matrix.toml`,
+`validate_residual_gate.rs::residual_gate_matrix` (future) reads `tests/residual_gate_catalog/matrix.toml`,
 filters by `tier` / `assertion`, runs `run_built_floor_oracle_cfg` with the profile matching
 `config_profile`. **Do not build** until phase 1 lands and backlog asserts exist — not required for
 G5 closure.
 
 ### First backlog items (no migration required)
 
-1. **`deadzone_punch_assert`** — new `#[test]` in `floor_oracle_integration.rs` or
-   `residual_gate_integration.rs`; copy Run B loop over punch cases only; use
+1. **`deadzone_punch_assert`** — in `validate_floor_oracle.rs`; copy Run B loop over punch cases only; use
    `production_fit_repair_config`; assert skip + `!residual.informative` for AAC punch rows.
 2. **`gate_real_codec_production_fit`** — same runner, `RepairConfig::default()`, key manifest
    cases; expect skips at finale/mid under production (documents shipped behavior).
@@ -360,7 +350,7 @@ cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignore
 
 | id | Claim | Profile | Notes |
 |----|-------|---------|-------|
-| `off_no_regression_baseline` | **C4** | n/a (off) | **Landed** — `tests/residual_gate_integration.rs::off_no_regression_baseline`. |
+| `off_no_regression_baseline` | **C4** | n/a (off) | **Landed** — `tests/integration_residual_gate_smoke.rs::off_no_regression_baseline`. |
 | `f4_decoy_veto_production_fit` | **C1** | `production_fit` | The remaining C1 gap: a pipeline case where a veto **actually fires** (echo/decoy Pearson would accept, residual rejects) under shipped floors. Today C1 is only score-level (`disagreement_oracles`) + the out-of-matrix calibration `f4_decoy_residual_gate_vetoes_bool`. |
 | `finale_floor_nan_probe` | C5 (sub) | — | *Needs design.* Explain *why* the finale floor is NaN. Entry point: `policies::seam_chosen_and_floor` → `select_reference_window` / `measure_window_at_delta` (does the reference-window energy gate fail, or does the B mapping fall out of range at the loud seam? M3-adjacent). **Done when:** NaN is attributed to either genuine cancellation failure or probe abstention, with a unit reproducing it. |
 | `p2_search_winner_bounds` | C3 (field) | `production_fit` | *Needs design.* Bound headroom on the **search winner** (not truth placement) to catch field over-/under-veto. No fixture or acceptance criterion yet — design before scheduling. |
@@ -376,8 +366,8 @@ Planned rows graduate to [`matrix.toml`](matrix.toml) when the test lands (see *
 | Current location | Tests |
 |------------------|-------|
 | `seam_residual_oracle.rs` | `broadband_oracle_veto_rescue_patches_marginal`, oracle CSVs |
-| `floor_oracle_integration.rs` | gate / veto_rescue / transient CSV |
-| `energy_signature_production.rs` | `f4_decoy_residual_gate_vetoes_bool` only (low priority) |
+| `validate_floor_oracle.rs` | gate / veto_rescue / transient CSV |
+| `validate_residual_gate.rs` | `f1_production_scan_patch_smoke`, EC6 `f4_decoy_*` |
 
 Stay outside: `seam_residual_corpus.rs` (layer B), `source_gap_oracle_floor_csv` (calibration),
 other F4 decoy tuning tests, `policies.rs` unit tests.

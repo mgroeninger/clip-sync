@@ -26,7 +26,7 @@ fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/
 | **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | lib / `tests/oracle_energy.rs` (target) |
 | **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/patch_audio_integration.rs` |
 | **EC** | Energy corpus | Production-geometry signature acceptance | lib + `tests/energy_signature_production.rs` |
-| **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md), `matrix.toml` |
+| **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
 | **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [energy-signature-plan.md](archive/energy-signature-plan.md) |
 
@@ -150,7 +150,7 @@ prefix; do not add parallel `p1_` numbering in new work.
 ## RG — residual gate contract
 
 Gate validity claims. Full semantics:
-[residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md).
+[residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md).
 
 | ID | Claim |
 |----|-------|
@@ -216,4 +216,4 @@ Historical ship criteria from energy signature Phase 2 — not gap kinds.
 - [corpus-validation.md](corpus-validation.md) — alignment corpus + EC rows
 - [energy-signature-plan.md](archive/energy-signature-plan.md) — SD / SP / CHK definitions
 - [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) — EC acceptance detail
-- [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) — RG contract
+- [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) — RG contract

@@ -54,7 +54,6 @@ try {
 
     function Invoke-RepairPrRepair {
         Invoke-RepairLibUnits
-        Invoke-CargoTest @('-p', 'clip-sync-repair', 'gap_corpus_committed')
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--test', 'config_roundtrip',
@@ -64,8 +63,13 @@ try {
             '--test', 'integration_residual_gate_smoke',
             '--test', 'integration_floor_oracle_smoke',
             '--test', 'integration_energy_smoke',
+            '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
-            '--test', 'wav_bit_depth_integration'
+            '--test', 'wav_bit_depth_integration',
+            '--',
+            '--skip', 'p1_', '--skip', 'p2_', '--skip', 'f1_production_haystack',
+            '--skip', 'f1_production_oracle_patch_control', '--skip', 'f2_production_oracle_patch_smoke',
+            '--skip', 'p4_f4_decoy_unified_search_diverges'
         )
 
         if (Test-FfmpegOnPath) {
