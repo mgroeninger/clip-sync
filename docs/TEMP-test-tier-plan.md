@@ -25,7 +25,7 @@
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **1** | Conventions + `test-tier.ps1` + docs (no file moves) | **Landed (2026-06-25)** — script, CI `-Tier pr`, `development.md` all in place; see [acceptance criteria](#acceptance-criteria) |
-| **2** | Physical separation, repair crate (`--lib` < 15s) | Pending |
+| **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** — see [acceptance criteria](#acceptance-criteria) |
 | **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
 | **2c** | `align_videos` integration move | Deferred |
 | **3** | Feature-gated tiers (`autotests = false`, `required-features`) | Pending |
@@ -187,7 +187,7 @@ clip-sync (feature test-utils)
   └── application/testing/          cross-crate fakes, alignment corpus helpers
 
 clip-sync-repair lib
-  └── test_support/                 F* builders, production helpers — NO #[test]
+  └── test_support/                 F* builders, production helpers — no acceptance/oracle/integration #[test]
   └── application/testing/          gap_corpus manifest + scan runner (#[cfg(test)] today)
 
 tests/  (integration binaries only)
@@ -200,7 +200,7 @@ tests/  (integration binaries only)
 
 | Kind | Location | Compiles | Contains |
 |------|----------|----------|----------|
-| **Domain fixtures** | `src/test_support/` | always (lib) | F* builders, WAV writers, oracle math — **no `#[test]`** |
+| **Domain fixtures** | `src/test_support/` | always (lib) | F* builders, WAV writers, oracle math — **no acceptance/oracle/integration `#[test]`** (fixture-builder unit tests OK) |
 | **Corpus data** | `tests/<corpus>/` | N/A | `manifest.toml`, README, `wav/` |
 | **Contract catalog** | `tests/residual_gate_catalog/` | N/A | `matrix.toml`, README, baseline CSV |
 | **Integration runners** | `tests/common/` | with parent `[[test]]` binary | `residual_gate_runner`, encode/build pairs, matrix loops, CSV printers |
@@ -213,7 +213,7 @@ tests/  (integration binaries only)
 1. **`tests/common/`** — modules imported by multiple integration binaries (`mod common;`). Never
    a `[[test]]` target. Cargo does not compile `tests/common/*.rs` on its own.
 2. **`test_support`** stays on the repair lib so integration binaries can call builders. Do not add
-   new `#[test]` modules there; optional later: `test-support` feature or Phase 5 validate crate
+   new acceptance/oracle/integration `#[test]` modules there (fixture-builder unit tests OK); optional later: `test-support` feature or Phase 5 validate crate
    for heavy runners.
 3. **New RG row** — add `matrix.toml` entry **and** reuse `common/residual_gate_runner` (or extend
    it). Do not copy `run_built_floor_oracle` / patch loops into a test file.
@@ -226,8 +226,8 @@ tests/  (integration binaries only)
 | Phase | Harness work |
 |-------|----------------|
 | 1 | Document layers (this section); no refactors required for `test-tier.ps1` |
-| 2 | No new `#[test]` in `test_support/`; finish runner use in `validate_*` splits; rename catalog folder |
-| 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` |
+| 2 | No new acceptance/oracle/integration `#[test]` in `test_support/` (fixture-builder unit tests OK); extract shared runners to `common/`; finish runner use in `validate_*` splits; rename catalog folder; update `test-tier.ps1` |
+| 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` — **required** if `--lib` still exceeds 15s after main splits |
 | 2b | `clip-sync` corpus + symphonia regressions → `tests/` binaries; `pr-align` script tier — see [Phase 2b](#phase-2b--physical-separation-clip-sync) |
 | 3 | `autotests = false` — catalog folders unchanged |
 | 5 | Optional matrix driver + `clip-sync-repair-validate` owns validate-tier runners |
@@ -290,7 +290,7 @@ path = "tests/integration_floor_oracle_smoke.rs"   # manifest_loads, gap_frames 
 
 [[test]]
 name = "integration_energy_smoke"
-path = "tests/integration_energy_smoke.rs"           # corpus_scan_patch_smoke (PR tripwire)
+path = "tests/integration_energy_smoke.rs"           # corpus_scan_patch_smoke + lib scan/domain smokes (PR)
 
 [[test]]
 name = "integration_residual_gate_smoke"
@@ -324,7 +324,7 @@ required-features = ["validation-tests"]
 
 [[test]]
 name = "validate_residual_gate"
-path = "tests/validate_residual_gate.rs"
+path = "tests/validate_residual_gate.rs"              # f1_production_scan_patch_smoke + EC6 f4_decoy_* + future RG rows
 required-features = ["validation-tests"]
 
 # ── tier: diagnostic (off default compile) ─────────────────────────────────────
@@ -372,7 +372,7 @@ required-features = ["diagnostic-tests"]
 | `cli_wav_integration.rs` | `cli_wav_integration` | integration | — |
 | `wav_bit_depth_integration.rs` | `wav_bit_depth_integration` | integration | — |
 | `cli_mux_integration.rs` | `cli_mux_integration` | integration | `ffmpeg-mux` |
-| `energy_signature_production.rs` | split → `integration_energy_smoke` + `oracle_energy` (integration) + `diag_energy_matrix` + EC6 in `validate_residual_gate` | integration / diagnostic / validation | diag: `diagnostic-tests`; EC6: `validation-tests` |
+| `energy_signature_production.rs` | split → `integration_energy_smoke` + `oracle_energy` (integration) + `diag_energy_matrix` + `f1_production_scan_patch_smoke` + EC6 in `validate_residual_gate` | integration / diagnostic / validation | diag: `diagnostic-tests`; validation: `validation-tests` |
 | `floor_oracle_integration.rs` | split → `integration_floor_oracle_smoke` + `validate_floor_oracle` | integration / validation | validation: `validation-tests` |
 | `residual_gate_integration.rs` | split → `integration_residual_gate_smoke` + `validate_residual_gate` | integration / validation | validation: `validation-tests` |
 | `seam_residual_oracle.rs` | `seam_residual_oracle` | integration (oracle label) | — (see [Resolved decisions](#resolved-decisions)) |
@@ -424,7 +424,7 @@ on first non-zero exit. Individual crate tiers remain callable alone.
 | `--test` | `wav_bit_depth_integration` | integration | source-driven WAV bit depth |
 | `--test` | `query_reference_integration` | integration | query-mode repair smoke |
 | `--test` | `integration_floor_oracle_smoke` | integration | manifest + gap_frames |
-| `--test` | `integration_energy_smoke` | integration | `corpus_scan_patch_smoke` (from `energy_signature_production.rs`) |
+| `--test` | `integration_energy_smoke` | integration | `corpus_scan_patch_smoke` + lib scan/domain smokes (see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_residual_gate_smoke` | integration | `off_no_regression_baseline` (RG04 only; see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_gap_corpus` | integration | `gap_corpus_committed` (Phase 2 follow-up) |
 | `--test` | `oracle_energy` | integration (oracle label) | SD U1–U8 + EC domain rows (from lib acceptance) |
@@ -477,13 +477,13 @@ Included in composite `-Tier pr`.
 Target tier for each `#[test]` when splitting. Acceptance IDs from
 [test-acceptance-glossary.md](test-acceptance-glossary.md).
 
-### `energy_signature_production.rs` → split across three binaries
+### `energy_signature_production.rs` → split across four binaries
 
 | Test fn | Today | Target binary | Tier | `#[ignore]` after split? |
 |---------|-------|---------------|------|--------------------------|
 | `corpus_scan_patch_smoke` | default CI | `integration_energy_smoke.rs` | integration | no |
 | `energy_signature_mode_matrix` | ignore | `diag_energy_matrix.rs` | diagnostic | no (binary gated) |
-| `f1_production_scan_patch_smoke` | ignore | `validate_energy_corpus.rs` | validation | no (feature-gated) |
+| `f1_production_scan_patch_smoke` | ignore | `validate_residual_gate.rs` | validation | no (feature-gated) |
 | `f1_production_oracle_patch_control` | ignore | `oracle_energy.rs` | integration (oracle label) | no |
 | `f2_production_oracle_patch_smoke` | ignore | `oracle_energy.rs` | integration (oracle label) | no |
 | `f2_production_weights_diagnostic` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
@@ -495,8 +495,10 @@ Target tier for each `#[test]` when splitting. Acceptance IDs from
 | `f4_decoy_bias_boundary` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
 | `f4_decoy_patch_diagnostic` | ignore | `diag_energy_matrix.rs` | diagnostic | no |
 
-**Decision:** EC6 contract rows (`f4_decoy_*` gate tests) land in **`validate_residual_gate.rs`**
-behind `validation-tests`; oracle smokes (`f1/f2_production_oracle_patch_*`) in **`oracle_energy.rs`**.
+**Decision:** validation production smokes (`f1_production_scan_patch_smoke` + EC6 `f4_decoy_*` gate
+tests) land in **`validate_residual_gate.rs`** behind `validation-tests` (no separate
+`validate_energy_corpus` binary); oracle smokes (`f1/f2_production_oracle_patch_*`) in
+**`oracle_energy.rs`**.
 
 Add `integration_energy_smoke.rs` to repair `[[test]]` sketch (not in original list).
 
@@ -506,6 +508,7 @@ Add `integration_energy_smoke.rs` to repair `[[test]]` sketch (not in original l
 |---------|-------|---------------|------|-----|
 | `off_no_regression_baseline` | default CI (~82s) | `integration_residual_gate_smoke.rs` | integration | **yes** |
 | (future RG01–RG03, RG05 rows) | — | `validate_residual_gate.rs` | validation | no |
+| `f1_production_scan_patch_smoke` (from `energy_signature_production.rs`) | ignore | `validate_residual_gate.rs` | validation | no |
 
 `residual_gate_integration.rs` is **renamed/split**, not moved wholesale behind `validation-tests`.
 
@@ -563,6 +566,9 @@ binary `wav_bit_depth_integration`. No split planned. Included in `pr-repair` vi
 |--------|---------------|--------|
 | `test_support/energy_signature_acceptance.rs` | all `#[test]` | `oracle_energy.rs` |
 | `test_support/energy_signature_production.rs` | `f1_production_haystack_scan_vs_oracle` | `oracle_energy.rs` |
+| same | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `integration_energy_smoke.rs` |
+| same | `production_matrix_contexts_skip_thirty_on_sixty_sec_fixture` | **stay in lib** (unit) |
+| `test_support/energy_signature_fixtures.rs` | `production_spec_tests` (4 fns) | **stay in lib** (`test_support/` fixture-builder units — see [Resolved decisions](#resolved-decisions)) |
 | `application/testing/gap_corpus_fixtures.rs` | `gap_corpus_committed` | `integration_gap_corpus.rs` |
 | same | generated/external/patch_timing/regenerate | validation / diagnostic binaries or stay ignored in gap binary |
 | `infrastructure/cli/output.rs` | `write_full_surface_repair_golden` | `diag_repair_golden.rs` (diagnostic; defer) |
@@ -694,44 +700,77 @@ etc.). Document ffmpeg requirement in `development.md`.
 | From | To |
 |------|-----|
 | `src/test_support/energy_signature_acceptance.rs` `#[test]` fns | `tests/oracle_energy.rs` |
-| Keep fixture builders in `test_support/` | no tests in acceptance module |
+| `src/test_support/energy_signature_production.rs` | `f1_production_haystack_scan_vs_oracle` → `tests/oracle_energy.rs` |
+| Keep fixture builders in `test_support/` | no acceptance/oracle/integration tests in acceptance module |
+
+**Move lib scan smokes to integration binary:**
+
+| From | To |
+|------|-----|
+| `energy_signature_production.rs` (lib) | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` → `tests/integration_energy_smoke.rs` |
+| same (lib) | `production_matrix_contexts_skip_thirty_on_sixty_sec_fixture` → **stay in lib** (unit) |
 
 **Split validation binaries:**
 
 | From | To |
 |------|-----|
 | `floor_oracle_integration.rs` (ignored gate/CSV tests) | `tests/validate_floor_oracle.rs` |
-| `residual_gate_integration.rs` | `tests/validate_residual_gate.rs` |
-| Leave in `floor_oracle_integration.rs` | fast smokes: `floor_oracle_manifest_loads`, `floor_oracle_gap_frames_use_production_anchor` → or move to `integration_` smoke file |
+| `residual_gate_integration.rs` (future RG rows) + `energy_signature_production.rs` | `tests/validate_residual_gate.rs` (`f1_production_scan_patch_smoke` + EC6 `f4_decoy_*`; no `validate_energy_corpus` binary) |
+| Leave in `floor_oracle_integration.rs` or move | fast smokes: `floor_oracle_manifest_loads`, `floor_oracle_gap_frames_use_production_anchor` → `integration_floor_oracle_smoke.rs` |
 
 **Split diagnostics:**
 
 | From | To |
 |------|-----|
 | `energy_signature_production.rs` ignored matrix/sweeps | `tests/diag_energy_matrix.rs` |
-| `energy_signature_production.rs` | `tests/integration_energy_smoke.rs` (`corpus_scan_patch_smoke`) |
-| `residual_gate_integration.rs` | `tests/integration_residual_gate_smoke.rs` (RG04 only) + `tests/validate_residual_gate.rs` (future RG rows) |
+| `energy_signature_production.rs` | `tests/integration_energy_smoke.rs` (`corpus_scan_patch_smoke` + lib scan/domain smokes) |
+| `residual_gate_integration.rs` | `tests/integration_residual_gate_smoke.rs` (RG04 only) + `tests/validate_residual_gate.rs` (validation rows) |
 | `seam_residual_corpus.rs` `*_csv` tests | `tests/diag_seam_residual.rs` (see [Resolved decisions](#resolved-decisions)) |
 | `patch_audio_integration.rs` `i1_/i3_` diagnostic | defer `tests/diag_patch_audio.rs` |
 
 **Rename catalog folder:** `tests/residual_gate/` → `tests/residual_gate_catalog/`; update
-references in `residual_gate_integration.rs`, `floor_oracle_integration.rs`, findings doc.
+references in split binaries, findings doc.
 
 **Harness (same phase):**
 
 - Delete or empty `energy_signature_acceptance.rs` tests after `oracle_energy.rs` split; leave
   builders in `test_support/`.
+- **`test_support/` policy:** no new acceptance/oracle/integration `#[test]` modules; existing
+  fixture-builder unit tests (`energy_signature_fixtures.rs` `production_spec_tests`) may stay.
+- Extract shared loop helpers from `energy_signature_production.rs` (`run_oracle_matrix_rows`,
+  `run_matrix_rows`, etc.) to `tests/common/` **before** splitting binaries.
 - `validate_floor_oracle.rs` / `validate_residual_gate.rs` import `common::residual_gate_runner`
   and `common::floor_oracle_fixtures` — no duplicated pipeline helpers in the test file.
 - `diag_energy_matrix.rs` owns matrix loop helpers or imports shared runner from `common/` if
   shared with oracle tier.
 
-**Done when:** `cargo test -p clip-sync-repair --lib` &lt; 15s debug; tier script still green;
-no `#[test]` in `src/test_support/`.
+**`test-tier.ps1` (same phase, same PR as renames):**
 
-**Phase 2 follow-up (repair, optional):** move `gap_corpus_committed` (+ generated/external
-runners) from `src/application/testing/gap_corpus_fixtures.rs` to `tests/integration_gap_corpus.rs`;
-add `[[test]]` entry. Same pattern as corpus split in Phase 2b.
+- `pr-repair`: swap legacy binaries for `integration_energy_smoke`, `integration_floor_oracle_smoke`,
+  `integration_residual_gate_smoke`; drop lib `--skip p1_/p2_/p4_/f1_production_haystack` once oracles
+  move to `oracle_energy`.
+- `-Tier oracle`: `--test oracle_energy` (and existing seam oracle rows) instead of lib name filters.
+- `-Tier integration` / `validation` / `diagnostic`: update `--test` lists and filters for split binaries.
+
+**Migration order:** create new binaries → update script → delete or empty old binaries (`energy_signature_production.rs`,
+`floor_oracle_integration.rs`, `residual_gate_integration.rs`) in the same PR. With `autotests = true`
+(Phase 3 deferred), Cargo auto-discovers new `tests/*.rs` until old files are removed.
+
+### Acceptance criteria
+
+- [x] `cargo test -p clip-sync-repair --lib` &lt; 15s debug (units + `gap_corpus_committed` + fixture-builder units only).
+- [x] No acceptance/oracle/integration `#[test]` in `src/test_support/` (fixture-builder units OK).
+- [x] `tests/oracle_energy.rs`, `integration_energy_smoke.rs`, smoke/validate/diag splits land per [inventory](#per-file-test-inventory-repair-binaries).
+- [x] `tests/residual_gate/` renamed to `tests/residual_gate_catalog/`.
+- [x] `.\scripts\test-tier.ps1 -Tier pr-repair` and `-Tier pr` pass without ffmpeg.
+- [x] [development.md](development.md) updated if PR commands change materially (no change — still `test-tier.ps1 -Tier pr-repair`).
+
+**Done when:** acceptance criteria above are met.
+
+**Phase 2 follow-up (repair):** move `gap_corpus_committed` (+ generated/external runners) from
+`src/application/testing/gap_corpus_fixtures.rs` to `tests/integration_gap_corpus.rs`; add `[[test]]`
+entry. **Required** (not optional) if `--lib` still exceeds 15s after the main splits. Same pattern
+as corpus split in Phase 2b.
 
 ---
 
@@ -1053,7 +1092,7 @@ How GitHub Actions evolves as phases land. Current (Phase 1, live):
 |-------|---------|-----------------|-------|
 | **0 — was** | — | `cargo test --workspace` | Runs full lib + all integration binaries; no ffmpeg; ~65s repair lib + integration compile cost |
 | **1 — Phase 1 (landed 2026-06-25)** | `test-tier.ps1` exists | ✅ `run: ./scripts/test-tier.ps1 -Tier pr` | Live in `ci.yml`; replaced workspace blanket test; Windows runner; no ffmpeg |
-| **2 — Phase 2 lands** | repair lib &lt;15s | keep `-Tier pr`; document extended profile optional | `pr-repair` no longer needs `--skip` oracle filters |
+| **2 — Phase 2 lands** | repair lib &lt;15s | keep `-Tier pr`; update `pr-repair` binary list + drop lib oracle `--skip`; document extended profile optional | `integration_*_smoke`, `oracle_energy`; script changes in same PR as file splits |
 | **3 — repair Phase 3** | feature gates | `pr` does **not** pass `validation-tests` / `diagnostic-tests` | Nightly job added (below) |
 | **4 — Phase 2b** | align `tests/` binaries | `pr-align` in script; `pr` uses it instead of `corpus_` filter | align lib still heavy until 2c |
 | **5 — optional nextest** | script pain | `cargo nextest run --profile pr` | script remains fallback |
@@ -1100,6 +1139,9 @@ Closes gaps called out in plan review (2026-06-25).
 | **Composite `pr` tier** | `pr-align` + `pr-repair` + `cargo test -p clip-sync-cli`. |
 | **Validation command `--ignored`** | Required only while tests remain in lib/default binaries. After Phase 3 / 2b-3, run `cargo test --features validation-tests --test validate_*` **without** `--ignored`. |
 | **Non-goals Phase 5 typo** | Validation crate deferral refers to **Phase 5**, not Phase 4 (nextest). |
+| **`f1_production_scan_patch_smoke`** | Lands in **`validate_residual_gate.rs`** with EC6 `f4_decoy_*` rows — no separate `validate_energy_corpus` binary. |
+| **Lib `energy_signature_production` tests** | `f1_production_haystack_scan_vs_oracle` → **`oracle_energy.rs`**; `scan_detects_f1_production_gap` + `f1_production_scan_and_domain_smoke` → **`integration_energy_smoke.rs`**; `production_matrix_contexts_skip_thirty_on_sixty_sec_fixture` → **stay in lib** (unit). |
+| **`test_support/` `#[test]` policy** | No acceptance/oracle/integration tests in `test_support/` after Phase 2. Fixture-builder unit tests (`energy_signature_fixtures.rs` `production_spec_tests`) **may stay** — they are not tier violations. |
 
 ---
 
@@ -1120,6 +1162,8 @@ Closes gaps called out in plan review (2026-06-25).
 | RG04 / energy smoke on PR | **integration** smokes (`integration_residual_gate_smoke`, `integration_energy_smoke`), not validation feature |
 | `#[ignore]` vs feature gates | Remove ignore when binary is feature-gated; see [Resolved decisions](#resolved-decisions) |
 | `cargo test --workspace` | Dev convenience only after Phase 1; not CI PR gate |
+| `test_support/` tests | Builders only for acceptance/oracle/integration; fixture-builder unit tests OK — see [Resolved decisions](#resolved-decisions) |
+| `validate_residual_gate` scope | `f1_production_scan_patch_smoke` + EC6 `f4_decoy_*` + future RG rows; no `validate_energy_corpus` crate/binary |
 
 ---
 

@@ -46,7 +46,7 @@ placement = "P2"
 config_profile = "calibration"
 tier = "fast"
 assertion = "hard_assert"
-location = "tests/residual_gate_integration.rs::off_no_regression_baseline"
+location = "tests/integration_residual_gate_smoke.rs::off_no_regression_baseline"
 fixture_ref = ["f1_production_16k_32s", "f4_decoy_production_16k_32s"]
 proves = "residual_gate=off matches pre-gate on F1+F4; patch+forced-skip; calibration+production_fit; diagnostics do not affect gating or PCM"
 claims = ["C4"]
@@ -72,7 +72,7 @@ placement = "P2"
 config_profile = "production_fit"
 tier = "diagnostic"
 assertion = "diagnostic_csv"
-location = "tests/floor_oracle_integration.rs::source_gap_oracle_transient_csv"
+location = "tests/validate_floor_oracle.rs::source_gap_oracle_transient_csv"
 fixture_ref = [
   "cc_music_gap_oracle_aac_128k",
   "cc_music_transient_aac_same",
@@ -92,7 +92,7 @@ placement = "P2"
 config_profile = "production_fit"
 tier = "ignored"
 assertion = "hard_assert"
-location = "tests/floor_oracle_integration.rs::deadzone_punch_assert"
+location = "tests/validate_floor_oracle.rs::deadzone_punch_assert"
 fixture_ref = [
   "cc_music_punch_finale_aac_same",
   "cc_music_punch_finale_aac_dual",
@@ -107,7 +107,7 @@ placement = "P2"
 config_profile = "production_fit"
 tier = "ignored"
 assertion = "hard_assert"
-location = "tests/floor_oracle_integration.rs::gate_real_codec_production_fit"
+location = "tests/validate_floor_oracle.rs::gate_real_codec_production_fit"
 fixture_ref = [
   "cc_ambient_gap_oracle_aac_same",
   "cc_speech_gap_oracle_aac_same",
@@ -129,7 +129,7 @@ placement = "P1"
 config_profile = "calibration"
 tier = "diagnostic"
 assertion = "floor_calibration"
-location = "tests/floor_oracle_integration.rs::source_gap_oracle_floor_csv"
+location = "tests/validate_floor_oracle.rs::source_gap_oracle_floor_csv"
 fixture_ref = "manifest FLOOR_OK rows"
 proves = "FLOOR_OK / expect_informative_floor calibration"
 claims = ["support"]  # calibrates FLOOR_OK that C2/C3 informative depends on
@@ -141,7 +141,7 @@ placement = "P2"
 config_profile = "calibration"
 tier = "ignored"
 assertion = "hard_assert"
-location = "tests/floor_oracle_integration.rs::floor_oracle_residual_gate_real_codec"
+location = "tests/validate_floor_oracle.rs::floor_oracle_residual_gate_real_codec"
 fixture_ref = [
   "cc_ambient_gap_oracle_aac_same",
   "cc_speech_gap_oracle_aac_same",
@@ -159,7 +159,7 @@ placement = "P2"
 config_profile = "calibration"
 tier = "ignored"
 assertion = "hard_assert"
-location = "tests/floor_oracle_integration.rs::floor_oracle_veto_rescue_real_broadband_codec"
+location = "tests/validate_floor_oracle.rs::floor_oracle_veto_rescue_real_broadband_codec"
 fixture_ref = "music/speech mid-content manifest rows"
 proves = "veto_rescue matches veto under relaxed floors (not shipped Pearson pass)"
 claims = ["C5"]  # rescue safety (no over-patch), calibration-only
@@ -171,7 +171,7 @@ placement = "P2"
 config_profile = "calibration"
 tier = "ignored"
 assertion = "hard_assert"
-location = "tests/floor_oracle_integration.rs::floor_oracle_vorbis_64k_veto_no_false_veto"
+location = "tests/validate_floor_oracle.rs::floor_oracle_vorbis_64k_veto_no_false_veto"
 fixture_ref = "cc_speech_gap_oracle_vorbis_64k"
 proves = "Veto inert when off patches (calibration)"
 claims = ["C3"]  # no false-veto, calibration-only

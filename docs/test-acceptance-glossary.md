@@ -28,7 +28,7 @@ fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/
 | **EC** | Energy corpus | Production-geometry signature acceptance | lib + `tests/energy_signature_production.rs` |
 | **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
-| **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) |
+| **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [energy-signature-plan.md](archive/energy-signature-plan.md) |
 
 ### Where acceptance code lives (harness)
 
@@ -93,7 +93,7 @@ fillable unless noted.
 ## SD — signature domain oracle
 
 Short-fixture structure signature proofs at domain layer (`unified_match`, `score_pre_*`).
-Defined in [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md).
+Defined in [energy-signature-plan.md](archive/energy-signature-plan.md).
 
 | ID | Fixture | Mode / focus |
 |----|---------|--------------|
@@ -214,6 +214,6 @@ Historical ship criteria from energy signature Phase 2 — not gap kinds.
 - [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) — CI tiers, file layout, `test-tier.ps1`
 - [gap-repair-guide.md](gap-repair-guide.md) — GK / CS in operator workflow
 - [corpus-validation.md](corpus-validation.md) — alignment corpus + EC rows
-- [TEMP-energy-signature-plan.md](TEMP-energy-signature-plan.md) — SD / SP / CHK definitions
+- [energy-signature-plan.md](archive/energy-signature-plan.md) — SD / SP / CHK definitions
 - [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) — EC acceptance detail
 - [residual_gate/README.md](../crates/clip-sync-repair/tests/residual_gate/README.md) — RG contract

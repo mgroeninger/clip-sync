@@ -1,8 +1,18 @@
 # Temporary plan: energy-envelope gap structure matching
 
-> **Status:** Phase 0–2 **complete** (2026-06-21). Energy bins, `GapSignature` enum, `gap_signature_mode` config (**`auto` default**), fit-path search + flat-envelope fallback, shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain), **I1–I5**, **P2-1–P2-2** green. **I1** and **I3** assert domain + haystack + full patch (not domain-only). Phase 3 partially landed: **`--gap-signature-mode` / `--gap-signature-context-secs` CLI flags shipped**, signature-mode guidance lives in [gap-repair-guide.md](gap-repair-guide.md) § Layer 4. Remaining Phase 3 docs (`cli-output.md` verbose `signature_mode`, README hard-gap context example) and corpus tuning open.
+> **Status:** Phases 0–3 **complete** (2026-06-25); ready to archive. Energy bins, `GapSignature`
+> enum, `gap_signature_mode` config (**`auto` default**), fit-path search + flat-envelope fallback,
+> shared fixtures (`test_support/`), acceptance **U1–U8** (+ **U5b** F2 integration domain),
+> **I1–I5**, **P2-1–P2-2** green. **I1**/**I3** assert domain + haystack + full patch. Phase 3:
+> `--gap-signature-mode` / `--gap-signature-context-secs` CLI flags shipped, corpus tuning
+> (**EC-1–EC-6**) complete incl. mode-coupled `nominal_bias`, and all docs landed
+> ([gap-repair-guide.md](gap-repair-guide.md) § Layer 4, `cli-output.md` signature mode, README
+> hard-gap context). Phase 4 dispositioned (FFT + landmarks won't-do; adaptive context → BACKLOG).
+> Open questions all resolved.
 >
-> Archive to `docs/archive/energy-signature-plan.md` when Phase 3 ships.
+> **Archived** (2026-06-25). Frozen record — outbound links are relative to the original `docs/`
+> location and may be stale. Only Phase 4 *adaptive context* remains, parked in
+> [BACKLOG.md](../../BACKLOG.md) (Repair R6 follow-ups) as a low-priority perf optimization.
 
 **Problem:** Structure match today collapses each time bin to a single boolean (“mostly silent” vs “mostly active”). Two regions can share the same talk/pause **pattern** but differ in loudness dynamics (breath level, room tone, musical swells, encode AGC). When the nominal B map is off by hundreds of ms, or multiple pauses sit near the gap, bool structure is ambiguous and repair compensates with more waveform slide / A-boundary extension — higher CPU, same marginal placement.
 
@@ -245,9 +255,27 @@ Not required for Phase 0/2 **done**; supports Phase 3 tuning.
 
 ### Phase 4 — Optional optimizations (defer if Phase 3 ships clean)
 
-- [ ] FFT cross-correlation for pre/post slide when `context_secs * 1000 / bin_ms > 1000` (profile-driven).
-- [ ] **Adaptive context:** only widen context when bool/energy score at nominal map < floor (saves decode on easy gaps) — requires second pass or lazy extend; backlog if not needed.
-- [ ] Peak-picked sparse landmarks as third `GapSignature` variant — only if envelope still ambiguous on speech-heavy corpus.
+Phase 3 shipped clean. Dispositions below recorded at archive time (2026-06-25) after reviewing the
+shipped energy search against the codebase. No Phase 4 work is required before archive.
+
+- [x] ~~FFT cross-correlation for pre/post slide when `context_secs * 1000 / bin_ms > 1000`.~~
+  **Won't do.** Trigger is unreachable at documented settings (>1000 bins = >50 s context at 50 ms
+  bins; max guidance is 30 s = 600 bins). More fundamentally the slide is already step-bounded —
+  `search_coarse_step` caps coarse candidates at ~2000 and `structure_fine_polish_frames` clamps
+  fine polish to ≤128 frames — so it is **not** a full O(N²) correlation. Pearson over ≤600-bin
+  vectors is microseconds/gap; FFT optimizes a slide we don't perform. Reopen only if profiling of
+  very-long-context runs ever shows `energy_similarity` hot.
+- [ ] **Adaptive context** (BACKLOG, low priority). Still valid: `gap_signature_context_secs` sizes
+  the per-gap B decode/slice (`patch_audio.rs`), so a globally-large context costs every gap incl.
+  easy ones. Value is now low — the shipped mode-coupled `nominal_bias` resolves the primary
+  hard-gap (drift) case at the default 3 s context, so a large *global* context is rarely needed.
+  Pays off only when a user sets large global context **and** has many easy gaps. Folded into the
+  BACKLOG streaming/extreme-cases note; not worth the second-pass / lazy-extend complexity now.
+- [x] ~~Peak-picked sparse landmarks as third `GapSignature` variant.~~ **Won't do (research-only).**
+  Gated on "envelope still ambiguous on speech-heavy corpus"; the completed corpus work
+  (EC-1–EC-6, incl. the 7 s-off F4 decoy) showed energy *resolving* the hard cases with no residual
+  ambiguity recorded. `GapSignature` stays `Bool`/`Energy`. Revisit only if real speech corpus
+  surfaces envelope ambiguity energy cannot resolve.
 - [x] **Mode-coupled `nominal_bias` — shipped (2026-06-23 f).** New `fill_fit_energy_nominal_bias_scale` config (default **0.25**): energy-resolved gaps use this lower distance-from-nominal penalty while bool keeps the base `fill_fit_nominal_bias_scale` (default 1.0). Applied per-resolved-signature in `application/patch_region.rs`; plumbed config → `PatchAudioRequest` → `SeamGateParams`. An energy match signals the nominal map may be wrong, so a confident energy contour can override a drifted nominal without loosening bool. Guarded by `f4_decoy_mode_coupled_bias` (energy → true pause, bool → decoy, at base bias 1.0). Penalty scales with distance, so the lower scale only frees far-off (drift) candidates — low-risk for small offsets. Details in [energy-corpus-plan.md](archive/energy-corpus-plan.md) Tuning record (2026-06-23 e/f).
 
 ---
@@ -332,8 +360,17 @@ Do not block energy signature on Phase D. Ship energy through structure tier ind
 
 ## Open questions
 
-1. **Enum vs parallel fields:** `GapSignature` enum vs extending `GapContextSignature` with optional `Vec<f32>` — enum preferred for invariant clarity?
-2. **Default context after flip:** Keep 3 s default or bump to 5–10 s when `energy` becomes default?
-3. **Band-limit:** Speech band (300 Hz–3 kHz) before RMS — worth Phase 1 or only if HVAC rumble false-matches appear?
+All resolved as shipped (2026-06-25).
+
+1. **Enum vs parallel fields:** **Resolved — enum.** `GapSignature { Bool, Energy }` shipped
+   (`domain/gap_signature.rs`); avoids dual truth, as preferred.
+2. **Default context after flip:** **Resolved — kept 3 s.** Default stays `auto` at
+   `gap_signature_context_secs = 3.0`; hard-gap guidance (10–30 s) documented in README and
+   gap-repair-guide rather than raising the global default.
+3. **Band-limit:** **Resolved — deferred (not implemented).** Full-band RMS proved sufficient on the
+   synthetic + production corpus; no HVAC-rumble false matches surfaced. Speech-band pre-filter is a
+   BACKLOG research idea, only if rumble false-matches appear on real material.
 4. ~~**Expose mode on CLI** for debugging (`--gap-signature-mode`)?~~ **Resolved:** `--gap-signature-mode` and `--gap-signature-context-secs` shipped in Phase 3.
-5. **Score naming in JSON/verbose:** Keep `struct pre=` label for energy scores or add `energy pre=` alias for clarity?
+5. **Score naming in JSON/verbose:** **Resolved — kept `struct pre=`.** Energy scores reuse the
+   `struct pre=`/`post=` labels; the resolved tier is disambiguated by the separate
+   `signature_mode=` field (verbose) and `signature_mode` JSON tag. No `energy pre=` alias added.

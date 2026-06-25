@@ -49,11 +49,7 @@ try {
     }
 
     function Invoke-RepairLibUnits {
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair', '--lib', '--',
-            '--skip', 'p1_', '--skip', 'p2_', '--skip', 'p4_',
-            '--skip', 'integration_', '--skip', 'f1_production_haystack'
-        )
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--lib')
     }
 
     function Invoke-RepairPrRepair {
@@ -65,12 +61,12 @@ try {
             '--test', 'scan_gaps_integration',
             '--test', 'cli_wav_integration',
             '--test', 'query_reference_integration',
-            '--test', 'residual_gate_integration',
-            '--test', 'floor_oracle_integration',
+            '--test', 'integration_residual_gate_smoke',
+            '--test', 'integration_floor_oracle_smoke',
+            '--test', 'integration_energy_smoke',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration'
         )
-        Invoke-CargoTest @('-p', 'clip-sync-repair', 'corpus_scan_patch_smoke')
 
         if (Test-FfmpegOnPath) {
             Invoke-CargoTest @(
@@ -100,9 +96,14 @@ try {
             '--test', 'patch_audio_integration',
             '--test', 'query_reference_integration',
             '--test', 'cli_wav_integration',
-            '--test', 'energy_signature_production',
-            '--test', 'floor_oracle_integration',
-            '--test', 'residual_gate_integration',
+            '--test', 'integration_energy_smoke',
+            '--test', 'integration_floor_oracle_smoke',
+            '--test', 'integration_residual_gate_smoke',
+            '--test', 'oracle_energy',
+            '--test', 'validate_floor_oracle',
+            '--test', 'validate_residual_gate',
+            '--test', 'diag_energy_matrix',
+            '--test', 'diag_seam_residual',
             '--test', 'seam_residual_oracle',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration'
@@ -116,10 +117,10 @@ try {
     }
 
     function Invoke-RepairOracle {
-        Invoke-CargoTest @('-p', 'clip-sync-repair', 'p1_', 'p2_', 'p4_', 'f1_production_haystack')
-        Invoke-CargoTest @('-p', 'clip-sync-repair', 'seam_residual_disagreement_oracles')
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'oracle_energy')
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'seam_residual_corpus', 'seam_residual_disagreement_oracles')
         Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
+            '-p', 'clip-sync-repair', '--test', 'oracle_energy',
             'f1_production_oracle_patch_control', 'f2_production_oracle_patch_smoke',
             'f4_decoy_placement_informative_with_high_headroom', '--', '--ignored'
         )
@@ -131,16 +132,22 @@ try {
         }
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
-            'floor_oracle_', 'source_gap_oracle_', 'deadzone_punch', 'gate_real_codec',
-            'patch_audio_fit_production_defaults',
+            '--test', 'validate_floor_oracle',
+            '--test', 'validate_residual_gate', '--', '--ignored'
+        )
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
             'gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing',
-            'f4_decoy_residual_gate', 'f4_decoy_patch_discrimination',
-            'f4_decoy_mode_coupled', 'f4_decoy_energy_recovers',
-            'f1_production_scan_patch_smoke', 'mux_writes', '--', '--ignored'
+            'patch_audio_fit_production_defaults', '--', '--ignored'
         )
     }
 
     function Invoke-RepairDiagnostic {
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'diag_energy_matrix',
+            '--test', 'diag_seam_residual', '--', '--ignored'
+        )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair', '--', '--ignored',
             '--skip', 'floor_oracle_', '--skip', 'source_gap_oracle_',
@@ -149,7 +156,8 @@ try {
             '--skip', 'f4_decoy_residual_gate', '--skip', 'f4_decoy_patch_discrimination',
             '--skip', 'f4_decoy_mode_coupled', '--skip', 'f4_decoy_energy_recovers',
             '--skip', 'f1_production_scan_patch_smoke', '--skip', 'mux_writes',
-            '--skip', 'patch_audio_fit_production_defaults'
+            '--skip', 'patch_audio_fit_production_defaults',
+            '--skip', 'energy_signature_mode_matrix', '--skip', 'seam_residual_'
         )
     }
 

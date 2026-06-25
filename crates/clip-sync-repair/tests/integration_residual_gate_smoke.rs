@@ -1,4 +1,6 @@
-//! Residual gate contract tests (C1–C5). Catalog: `tests/residual_gate/matrix.toml`.
+//! RG04 PR smoke — residual gate off-regression baseline.
+//!
+//! Catalog: `tests/residual_gate_catalog/matrix.toml`.
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;

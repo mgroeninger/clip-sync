@@ -1,12 +1,25 @@
-//! Phase 0/2 acceptance rows U1–U8 (`docs/TEMP-energy-signature-plan.md`).
+//! Energy signature domain-acceptance oracles (SD/EC). Tier: integration (oracle label).
 
-use crate::test_support::energy_signature_fixtures::{
+use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
     build_f2_production, build_f3_drone, build_f3_drone_production, build_f3_silence,
     build_f4_decoy_production, structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN,
     MODE_SCORE_EPS,
 };
-use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
+
+use clip_sync_repair::test_support::energy_signature_production::{
+    gap_report_from_energy_fixture, patch_request_from_repair,
+    production_geometry_params, production_repair_config, scan_gaps_for_fixture,
+};
+use clip_sync_repair::test_support::energy_signature_fixtures::gap_report_times;
+use clip_sync_repair::test_support::patch_geometry_preview::preview_patch_geometry;
+use clip_sync_repair::test_support::energy_signature_fixtures::structure_slide_secs;
+use clip_sync::SymphoniaMediaReader;
+use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync_repair::application::PatchAudio;
+use clip_sync_repair::domain::GapPatchStatus;
+use clip_sync_repair::infrastructure::config::RepairConfig;
+use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 
 #[test]
 fn f1_integration_energy_scores_are_finite() {
@@ -340,4 +353,133 @@ fn p4_f4_decoy_unified_search_diverges() {
         energy.alignment.start_frame,
         bool_match.alignment.start_frame,
     );
+}
+
+
+#[test]
+fn f1_production_haystack_scan_vs_oracle() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_production(48_000, 2, 3.0);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let params = production_geometry_params(&repair);
+    let weights = structure_heavy_weights();
+
+    let scan_report = scan_gaps_for_fixture(&fixture, temp.path());
+    let scan_gap = scan_report
+        .gaps
+        .iter()
+        .find(|g| g.is_fillable())
+        .expect("fillable scan gap");
+    let scan_preview = preview_patch_geometry(
+        &fixture,
+        &scan_report.alignment,
+        scan_gap.video_a_start_secs,
+        scan_gap.video_a_end_secs,
+        scan_gap.video_b_start_secs.unwrap_or(0.0),
+        scan_gap.video_b_end_secs.unwrap_or(0.0),
+        &params,
+    );
+
+    let (oracle_a_start, oracle_a_end, oracle_b_start, oracle_b_end, _) =
+        gap_report_times(&fixture);
+    let oracle_report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let oracle_preview = preview_patch_geometry(
+        &fixture,
+        &oracle_report.alignment,
+        oracle_a_start,
+        oracle_a_end,
+        oracle_b_start,
+        oracle_b_end,
+        &params,
+    );
+
+    eprintln!("{}", scan_preview.format_diagnostic(&fixture));
+    eprintln!("{}", oracle_preview.format_diagnostic(&fixture));
+
+    let scan_haystack = scan_preview
+        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
+    let oracle_haystack = oracle_preview
+        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
+
+    assert!(
+        oracle_preview.true_within_search_radius,
+        "oracle control: true fill must be within search radius"
+    );
+    assert!(
+        oracle_haystack.is_some(),
+        "oracle haystack unified match should succeed"
+    );
+
+    if !scan_preview.true_within_search_radius {
+        eprintln!("scan path: true fill outside search radius (expected blocker)");
+    }
+    if scan_haystack.is_none() {
+        eprintln!("scan path: haystack unified match failed");
+    }
+}
+
+#[test]
+#[ignore = "control: cargo test -p clip-sync-repair f1_production_oracle_patch_control -- --ignored --nocapture"]
+fn f1_production_oracle_patch_control() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f1_production(48_000, 2, 3.0);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("oracle patch");
+    eprintln!(
+        "oracle control: patched={} skipped={} status={:?}",
+        result.summary.patched_count,
+        result.summary.skipped_count,
+        result.summary.gaps.first().map(|g| &g.status),
+    );
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "oracle control should patch F1-long with production config"
+    );
+}
+
+#[test]
+#[ignore = "smoke: cargo test -p clip-sync-repair f2_production_oracle_patch_smoke -- --ignored --nocapture"]
+fn f2_production_oracle_patch_smoke() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repair_defaults = RepairConfig::default();
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let fixture = build_f2_production(48_000, 2, 90.0, 3.0);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            repair_defaults.crossfade_ms,
+        )
+        .expect("F2-long oracle patch");
+    assert_eq!(
+        result.summary.patched_count, 1,
+        "F2-long energy should patch pause₁: {:?}",
+        result.summary.gaps,
+    );
+    // `align_adjustment_secs` is measured from the A-aligned nominal (pause₁ at zero
+    // offset), so a correct pause₁ placement reads ≈ 0; landing on the decoy pause₂
+    // would read ≈ +(gap + bridge). Assert pause₁ (slide ≈ 0), mirroring I3.
+    let actual_slide = match &result.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            align_adjustment_secs,
+            ..
+        } => *align_adjustment_secs,
+        other => panic!("expected patched, got {other:?}"),
+    };
+    let pause2_offset = structure_slide_secs(&fixture, fixture.true_fill_start).abs();
+    assert!(
+        actual_slide.abs() < pause2_offset / 2.0,
+        "F2-long energy slide {actual_slide:.3}s should sit near pause₁ (≈0), \
+         not the decoy pause₂ (≈{pause2_offset:.3}s)",
+    );
+    eprintln!("F2-long energy slide: {actual_slide:.3}s (≈0 = pause₁)");
 }
