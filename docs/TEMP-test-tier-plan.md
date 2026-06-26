@@ -28,7 +28,7 @@
 | **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** — see [acceptance criteria](#acceptance-criteria) |
 | **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
 | **2c** | `align_videos` integration move | Deferred |
-| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | Pending |
+| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 
@@ -1070,12 +1070,15 @@ consumers.
    needs, sibling to the test root:
 
    ```rust
+   #[allow(dead_code)] // harness pub items shared across binaries; each consumer uses a subset
    mod floor_oracle_fixtures {
        include!("common/floor_oracle_fixtures.rs");
    }
    ```
 
    Refactor `residual_gate_runner.rs`: `super::floor_oracle_fixtures` → `crate::floor_oracle_fixtures`.
+   Use `//` (not `//!`) for file headers inside `tests/common/*.rs` — inner doc comments break
+   under `include!`.
 
 2. **Do not use `#[path = "..."]`** — same brittleness as `include!`, but `include!` is the
    documented pattern for shared integration sources when `autotests = false` and there is no
@@ -1087,8 +1090,9 @@ consumers.
 4. **Workspace micro-crates** (`clip-sync-repair-test-floor-oracle`, etc.) — defer unless Phase 2b
    align harness growth makes `include!` repetition painful; not required for repair Phase 3.
 
-5. **`#[allow(dead_code)]` on shared modules** — fallback only if per-binary includes are deferred;
-   prefer includes so `-D warnings` stays meaningful inside each runner file.
+5. **`#[allow(dead_code)]` on the `mod { include!(…) }` wrapper** — required when a harness file
+   exposes items for multiple consumers (e.g. `seam_residual_scoring` serves both corpus and diag);
+   not a substitute for monolithic `mod common`.
 
 **Clippy expectations after Phase 3:**
 

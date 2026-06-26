@@ -2061,7 +2061,7 @@ fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamF
     let mut best: Option<(f64, &SeamChannelResidual)> = None;
     for c in side {
         let headroom = c.chosen.residual_db - c.floor.residual_db;
-        if headroom.is_finite() && best.map_or(true, |(h, _)| headroom > h) {
+        if headroom.is_finite() && best.is_none_or(|(h, _)| headroom > h) {
             best = Some((headroom, c));
         }
     }

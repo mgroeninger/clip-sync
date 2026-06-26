@@ -1,8 +1,11 @@
 //! Floor oracle integration smokes.
 
-mod common;
+#[allow(dead_code)]
+mod floor_oracle_fixtures {
+    include!("common/floor_oracle_fixtures.rs");
+}
 
-use common::floor_oracle_fixtures::{gap_frames_for_case, load_manifest, FloorOracleCase, FloorOracleDefaults};
+use floor_oracle_fixtures::{gap_frames_for_case, load_manifest, FloorOracleCase, FloorOracleDefaults};
 
 #[test]
 fn floor_oracle_manifest_loads() {

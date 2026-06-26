@@ -1,17 +1,22 @@
 //! Floor oracle validation (ffmpeg + corpus).
 
-mod common;
-
-use clip_sync::testing::ffmpeg_util;
+#[allow(dead_code)]
+mod floor_oracle_fixtures {
+    include!("common/floor_oracle_fixtures.rs");
+}
+#[allow(dead_code)]
+mod residual_gate_runner {
+    include!("common/residual_gate_runner.rs");
+}
 
 use clip_sync_repair::domain::ResidualGateMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;
 
-use common::floor_oracle_fixtures::{
-    build_floor_oracle_pair, case_sources_ready, format_label, load_manifest, BuiltFloorOracle,
-    FloorOracleCase, FloorOracleManifest, OracleVariant,
+use floor_oracle_fixtures::{
+    build_floor_oracle_pair, format_label, load_manifest, require_case_sources,
+    require_validation_env, BuiltFloorOracle, FloorOracleCase, FloorOracleManifest, OracleVariant,
 };
-use common::residual_gate_runner::{
+use residual_gate_runner::{
     assert_deadzone_punch_inert, assert_floor_expectations,
     assert_production_fit_gate_no_worse_than_off_baseline,
     assert_production_fit_pearson_deadzone,
@@ -69,12 +74,8 @@ fn print_csv_row(built: &BuiltFloorOracle, run: &FloorOracleRun) {
 }
 
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture"]
 fn source_gap_oracle_floor_csv() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skipping source_gap_oracle_floor_csv: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -87,13 +88,7 @@ fn source_gap_oracle_floor_csv() {
         if case.ignore {
             continue;
         }
-        if !case_sources_ready(case) {
-            eprintln!(
-                "skip {}: run scripts/fetch_corpus_sources.ps1 (source cache missing)",
-                case.id
-            );
-            continue;
-        }
+        require_case_sources(case);
 
         let case_dir = temp.path().join(&case.id);
         let built = build_floor_oracle_pair(&case_dir, case, &manifest.defaults);
@@ -112,26 +107,18 @@ fn source_gap_oracle_floor_csv() {
         mismatches.join("\n"),
     );
 
-    if ran == 0 {
-        eprintln!(
-            "source_gap_oracle_floor_csv: no cases ran (fetch sources or check ffmpeg)"
-        );
-    }
+    assert!(
+        ran > 0,
+        "validation tier: no floor oracle cases ran — manifest has no runnable rows or all cases are `ignore = true`"
+    );
 }
 
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_vorbis_64k_veto_no_false_veto -- --ignored --nocapture"]
 fn floor_oracle_vorbis_64k_veto_no_false_veto() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skip: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
     let manifest = load_manifest();
     let case = manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_64k");
-    if !case_sources_ready(case) {
-        eprintln!("skip: run scripts/fetch_corpus_sources.ps1");
-        return;
-    }
+    require_case_sources(case);
     let temp = tempfile::tempdir().expect("tempdir");
     let built = build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
     let off = run_built_floor_oracle(&built, ResidualGateMode::Off);
@@ -147,12 +134,8 @@ fn floor_oracle_vorbis_64k_veto_no_false_veto() {
 /// Real-codec residual gate on Wikimedia floor oracles: truth gaps patch under `off`/`veto`/
 /// `veto_rescue`; unrelated two-mic must not be rescued into a patch.
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture"]
 fn floor_oracle_residual_gate_real_codec() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skipping floor_oracle_residual_gate_real_codec: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let ambient = manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same");
@@ -162,12 +145,7 @@ fn floor_oracle_residual_gate_real_codec() {
     let two_mic = manifest_case(&manifest, "cc_speech_ambient_two_mic");
 
     for case in [ambient, speech, speech_vorbis, ambient_vorbis, two_mic] {
-        if !case_sources_ready(case) {
-            eprintln!(
-                "skip floor_oracle_residual_gate_real_codec: run scripts/fetch_corpus_sources.ps1"
-            );
-            return;
-        }
+        require_case_sources(case);
     }
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -258,12 +236,8 @@ fn floor_oracle_residual_gate_real_codec() {
 /// Dead-zone rescue proof stays on `broadband_oracle_veto_rescue_patches_marginal`
 /// (`seam_residual_oracle.rs`). This test ties rescue safety to the same corpus as FLOOR_OK.
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture"]
 fn floor_oracle_veto_rescue_real_broadband_codec() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skip floor_oracle_veto_rescue_real_broadband_codec: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let cases = [
@@ -274,12 +248,7 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
     ];
 
     for case in cases {
-        if !case_sources_ready(case) {
-            eprintln!(
-                "skip floor_oracle_veto_rescue_real_broadband_codec: run scripts/fetch_corpus_sources.ps1"
-            );
-            return;
-        }
+        require_case_sources(case);
     }
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -300,12 +269,8 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
 /// baseline); broadband finale gaps skip in the Pearson dead zone with uninformative floor; two-mic
 /// must abstain (C2).
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair gate_real_codec_production_fit -- --ignored --nocapture"]
 fn gate_real_codec_production_fit() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skip gate_real_codec_production_fit: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let shaped_speech_ambient = [
@@ -322,10 +287,7 @@ fn gate_real_codec_production_fit() {
         .into_iter()
         .chain([music_control, two_mic, finale_deadzone])
     {
-        if !case_sources_ready(case) {
-            eprintln!("skip gate_real_codec_production_fit: run scripts/fetch_corpus_sources.ps1");
-            return;
-        }
+        require_case_sources(case);
     }
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -439,12 +401,8 @@ fn gate_real_codec_production_fit() {
 /// A borders remove the inject-then-encode confound. Baseline:
 /// `tests/residual_gate_catalog/baseline_run_b_transient.csv`.
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair deadzone_punch_assert -- --ignored --nocapture"]
 fn deadzone_punch_assert() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skip deadzone_punch_assert: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let ids = [
@@ -455,10 +413,7 @@ fn deadzone_punch_assert() {
     let temp = tempfile::tempdir().expect("tempdir");
     for id in ids {
         let case = manifest_case(&manifest, id);
-        if !case_sources_ready(case) {
-            eprintln!("skip deadzone_punch_assert: run scripts/fetch_corpus_sources.ps1");
-            return;
-        }
+        require_case_sources(case);
         let built = build_floor_oracle_pair(&temp.path().join(id), case, &manifest.defaults);
         for gate in [
             ResidualGateMode::Off,
@@ -482,12 +437,8 @@ fn deadzone_punch_assert() {
 /// The first transient case is preceded by the benign mid-content `cc_music_gap_oracle_aac_128k`
 /// control (where Pearson is known to pass), so the matrix shows both regimes side by side.
 #[test]
-#[ignore = "needs fetch_corpus_sources + ffmpeg: cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture"]
 fn source_gap_oracle_transient_csv() {
-    if !ffmpeg_util::ffmpeg_available() {
-        eprintln!("skip source_gap_oracle_transient_csv: ffmpeg unavailable");
-        return;
-    }
+    require_validation_env();
 
     let manifest = load_manifest();
     let ids = [
@@ -514,10 +465,7 @@ fn source_gap_oracle_transient_csv() {
         if case.ignore {
             continue;
         }
-        if !case_sources_ready(case) {
-            eprintln!("skip source_gap_oracle_transient_csv: run scripts/fetch_corpus_sources.ps1");
-            return;
-        }
+        require_case_sources(case);
         let built = build_floor_oracle_pair(&temp.path().join(id), case, &manifest.defaults);
         for gate in [
             ResidualGateMode::Off,
@@ -550,3 +498,4 @@ fn source_gap_oracle_transient_csv() {
         }
     }
 }
+

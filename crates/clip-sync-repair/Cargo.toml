@@ -6,6 +6,7 @@ description = "Gap scan and repair tool for clip-sync"
 authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]
 license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/mgroeninger/clip-sync"
+autotests = false
 
 [lib]
 name = "clip_sync_repair"
@@ -21,6 +22,8 @@ ffmpeg-mux = []
 he-aac = ["clip-sync/he-aac"]
 ac3 = ["clip-sync/ac3"]
 ffmpeg-tests = ["clip-sync/ffmpeg-tests"]
+validation-tests = []
+diagnostic-tests = []
 
 [dependencies]
 clip-sync = { path = "../clip-sync" }
@@ -35,3 +38,76 @@ hound = "3"
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }
 tempfile = "3"
+
+[[test]]
+name = "config_roundtrip"
+path = "tests/config_roundtrip.rs"
+
+[[test]]
+name = "scan_gaps_integration"
+path = "tests/scan_gaps_integration.rs"
+
+[[test]]
+name = "patch_audio_integration"
+path = "tests/patch_audio_integration.rs"
+
+[[test]]
+name = "query_reference_integration"
+path = "tests/query_reference_integration.rs"
+
+[[test]]
+name = "cli_wav_integration"
+path = "tests/cli_wav_integration.rs"
+
+[[test]]
+name = "wav_bit_depth_integration"
+path = "tests/wav_bit_depth_integration.rs"
+
+[[test]]
+name = "integration_floor_oracle_smoke"
+path = "tests/integration_floor_oracle_smoke.rs"
+
+[[test]]
+name = "integration_energy_smoke"
+path = "tests/integration_energy_smoke.rs"
+
+[[test]]
+name = "integration_residual_gate_smoke"
+path = "tests/integration_residual_gate_smoke.rs"
+
+[[test]]
+name = "cli_mux_integration"
+path = "tests/cli_mux_integration.rs"
+required-features = ["ffmpeg-mux"]
+
+[[test]]
+name = "oracle_energy"
+path = "tests/oracle_energy.rs"
+
+[[test]]
+name = "seam_residual_oracle"
+path = "tests/seam_residual_oracle.rs"
+
+[[test]]
+name = "seam_residual_corpus"
+path = "tests/seam_residual_corpus.rs"
+
+[[test]]
+name = "validate_floor_oracle"
+path = "tests/validate_floor_oracle.rs"
+required-features = ["validation-tests"]
+
+[[test]]
+name = "validate_residual_gate"
+path = "tests/validate_residual_gate.rs"
+required-features = ["validation-tests"]
+
+[[test]]
+name = "diag_energy_matrix"
+path = "tests/diag_energy_matrix.rs"
+required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_seam_residual"
+path = "tests/diag_seam_residual.rs"
+required-features = ["diagnostic-tests"]

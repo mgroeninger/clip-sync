@@ -231,20 +231,27 @@ Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Pha
 
 | Layer | Tier | Fixture / test | Asserts |
 |-------|------|----------------|---------|
-| Domain oracle | **committed** (lib) | `build_f1/f2/f3_production` + `build_f4_decoy_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_`), **EC-6** (`p4_f4_decoy_energy_separates_but_bool_ties`) | Unified match on full B; energy vs bool discrimination |
-| Scan path | **committed** (lib) | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
-| **End-to-end (CI smoke)** | **committed** | `corpus_scan_patch_smoke` (integration binary, ~5 s) | Full scan → patch on 16 kHz / 32 s production-geometry F1; asserts one gap detected and patched |
-| Integration (fast) | **committed** | I1–I4 @ 8 s, `energy_sig_patch_options` | Patch with oracle `GapReport`, structure-heavy weights |
-| Mode matrix + EC-6 patch | **ignored** | `energy_signature_mode_matrix`, `f4_decoy_patch_discrimination`, `f4_decoy_mode_coupled_bias` | CSV rows (fixture × mode × context); **EC-6:** energy → true pause (slide +7 s) / bool → decoy (slide 0); mode-coupled bias un-masks at production weights |
+| Domain oracle | **integration** (oracle label) | `tests/oracle_energy.rs` — `build_f1/f2/f3_production` + `build_f4_decoy_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_`), **EC-6** (`p4_f4_decoy_energy_separates_but_bool_ties`) | Unified match on full B; energy vs bool discrimination |
+| Scan path | **integration** | `tests/integration_energy_smoke.rs` — `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
+| **End-to-end (CI smoke)** | **integration** | `corpus_scan_patch_smoke` in `integration_energy_smoke.rs` (~5 s) | Full scan → patch on 16 kHz / 32 s production-geometry F1; asserts one gap detected and patched |
+| Integration (fast) | **integration** | I1–I4 @ 8 s in `patch_audio_integration.rs` | Patch with oracle `GapReport`, structure-heavy weights |
+| Mode matrix + EC-6 patch | **validation** / **diagnostic** | `validate_residual_gate.rs` (`f4_decoy_patch_discrimination`, …); `diag_energy_matrix.rs` (`energy_signature_mode_matrix`, …) | CSV rows (fixture × mode × context); **EC-6:** energy → true pause / bool → decoy |
 
-**CI commands:**
+**CI commands** (prefer [test-tier.ps1](development.md#default--ci-commands); bare `cargo test -p clip-sync-repair` runs **`--lib` only** after Phase 3):
 
 ```powershell
-cargo test -p clip-sync-repair --lib production
-cargo test -p clip-sync-repair --lib u5 f2 p1_f1 p2_f2 p3_f3 p4_f4   # EC-1..EC-3, EC-6 (fast)
-cargo test -p clip-sync-repair corpus_scan_patch_smoke               # committed e2e tripwire (~5 s)
-cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture
-cargo test -p clip-sync-repair f4_decoy_patch_discrimination -- --ignored --nocapture  # EC-6 patch layer
+# PR repair slice (integration + oracle label)
+.\scripts\test-tier.ps1 -Tier pr-repair
+
+# Ad hoc — integration binaries
+cargo test -p clip-sync-repair --test oracle_energy u5 f2 p1_f1 p2_f2 p3_f3 p4_f4
+cargo test -p clip-sync-repair --test integration_energy_smoke corpus_scan_patch_smoke
+
+# Validation (EC-6 patch layer)
+cargo test -p clip-sync-repair --features validation-tests --test validate_residual_gate f4_decoy_patch_discrimination
+
+# Diagnostic (mode matrix CSV)
+cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix energy_signature_mode_matrix -- --nocapture
 ```
 
 ### Fixture scenarios → oracles and tags
@@ -279,8 +286,8 @@ After matrix or config changes, extend the [gap fill checklist](#manual-acceptan
 
 | Check | Pass? | Notes |
 |-------|-------|-------|
-| EC-1–EC-3 lib tests green | | `cargo test -p clip-sync-repair --lib production` |
-| Mode matrix recorded (ignored run) | | Paste rows into [Tuning record](archive/energy-corpus-plan.md#tuning-record) |
+| EC-1–EC-3 oracle tests green | | `cargo test -p clip-sync-repair --test oracle_energy production` |
+| Mode matrix recorded (diagnostic run) | | `.\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture` |
 | `-v` `gap tags:` match expected tier for listen-approved gaps | | Compare to fixture table above |
 | `auto`/`energy` patch cases where `bool` skips or mis-places | | **EC-6 met** on synthetic F4-decoy (`f4_decoy_patch_discrimination`); confirm on real drift-heavy media |
 

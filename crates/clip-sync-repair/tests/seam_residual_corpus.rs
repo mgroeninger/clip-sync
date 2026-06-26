@@ -1,6 +1,9 @@
 //! Seam residual integration oracles (score-level acceptance).
 
-mod common;
+#[allow(dead_code)]
+mod seam_residual_scoring {
+    include!("common/seam_residual_scoring.rs");
+}
 
 use clip_sync_repair::domain::gap_fill_fit::{
     apply_residual_to_confidence, ResidualGateError, FillConfidence,
@@ -11,7 +14,7 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f4_decoy_production,
 };
 
-use common::seam_residual_scoring::{
+use seam_residual_scoring::{
     build_broadband, disagreement_at, score_placement, GateOutcomeLabel, PearsonTierLabel, Variant,
 };
 

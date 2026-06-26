@@ -1,6 +1,9 @@
 //! Energy signature matrix / sweep diagnostics.
 
-mod common;
+#[allow(dead_code)]
+mod energy_signature_matrix {
+    include!("common/energy_signature_matrix.rs");
+}
 
 use std::time::Instant;
 
@@ -19,12 +22,11 @@ use clip_sync_repair::test_support::energy_signature_production::{
     production_repair_config, production_weight_sweep_config,
 };
 
-use common::energy_signature_matrix::{
+use energy_signature_matrix::{
     format_slide, run_matrix_rows, run_oracle_control_row, run_oracle_matrix_rows,
 };
 
 #[test]
-#[ignore = "tier:diagnostic — matrix: cargo test -p clip-sync-repair energy_signature_mode_matrix -- --ignored --nocapture"]
 fn energy_signature_mode_matrix() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -109,7 +111,6 @@ fn energy_signature_mode_matrix() {
 }
 
 #[test]
-#[ignore = "tier:diagnostic — diagnostic: cargo test -p clip-sync-repair f2_production_weights_diagnostic -- --ignored --nocapture"]
 fn f2_production_weights_diagnostic() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -142,7 +143,6 @@ fn f2_production_weights_diagnostic() {
 /// Energy target slide ≈ +7 s (true pause); bool/masked ≈ 0 (decoy).
 
 #[test]
-#[ignore = "tier:diagnostic — sweep: cargo test -p clip-sync-repair f4_decoy_weight_sweep -- --ignored --nocapture"]
 fn f4_decoy_weight_sweep() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -188,7 +188,6 @@ fn f4_decoy_weight_sweep() {
 /// energy/bool split. Pin the threshold between 0 and 0.5 at production weights (0.35/0.65).
 
 #[test]
-#[ignore = "tier:diagnostic — sweep: cargo test -p clip-sync-repair f4_decoy_bias_boundary -- --ignored --nocapture"]
 fn f4_decoy_bias_boundary() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -219,7 +218,6 @@ fn f4_decoy_bias_boundary() {
 }
 
 #[test]
-#[ignore = "tier:diagnostic — diagnostic: cargo test -p clip-sync-repair f4_decoy_patch_diagnostic -- --ignored --nocapture"]
 fn f4_decoy_patch_diagnostic() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -248,3 +246,4 @@ fn f4_decoy_patch_diagnostic() {
         &repair_defaults,
     );
 }
+

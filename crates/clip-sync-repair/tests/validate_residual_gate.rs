@@ -18,7 +18,6 @@ use clip_sync_repair::test_support::energy_signature_production::{
 };
 
 #[test]
-#[ignore = "tier:validation — smoke: cargo test -p clip-sync-repair f1_production_scan_patch_smoke -- --ignored --nocapture"]
 fn f1_production_scan_patch_smoke() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -46,7 +45,6 @@ fn f1_production_scan_patch_smoke() {
 /// Energy mode still patches the true pause under veto. Ignored: ~72 s in debug.
 
 #[test]
-#[ignore = "tier:validation — ec6: cargo test -p clip-sync-repair f4_decoy_residual_gate_vetoes_bool -- --ignored --nocapture"]
 fn f4_decoy_residual_gate_vetoes_bool() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -129,7 +127,6 @@ fn f4_decoy_residual_gate_vetoes_bool() {
 /// bool-vs-energy split survives the full patch path. Ignored: ~36 s per patch in debug.
 
 #[test]
-#[ignore = "tier:validation — ec6: cargo test -p clip-sync-repair f4_decoy_patch_discrimination -- --ignored --nocapture"]
 fn f4_decoy_patch_discrimination() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -187,7 +184,6 @@ fn f4_decoy_patch_discrimination() {
 /// coupling un-masks the EC-6 split that full production weights otherwise hide.
 
 #[test]
-#[ignore = "tier:validation — ec6: cargo test -p clip-sync-repair f4_decoy_mode_coupled_bias -- --ignored --nocapture"]
 fn f4_decoy_mode_coupled_bias() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -238,7 +234,6 @@ fn f4_decoy_mode_coupled_bias() {
 /// realistic weights, and that the masking lever is `nominal_bias`, not the weight split.
 
 #[test]
-#[ignore = "tier:validation — ec6: cargo test -p clip-sync-repair f4_decoy_energy_recovers_at_low_bias -- --ignored --nocapture"]
 fn f4_decoy_energy_recovers_at_low_bias() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -274,3 +269,4 @@ fn f4_decoy_energy_recovers_at_low_bias() {
          ({slide:.3}s vs {truth_slide:.3}s)",
     );
 }
+

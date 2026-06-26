@@ -187,7 +187,7 @@ G5 RESOLVED: rescue trigger does not occur on real codec noise (synthetic-only)
 | `cc_music_punch_finale_aac_*` | punch_after_encode | finale_transient | **Decisive G5** — native borders; floor *still* uninformative (confound refuted) |
 
 ```text
-cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle source_gap_oracle_transient_csv -- --nocapture
 ```
 
 ### G5 summary (production_fit, finale) — **resolved**
@@ -239,7 +239,7 @@ profiles** first.
 
 **No.** The matrix is an **inventory**, not a migration checklist.
 
-| Matrix row | Re-home under `residual_gate_integration.rs`? | Reason |
+| Matrix row | Re-home under `integration_residual_gate_smoke.rs` / `validate_*`? | Reason |
 |------------|-----------------------------------------------|--------|
 | `disagreement_oracles` | **No** | Layer B — stays in `seam_residual_corpus.rs` |
 | `floor_calibration_csv` | **No** | Calibration home — stays in `validate_floor_oracle.rs` |
@@ -337,9 +337,9 @@ G5 closure.
 ### Verify
 
 ```text
-cargo test -p clip-sync-repair seam_residual_disagreement_oracles
-cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture
-cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec -- --ignored --nocapture
+cargo test -p clip-sync-repair --test seam_residual_corpus seam_residual_disagreement_oracles
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle source_gap_oracle_transient_csv -- --nocapture
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle floor_oracle_residual_gate_real_codec -- --nocapture
 ```
 
 ---
@@ -377,9 +377,11 @@ other F4 decoy tuning tests, `policies.rs` unit tests.
 ## Quick commands
 
 ```text
-cargo test -p clip-sync-repair off_no_regression_baseline
-cargo test -p clip-sync-repair seam_residual_disagreement_oracles
-cargo test -p clip-sync-repair source_gap_oracle_floor_csv -- --ignored --nocapture
-cargo test -p clip-sync-repair source_gap_oracle_transient_csv -- --ignored --nocapture
-cargo test -p clip-sync-repair floor_oracle_residual_gate_real_codec floor_oracle_veto_rescue_real_broadband_codec -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_residual_gate_smoke off_no_regression_baseline
+cargo test -p clip-sync-repair --test seam_residual_corpus seam_residual_disagreement_oracles
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle source_gap_oracle_floor_csv -- --nocapture
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle source_gap_oracle_transient_csv -- --nocapture
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle floor_oracle_residual_gate_real_codec floor_oracle_veto_rescue_real_broadband_codec -- --nocapture
 ```
+
+Or: `.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair`

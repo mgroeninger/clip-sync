@@ -1,4 +1,4 @@
-//! Real-media floor-oracle pair builder for FLOOR_OK calibration (integration tests).
+// Real-media floor-oracle pair builder for FLOOR_OK calibration (integration tests).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -209,6 +209,23 @@ pub fn case_sources_ready(case: &FloorOracleCase) -> bool {
         return source_ready(donor);
     }
     true
+}
+
+/// Hard prerequisites for `validate_floor_oracle` (`validation-tests` binary).
+pub fn require_validation_env() {
+    assert!(
+        ffmpeg_available(),
+        "validation tier requires ffmpeg on PATH (install ffmpeg and ensure it is on PATH)"
+    );
+}
+
+pub fn require_case_sources(case: &FloorOracleCase) {
+    assert!(
+        case_sources_ready(case),
+        "validation tier: source cache missing for case `{}` (source `{}`) — run scripts/fetch_corpus_sources.ps1",
+        case.id,
+        case.source_id
+    );
 }
 
 fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {

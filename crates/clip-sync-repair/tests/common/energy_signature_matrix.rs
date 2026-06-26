@@ -1,4 +1,4 @@
-//! Shared matrix/oracle row runners for energy signature integration binaries.
+// Shared matrix/oracle row runners for energy signature integration binaries.
 
 use std::time::Instant;
 

@@ -104,10 +104,6 @@ try {
             '--test', 'integration_floor_oracle_smoke',
             '--test', 'integration_residual_gate_smoke',
             '--test', 'oracle_energy',
-            '--test', 'validate_floor_oracle',
-            '--test', 'validate_residual_gate',
-            '--test', 'diag_energy_matrix',
-            '--test', 'diag_seam_residual',
             '--test', 'seam_residual_oracle',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration'
@@ -136,8 +132,9 @@ try {
         }
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
+            '--features', 'validation-tests',
             '--test', 'validate_floor_oracle',
-            '--test', 'validate_residual_gate', '--', '--ignored'
+            '--test', 'validate_residual_gate'
         )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
@@ -147,21 +144,30 @@ try {
     }
 
     function Invoke-RepairDiagnostic {
+        # Feature-gated diagnostic binaries (CSV / sweeps; no #[ignore]).
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
+            '--features', 'diagnostic-tests',
             '--test', 'diag_energy_matrix',
-            '--test', 'diag_seam_residual', '--', '--ignored'
+            '--test', 'diag_seam_residual'
+        )
+        # Straggler diagnostic #[ignore] rows still in --lib or integration binaries.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair', '--lib', '--', '--ignored',
+            '--skip', 'gap_corpus_generated', '--skip', 'gap_corpus_external',
+            '--skip', 'gap_corpus_patch_timing'
         )
         Invoke-CargoTest @(
-            '-p', 'clip-sync-repair', '--', '--ignored',
-            '--skip', 'floor_oracle_', '--skip', 'source_gap_oracle_',
-            '--skip', 'deadzone_punch', '--skip', 'gate_real_codec',
-            '--skip', 'gap_corpus_generated', '--skip', 'gap_corpus_external',
-            '--skip', 'f4_decoy_residual_gate', '--skip', 'f4_decoy_patch_discrimination',
-            '--skip', 'f4_decoy_mode_coupled', '--skip', 'f4_decoy_energy_recovers',
-            '--skip', 'f1_production_scan_patch_smoke', '--skip', 'mux_writes',
-            '--skip', 'patch_audio_fit_production_defaults',
-            '--skip', 'energy_signature_mode_matrix', '--skip', 'seam_residual_'
+            '-p', 'clip-sync-repair',
+            '--test', 'patch_audio_integration',
+            '--', '--ignored',
+            '--skip', 'patch_audio_fit_production_defaults'
+        )
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'seam_residual_oracle',
+            '--', '--ignored',
+            '--skip', 'broadband_oracle'
         )
     }
 

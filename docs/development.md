@@ -103,8 +103,8 @@ contract). Select oracle tests by name (`cargo test oracle_`) or acceptance ID.
 |------|---------|-------------------------------|------------------|
 | **unit** | Pure logic, policies, small fakes | yes (`pr` → repair lib with `oracle_`-label skips) | `src/**` `#[test]` |
 | **integration** | Patch/scan/CLI on synthetic WAV; seam behavior; repo-only domain-acceptance (`oracle_` label) | yes (subset via `pr-repair`) | `tests/*_integration.rs`, `tests/oracle_*.rs` |
-| **validation** | External dep (real codec / ffmpeg / corpus / env) **or** exhaustive off-PR contract (RG, EC6, floor oracle) | no (`#[ignore]` or manual) | `tests/`, lib ignores |
-| **diagnostic** | CSV dumps, sweeps, golden generators (emit data, no assertion) | never | manual only |
+| **validation** | External dep (real codec / ffmpeg / corpus / env) **or** exhaustive off-PR contract (RG, EC6, floor oracle) | no (`validation-tests` feature) | `tests/validate_*.rs` |
+| **diagnostic** | CSV dumps, sweeps, golden generators (emit data, no assertion) | never (`diagnostic-tests` feature) | `tests/diag_*.rs` |
 
 ### Tier decision rule
 
@@ -133,6 +133,31 @@ validation/diagnostic rows.
 
 `cargo test --workspace` is a **local convenience** compile check only — not the CI PR gate.
 
+**Phase 3 (`clip-sync-repair`):** integration test binaries are declared explicitly in
+`Cargo.toml` (`autotests = false`). Bare `cargo test -p clip-sync-repair` runs **`--lib` only**
+— not integration binaries. Validation and diagnostic binaries require feature flags:
+
+| Feature | Binaries |
+|---------|----------|
+| *(default)* | lib + integration + `oracle_*` |
+| `validation-tests` | `validate_floor_oracle`, `validate_residual_gate` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual` |
+
+```powershell
+cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
+cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture
+```
+
+**Clippy (local verification):**
+
+```powershell
+# PR-equivalent (no validation/diagnostic binaries)
+cargo clippy -p clip-sync-repair --all-targets -- -D warnings
+
+# Full repair harness
+cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagnostic-tests -- -D warnings
+```
+
 ### Wall-time budgets (debug, typical dev machine)
 
 | Profile | Budget |
@@ -142,8 +167,8 @@ validation/diagnostic rows.
 | `pr-repair` | ~4–6 min |
 | `pr-repair-extended` | +~3–8 min (sine seam grid, skips SP rows) |
 | `unit` (repair lib, `oracle_`-label skips) | ~30–60 s |
-| `integration` (repair, all `--test` binaries) | ~20+ min (includes full `patch_audio`) |
-| `validation` | minutes+; ffmpeg + optional corpus env |
+| `integration` (repair, integration + oracle `--test` binaries; **not** `validate_*` / `diag_*`) | ~20+ min (includes full `patch_audio`) |
+| `validation` | minutes+; **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
 
 ---
 
@@ -161,18 +186,20 @@ validation/diagnostic rows.
 .\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
 .\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
 .\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # convenience: oracle-label rows (integration tier)
-.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # needs ffmpeg
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # needs ffmpeg + fetch_corpus_sources
 .\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
 
 # Extended repair (pr-repair + patch_audio sine grid, skips i1_/i2_/i3_)
 .\scripts\test-tier.ps1 -Tier pr-repair-extended
 ```
 
-**Integration-only** (repair integration binaries, **no `--lib`**):
+**Integration-only** (repair integration + oracle binaries, **no `--lib`**, **no** `validate_*` / `diag_*`):
 
 ```powershell
 .\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
 ```
+
+Use `-Tier validation` / `-Tier diagnostic` for feature-gated `validate_*` and `diag_*` binaries.
 
 Do **not** use `cargo test --tests` for integration-only — Cargo still runs `--lib` with
 `--tests`. Use the script or an explicit `--test <binary>` list (see
@@ -193,15 +220,20 @@ cargo test -p clip-sync-repair gap_corpus_committed
 cargo test -p clip-sync-repair --test patch_audio_integration
 ```
 
-### `#[ignore]` convention (new / edited tests)
+### `#[ignore]` convention (integration / lib tests)
+
+Tests in feature-gated `validate_*` / `diag_*` binaries do **not** use `#[ignore]` — the
+`validation-tests` / `diagnostic-tests` Cargo features control compilation instead.
+
+For tests still in shared integration binaries or `--lib`, use:
 
 ```rust
 #[ignore = "tier:validation — needs ffmpeg + fetch_corpus_sources"]
 #[ignore = "tier:diagnostic — CSV export; test-tier.ps1 -Tier diagnostic"]
 ```
 
-Phase 1 validation/diagnostic tiers in the script still match many legacy ignore reason strings
-(`diagnostic:`, `needs fetch_corpus_sources`, etc.) until prefixes are updated opportunistically.
+Legacy ignore reason strings (`diagnostic:`, `needs fetch_corpus_sources`, etc.) remain on older
+rows until touched.
 
 ---
 

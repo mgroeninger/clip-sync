@@ -1,8 +1,8 @@
-//! Shared floor-oracle pipeline runner for residual gate validation tests.
-//!
-//! One gap per [`BuiltFloorOracle`], `measure_residual = true`, decode A to mono for
-//! `gap_report_from_floor_oracle` — same contract as the original `floor_oracle_integration`
-//! helpers.
+// Shared floor-oracle pipeline runner for residual gate validation tests.
+//
+// One gap per `BuiltFloorOracle`, `measure_residual = true`, decode A to mono for
+// `gap_report_from_floor_oracle` — same contract as the original `floor_oracle_integration`
+// helpers.
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
@@ -17,7 +17,7 @@ use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_floor_oracle, patch_request_from_repair, production_repair_config,
 };
 
-use super::floor_oracle_fixtures::{decode_to_mono_wav_at, read_mono_wav, BuiltFloorOracle};
+use crate::floor_oracle_fixtures::{decode_to_mono_wav_at, read_mono_wav, BuiltFloorOracle};
 
 pub struct FloorOracleRun {
     pub status: &'static str,

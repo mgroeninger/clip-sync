@@ -1,17 +1,19 @@
 //! Seam residual CSV diagnostics.
 
-mod common;
+#[allow(dead_code)]
+mod seam_residual_scoring {
+    include!("common/seam_residual_scoring.rs");
+}
 
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f2_production, build_f4_decoy_production,
 };
 
-use common::seam_residual_scoring::{
+use seam_residual_scoring::{
     build_broadband, build_broadband_with, run_disagreement_fixture, run_fixture, score_at, Variant,
 };
 
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_broadband_csv -- --ignored --nocapture"]
 fn seam_residual_broadband_csv() {
     println!(
         "fixture,variant,placement,oracle_correct,seam_pre,seam_post,\
@@ -29,7 +31,6 @@ fn seam_residual_broadband_csv() {
 /// headroom grows (correct reject). Codec noise on → realistic floor.
 
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_alignment_sweep_csv -- --ignored --nocapture"]
 fn seam_residual_alignment_sweep_csv() {
     println!(
         "rate,offset_samples,seam_pre,seam_post,residual_pre_db,residual_post_db,\
@@ -61,7 +62,6 @@ fn seam_residual_alignment_sweep_csv() {
 /// veto case. Fast score-level check (no full patch search).
 
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_truth_decoy_csv -- --ignored --nocapture"]
 fn seam_residual_truth_decoy_csv() {
     println!(
         "fixture,variant,placement,oracle_correct,seam_pre,seam_post,\
@@ -75,7 +75,6 @@ fn seam_residual_truth_decoy_csv() {
 }
 
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_disagreement_csv -- --ignored --nocapture"]
 fn seam_residual_disagreement_csv() {
     println!(
         "fixture,variant,placement,oracle_correct,pearson_min,pearson_tier,\
@@ -91,3 +90,4 @@ fn seam_residual_disagreement_csv() {
         run_disagreement_fixture(&build_broadband(16_000, variant), variant.label());
     }
 }
+

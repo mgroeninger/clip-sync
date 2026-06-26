@@ -23,9 +23,9 @@ fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/
 | **GK** | Gap kind | Operator/report classification (maps to `plan_kind`) | [gap-repair-guide.md](gap-repair-guide.md) Layer 1 |
 | **CS** | Content shape | Acoustic/editorial seam hint | [gap-repair-guide.md](gap-repair-guide.md) Layer 2 |
 | **F** | Fixture geometry | Synthetic scenario layout (F1, F1-long, F4-decoy, …) | `test_support/`, guide § Corpus fixtures |
-| **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | lib / `tests/oracle_energy.rs` (target) |
+| **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | `tests/oracle_energy.rs` (integration, oracle label) |
 | **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/patch_audio_integration.rs` |
-| **EC** | Energy corpus | Production-geometry signature acceptance | lib + `tests/energy_signature_production.rs` |
+| **EC** | Energy corpus | Production-geometry signature acceptance | `tests/oracle_energy.rs` (domain), `tests/integration_energy_smoke.rs` (scan/e2e), `tests/validate_residual_gate.rs` (EC-6 patch, validation), `tests/diag_energy_matrix.rs` (matrix, diagnostic) |
 | **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
 | **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [energy-signature-plan.md](archive/energy-signature-plan.md) |
