@@ -121,6 +121,8 @@ pub fn apply_residual_to_confidence(
 
 /// Penalty subtracted from ranking score per frame of A-boundary movement (Phase C).
 pub const BOUNDARY_MOVE_PENALTY_PER_FRAME: f64 = 0.000_2;
+/// Penalty per frame the anchor bracket center drifts from the scan-hole center (anchor seam).
+pub const ANCHOR_CENTER_DRIFT_PENALTY_PER_FRAME: f64 = 0.000_15;
 
 /// Cap grid steps per axis in joint A-boundary search (Phase C performance).
 const MAX_BOUNDARY_GRID_STEPS: usize = 12;
@@ -135,6 +137,31 @@ pub fn boundary_search_step_frames(max_extend_frames: usize, step_frames: usize)
 
 pub fn fit_candidate_ranking_score(min_waveform: f64, boundary_move_frames: usize) -> f64 {
     min_waveform - BOUNDARY_MOVE_PENALTY_PER_FRAME * boundary_move_frames as f64
+}
+
+/// Frame distance between scan-hole center and anchor-bracket center on A.
+pub fn anchor_bracket_center_drift_frames(
+    scan_hole: crate::domain::policies::RefinedGapFrames,
+    refined: crate::domain::policies::RefinedGapFrames,
+) -> usize {
+    let scan_center = (scan_hole.start_frame + scan_hole.end_frame) / 2;
+    let bracket_center = (refined.start_frame + refined.end_frame) / 2;
+    scan_center.abs_diff(bracket_center)
+}
+
+/// Ranking penalty for anchor brackets that shift the editorial center away from the scan hole.
+pub fn anchor_bracket_ranking_penalty(center_drift_frames: usize) -> f64 {
+    ANCHOR_CENTER_DRIFT_PENALTY_PER_FRAME * center_drift_frames as f64
+}
+
+/// Joint-pool ranking for anchor-seam bracket candidates (waveform + boundary + center drift).
+pub fn fit_anchor_candidate_ranking_score(
+    min_waveform: f64,
+    boundary_move_frames: usize,
+    center_drift_frames: usize,
+) -> f64 {
+    fit_candidate_ranking_score(min_waveform, boundary_move_frames)
+        - anchor_bracket_ranking_penalty(center_drift_frames)
 }
 
 /// Weights for unified fit scoring (Phase B).
@@ -1346,6 +1373,24 @@ mod tests {
     #[test]
     fn fit_candidate_ranking_prefers_less_boundary_move_at_equal_waveform() {
         assert!(fit_candidate_ranking_score(0.5, 0) > fit_candidate_ranking_score(0.5, 100));
+    }
+
+    #[test]
+    fn anchor_ranking_penalizes_center_drift_at_equal_waveform_and_boundary_move() {
+        assert!(
+            fit_anchor_candidate_ranking_score(0.5, 100, 0)
+                > fit_anchor_candidate_ranking_score(0.5, 100, 500)
+        );
+    }
+
+    #[test]
+    fn anchor_center_drift_is_zero_when_bracket_matches_scan_hole() {
+        use crate::domain::policies::RefinedGapFrames;
+        let hole = RefinedGapFrames {
+            start_frame: 100,
+            end_frame: 200,
+        };
+        assert_eq!(anchor_bracket_center_drift_frames(hole, hole), 0);
     }
 
     #[test]

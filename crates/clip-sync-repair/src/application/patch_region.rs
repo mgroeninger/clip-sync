@@ -6,7 +6,8 @@ use crate::domain::fill_mode::FillMode;
 use crate::domain::repair_profile::FitBoundarySearch;
 use crate::domain::gap_fill_fit::{
     anchor_trust_applies, boundary_search_step_frames, apply_residual_to_confidence,
-    classify_fill_waveform_confidence, fit_candidate_ranking_score,
+    classify_fill_waveform_confidence, fit_anchor_candidate_ranking_score,
+    fit_candidate_ranking_score,
     match_gap_fill_unified_in_b_with_timeline, FillConfidence, ResidualGateError,
     UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
 };
@@ -621,9 +622,7 @@ fn global_best_joint_candidate<'a>(
     }
 }
 
-fn best_high_joint_candidate<'a>(
-    pool: &'a [FitJointCandidate],
-) -> Option<&'a FitJointCandidate> {
+fn best_high_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCandidate> {
     pool.iter()
         .filter(|c| c.outcome.confidence == FillConfidence::High)
         .max_by(joint_candidate_ranking_cmp)
@@ -660,18 +659,41 @@ fn best_anchor_joint_candidate<'a>(
     }
 }
 
-fn try_anchor_seam_joint_search(
-    best: &mut Option<FitJointCandidate>,
-    pool: &mut Vec<FitJointCandidate>,
-    best_below_floor: &mut Option<SeamGateFailure>,
+struct AnchorSeamJointSearchState<'a> {
+    best: &'a mut Option<FitJointCandidate>,
+    pool: &'a mut Vec<FitJointCandidate>,
+    best_below_floor: &'a mut Option<SeamGateFailure>,
+}
+
+struct AnchorSeamJointSearchCtx<'a> {
     baseline: RefinedGapFrames,
     baseline_pre: f64,
     baseline_post: f64,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
+    params: &'a SeamGateParams<'a>,
+    cache: &'a FitHaystackCache,
     defer_residual: bool,
     haystack_secs: f64,
+}
+
+fn try_anchor_seam_joint_search(
+    state: &mut AnchorSeamJointSearchState<'_>,
+    ctx: &AnchorSeamJointSearchCtx<'_>,
 ) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
+    let AnchorSeamJointSearchState {
+        best,
+        pool,
+        best_below_floor,
+    } = state;
+    let AnchorSeamJointSearchCtx {
+        baseline,
+        baseline_pre,
+        baseline_post,
+        params,
+        cache,
+        defer_residual,
+        haystack_secs,
+    } = *ctx;
+
     if params.anchor_seam_mode == AnchorSeamMode::Off {
         return Ok(None);
     }
@@ -922,16 +944,20 @@ fn evaluate_seam_gate_fit_joint(
     );
 
     if let Some(outcome) = try_anchor_seam_joint_search(
-        &mut best,
-        &mut pool,
-        &mut best_below_floor,
-        baseline,
-        baseline_pre,
-        baseline_post,
-        params,
-        &cache,
-        defer_residual,
-        haystack_secs,
+        &mut AnchorSeamJointSearchState {
+            best: &mut best,
+            pool: &mut pool,
+            best_below_floor: &mut best_below_floor,
+        },
+        &AnchorSeamJointSearchCtx {
+            baseline,
+            baseline_pre,
+            baseline_post,
+            params,
+            cache: &cache,
+            defer_residual,
+            haystack_secs,
+        },
     )? {
         return Ok(outcome);
     }
@@ -1455,8 +1481,15 @@ fn evaluate_seam_gate_fit_candidate(
 
     let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
         + baseline.end_frame.abs_diff(refined.end_frame);
-    let ranking_score =
-        fit_candidate_ranking_score(pre_corr.min(post_corr), boundary_move);
+    let ranking_score = if anchor_seam_bracket {
+        fit_anchor_candidate_ranking_score(
+            pre_corr.min(post_corr),
+            boundary_move,
+            crate::domain::gap_fill_fit::anchor_bracket_center_drift_frames(baseline, refined),
+        )
+    } else {
+        fit_candidate_ranking_score(pre_corr.min(post_corr), boundary_move)
+    };
     let anchor_trusted = anchor_seam_bracket
         && anchor_trust_applies(
             structure_pre,

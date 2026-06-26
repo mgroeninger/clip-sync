@@ -80,6 +80,8 @@ pub struct AnchorBracket {
     pub post: AnchorCandidate,
     /// Total frame movement from scan-refined baseline (ranking penalty input).
     pub move_frames: usize,
+    /// Distance between scan-hole center and bracket center on A (decoy-peak guard).
+    pub center_drift_frames: usize,
 }
 
 /// Default minimum anchor-window Pearson for B-side matchability (below structure gate).
@@ -194,23 +196,27 @@ pub fn list_anchor_candidates_a(
     );
     pre.extend(energy_peak_candidates(
         &pre_bins,
-        bin_frames,
-        pre_start,
-        AnchorSeamSide::Pre,
-        scan_hole.start_frame,
-        params,
-        samples,
-        channels,
+        &AnchorSideScanCtx {
+            bin_frames,
+            origin_frame: pre_start,
+            side: AnchorSeamSide::Pre,
+            scan_edge: scan_hole.start_frame,
+            params,
+            samples,
+            channels,
+        },
     ));
     post.extend(energy_peak_candidates(
         &post_bins,
-        bin_frames,
-        post_start,
-        AnchorSeamSide::Post,
-        scan_hole.end_frame,
-        params,
-        samples,
-        channels,
+        &AnchorSideScanCtx {
+            bin_frames,
+            origin_frame: post_start,
+            side: AnchorSeamSide::Post,
+            scan_edge: scan_hole.end_frame,
+            params,
+            samples,
+            channels,
+        },
     ));
 
     let pre_activity = activity_bins(
@@ -233,23 +239,27 @@ pub fn list_anchor_candidates_a(
     );
     pre.extend(bool_transition_candidates(
         &pre_activity,
-        bin_frames,
-        pre_start,
-        AnchorSeamSide::Pre,
-        scan_hole.start_frame,
-        params,
-        samples,
-        channels,
+        &AnchorSideScanCtx {
+            bin_frames,
+            origin_frame: pre_start,
+            side: AnchorSeamSide::Pre,
+            scan_edge: scan_hole.start_frame,
+            params,
+            samples,
+            channels,
+        },
     ));
     post.extend(bool_transition_candidates(
         &post_activity,
-        bin_frames,
-        post_start,
-        AnchorSeamSide::Post,
-        scan_hole.end_frame,
-        params,
-        samples,
-        channels,
+        &AnchorSideScanCtx {
+            bin_frames,
+            origin_frame: post_start,
+            side: AnchorSeamSide::Post,
+            scan_edge: scan_hole.end_frame,
+            params,
+            samples,
+            channels,
+        },
     ));
 
     AnchorCandidateSet {
@@ -294,12 +304,18 @@ pub fn list_feasible_anchor_brackets(
                 post: *post,
                 move_frames: scan_hole.start_frame.abs_diff(start)
                     + scan_hole.end_frame.abs_diff(end),
+                center_drift_frames: {
+                    let scan_center = (scan_hole.start_frame + scan_hole.end_frame) / 2;
+                    let bracket_center = (start + end) / 2;
+                    scan_center.abs_diff(bracket_center)
+                },
             });
         }
     }
     brackets.sort_by(|a, b| {
         a.move_frames
             .cmp(&b.move_frames)
+            .then_with(|| a.center_drift_frames.cmp(&b.center_drift_frames))
             .then_with(|| {
                 b.pre
                     .prominence
@@ -382,16 +398,17 @@ fn bin_to_anchor_frame(
     }
 }
 
-fn energy_peak_candidates(
-    bins: &[f32],
+struct AnchorSideScanCtx<'a> {
     bin_frames: usize,
     origin_frame: usize,
     side: AnchorSeamSide,
     scan_edge: usize,
-    params: &AnchorSeamParams,
-    samples: &[f32],
+    params: &'a AnchorSeamParams,
+    samples: &'a [f32],
     channels: usize,
-) -> Vec<AnchorCandidate> {
+}
+
+fn energy_peak_candidates(bins: &[f32], ctx: &AnchorSideScanCtx<'_>) -> Vec<AnchorCandidate> {
     let mut out = Vec::new();
     if bins.len() < 3 {
         return out;
@@ -403,16 +420,22 @@ fn energy_peak_candidates(
         }
         let local_median = median3(bins[i - 1], v, bins[i + 1]);
         let prominence = v - local_median;
-        if prominence < params.min_prominence {
+        if prominence < ctx.params.min_prominence {
             continue;
         }
-        let frame = bin_to_anchor_frame(i, bin_frames, origin_frame, side, scan_edge);
-        if !anchor_matchable_on_a(samples, channels, frame, side, params) {
+        let frame = bin_to_anchor_frame(
+            i,
+            ctx.bin_frames,
+            ctx.origin_frame,
+            ctx.side,
+            ctx.scan_edge,
+        );
+        if !anchor_matchable_on_a(ctx.samples, ctx.channels, frame, ctx.side, ctx.params) {
             continue;
         }
         out.push(AnchorCandidate {
             frame,
-            side,
+            side: ctx.side,
             source: AnchorSource::EnergyPeak,
             prominence,
             rms: v,
@@ -423,13 +446,7 @@ fn energy_peak_candidates(
 
 fn bool_transition_candidates(
     activity: &[bool],
-    bin_frames: usize,
-    origin_frame: usize,
-    side: AnchorSeamSide,
-    scan_edge: usize,
-    params: &AnchorSeamParams,
-    samples: &[f32],
-    channels: usize,
+    ctx: &AnchorSideScanCtx<'_>,
 ) -> Vec<AnchorCandidate> {
     let mut out = Vec::new();
     if activity.is_empty() {
@@ -441,26 +458,33 @@ fn bool_transition_candidates(
         if prev == curr {
             continue;
         }
-        let direction_ok = match side {
+        let direction_ok = match ctx.side {
             AnchorSeamSide::Pre => !prev && curr,
             AnchorSeamSide::Post => prev && !curr,
         };
         if !direction_ok {
             continue;
         }
-        let frame = match side {
-            AnchorSeamSide::Pre => bin_to_anchor_frame(i, bin_frames, origin_frame, side, scan_edge),
-            AnchorSeamSide::Post => origin_frame
-                .saturating_add(i * bin_frames)
+        let frame = match ctx.side {
+            AnchorSeamSide::Pre => bin_to_anchor_frame(
+                i,
+                ctx.bin_frames,
+                ctx.origin_frame,
+                ctx.side,
+                ctx.scan_edge,
+            ),
+            AnchorSeamSide::Post => ctx
+                .origin_frame
+                .saturating_add(i * ctx.bin_frames)
                 .saturating_sub(1)
-                .max(scan_edge),
+                .max(ctx.scan_edge),
         };
-        if !anchor_matchable_on_a(samples, channels, frame, side, params) {
+        if !anchor_matchable_on_a(ctx.samples, ctx.channels, frame, ctx.side, ctx.params) {
             continue;
         }
         out.push(AnchorCandidate {
             frame,
-            side,
+            side: ctx.side,
             source: AnchorSource::BoolTransition,
             prominence: 0.5,
             rms: if curr { 1.0 } else { 0.5 },
@@ -519,18 +543,33 @@ pub struct AnchorMatchability {
     pub matchable: bool,
 }
 
+/// Inputs for [`matchability_at_anchor`].
+#[derive(Clone, Copy)]
+pub struct MatchabilityAtAnchorArgs<'a> {
+    pub templates: &'a crate::domain::policies::SeamTemplates<'a>,
+    pub placement: crate::domain::policies::SeamPlacement,
+    pub side: AnchorSeamSide,
+    pub pre_window: usize,
+    pub post_window: usize,
+    pub params: &'a AnchorMatchabilityParams,
+    pub correlator: Option<&'a clip_sync::FftCorrelator>,
+    pub max_lag_frames: i32,
+}
+
 /// Score waveform Pearson at one anchor; optional local xcorr when Pearson is ambiguous.
-pub fn matchability_at_anchor(
-    templates: &crate::domain::policies::SeamTemplates<'_>,
-    placement: crate::domain::policies::SeamPlacement,
-    side: AnchorSeamSide,
-    pre_window: usize,
-    post_window: usize,
-    params: &AnchorMatchabilityParams,
-    correlator: Option<&clip_sync::FftCorrelator>,
-    max_lag_frames: i32,
-) -> AnchorMatchability {
+pub fn matchability_at_anchor(args: &MatchabilityAtAnchorArgs<'_>) -> AnchorMatchability {
     use crate::domain::policies::fill_seam_correlations;
+
+    let MatchabilityAtAnchorArgs {
+        templates,
+        placement,
+        side,
+        pre_window,
+        post_window,
+        params,
+        correlator,
+        max_lag_frames,
+    } = *args;
 
     let mut placement = placement;
     match side {
@@ -573,26 +612,26 @@ pub fn anchor_bracket_both_matchable(
     correlator: Option<&clip_sync::FftCorrelator>,
     max_lag_frames: i32,
 ) -> bool {
-    let pre = matchability_at_anchor(
+    let pre = matchability_at_anchor(&MatchabilityAtAnchorArgs {
         templates,
         placement,
-        AnchorSeamSide::Pre,
+        side: AnchorSeamSide::Pre,
         pre_window,
         post_window,
         params,
         correlator,
         max_lag_frames,
-    );
-    let post = matchability_at_anchor(
+    });
+    let post = matchability_at_anchor(&MatchabilityAtAnchorArgs {
         templates,
         placement,
-        AnchorSeamSide::Post,
+        side: AnchorSeamSide::Post,
         pre_window,
         post_window,
         params,
         correlator,
         max_lag_frames,
-    );
+    });
     pre.matchable && post.matchable
 }
 
@@ -797,7 +836,7 @@ mod tests {
             a_pre_ch: &[vec![1.0; 4]],
             a_post_ch: &[vec![1.0; 4]],
             b_mono: &b_mono,
-            b_ch: &[b_mono.clone()],
+            b_ch: std::slice::from_ref(&b_mono),
         };
         let placement = crate::domain::policies::SeamPlacement {
             start: 4,
@@ -805,16 +844,16 @@ mod tests {
             pre_window: 4,
             post_window: 4,
         };
-        let pre = matchability_at_anchor(
-            &templates,
+        let pre = matchability_at_anchor(&MatchabilityAtAnchorArgs {
+            templates: &templates,
             placement,
-            AnchorSeamSide::Pre,
-            4,
-            4,
-            &params,
-            None,
-            0,
-        );
+            side: AnchorSeamSide::Pre,
+            pre_window: 4,
+            post_window: 4,
+            params: &params,
+            correlator: None,
+            max_lag_frames: 0,
+        });
         assert!(
             !pre.matchable,
             "low anchor Pearson must fail even when structure scores would pass"

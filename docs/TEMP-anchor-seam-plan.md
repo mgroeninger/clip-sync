@@ -222,7 +222,7 @@ record_fit_joint_candidate(baseline)           // existing
 | P1.6 | Auto trigger | `gap_signature.rs`, `patch_region.rs` | `GapSignature::has_anchor_seam_contour()` + `should_run_anchor_seam(...)` |
 | P1.7 | Anchor search loop | `patch_region.rs` | `evaluate_anchor_seam_brackets(...)` → `record_fit_joint_candidate` per `AnchorBracket` |
 | P1.8 | Orchestration | `evaluate_seam_gate_fit_joint` (~530) | Insert after baseline fail, before `BaselineOnly` early return (~635) |
-| P1.9 | Ranking penalty | `gap_fill_fit.rs` | `anchor_bracket_ranking_penalty(distance_from_scan_center_frames)` |
+| P1.9 | Ranking penalty | `gap_fill_fit.rs` | `anchor_bracket_ranking_penalty` / `fit_anchor_candidate_ranking_score` |
 | P1.10 | B-side matchability | `gap_anchor_seam.rs` or `patch_region.rs` | `matchability_at_anchor(...)` — envelope + `fill_seam_correlations` + deferred residual |
 | P1.11 | Outcome fields | `SeamGateOutcome` | `anchor_seam_used`, `anchor_bracket_move_frames` |
 | P1.12 | Integration test | `tests/anchor_seam_oracle.rs` | A5/A5b: `baseline_only` + `anchor_seam_mode=auto` (energy + bool) patches speech-at-peaks |
@@ -248,7 +248,7 @@ record_fit_joint_candidate(baseline)           // existing
 | P3.1 | Synthetic fixture | `energy_signature_fixtures.rs` | `speech_peaks_offset_from_throat(secs)` |
 | P3.2 | Domain oracle | `tests/anchor_seam_oracle.rs` (new) | A1: candidates pick peak frames, not throat |
 | P3.3 | Pipeline oracle | `tests/anchor_seam_oracle.rs` | A1 end-to-end: `PatchAudio` + `anchor_seam_mode=force` |
-| P3.4 | Regression rows | `patch_audio_integration.rs` or `integration_energy_smoke.rs` | A2–A4 |
+| P3.4 | Regression rows | `tests/anchor_seam_oracle.rs` | A2–A4 (A3 domain + pipeline in oracle) |
 | P3.5 | Production corpus row | `gap_corpus_fixtures.rs` + manifest | One real W5 row |
 | P3.6 | Diagnostic (optional) | `tests/diag_anchor_seam.rs` | Per-gap candidate dump (`diagnostic-tests`) |
 

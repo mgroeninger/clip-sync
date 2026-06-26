@@ -1494,6 +1494,60 @@ pub fn build_speech_peaks_offset_from_throat(
     }
 }
 
+/// **C3** / A2 — flat pre, speech onset after silent gap (asymmetric post); bool rising post edge.
+pub fn build_c3_speech_boundary_asymmetric_post(
+    sample_rate: u32,
+    channels: usize,
+    post_onset_secs: f64,
+) -> EnergySignatureFixture {
+    let ch = channels.max(1);
+    let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = spec.bin_frames(sample_rate);
+    let context = spec.context_frames(sample_rate, total_frames);
+    let gap_frames = spec.min_gap_frames(sample_rate).max(bin_frames * 2);
+    let anchor = (gap_anchor_secs(&spec) * sample_rate as f64) as usize;
+    let gap_start = anchor.max(context + bin_frames);
+    let gap_end = gap_start + gap_frames;
+
+    let post_onset = secs_to_frames(post_onset_secs, sample_rate);
+    let burst_frames = secs_to_frames(0.4, sample_rate);
+    let post_burst_start = gap_end + post_onset;
+    let post_burst_end = (post_burst_start + burst_frames).min(total_frames);
+
+    let bed = 5_000.0_f32 / 32767.0;
+    let mut a = vec![0.0f32; total_frames * ch];
+    let mut b = vec![0.0f32; total_frames * ch];
+    for frame in 0..gap_start {
+        write_frame(&mut a, ch, frame, bed);
+        write_frame(&mut b, ch, frame, bed);
+    }
+    fill_speech_like(&mut a, ch, sample_rate, post_burst_start, post_burst_end);
+    zero_frames(&mut a, ch, gap_start, gap_end);
+    b.copy_from_slice(&a);
+    fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
+
+    let structure_params =
+        spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
+
+    EnergySignatureFixture {
+        id: "c3_speech_boundary_asymmetric_post",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start,
+        gap_end,
+        context_frames: context,
+        true_fill_start: gap_start,
+        true_fill_end: gap_end,
+        nominal_fill_start: gap_start,
+        nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
+        structure_params,
+    }
+}
+
 /// Write interleaved PCM to a WAV file.
 pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, samples: &[f32]) {
     use hound::{SampleFormat, WavSpec, WavWriter};

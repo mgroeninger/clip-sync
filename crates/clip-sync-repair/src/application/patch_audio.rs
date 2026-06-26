@@ -1096,29 +1096,38 @@ fn log_skip_gap_fill(
     }
 }
 
-fn log_marginal_gap_fill(
-    progress: &dyn ProgressReporter,
-    gaps: &[Gap],
+struct MarginalGapFillLog<'a> {
+    gaps: &'a [Gap],
     a_start_secs: f64,
     a_end_secs: f64,
     pre: f64,
     post: f64,
     min: f32,
     anchor_seam: bool,
-) {
+}
+
+fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &MarginalGapFillLog<'_>) {
     progress.flush_progress();
     if progress.detailed_extraction_progress() {
         progress.phase_verbose(&format_gap_fill_marginal_verbose_line(
-            pre, post, min, anchor_seam,
+            log.pre,
+            log.post,
+            log.min,
+            log.anchor_seam,
         ));
     } else {
         tracing::warn!(
             "{}",
             format_skip_gap_fill_log(
-                gaps,
-                a_start_secs,
-                a_end_secs,
-                &format_gap_fill_marginal_warn_reason(pre, post, min, anchor_seam),
+                log.gaps,
+                log.a_start_secs,
+                log.a_end_secs,
+                &format_gap_fill_marginal_warn_reason(
+                    log.pre,
+                    log.post,
+                    log.min,
+                    log.anchor_seam,
+                ),
             )
         );
     }
@@ -1699,13 +1708,15 @@ fn prepare_region_patch(
     if confidence == FillConfidence::Marginal {
         log_marginal_gap_fill(
             progress,
-            &request.report.gaps,
-            region.a_start_secs,
-            region.a_end_secs,
-            report_pre,
-            report_post,
-            request.min_fill_correlation,
-            anchor_seam_used,
+            &MarginalGapFillLog {
+                gaps: &request.report.gaps,
+                a_start_secs: region.a_start_secs,
+                a_end_secs: region.a_end_secs,
+                pre: report_pre,
+                post: report_post,
+                min: request.min_fill_correlation,
+                anchor_seam: anchor_seam_used,
+            },
         );
     }
 
