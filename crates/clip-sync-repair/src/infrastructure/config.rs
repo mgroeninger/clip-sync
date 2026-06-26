@@ -204,6 +204,18 @@ pub struct RepairConfig {
     /// Fit mode: skip boundary grid on marginal baseline (`baseline_only`) or run full grid.
     #[serde(default)]
     pub fit_boundary_search: FitBoundarySearch,
+    /// Editorial seam anchor search (`off`, `auto`, `force`); fit mode only.
+    #[serde(default)]
+    pub anchor_seam_mode: crate::domain::AnchorSeamMode,
+    /// Maximum A bracket span when searching editorial seam anchors (seconds).
+    #[serde(default = "default_max_anchor_bracket_secs")]
+    pub max_anchor_bracket_secs: f64,
+    /// Max anchor candidates per side of the scan hole.
+    #[serde(default = "default_max_anchors_per_side")]
+    pub max_anchors_per_side: usize,
+    /// Minimum energy-bin prominence for peak anchor candidates (0 = any local maximum).
+    #[serde(default)]
+    pub anchor_seam_min_prominence: f32,
     /// Residual headroom gate (`off`, `veto`, `veto_rescue`); fit mode only.
     #[serde(default)]
     pub residual_gate: crate::domain::ResidualGateMode,
@@ -341,6 +353,12 @@ fn default_fill_anchor_min_correlation() -> f32 {
 fn default_fill_anchor_max_adjustment_frac() -> f64 {
     0.9
 }
+fn default_max_anchor_bracket_secs() -> f64 {
+    5.0
+}
+fn default_max_anchors_per_side() -> usize {
+    5
+}
 
 fn apply_profile_bundle_fields(
     repair: &mut RepairConfig,
@@ -428,6 +446,10 @@ impl Default for RepairConfig {
             short_gap_one_strong_seam_fallback: true,
             profile: RepairProfile::default(),
             fit_boundary_search: FitBoundarySearch::default(),
+            anchor_seam_mode: crate::domain::AnchorSeamMode::default(),
+            max_anchor_bracket_secs: default_max_anchor_bracket_secs(),
+            max_anchors_per_side: default_max_anchors_per_side(),
+            anchor_seam_min_prominence: 0.0,
             residual_gate: crate::domain::ResidualGateMode::default(),
             residual_floor_ok_db: default_residual_floor_ok_db(),
             residual_headroom_margin_db: default_residual_headroom_margin_db(),
@@ -544,6 +566,10 @@ impl RepairConfig {
             gap_signature_mode: self.gap_signature_mode,
             profile: self.profile,
             fit_boundary_search: self.fit_boundary_search,
+            anchor_seam_mode: self.anchor_seam_mode,
+            max_anchor_bracket_secs: self.max_anchor_bracket_secs,
+            max_anchors_per_side: self.max_anchors_per_side,
+            anchor_seam_min_prominence: self.anchor_seam_min_prominence,
             residual_gate: self.residual_gate,
             residual_floor_ok_db: self.residual_floor_ok_db,
             residual_headroom_margin_db: self.residual_headroom_margin_db,
@@ -739,6 +765,18 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "fill_repeat_penalty_weight".into(),
                 reason: "must be non-negative".into(),
+            });
+        }
+        if self.max_anchor_bracket_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "max_anchor_bracket_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.max_anchors_per_side == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "max_anchors_per_side".into(),
+                reason: "must be greater than zero".into(),
             });
         }
         if self.residual_lag_secs <= 0.0 {

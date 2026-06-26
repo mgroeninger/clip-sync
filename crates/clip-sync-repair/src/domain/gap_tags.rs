@@ -110,6 +110,7 @@ impl PlanKind {
 pub enum PatchTier {
     High,
     Marginal,
+    AnchorTrusted,
     DeadZone,
     HardSkip,
     StructureFail,
@@ -121,6 +122,7 @@ impl PatchTier {
         match self {
             Self::High => "high",
             Self::Marginal => "marginal",
+            Self::AnchorTrusted => "anchor_trusted",
             Self::DeadZone => "dead_zone",
             Self::HardSkip => "hard_skip",
             Self::StructureFail => "structure_fail",
@@ -134,6 +136,7 @@ impl PatchTier {
             Self::NotApplicable => None,
             Self::High => Some("high"),
             Self::Marginal => Some("marginal"),
+            Self::AnchorTrusted => Some("anchor trusted"),
             Self::DeadZone => Some("dead zone"),
             Self::HardSkip => Some("hard skip"),
             Self::StructureFail => Some("structure fail"),
@@ -271,6 +274,8 @@ pub struct GapTagsPatchContext {
     pub thresholds: FillTierThresholds,
     pub signature_mode_label: &'static str,
     pub fit_used_boundary_grid: bool,
+    pub anchor_seam_used: bool,
+    pub anchor_trusted: bool,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
 }
@@ -363,7 +368,11 @@ pub fn derive_gap_tags_from_patch_outcome(
             post,
             confidence,
         } => {
-            let tier = patch_tier_from_patched(*confidence, ctx.fill_mode);
+            let tier = if ctx.anchor_trusted && ctx.fill_mode == FillMode::Fit {
+                PatchTier::AnchorTrusted
+            } else {
+                patch_tier_from_patched(*confidence, ctx.fill_mode)
+            };
             let seam = if ctx.fill_mode == FillMode::Fit {
                 classify_seam_shape(*pre, *post)
             } else {
@@ -451,6 +460,8 @@ pub fn derive_gap_tags_from_status(
                 thresholds,
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
+                anchor_seam_used: false,
+                anchor_trusted: false,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -462,6 +473,8 @@ pub fn derive_gap_tags_from_status(
                 thresholds,
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
+                anchor_seam_used: false,
+                anchor_trusted: false,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -559,6 +572,8 @@ mod tests {
             thresholds: FillTierThresholds::DEFAULT,
             signature_mode_label: "bool",
             fit_used_boundary_grid: false,
+            anchor_seam_used: false,
+            anchor_trusted: false,
             residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }

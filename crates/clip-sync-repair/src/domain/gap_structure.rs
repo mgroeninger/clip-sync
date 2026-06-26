@@ -515,7 +515,7 @@ pub(crate) fn score_post_match(
     bin_similarity(&signature.post_bins, b_bins)
 }
 
-fn activity_bins(
+pub(crate) fn activity_bins(
     samples: &[f32],
     channels: usize,
     start_frame: usize,

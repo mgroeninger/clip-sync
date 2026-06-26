@@ -4,7 +4,8 @@ use serde::Deserialize;
 use tempfile::TempDir;
 
 use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader, TimelineOverlap};
-use clip_sync::testing::fakes::FakeProgressReporter;
+
+use crate::test_support::NoOpProgressReporter;
 
 use crate::application::ports::Aligner;
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
@@ -763,7 +764,7 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
-    let progress = FakeProgressReporter;
+    let progress = NoOpProgressReporter;
     let aligner = NeverCalledAligner;
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
 
@@ -809,7 +810,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
-    let progress = FakeProgressReporter;
+    let progress = NoOpProgressReporter;
     let aligner = NeverCalledAligner;
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);
@@ -896,7 +897,7 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
-    let progress = FakeProgressReporter;
+    let progress = NoOpProgressReporter;
     let aligner = NeverCalledAligner;
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);

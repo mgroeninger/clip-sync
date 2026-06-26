@@ -265,7 +265,7 @@ tree — no cleanup needed.)
 | C | `application/patch_region.rs` (`FitHaystackCache`) | Already has `b_ch` — no new cache; extract `gap_border_spec(params, refined)` helper to DRY the two inline `GapBorderSpec` builds |
 | D | `application/patch_region.rs` (`log_residual_channel_breakdown`) | **Done** — `selected_channels` + per-channel headroom to the `RUST_LOG=debug` log (not JSON; verdict stays `Copy`, §4e) |
 | E | `test_support/energy_signature_fixtures.rs` | **Done** — `overwrite_channels` + `channel_noise` per-channel fixture helpers (prereq for F/G; `write_frame` is uniform across channels, §7 Prerequisite) |
-| F | `tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs` | *TODO* — reroute harness through `seam_chosen_and_floor_multichannel`; center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
+| F | `tests/seam_residual_corpus.rs` + `clip-sync-repair-harness/src/seam_residual.rs` | *TODO* — add `score_placement_multichannel` (harness moved out of `tests/common/` into the harness crate); center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
 | G | `tests/seam_residual_oracle.rs` | **Done** — `seam_residual_oracle_center_dominant_6ch` + `build_center_dominant_oracle` (real pipeline; §7 1b). **Diagnostic tier** (`required-features = ["diagnostic-tests"]`), not PR CI |
 | H | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
 
@@ -331,16 +331,23 @@ keep ch FC as-is on both A and B, and demote FL/FR/LFE/Ls/Rs. Two variants:
   20 dB selection gate (excluded) *or* within it (selected but high residual), depending on which
   behavior the row asserts.
 
-### 1a — Corpus (`tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs`)
+### 1a — Corpus (`tests/seam_residual_corpus.rs` + `clip-sync-repair-harness/src/seam_residual.rs`)
 
-Today `score_placement` calls the **mono** `seam_chosen_and_floor`, so a 6ch row added as-is would not
-exercise channel alignment. Required work:
+> **Layout note:** the score harness was moved out of `tests/common/seam_residual_scoring.rs` into the
+> `clip-sync-repair-harness` crate (`src/seam_residual.rs`); `score_placement` is there (already builds
+> `b_ch` for Pearson). The corpus test stays in `tests/seam_residual_corpus.rs`.
 
-1. **Reroute the harness through the production path.** Add a multichannel scoring variant alongside
-   the mono one: build `GapBorderSpec`, call `selected_seam_channels`, and when the selection is
-   non-empty drive `seam_chosen_and_floor_multichannel(&params, &b_ch, &selected, …)` →
-   `SeamResidualVerdict::from_channel_residuals`; else fall back to today's mono path. Surface the
-   selected indices on `ScoredPlacement` for the CSV.
+Today `score_placement` (harness crate) calls the **mono** `seam_chosen_and_floor` for residual, so a
+6ch row added as-is would not exercise channel alignment. Required work:
+
+1. **Reroute the harness through the production path.** Add a multichannel scoring variant
+   (`score_placement_multichannel`) **alongside** the mono `score_placement` so the existing 2ch
+   `f4_decoy_*` / `disagreement` rows stay byte-for-byte (Option A). It builds `GapBorderSpec`, calls
+   `selected_seam_channels`, and when the selection is non-empty drives
+   `seam_chosen_and_floor_multichannel(&params, &b_ch, &selected, …)` →
+   `SeamResidualVerdict::from_channel_residuals`; else falls back to the mono path. Surface the
+   selected indices on `ScoredPlacement` for the CSV. (Option B — rerouting the shared
+   `score_placement` — is more faithful to production but recalibrates the existing stereo rows.)
 2. **CSV columns** `selected_channels` and `path` (`mono` | `multichannel`) for calibration runs.
 3. **Assertions (center-dominant 6ch fixture, at truth and at the F4-style decoy):**
    - *Truth, multichannel:* `worst_floor_db ≤ −40` (FC cancels), `informative == true`,

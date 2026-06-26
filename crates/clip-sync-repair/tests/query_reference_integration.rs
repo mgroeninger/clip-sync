@@ -231,6 +231,10 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
                 residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
                 residual_lag_secs: clip_sync_repair::domain::DEFAULT_RESIDUAL_LAG_SECS,
+                anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode::Off,
+                max_anchor_bracket_secs: 5.0,
+                max_anchors_per_side: 5,
+                anchor_seam_min_prominence: 0.0,
             },
             10,
         )

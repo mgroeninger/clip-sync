@@ -41,6 +41,10 @@ clip-sync = { path = "../clip-sync", features = ["test-utils"] }
 clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
 
 [[test]]
+name = "anchor_seam_oracle"
+path = "tests/anchor_seam_oracle.rs"
+
+[[test]]
 name = "config_roundtrip"
 path = "tests/config_roundtrip.rs"
 

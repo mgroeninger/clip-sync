@@ -1385,6 +1385,77 @@ pub fn build_f4_decoy_production(
     }
 }
 
+fn fill_speech_like(samples: &mut [f32], channels: usize, sample_rate: u32, start: usize, end: usize) {
+    let ch = channels.max(1);
+    for frame in start..end.min(samples.len() / ch) {
+        let t = frame as f64 / sample_rate as f64;
+        let amp = (0.45 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as f32;
+        for c in 0..ch {
+            samples[frame * ch + c] = amp;
+        }
+    }
+}
+
+fn zero_frames(samples: &mut [f32], channels: usize, start: usize, end: usize) {
+    let ch = channels.max(1);
+    for frame in start..end.min(samples.len() / ch) {
+        for c in 0..ch {
+            samples[frame * ch + c] = 0.0;
+        }
+    }
+}
+
+/// A1 oracle: silent dropout throat on A with salient speech bursts `peak_offset_secs` before/after.
+pub fn build_speech_peaks_offset_from_throat(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+) -> EnergySignatureFixture {
+    let ch = channels.max(1);
+    let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = spec.bin_frames(sample_rate);
+    let context = spec.context_frames(sample_rate, total_frames);
+    let gap_frames = spec.min_gap_frames(sample_rate).max(bin_frames * 2);
+    let anchor = (gap_anchor_secs(&spec) * sample_rate as f64) as usize;
+    let gap_start = anchor.max(context + bin_frames);
+    let gap_end = gap_start + gap_frames;
+
+    let peak_offset = secs_to_frames(peak_offset_secs, sample_rate);
+    let burst_frames = secs_to_frames(0.35, sample_rate);
+    let pre_burst_end = gap_start.saturating_sub(peak_offset);
+    let pre_burst_start = pre_burst_end.saturating_sub(burst_frames);
+    let post_burst_start = gap_end + peak_offset;
+    let post_burst_end = (post_burst_start + burst_frames).min(total_frames);
+
+    let mut a = vec![0.0f32; total_frames * ch];
+    let mut b = vec![0.0f32; total_frames * ch];
+    fill_speech_like(&mut b, ch, sample_rate, 0, total_frames);
+    fill_speech_like(&mut a, ch, sample_rate, pre_burst_start, pre_burst_end);
+    fill_speech_like(&mut a, ch, sample_rate, post_burst_start, post_burst_end);
+    zero_frames(&mut a, ch, gap_start, gap_end);
+
+    let structure_params =
+        spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
+
+    EnergySignatureFixture {
+        id: "speech_peaks_offset_throat",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start,
+        gap_end,
+        context_frames: context,
+        true_fill_start: gap_start,
+        true_fill_end: gap_end,
+        nominal_fill_start: gap_start,
+        nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
+        structure_params,
+    }
+}
+
 /// Write interleaved PCM to a WAV file.
 pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, samples: &[f32]) {
     use hound::{SampleFormat, WavSpec, WavWriter};

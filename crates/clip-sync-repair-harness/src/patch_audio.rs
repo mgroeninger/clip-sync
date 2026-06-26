@@ -8,8 +8,8 @@ use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
-    CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch, GapPatchStatus,
-    GapSignatureMode, RepairProfile, TrackCompatibility,
+    AnchorSeamMode, CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
+    GapPatchStatus, GapSignatureMode, RepairProfile, TrackCompatibility,
 };
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     gap_report_times, structure_heavy_weights, structure_slide_secs, EnergySignatureFixture,
@@ -248,6 +248,10 @@ pub fn patch_request_with_options(
     options: PatchTestOptions,
 ) -> PatchAudioRequest {
     PatchAudioRequest {
+        anchor_seam_mode: AnchorSeamMode::Auto,
+        anchor_seam_min_prominence: 0.0,
+        max_anchor_bracket_secs: 0.0,
+        max_anchors_per_side: 0,
         report,
         normalize_fill,
         normalize_window_secs,

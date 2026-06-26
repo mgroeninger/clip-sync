@@ -5,6 +5,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::fill_mode::FillMode;
+use crate::domain::gap_anchor_seam::AnchorSeamMode;
 use crate::domain::FillOffsetMode;
 
 /// Named repair preset: bundles haystack size, extension flags, and fit boundary search.
@@ -210,6 +211,7 @@ pub struct RepairPatchConfigView {
     pub fill_anchor_search_prior_weight: f64,
     pub fill_anchor_retry_marginal: bool,
     pub fill_offset_mode: FillOffsetMode,
+    pub anchor_seam_mode: AnchorSeamMode,
 }
 
 /// Whether fit mode may run the joint A-boundary grid (extension axes).
@@ -293,6 +295,12 @@ pub fn inactive_repair_flag_notes(view: RepairPatchConfigView) -> Vec<String> {
                     .into(),
             );
         }
+        if view.anchor_seam_mode == AnchorSeamMode::Off {
+            notes.push(
+                "anchor_seam_mode=off: editorial anchor search inactive; use --anchor-seam-mode auto|force"
+                    .into(),
+            );
+        }
     }
 
     notes
@@ -314,6 +322,7 @@ mod tests {
             fill_anchor_search_prior_weight: 0.0,
             fill_anchor_retry_marginal: false,
             fill_offset_mode: FillOffsetMode::Recommended,
+            anchor_seam_mode: AnchorSeamMode::Off,
         }
     }
 

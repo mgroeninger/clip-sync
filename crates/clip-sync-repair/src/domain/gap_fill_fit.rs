@@ -42,6 +42,20 @@ pub fn effective_fill_absolute_floor(min_fill_correlation: f32, absolute_floor: 
     absolute_floor.min(min_fill_correlation)
 }
 
+/// True when structure is strong at anchor brackets but waveform Pearson is below production min.
+pub fn anchor_trust_applies(
+    structure_pre: f64,
+    structure_post: f64,
+    pearson_pre: f64,
+    pearson_post: f64,
+    strong_structure_trust: f64,
+    min_fill_correlation: f32,
+) -> bool {
+    structure_pre >= strong_structure_trust
+        && structure_post >= strong_structure_trust
+        && pearson_pre.min(pearson_post) < f64::from(min_fill_correlation)
+}
+
 /// Classify waveform seam scores into patch confidence tiers (fit mode).
 ///
 /// Returns `Err` when `min(pre, post)` is below the effective absolute floor.

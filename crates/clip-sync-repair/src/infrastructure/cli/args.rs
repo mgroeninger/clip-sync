@@ -229,6 +229,22 @@ pub struct Args {
     #[arg(long, value_name = "MS")]
     pub gap_end_extend_step_ms: Option<u64>,
 
+    /// Editorial seam anchor search (`off`, `auto`, `force`); fit mode only [default: off].
+    #[arg(long, value_parser = clap::value_parser!(crate::domain::AnchorSeamMode), value_name = "MODE")]
+    pub anchor_seam_mode: Option<crate::domain::AnchorSeamMode>,
+
+    /// Maximum A bracket span when searching editorial seam anchors (seconds) [default: 5.0].
+    #[arg(long, value_name = "SECS")]
+    pub max_anchor_bracket_secs: Option<f64>,
+
+    /// Max anchor candidates per side of the scan hole [default: 5].
+    #[arg(long, value_name = "N")]
+    pub max_anchors_per_side: Option<usize>,
+
+    /// Minimum energy-bin prominence for peak anchor candidates [default: 0].
+    #[arg(long, value_name = "N")]
+    pub anchor_seam_min_prominence: Option<f32>,
+
     /// Crossfade duration at gap boundaries (ms) [default: 10].
     #[arg(long, value_name = "MS")]
     pub crossfade_ms: Option<u64>,

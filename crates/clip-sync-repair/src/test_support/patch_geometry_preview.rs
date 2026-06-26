@@ -290,6 +290,7 @@ pub fn preview_patch_geometry(
         fill_anchor_search_prior_weight: 0.0,
         fill_anchor_retry_marginal: false,
         fill_offset_mode: params.fill_offset_mode,
+        anchor_seam_mode: crate::domain::AnchorSeamMode::Off,
     });
     let b_extract_start_secs = (refined_b_start_secs
         - params.gap_signature_context_secs

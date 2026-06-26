@@ -136,6 +136,18 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(ms) = args.gap_end_extend_step_ms {
         config.repair.gap_end_extend_step_ms = ms;
     }
+    if let Some(mode) = args.anchor_seam_mode {
+        config.repair.anchor_seam_mode = mode;
+    }
+    if let Some(secs) = args.max_anchor_bracket_secs {
+        config.repair.max_anchor_bracket_secs = secs;
+    }
+    if let Some(n) = args.max_anchors_per_side {
+        config.repair.max_anchors_per_side = n;
+    }
+    if let Some(p) = args.anchor_seam_min_prominence {
+        config.repair.anchor_seam_min_prominence = p;
+    }
     if let Some(ms) = args.crossfade_ms {
         config.repair.crossfade_ms = ms;
     }

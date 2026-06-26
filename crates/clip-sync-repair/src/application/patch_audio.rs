@@ -144,6 +144,11 @@ pub struct PatchAudioRequest {
     pub profile: crate::domain::RepairProfile,
     /// Fit mode boundary search policy.
     pub fit_boundary_search: crate::domain::FitBoundarySearch,
+    /// Editorial seam anchor search mode (fit mode only).
+    pub anchor_seam_mode: crate::domain::AnchorSeamMode,
+    pub max_anchor_bracket_secs: f64,
+    pub max_anchors_per_side: usize,
+    pub anchor_seam_min_prominence: f32,
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
     pub measure_residual: bool,
@@ -198,6 +203,10 @@ pub struct PatchRequestSettings {
     pub gap_signature_mode: crate::domain::GapSignatureMode,
     pub profile: crate::domain::RepairProfile,
     pub fit_boundary_search: crate::domain::FitBoundarySearch,
+    pub anchor_seam_mode: crate::domain::AnchorSeamMode,
+    pub max_anchor_bracket_secs: f64,
+    pub max_anchors_per_side: usize,
+    pub anchor_seam_min_prominence: f32,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,
@@ -250,6 +259,10 @@ impl PatchRequestSettings {
             gap_signature_mode: self.gap_signature_mode,
             profile: self.profile,
             fit_boundary_search: self.fit_boundary_search,
+            anchor_seam_mode: self.anchor_seam_mode,
+            max_anchor_bracket_secs: self.max_anchor_bracket_secs,
+            max_anchors_per_side: self.max_anchors_per_side,
+            anchor_seam_min_prominence: self.anchor_seam_min_prominence,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
             residual_gate: self.residual_gate,
@@ -1420,6 +1433,8 @@ fn prepare_region_patch(
         },
         signature_mode_label,
         fit_used_boundary_grid: false,
+        anchor_seam_used: false,
+        anchor_trusted: false,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };
@@ -1544,6 +1559,10 @@ fn prepare_region_patch(
         ),
         gap_signature_mode: request.gap_signature_mode,
         fit_boundary_search: request.fit_boundary_search,
+        anchor_seam_mode: request.anchor_seam_mode,
+        max_anchor_bracket_secs: request.max_anchor_bracket_secs,
+        max_anchors_per_side: request.max_anchors_per_side,
+        anchor_seam_min_prominence: request.anchor_seam_min_prominence,
         measure_residual: request.measure_residual,
         residual_gate: request.residual_gate,
         residual_floor_ok_db: request.residual_floor_ok_db,
@@ -1626,8 +1645,11 @@ fn prepare_region_patch(
         fit_boundary_grid_cells,
         fit_haystack_secs,
         residual: residual_verdict,
+        ..
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
+    tag_ctx.anchor_seam_used = gate_outcome.anchor_seam_used;
+    tag_ctx.anchor_trusted = gate_outcome.anchor_trusted;
 
     let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
 
@@ -1854,6 +1876,7 @@ fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigVie
         fill_anchor_search_prior_weight: request.fill_anchor_search_prior_weight,
         fill_anchor_retry_marginal: request.fill_anchor_retry_marginal,
         fill_offset_mode: request.fill_offset_mode,
+        anchor_seam_mode: request.anchor_seam_mode,
     }
 }
 

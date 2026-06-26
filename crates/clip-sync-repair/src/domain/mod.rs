@@ -5,6 +5,7 @@ pub mod fill_offset;
 pub mod gap_fill_fit;
 pub mod gap;
 pub mod gap_seam_extend;
+pub mod gap_anchor_seam;
 pub mod gap_fill;
 pub mod gap_energy;
 pub mod gap_signature;
@@ -30,8 +31,16 @@ pub use gap_tags::{
     GapPatchTierInput, GapTags, GapTagsPatchContext, PatchTier, PlanKind,
     RegionPatchOutcomeView, ResidualBand, SeamShape, SignatureModeTag,
 };
+pub use gap_anchor_seam::{
+    anchor_matchable_on_a, list_anchor_candidates_a, list_feasible_anchor_brackets,
+    should_run_anchor_seam, AnchorBracket, AnchorCandidate, AnchorCandidateSet, AnchorSeamMode,
+    AnchorSeamParams, AnchorSeamSide, AnchorSource,
+};
 pub use gap_signature::{GapSignature, GapSignatureMode};
-pub use gap_fill_fit::{FillConfidence, ResidualGateError, apply_residual_to_confidence, classify_fill_waveform_confidence};
+pub use gap_fill_fit::{
+    anchor_trust_applies, FillConfidence, ResidualGateError, apply_residual_to_confidence,
+    classify_fill_waveform_confidence,
+};
 pub use residual_gate::{
     ResidualGateMode, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
     residual_max_lag_frames,

@@ -49,6 +49,17 @@ pub enum GapSignature {
 }
 
 impl GapSignature {
+    /// True when the resolved signature carries non-flat energy contour (auto anchor trigger).
+    pub(crate) fn has_energy_contour(&self) -> bool {
+        match self {
+            GapSignature::Energy(sig) => {
+                !energy_envelope_is_flat(&sig.pre_energy)
+                    || !energy_envelope_is_flat(&sig.post_energy)
+            }
+            GapSignature::Bool(_) => false,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match self {
             GapSignature::Bool(sig) => sig.pre_bins.is_empty() || sig.post_bins.is_empty(),
@@ -102,7 +113,7 @@ pub fn build_gap_signature(
     }
 }
 
-fn energy_envelope_is_flat(bins: &[f32]) -> bool {
+pub(crate) fn energy_envelope_is_flat(bins: &[f32]) -> bool {
     if bins.is_empty() {
         return true;
     }

@@ -499,6 +499,35 @@ pub fn border_templates_for_gap(
     (pre_mono, post_mono)
 }
 
+/// Count of samples above 12% of border peak (matches trim_low_energy threshold).
+pub(crate) fn border_active_extent_frames(border: &[f64]) -> usize {
+    if border.is_empty() {
+        return 0;
+    }
+    let peak = border.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
+    if peak <= f64::EPSILON {
+        return 0;
+    }
+    let floor = peak * 0.12;
+    border.iter().filter(|s| s.abs() >= floor).count()
+}
+
+/// Adaptive seam window: cap at active extent, bounded by min/max seam frames.
+pub(crate) fn adaptive_seam_window_frames(
+    border_len: usize,
+    min_frames: usize,
+    max_frames: usize,
+    active_extent_frames: usize,
+) -> usize {
+    if border_len == 0 {
+        return 0;
+    }
+    let min_frames = min_frames.max(1);
+    let max_frames = max_frames.max(min_frames);
+    let target = active_extent_frames.max(min_frames).min(max_frames);
+    target.min(border_len).max(1)
+}
+
 /// Per-channel border templates (same frame ranges as [`border_templates_for_gap`]).
 pub fn border_templates_per_channel_for_gap(
     samples: &[f32],
@@ -586,7 +615,6 @@ fn peak_normalize_f64(samples: &[f64]) -> Vec<f64> {
     samples.iter().map(|s| s / peak).collect()
 }
 
-/// Peak-normalized Pearson correlation (reduces level mismatch between encodes).
 fn seam_pearson(left: &[f64], right: &[f64]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
         return 0.0;

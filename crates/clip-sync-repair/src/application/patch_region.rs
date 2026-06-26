@@ -5,9 +5,10 @@ use clip_sync::MultiChannelPcm;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::repair_profile::FitBoundarySearch;
 use crate::domain::gap_fill_fit::{
-    boundary_search_step_frames, apply_residual_to_confidence, classify_fill_waveform_confidence,
-    fit_candidate_ranking_score, match_gap_fill_unified_in_b_with_timeline, FillConfidence,
-    ResidualGateError, UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
+    anchor_trust_applies, boundary_search_step_frames, apply_residual_to_confidence,
+    classify_fill_waveform_confidence, fit_candidate_ranking_score,
+    match_gap_fill_unified_in_b_with_timeline, FillConfidence, ResidualGateError,
+    UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
 };
 use crate::domain::residual_gate::ResidualGateMode;
 use crate::domain::patch_anchor::AnchorSearchPrior;
@@ -18,6 +19,10 @@ use crate::domain::gap_seam_extend::{
 use crate::domain::gap_structure::{self, StructureMatchParams};
 use crate::domain::gap_signature::{
     build_gap_signature, GapSignature, GapSignatureMode, StructureTimeline,
+};
+use crate::domain::gap_anchor_seam::{
+    list_anchor_candidates_a, list_feasible_anchor_brackets, should_run_anchor_seam,
+    AnchorSeamMode, AnchorSeamParams,
 };
 use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
@@ -46,6 +51,12 @@ pub(crate) struct SeamGateOutcome {
     pub fit_haystack_secs: f64,
     /// Residual/floor verdict (P1 report-only); `Some` when residual measurement is enabled.
     pub residual: Option<policies::SeamResidualVerdict>,
+    /// True when the winning bracket came from editorial anchor search (not scan throat alone).
+    pub anchor_seam_used: bool,
+    /// Total frame movement from scan-refined baseline when `anchor_seam_used`.
+    pub anchor_bracket_move_frames: usize,
+    /// Structure-trusted patch at editorial anchors with weak throat Pearson (fit mode).
+    pub anchor_trusted: bool,
 }
 
 pub(crate) struct SeamGateParams<'a> {
@@ -88,6 +99,10 @@ pub(crate) struct SeamGateParams<'a> {
     pub anchor_search_prior: Option<AnchorSearchPrior>,
     pub gap_signature_mode: GapSignatureMode,
     pub fit_boundary_search: FitBoundarySearch,
+    pub anchor_seam_mode: AnchorSeamMode,
+    pub max_anchor_bracket_secs: f64,
+    pub max_anchors_per_side: usize,
+    pub anchor_seam_min_prominence: f32,
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     pub measure_residual: bool,
     /// Residual headroom gate mode (`off` = no gating; measurement still obeys `measure_residual`).
@@ -527,6 +542,241 @@ fn fit_haystack_secs(params: &SeamGateParams<'_>) -> f64 {
     params.b_samples.len() as f64 / channels as f64 / f64::from(params.sample_rate)
 }
 
+fn baseline_seam_scores(
+    baseline_candidate: Option<&FitJointCandidate>,
+    best_below_floor: &Option<SeamGateFailure>,
+) -> (f64, f64) {
+    if let Some(c) = baseline_candidate {
+        return (c.outcome.report_pre, c.outcome.report_post);
+    }
+    match best_below_floor {
+        Some(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => (*pre, *post),
+        Some(SeamGateFailure::ResidualHeadroomExceeded { pre, post, .. }) => (*pre, *post),
+        _ => (0.0, 0.0),
+    }
+}
+
+fn anchor_seam_gate_params(params: &SeamGateParams<'_>, baseline: RefinedGapFrames) -> AnchorSeamParams {
+    let gap_frames = baseline.end_frame.saturating_sub(baseline.start_frame);
+    AnchorSeamParams {
+        context_frames: params.context_frames,
+        max_anchors_per_side: params.max_anchors_per_side,
+        max_bracket_frames: (params.max_anchor_bracket_secs * f64::from(params.sample_rate))
+            .round()
+            .max(1.0) as usize,
+        min_prominence: params.anchor_seam_min_prominence,
+        structure: StructureMatchParams {
+            gap_frames,
+            bin_frames: params.bin_frames.max(1),
+            search_radius_frames: params.search_radius_frames,
+            fill_length_slack_frames: params.fill_length_slack_frames,
+            max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.bin_frames),
+            silence_peak_fraction: params.silence_peak_fraction,
+            absolute_silence_rms: params.absolute_silence_rms,
+        },
+    }
+}
+
+fn mark_anchor_outcome(outcome: &mut SeamGateOutcome, move_frames: usize) {
+    outcome.anchor_seam_used = true;
+    outcome.anchor_bracket_move_frames = move_frames;
+    if outcome.anchor_trusted {
+        tracing::debug!(
+            pre = outcome.report_pre,
+            post = outcome.report_post,
+            move_frames,
+            "anchor-trusted patch at editorial seam"
+        );
+    }
+}
+
+fn best_anchor_joint_candidate<'a>(
+    defer_residual: bool,
+    best: &'a Option<FitJointCandidate>,
+    pool: &'a [FitJointCandidate],
+) -> Option<&'a FitJointCandidate> {
+    if defer_residual {
+        pool.iter()
+            .filter(|c| c.outcome.anchor_seam_used)
+            .max_by(|a, b| {
+                a.ranking_score
+                    .partial_cmp(&b.ranking_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.boundary_move.cmp(&b.boundary_move))
+            })
+    } else {
+        best.as_ref().filter(|c| c.outcome.anchor_seam_used)
+    }
+}
+
+fn try_anchor_seam_joint_search(
+    best: &mut Option<FitJointCandidate>,
+    pool: &mut Vec<FitJointCandidate>,
+    best_below_floor: &mut Option<SeamGateFailure>,
+    baseline: RefinedGapFrames,
+    baseline_pre: f64,
+    baseline_post: f64,
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    defer_residual: bool,
+    haystack_secs: f64,
+) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
+    if params.anchor_seam_mode == AnchorSeamMode::Off {
+        return Ok(None);
+    }
+
+    let anchor_params = anchor_seam_gate_params(params, baseline);
+    let baseline_signature = build_gap_signature(
+        &params.a_pcm.samples,
+        params.channels,
+        baseline.start_frame,
+        baseline.end_frame,
+        params.context_frames,
+        &anchor_params.structure,
+        params.gap_signature_mode,
+    );
+    if !should_run_anchor_seam(
+        params.anchor_seam_mode,
+        baseline_pre,
+        baseline_post,
+        params.min_fill_correlation,
+        params.fill_marginal_margin,
+        baseline_signature.has_energy_contour(),
+    ) {
+        return Ok(None);
+    }
+
+    let candidates = list_anchor_candidates_a(
+        &params.a_pcm.samples,
+        params.channels,
+        baseline,
+        &anchor_params,
+    );
+    let brackets = list_feasible_anchor_brackets(&candidates, baseline, &anchor_params);
+    if brackets.is_empty() {
+        return Ok(None);
+    }
+
+    tracing::debug!(
+        pre_candidates = candidates.pre.len(),
+        post_candidates = candidates.post.len(),
+        brackets = brackets.len(),
+        "anchor seam bracket search"
+    );
+
+    for bracket in brackets {
+        if bracket.refined == baseline {
+            continue;
+        }
+        if defer_residual {
+            record_fit_joint_candidate_to_pool(
+                pool,
+                best_below_floor,
+                bracket.refined,
+                baseline,
+                params,
+                cache,
+            );
+            if let Some(candidate) = pool.last_mut() {
+                mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
+            }
+        } else {
+            record_fit_joint_candidate(
+                best,
+                best_below_floor,
+                bracket.refined,
+                baseline,
+                params,
+                cache,
+            );
+            if let Some(candidate) = best.as_mut() {
+                if candidate.outcome.refined == bracket.refined {
+                    mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
+                }
+            }
+        }
+    }
+
+    let anchor_high = if defer_residual {
+        pool.iter().any(|c| {
+            c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High
+        })
+    } else {
+        best.as_ref().is_some_and(|c| {
+            c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High
+        })
+    };
+    if anchor_high {
+        if defer_residual {
+            if let Some(candidate) = pool
+                .iter()
+                .filter(|c| c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High)
+                .max_by(|a, b| {
+                    a.ranking_score
+                        .partial_cmp(&b.ranking_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            {
+                if let Some(outcome) = try_finalize_high_joint_candidate(
+                    candidate.clone(),
+                    baseline,
+                    params,
+                    cache,
+                    haystack_secs,
+                    None,
+                ) {
+                    return Ok(Some(outcome));
+                }
+            }
+        } else if let Some(candidate) = best.as_ref().filter(|c| c.outcome.anchor_seam_used) {
+            let mut outcome = candidate.outcome.clone();
+            outcome.fit_haystack_secs = haystack_secs;
+            return Ok(Some(outcome));
+        }
+    }
+
+    if let Some(candidate) =
+        best_anchor_joint_candidate(defer_residual, best, pool)
+    {
+        if accepts_baseline_without_boundary_grid(
+            params.fit_boundary_search,
+            candidate.outcome.confidence,
+        ) {
+            if defer_residual {
+                let mut outcome = finalize_fit_outcome_residual(
+                    candidate.outcome.clone(),
+                    baseline,
+                    params,
+                    cache,
+                )?;
+                if outcome.confidence == FillConfidence::Marginal {
+                    tracing::warn!(
+                        pre = outcome.report_pre,
+                        post = outcome.report_post,
+                        min = params.min_fill_correlation,
+                        "marginal waveform seam patch (anchor seam, below min_fill_correlation)"
+                    );
+                }
+                outcome.fit_haystack_secs = haystack_secs;
+                return Ok(Some(outcome));
+            }
+            if candidate.outcome.confidence == FillConfidence::Marginal {
+                tracing::warn!(
+                    pre = candidate.outcome.report_pre,
+                    post = candidate.outcome.report_post,
+                    min = params.min_fill_correlation,
+                    "marginal waveform seam patch (anchor seam, below min_fill_correlation)"
+                );
+            }
+            let mut outcome = candidate.outcome.clone();
+            outcome.fit_haystack_secs = haystack_secs;
+            return Ok(Some(outcome));
+        }
+    }
+
+    Ok(None)
+}
+
 fn evaluate_seam_gate_fit_joint(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
@@ -632,6 +882,31 @@ fn evaluate_seam_gate_fit_joint(
             return Ok(outcome);
         }
     }
+
+    let (baseline_pre, baseline_post) = baseline_seam_scores(
+        if defer_residual {
+            pool.first()
+        } else {
+            best.as_ref()
+        },
+        &best_below_floor,
+    );
+
+    if let Some(outcome) = try_anchor_seam_joint_search(
+        &mut best,
+        &mut pool,
+        &mut best_below_floor,
+        baseline,
+        baseline_pre,
+        baseline_post,
+        params,
+        &cache,
+        defer_residual,
+        haystack_secs,
+    )? {
+        return Ok(outcome);
+    }
+
     if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
         if defer_residual {
             return select_joint_fit_winner_with_residual(
@@ -936,10 +1211,30 @@ fn evaluate_seam_gate_fit_candidate(
         params.gap_signature_mode,
     );
 
-    let waveform_gate_frames = params
-        .seam_gate_frames
-        .min(a_pre_border.len().max(1));
-    let post_gate_frames = seam_post_gate_frames(params.seam_gate_frames, a_post_border.len());
+    let moved_bracket = refined != baseline;
+    let max_seam = params.seam_gate_frames;
+    let min_seam = (max_seam / 4).max(1);
+    let waveform_gate_frames = if moved_bracket {
+        policies::adaptive_seam_window_frames(
+            a_pre_border.len(),
+            min_seam,
+            max_seam,
+            policies::border_active_extent_frames(&a_pre_border),
+        )
+    } else {
+        max_seam.min(a_pre_border.len().max(1))
+    };
+    let post_seam_cap = if moved_bracket {
+        policies::adaptive_seam_window_frames(
+            a_post_border.len(),
+            min_seam,
+            max_seam,
+            policies::border_active_extent_frames(&a_post_border),
+        )
+    } else {
+        params.seam_gate_frames
+    };
+    let post_gate_frames = seam_post_gate_frames(post_seam_cap, a_post_border.len());
     let templates = policies::SeamTemplates {
         a_pre: &a_pre_border,
         a_post: &a_post_border,
@@ -1117,6 +1412,15 @@ fn evaluate_seam_gate_fit_candidate(
         + baseline.end_frame.abs_diff(refined.end_frame);
     let ranking_score =
         fit_candidate_ranking_score(pre_corr.min(post_corr), boundary_move);
+    let anchor_trusted = moved_bracket
+        && anchor_trust_applies(
+            structure_pre,
+            structure_post,
+            pre_corr,
+            post_corr,
+            params.strong_structure_trust,
+            params.min_fill_correlation,
+        );
 
     Ok((
         SeamGateOutcome {
@@ -1134,6 +1438,9 @@ fn evaluate_seam_gate_fit_candidate(
             fit_boundary_grid_cells: None,
             fit_haystack_secs: fit_haystack_secs(params),
             residual,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            anchor_trusted,
         },
         ranking_score,
     ))
@@ -1289,6 +1596,9 @@ fn evaluate_seam_gate_legacy(
         fit_haystack_secs: 0.0,
         // Legacy gate path does not compute the residual verdict (fit-mode only).
         residual: None,
+        anchor_seam_used: false,
+        anchor_bracket_move_frames: 0,
+        anchor_trusted: false,
     })
 }
 
