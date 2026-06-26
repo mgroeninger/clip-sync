@@ -148,7 +148,7 @@ cargo test -p clip-sync-repair --features validation-tests --test validate_floor
 cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture
 ```
 
-**Clippy (local verification):**
+**Clippy (local verification; CI runs the PR-equivalent line on every push/PR):**
 
 ```powershell
 # PR-equivalent (no validation/diagnostic binaries)
@@ -176,11 +176,12 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 
 ```powershell
 # PR gate (same as GitHub Actions)
+.\scripts\check-repair-test-manifest.ps1   # autotests=false [[test]] guard (also in CI)
 .\scripts\test-tier.ps1 -Tier pr
 
 # Per-crate PR slices
 .\scripts\test-tier.ps1 -Tier pr-align
-.\scripts\test-tier.ps1 -Tier pr-repair   # includes oracle_energy SD rows (skips slow patch smokes)
+.\scripts\test-tier.ps1 -Tier pr-repair   # includes oracle_energy SD rows (`#[ignore]` on slow/control rows)
 
 # Execution tiers (repair crate)
 .\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair

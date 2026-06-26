@@ -67,9 +67,7 @@ try {
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration',
             '--',
-            '--skip', 'p1_', '--skip', 'p2_', '--skip', 'f1_production_haystack',
-            '--skip', 'f1_production_oracle_patch_control', '--skip', 'f2_production_oracle_patch_smoke',
-            '--skip', 'p4_f4_decoy_unified_search_diverges'
+            '--skip', 'p1_', '--skip', 'p2_'
         )
 
         if (Test-FfmpegOnPath) {
@@ -122,6 +120,7 @@ try {
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair', '--test', 'oracle_energy',
             'f1_production_oracle_patch_control', 'f2_production_oracle_patch_smoke',
+            'f1_production_haystack_scan_vs_oracle', 'p4_f4_decoy_unified_search_diverges',
             'f4_decoy_placement_informative_with_high_headroom', '--', '--ignored'
         )
     }

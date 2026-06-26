@@ -357,6 +357,7 @@ fn p4_f4_decoy_unified_search_diverges() {
 
 
 #[test]
+#[ignore = "slow: cargo test -p clip-sync-repair --test oracle_energy f1_production_haystack_scan_vs_oracle -- --ignored --nocapture"]
 fn f1_production_haystack_scan_vs_oracle() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_f1_production(48_000, 2, 3.0);

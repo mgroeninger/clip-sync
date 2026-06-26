@@ -7,7 +7,8 @@
 > codec/corpus, or is a slow off-PR contract matrix). Select oracle tests by name filter
 > (`cargo test oracle_`) or acceptance ID — not by tier. See [Tier decision rule](#tier-decision-rule).
 
-> **Status:** Phase 1 landed (2026-06-25); Phases 2–5 pending. See [Phase status](#phase-status).
+> **Status:** Phases 1–3 landed (2026-06-25); Phase 3.5 (harness dev-dep crate) pending; Phases
+> 2b–5 otherwise pending. See [Phase status](#phase-status).
 > Motivated by confusion between CI-fast tests, integration
 > tests, domain oracles, and validation/contract work (e.g. residual gate **RG01–RG05**, floor
 > oracle, energy acceptance **SD** / **EC**). Cargo exposes a single `cargo test` surface;
@@ -28,7 +29,8 @@
 | **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** — see [acceptance criteria](#acceptance-criteria) |
 | **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
 | **2c** | `align_videos` integration move | Deferred |
-| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** |
+| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** — interim `include!` harness; superseded by [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
+| **3.5** | `clip-sync-repair-harness` dev-dep crate; retire `tests/common/` `include!` | Pending |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 
@@ -191,11 +193,14 @@ clip-sync-repair lib
   └── application/testing/          gap_corpus manifest + scan runner (#[cfg(test)] today)
 
 tests/  (integration binaries only)
-  ├── common/                       runners shared by 2+ binaries (not a Cargo target)
+  ├── common/                       (interim Phase 3 — removed in Phase 3.5)
   ├── floor_oracle/, gap_corpus/    manifest.toml + README + committed/generated WAV
   ├── residual_gate_catalog/        matrix.toml + README + baseline CSV (not tests)
   ├── fixtures/                     JSON/TOML for CLI/config roundtrips
   └── <tier>_*.rs                   thin #[test] fns: call runner, assert SD/EC/RG/SP row
+
+clip-sync-repair-harness/           dev-dep library (Phase 3.5)
+  └── src/                          floor_oracle, residual_gate, seam_residual, energy_matrix
 ```
 
 | Kind | Location | Compiles | Contains |
@@ -203,24 +208,26 @@ tests/  (integration binaries only)
 | **Domain fixtures** | `src/test_support/` | always (lib) | F* builders, WAV writers, oracle math — **no acceptance/oracle/integration `#[test]`** (fixture-builder unit tests OK) |
 | **Corpus data** | `tests/<corpus>/` | N/A | `manifest.toml`, README, `wav/` |
 | **Contract catalog** | `tests/residual_gate_catalog/` | N/A | `matrix.toml`, README, baseline CSV |
-| **Integration runners** | `tests/common/` | with parent `[[test]]` binary | `residual_gate_runner`, encode/build pairs, matrix loops, CSV printers |
+| **Integration runners** | `clip-sync-repair-harness/` (Phase 3.5) | dev-dep of repair crate | `residual_gate`, encode/build pairs, matrix loops, CSV printers — **today:** interim `tests/common/` via `include!` until Phase 3.5 lands |
 | **Assertions** | `tests/<tier>_*.rs` | per tier / `required-features` | Thin wrappers around runners |
 | **Unit assertions** | `src/**` `#[cfg(test)]` | `--lib` | Single-module logic only |
 | **Cross-crate fakes** | `clip-sync` `test-utils` | dev-dep | Shared progress fakes, alignment corpus |
 
 **Rules:**
 
-1. **`tests/common/`** — shared runner sources (not a `[[test]]` target). **Phase 2:** `mod common;`
-   from each consumer (compiles all submodules per binary). **Phase 3:** drop monolithic
-   `mod common`; each `tests/<tier>_*.rs` binary includes only the units it needs — see
-   [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy).
+1. **Integration runners** — **Phase 3.5 target:** `clip-sync-repair-harness` workspace crate,
+   `[dev-dependencies]` of `clip-sync-repair`; normal `use clip_sync_repair_harness::…` from tier
+   binaries. **Interim (Phase 3 landed):** `tests/common/*.rs` included per binary via `include!` —
+   see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy); do not add new
+   `include!` consumers after Phase 3.5 is scheduled — extend the harness crate instead.
 2. **`test_support`** stays on the repair lib so integration binaries can call builders. Do not add
    new acceptance/oracle/integration `#[test]` modules there (fixture-builder unit tests OK); optional later: `test-support` feature or Phase 5 validate crate
    for heavy runners.
-3. **New RG row** — add `matrix.toml` entry **and** reuse `common/residual_gate_runner` (or extend
-   it). Do not copy `run_built_floor_oracle` / patch loops into a test file.
-4. **Catalog ≠ runner ≠ test** — `matrix.toml` inventories instances; runners live in `common/` or
-   `test_support/`; `#[test]` fns only assert. Matrix-driven execution stays deferred (Phase 5).
+3. **New RG row** — add `matrix.toml` entry **and** reuse `clip_sync_repair_harness::residual_gate`
+   (or extend it). Do not copy `run_built_floor_oracle` / patch loops into a test file.
+4. **Catalog ≠ runner ≠ test** — `matrix.toml` inventories instances; runners live in the harness
+   crate (or interim `tests/common/`); `test_support/` holds fixtures only; `#[test]` fns only
+   assert. Matrix-driven execution stays deferred (Phase 5).
 5. **Runner extraction** — follow [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) § Implementation when splitting floor/residual binaries; tier plan does not duplicate that runbook.
 
 **Phase hooks:**
@@ -232,7 +239,8 @@ tests/  (integration binaries only)
 | 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` — **required** if `--lib` still exceeds 15s after main splits |
 | 2b | `clip-sync` corpus + symphonia regressions → `tests/` binaries; `pr-align` script tier — see [Phase 2b](#phase-2b--physical-separation-clip-sync) |
 | 3 | `autotests = false`; per-binary `tests/common/` includes; tier `required-features`; Clippy clean on default features — see [Phase 3](#phase-3--feature-gated-tiers-optional) |
-| 5 | Optional matrix driver + `clip-sync-repair-validate` owns validate-tier runners |
+| 3.5 | Move `tests/common/` → `clip-sync-repair-harness`; dev-dep + consumer refactor; delete `include!` — see [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
+| 5 | Optional matrix driver + `clip-sync-repair-validate` owns validate-tier runners (may depend on harness crate from 3.5) |
 
 ### Target `Cargo.toml` layout (`[[test]]`)
 
@@ -354,9 +362,10 @@ required-features = ["diagnostic-tests"]
 
 **Notes:**
 
-- `tests/common/` stays **source files** under `tests/common/*.rs` (not `[[test]]` targets). Phase 3
-  stops using a shared `tests/common/mod.rs` pulled in via `mod common;` — each consumer binary
-  includes only the units it needs (see [harness + Clippy](#phase-3--testscommon-and-clippy)).
+- **Runners:** Phase 3.5 moves shared runner code to `clip-sync-repair-harness` (see
+  [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up)). Until then, `tests/common/*.rs` stays
+  as included sources (not `[[test]]` targets); Phase 3 dropped `mod common` in favor of per-binary
+  `include!` (see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy)).
 - `autotests = false` prevents Cargo from auto-discovering a stray `tests/foo.rs` without an
   explicit entry — renames and splits must update `Cargo.toml` in the same PR.
 - `cli_mux_integration` already needs `ffmpeg-mux`; `required-features` replaces scattered
@@ -1018,8 +1027,9 @@ Wire the [target `[[test]]` layout](#target-cargotoml-layout-test) into
    existing `ffmpeg-mux` targets.
 4. Do **not** use `#![cfg(feature)]` at file tops — `required-features` on `[[test]]` is
    sufficient for skipping whole binaries.
-5. Refactor `tests/common/` consumers per [harness + Clippy](#phase-3--testscommon-and-clippy) (same
-   PR or immediately after step 1–3).
+5. Refactor `tests/common/` consumers per [Phase 3 harness](#phase-3--testscommon-and-clippy) (landed
+   2026-06-25). Follow-up: [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) replaces
+   `include!` with the harness dev-dep crate.
 
 **CI fast path:** default `cargo test -p clip-sync-repair` compiles unit + integration binaries
 only (oracle_* are integration; no `validation-tests` / `diagnostic-tests`).
@@ -1087,12 +1097,14 @@ consumers.
 3. **Do not rely on `#[cfg(feature)]` inside a shared `common/mod.rs`** to subset modules — it does
    not give per-binary dependency sets and still leaves integration↔integration overlap on PR.
 
-4. **Workspace micro-crates** (`clip-sync-repair-test-floor-oracle`, etc.) — defer unless Phase 2b
-   align harness growth makes `include!` repetition painful; not required for repair Phase 3.
+4. **Workspace micro-crates** — deferred at Phase 3; **trigger met (2026-06):** `include!` is fragile
+   (wrapper boilerplate, `//!` footguns, cross-module `crate::` coupling). **Phase 3.5** adds one
+   harness dev-dep crate instead of multiple micro-crates — see
+   [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up).
 
-5. **`#[allow(dead_code)]` on the `mod { include!(…) }` wrapper** — required when a harness file
-   exposes items for multiple consumers (e.g. `seam_residual_scoring` serves both corpus and diag);
-   not a substitute for monolithic `mod common`.
+5. **`#[allow(dead_code)]` on the `mod { include!(…) }` wrapper** — required interim fix when a
+   harness file exposes items for multiple consumers (e.g. `seam_residual_scoring` serves both corpus
+   and diag); removed when Phase 3.5 lands (library `pub` items are exempt from `dead_code`).
 
 **Clippy expectations after Phase 3:**
 
@@ -1110,6 +1122,173 @@ to main.
 binaries; `cargo clippy -p clip-sync-repair --all-targets -- -D warnings` passes without tier
 features; `development.md` documents features, explicit `--test` names, and the Clippy command
 variants above.
+
+> **Follow-up:** Phase 3 `include!` is an interim Clippy fix, not the long-term harness convention.
+> [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) replaces it with a dev-dep library.
+
+---
+
+## Phase 3.5 — harness dev-dep crate (follow-up)
+
+**Trigger (2026-06):** Phase 3 `include!` + `#[allow(dead_code)]` satisfies Clippy but does not scale:
+
+- Every consumer must duplicate the `mod { include!(…) }` wrapper and lint attribute.
+- File headers in `tests/common/*.rs` must use `//` not `//!` (inner doc comments break under
+  `include!`).
+- Cross-runner coupling is implicit: `residual_gate_runner` imports
+  `crate::floor_oracle_fixtures`, which only works when the parent binary includes both modules in
+  the right order — easy to break when adding a consumer or splitting files.
+- New work tends toward `mod common`, copy-pasted runner loops, or more `allow(dead_code)` rather
+  than the documented pattern.
+
+**Goal:** One workspace **library** crate holds all integration runners. Tier binaries stay thin:
+`use clip_sync_repair_harness::…` and `#[test]` assertions only. No `include!`, no harness
+`#[allow(dead_code)]`.
+
+**Not Phase 5:** this does **not** move `validate_*` / `diag_*` binaries out of `clip-sync-repair`.
+Phase 5 (`clip-sync-repair-validate`) may later depend on this harness crate or absorb it; Phase 3.5
+is strictly “shared runner sources become a normal Rust library.”
+
+### Crate layout
+
+Add workspace member `crates/clip-sync-repair-harness/`:
+
+```toml
+[package]
+name = "clip-sync-repair-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "clip_sync_repair_harness"
+path = "src/lib.rs"
+
+[dependencies]
+clip-sync-repair = { path = "../clip-sync-repair" }
+clip-sync = { path = "../clip-sync", features = ["test-utils"] }
+hound = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Add others only as needed by moved runner sources (mirror tests/common/*.rs today).
+```
+
+Root `Cargo.toml`:
+
+```toml
+[workspace]
+members = [
+    "crates/clip-sync",
+    "crates/clip-sync-cli",
+    "crates/clip-sync-repair",
+    "crates/clip-sync-repair-harness",
+]
+```
+
+`src/lib.rs` — four modules matching today's units (do **not** re-merge):
+
+```rust
+//! Shared integration/validation runners for clip-sync-repair tier binaries.
+//! Not linked into the product library; dev-dep of clip-sync-repair tests only.
+
+pub mod energy_matrix;
+pub mod floor_oracle;
+pub mod residual_gate;
+pub mod seam_residual;
+```
+
+| Today (`tests/common/`) | Harness module | Depends on |
+|-------------------------|----------------|------------|
+| `floor_oracle_fixtures.rs` | `floor_oracle` | `clip-sync-repair::test_support`, `clip-sync::testing` |
+| `residual_gate_runner.rs` | `residual_gate` | `floor_oracle`, repair application/domain |
+| `seam_residual_scoring.rs` | `seam_residual` | `test_support` fixtures |
+| `energy_signature_matrix.rs` | `energy_matrix` | `test_support` production helpers |
+
+Refactor `residual_gate`: replace `use crate::floor_oracle_fixtures::…` with
+`use crate::floor_oracle::…`. Use normal `//!` module docs in harness sources.
+
+**Path resolution:** runners today locate catalogs via paths relative to `tests/` (e.g.
+`tests/floor_oracle/manifest.toml`). Options (pick one in the implementing PR, document in
+`development.md`):
+
+1. **`CARGO_MANIFEST_DIR` of `clip-sync-repair`** — harness functions take `manifest_root: &Path`
+   from the test binary, or a `HarnessPaths::from_repair_tests_dir()` helper built in the harness
+   crate using `env!("CARGO_MANIFEST_DIR")` + `../clip-sync-repair/tests/…` (fragile if crate
+   layout moves — prefer explicit path args from tests).
+2. **Test passes paths** — smoke/validate binaries construct `PathBuf` from
+   `std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("floor_oracle")` (keeps corpus adjacent
+   to tier binaries; harness stays path-agnostic).
+
+Prefer **(2)** for corpus/manifest paths so the harness crate does not hard-code sibling crate
+layout.
+
+### `clip-sync-repair` consumer changes
+
+```toml
+[dev-dependencies]
+clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
+```
+
+Replace every `include!` block with ordinary imports, e.g.:
+
+```rust
+use clip_sync_repair_harness::floor_oracle::{
+    gap_frames_for_case, load_manifest, FloorOracleCase, FloorOracleDefaults,
+};
+```
+
+**Consumers to migrate** (six binaries today):
+
+| Binary | Harness modules used |
+|--------|----------------------|
+| `integration_floor_oracle_smoke` | `floor_oracle` |
+| `validate_floor_oracle` | `floor_oracle`, `residual_gate` |
+| `seam_residual_corpus` | `seam_residual` |
+| `diag_seam_residual` | `seam_residual` |
+| `diag_energy_matrix` | `energy_matrix` |
+
+Remove all `#[allow(dead_code)]` / `#[expect(dead_code)]` harness wrappers. Delete
+`tests/common/` after migration.
+
+### What stays unchanged
+
+| Item | Location / behavior |
+|------|---------------------|
+| F* synthetic fixtures | `clip-sync-repair/src/test_support/` |
+| Corpus manifests, WAV, CSV baselines | `clip-sync-repair/tests/<corpus>/` |
+| Tier binaries, `[[test]]` names, `required-features` | `clip-sync-repair/Cargo.toml` |
+| `test-tier.ps1` tiers and `--test` filters | unchanged (same binary names) |
+| Clippy tier matrix | same commands as [Phase 3 Clippy expectations](#phase-3--testscommon-and-clippy) |
+
+### Migration steps
+
+1. Scaffold `clip-sync-repair-harness`; move `tests/common/*.rs` → `src/*.rs` with module renames;
+   fix internal `crate::` paths; `cargo check -p clip-sync-repair-harness`.
+2. Add dev-dep; migrate `integration_floor_oracle_smoke` (smallest consumer); run
+   `cargo test -p clip-sync-repair --test integration_floor_oracle_smoke`.
+3. Migrate remaining five binaries; full tier spot-check locally with
+   `--features validation-tests,diagnostic-tests`.
+4. Delete `tests/common/`; grep repo for `include!("common/` and `tests/common` — must be zero in
+   repair crate.
+5. Update [development.md](development.md) (adding/extending a runner), [test-acceptance-glossary.md](test-acceptance-glossary.md) harness table, and
+   `residual_gate_catalog/README.md` § Implementation if it still references `tests/common/`.
+
+### Done when
+
+- `clip-sync-repair-harness` is a workspace member; `clip-sync-repair` lists it under
+  `[dev-dependencies]`.
+- No `include!("common/…")` and no `tests/common/` directory under `clip-sync-repair`.
+- No harness-related `#[allow(dead_code)]` on integration test binaries.
+- `cargo clippy -p clip-sync-repair --all-targets -- -D warnings` passes at default features; same
+  with `--features validation-tests` and `--features diagnostic-tests` as in Phase 3.
+- All migrated `[[test]]` binaries pass unchanged assertions (no tier or script renames required).
+
+### Non-goals (Phase 3.5)
+
+- Moving `validate_*` binaries to `clip-sync-repair-validate` (Phase 5).
+- Moving F* builders out of `test_support/` into the harness crate.
+- Splitting into multiple harness micro-crates (one crate unless compile time forces a later split).
+- Changing CI tier membership or PR contract test lists.
 
 ---
 
@@ -1140,11 +1319,16 @@ cargo nextest run --profile validation -p clip-sync-repair
 
 `clip-sync-repair-validate` workspace member:
 
-- Depends on `clip-sync-repair`, `clip-sync` (`test-utils`).
+- Depends on `clip-sync-repair`, `clip-sync` (`test-utils`), and (after Phase 3.5)
+  `clip-sync-repair-harness` for shared runners.
 - Owns `validate_*` tests, matrix driver, optional CLI.
 - `cargo test -p clip-sync-repair` = product tests only.
 
 **Trigger:** matrix driver ships, or validation compile time materially slows default builds.
+
+**Relationship to Phase 3.5:** the harness dev-dep crate is required regardless of Phase 5; Phase 5 may
+move validate **binaries** out of `clip-sync-repair` but should not duplicate runner logic already
+in `clip-sync-repair-harness`.
 
 ---
 
@@ -1238,12 +1422,12 @@ Closes gaps called out in plan review (2026-06-25).
 | `cargo test --tests` | Document as **misleading** (includes `--lib`); use tier script |
 | Workspace scope | Phase 1–2 repair-first; **Phase 2b** = `clip-sync` corpus + symphonia splits; **Phase 2c** = `align_videos` defer |
 | libtest `--skip` | Acceptable in Phase 1; reduce reliance after Phase 2 moves oracles |
-| Harness layout | Fixtures in `test_support/`; runners in `tests/common/`; catalogs data-only; thin `#[test]` in tier binaries — see [Harness organization](#harness-organization-fixtures-runners-catalogs) |
+| Harness layout | Fixtures in `test_support/`; runners in `clip-sync-repair-harness` (Phase 3.5; interim `tests/common/` until then); catalogs data-only; thin `#[test]` in tier binaries — see [Harness organization](#harness-organization-fixtures-runners-catalogs) |
 | PR contract | [PR contract](#pr-contract-required-ci-gates) is source of truth for CI; per-file splits in [inventory](#per-file-test-inventory-repair-binaries) |
 | Oracle (label) on PR | **Yes** for `seam_residual_disagreement_oracles` + `oracle_energy` SD rows (integration tier); not all `oracle_*` rows |
 | RG04 / energy smoke on PR | **integration** smokes (`integration_residual_gate_smoke`, `integration_energy_smoke`), not validation feature |
 | `#[ignore]` vs feature gates | Remove ignore when binary is feature-gated; see [Resolved decisions](#resolved-decisions) |
-| `tests/common/` harness (Phase 3) | Drop `mod common`; per-binary `include!("common/….rs")`; tier features gate binaries not integration overlap — see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy) |
+| Integration runners (Phase 3 → 3.5) | Phase 3: interim per-binary `include!` + `allow(dead_code)` — [Phase 3](#phase-3--testscommon-and-clippy). **Target:** `clip-sync-repair-harness` dev-dep — [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
 | `cargo test --workspace` | Dev convenience only after Phase 1; not CI PR gate |
 | `test_support/` tests | Builders only for acceptance/oracle/integration; fixture-builder unit tests OK — see [Resolved decisions](#resolved-decisions) |
 | `validate_residual_gate` scope | `f1_production_scan_patch_smoke` + EC6 `f4_decoy_*` + future RG rows; no `validate_energy_corpus` crate/binary |
