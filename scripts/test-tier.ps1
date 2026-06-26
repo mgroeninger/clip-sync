@@ -98,6 +98,7 @@ try {
             '--test', 'integration_floor_oracle_smoke',
             '--test', 'integration_gap_corpus',
             '--test', 'integration_residual_gate_smoke',
+            '--test', 'anchor_seam_oracle',
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration'

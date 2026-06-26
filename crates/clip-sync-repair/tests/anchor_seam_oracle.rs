@@ -1,6 +1,6 @@
-//! Anchor seam oracle: speech peaks offset from silent throat (plan §7 rows A1–A5).
+//! Anchor seam oracle: speech peaks offset from silent throat (plan §7 rows A1–A5b).
 //!
-//! Tier: **integration** (add to `Invoke-RepairIntegrationOnly` in `scripts/test-tier.ps1`).
+//! Tier: **integration** (`Invoke-RepairIntegrationOnly` in `scripts/test-tier.ps1`).
 //! Domain + pipeline oracles for editorial anchor search; distinct from sine-seam rows in
 //! `patch_audio_integration.rs` and harness-backed SP01–SP03 in `integration_energy_patch.rs`.
 

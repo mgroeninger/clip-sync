@@ -163,8 +163,9 @@ which is offset anchors for `anchored_retry`.
 | **P4** (optional) | Local PCM xcorr at anchors | `PcmCorrelator` adapter |
 
 **Default behavior:** ship behind `repair.anchor_seam_mode = off | auto | force`;
-`auto` enables when baseline throat `min(pre,post) < marginal_floor` and envelope contour present
-(non-flat per `energy_envelope_is_flat`).
+`auto` enables when baseline throat `min(pre,post) < marginal_floor` and signature contour present:
+energy mode uses `energy_envelope_is_flat`; bool mode uses activity transitions or mixed
+active/silent bins (`GapSignature::has_anchor_seam_contour`).
 
 **Target call chain** (P1, in `evaluate_seam_gate_fit_joint`):
 
@@ -218,13 +219,13 @@ record_fit_joint_candidate(baseline)           // existing
 | P1.3 | CLI / TOML | `cli/args.rs`, `cli/mod.rs` | `--anchor-seam-mode`, serde defaults |
 | P1.4 | Gate params | `patch_region.rs` | Extend `SeamGateParams` with anchor fields |
 | P1.5 | Build params | `patch_audio.rs` (~`SeamGateParams { … }`) | Map `RepairConfig` → `SeamGateParams` |
-| P1.6 | Auto trigger | `patch_region.rs` | `should_run_anchor_seam(mode, baseline_outcome, signature)` |
+| P1.6 | Auto trigger | `gap_signature.rs`, `patch_region.rs` | `GapSignature::has_anchor_seam_contour()` + `should_run_anchor_seam(...)` |
 | P1.7 | Anchor search loop | `patch_region.rs` | `evaluate_anchor_seam_brackets(...)` → `record_fit_joint_candidate` per `AnchorBracket` |
 | P1.8 | Orchestration | `evaluate_seam_gate_fit_joint` (~530) | Insert after baseline fail, before `BaselineOnly` early return (~635) |
 | P1.9 | Ranking penalty | `gap_fill_fit.rs` | `anchor_bracket_ranking_penalty(distance_from_scan_center_frames)` |
 | P1.10 | B-side matchability | `gap_anchor_seam.rs` or `patch_region.rs` | `matchability_at_anchor(...)` — envelope + `fill_seam_correlations` + deferred residual |
 | P1.11 | Outcome fields | `SeamGateOutcome` | `anchor_seam_used`, `anchor_bracket_move_frames` |
-| P1.12 | Integration test | `patch_audio_integration.rs` | A5: `baseline_only` + anchor auto patches speech-at-peaks |
+| P1.12 | Integration test | `tests/anchor_seam_oracle.rs` | A5/A5b: `baseline_only` + `anchor_seam_mode=auto` (energy + bool) patches speech-at-peaks |
 
 ### P2 — Adaptive window + `anchor_trusted` vocabulary
 
@@ -444,7 +445,8 @@ Called from `evaluate_seam_gate_fit_candidate` with the winning `FillAlignment`.
 | **A2** C3 speech boundary (asymmetric post) | Anchors near onset; aligns with bool path; no regression vs W3 |
 | **A3** Flat room tone (C1) | Fallback to scan edges; behavior ≈ today |
 | **A4** F4 decoy / wrong B slide | Residual veto; no anchor_trusted false patch |
-| **A5** `baseline_only` profile | Anchor search runs without requiring `--full` grid |
+| **A5** `baseline_only` profile (energy) | Anchor search runs without requiring `--full` grid |
+| **A5b** `baseline_only` + bool signature | Same as A5 under `gap_signature_mode=bool` |
 
 Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (candidate count bounded).
 
