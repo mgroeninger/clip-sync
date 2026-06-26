@@ -3,10 +3,10 @@
 //! Tier: **diagnostic** (`diagnostic-tests` feature). Same-master injected-gap oracle through the
 //! real patch pipeline at production geometry (60 s). Real-codec counterpart: `validate_floor_oracle`.
 //!
-//! PR: **no** — diagnostic tier.
+//! PR: **no** — diagnostic tier (+ slow rescue row via `--ignored` in script).
 //!
-//! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle -- --nocapture`
-//! Slow rescue row (`#[ignore]`): `… seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
+//! Run: `.\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture`
+//! Slow rescue row (`#[ignore]`): included in the same tier via `--ignored` name filter.
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
@@ -19,7 +19,8 @@ use clip_sync_repair::domain::{
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
-    gap_anchor_secs, structure_slide_secs, EnergySignatureFixture, ProductionScenarioSpec,
+    channel_noise, gap_anchor_secs, overwrite_channels, structure_slide_secs,
+    EnergySignatureFixture, ProductionScenarioSpec,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
@@ -79,6 +80,24 @@ fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergyS
     }
 }
 
+/// Center-dominant 5.1 variant of [`build_broadband_oracle`]: the center channel carries the
+/// same-master signal; the other five channels carry only quiet, decorrelated noise (>40 dB below the
+/// center), so seam channel selection follows the center and the surrounds neither cancel nor veto.
+/// Validates the per-channel residual path end-to-end (the mono downmix would be diluted by the
+/// surrounds; see residual-channel-alignment-plan § residual channel policy).
+fn build_center_dominant_oracle(rate: u32, noise_amp: f64) -> EnergySignatureFixture {
+    let channels = 6usize;
+    let center = 2usize; // FC in FL FR FC LFE Ls Rs
+    let mut fixture = build_broadband_oracle(rate, channels, noise_amp);
+    // build_broadband_oracle put the master on every channel; demote all but the center to quiet
+    // noise. Different seeds on A vs B → the surrounds do not cancel (independent content).
+    let surrounds: Vec<usize> = (0..channels).filter(|&c| c != center).collect();
+    overwrite_channels(&mut fixture.a_samples, channels, &surrounds, channel_noise(0x0A, 0.003));
+    overwrite_channels(&mut fixture.b_samples, channels, &surrounds, channel_noise(0x0B, 0.003));
+    fixture.id = "center_dominant_oracle";
+    fixture
+}
+
 /// Production-like repair defaults for H2-B: shipped fit weights and gate floors, energy signature.
 fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairConfig {
     RepairConfig {
@@ -100,7 +119,7 @@ fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairCo
 /// Real Wikimedia/Musopen Vorbis truth gaps pass Pearson — rescue matches `veto` there; see
 /// `floor_oracle_veto_rescue_real_broadband_codec`.
 #[test]
-#[ignore = "tier:diagnostic — slow (~100s); test-tier.ps1 -Tier diagnostic or --ignored --nocapture"]
+#[ignore = "tier:diagnostic — slow (~100s); test-tier.ps1 -Tier diagnostic"]
 fn broadband_oracle_veto_rescue_patches_marginal() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_broadband_oracle(48_000, 1, 40.0);
@@ -317,6 +336,55 @@ fn seam_residual_oracle_csv() {
     assert!(
         v.worst_headroom_db() < 6.0,
         "headroom at the true fill should be small after the raw-window fix, got {:.1} dB",
+        v.worst_headroom_db()
+    );
+}
+
+/// Center-dominant 5.1 oracle (plan §7 1b): the real pipeline must follow the center channel for
+/// residual/floor — selecting it over the quiet surrounds — and patch at the true fill with low
+/// headroom. Exercises `seam_chosen_and_floor_multichannel` end-to-end (the focused per-channel
+/// behavior, including the shared cross-channel lag, is covered by the fast `policies.rs` unit tests).
+#[test]
+fn seam_residual_oracle_center_dominant_6ch() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_center_dominant_oracle(48_000, 40.0);
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let mut request = patch_request_from_repair(report, &repair);
+    request.measure_residual = true;
+
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let result = patch
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .expect("center-dominant oracle patch");
+
+    let gap = result.summary.gaps.first().expect("one gap");
+    assert!(
+        matches!(gap.status, GapPatchStatus::Patched { .. }),
+        "center-dominant gap should patch (center channel cancels): {:?}",
+        gap.status
+    );
+    let v = gap
+        .residual
+        .expect("residual present (measure_residual on + patched)");
+
+    println!(
+        "center_dominant_oracle,multichannel,true_fill,\
+         chosen_pre={:.1},chosen_post={:.1},floor_pre={:.1},floor_post={:.1},headroom={:.1}",
+        v.chosen_pre_db, v.chosen_post_db, v.floor_pre_db, v.floor_post_db, v.worst_headroom_db(),
+    );
+
+    // The center channel cancels (same-master) even though five of six channels are decorrelated
+    // noise that a mono downmix would have diluted into a high floor.
+    assert!(
+        v.informative,
+        "center-channel cancellation should establish the regime: floor pre={:.1} post={:.1}",
+        v.floor_pre_db,
+        v.floor_post_db,
+    );
+    assert!(
+        v.worst_headroom_db() < 6.0,
+        "headroom at the true fill should be small on the center channel, got {:.1} dB",
         v.worst_headroom_db()
     );
 }

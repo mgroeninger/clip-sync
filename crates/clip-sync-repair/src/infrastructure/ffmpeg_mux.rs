@@ -506,7 +506,7 @@ Error: no video stream\n";
 
     #[test]
     #[cfg(feature = "ffmpeg-mux")]
-    #[ignore = "requires ffmpeg and ffprobe on PATH"]
+    #[ignore = "tier:diagnostic — needs ffmpeg and ffprobe on PATH; test-tier.ps1 -Tier diagnostic"]
     fn mux_reports_progress_for_short_fixture() {
         let ffmpeg_ok = Command::new("ffmpeg")
             .arg("-version")

@@ -37,8 +37,8 @@ splits, wire `pr-align` to binaries instead of lib `corpus_` filters. Full inven
 | Item | Notes |
 |------|--------|
 | **`pr-repair-extended` in CI** | Path filter on `clip-sync-repair/**` if you want the sine seam grid on every PR. |
-| **`cli_mux_integration`** | Compiles on PR when ffmpeg on PATH; ignored mux rows need `--ignored` locally or in validation. |
-| **Lib `#[ignore]` stragglers** | Golden JSON generator (`output.rs`), ffmpeg mux unit test — diagnostic tier runs `--lib --ignored`. |
+| **`cli_mux_integration`** | E2e mux rows run in `validation` tier when ffmpeg on PATH. |
+| **Lib `#[ignore]` stragglers** | Golden JSON generator + ffmpeg mux unit — named in `diagnostic` tier (no blanket `--lib --ignored`). |
 | **`diag_repair_golden`** | Deferred binary for `write_full_surface_repair_golden`. |
 | **Doc grep** | Opportunistic fixes in `residual-gate-findings.md`, catalog READMEs for pre-migration paths. |
 

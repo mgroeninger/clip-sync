@@ -941,7 +941,7 @@ mod tests {
     /// Regenerate `tests/fixtures/full_surface_repair.json` after an intentional contract change:
     /// `cargo test -p clip-sync-repair write_full_surface_repair_golden -- --ignored --nocapture`
     #[test]
-    #[ignore = "fixture generator — run manually when the JSON contract is revised"]
+    #[ignore = "tier:diagnostic — golden JSON generator; test-tier.ps1 -Tier diagnostic or ad hoc"]
     fn write_full_surface_repair_golden() {
         let report = full_surface_gap_report();
         let patch = full_surface_patch_summary();

@@ -3,10 +3,11 @@
 //! Tier: **integration** (oracle label). Short 8 s fixtures (`u1_`–`u8_`) + EC03/EC06 domain;
 //! EC01/EC02 production geometry (`p1_`/`p2_`) and slow control rows are `#[ignore]`.
 //!
-//! PR: **yes** (fast SD + EC03/EC06 domain) — `pr-repair`. Production EC01/EC02: oracle tier
-//! `--ignored` or `.\scripts\test-tier.ps1 -Tier oracle`.
+//! PR: **yes** (fast SD + EC03/EC06 domain) — `pr-repair`. Ignored production/control rows:
+//! `.\scripts\test-tier.ps1 -Tier oracle`.
 //!
 //! Run: `cargo test -p clip-sync-repair --test oracle_energy`
+//! Ignored: `.\scripts\test-tier.ps1 -Tier oracle`
 
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
@@ -249,7 +250,7 @@ fn u8_f3_drone_energy_and_bool_scores_agree() {
 }
 
 #[test]
-#[ignore = "tier:oracle — EC-1 production geometry (60s): cargo test -p clip-sync-repair --test oracle_energy p1_f1_production_energy_unified_finds_true_offset -- --ignored --nocapture"]
+#[ignore = "tier:oracle — EC-1 production geometry (60s); test-tier.ps1 -Tier oracle"]
 /// **EC-1 (domain oracle only):** energy unified match on full B at true offset.
 /// Patch-layer criteria (bool decoy, production weights) deferred until scan→patch e2e lands.
 /// PR covers EC-1 at integration scale via `u3_f1_energy_unified_finds_true_offset`.
@@ -267,7 +268,7 @@ fn p1_f1_production_energy_unified_finds_true_offset() {
 }
 
 #[test]
-#[ignore = "tier:oracle — EC-2 production geometry (90s): cargo test -p clip-sync-repair --test oracle_energy p2_f2_production_energy_unified_finds_pause_one -- --ignored --nocapture"]
+#[ignore = "tier:oracle — EC-2 production geometry (90s); test-tier.ps1 -Tier oracle"]
 /// **EC-2 (domain oracle only):** energy unified match at pause₁ on F2-long.
 /// Slide ≈ 0 and patch-layer checks deferred until scan→patch e2e lands.
 /// PR covers EC-2 at integration scale via `u5_f2_energy_unified_finds_pause_one`.
@@ -331,7 +332,7 @@ fn p4_f4_decoy_energy_separates_but_bool_ties() {
 /// `bool` ties and `prefer_start` keeps it at the decoy nominal. Ignored: the per-candidate
 /// waveform correlation over a dense 90 s B costs ~1 min in debug.
 #[test]
-#[ignore = "slow (~1 min debug): cargo test -p clip-sync-repair p4_f4_decoy_unified_search_diverges -- --ignored --nocapture"]
+#[ignore = "tier:oracle — EC06 unified search (~1 min debug); test-tier.ps1 -Tier oracle"]
 fn p4_f4_decoy_unified_search_diverges() {
     let f = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
 
@@ -369,7 +370,7 @@ fn p4_f4_decoy_unified_search_diverges() {
 
 
 #[test]
-#[ignore = "slow: cargo test -p clip-sync-repair --test oracle_energy f1_production_haystack_scan_vs_oracle -- --ignored --nocapture"]
+#[ignore = "tier:oracle — F1 haystack scan vs oracle; test-tier.ps1 -Tier oracle"]
 fn f1_production_haystack_scan_vs_oracle() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_f1_production(48_000, 2, 3.0);
@@ -432,7 +433,7 @@ fn f1_production_haystack_scan_vs_oracle() {
 }
 
 #[test]
-#[ignore = "control: cargo test -p clip-sync-repair f1_production_oracle_patch_control -- --ignored --nocapture"]
+#[ignore = "tier:oracle — EC01 patch control; test-tier.ps1 -Tier oracle"]
 fn f1_production_oracle_patch_control() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();
@@ -459,7 +460,7 @@ fn f1_production_oracle_patch_control() {
 }
 
 #[test]
-#[ignore = "smoke: cargo test -p clip-sync-repair f2_production_oracle_patch_smoke -- --ignored --nocapture"]
+#[ignore = "tier:oracle — EC02 patch smoke; test-tier.ps1 -Tier oracle"]
 fn f2_production_oracle_patch_smoke() {
     let temp = tempfile::tempdir().expect("tempdir");
     let repair_defaults = RepairConfig::default();

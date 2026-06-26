@@ -193,7 +193,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
 | `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
-| `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; `mux_writes_video` / 24-bit pipe `#[ignore]` |
+| `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
 | `validate_residual_gate` | validation | `validation-tests` | no | RG catalog rows + EC06 patch discrimination |
 | `validate_patch_audio` | validation | `validation-tests` | no | SP05 — production-default fit smoke |
@@ -202,8 +202,8 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_patch_audio` | diagnostic | `diagnostic-tests` | no | Patch geometry CSV (I1/I3) |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
-† `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH`; ignored mux e2e rows need
-`--ignored` locally or validation-tier sign-off.
+† `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored
+mux e2e rows run in `.\scripts\test-tier.ps1 -Tier validation` when ffmpeg is on PATH.
 
 **Clippy (local verification; CI runs the PR-equivalent line on every push/PR):**
 
@@ -246,7 +246,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 # Execution tiers (repair crate)
 .\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
 .\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
-.\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # convenience: oracle-label rows (integration tier)
+.\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # oracle_energy + --ignored rows
 .\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # local only — ffmpeg + fetch_corpus_sources
 .\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
 
@@ -289,12 +289,14 @@ Tests in feature-gated `validate_*` / `diag_*` binaries do **not** use `#[ignore
 For tests still in shared integration binaries or `--lib`, use:
 
 ```rust
-#[ignore = "tier:validation — needs ffmpeg + fetch_corpus_sources"]
-#[ignore = "tier:diagnostic — CSV export; test-tier.ps1 -Tier diagnostic"]
+#[ignore = "tier:oracle — EC01 production geometry; test-tier.ps1 -Tier oracle"]
+#[ignore = "tier:validation — needs ffmpeg + fetch_corpus_sources; test-tier.ps1 -Tier validation"]
+#[ignore = "tier:diagnostic — golden generator; test-tier.ps1 -Tier diagnostic"]
 ```
 
-Legacy ignore reason strings (`diagnostic:`, `needs fetch_corpus_sources`, etc.) remain on older
-rows until touched.
+`tier:oracle` / `tier:validation` / `tier:diagnostic` in the reason string is the convention;
+`test-tier.ps1` selects ignored rows by binary + `--ignored` (or substring filters for gap
+corpus), not by parsing the reason text.
 
 ---
 
@@ -431,7 +433,11 @@ cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenera
 | `gap_corpus_*` | `clip-sync-repair` | `--test integration_gap_corpus`; generated/external/patch_timing `--ignored` |
 | `pcm_discover_finds_*`, `refine_recovers_large` | `clip-sync` | `--ignored`; slow |
 | `mux_arg_rejected_without_feature` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; runs on `pr-repair` when ffmpeg is on PATH |
-| `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; `#[ignore]` — run with `--ignored` locally |
+| `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; `#[ignore]` — `test-tier.ps1 -Tier validation` when ffmpeg on PATH |
+| `gap_corpus_regenerate_committed_wav_fixtures` | `clip-sync-repair` | manual only (not in validation tier — overwrites committed WAVs) |
+| `write_full_surface_repair_golden` | `clip-sync-repair` | `--lib`; `test-tier.ps1 -Tier diagnostic` |
+| `mux_reports_progress_for_short_fixture` | `clip-sync-repair` | `--lib` + `ffmpeg-mux`; `test-tier.ps1 -Tier diagnostic` when ffmpeg on PATH |
+| `broadband_oracle_veto_rescue_patches_marginal` | `clip-sync-repair` | `seam_residual_oracle`; `test-tier.ps1 -Tier diagnostic` |
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 

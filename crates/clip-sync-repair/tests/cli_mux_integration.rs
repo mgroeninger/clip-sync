@@ -3,7 +3,8 @@
 //! Tier: **integration**. Mux argument parsing and ffmpeg subprocess adapter. `mux_writes_video` and
 //! `mux_24bit_source_pipe_completes_successfully` are `#[ignore]` (need ffmpeg + disk I/O).
 //!
-//! PR: **compile + fast rows** when ffmpeg on PATH — `pr-repair`; full mux e2e via `--ignored`.
+//! PR: **compile + fast rows** when ffmpeg on PATH — `pr-repair`. E2e mux rows:
+//! `.\scripts\test-tier.ps1 -Tier validation` (ffmpeg required).
 //!
 //! Run: `cargo test -p clip-sync-repair --features ffmpeg-mux --test cli_mux_integration`
 
@@ -137,7 +138,7 @@ fn mux_arg_rejected_without_feature() {
 
 #[cfg(feature = "ffmpeg-mux")]
 #[test]
-#[ignore = "requires ffmpeg on PATH"]
+#[ignore = "tier:validation — needs ffmpeg + ffprobe on PATH; test-tier.ps1 -Tier validation"]
 fn mux_writes_video() {
     if !ffmpeg_available() {
         eprintln!("skipping mux_writes_video: ffmpeg unavailable");
@@ -208,7 +209,7 @@ scan_both = false
 /// with `WavBitDepth::Int24` and ffmpeg accepts s24le input without error.
 #[cfg(feature = "ffmpeg-mux")]
 #[test]
-#[ignore = "requires ffmpeg on PATH and disk I/O; run with --include-ignored"]
+#[ignore = "tier:validation — needs ffmpeg on PATH and disk I/O; test-tier.ps1 -Tier validation"]
 fn mux_24bit_source_pipe_completes_successfully() {
     if !ffmpeg_available() {
         eprintln!("skipping mux_24bit_source_pipe_completes_successfully: ffmpeg unavailable");

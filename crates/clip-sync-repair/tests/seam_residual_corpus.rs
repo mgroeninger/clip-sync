@@ -3,7 +3,7 @@
 //! Tier: **integration**. F4 decoy headroom placement and `seam_residual_disagreement_oracles`
 //! score harness (Pearson vs residual disagreement at truth/decoy placements).
 //!
-//! PR: **yes** — `pr-repair`. Slow oracle sweep also in `.\scripts\test-tier.ps1 -Tier oracle`.
+//! PR: **yes** — `pr-repair` (full binary).
 //!
 //! Run: `cargo test -p clip-sync-repair --test seam_residual_corpus`
 

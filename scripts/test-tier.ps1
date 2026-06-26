@@ -112,15 +112,7 @@ try {
 
     function Invoke-RepairOracle {
         Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'oracle_energy')
-        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'seam_residual_corpus', 'seam_residual_disagreement_oracles')
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair', '--test', 'oracle_energy',
-            'p1_f1_production_energy_unified_finds_true_offset',
-            'p2_f2_production_energy_unified_finds_pause_one',
-            'f1_production_oracle_patch_control', 'f2_production_oracle_patch_smoke',
-            'f1_production_haystack_scan_vs_oracle', 'p4_f4_decoy_unified_search_diverges',
-            'f4_decoy_placement_informative_with_high_headroom', '--', '--ignored'
-        )
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'oracle_energy', '--', '--ignored')
     }
 
     function Invoke-RepairValidation {
@@ -140,6 +132,16 @@ try {
             'gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing',
             '--', '--ignored'
         )
+        if (Test-FfmpegOnPath) {
+            Invoke-CargoTest @(
+                '-p', 'clip-sync-repair',
+                '--features', 'ffmpeg-mux',
+                '--test', 'cli_mux_integration',
+                '--', '--ignored'
+            )
+        } else {
+            Write-Host '>> skip cli_mux_integration ignored e2e (ffmpeg not on PATH)' -ForegroundColor DarkYellow
+        }
     }
 
     function Invoke-RepairDiagnostic {
@@ -152,8 +154,29 @@ try {
             '--test', 'diag_patch_audio',
             '--test', 'seam_residual_oracle'
         )
-        # Straggler diagnostic #[ignore] rows still in --lib (golden generator, ffmpeg unit).
-        Invoke-CargoTest @('-p', 'clip-sync-repair', '--lib', '--', '--ignored')
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--features', 'diagnostic-tests',
+            '--test', 'seam_residual_oracle',
+            'broadband_oracle_veto_rescue_patches_marginal',
+            '--', '--ignored'
+        )
+        # Lib stragglers (golden generator; ffmpeg mux unit when feature enabled).
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            'write_full_surface_repair_golden',
+            '--', '--ignored'
+        )
+        if (Test-FfmpegOnPath) {
+            Invoke-CargoTest @(
+                '-p', 'clip-sync-repair',
+                '--features', 'ffmpeg-mux',
+                'mux_reports_progress_for_short_fixture',
+                '--', '--ignored'
+            )
+        } else {
+            Write-Host '>> skip mux_reports_progress_for_short_fixture (ffmpeg not on PATH)' -ForegroundColor DarkYellow
+        }
     }
 
     function Invoke-PrAlign {
