@@ -21,8 +21,8 @@ use crate::domain::gap_signature::{
     build_gap_signature, GapSignature, GapSignatureMode, StructureTimeline,
 };
 use crate::domain::gap_anchor_seam::{
-    list_anchor_candidates_a, list_feasible_anchor_brackets, should_run_anchor_seam,
-    AnchorSeamMode, AnchorSeamParams,
+    list_anchor_candidates_a, list_feasible_anchor_brackets, matchability_at_anchor,
+    should_run_anchor_seam, AnchorSeamMode, AnchorSeamParams, AnchorSeamSide,
 };
 use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
@@ -205,9 +205,17 @@ fn record_fit_joint_candidate(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
+    anchor_seam_bracket: bool,
 ) {
     let defer_residual = defer_fit_residual_measurement(params);
-    match evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, defer_residual) {
+    match evaluate_seam_gate_fit_candidate(
+        refined,
+        baseline,
+        params,
+        cache,
+        defer_residual,
+        anchor_seam_bracket,
+    ) {
         Ok((outcome, ranking_score)) => {
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
@@ -253,8 +261,16 @@ fn record_fit_joint_candidate_to_pool(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
+    anchor_seam_bracket: bool,
 ) {
-    match evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, true) {
+    match evaluate_seam_gate_fit_candidate(
+        refined,
+        baseline,
+        params,
+        cache,
+        true,
+        anchor_seam_bracket,
+    ) {
         Ok((outcome, ranking_score)) => {
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
@@ -590,22 +606,80 @@ fn mark_anchor_outcome(outcome: &mut SeamGateOutcome, move_frames: usize) {
     }
 }
 
-fn best_anchor_joint_candidate<'a>(
+fn joint_candidate_ranking_cmp(
+    a: &&FitJointCandidate,
+    b: &&FitJointCandidate,
+) -> std::cmp::Ordering {
+    a.ranking_score
+        .partial_cmp(&b.ranking_score)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.boundary_move.cmp(&b.boundary_move))
+}
+
+fn global_best_joint_candidate<'a>(
     defer_residual: bool,
     best: &'a Option<FitJointCandidate>,
     pool: &'a [FitJointCandidate],
 ) -> Option<&'a FitJointCandidate> {
     if defer_residual {
-        pool.iter()
-            .filter(|c| c.outcome.anchor_seam_used)
-            .max_by(|a, b| {
-                a.ranking_score
-                    .partial_cmp(&b.ranking_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.boundary_move.cmp(&b.boundary_move))
-            })
+        pool.iter().max_by(joint_candidate_ranking_cmp)
     } else {
-        best.as_ref().filter(|c| c.outcome.anchor_seam_used)
+        best.as_ref()
+    }
+}
+
+fn best_high_joint_candidate<'a>(
+    pool: &'a [FitJointCandidate],
+) -> Option<&'a FitJointCandidate> {
+    pool.iter()
+        .filter(|c| c.outcome.confidence == FillConfidence::High)
+        .max_by(joint_candidate_ranking_cmp)
+}
+
+fn anchor_bracket_both_matchable(
+    templates: &policies::SeamTemplates<'_>,
+    placement: policies::SeamPlacement,
+    pre_window: usize,
+    post_window: usize,
+    structure_pre: f64,
+    structure_post: f64,
+    envelope_floor: f64,
+) -> bool {
+    let pre = matchability_at_anchor(
+        templates,
+        placement,
+        AnchorSeamSide::Pre,
+        pre_window,
+        post_window,
+        structure_pre,
+        envelope_floor,
+        None,
+        0,
+    );
+    let post = matchability_at_anchor(
+        templates,
+        placement,
+        AnchorSeamSide::Post,
+        pre_window,
+        post_window,
+        structure_post,
+        envelope_floor,
+        None,
+        0,
+    );
+    pre.matchable && post.matchable
+}
+
+fn best_anchor_joint_candidate<'a>(
+    defer_residual: bool,
+    best: &'a Option<FitJointCandidate>,
+    pool: &'a [FitJointCandidate],
+) -> Option<&'a FitJointCandidate> {
+    let global = global_best_joint_candidate(defer_residual, best, pool)?;
+    if global.outcome.anchor_seam_used {
+        Some(global)
+    } else {
+        None
     }
 }
 
@@ -676,6 +750,7 @@ fn try_anchor_seam_joint_search(
                 baseline,
                 params,
                 cache,
+                true,
             );
             if let Some(candidate) = pool.last_mut() {
                 mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
@@ -688,6 +763,7 @@ fn try_anchor_seam_joint_search(
                 baseline,
                 params,
                 cache,
+                true,
             );
             if let Some(candidate) = best.as_mut() {
                 if candidate.outcome.refined == bracket.refined {
@@ -698,9 +774,7 @@ fn try_anchor_seam_joint_search(
     }
 
     let anchor_high = if defer_residual {
-        pool.iter().any(|c| {
-            c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High
-        })
+        best_high_joint_candidate(pool).is_some_and(|c| c.outcome.anchor_seam_used)
     } else {
         best.as_ref().is_some_and(|c| {
             c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High
@@ -708,24 +782,18 @@ fn try_anchor_seam_joint_search(
     };
     if anchor_high {
         if defer_residual {
-            if let Some(candidate) = pool
-                .iter()
-                .filter(|c| c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High)
-                .max_by(|a, b| {
-                    a.ranking_score
-                        .partial_cmp(&b.ranking_score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-            {
-                if let Some(outcome) = try_finalize_high_joint_candidate(
-                    candidate.clone(),
-                    baseline,
-                    params,
-                    cache,
-                    haystack_secs,
-                    None,
-                ) {
-                    return Ok(Some(outcome));
+            if let Some(candidate) = best_high_joint_candidate(pool) {
+                if candidate.outcome.anchor_seam_used {
+                    if let Some(outcome) = try_finalize_high_joint_candidate(
+                        candidate.clone(),
+                        baseline,
+                        params,
+                        cache,
+                        haystack_secs,
+                        None,
+                    ) {
+                        return Ok(Some(outcome));
+                    }
                 }
             }
         } else if let Some(candidate) = best.as_ref().filter(|c| c.outcome.anchor_seam_used) {
@@ -810,6 +878,7 @@ fn evaluate_seam_gate_fit_joint(
             baseline,
             params,
             &cache,
+            false,
         );
     } else {
         record_fit_joint_candidate(
@@ -819,6 +888,7 @@ fn evaluate_seam_gate_fit_joint(
             baseline,
             params,
             &cache,
+            false,
         );
     }
 
@@ -942,6 +1012,7 @@ fn evaluate_seam_gate_fit_joint(
                         baseline,
                         params,
                         &cache,
+                        false,
                     );
                     if let Some(candidate) = pool.last() {
                         if candidate.outcome.confidence == FillConfidence::High {
@@ -968,6 +1039,7 @@ fn evaluate_seam_gate_fit_joint(
                         baseline,
                         params,
                         &cache,
+                        false,
                     );
                     if best
                         .as_ref()
@@ -1161,6 +1233,7 @@ fn evaluate_seam_gate_fit_candidate(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     defer_residual: bool,
+    anchor_seam_bracket: bool,
 ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
@@ -1211,10 +1284,9 @@ fn evaluate_seam_gate_fit_candidate(
         params.gap_signature_mode,
     );
 
-    let moved_bracket = refined != baseline;
     let max_seam = params.seam_gate_frames;
     let min_seam = (max_seam / 4).max(1);
-    let waveform_gate_frames = if moved_bracket {
+    let waveform_gate_frames = if anchor_seam_bracket {
         policies::adaptive_seam_window_frames(
             a_pre_border.len(),
             min_seam,
@@ -1224,7 +1296,7 @@ fn evaluate_seam_gate_fit_candidate(
     } else {
         max_seam.min(a_pre_border.len().max(1))
     };
-    let post_seam_cap = if moved_bracket {
+    let post_seam_cap = if anchor_seam_bracket {
         policies::adaptive_seam_window_frames(
             a_post_border.len(),
             min_seam,
@@ -1353,6 +1425,30 @@ fn evaluate_seam_gate_fit_candidate(
         });
     }
 
+    if anchor_seam_bracket {
+        let placement = policies::SeamPlacement {
+            start: alignment.start_frame,
+            gap_frames,
+            pre_window: waveform_gate_frames,
+            post_window: post_gate_frames,
+        };
+        if !anchor_bracket_both_matchable(
+            &templates,
+            placement,
+            waveform_gate_frames,
+            post_gate_frames,
+            structure_pre,
+            structure_post,
+            f64::from(params.min_structure_match_score),
+        ) {
+            return Err(SeamGateFailure::WaveformBelowThreshold {
+                pre: alignment.pre_correlation,
+                post: alignment.post_correlation,
+                min: params.fill_absolute_floor,
+            });
+        }
+    }
+
     let pre_corr = alignment.pre_correlation;
     let post_corr = alignment.post_correlation;
     let pearson = classify_fill_waveform_confidence(
@@ -1412,7 +1508,7 @@ fn evaluate_seam_gate_fit_candidate(
         + baseline.end_frame.abs_diff(refined.end_frame);
     let ranking_score =
         fit_candidate_ranking_score(pre_corr.min(post_corr), boundary_move);
-    let anchor_trusted = moved_bracket
+    let anchor_trusted = anchor_seam_bracket
         && anchor_trust_applies(
             structure_pre,
             structure_post,
