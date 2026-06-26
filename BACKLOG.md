@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-25.
+Last updated: 2026-06-26.
 
 **How this doc works**
 
@@ -67,6 +67,7 @@ From [archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md)
 | [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
 | [Verification cost knob](#verification-cost-knob) | `validation.max_verification_secs` — only on demonstrated friction |
+| [Test tier follow-ups](docs/test-tier-remainder.md) | `clip-sync` ignore cleanup (~1 h), optional `pr-repair-extended` / SP on PR, Phase 2b binary split — see [test-tier-remainder.md](docs/test-tier-remainder.md) |
 
 #### Memory use and PCM cloning on long clips
 

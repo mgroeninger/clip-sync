@@ -296,7 +296,26 @@ For tests still in shared integration binaries or `--lib`, use:
 
 `tier:oracle` / `tier:validation` / `tier:diagnostic` in the reason string is the convention;
 `test-tier.ps1` selects ignored rows by binary + `--ignored` (or substring filters for gap
-corpus), not by parsing the reason text.
+corpus), not by parsing the reason text. Open follow-ups:
+[test-tier-remainder.md](test-tier-remainder.md).
+
+### Ignore scheduling
+
+How `test-tier.ps1` runs `#[ignore]` rows (repair crate). Source of truth: `scripts/test-tier.ps1`.
+
+| Tier command | Mechanism | Ignored rows |
+|--------------|-----------|--------------|
+| **oracle** | `--test oracle_energy` then `-- --ignored` on same binary | All ignored rows in `oracle_energy.rs` (EC01/EC02 production, patch control/smoke, haystack, EC06 search) |
+| **validation** | `validate_*` feature binaries (no `#[ignore]`) + gap_corpus **substring** filters + `--ignored` | `gap_corpus_generated`, `gap_corpus_external`, `gap_corpus_patch_timing_*` — **not** `gap_corpus_regenerate_*` (manual only) |
+| **validation** | `--test cli_mux_integration -- --ignored` when ffmpeg on PATH | `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` |
+| **diagnostic** | `diag_*` + `seam_residual_oracle` (no `#[ignore]` in those binaries) | — |
+| **diagnostic** | Named `--ignored` filters (not blanket `--lib --ignored`) | `broadband_oracle_veto_rescue_patches_marginal`, `write_full_surface_repair_golden`, `mux_reports_progress_for_short_fixture` |
+
+**Manual only** (not in any tier script): `gap_corpus_regenerate_committed_wav_fixtures` (overwrites
+committed WAVs).
+
+**`clip-sync`:** validation/diagnostic tiers use substring filters on `--lib`; legacy ignore
+strings remain — see [test-tier-remainder.md § Open — clip-sync ignore cleanup](test-tier-remainder.md#open--clip-sync-ignore-cleanup-1-h).
 
 ---
 
