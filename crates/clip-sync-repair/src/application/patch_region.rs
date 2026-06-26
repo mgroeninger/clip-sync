@@ -208,67 +208,6 @@ impl FitHaystackCache {
     }
 }
 
-/// L3: joint-grid cells defer the expensive floor probe until a pearson-ranked winner is chosen.
-fn defer_fit_residual_measurement(params: &SeamGateParams<'_>) -> bool {
-    want_residual_measurement(params)
-}
-
-fn record_fit_joint_candidate(
-    best: &mut Option<FitJointCandidate>,
-    best_below_floor: &mut Option<SeamGateFailure>,
-    refined: RefinedGapFrames,
-    baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
-    anchor_seam_bracket: bool,
-) {
-    let defer_residual = defer_fit_residual_measurement(params);
-    match evaluate_seam_gate_fit_candidate(
-        refined,
-        baseline,
-        params,
-        cache,
-        defer_residual,
-        anchor_seam_bracket,
-    ) {
-        Ok((outcome, ranking_score)) => {
-            let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
-                + baseline.end_frame.abs_diff(refined.end_frame);
-            let replace = best.as_ref().is_none_or(|current| {
-                ranking_score > current.ranking_score + 1e-9
-                    || (ranking_score >= current.ranking_score - 1e-9
-                        && boundary_move < current.boundary_move)
-            });
-            if replace {
-                *best = Some(FitJointCandidate {
-                    outcome,
-                    ranking_score,
-                    boundary_move,
-                });
-            }
-        }
-        Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min }) => {
-            if best_below_floor.is_none() {
-                *best_below_floor = Some(SeamGateFailure::WaveformBelowThreshold {
-                    pre,
-                    post,
-                    min,
-                });
-            }
-        }
-        Err(fail @ SeamGateFailure::ResidualHeadroomExceeded { .. }) => {
-            if best_below_floor.is_none() {
-                *best_below_floor = Some(fail);
-            }
-        }
-        Err(other) => {
-            if best.is_none() && best_below_floor.is_none() {
-                *best_below_floor = Some(other);
-            }
-        }
-    }
-}
-
 fn record_fit_joint_candidate_to_pool(
     pool: &mut Vec<FitJointCandidate>,
     best_below_floor: &mut Option<SeamGateFailure>,
@@ -278,14 +217,7 @@ fn record_fit_joint_candidate_to_pool(
     cache: &FitHaystackCache,
     anchor_seam_bracket: bool,
 ) {
-    match evaluate_seam_gate_fit_candidate(
-        refined,
-        baseline,
-        params,
-        cache,
-        true,
-        anchor_seam_bracket,
-    ) {
+    match evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket) {
         Ok((outcome, ranking_score)) => {
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
@@ -487,8 +419,6 @@ fn try_finalize_high_joint_candidate(
 
 /// E6: after the full boundary grid, pick the best Pearson-`High` by ranking (not first in walk order).
 fn try_finalize_best_grid_high(
-    defer_residual: bool,
-    best: &Option<FitJointCandidate>,
     pool: &[FitJointCandidate],
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
@@ -496,14 +426,7 @@ fn try_finalize_best_grid_high(
     haystack_secs: f64,
     grid_cells: u32,
 ) -> Option<SeamGateOutcome> {
-    let candidate = if defer_residual {
-        best_high_joint_candidate(pool)?.clone()
-    } else {
-        best.as_ref().filter(|c| {
-            fit_routing::terminates_high(c.outcome.confidence)
-        })?
-        .clone()
-    };
+    let candidate = best_high_joint_candidate(pool)?.clone();
     try_finalize_high_joint_candidate(
         candidate,
         baseline,
@@ -652,16 +575,8 @@ fn joint_candidate_ranking_cmp(
     fit_routing::selection_cmp(&a.score(), &b.score())
 }
 
-fn global_best_joint_candidate<'a>(
-    defer_residual: bool,
-    best: &'a Option<FitJointCandidate>,
-    pool: &'a [FitJointCandidate],
-) -> Option<&'a FitJointCandidate> {
-    if defer_residual {
-        pool.iter().max_by(joint_candidate_ranking_cmp)
-    } else {
-        best.as_ref()
-    }
+fn global_best_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCandidate> {
+    pool.iter().max_by(joint_candidate_ranking_cmp)
 }
 
 fn best_high_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCandidate> {
@@ -697,12 +612,8 @@ fn anchor_bracket_both_matchable_at_gate(
     )
 }
 
-fn best_anchor_joint_candidate<'a>(
-    defer_residual: bool,
-    best: &'a Option<FitJointCandidate>,
-    pool: &'a [FitJointCandidate],
-) -> Option<&'a FitJointCandidate> {
-    let global = global_best_joint_candidate(defer_residual, best, pool)?;
+fn best_anchor_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCandidate> {
+    let global = global_best_joint_candidate(pool)?;
     if global.outcome.anchor_seam_used {
         Some(global)
     } else {
@@ -711,7 +622,6 @@ fn best_anchor_joint_candidate<'a>(
 }
 
 struct AnchorSeamJointSearchState<'a> {
-    best: &'a mut Option<FitJointCandidate>,
     pool: &'a mut Vec<FitJointCandidate>,
     best_below_floor: &'a mut Option<SeamGateFailure>,
 }
@@ -722,7 +632,6 @@ struct AnchorSeamJointSearchCtx<'a> {
     baseline_post: f64,
     params: &'a SeamGateParams<'a>,
     cache: &'a FitHaystackCache,
-    defer_residual: bool,
     haystack_secs: f64,
 }
 
@@ -731,7 +640,6 @@ fn try_anchor_seam_joint_search(
     ctx: &AnchorSeamJointSearchCtx<'_>,
 ) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
     let AnchorSeamJointSearchState {
-        best,
         pool,
         best_below_floor,
     } = state;
@@ -741,7 +649,6 @@ fn try_anchor_seam_joint_search(
         baseline_post,
         params,
         cache,
-        defer_residual,
         haystack_secs,
     } = *ctx;
 
@@ -792,91 +699,51 @@ fn try_anchor_seam_joint_search(
         if bracket.refined == baseline {
             continue;
         }
-        if defer_residual {
-            // `record_fit_joint_candidate_to_pool` only pushes on a passing gate; on failure the
-            // pool is unchanged. Mark only the candidate we actually appended — otherwise a failed
-            // bracket would stamp `anchor_seam_used` onto the prior entry (e.g. the baseline).
-            let pool_len_before = pool.len();
-            record_fit_joint_candidate_to_pool(
-                pool,
-                best_below_floor,
-                bracket.refined,
-                baseline,
-                params,
-                cache,
-                true,
-            );
-            if pool.len() > pool_len_before {
-                if let Some(candidate) = pool.last_mut() {
-                    mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
-                }
-            }
-        } else {
-            record_fit_joint_candidate(
-                best,
-                best_below_floor,
-                bracket.refined,
-                baseline,
-                params,
-                cache,
-                true,
-            );
-            if let Some(candidate) = best.as_mut() {
-                if candidate.outcome.refined == bracket.refined {
-                    mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
-                }
+        // `record_fit_joint_candidate_to_pool` only pushes on a passing gate; on failure the pool
+        // is unchanged. Mark only the candidate we actually appended — otherwise a failed bracket
+        // would stamp `anchor_seam_used` onto the prior entry (e.g. the baseline).
+        let pool_len_before = pool.len();
+        record_fit_joint_candidate_to_pool(
+            pool,
+            best_below_floor,
+            bracket.refined,
+            baseline,
+            params,
+            cache,
+            true,
+        );
+        if pool.len() > pool_len_before {
+            if let Some(candidate) = pool.last_mut() {
+                mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
             }
         }
     }
 
-    let anchor_high = if defer_residual {
-        best_high_joint_candidate(pool).is_some_and(|c| c.outcome.anchor_seam_used)
-    } else {
-        best.as_ref().is_some_and(|c| {
-            c.outcome.anchor_seam_used && fit_routing::terminates_high(c.outcome.confidence)
-        })
-    };
-    if anchor_high {
-        if defer_residual {
-            if let Some(candidate) = best_high_joint_candidate(pool) {
-                if candidate.outcome.anchor_seam_used {
-                    if let Some(outcome) = try_finalize_high_joint_candidate(
-                        candidate.clone(),
-                        baseline,
-                        params,
-                        cache,
-                        haystack_secs,
-                        None,
-                    ) {
-                        return Ok(Some(outcome));
-                    }
-                }
+    // E3: the best Pearson-High candidate, if it is an anchor bracket, terminates here (residual
+    // confirmed by `try_finalize_high_joint_candidate`).
+    if let Some(candidate) = best_high_joint_candidate(pool) {
+        if candidate.outcome.anchor_seam_used {
+            if let Some(outcome) = try_finalize_high_joint_candidate(
+                candidate.clone(),
+                baseline,
+                params,
+                cache,
+                haystack_secs,
+                None,
+            ) {
+                return Ok(Some(outcome));
             }
-        } else if let Some(candidate) = best.as_ref().filter(|c| c.outcome.anchor_seam_used) {
-            let mut outcome = candidate.outcome.clone();
-            outcome.fit_haystack_secs = haystack_secs;
-            return Ok(Some(outcome));
         }
     }
 
-    if let Some(candidate) =
-        best_anchor_joint_candidate(defer_residual, best, pool)
-    {
+    // E4: under baseline-only, an anchor bracket that ranks best overall is accepted without the grid.
+    if let Some(candidate) = best_anchor_joint_candidate(pool) {
         if accepts_baseline_without_boundary_grid(
             params.fit_boundary_search,
             candidate.outcome.confidence,
         ) {
-            if defer_residual {
-                let mut outcome = finalize_fit_outcome_residual(
-                    candidate.outcome.clone(),
-                    baseline,
-                    params,
-                    cache,
-                )?;
-                outcome.fit_haystack_secs = haystack_secs;
-                return Ok(Some(outcome));
-            }
-            let mut outcome = candidate.outcome.clone();
+            let mut outcome =
+                finalize_fit_outcome_residual(candidate.outcome.clone(), baseline, params, cache)?;
             outcome.fit_haystack_secs = haystack_secs;
             return Ok(Some(outcome));
         }
@@ -892,7 +759,6 @@ fn evaluate_seam_gate_fit_joint(
     let step = boundary_search_step_frames(params.max_extend_frames, params.step_frames);
     let total_frames = params.a_pcm.samples.len() / params.channels.max(1);
     let haystack_secs = fit_haystack_secs(params);
-    let defer_residual = defer_fit_residual_measurement(params);
 
     let start_min = if params.gap_start_extend_on_pre_seam_fail {
         baseline.start_frame.saturating_sub(params.max_extend_frames)
@@ -905,117 +771,48 @@ fn evaluate_seam_gate_fit_joint(
         baseline.end_frame
     };
 
-    let mut best: Option<FitJointCandidate> = None;
+    // Single pool path (the `defer_residual` fork is gone): candidates are scored with Pearson
+    // confidence; residual is applied at selection (`try_finalize_*` / `select_joint_fit_winner…`),
+    // a no-op when residual measurement is disabled. See docs/TEMP-fit-routing-extraction-plan.md §5.
     let mut pool: Vec<FitJointCandidate> = Vec::new();
     let mut best_below_floor: Option<SeamGateFailure> = None;
     let cache = FitHaystackCache::build(params);
 
-    if defer_residual {
-        record_fit_joint_candidate_to_pool(
-            &mut pool,
-            &mut best_below_floor,
-            baseline,
-            baseline,
-            params,
-            &cache,
-            false,
-        );
-    } else {
-        record_fit_joint_candidate(
-            &mut best,
-            &mut best_below_floor,
-            baseline,
-            baseline,
-            params,
-            &cache,
-            false,
-        );
-    }
+    record_fit_joint_candidate_to_pool(
+        &mut pool,
+        &mut best_below_floor,
+        baseline,
+        baseline,
+        params,
+        &cache,
+        false,
+    );
 
-    let baseline_high = if defer_residual {
-        pool.first()
-            .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
-    } else {
-        best.as_ref()
-            .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
-    };
-    if baseline_high {
-        if defer_residual {
-            if let Some(outcome) = try_finalize_high_joint_candidate(
-                pool.first().expect("baseline high").clone(),
-                baseline,
-                params,
-                &cache,
-                haystack_secs,
-                None,
-            ) {
-                return Ok(outcome);
-            }
-        } else {
-            let mut outcome = best.expect("baseline high").outcome;
-            outcome.fit_haystack_secs = haystack_secs;
+    // E1: a High baseline short-circuits in any mode (residual confirmed by `try_finalize_high…`).
+    if pool
+        .first()
+        .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
+    {
+        if let Some(outcome) = try_finalize_high_joint_candidate(
+            pool.first().expect("baseline high").clone(),
+            baseline,
+            params,
+            &cache,
+            haystack_secs,
+            None,
+        ) {
             return Ok(outcome);
         }
     }
 
-    let baseline_candidate = if defer_residual {
-        pool.first()
-    } else {
-        best.as_ref()
-    };
-    if let Some(candidate) = baseline_candidate {
+    // E2: under baseline-only, a High/Marginal baseline is accepted without the grid (the force rule
+    // withholds a Marginal baseline so anchor search runs first).
+    if let Some(candidate) = pool.first() {
         if baseline_accept_without_grid(
             params.fit_boundary_search,
             candidate.outcome.confidence,
             params.anchor_seam_mode,
         ) {
-            if defer_residual {
-                return select_joint_fit_winner_with_residual(
-                    pool,
-                    best_below_floor,
-                    baseline,
-                    params,
-                    &cache,
-                    haystack_secs,
-                    None,
-                );
-            }
-            let mut outcome = candidate.outcome.clone();
-            outcome.fit_haystack_secs = haystack_secs;
-            return Ok(outcome);
-        }
-    }
-
-    let (baseline_pre, baseline_post) = baseline_seam_scores(
-        if defer_residual {
-            pool.first()
-        } else {
-            best.as_ref()
-        },
-        &best_below_floor,
-    );
-
-    if let Some(outcome) = try_anchor_seam_joint_search(
-        &mut AnchorSeamJointSearchState {
-            best: &mut best,
-            pool: &mut pool,
-            best_below_floor: &mut best_below_floor,
-        },
-        &AnchorSeamJointSearchCtx {
-            baseline,
-            baseline_pre,
-            baseline_post,
-            params,
-            cache: &cache,
-            defer_residual,
-            haystack_secs,
-        },
-    )? {
-        return Ok(outcome);
-    }
-
-    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
-        if defer_residual {
             return select_joint_fit_winner_with_residual(
                 pool,
                 best_below_floor,
@@ -1026,7 +823,38 @@ fn evaluate_seam_gate_fit_joint(
                 None,
             );
         }
-        return Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed));
+    }
+
+    let (baseline_pre, baseline_post) = baseline_seam_scores(pool.first(), &best_below_floor);
+
+    if let Some(outcome) = try_anchor_seam_joint_search(
+        &mut AnchorSeamJointSearchState {
+            pool: &mut pool,
+            best_below_floor: &mut best_below_floor,
+        },
+        &AnchorSeamJointSearchCtx {
+            baseline,
+            baseline_pre,
+            baseline_post,
+            params,
+            cache: &cache,
+            haystack_secs,
+        },
+    )? {
+        return Ok(outcome);
+    }
+
+    // E5: baseline-only never runs the grid — pick the pool winner (or skip on `best_below_floor`).
+    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
+        return select_joint_fit_winner_with_residual(
+            pool,
+            best_below_floor,
+            baseline,
+            params,
+            &cache,
+            haystack_secs,
+            None,
+        );
     }
 
     let grid_cells = count_joint_boundary_grid_cells(baseline, start_min, end_max, step);
@@ -1038,33 +866,18 @@ fn evaluate_seam_gate_fit_joint(
             if try_end > try_start
                 && (try_start != baseline.start_frame || try_end != baseline.end_frame)
             {
-                if defer_residual {
-                    record_fit_joint_candidate_to_pool(
-                        &mut pool,
-                        &mut best_below_floor,
-                        RefinedGapFrames {
-                            start_frame: try_start,
-                            end_frame: try_end,
-                        },
-                        baseline,
-                        params,
-                        &cache,
-                        false,
-                    );
-                } else {
-                    record_fit_joint_candidate(
-                        &mut best,
-                        &mut best_below_floor,
-                        RefinedGapFrames {
-                            start_frame: try_start,
-                            end_frame: try_end,
-                        },
-                        baseline,
-                        params,
-                        &cache,
-                        false,
-                    );
-                }
+                record_fit_joint_candidate_to_pool(
+                    &mut pool,
+                    &mut best_below_floor,
+                    RefinedGapFrames {
+                        start_frame: try_start,
+                        end_frame: try_end,
+                    },
+                    baseline,
+                    params,
+                    &cache,
+                    false,
+                );
             }
             if try_end >= end_max {
                 break;
@@ -1077,39 +890,23 @@ fn evaluate_seam_gate_fit_joint(
         try_start = try_start.saturating_sub(step).max(start_min);
     }
 
-    if let Some(outcome) = try_finalize_best_grid_high(
-        defer_residual,
-        &best,
-        &pool,
+    // E6: best Pearson-High over the full grid (residual confirmed).
+    if let Some(outcome) =
+        try_finalize_best_grid_high(&pool, baseline, params, &cache, haystack_secs, grid_cells)
+    {
+        return Ok(outcome);
+    }
+
+    // E7: best of the pool, or skip with the recorded below-floor failure.
+    select_joint_fit_winner_with_residual(
+        pool,
+        best_below_floor,
         baseline,
         params,
         &cache,
         haystack_secs,
-        grid_cells,
-    ) {
-        return Ok(outcome);
-    }
-
-    if defer_residual {
-        return select_joint_fit_winner_with_residual(
-            pool,
-            best_below_floor,
-            baseline,
-            params,
-            &cache,
-            haystack_secs,
-            Some(grid_cells),
-        );
-    }
-
-    if let Some(mut candidate) = best {
-        candidate.outcome.fit_used_boundary_grid = true;
-        candidate.outcome.fit_boundary_grid_cells = Some(grid_cells);
-        candidate.outcome.fit_haystack_secs = haystack_secs;
-        return Ok(candidate.outcome);
-    }
-
-    Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed))
+        Some(grid_cells),
+    )
 }
 
 fn want_residual_measurement(params: &SeamGateParams<'_>) -> bool {
@@ -1250,7 +1047,6 @@ fn evaluate_seam_gate_fit_candidate(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
-    defer_residual: bool,
     anchor_seam_bracket: bool,
 ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
@@ -1406,29 +1202,9 @@ fn evaluate_seam_gate_fit_candidate(
 
     }
 
-    let residual = if defer_residual {
-        None
-    } else {
-        measure_fit_residual_verdict(
-            params,
-            cache,
-            refined,
-            alignment.start_frame,
-            offset_nominal_start,
-            waveform_gate_frames,
-            post_gate_frames,
-        )
-    };
-    if let Some(ref verdict) = residual {
-        log_residual_verdict_debug(
-            params,
-            alignment.start_frame,
-            offset_nominal_start,
-            alignment.pre_correlation,
-            alignment.post_correlation,
-            verdict,
-        );
-    }
+    // Residual/floor is probed once at selection (`finalize_fit_outcome_residual`), never per scored
+    // candidate — keeping the grid/anchor cold path cheap. Scored candidates carry no verdict.
+    let residual: Option<policies::SeamResidualVerdict> = None;
 
     if !structure_passes_gate(
         structure_pre,
@@ -1475,36 +1251,13 @@ fn evaluate_seam_gate_fit_candidate(
         params.fill_absolute_floor,
     );
 
-    let confidence = if defer_residual && params.residual_gate.is_active() {
+    // Pearson-only confidence: residual is applied later at selection, so the residual-gated rescue
+    // here just keeps a sub-floor Pearson alive as Marginal for the finalize step to confirm/veto.
+    let confidence = if params.residual_gate.is_active() {
         match pearson {
             Ok(confidence) => confidence,
             Err(_) if params.residual_gate.rescue_enabled() => FillConfidence::Marginal,
             Err(_) => {
-                return Err(SeamGateFailure::WaveformBelowThreshold {
-                    pre: pre_corr,
-                    post: post_corr,
-                    min: params.fill_absolute_floor,
-                });
-            }
-        }
-    } else if params.residual_gate.is_active() {
-        let verdict = residual.ok_or(SeamGateFailure::StructureAlignmentFailed)?;
-        match apply_residual_to_confidence(
-            pearson,
-            &verdict,
-            params.residual_headroom_margin_db,
-            params.residual_gate.rescue_enabled(),
-        ) {
-            Ok(confidence) => confidence,
-            Err(ResidualGateError::HeadroomExceeded { margin_db, .. }) => {
-                return Err(SeamGateFailure::ResidualHeadroomExceeded {
-                    pre: pre_corr,
-                    post: post_corr,
-                    residual: verdict,
-                    margin_db,
-                });
-            }
-            Err(ResidualGateError::PearsonBelowFloor(_)) => {
                 return Err(SeamGateFailure::WaveformBelowThreshold {
                     pre: pre_corr,
                     post: post_corr,

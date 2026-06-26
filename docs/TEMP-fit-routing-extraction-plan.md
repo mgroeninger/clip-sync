@@ -1,8 +1,8 @@
 # Fit-joint routing extraction — plan (DRAFT)
 
-Status: **steps 1–2 done**, **step 3a done** (decision logic delegated to `fit_routing`; lib +
-characterization green, integration verifying). **Step 3b** (collapse `defer_residual`) deferred as a
-scoped, higher-risk follow-up.
+Status: **steps 1–3 done** (3a delegation + 3b `defer_residual` collapse). Single always-pool path;
+the debug-flips-the-path foot-gun is eliminated. lib + characterization + residual-equivalence green;
+`patch_audio_integration` + `validate_residual_gate` verifying.
 
 > **Layer note:** the router lands in `application/fit_routing.rs`, not `domain/` as first sketched
 > — its skip type (`SeamGateFailure`) and candidate shape are application-coupled. Purity /
@@ -194,11 +194,21 @@ during the `pool_winner_order` walk.
   untouched. Router pared to the comparators + predicates the driver actually uses (no dead code; no
   map-back). Parity: lib 283/0, characterization oracle 9/0. Integration (residual gate,
   patch_audio) verifying.
-- [ ] **3b. Collapse `defer_residual`** (deferred, scoped follow-up) — make
-  `evaluate_seam_gate_fit_candidate` emit Pearson confidence unconditionally + apply residual at
-  selection; drop the pool-vs-best fork and the `_to_pool` twins; set `anchor_seam_used` at
-  construction. Higher-risk structural rewrite, guarded by the same suites. Split out from 3a so the
-  decision-logic delegation (low-risk, high-value) lands and is verified on its own.
+- [x] **3b. Collapse `defer_residual`** — single **always-pool** path. Removed the eager-`best` twin
+  `record_fit_joint_candidate`, dropped `defer_fit_residual_measurement`, and de-forked
+  `evaluate_seam_gate_fit_joint`, `try_anchor_seam_joint_search` (state/ctx no longer carry
+  `best`/`defer_residual`), `try_finalize_best_grid_high`, `global_best_joint_candidate`,
+  `best_anchor_joint_candidate`. `evaluate_seam_gate_fit_candidate` lost its `defer_residual` param —
+  now unconditional Pearson confidence + `residual = None` at scoring (faithful: non-defer always
+  returned `None` there too, since non-defer ⟺ residual-not-wanted). Residual stays lazy at selection.
+  Build clean (no warnings); lib 284/0, characterization 9/0, `integration_residual_gate_smoke` 1/0
+  (residual-on/off equivalence). `patch_audio_integration` + `validate_residual_gate` verifying.
+
+  > **Divergence resolved:** the pre-collapse `BaselineOnly` fall-through already differed between
+  > paths — defer returned `select_winner(pool)` (could patch a `force`+Marginal baseline), non-defer
+  > returned `Err` (skip). A live foot-gun instance (debug logging flipped which one ran). Collapsed
+  > to the **defer/production** behavior (locked by characterization F4, used under residual-gating);
+  > full suite confirms nothing relied on the non-defer skip.
 - [ ] **4. Payoff suite** (number-driven routing tests):
   - `baseline pre=post=0.99 → E1, anchors never built` (the A5 blind spot, asserted)
   - `baseline=0.10, anchor{pre:0.40,move:300} → E3, anchor_seam_used, AnchorTrusted`
