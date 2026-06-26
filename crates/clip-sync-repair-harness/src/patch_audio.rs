@@ -250,8 +250,8 @@ pub fn patch_request_with_options(
     PatchAudioRequest {
         anchor_seam_mode: AnchorSeamMode::Auto,
         anchor_seam_min_prominence: 0.0,
-        max_anchor_bracket_secs: 0.0,
-        max_anchors_per_side: 0,
+        max_anchor_bracket_secs: 5.0,
+        max_anchors_per_side: 5,
         report,
         normalize_fill,
         normalize_window_secs,

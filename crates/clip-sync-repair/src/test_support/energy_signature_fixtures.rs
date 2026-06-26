@@ -8,8 +8,8 @@ use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatu
 use crate::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
 use crate::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
-    interleaved_to_mono, refine_gap_frames, FillAlignment, GapBorderSpec, RefinedGapFrames,
-    SeamPlacement, SeamTemplates,
+    interleaved_to_mono, is_silent_frame, refine_gap_frames, FillAlignment, GapBorderSpec,
+    RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
 
 pub const BOOL_AMBIGUITY_EPS: f64 = 0.45;
@@ -929,6 +929,42 @@ fn patch_refine_gap_frames(
     )
 }
 
+/// B-side gap bounds for oracle reports. When B still carries audio in the hole (A-only dropout),
+/// silence-based peel would shrink the fill window; track A's refined hole on the shared timeline.
+fn b_gap_bounds_for_report(
+    fixture: &EnergySignatureFixture,
+    refined_a: RefinedGapFrames,
+) -> RefinedGapFrames {
+    let ch = fixture.channels.max(1);
+    let params = &fixture.structure_params;
+    let start = fixture.nominal_fill_start;
+    let end = fixture.nominal_fill_end;
+    let retains_audio = !is_silent_frame(
+        &fixture.b_samples,
+        ch,
+        start,
+        params.silence_peak_fraction,
+        params.absolute_silence_rms,
+    ) && !is_silent_frame(
+        &fixture.b_samples,
+        ch,
+        end.saturating_sub(1),
+        params.silence_peak_fraction,
+        params.absolute_silence_rms,
+    );
+    if retains_audio {
+        refined_a
+    } else {
+        patch_refine_gap_frames(
+            &fixture.b_samples,
+            ch,
+            fixture.sample_rate,
+            start,
+            end,
+        )
+    }
+}
+
 fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
     (secs * sample_rate as f64).round() as usize
 }
@@ -1430,10 +1466,12 @@ pub fn build_speech_peaks_offset_from_throat(
 
     let mut a = vec![0.0f32; total_frames * ch];
     let mut b = vec![0.0f32; total_frames * ch];
-    fill_speech_like(&mut b, ch, sample_rate, 0, total_frames);
     fill_speech_like(&mut a, ch, sample_rate, pre_burst_start, pre_burst_end);
     fill_speech_like(&mut a, ch, sample_rate, post_burst_start, post_burst_end);
     zero_frames(&mut a, ch, gap_start, gap_end);
+    // B matches A outside the hole; gap region retains same-master speech for fill extraction.
+    b.copy_from_slice(&a);
+    fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
 
     let structure_params =
         spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
@@ -1488,13 +1526,7 @@ pub fn gap_report_times(fixture: &EnergySignatureFixture) -> (f64, f64, f64, f64
         fixture.gap_start,
         fixture.gap_end,
     );
-    let refined_b = patch_refine_gap_frames(
-        &fixture.b_samples,
-        ch,
-        fixture.sample_rate,
-        fixture.nominal_fill_start,
-        fixture.nominal_fill_end,
-    );
+    let refined_b = b_gap_bounds_for_report(fixture, refined_a);
     let a_start = refined_a.start_frame as f64 / rate;
     let a_end = refined_a.end_frame as f64 / rate;
     let b_nominal_start = refined_b.start_frame as f64 / rate;
@@ -1578,6 +1610,29 @@ mod production_spec_tests {
             }
         }
         assert!(decorrelated, "different seeds must produce different noise");
+    }
+
+    #[test]
+    fn speech_peaks_fixture_unified_match_finds_truth() {
+        use super::build_speech_peaks_offset_from_throat;
+        use crate::domain::GapSignatureMode;
+        use crate::test_support::energy_signature_fixtures::structure_heavy_weights;
+
+        let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
+        let (_, _, b0, b1, _) = gap_report_times(&fixture);
+        assert!(
+            (b1 - b0) > 0.5,
+            "B fill window should span the nominal gap, got {b0}..{b1}"
+        );
+        let matched = fixture
+            .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
+            .expect("speech peaks fixture should align in domain");
+        assert!(
+            fixture.within_bin_tolerance(matched.alignment.start_frame, fixture.true_fill_start),
+            "start {} vs truth {}",
+            matched.alignment.start_frame,
+            fixture.true_fill_start,
+        );
     }
 
     #[test]

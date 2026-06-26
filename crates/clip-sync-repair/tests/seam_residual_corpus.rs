@@ -13,10 +13,11 @@ use clip_sync_repair::domain::gap_fill_fit::{
 use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
 use clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
-    build_f1_production, build_f4_decoy_production,
+    build_f1_production, build_f4_decoy_production, channel_noise, overwrite_channels,
 };
 use clip_sync_repair_harness::seam_residual::{
-    build_broadband, disagreement_at, score_placement, GateOutcomeLabel, PearsonTierLabel, Variant,
+    build_broadband, disagreement_at, score_placement, score_placement_multichannel,
+    GateOutcomeLabel, PearsonTierLabel, Variant,
 };
 
 #[test]
@@ -55,6 +56,65 @@ fn f4_decoy_placement_informative_with_high_headroom() {
     )
     .unwrap_err();
     assert!(matches!(err, ResidualGateError::HeadroomExceeded { .. }));
+}
+
+/// Center-dominant 6ch (plan §7 1a): the per-channel scoring path must follow the center channel —
+/// the only one carrying signal — for residual/floor, where a mono downmix would be diluted by the
+/// five quiet surrounds. This is the PR-CI guard on the now-live default-on veto for multichannel
+/// (and, by the same path, stereo) gaps; the real-pipeline counterpart is the diagnostic-tier
+/// `seam_residual_oracle_center_dominant_6ch`.
+#[test]
+fn seam_residual_center_dominant_follows_center_channel() {
+    let channels = 6usize;
+    let center = 2usize; // FC in FL FR FC LFE Ls Rs
+    let mut fixture = build_f1_production(48_000, channels, 3.0);
+
+    // Demote the surrounds to quiet, decorrelated noise relative to the center's own level: ~5 % of
+    // the center peak (≈ −26 dB, mean-square ratio ≈ 0.0025) so they stay below the ~20 dB selection
+    // gate, yet are present enough to dilute a mono downmix. Different seeds on A vs B → no cancel.
+    let center_peak = fixture
+        .a_samples
+        .iter()
+        .skip(center)
+        .step_by(channels)
+        .fold(0.0f32, |m, &s| m.max(s.abs()));
+    let surr_amp = center_peak * 0.05;
+    let surrounds: Vec<usize> = (0..channels).filter(|&c| c != center).collect();
+    overwrite_channels(&mut fixture.a_samples, channels, &surrounds, channel_noise(0xA1, surr_amp));
+    overwrite_channels(&mut fixture.b_samples, channels, &surrounds, channel_noise(0xB2, surr_amp));
+
+    let truth = fixture.true_fill_start;
+    let mc = score_placement_multichannel(&fixture, truth);
+    let mono = score_placement(&fixture, truth);
+
+    // Selection narrowed to the center (surrounds are below the energy gate).
+    assert_eq!(
+        mc.selected_channels,
+        vec![center],
+        "only the center channel should be selected; got {:?}",
+        mc.selected_channels
+    );
+    // The center cancels at truth → regime established, headroom within the veto margin (gate passes).
+    assert!(
+        mc.verdict.informative,
+        "center cancellation should be informative: floor pre={:.1} post={:.1}",
+        mc.verdict.floor_pre_db,
+        mc.verdict.floor_post_db,
+    );
+    assert!(
+        mc.verdict.worst_headroom_db() <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+        "center-dominant headroom {:.1} dB should be within veto margin {:.1} dB",
+        mc.verdict.worst_headroom_db(),
+        DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+    );
+    // Documents the fix: the mono downmix, diluted by the surrounds, cancels worse than the
+    // per-channel center measurement on the identical fixture.
+    assert!(
+        mc.verdict.worst_floor_db() < mono.verdict().worst_floor_db() - 2.0,
+        "per-channel floor {:.1} dB should be meaningfully deeper than the mono downmix {:.1} dB",
+        mc.verdict.worst_floor_db(),
+        mono.verdict().worst_floor_db(),
+    );
 }
 
 #[test]

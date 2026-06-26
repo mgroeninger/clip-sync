@@ -6,9 +6,10 @@ use clip_sync_repair::domain::gap_fill_fit::{
 };
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
-    interleaved_to_channels, interleaved_to_mono, seam_chosen_and_floor, GapBorderSpec,
-    DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamFloorParams, SeamFloorProbe, SeamPlacement, SeamResidualVerdict,
-    SeamSide, SeamTemplates,
+    interleaved_to_channels, interleaved_to_mono, seam_chosen_and_floor,
+    seam_chosen_and_floor_multichannel, selected_seam_channels, GapBorderSpec,
+    DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamChannelResidual, SeamFloorParams, SeamFloorProbe, SeamPlacement,
+    SeamResidualVerdict, SeamSide, SeamTemplates,
 };
 use clip_sync_repair::domain::{
     residual_max_lag_frames, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
@@ -348,6 +349,116 @@ pub fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> Scored
         placement_slide_frames: placement_slide,
         max_lag_frames: max_lag,
     }
+}
+
+/// Multichannel result of [`score_placement_multichannel`]: the production verdict (built from the
+/// energy-selected channels), the channels selected, and the per-side per-channel residuals for CSV.
+pub struct ScoredPlacementMultichannel {
+    pub pearson_pre: f64,
+    pub pearson_post: f64,
+    /// Energy-selected channels (`selected_seam_channels`); empty ⇒ mono-downmix fallback was used.
+    pub selected_channels: Vec<usize>,
+    pub verdict: SeamResidualVerdict,
+    pub pre: Vec<SeamChannelResidual>,
+    pub post: Vec<SeamChannelResidual>,
+}
+
+/// Score a placement through the **per-channel** residual path — the production routing
+/// ([`seam_chosen_and_floor_multichannel`] + [`SeamResidualVerdict::from_channel_residuals`]) used by
+/// `measure_fit_residual_verdict`. Separate from [`score_placement`] (Option A) so the existing mono /
+/// stereo corpus rows keep scoring on the mono path unchanged. Empty selection falls back to the mono
+/// path with `from_parts_with_placement`, matching production.
+pub fn score_placement_multichannel(
+    fixture: &EnergySignatureFixture,
+    start: usize,
+) -> ScoredPlacementMultichannel {
+    let ch = fixture.channels.max(1);
+    let rate = fixture.sample_rate;
+    let gap_start = fixture.gap_start;
+    let gap_end = fixture.gap_end;
+    let gap_frames = gap_end - gap_start;
+    let geom = geometry_for(gap_frames, rate);
+
+    let border_spec = GapBorderSpec {
+        gap_start_frame: gap_start,
+        gap_end_frame: gap_end,
+        border_frames: geom.border_frames,
+        border_standoff_frames: geom.standoff_frames,
+        silence_peak_fraction: fixture.structure_params.silence_peak_fraction,
+        absolute_rms_floor: fixture.structure_params.absolute_silence_rms,
+    };
+    let (a_pre, a_post) = border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
+    let (a_pre_ch, a_post_ch) =
+        border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
+    let b_mono = interleaved_to_mono(&fixture.b_samples, ch);
+    let b_ch = interleaved_to_channels(&fixture.b_samples, ch);
+
+    let pre_window = geom.seam_gate_frames.min(a_pre.len().max(1));
+    let post_window = geom.seam_gate_frames.min(a_post.len()).max(1);
+    let templates = SeamTemplates {
+        a_pre: &a_pre,
+        a_post: &a_post,
+        a_pre_ch: &a_pre_ch,
+        a_post_ch: &a_post_ch,
+        b_mono: &b_mono,
+        b_ch: &b_ch,
+    };
+    let placement = SeamPlacement { start, gap_frames, pre_window, post_window };
+    let max_lag = residual_max_lag_frames(rate, DEFAULT_RESIDUAL_LAG_SECS);
+    let (pearson_pre, pearson_post) = fill_seam_correlations(&templates, placement);
+
+    let delta_true = fixture.true_fill_start as i64 - gap_start as i64;
+    let nominal_delta = fixture.nominal_fill_start as i64 - gap_start as i64;
+    let chosen_delta = start as i64 - gap_start as i64;
+    let production_floor_anchor = delta_true == nominal_delta;
+    let placement_slide = if production_floor_anchor {
+        (chosen_delta - nominal_delta).unsigned_abs()
+    } else {
+        0
+    };
+    let floor_params = |window: usize| SeamFloorParams {
+        a_samples: &fixture.a_samples,
+        channels: ch,
+        b_mono: &b_mono,
+        window,
+        standoff_frames: geom.standoff_frames,
+        a_to_b_delta: delta_true,
+        step_frames: window.max(1),
+        max_walk_frames: rate as usize * 3,
+        absolute_silence_rms: fixture.structure_params.absolute_silence_rms,
+        max_lag_frames: max_lag,
+    };
+
+    // Same selection production recomputes (`selected_seam_channels`), filtered to channels B has.
+    let selected: Vec<usize> = selected_seam_channels(&fixture.a_samples, ch, &border_spec)
+        .into_iter()
+        .filter(|&c| c < b_ch.len())
+        .collect();
+
+    let (pre, post, verdict) = if selected.is_empty() {
+        let (chosen_pre, floor_pre) =
+            seam_chosen_and_floor(&floor_params(pre_window), SeamSide::Pre, gap_start, gap_end, chosen_delta);
+        let (chosen_post, floor_post) =
+            seam_chosen_and_floor(&floor_params(post_window), SeamSide::Post, gap_start, gap_end, chosen_delta);
+        let verdict = SeamResidualVerdict::from_parts_with_placement(
+            &chosen_pre, &chosen_post, &floor_pre, &floor_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB, placement_slide, max_lag,
+        );
+        (Vec::new(), Vec::new(), verdict)
+    } else {
+        let pre = seam_chosen_and_floor_multichannel(
+            &floor_params(pre_window), &b_ch, &selected, SeamSide::Pre, gap_start, gap_end, chosen_delta,
+        );
+        let post = seam_chosen_and_floor_multichannel(
+            &floor_params(post_window), &b_ch, &selected, SeamSide::Post, gap_start, gap_end, chosen_delta,
+        );
+        let verdict = SeamResidualVerdict::from_channel_residuals(
+            &pre, &post, DEFAULT_RESIDUAL_FLOOR_OK_DB, placement_slide, max_lag,
+        );
+        (pre, post, verdict)
+    };
+
+    ScoredPlacementMultichannel { pearson_pre, pearson_post, selected_channels: selected, verdict, pre, post }
 }
 
 pub fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {

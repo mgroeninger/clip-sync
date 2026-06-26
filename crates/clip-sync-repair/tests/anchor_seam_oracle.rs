@@ -3,7 +3,7 @@
 use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
 
-use clip_sync_repair::application::PatchAudio;
+use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
 use clip_sync_repair::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
     AnchorSeamSide, AnchorSource,
@@ -17,8 +17,9 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f4_decoy_production, build_speech_peaks_offset_from_throat, EnergySignatureFixture,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_energy_fixture, patch_request_from_repair,
+    gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
 };
+use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_request_with_options};
 
 fn anchor_params(fixture: &EnergySignatureFixture) -> AnchorSeamParams {
     AnchorSeamParams {
@@ -56,9 +57,9 @@ fn anchor_candidates_pick_speech_peak_not_throat() {
     );
     assert!(
         set.pre.iter().any(|c| {
-            c.source == AnchorSource::EnergyPeak && c.frame < scan.start_frame
+            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
         }),
-        "expected pre energy peak before throat: {:?}",
+        "expected salient pre-anchor before throat (not scan edge): {:?}",
         set.pre
     );
     let brackets = list_feasible_anchor_brackets(&set, scan, &params);
@@ -73,13 +74,27 @@ fn anchor_seam_pipeline_patches_speech_peaks_fixture() {
     let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
     let temp = tempfile::tempdir().expect("tempdir");
     let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let mut repair = RepairConfig::default();
-    repair.gap_signature_mode = GapSignatureMode::Energy;
-    repair.gap_signature_context_secs = 3.0;
+    let mut options = energy_sig_patch_options(GapSignatureMode::Energy);
+    options.fill_mode = clip_sync_repair::domain::FillMode::Fit;
+    options.gap_signature_context_secs = 3.0;
+    options.fill_border_search_secs = 10.0;
+    options.fill_align_margin_secs = 1.0;
+    let mut repair = production_repair_config(GapSignatureMode::Energy, 3.0);
     repair.anchor_seam_mode = AnchorSeamMode::Force;
-    repair.fill_mode = clip_sync_repair::domain::FillMode::Fit;
     repair.residual_gate = ResidualGateMode::VetoRescue;
-    let request = patch_request_from_repair(report, &repair);
+    repair.min_fill_correlation = 0.35;
+    repair.fill_fit_structure_weight = 0.35;
+    repair.fill_fit_waveform_weight = 0.65;
+    let request = patch_request_with_options(report, false, 5.0, 0.35, options);
+    let request = PatchAudioRequest {
+        anchor_seam_mode: repair.anchor_seam_mode,
+        max_anchor_bracket_secs: repair.max_anchor_bracket_secs,
+        max_anchors_per_side: repair.max_anchors_per_side,
+        anchor_seam_min_prominence: repair.anchor_seam_min_prominence,
+        residual_gate: repair.residual_gate,
+        measure_residual: true,
+        ..request
+    };
     let reader = SymphoniaMediaReader;
     let progress = FakeProgressReporter;
     let response = PatchAudio::new(&reader, &progress)

@@ -598,7 +598,7 @@ fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> 
 /// Pearson scores — the single entry point so residual/floor measurement follows the *same*
 /// channels as seam scoring (see `seam-scoring.md`). Returns empty when every channel is
 /// near-silent, so the caller falls back to the mono downmix.
-pub(crate) fn selected_seam_channels(
+pub fn selected_seam_channels(
     a_samples: &[f32],
     channels: usize,
     spec: &GapBorderSpec,
