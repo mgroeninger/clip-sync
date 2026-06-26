@@ -264,10 +264,10 @@ tree — no cleanup needed.)
 | B | `application/patch_region.rs` (`measure_fit_residual_verdict` ~760) | Build `GapBorderSpec` from `(params, refined)`, call `selected_seam_channels`, pass `score_channels` + `cache.b_ch` into `SeamFloorParams`; build verdict from multichannel path. **No signature changes** to `finalize_fit_outcome_residual` or the candidate pool — selection is recomputed here, not threaded |
 | C | `application/patch_region.rs` (`FitHaystackCache`) | Already has `b_ch` — no new cache; extract `gap_border_spec(params, refined)` helper to DRY the two inline `GapBorderSpec` builds |
 | D | `application/patch_region.rs` (`log_residual_channel_breakdown`) | **Done** — `selected_channels` + per-channel headroom to the `RUST_LOG=debug` log (not JSON; verdict stays `Copy`, §4e) |
-| E0 | `test_support/energy_signature_fixtures.rs` | *TODO* — `overwrite_channels` per-channel fixture helper (prereq for E1/E2; `write_frame` is uniform across channels, §7) |
-| E1 | `tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs` | *TODO* — reroute harness through `seam_chosen_and_floor_multichannel`; center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
-| E2 | `tests/seam_residual_oracle.rs` | *TODO* — center-dominant 6ch case in `seam_residual_oracle_csv` (real pipeline; §7 1b) |
-| F | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
+| E | `test_support/energy_signature_fixtures.rs` | **Done** — `overwrite_channels` + `channel_noise` per-channel fixture helpers (prereq for F/G; `write_frame` is uniform across channels, §7 Prerequisite) |
+| F | `tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs` | *TODO* — reroute harness through `seam_chosen_and_floor_multichannel`; center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
+| G | `tests/seam_residual_oracle.rs` | *TODO* — center-dominant 6ch case in `seam_residual_oracle_csv` (real pipeline; §7 1b) |
+| H | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
 
 No change to: Pearson functions, structure match, fill search, gate mode legacy path (residual still
 fit-only until legacy path gets measurement — optional follow-up).
@@ -278,7 +278,7 @@ fit-only until legacy path gets measurement — optional follow-up).
 |-------|-------------|
 | **P0 — domain + unit tests** | **Done** — per-channel cancel on fixed windows; aggregation; center-dominant test (`seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise`), stereo-equal, empty-selection, and aggregation/informative-decoupling tests in `policies.rs` |
 | **P1 — pipeline** | **Done** — wired in `measure_fit_residual_verdict` (recompute selection via `selected_seam_channels`, §4b); `log_residual_channel_breakdown` debug log |
-| **P1.5 — multichannel fixtures** | *TODO* — per-channel fixture helper (E0), then oracle 6ch (E2, §7 1b) and corpus 6ch + harness reroute (E1, §7 1a). Validates the now-live default-on veto on multichannel/stereo gaps |
+| **P1.5 — multichannel fixtures** | *TODO* — per-channel fixture helper (row E), then oracle 6ch (row G, §7 1b) and corpus 6ch + harness reroute (row F, §7 1a). Validates the now-live default-on veto on multichannel/stereo gaps |
 | **P2 — gate** | *TODO* — proceed with [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) veto on aligned measurements |
 
 Channel alignment is **not blocked** on lag-radius unification or `informative` — but those should
