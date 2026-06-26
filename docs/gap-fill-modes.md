@@ -139,6 +139,8 @@ Seam Pearson is **peak-normalized** (level is removed) and computed on the chann
 
 This matters because seam Pearson on **near-silent audio is noise** (peak-normalized noise correlates to ~0). If scoring were locked to front L/R, a 5.1 mix with dialogue in the center channel and quiet fronts would show **pre/post ≈ 0** and skip a perfectly fillable gap. Following the signal-bearing channel(s) gives such gaps an honest seam score. (Mono/stereo content is unaffected — all channels carry signal, so all are scored as before.)
 
+The fit-mode **residual/floor** measurement follows the *same* selected channels (not a mono downmix that quiet surrounds would dilute): cancellation depth is measured per selected channel, while the integer alignment lag is found once across all of them by summed correlation. See [seam-scoring.md](seam-scoring.md) § Residual channel policy and [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md).
+
 ---
 
 ## Patch anchors

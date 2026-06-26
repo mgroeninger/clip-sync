@@ -1,17 +1,21 @@
 # Residual channel alignment — plan (DRAFT)
 
-Status: **P0 + P1 implemented** (domain per-channel measurement + shared cross-channel lag + pipeline
-wiring + unit tests).
-Remaining: P2 gate veto (separate PR, see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md)),
-corpus/oracle 6ch rows (§7), and doc cross-links (§5 rows E/F). Align residual/floor cancellation with
+Status: **implemented** — P0 (domain per-channel measurement + shared cross-channel lag), P1 (pipeline
+wiring), and P1.5 (multichannel fixtures: rows E/F/G) are done. **The residual gate is already
+default-on (`residual_gate = veto`), so this change is live in production decisions** — it moved the
+gate's inputs (`worst_headroom_db` + `informative`) onto channel-aligned measurements, not just a
+report-only improvement. There is no separate "P2 gate" to ship here: the gate
+([residual-gate-wiring-plan.md](residual-gate-wiring-plan.md)) was already wired; this plan only
+re-bases what it measures. Remaining: doc polish only. Align residual/floor cancellation with
 Pearson’s **energy-selected per-channel** policy so surround and center-dominant mixes are measured on
 the same signal path as the seam gate — without treating “full multichannel” as a separate
 discriminator. Sections marked **as built** reflect the shipped code; where it diverged from the
-original sketch (verdict stays `Copy`/scalar-only; explicit `b_ch` args) the reason is noted inline.
+original sketch (verdict stays `Copy`/scalar-only; explicit `b_ch` args; **shared lag via summed
+correlation, not a mono downmix**) the reason is noted inline.
 
 Companions: [seam-scoring.md](seam-scoring.md) (Pearson channel selection),
-[residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (gate wiring — independent but should
-ship channel alignment **before** default-on veto), [gap-fill-modes.md](gap-fill-modes.md) §
+[residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (gate wiring — already default-on; this
+plan re-bases its inputs onto channel-aligned measurements), [gap-fill-modes.md](gap-fill-modes.md) §
 Multichannel seams.
 
 ---
@@ -265,7 +269,7 @@ tree — no cleanup needed.)
 | C | `application/patch_region.rs` (`FitHaystackCache`) | Already has `b_ch` — no new cache; extract `gap_border_spec(params, refined)` helper to DRY the two inline `GapBorderSpec` builds |
 | D | `application/patch_region.rs` (`log_residual_channel_breakdown`) | **Done** — `selected_channels` + per-channel headroom to the `RUST_LOG=debug` log (not JSON; verdict stays `Copy`, §4e) |
 | E | `test_support/energy_signature_fixtures.rs` | **Done** — `overwrite_channels` + `channel_noise` per-channel fixture helpers (prereq for F/G; `write_frame` is uniform across channels, §7 Prerequisite) |
-| F | `tests/seam_residual_corpus.rs` + `clip-sync-repair-harness/src/seam_residual.rs` | *TODO* — add `score_placement_multichannel` (harness moved out of `tests/common/` into the harness crate); center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
+| F | `tests/seam_residual_corpus.rs` + `clip-sync-repair-harness/src/seam_residual.rs` | **Done** — `score_placement_multichannel` (Option A, separate from mono `score_placement`) + `seam_residual_center_dominant_follows_center_channel`; existing 2ch rows unchanged. Needed `selected_seam_channels` made `pub` (was `pub(crate)`) for the harness crate |
 | G | `tests/seam_residual_oracle.rs` | **Done** — `seam_residual_oracle_center_dominant_6ch` + `build_center_dominant_oracle` (real pipeline; §7 1b). **Diagnostic tier** (`required-features = ["diagnostic-tests"]`), not PR CI |
 | H | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
 
@@ -278,7 +282,7 @@ fit-only until legacy path gets measurement — optional follow-up).
 |-------|-------------|
 | **P0 — domain + unit tests** | **Done** — per-channel cancel on fixed windows; aggregation; center-dominant test (`seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise`), stereo-equal, empty-selection, and aggregation/informative-decoupling tests in `policies.rs` |
 | **P1 — pipeline** | **Done** — wired in `measure_fit_residual_verdict` (recompute selection via `selected_seam_channels`, §4b); `log_residual_channel_breakdown` debug log |
-| **P1.5 — multichannel fixtures** | row E (fixture helper) **done**; row G (oracle 6ch, §7 1b, diagnostic tier) **done**; row F (corpus 6ch + harness reroute, §7 1a, PR-CI) *TODO* — the PR-CI guard on the now-live default-on veto |
+| **P1.5 — multichannel fixtures** | **done** — row E (fixture helper), row G (oracle 6ch, §7 1b, diagnostic tier), row F (corpus 6ch + `score_placement_multichannel`, §7 1a, PR-CI guard on the now-live default-on veto) |
 | **P2 — gate** | *TODO* — proceed with [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) veto on aligned measurements |
 
 Channel alignment is **not blocked** on lag-radius unification or `informative` — but those should
@@ -348,16 +352,19 @@ Today `score_placement` (harness crate) calls the **mono** `seam_chosen_and_floo
    `SeamResidualVerdict::from_channel_residuals`; else falls back to the mono path. Surface the
    selected indices on `ScoredPlacement` for the CSV. (Option B — rerouting the shared
    `score_placement` — is more faithful to production but recalibrates the existing stereo rows.)
-2. **CSV columns** `selected_channels` and `path` (`mono` | `multichannel`) for calibration runs.
-3. **Assertions (center-dominant 6ch fixture, at truth and at the F4-style decoy):**
-   - *Truth, multichannel:* `worst_floor_db ≤ −40` (FC cancels), `informative == true`,
-     `worst_headroom_db` within `DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB` → gate **passes**.
-   - *Truth, mono vs multichannel (documents the fix):* the multichannel `worst_floor_db` is at least
-     **20 dB deeper** than the mono-harness `worst_floor_db` on the same fixture (the surround noise
-     dilutes the downmix). This is the corpus analog of the `..._follows_center` unit test, but on the
-     production scoring path.
-   - *Decoy, multichannel:* `informative == true` and `worst_headroom_db > DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB`
-     → gate **vetoes** (mirrors `f4_decoy_placement_informative_with_high_headroom`).
+2. **CSV columns** — *deferred*: `ScoredPlacementMultichannel` surfaces `selected_channels` + per-side
+   per-channel `pre`/`post` residuals, so a calibration CSV can be added later without more plumbing.
+3. **Assertions — as shipped** (`seam_residual_center_dominant_follows_center_channel`, F1 6ch with
+   surrounds demoted to ~5 % of the center peak — below the selection gate, but enough to dilute a
+   downmix):
+   - `selected_channels == [center]` — selection narrows to the signal-bearing channel.
+   - `informative == true` and `worst_headroom_db ≤ DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB` (gate passes).
+   - *Documents the fix:* `mc.worst_floor_db() < mono.worst_floor_db() − 2 dB` — the per-channel
+     center floor is meaningfully deeper than the diluted mono downmix on the **same** fixture.
+   - (Bars relaxed from the original draft's `≤ −40` / `≥ 20 dB`: F1's center floor isn't as deep as a
+     pure broadband master, and surrounds must stay *below* the selection gate, capping dilution. The
+     shipped bars are robust without per-fixture dB tuning. The decoy/veto direction stays with the
+     existing 2ch `f4_decoy_placement_informative_with_high_headroom` — no multichannel decoy added.)
 
 ### 1b — Real-pipeline oracle (`tests/seam_residual_oracle.rs`) — **diagnostic tier, not PR CI**
 
@@ -393,7 +400,7 @@ real-pipeline confirmation run on demand.
 | A/B channel count differ | v1: if `ch >= b_ch.len()`, skip that channel; if none left, mono fallback |
 | Energy gate uses border templates for selection but raw window for cancel | Intentional — same as today’s template vs raw split; selection indices still match Pearson |
 | Slightly higher cost (× #selected channels × lags) | Typically 1–3 channels; same order as Pearson; still behind `measure_residual` / debug |
-| `fill_repeat_correlations` still scores all channels | Out of scope here; note in BACKLOG as separate Pearson/residual repeat alignment |
+| `fill_repeat_correlations` scores all channels (no energy selection) | Out of scope here; it already does per-channel best-of + mono, just without `seam_score_channel_indices`. Tracked in BACKLOG (consistency cleanup, low priority) |
 
 **Resolved (was open):** scalar side summary fields (`chosen_pre_db`, …) report the **worst-headroom
 channel** so the `ResidualHeadroomExceeded` message names the channel that drove the veto. But
