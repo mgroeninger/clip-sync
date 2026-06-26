@@ -36,6 +36,8 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             confidence,
             gap_start_adjust_frames,
             gap_end_adjust_frames,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
             ..
         } => GapPatchStatus::Patched {
             pre_correlation: *pre_correlation,
@@ -49,6 +51,8 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             residual_db: None,
             floor_db: None,
             headroom_db: None,
+            anchor_seam_used: *anchor_seam_used,
+            anchor_bracket_move_frames: *anchor_bracket_move_frames,
         },
         other => other.clone(),
     }

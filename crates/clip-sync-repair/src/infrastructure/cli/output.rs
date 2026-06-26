@@ -13,7 +13,7 @@ use crate::application::ports::GapReporter;
 use crate::domain::{
     CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport,
     PatchSummary, TrackCompatibility, diagnostics::collect_repair_warnings,
-    format_gap_patch_skip_reason,
+    format_gap_patch_skip_reason, gap_tags::PatchTier,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -430,6 +430,67 @@ fn format_patch_slide_suffix(align_adjustment_secs: f64, waveform_adjustment_sec
     }
 }
 
+struct PatchedGapDetail<'a> {
+    pre_correlation: f64,
+    post_correlation: f64,
+    align_adjustment_secs: f64,
+    waveform_adjustment_secs: f64,
+    structure_trusted: bool,
+    confidence: crate::domain::FillConfidence,
+    patch_tier: PatchTier,
+    diagnostics: bool,
+    patched_label_spacing: &'a str,
+}
+
+/// Human `patched (…)` detail for the gap table and patch summary.
+fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
+    let PatchedGapDetail {
+        pre_correlation,
+        post_correlation,
+        align_adjustment_secs,
+        waveform_adjustment_secs,
+        structure_trusted,
+        confidence,
+        patch_tier,
+        diagnostics,
+        patched_label_spacing,
+    } = *detail;
+
+    let slide = format_patch_slide_suffix(align_adjustment_secs, waveform_adjustment_secs);
+    let marginal = if confidence == crate::domain::FillConfidence::Marginal {
+        "! "
+    } else {
+        ""
+    };
+    let placement = if structure_trusted {
+        "struct"
+    } else if patch_tier == PatchTier::AnchorTrusted {
+        "anchor"
+    } else {
+        ""
+    };
+
+    if diagnostics {
+        if placement.is_empty() {
+            format!(
+                "{marginal}patched{patched_label_spacing}(pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+            )
+        } else {
+            format!(
+                "{marginal}patched{patched_label_spacing}({placement} pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
+            )
+        }
+    } else if placement.is_empty() {
+        format!(
+            "{marginal}patched{patched_label_spacing}({pre_correlation:.2}→{post_correlation:.2})"
+        )
+    } else {
+        format!(
+            "{marginal}patched{patched_label_spacing}({placement} {pre_correlation:.2}→{post_correlation:.2})"
+        )
+    }
+}
+
 fn format_unified_gap_status(
     gap: &crate::domain::Gap,
     report: &GapReport,
@@ -449,29 +510,17 @@ fn format_unified_gap_status(
             structure_trusted,
             confidence,
             ..
-        } => {
-            let slide = format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
-            let marginal = if *confidence == crate::domain::FillConfidence::Marginal {
-                "! "
-            } else {
-                ""
-            };
-            if show_diagnostics {
-                if *structure_trusted {
-                    format!(
-                        "{marginal}patched (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
-                    )
-                } else {
-                    format!(
-                        "{marginal}patched (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
-                    )
-                }
-            } else if *structure_trusted {
-                format!("{marginal}patched (struct {pre_correlation:.2}→{post_correlation:.2})")
-            } else {
-                format!("{marginal}patched ({pre_correlation:.2}→{post_correlation:.2})")
-            }
-        }
+        } => format_patched_gap_detail(&PatchedGapDetail {
+            pre_correlation: *pre_correlation,
+            post_correlation: *post_correlation,
+            align_adjustment_secs: *align_adjustment_secs,
+            waveform_adjustment_secs: *waveform_adjustment_secs,
+            structure_trusted: *structure_trusted,
+            confidence: *confidence,
+            patch_tier: outcome.tags.patch_tier,
+            diagnostics: show_diagnostics,
+            patched_label_spacing: " ",
+        }),
         GapPatchStatus::Skipped { reason } => {
             format!("skipped: {}", format_gap_patch_skip_reason(reason))
         }
@@ -634,24 +683,17 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 structure_trusted,
                 confidence,
                 ..
-            } => {
-                let slide =
-                    format_patch_slide_suffix(*align_adjustment_secs, *waveform_adjustment_secs);
-                let marginal = if *confidence == crate::domain::FillConfidence::Marginal {
-                    "! "
-                } else {
-                    ""
-                };
-                if *structure_trusted {
-                    format!(
-                        "{marginal}patched  (struct pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
-                    )
-                } else {
-                    format!(
-                        "{marginal}patched  (pre={pre_correlation:.2} post={post_correlation:.2} {slide})"
-                    )
-                }
-            }
+            } => format_patched_gap_detail(&PatchedGapDetail {
+                pre_correlation: *pre_correlation,
+                post_correlation: *post_correlation,
+                align_adjustment_secs: *align_adjustment_secs,
+                waveform_adjustment_secs: *waveform_adjustment_secs,
+                structure_trusted: *structure_trusted,
+                confidence: *confidence,
+                patch_tier: gap.tags.patch_tier,
+                diagnostics: true,
+                patched_label_spacing: "  ",
+            }),
             GapPatchStatus::Skipped { reason } => {
                 format!("skipped: {}", format_gap_patch_skip_reason(reason))
             }
@@ -852,6 +894,8 @@ mod tests {
                     residual_db: None,
                     floor_db: None,
                     headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
                 },
             ),
             gap_patch_outcome(
@@ -997,6 +1041,8 @@ mod tests {
                 residual_db: None,
                 floor_db: None,
                 headroom_db: None,
+                anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1037,6 +1083,8 @@ mod tests {
                     residual_db: None,
                     floor_db: None,
                     headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
                 },
             ),
             gap_patch_outcome(
@@ -1272,6 +1320,8 @@ mod tests {
                 residual_db: None,
                 floor_db: None,
                 headroom_db: None,
+                anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
             },
         )]);
 
@@ -1280,6 +1330,56 @@ mod tests {
         assert!(text.contains("patched (struct 0.98→1.00)"));
         assert!(!text.contains("Patch results"));
         assert!(!text.contains("Gaps detected"));
+    }
+
+    #[test]
+    fn unified_gap_report_shows_anchor_trusted_patch_detail() {
+        use crate::domain::{
+            FillMode, FillTierThresholds, GapPatchTierInput, GapTagsPatchContext,
+            derive_gap_tags_from_patch_outcome,
+        };
+        use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
+
+        let report = minimal_report();
+        let status = GapPatchStatus::Patched {
+            pre_correlation: 0.31,
+            post_correlation: 0.29,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: crate::domain::FillConfidence::Marginal,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            residual_db: None,
+            floor_db: None,
+            headroom_db: None,
+            anchor_seam_used: true,
+            anchor_bracket_move_frames: 48_000,
+        };
+        let tags = derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre: 0.31,
+                post: 0.29,
+                confidence: crate::domain::FillConfidence::Marginal,
+            },
+            GapTagsPatchContext {
+                fill_mode: FillMode::Fit,
+                thresholds: FillTierThresholds::DEFAULT,
+                signature_mode_label: "energy",
+                fit_used_boundary_grid: false,
+                anchor_seam_used: true,
+                anchor_trusted: true,
+                residual: None,
+                residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+            },
+        );
+        let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome::new(
+            0.0, 60.0, status, tags,
+        )]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        assert!(text.contains("! patched (anchor 0.31→0.29)"));
+        assert!(text.contains("[anchor trusted"));
     }
 
     #[test]
@@ -1302,6 +1402,8 @@ mod tests {
                 residual_db: None,
                 floor_db: None,
                 headroom_db: None,
+                anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
             },
         )]);
 
@@ -1423,6 +1525,8 @@ mod tests {
                     residual_db: None,
                     floor_db: None,
                     headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
                 },
             ),
             gap_patch_outcome(
@@ -1491,6 +1595,8 @@ mod tests {
                     residual_db: None,
                     floor_db: None,
                     headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
                 },
             ),
             gap_patch_outcome(

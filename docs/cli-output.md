@@ -271,8 +271,8 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 - **Duration summary:** when patching ran, a sub-line under the header totals repaired/skipped seconds and points at the longest skipped gap (`gap #N at H:MM:SS`).
 - **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows follow timeline order (gap #1, #2, …).
 
-- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`). After patch, append vocabulary suffix ` [tier · seam]` when applicable (e.g. `[marginal · post-strong]`, `[hard skip · weak both sides]`, `[structure fail]`); see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary.
-- **Default patch detail (`fill_mode = fit`, default):** `patched (pre→post)` from waveform seam scores after slide search; `structure_trusted` is always false in JSON.
+- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`). After patch, append vocabulary suffix ` [tier · seam]` when applicable (e.g. `[marginal · post-strong]`, `[anchor trusted · symmetric weak]`, `[hard skip · weak both sides]`, `[structure fail]`); see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary.
+- **Default patch detail (`fill_mode = fit`, default):** `patched (pre→post)` from waveform seam scores at the winning placement (scan throat or editorial anchor). When anchor seam search rescues a gap with strong structure but throat Pearson below `min_fill_correlation`, the status prefix is `anchor` (e.g. `patched (anchor 0.31→0.29)`) and the suffix tier is `anchor trusted`. `structure_trusted` is always false in JSON for fit mode.
 - **Default patch detail (`fill_mode = gate`):** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.
 - **Verbose patch detail:** includes slide adjustment and full pre/post labels.
 - **Footer:** `Output: <path>` when WAV or mux file was written.
@@ -301,6 +301,7 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
   - `< fill_absolute_floor` (default 0.12) → skip
 - Unified scorer: `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)` (defaults 0.35 / 0.65).
 - Structure trust is not used (`structure_trusted` is always false).
+- **Anchor seam (`anchor_seam_mode = auto|force`):** when editorial anchors rescue a gap that would skip on throat Pearson alone, status shows `patched (anchor pre→post)` and `patch_tier=anchor_trusted` in tags (see [gap-repair-guide.md](gap-repair-guide.md) § `anchor_trusted`).
 - CLI flags **`--no-structure-trust`** and **`--no-short-gap-one-strong-seam`** have **no effect** (gate-only).
 
 **Structure trust vs waveform gate (`fill_mode = gate` only)**

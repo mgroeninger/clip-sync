@@ -942,4 +942,181 @@ mod tests {
             false,
         ));
     }
+
+    fn test_tone(len: usize, freq_hz: f64, rate_hz: f64) -> Vec<f64> {
+        use std::f64::consts::TAU;
+        (0..len)
+            .map(|i| (TAU * freq_hz * i as f64 / rate_hz).sin())
+            .collect()
+    }
+
+    /// Pre window: Pearson fails at lag 0 but GCC-PHAT peak at the true lag clears Tier 2.
+    fn misaligned_pre_b_window(a_ref: &[f64], lag: usize) -> Vec<f64> {
+        let w = a_ref.len();
+        let mut b = vec![0.0; w];
+        b[lag..w].copy_from_slice(&a_ref[..w - lag]);
+        for (i, sample) in b[..lag].iter_mut().enumerate() {
+            *sample = ((i as f64) * 0.37).sin() * 0.05;
+        }
+        b
+    }
+
+    fn xcorr_rescue_templates(
+        pre_window: usize,
+        lag: usize,
+    ) -> (
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        crate::domain::policies::SeamPlacement,
+    ) {
+        let gap_frames = 10;
+        let start = pre_window;
+        let a_pre = test_tone(pre_window, 440.0, 8_000.0);
+        let a_post = test_tone(pre_window, 440.0, 8_000.0);
+        let b_pre = misaligned_pre_b_window(&a_pre, lag);
+        let mut b_mono = vec![0.0; start + gap_frames + pre_window];
+        b_mono[..pre_window].copy_from_slice(&b_pre);
+        b_mono[start + gap_frames..].copy_from_slice(&a_post);
+        let placement = crate::domain::policies::SeamPlacement {
+            start,
+            gap_frames,
+            pre_window,
+            post_window: pre_window,
+        };
+        (a_pre, a_post, b_mono, placement)
+    }
+
+    #[test]
+    fn local_anchor_xcorr_peak_finds_lag_alignment() {
+        let correlator = clip_sync::FftCorrelator;
+        let lag = 50;
+        let w = 256;
+        let (a_pre, a_post, b_mono, placement) = xcorr_rescue_templates(w, lag);
+        let templates = crate::domain::policies::SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[a_pre.clone()],
+            a_post_ch: &[a_post.clone()],
+            b_mono: &b_mono,
+            b_ch: std::slice::from_ref(&b_mono),
+        };
+        let peak = local_anchor_xcorr_peak(
+            &correlator,
+            &templates,
+            placement,
+            AnchorSeamSide::Pre,
+            w,
+            w,
+            lag as i32 + 5,
+        )
+        .expect("xcorr peak");
+        assert!(
+            peak >= f64::from(DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK),
+            "expected strong GCC-PHAT peak at lag {lag}, got {peak}"
+        );
+    }
+
+    #[test]
+    fn xcorr_rescues_ambiguous_pearson_pre_anchor() {
+        let correlator = clip_sync::FftCorrelator;
+        let lag = 50;
+        let w = 256;
+        let (a_pre, a_post, b_mono, placement) = xcorr_rescue_templates(w, lag);
+        let templates = crate::domain::policies::SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[a_pre.clone()],
+            a_post_ch: &[a_post.clone()],
+            b_mono: &b_mono,
+            b_ch: std::slice::from_ref(&b_mono),
+        };
+        let params = AnchorMatchabilityParams::default();
+        let without = matchability_at_anchor(&MatchabilityAtAnchorArgs {
+            templates: &templates,
+            placement,
+            side: AnchorSeamSide::Pre,
+            pre_window: w,
+            post_window: w,
+            params: &params,
+            correlator: None,
+            max_lag_frames: 0,
+        });
+        assert!(
+            !without.matchable,
+            "misaligned pre Pearson must fail without xcorr: pearson={}",
+            without.pearson
+        );
+        assert!(
+            without.pearson < f64::from(params.min_pearson),
+            "pearson must sit in ambiguous band trigger range"
+        );
+
+        let with = matchability_at_anchor(&MatchabilityAtAnchorArgs {
+            templates: &templates,
+            placement,
+            side: AnchorSeamSide::Pre,
+            pre_window: w,
+            post_window: w,
+            params: &params,
+            correlator: Some(&correlator),
+            max_lag_frames: lag as i32 + 5,
+        });
+        assert!(
+            with.matchable,
+            "xcorr should rescue ambiguous pre anchor: pearson={} xcorr={:?}",
+            with.pearson,
+            with.xcorr_peak
+        );
+        assert!(with.xcorr_peak.is_some_and(|p| p >= f64::from(params.min_xcorr_peak)));
+    }
+
+    #[test]
+    fn xcorr_not_run_when_pearson_deep_fail() {
+        let correlator = clip_sync::FftCorrelator;
+        let w = 256;
+        let a_pre = test_tone(w, 440.0, 8_000.0);
+        let a_post = a_pre.clone();
+        let mut b_pre = a_pre.clone();
+        for sample in &mut b_pre {
+            *sample = -*sample;
+        }
+        let start = w;
+        let gap_frames = 10;
+        let mut b_mono = vec![0.0; start + gap_frames + w];
+        b_mono[..w].copy_from_slice(&b_pre);
+        b_mono[start + gap_frames..].copy_from_slice(&a_post);
+        let templates = crate::domain::policies::SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[a_pre.clone()],
+            a_post_ch: &[a_post.clone()],
+            b_mono: &b_mono,
+            b_ch: std::slice::from_ref(&b_mono),
+        };
+        let placement = crate::domain::policies::SeamPlacement {
+            start,
+            gap_frames,
+            pre_window: w,
+            post_window: w,
+        };
+        let params = AnchorMatchabilityParams::default();
+        let result = matchability_at_anchor(&MatchabilityAtAnchorArgs {
+            templates: &templates,
+            placement,
+            side: AnchorSeamSide::Pre,
+            pre_window: w,
+            post_window: w,
+            params: &params,
+            correlator: Some(&correlator),
+            max_lag_frames: 50,
+        });
+        assert!(!result.matchable);
+        assert!(result.xcorr_peak.is_none());
+        assert!(
+            result.pearson < f64::from(params.min_pearson - params.xcorr_ambiguous_band),
+            "inverted tone must fall outside ambiguous band, pearson={}",
+            result.pearson
+        );
+    }
 }

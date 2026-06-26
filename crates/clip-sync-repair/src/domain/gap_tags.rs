@@ -682,6 +682,26 @@ mod tests {
     }
 
     #[test]
+    fn status_suffix_anchor_trusted_symmetric_weak() {
+        let mut ctx = patch_ctx();
+        ctx.anchor_trusted = true;
+        ctx.anchor_seam_used = true;
+        let tags = derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre: 0.31,
+                post: 0.29,
+                confidence: FillConfidence::Marginal,
+            },
+            ctx,
+        );
+        assert_eq!(tags.patch_tier, PatchTier::AnchorTrusted);
+        assert_eq!(
+            format_gap_tags_status_suffix(&tags),
+            " [anchor trusted · balanced]"
+        );
+    }
+
+    #[test]
     fn plan_not_planned_tags() {
         let status = GapPatchStatus::NotPlanned {
             reason: GapFillSkipReason::OutsideReferenceCoverage,

@@ -235,6 +235,15 @@ pub enum GapPatchStatus {
         /// Worst-side headroom at chosen placement (dB); present when residual was measured.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         headroom_db: Option<f64>,
+        /// Run metadata: placement won at an editorial anchor seam, not the scan throat alone
+        /// (anchor-seam search rescued this gap). Mirrors `structure_trusted` as a path fact —
+        /// not a `GapTags` characteristic. Serialized only when `true` (absent ⇒ baseline throat).
+        #[serde(default, skip_serializing_if = "is_false")]
+        anchor_seam_used: bool,
+        /// Frames the winning anchor bracket moved from the scan-refined baseline; 0 unless
+        /// `anchor_seam_used` (the displacement of the editorial seam from the silence throat).
+        #[serde(default, skip_serializing_if = "is_zero_move_frames")]
+        anchor_bracket_move_frames: usize,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -247,6 +256,16 @@ pub enum GapPatchStatus {
 #[allow(dead_code)]
 fn default_fill_confidence_high() -> FillConfidence {
     FillConfidence::High
+}
+
+/// Skip serializing `anchor_bracket_move_frames` for non-anchor patches (the common case).
+fn is_zero_move_frames(frames: &usize) -> bool {
+    *frames == 0
+}
+
+/// Skip serializing `anchor_seam_used` when `false` (the common baseline-throat case).
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// User-visible summary of a `PatchAudio` run (no PCM payload).

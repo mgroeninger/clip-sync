@@ -159,7 +159,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 |-----|--------|--------------|-----------------|
 | `plan_kind` | `below_scan_floor`, `unfillable`, `not_planned`, `fillable` | Plan (P0–P5) | Status column / omitted |
 | `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable` | Plan (P1–P4) | `unfillable`, `not planned: …` |
-| `patch_tier` | `high`, `marginal`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | Gap table ` [tier · seam]` suffix; `patched`, `!`, `skipped: …` |
+| `patch_tier` | `high`, `marginal`, `anchor_trusted`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | Gap table ` [tier · seam]` suffix; `patched`, `!`, `patched (anchor …)`, `skipped: …` |
 | `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Gap table suffix (`post-strong`, `weak both sides`, …); `-v` `gap tags:` |
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
@@ -177,7 +177,8 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `gap_signature_context_secs` | e.g. `3`, `10`, `30` | Matrix column |
 | `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](corpus-validation.md)) |
 | `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
-| `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate |
+| `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate (gate mode) |
+| `anchor_trusted` | via `patch_tier=anchor_trusted` | Fit mode: strong structure at editorial anchors, throat Pearson below `min_fill_correlation` but patch accepted | Gap table `patched (anchor …)` + ` [anchor trusted · seam]`; JSON `tags.patch_tier` |
 | `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`) | JSON `patch.donor_relation`; patch summary header |
 
 **Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
@@ -214,9 +215,12 @@ Synthetic energy-signature oracles ([corpus-validation.md](corpus-validation.md)
 |-----------|-----|-----------|
 | `patched` (no `!`) | `high` | W1 |
 | `! patched` | `marginal` | W2, W3 |
+| `patched (anchor …)` — editorial anchor seam, strong structure, `min(pre,post) < min_fill_correlation` | `anchor_trusted` | W5 rescue |
 | `skipped: boundary correlation below threshold`, `0.12 ≤ min(pre,post) < 0.27` | `dead_zone` | W4, W5 |
 | Same skip, `min(pre,post) < 0.12` | `hard_skip` | — |
 | `skipped: boundary alignment failed` | `structure_fail` | W6, P6, C5 |
+
+**`anchor_trusted` (fit mode only):** Distinct from gate-mode `structure_trusted`. Applies when `anchor_seam_mode` finds a bracket with strong structure scores at both anchors, B-side anchor matchability passes, and waveform Pearson at the **anchor windows** is in the marginal band (`≥ min_fill_correlation - fill_marginal_margin` but `< min_fill_correlation`) — i.e. a throat-only read would be W5/dead zone, but the editorial cut is accepted. Requires `anchor_seam_used` on the winning candidate. Residual veto still applies; F4 decoy must skip.
 
 The skip string always shows `min=0.12`; use the **score** in verbose or JSON to separate `dead_zone` from `hard_skip`.
 
@@ -245,6 +249,11 @@ The skip string always shows `min=0.12`; use the **score** in verbose or JSON to
 Short tags you can paste into run notes:
 
 ```text
+# Symmetric weak at throat, rescued by anchor seam (energy)
+plan_kind=fillable patch_tier=anchor_trusted seam_shape=symmetric_weak
+content_hint=contour fit_path=baseline_only signature_mode=energy anchor_seam_mode=auto
+→ guide: W5 throat skip avoided; status `patched (anchor 0.15→0.14) [anchor trusted · weak both sides]`; not gate-mode `structure_trusted`
+
 # Boundary gap skipped on default profile
 plan_kind=fillable patch_tier=dead_zone seam_shape=asymmetric_post
 content_hint=speech_boundary_suspected fit_path=baseline_only signature_mode=bool
@@ -291,7 +300,7 @@ domain=energy_finds_truth tags=plan_kind=fillable patch_tier=structure_fail patc
 | W2 | `patch_tier=marginal`, `seam_shape=balanced` |
 | W3 | `patch_tier=marginal`, `seam_shape=asymmetric_post` |
 | W4 | `patch_tier=dead_zone`, `seam_shape=asymmetric_post` |
-| W5 | `patch_tier=dead_zone`, `seam_shape=symmetric_weak` |
+| W5 | `patch_tier=dead_zone`, `seam_shape=symmetric_weak` — or `patch_tier=anchor_trusted` when anchor seam rescues |
 | W6 | `patch_tier=structure_fail` |
 
 Tags are computed at patch time for fillable regions (preserving `fit_path` and `signature_mode`). Plan-only gaps derive tags from `status` only.
@@ -318,7 +327,7 @@ Map **shape + outcome** to the next run. Start from **original** video A unless 
 | Short marginal seams | P5 + W2 | `default` | Listen; `--full` if placement wrong | Lowering thresholds without listening |
 | **Boundary** gap (music→speech) | C3 + W3 | `default`, `-v` | `--full`; `--gap-signature-mode auto`; ↑ `fill_repeat_penalty_weight` | `--quick` if true match is near haystack edge |
 | Boundary gap, skipped | C3 + W4 | `default` | **`--full --gap-signature-mode auto`** | Patching MP4 re-scan only; widening marginal band without cause |
-| Symmetric weak (energy) | W5 | `--gap-signature-mode auto` | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix |
+| Symmetric weak (energy) | W5 | `--gap-signature-mode auto` + `--anchor-seam-mode auto` | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour ±1 s from throat |
 | Long tail / huge gap | P6 + C5 + W6 | Expect skip | Manual edit; do not run `--full` on multi-minute gaps | `--full` on 200 s+ gaps (hours) |
 | Pre-overlap on A | P1 | Ignore | — | Patching |
 | Clip drift on long form | P5 (many) | `fill_offset=interpolated` if drift ≥ ~0.05 s | `anchored-retry` after some High patches | `interpolated` when drift tiny |

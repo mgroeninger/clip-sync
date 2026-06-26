@@ -1,9 +1,7 @@
 # Anchor-based seam placement — plan (DRAFT)
 
-Status: **not started** — design capture from production-gap analysis (symmetric-weak W5 skips on
-dropouts with salient speech ±1 s from a silent throat). Motivating case: scan finds a fillable hole;
-energy structure slides B; waveform seam grades ~250 ms at the **quiet junction** (`pre/post ≈ 0`) and
-skips.
+Status: **in progress** — P0–P3 core, bool `auto` trigger, Batch A–C (Pearson gate, ranking, Tier-2
+xcorr wired). Remaining: observability tags, user docs, optional corpus/diag rows.
 
 Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
 Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
@@ -254,13 +252,16 @@ record_fit_joint_candidate(baseline)           // existing
 
 Pattern to copy: `tests/seam_residual_oracle.rs`.
 
-### P4 — Optional PCM xcorr (defer)
+### P4 — Optional PCM xcorr (Tier 2 rescue)
 
-| # | Task | File(s) |
-|---|------|---------|
-| P4.1 | Port adapter | `infrastructure/pcm_correlator.rs` — wrap `clip_sync::PcmCorrelator` |
-| P4.2 | Anchor lag probe | `local_anchor_xcorr_peak(a_window, b_window, max_lag)` |
-| P4.3 | Tier-2 gate | Use in `matchability_at_anchor` only when envelope ambiguous; top-N brackets |
+| # | Task | File(s) | Status |
+|---|------|---------|--------|
+| P4.1 | Port adapter | `infrastructure/pcm_correlator.rs` — wrap `clip_sync::PcmCorrelator` | optional / skipped (`clip_sync::FftCorrelator` used directly) |
+| P4.2 | Anchor lag probe | `local_anchor_xcorr_peak` in `gap_anchor_seam.rs` | **done** |
+| P4.3 | Tier-2 gate | `matchability_at_anchor` when Pearson ambiguous; production via `anchor_bracket_both_matchable_at_gate` + `residual_max_lag_frames` | **done** (Batch C) |
+
+Unit tests: `xcorr_rescues_ambiguous_pearson_pre_anchor`, `local_anchor_xcorr_peak_finds_lag_alignment`,
+`xcorr_not_run_when_pearson_deep_fail` in `gap_anchor_seam.rs`.
 
 ---
 
