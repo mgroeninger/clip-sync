@@ -62,12 +62,11 @@ try {
             '--test', 'query_reference_integration',
             '--test', 'integration_residual_gate_smoke',
             '--test', 'integration_floor_oracle_smoke',
+            '--test', 'integration_gap_corpus',
             '--test', 'integration_energy_smoke',
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
-            '--test', 'wav_bit_depth_integration',
-            '--',
-            '--skip', 'p1_', '--skip', 'p2_'
+            '--test', 'wav_bit_depth_integration'
         )
 
         if (Test-FfmpegOnPath) {
@@ -100,6 +99,7 @@ try {
             '--test', 'cli_wav_integration',
             '--test', 'integration_energy_smoke',
             '--test', 'integration_floor_oracle_smoke',
+            '--test', 'integration_gap_corpus',
             '--test', 'integration_residual_gate_smoke',
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
@@ -118,6 +118,8 @@ try {
         Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'seam_residual_corpus', 'seam_residual_disagreement_oracles')
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair', '--test', 'oracle_energy',
+            'p1_f1_production_energy_unified_finds_true_offset',
+            'p2_f2_production_energy_unified_finds_pause_one',
             'f1_production_oracle_patch_control', 'f2_production_oracle_patch_smoke',
             'f1_production_haystack_scan_vs_oracle', 'p4_f4_decoy_unified_search_diverges',
             'f4_decoy_placement_informative_with_high_headroom', '--', '--ignored'
@@ -136,7 +138,13 @@ try {
         )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
+            '--test', 'integration_gap_corpus',
             'gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing',
+            '--', '--ignored'
+        )
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'patch_audio_integration',
             'patch_audio_fit_production_defaults', '--', '--ignored'
         )
     }
@@ -150,12 +158,8 @@ try {
             '--test', 'diag_seam_residual',
             '--test', 'seam_residual_oracle'
         )
-        # Straggler diagnostic #[ignore] rows still in --lib or integration binaries.
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair', '--lib', '--', '--ignored',
-            '--skip', 'gap_corpus_generated', '--skip', 'gap_corpus_external',
-            '--skip', 'gap_corpus_patch_timing'
-        )
+        # Straggler diagnostic #[ignore] rows still in --lib (golden generator, ffmpeg unit).
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--lib', '--', '--ignored')
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--test', 'patch_audio_integration',

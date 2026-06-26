@@ -106,7 +106,7 @@ contract). Select oracle tests by name (`cargo test oracle_`) or acceptance ID.
 | **unit** | Pure logic, policies, small fakes | yes (`pr` → repair lib with `oracle_`-label skips) | `src/**` `#[test]` |
 | **integration** | Patch/scan/CLI on synthetic WAV; seam behavior; repo-only domain-acceptance (`oracle_` label) | yes (subset via `pr-repair`) | `tests/*_integration.rs`, `tests/oracle_*.rs` |
 | **validation** | External dep (real codec / ffmpeg / corpus / env) **or** exhaustive off-PR contract (RG, EC6, floor oracle) | no (`validation-tests` feature) | `tests/validate_*.rs` |
-| **diagnostic** | CSV dumps, sweeps, golden generators (emit data, no assertion) | never (`diagnostic-tests` feature) | `tests/diag_*.rs` |
+| **diagnostic** | CSV dumps, sweeps, golden generators (emit data, no assertion) | never (`diagnostic-tests` feature) | `tests/diag_*.rs`, `seam_residual_oracle` |
 
 ### Tier decision rule
 
@@ -143,7 +143,7 @@ validation changes.
 
 | Feature | Binaries |
 |---------|----------|
-| *(default)* | lib + integration + `oracle_*` |
+| *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate` |
 | `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `seam_residual_oracle` |
 
@@ -155,8 +155,9 @@ cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_ma
 **Phase 3.5 (`clip-sync-repair-harness`):** shared integration runners live in the workspace
 crate `crates/clip-sync-repair-harness` (`clip_sync_repair_harness`), listed under
 `clip-sync-repair` `[dev-dependencies]`. Tier binaries import runners with normal `use` statements;
-corpus paths are resolved from `env!("CARGO_MANIFEST_DIR")` in the test binary (the repair crate
-root), passed into harness helpers such as `floor_oracle::load_manifest(repair_tests_dir)`.
+corpus paths are resolved from `repair_tests_dir!()` in tier binaries (expands to
+`env!("CARGO_MANIFEST_DIR")` in the repair `[[test]]` crate), passed into harness helpers such as
+`floor_oracle::load_manifest(repair_tests_dir!())`.
 
 | Harness module | Former `tests/common/` file | Used by |
 |----------------|----------------------------|---------|
@@ -240,7 +241,7 @@ Legacy filters (still valid for ad-hoc runs):
 ```powershell
 cargo test -p clip-sync corpus_committed
 cargo test -p clip-sync-cli
-cargo test -p clip-sync-repair gap_corpus_committed
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_committed
 cargo test -p clip-sync-repair --test patch_audio_integration
 ```
 
@@ -290,11 +291,11 @@ See [corpus-validation.md](corpus-validation.md) and [tests/corpus/README.md](..
 
 ```powershell
 # Committed + generated
-cargo test -p clip-sync-repair gap_corpus -- --ignored
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus -- --ignored
 
 # External (real media; ground truth in manifest)
 $env:CLIP_SYNC_GAP_CORPUS = "F:\Video"   # directory with your MKV files
-cargo test -p clip-sync-repair gap_corpus_external -- --ignored
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_external -- --ignored
 ```
 
 See [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
@@ -378,7 +379,7 @@ cargo test -p clip-sync regenerate_committed_wav_fixtures -- --ignored --nocaptu
 Repair committed gap WAVs:
 
 ```powershell
-cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenerate -- --ignored --nocapture
 ```
 
 ---
@@ -391,9 +392,7 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | `corpus_query_reference_45min_anchor` | `clip-sync` | `--ignored`; 60 min query-reference oracle (~minutes) |
 | `corpus_external_cases` | `clip-sync` | `--ignored`; `CLIP_SYNC_CORPUS` |
 | `regenerate_committed_wav_fixtures` | `clip-sync` | `--ignored`; overwrites committed WAVs |
-| `gap_corpus_generated` | `clip-sync-repair` | `--ignored` |
-| `gap_corpus_external` | `clip-sync-repair` | `--ignored`; `CLIP_SYNC_GAP_CORPUS` |
-| `gap_corpus_regenerate` | `clip-sync-repair` | `--ignored`; overwrites gap WAVs |
+| `gap_corpus_*` | `clip-sync-repair` | `--test integration_gap_corpus`; generated/external/patch_timing `--ignored` |
 | `pcm_discover_finds_*`, `refine_recovers_large` | `clip-sync` | `--ignored`; slow |
 | `mux_writes_video` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; ffmpeg on PATH (`pr-repair` when available) |
 

@@ -235,7 +235,7 @@ clip-sync-repair-harness/           dev-dep library (Phase 3.5 — landed)
 |-------|----------------|
 | 1 | Document layers (this section); no refactors required for `test-tier.ps1` |
 | 2 | No new acceptance/oracle/integration `#[test]` in `test_support/` (fixture-builder unit tests OK); extract shared runners to `common/`; finish runner use in `validate_*` splits; rename catalog folder; update `test-tier.ps1` |
-| 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` — **required** if `--lib` still exceeds 15s after main splits |
+| 2 follow-up (repair) | `integration_gap_corpus.rs` binary; move `gap_corpus_committed` out of lib `application/testing/` | **Landed (2026-06-25)** |
 | 2b | `clip-sync` corpus + symphonia regressions → `tests/` binaries; `pr-align` script tier — see [Phase 2b](#phase-2b--physical-separation-clip-sync) |
 | 3 | `autotests = false`; per-binary `tests/common/` includes; tier `required-features`; Clippy clean on default features — see [Phase 3](#phase-3--feature-gated-tiers-optional) |
 | 3.5 | Move `tests/common/` → `clip-sync-repair-harness`; dev-dep + consumer refactor; delete `include!` — see [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
@@ -437,7 +437,7 @@ on first non-zero exit. Individual crate tiers remain callable alone.
 | `--test` | `integration_energy_smoke` | integration | `corpus_scan_patch_smoke` + lib scan/domain smokes (see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_residual_gate_smoke` | integration | `off_no_regression_baseline` (RG04 only; see [Resolved decisions](#resolved-decisions)) |
 | `--test` | `integration_gap_corpus` | integration | `gap_corpus_committed` (Phase 2 follow-up) |
-| `--test` | `oracle_energy` | integration (oracle label) | SD U1–U8 + EC `p3_`/`p4_` (skips slow `p1_`/`p2_`/haystack/patch smokes on PR) |
+| `--test` | `oracle_energy` | integration (oracle label) | SD U1–U8 + EC `p3_`/`p4_`; `p1_`/`p2_`/haystack/patch smokes `#[ignore]` (oracle tier `--ignored`) |
 | `--test` | `seam_residual_corpus` | integration (oracle label) | `f4_decoy_placement_informative_with_high_headroom`, `seam_residual_disagreement_oracles` |
 
 `gap_corpus_committed` runs via `--lib` only (no duplicate name filter on PR).
@@ -580,7 +580,7 @@ binary `wav_bit_depth_integration`. No split planned. Included in `pr-repair` vi
 | same | `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `integration_energy_smoke.rs` |
 | same | `production_matrix_contexts_skip_thirty_on_sixty_sec_fixture` | **stay in lib** (unit) |
 | `test_support/energy_signature_fixtures.rs` | `production_spec_tests` (4 fns) | **stay in lib** (`test_support/` fixture-builder units — see [Resolved decisions](#resolved-decisions)) |
-| `application/testing/gap_corpus_fixtures.rs` | `gap_corpus_committed` | `integration_gap_corpus.rs` |
+| `test_support/gap_corpus_fixtures.rs` | `gap_corpus_committed` | `integration_gap_corpus.rs` |
 | same | generated/external/patch_timing/regenerate | validation / diagnostic binaries or stay ignored in gap binary |
 | `infrastructure/cli/output.rs` | `write_full_surface_repair_golden` | `diag_repair_golden.rs` (diagnostic; defer) |
 

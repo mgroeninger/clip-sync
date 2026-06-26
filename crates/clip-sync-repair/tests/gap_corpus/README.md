@@ -25,26 +25,26 @@ tests default to `fill_mode = gate` where gate shortcuts are under test) and uni
 
 ```powershell
 # Committed only (fast, always green in CI)
-cargo test -p clip-sync-repair gap_corpus_committed
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_committed
 
 # Patch timing on committed gap fixtures (scan + fit patch; 5s border, no extension grid)
-cargo test -p clip-sync-repair gap_corpus_patch_timing_committed
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed -- --ignored --nocapture
 
 # Production-default fit patch on corpus (slow; run before release)
-cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_production -- --ignored --nocapture
 
 # Committed + generated
-cargo test -p clip-sync-repair gap_corpus -- --ignored
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus -- --ignored
 
 # External (real MKV files)
 $env:CLIP_SYNC_GAP_CORPUS = "F:\Video"
-cargo test -p clip-sync-repair gap_corpus_external -- --ignored
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_external -- --ignored
 ```
 
 ## Regenerating committed WAV fixtures
 
 ```powershell
-cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenerate -- --ignored --nocapture
 ```
 
 The fixtures are synthetic chirp WAVs (11 025 Hz, i16) with specific sample ranges

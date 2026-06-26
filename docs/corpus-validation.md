@@ -239,7 +239,7 @@ Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Pha
 
 | Layer | Tier | Fixture / test | Asserts |
 |-------|------|----------------|---------|
-| Domain oracle | **integration** (oracle label) | `tests/oracle_energy.rs` — `build_f1/f2/f3_production` + `build_f4_decoy_production`, U1–U8, **EC-1–EC-3** (`p1_`/`p2_`/`p3_`), **EC-6** (`p4_f4_decoy_energy_separates_but_bool_ties`) | Unified match on full B; energy vs bool discrimination |
+| Domain oracle | **integration** (oracle label) | `tests/oracle_energy.rs` — U1–U8 (8 s integration fixtures), **EC-3** (`p3_`), **EC-6** score (`p4_f4_decoy_energy_separates_but_bool_ties`); **EC-1/EC-2** production geometry (`p1_`/`p2_`, `#[ignore]` — PR uses **U3/U5** instead) | Unified match on full B; energy vs bool discrimination |
 | Scan path | **integration** | `tests/integration_energy_smoke.rs` — `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
 | **End-to-end (CI smoke)** | **integration** | `corpus_scan_patch_smoke` in `integration_energy_smoke.rs` (~5 s) | Full scan → patch on 16 kHz / 32 s production-geometry F1; asserts one gap detected and patched |
 | Integration (fast) | **integration** | I1–I4 @ 8 s in `patch_audio_integration.rs` | Patch with oracle `GapReport`, structure-heavy weights |
@@ -251,8 +251,9 @@ Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Pha
 # PR repair slice (integration + oracle label)
 .\scripts\test-tier.ps1 -Tier pr-repair
 
-# Ad hoc — integration binaries
-cargo test -p clip-sync-repair --test oracle_energy u5 f2 p1_f1 p2_f2 p3_f3 p4_f4
+# Ad hoc — integration binaries (PR runs U3/U5 for EC-1/EC-2; production geometry via --ignored)
+cargo test -p clip-sync-repair --test oracle_energy u5 f2 p3_f3 p4_f4
+cargo test -p clip-sync-repair --test oracle_energy p1_f1_production_energy_unified_finds_true_offset p2_f2_production_energy_unified_finds_pause_one -- --ignored --nocapture
 cargo test -p clip-sync-repair --test integration_energy_smoke corpus_scan_patch_smoke
 
 # Validation (EC-6 patch layer)
@@ -268,8 +269,8 @@ Record **fixture oracle** (what the test asserts) separately from **run tags** (
 
 | `fixture_scenario` | Geometry | Domain oracle (EC-*) | Typical run tags (production default, if patched) |
 |--------------------|----------|----------------------|---------------------------------------------------|
-| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1:** energy/`auto` → true offset (`p1_` domain; `f1_production_scan_patch_smoke` patch) | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
-| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2:** energy → pause₁ (`p2_` domain; `f2_production_oracle_patch_smoke` patch, slide ≈ 0 from A-aligned nominal) | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
+| `F1-long` | Decoy dropout inside 10 s border; wrong nominal B map | **EC-1:** energy/`auto` → true offset (`p1_` production domain `#[ignore]`; **U3** on PR; `f1_production_scan_patch_smoke` patch) | `plan_kind=fillable`, `signature_mode=energy`, non-zero slide |
+| `F2-long` | Dual pause; nominal → pause₂, truth → pause₁ | **EC-2:** energy → pause₁ (`p2_` production domain `#[ignore]`; **U5** on PR; `f2_production_oracle_patch_smoke` patch, slide ≈ 0 from A-aligned nominal) | `plan_kind=fillable`, `signature_mode=energy`, slide ≈ 0 |
 | `F3-long` | Steady drone | **EC-3:** `auto` → resolved `bool` | `signature_mode=bool`, `content_hint=flat` |
 | `F4-decoy` | A gap at decoy; truth shifted +7 s in B; identical bool pattern, anti-correlated energy contour, waveform-neutral inner border | **EC-6:** `energy`/`auto` patch the true pause (slide +7 s), `bool` stays at the decoy (slide 0) — `p4_*` domain; `f4_decoy_patch_discrimination` patch | `signature_mode=energy`, slide → true pause |
 
