@@ -1506,59 +1506,58 @@ pub fn build_speech_peaks_offset_from_throat(
     }
 }
 
-/// **A6** oracle: silent throat on A, speech peaks ±`peak_offset_secs`; B peaks detuned so the
-/// nominal throat is symmetric-weak while gap fill keeps haystack structure for anchor brackets.
+/// **A6** oracle: silent throat on A, speech peaks ±`peak_offset_secs`; B is a delayed copy of A
+/// (`peak_offset` shift) with a silent nominal gap and fill at the shifted dropout. Pair with
+/// `w5_anchor_rescue_repair` (`fill_border_search_secs` < `peak_offset_secs`) so baseline unified
+/// search cannot High-short-circuit; anchor brackets must reach Pearson High (routing E3).
 pub fn build_w5_symmetric_weak_throat_anchor_rescue(
     sample_rate: u32,
     channels: usize,
     peak_offset_secs: f64,
 ) -> EnergySignatureFixture {
-    build_w5_symmetric_weak_throat_anchor_rescue_at_freq(sample_rate, channels, peak_offset_secs, 432.0)
+    build_w5_symmetric_weak_throat_anchor_rescue_at_freq(sample_rate, channels, peak_offset_secs, 440.0)
 }
 
-/// Build W5 rescue fixture with detuned B peaks (`decoy_freq_hz` vs 440 Hz on A).
+/// Build W5 rescue fixture (`peak_freq_hz` reserved for manual detune sweeps).
 pub fn build_w5_symmetric_weak_throat_anchor_rescue_at_freq(
     sample_rate: u32,
     channels: usize,
     peak_offset_secs: f64,
-    decoy_freq_hz: f64,
+    _peak_freq_hz: f64,
 ) -> EnergySignatureFixture {
+    let peak_offset_frames = secs_to_frames(peak_offset_secs, sample_rate);
     let mut fixture =
         build_speech_peaks_offset_from_throat(sample_rate, channels, peak_offset_secs);
-    decoy_b_detuned_peaks(&mut fixture, decoy_freq_hz);
-    fixture.id = "w5_symmetric_weak_throat_anchor_rescue";
-    fixture
-}
 
-/// Replace only B peak bursts with detuned speech; gap fill stays 440 Hz from the base builder.
-fn decoy_b_detuned_peaks(fixture: &mut EnergySignatureFixture, decoy_freq_hz: f64) {
     let ch = fixture.channels.max(1);
     let rate = fixture.sample_rate;
-    let peak_offset_frames = secs_to_frames(1.0, rate);
-    let burst_frames = secs_to_frames(0.35, rate);
-    let pre_burst_end = fixture.gap_start.saturating_sub(peak_offset_frames);
-    let pre_burst_start = pre_burst_end.saturating_sub(burst_frames);
-    let post_burst_start = fixture.gap_end + peak_offset_frames;
-    let post_burst_end = (post_burst_start + burst_frames).min(fixture.a_samples.len() / ch);
+    let total_frames = fixture.a_samples.len() / ch;
+    let shift = peak_offset_frames;
 
-    fill_speech_like_at_freq(
-        &mut fixture.b_samples,
+    let mut b = vec![0.0f32; fixture.b_samples.len()];
+    for frame in shift..total_frames {
+        let src = (frame - shift) * ch;
+        let dst = frame * ch;
+        b[dst..dst + ch].copy_from_slice(&fixture.a_samples[src..src + ch]);
+    }
+    // Nominal scan hole stays silent on B; true fill lives at the shifted dropout.
+    zero_frames(&mut b, ch, fixture.gap_start, fixture.gap_end);
+    fill_speech_like(
+        &mut b,
         ch,
         rate,
-        pre_burst_start,
-        pre_burst_end,
-        decoy_freq_hz,
-        0.45,
+        fixture.gap_start + shift,
+        fixture.gap_end + shift,
     );
-    fill_speech_like_at_freq(
-        &mut fixture.b_samples,
-        ch,
-        rate,
-        post_burst_start,
-        post_burst_end,
-        decoy_freq_hz,
-        0.45,
-    );
+
+    fixture.b_samples = b;
+    fixture.true_fill_start = fixture.gap_start + shift;
+    fixture.true_fill_end = fixture.gap_end + shift;
+    fixture.b_dropout_shift_frames = shift;
+    fixture.structure_params.search_radius_frames =
+        secs_to_frames(0.78, sample_rate);
+    fixture.id = "w5_symmetric_weak_throat_anchor_rescue";
+    fixture
 }
 
 /// **C3** / A2 — flat pre, speech onset after silent gap (asymmetric post); bool rising post edge.

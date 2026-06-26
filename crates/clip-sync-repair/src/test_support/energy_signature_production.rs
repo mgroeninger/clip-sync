@@ -489,13 +489,13 @@ pub fn w5_anchor_rescue_repair(anchor_seam_mode: crate::domain::AnchorSeamMode) 
     repair.anchor_seam_mode = anchor_seam_mode;
     repair.residual_gate = crate::domain::ResidualGateMode::Off;
     repair.min_fill_correlation = 0.35;
-    repair.fill_marginal_margin = 0.08;
+    repair.fill_marginal_margin = 0.10;
     repair.strong_structure_trust = 0.90;
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
-    repair.fill_border_search_secs = 10.0;
+    repair.fill_border_search_secs = 0.78;
     repair.gap_end_extend_on_post_seam_fail = false;
     repair.gap_start_extend_on_pre_seam_fail = false;
     repair.gap_end_extend_max_ms = 0;
