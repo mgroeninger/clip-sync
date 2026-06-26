@@ -1,15 +1,16 @@
 //! P1 step 2 (in-memory tier): injected-gap **same-master** oracle through the real patch pipeline.
 //!
-//! Tier: **integration** (default `[[test]]` binary). Builds a broadband master at production
+//! Tier: **diagnostic** (`diagnostic-tests` feature). Builds a broadband master at production
 //! geometry (60 s), runs `PatchAudio::execute` with `measure_residual = true`, and validates
 //! residual JSON plumbing. Real-codec counterpart:
 //! `tests/floor_oracle/manifest.toml` + `validate_floor_oracle` (validation tier).
 //!
 //! Run:
-//! `cargo test -p clip-sync-repair --test seam_residual_oracle -- --nocapture`
+//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle -- --nocapture`
 //!
-//! Slow H2-B rescue row (`#[ignore]`): selected by `test-tier.ps1 -Tier diagnostic` or:
-//! `cargo test -p clip-sync-repair --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
+//! Slow H2-B rescue row (`#[ignore]`): also selected by `test-tier.ps1 -Tier diagnostic` via
+//! `--ignored` straggler pass, or:
+//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;

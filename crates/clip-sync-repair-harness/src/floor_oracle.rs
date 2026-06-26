@@ -584,3 +584,45 @@ pub fn format_label(format: FloorOracleFormat) -> &'static str {
         FloorOracleFormat::Vorbis => "vorbis",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn gap_frames_production_anchor() {
+        let defaults = FloorOracleDefaults::default();
+        let case = FloorOracleCase {
+            id: "geom".into(),
+            source_id: "x".into(),
+            donor_source_id: None,
+            oracle_variant: None,
+            format_a: None,
+            format_b: None,
+            bitrate_a: None,
+            bitrate_b: None,
+            total_secs: Some(60),
+            sample_rate: Some(48_000),
+            gap_duration_secs: Some(1.0),
+            gap_signature_context_secs: Some(3.0),
+            gap_anchor_secs: None,
+            gap_interior_peak_max: None,
+            punch_after_encode: false,
+            b_encode_delay_ms: None,
+            expect_informative_floor: None,
+            ignore: false,
+        };
+        let (start, end) = gap_frames_for_case(&case, &defaults);
+        assert_eq!(start, 14 * 48_000);
+        assert_eq!(end - start, 48_000);
+    }
+
+    #[test]
+    fn load_manifest_from_repair_crate_layout() {
+        let repair_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../clip-sync-repair");
+        let manifest = load_manifest(&repair_root);
+        assert!(manifest.version >= 1);
+        assert!(!manifest.case.is_empty());
+    }
+}
