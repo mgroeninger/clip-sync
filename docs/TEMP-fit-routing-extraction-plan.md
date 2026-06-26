@@ -229,6 +229,11 @@ scores*; **one** anchor-rescue fixture (`build_w5_symmetric_weak_throat_anchor_r
 scores are physically realizable — together they finally pin the anchor-rescue path the original
 blind-spot finding exposed (A2/A5 patch the baseline throat, never the anchor).
 
+**A6 status (2026-06):** Domain oracle **done** (`w5_fixture_throat_symmetric_weak_and_brackets_exist`).
+Pipeline oracles (`w5_anchor_rescue_pipeline_engages_anchor_seam_{auto,force}`) remain `#[ignore]` until
+the winning anchor bracket reaches Pearson **High** (routing E3); manual tuning:
+`cargo test -p clip-sync-repair --test anchor_seam_oracle probe_w5_anchor_rescue_scores -- --ignored --nocapture`.
+
 ---
 
 ## 9. Step 5 — `FitCandidateSource` seam (design)

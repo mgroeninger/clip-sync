@@ -192,7 +192,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `integration_floor_oracle_smoke` | integration | — | yes | Floor manifest load + gap-frame geometry (not full codec matrix) |
 | `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
 | `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
-| `anchor_seam_oracle` | integration | — | yes | Editorial anchor seam A1–A5b + F4 regression (`tests/anchor_seam_oracle.rs`) |
+| `anchor_seam_oracle` | integration | — | yes | Editorial anchor seam A1–A5b + **A6 domain** + F4 regression (`tests/anchor_seam_oracle.rs`); A6/A6b pipeline `#[ignore]` |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
@@ -459,6 +459,8 @@ cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenera
 | `write_full_surface_repair_golden` | `clip-sync-repair` | `--lib`; `test-tier.ps1 -Tier diagnostic` |
 | `mux_reports_progress_for_short_fixture` | `clip-sync-repair` | `--lib` + `ffmpeg-mux`; `test-tier.ps1 -Tier diagnostic` when ffmpeg on PATH |
 | `broadband_oracle_veto_rescue_patches_marginal` | `clip-sync-repair` | `seam_residual_oracle`; `test-tier.ps1 -Tier diagnostic` |
+| `w5_anchor_rescue_pipeline_engages_anchor_seam_*` | `clip-sync-repair` | `anchor_seam_oracle`; A6 pipeline — `#[ignore]` until anchor bracket reaches High |
+| `probe_w5_anchor_rescue_scores` | `clip-sync-repair` | `anchor_seam_oracle`; manual fixture tuning (`--ignored --nocapture`) |
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 
