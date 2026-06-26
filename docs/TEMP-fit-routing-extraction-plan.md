@@ -1,8 +1,16 @@
 # Fit-joint routing extraction — plan (DRAFT)
 
 Status: **steps 1–3 done** (3a delegation + 3b `defer_residual` collapse). Single always-pool path;
-the debug-flips-the-path foot-gun is eliminated. lib + characterization + residual-equivalence green;
-`patch_audio_integration` + `validate_residual_gate` verifying.
+the debug-flips-the-path foot-gun is eliminated. lib + characterization + residual-equivalence +
+`patch_audio_integration` + `validate_residual_gate` all green. **Steps 4–5 in progress** (number-driven
+payoff suite + `CandidateScorer` seam for composed orchestration assertions).
+
+> **As-built note (doc reconciled to the code):** §§2–6 originally sketched a *monolithic*
+> `route_fit_joint(baseline, anchors, grid) → Decision`. The landed design is **surgical delegation**:
+> the router (`application/fit_routing.rs`) owns the decision *rules* (comparators + predicates); the
+> driver (`patch_region`) keeps the *orchestration* (precedence/short-circuit/selection). Lower parity
+> risk; the trade is that exit precedence is not a single pure function — step 5 adds the
+> `CandidateScorer` seam to make the orchestration number-testable too.
 
 > **Layer note:** the router lands in `application/fit_routing.rs`, not `domain/` as first sketched
 > — its skip type (`SeamGateFailure`) and candidate shape are application-coupled. Purity /
@@ -21,93 +29,80 @@ with numbers so that blind spot becomes an asserted decision, not a silent coinc
 
 ---
 
-## 1. Problem (one paragraph)
+## 1. Problem (one paragraph, pre-extraction)
 
-The fit-joint routing — baseline short-circuit → anchor search → boundary grid → winner/tier — lives
-in `evaluate_seam_gate_fit_joint` (`application/patch_region.rs:815-1046`) and
-`try_anchor_seam_joint_search` (`:663-813`), **fused with measurement**: each branch condition is
-computed by `evaluate_seam_gate_fit_candidate`, which runs the unified structure+waveform search on
-real PCM. Because decision and measurement are entangled, the routing can only be tested through full
-WAV fixtures, and we cannot deterministically hit "baseline weak, anchor strong" (the throat scores
-whatever the fixture audio happens to produce). The leaf gate predicates are already pure and tested;
-the **orchestration/precedence** is not extractable today.
+The fit-joint routing — baseline short-circuit → anchor search → boundary grid → winner/tier — lived
+in `evaluate_seam_gate_fit_joint` and `try_anchor_seam_joint_search` (`application/patch_region.rs`),
+**fused with measurement**: each branch condition was computed by `evaluate_seam_gate_fit_candidate`,
+which runs the unified structure+waveform search on real PCM. Because decision and measurement were
+entangled, the routing could only be tested through full WAV fixtures, and we could not
+deterministically hit "baseline weak, anchor strong" (the throat scores whatever the fixture audio
+happens to produce). The leaf gate predicates were already pure and tested; the
+**orchestration/precedence** was not.
 
-Precedent for the target shape already exists: `harness/src/residual_gate.rs` tests residual-gate
-decisions purely over a synthetic `FloorOracleRun` struct (numbers), no audio. We want the same for
-fit-joint routing.
-
----
-
-## 2. Definition: the router contract (7 terminal exits)
-
-Strict precedence order, each a pure function of candidate scores + thresholds:
-
-| # | Exit | Condition | Current lines |
-|---|------|-----------|---------------|
-| E1 | Baseline High | baseline `confidence==High` **after residual finalize** | 862-886 |
-| E2 | Baseline accept | `BaselineOnly` ∧ baseline `∈{High,Marginal}` — **not Marginal when `anchor_seam_mode = force`** | 888-913 |
-| E3 | Anchor High | anchor gate open ∧ best anchor cand `High` | 759-787 |
-| E4 | Anchor accept | `BaselineOnly` ∧ best anchor cand `Marginal` | 789-810 |
-| E5 | BaselineOnly winner | no grid: best of pool, else `Skip(best_below_floor)` | 939-952 |
-| E6 | Grid High | full grid done; **best** Pearson `High` by ranking (+ residual finalize) | after grid loop |
-| E7 | Grid winner | best of pool, else `Skip(best_below_floor)` | 1026-1045 |
-
-Anchor gate (whether E3/E4 are reachable) is already pure:
-`should_run_anchor_seam(...)` (`gap_anchor_seam.rs:135`) — the template for the rest.
+After steps 1–3 the decision *rules* are pure and number-tested (`fit_routing`); step 5 will make the
+*orchestration* number-testable too. Precedent for the target shape already existed:
+`harness/src/residual_gate.rs` tests residual-gate decisions purely over a synthetic `FloorOracleRun`
+struct (numbers), no audio — the same model for fit-joint routing.
 
 ---
 
-## 3. The seam: driver vs router
+## 2. The 7 terminal exits (as built)
 
-- **Driver** (stays in `application`): scores a bracket, finalizes residual, owns *short-circuit
-  timing* (stop scoring grid cells at first High). Audio-touching.
-- **Router** (`domain/fit_routing.rs`, new): pure functions over `CandidateScore` numbers that decide
-  *which exit* and *which winner*. Number-testable.
+Strict precedence order. The "decided by" column names the driver helper and the router rule it
+delegates to (the orchestration lives in `evaluate_seam_gate_fit_joint` / `try_anchor_seam_joint_search`).
+
+| # | Exit | Condition | Decided by (driver → router rule) |
+|---|------|-----------|-----------------------------------|
+| E1 | Baseline High | baseline Pearson `High`, residual-confirmed at finalize | screen → `terminates_high` + `try_finalize_high_joint_candidate` |
+| E2 | Baseline accept | `BaselineOnly` ∧ `{High,Marginal}` — **not Marginal under `force`** | `baseline_accept_without_grid` → `baseline_only_accepts` |
+| E3 | Anchor High | best Pearson-`High` over the pool is an anchor bracket | `best_high_joint_candidate` (`selection_cmp` + `terminates_high`) + is-anchor |
+| E4 | Anchor accept | `BaselineOnly` ∧ best-overall is an anchor & accepts | `best_anchor_joint_candidate` + `baseline_only_accepts` |
+| E5 | BaselineOnly winner | no grid: pool winner, else `Skip(best_below_floor)` | `select_joint_fit_winner_with_residual` (`winner_cmp`) |
+| E6 | Grid High | **full grid scored**, then best Pearson-`High` by ranking, residual-confirmed | `try_finalize_best_grid_high` → `best_high_joint_candidate` |
+| E7 | Grid winner | pool winner, else `Skip(best_below_floor)` | `select_joint_fit_winner_with_residual` |
+
+Anchor gate (whether E3/E4 are reachable) is pure: `should_run_anchor_seam(...)`
+(`gap_anchor_seam.rs`). Note E6 is **not** an early-exit on the first grid High — the grid is scored
+in full, then the best High wins (see §6).
+
+---
+
+## 3. The seam: driver vs router (as built)
+
+**Surgical delegation**, not a monolithic `route_fit_joint`: the router owns the decision *rules*
+(comparators + predicates), the driver keeps the *orchestration* (precedence, selection loop). Each
+driver call site swapped an inline expression for a behaviour-identical router call — minimal parity
+risk. The cost: exit precedence is not a single pure function (it stays in the driver); step 5 closes
+that with a `CandidateScorer` seam.
+
+**Router** (`application/fit_routing.rs`, pure, number-tested):
 
 ```rust
-struct CandidateScore {
-    refined: RefinedGapFrames,
-    pre: f64, post: f64,
-    structure_pre: f64, structure_post: f64,
-    confidence: FillConfidence,    // ALREADY residual-finalized (see §5)
-    boundary_move: usize,
-    anchor_seam_used: bool,
-    anchor_trusted: bool,
-    skip: Option<SeamGateFailure>, // None if it passed gates
-}
+struct CandidateScore { confidence: FillConfidence, boundary_move: usize, ranking_score: f64 }
 
-enum Decision { Patched(CandidateScore), Skipped(SeamGateFailure) }
-
-fn baseline_terminal(b: &CandidateScore, p: &RoutingParams) -> Option<Decision>;          // E1,E2
-fn anchor_terminal(anchors: &[CandidateScore], p: &RoutingParams) -> Option<Decision>;     // E3,E4
-fn is_terminal_high(c: &CandidateScore, p: &RoutingParams) -> bool;                        // short-circuit
-fn select_winner(pool: &[CandidateScore], below: Option<SeamGateFailure>, p) -> Decision;  // E5,E7
+fn terminates_high(confidence: FillConfidence) -> bool;          // E1/E3/E6 screen
+fn baseline_only_accepts(search, confidence) -> bool;            // E2/E4
+fn selection_cmp(a, b) -> Ordering;  // max_by: rank↑ then move↑  (tie → larger move)
+fn winner_cmp(a, b) -> Ordering;     // sort:   rank↓ then move↑  (tie → smaller move)
 ```
 
-Driver after extraction (short-circuit preserved):
+`CandidateScore` is the lean decision projection — identity, `anchor_seam_used`, residual, etc. stay
+on the driver's `FitJointCandidate`. `ranking_score` and `confidence` are **Pearson** (residual is
+applied later at selection; see §5).
 
-```
-score baseline → finalize residual → baseline
-if let Some(d) = baseline_terminal(&baseline, p) { return d }           // E1,E2
-if should_run_anchor_seam(...) {
-    anchors = brackets.map(score + finalize)
-    if let Some(d) = anchor_terminal(&anchors, p) { return d }          // E3,E4
-}
-if BaselineOnly { return select_winner(&pool, below_floor, p) }         // E5
-for cell in grid {
-    let c = score(cell);
-    if is_terminal_high(&c, p) { return Patched(c) }                    // E6
-    pool.push(c);
-}
-select_winner(&pool, below_floor, p)                                    // E7
-```
+**Driver** (`evaluate_seam_gate_fit_joint`, `try_anchor_seam_joint_search`): projects each
+`FitJointCandidate` via `.score()` and drives its `max_by` / `sort_by` / High-screen through the
+router rules. Single **always-pool** path; residual applied lazily at selection
+(`try_finalize_*` / `select_joint_fit_winner_with_residual`), a no-op when residual is disabled.
 
 ---
 
 ## 4. Where it lives
 
-`CandidateScore` + `route_fit_joint` fns → `domain/fit_routing.rs` (pure). `evaluate_seam_gate_fit_joint`
-stays in `application` (I/O + measurement). Respects existing layering.
+Router → `application/fit_routing.rs` (not `domain/`: inputs are application-coupled, e.g.
+`SeamGateFailure`; purity/number-testability is unaffected — see the layer note up top).
+Orchestration + measurement stay in `application/patch_region.rs`.
 
 ---
 
@@ -128,46 +123,53 @@ residual measurement is disabled, finalize is a no-op, so one path serves both.
 > the lazy residual loop. This still collapses the pool-vs-best fork (always pool, finalize a no-op
 > when residual off) and removes the `_to_pool` twins + `global_best_joint_candidate`.
 
-## 5b. Touch points (verified for step 3)
+## 5b. Touch points (as built)
 
-Each driver branch and the router primitive + driver-owned residual step that replaces it. `FitJoint
-Candidate { outcome, ranking_score, boundary_move }` maps to `CandidateScore` as:
-`refined=outcome.refined, confidence=outcome.confidence (Pearson), boundary_move, ranking_score,
-anchor_seam_used=outcome.anchor_seam_used`.
+`FitJointCandidate { outcome, ranking_score, boundary_move }` projects via `.score()` to
+`CandidateScore { confidence: outcome.confidence (Pearson), boundary_move, ranking_score }`.
 
-| Site (`patch_region.rs`) | Router primitive | Driver still owns |
-|--------------------------|------------------|-------------------|
-| baseline High `:862-886` | `terminates_high(baseline)` | residual confirm (`try_finalize_high…`) |
-| baseline accept `:888-913` | `baseline_only_accepts` | — |
-| `accepts_baseline_without_boundary_grid:538-547` | delegate → `baseline_only_accepts` | — |
-| anchor High `:759-787` | `best_high(pool)` + is-anchor | residual confirm |
-| anchor accept `:789-810` | `best_by_ranking(pool)` + is-anchor + `baseline_only_accepts` | — |
-| grid early High `:976-989` | `terminates_high(cell)`, scan order | residual confirm |
-| winner `select_joint_fit_winner…:463-505` | `pool_winner_order` | lazy residual walk + `best_below_floor` |
+| Driver helper | Router rule used | Residual step (driver) |
+|---------------|------------------|------------------------|
+| `joint_candidate_ranking_cmp` | `selection_cmp` | — |
+| winner sort in `select_joint_fit_winner_with_residual` | `winner_cmp` | lazy walk + `best_below_floor` |
+| `accepts_baseline_without_boundary_grid` / `baseline_accept_without_grid` | `baseline_only_accepts` | — |
+| baseline / anchor / grid High screens | `terminates_high` | `try_finalize_high_joint_candidate` confirm |
 
-**Two driver changes the wiring depends on (do these in step 3, not the router):**
+**Two driver changes the collapse depended on:**
 
-1. `evaluate_seam_gate_fit_candidate` must emit **Pearson** confidence with residual *unmeasured*
-   (today `:1446-1454` already does this in the `defer_residual` branch; make it unconditional). The
-   selected winner's final `confidence` comes from `finalize_fit_outcome_residual` at selection.
-2. Set `anchor_seam_used = anchor_seam_bracket` on the candidate **at construction** (the scorer knows
-   it), retiring the post-hoc `mark_anchor_outcome` stamping (`:723-740`, plan §6.3).
+1. ✅ `evaluate_seam_gate_fit_candidate` now emits **Pearson** confidence unconditionally with
+   `residual = None` at scoring; the winner's final `confidence` comes from
+   `finalize_fit_outcome_residual` at selection. (Faithful: the old non-defer branch also yielded
+   `None` residual there, since non-defer ⟺ residual-not-wanted.)
+2. ⚠️ **Not done — deliberately.** Setting `anchor_seam_used` at construction to retire
+   `mark_anchor_outcome` isn't clean: `mark_anchor_outcome` also stamps `anchor_bracket_move_frames`,
+   which is only known in the anchor-search loop (`bracket.move_frames` vs the scan hole), not at
+   scoring time. So `mark_anchor_outcome` stays, with its pool-append guard (the §6.3 footgun is
+   *contained* by the guard, not removed). Revisit only if `move_frames` is ever plumbed to scoring.
 
-`best_below_floor` stays driver state: gate failures recorded at scoring, residual vetoes recorded
-during the `pool_winner_order` walk.
+`best_below_floor` stays driver state: gate failures recorded at scoring, residual vetoes during the
+`winner_cmp` walk.
 
 ---
 
-## 6. Parity risks (pin before cutting)
+## 6. Parity risks (outcomes)
 
-1. **Grid early-exit (E6)** — a pure fn over a fully materialized list would force scoring every cell
-   (perf regression). Mitigation: driver keeps short-circuit via `is_terminal_high`.
-2. **Residual can downgrade High** (`try_finalize_high_joint_candidate:438-460`) — "High" provisional
-   until residual confirms. Mitigation: finalize residual before building `CandidateScore`.
-3. **Anchor marking** (`:723-740`) — today `anchor_seam_used` stamped post-hoc; comment warns against
-   mis-stamping baseline. After extraction the scorer sets it intrinsically → footgun removed.
-4. **`best_below_floor` precedence** — which failure surfaces when nothing passes; preserve exactly in
-   `select_winner`.
+1. **Grid selection (E6)** — *resolved by design choice, not by early-exit.* The grid is now scored
+   in **full**, then the best Pearson-`High` wins by ranking (`try_finalize_best_grid_high`). This
+   replaced the old first-High-in-scan-order early-exit; the perf cost of scoring all cells is
+   accepted (the user's E6 design choice — more principled than arbitrary scan order). Verified by
+   the full suite.
+2. **Residual can downgrade High** — "High" is provisional until residual confirms. Handled:
+   `try_finalize_high_joint_candidate` re-checks `confidence == High` *after* finalize and falls
+   through if downgraded.
+3. **Anchor marking** — `mark_anchor_outcome` (`anchor_seam_used` + `anchor_bracket_move_frames`)
+   stays post-hoc, **contained** by the pool-append guard (see §5b #2). Footgun mitigated, not
+   removed.
+4. **`best_below_floor` precedence** — preserved exactly: gate failures at scoring, residual vetoes
+   during the `winner_cmp` walk; `StructureAlignmentFailed` as the last-resort skip.
+5. **`BaselineOnly` fall-through divergence** — the collapse exposed that defer/non-defer already
+   disagreed here (`force`+Marginal: patch vs skip). Resolved to the defer/production behaviour; see
+   step 3b note. This was the live foot-gun the whole effort was meant to prevent.
 
 ---
 
@@ -209,24 +211,37 @@ during the `pool_winner_order` walk.
   > returned `Err` (skip). A live foot-gun instance (debug logging flipped which one ran). Collapsed
   > to the **defer/production** behavior (locked by characterization F4, used under residual-gating);
   > full suite confirms nothing relied on the non-defer skip.
-- [ ] **4. Payoff suite** (number-driven routing tests):
-  - `baseline pre=post=0.99 → E1, anchors never built` (the A5 blind spot, asserted)
-  - `baseline=0.10, anchor{pre:0.40,move:300} → E3, anchor_seam_used, AnchorTrusted`
-  - `all<0.12 → Skip(HardSkip)`; `0.12–0.27 symmetric → Skip(DeadZone)`
-  - `BaselineOnly + marginal baseline → E2 (no grid, no anchor)`
-- [ ] **5. (Optional) `CandidateScorer` trait** — driver-level fake returning scripted numbers, to
-  test loop ordering (E2-before-E3-before-E6). Only if step 4 leaves a gap.
+- [~] **4. Payoff suite** (number-driven routing tests). The *rule-level* assertions already exist
+  (step 2's 8 `fit_routing` tests: `terminates_high`, `selection_cmp`/`winner_cmp` tie-breaks,
+  `baseline_only_accepts`, plus the `composed_baseline_high…` case). The remaining bullets are
+  *composed orchestration* assertions and require step 5's seam (the driver, not a pure fn, owns
+  precedence) — or are already covered by `gap_tags` unit tests (tier) + characterization (end-to-end):
+  - `baseline pre=post=0.99 → E1, anchor search never invoked` (control-flow fact → needs step 5)
+  - `baseline dead-zone, anchor High → E3, anchor_seam_used, AnchorTrusted` (needs step 5)
+  - `all<floor → Skip(HardSkip)`; `floor–marginal symmetric → Skip(DeadZone)` (tier: `gap_tags`)
+  - `force + Marginal baseline, no better anchor → patch marginal` (the 3b divergence → needs step 5)
+- [ ] **5. `CandidateScorer` seam** (wanted) — put the bracket scorer behind a trait so
+  `evaluate_seam_gate_fit_joint` can run against a fake returning scripted `CandidateScore`s. Enables
+  the composed assertions in step 4: exit precedence, short-circuit/“anchor never invoked”, and the
+  `force` fall-through — all as fast deterministic number tests. Moderate refactor (inject the scorer
+  into the orchestration; production wires the real audio scorer).
 
 ## 8. What stays fixture-bound
 
-Only the **audio→score mapping**: "a throat-offset speech gap physically scores baseline-dead-zone +
-anchor-bracket-high." Keep *one* such fixture as the seam anchor; everything about *what the pipeline
-decides given scores* moves to step 4.
+Only the **audio→score mapping**: "a symmetric-weak throat with a salient nearby anchor physically
+scores baseline-dead-zone + anchor-bracket-high." Step 4/5 own *what the pipeline decides given
+scores*; **one** anchor-rescue fixture (`build_w5_symmetric_weak_throat_anchor_rescue`) owns that the
+scores are physically realizable — together they finally pin the anchor-rescue path the original
+blind-spot finding exposed (A2/A5 patch the baseline throat, never the anchor).
 
 ---
 
 ## Decision log
 
-- (open) Build the baseline-fails/anchor-rescues fixture, or rely on the number-driven suite + one
-  measurement fixture? Leaning: number suite owns routing, one fixture owns the audio→score seam.
-- (open) Start at step 1 now, or defer the whole refactor? Step 1 is worthwhile regardless.
+- (resolved) Fixture vs number suite → **both, complementary**: the number suite (step 4) + the
+  `CandidateScorer` seam (step 5) own routing; one anchor-rescue fixture owns the audio→score seam (§8).
+- (resolved) Surgical delegation over a monolithic `route_fit_joint` (lower parity risk; orchestration
+  stays in the driver, made number-testable via step 5).
+- (resolved) `BaselineOnly` `force`+Marginal divergence → defer/production behaviour (step 3b note).
+- (open) `mark_anchor_outcome` retirement — blocked on plumbing `anchor_bracket_move_frames` to
+  scoring time; left post-hoc with its guard (§5b #2).
