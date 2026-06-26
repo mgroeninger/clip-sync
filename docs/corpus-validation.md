@@ -12,11 +12,19 @@ Manifest-driven integration tests exercise real-world alignment scenarios: multi
 ## Quick start
 
 ```powershell
+# PR alignment slice (committed corpus; same as pr-align tier)
+.\scripts\test-tier.ps1 -Tier pr-align
+
+# Or ad-hoc name filter on lib:
+cargo test -p clip-sync corpus_committed
+
 cargo test -p clip-sync corpus_                                          # committed + generated (~60s with ffmpeg)
 cargo test -p clip-sync -- --ignored                                     # + external long smoke (CLIP_SYNC_CORPUS)
 cargo test -p clip-sync --features he-aac,test-utils corpus_            # + HE-AAC cases
 .\scripts\generate_corpus.ps1                                            # regenerate committed WAV fixtures
 ```
+
+Full tier machinery: [development.md](development.md), [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md).
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
 - **Generated tier** — 20 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.

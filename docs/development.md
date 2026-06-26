@@ -12,7 +12,7 @@ Build commands, Cargo feature flags per crate, and how to run the full test matr
 |------|----------------|
 | Rust (stable) | build and all tests |
 | `ffmpeg` on `PATH` | generated alignment corpus cases, `ffmpeg-tests` adapter tests, repair mux integration |
-| `ffprobe` on `PATH` | repair `mux_writes_video` unit test |
+| `ffprobe` on `PATH` | repair `cli_mux_integration` (`mux_writes_video`) |
 
 ---
 
@@ -71,6 +71,8 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `he-aac` | no | Passthrough: `clip-sync/he-aac` |
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
+| `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `seam_residual_oracle` integration binaries |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -129,7 +131,9 @@ filters), not by relabeling it. Only external-dependency or exhaustive-contract 
 
 **PR gate:** `.\scripts\test-tier.ps1 -Tier pr` (alignment committed corpus + repair smoke +
 CLI adapter tests). Does **not** run full `patch_audio_integration` (~15 min) or ignored
-validation/diagnostic rows.
+validation/diagnostic rows. **Validation tier is not CI** — no scheduled runner with ffmpeg /
+corpus fetch; run `.\scripts\test-tier.ps1 -Tier validation` locally before releases or large
+validation changes.
 
 `cargo test --workspace` is a **local convenience** compile check only — not the CI PR gate.
 
@@ -141,7 +145,7 @@ validation/diagnostic rows.
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `seam_residual_oracle` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -187,7 +191,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 | `pr-repair-extended` | +~3–8 min (sine seam grid, skips SP rows) |
 | `unit` (repair lib, `oracle_`-label skips) | ~30–60 s |
 | `integration` (repair, integration + oracle `--test` binaries; **not** `validate_*` / `diag_*`) | ~20+ min (includes full `patch_audio`) |
-| `validation` | minutes+; **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
+| `validation` | minutes+; **local only** (not CI); **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
 
 ---
 
@@ -206,7 +210,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 .\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
 .\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
 .\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # convenience: oracle-label rows (integration tier)
-.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # needs ffmpeg + fetch_corpus_sources
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # local only — ffmpeg + fetch_corpus_sources
 .\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
 
 # Extended repair (pr-repair + patch_audio sine grid, skips i1_/i2_/i3_)
@@ -321,12 +325,11 @@ cargo test -p clip-sync --features ac3,ffmpeg-tests ac3_corpus_chirp -- --nocapt
 Mux re-encodes patched audio as AAC. Default `mux_audio_bitrate = "match_min"` in `[repair.output]` sets ffmpeg `-b:a` from measured compressed bitrates of A and B during patch decode (see README § Write output).
 
 ```powershell
-# Build feature required; test is #[ignore] — needs ffmpeg on PATH
-cargo test -p clip-sync-repair --features ffmpeg-mux mux_writes -- --ignored
-cargo test -p clip-sync-repair --features ffmpeg-mux --test cli_mux_integration -- --ignored
+# Build feature required; ffmpeg on PATH (included in pr-repair when ffmpeg is available)
+cargo test -p clip-sync-repair --features ffmpeg-mux --test cli_mux_integration
 ```
 
-`mux_arg_rejected_without_feature` runs without `ffmpeg-mux` (no `--ignored`).
+`mux_writes_video` soft-skips when ffmpeg is missing.
 
 ### 6. Slow PCM refinement (library)
 
@@ -358,7 +361,7 @@ cargo test -p clip-sync-repair --features ac3,ffmpeg-mux,ffmpeg-tests -- --ignor
 |----------|---------|---------|
 | `CLIP_SYNC_CORPUS` | `corpus_external_cases` | Writable directory for the 3600 s external alignment case |
 | `CLIP_SYNC_GAP_CORPUS` | `gap_corpus_external` | Root directory containing real media files referenced in gap manifest |
-| `CLIP_SYNC_WORKSPACE_ROOT` | `corpus_fixtures` | Override workspace root when resolving `tests/corpus/` (rare) |
+| `CLIP_SYNC_WORKSPACE_ROOT` | alignment `corpus_fixtures`, floor-oracle harness | Override workspace root when resolving `tests/corpus/` or `tests/floor_oracle/` (rare) |
 
 ---
 
@@ -392,8 +395,7 @@ cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
 | `gap_corpus_external` | `clip-sync-repair` | `--ignored`; `CLIP_SYNC_GAP_CORPUS` |
 | `gap_corpus_regenerate` | `clip-sync-repair` | `--ignored`; overwrites gap WAVs |
 | `pcm_discover_finds_*`, `refine_recovers_large` | `clip-sync` | `--ignored`; slow |
-| `mux_writes_video` | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
-| `mux_writes_video` (integration) | `clip-sync-repair` | `ffmpeg-mux` + `--ignored`; ffmpeg |
+| `mux_writes_video` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; ffmpeg on PATH (`pr-repair` when available) |
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 

@@ -88,6 +88,7 @@ path = "tests/oracle_energy.rs"
 [[test]]
 name = "seam_residual_oracle"
 path = "tests/seam_residual_oracle.rs"
+required-features = ["diagnostic-tests"]
 
 [[test]]
 name = "seam_residual_corpus"

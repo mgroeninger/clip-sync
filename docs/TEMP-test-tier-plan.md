@@ -31,6 +31,7 @@
 | **2c** | `align_videos` integration move | Deferred |
 | **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** — interim `include!` harness; superseded by [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
 | **3.5** | `clip-sync-repair-harness` dev-dep crate; retire `tests/common/` `include!` | **Landed (2026-06-25)** |
+| **CI nightly validation** | Scheduled `validation` tier on GitHub Actions | **Deferred** — no runner infrastructure (ffmpeg, corpus fetch, wall time); run locally via `test-tier.ps1 -Tier validation` |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 
@@ -193,13 +194,12 @@ clip-sync-repair lib
   └── application/testing/          gap_corpus manifest + scan runner (#[cfg(test)] today)
 
 tests/  (integration binaries only)
-  ├── common/                       (interim Phase 3 — removed in Phase 3.5)
   ├── floor_oracle/, gap_corpus/    manifest.toml + README + committed/generated WAV
   ├── residual_gate_catalog/        matrix.toml + README + baseline CSV (not tests)
   ├── fixtures/                     JSON/TOML for CLI/config roundtrips
   └── <tier>_*.rs                   thin #[test] fns: call runner, assert SD/EC/RG/SP row
 
-clip-sync-repair-harness/           dev-dep library (Phase 3.5)
+clip-sync-repair-harness/           dev-dep library (Phase 3.5 — landed)
   └── src/                          floor_oracle, residual_gate, seam_residual, energy_matrix
 ```
 
@@ -208,25 +208,24 @@ clip-sync-repair-harness/           dev-dep library (Phase 3.5)
 | **Domain fixtures** | `src/test_support/` | always (lib) | F* builders, WAV writers, oracle math — **no acceptance/oracle/integration `#[test]`** (fixture-builder unit tests OK) |
 | **Corpus data** | `tests/<corpus>/` | N/A | `manifest.toml`, README, `wav/` |
 | **Contract catalog** | `tests/residual_gate_catalog/` | N/A | `matrix.toml`, README, baseline CSV |
-| **Integration runners** | `clip-sync-repair-harness/` (Phase 3.5) | dev-dep of repair crate | `residual_gate`, encode/build pairs, matrix loops, CSV printers — **today:** interim `tests/common/` via `include!` until Phase 3.5 lands |
+| **Integration runners** | `clip-sync-repair-harness/` | dev-dep of repair crate | `floor_oracle`, `residual_gate`, `seam_residual`, `energy_matrix` — encode/build pairs, matrix loops, CSV printers |
 | **Assertions** | `tests/<tier>_*.rs` | per tier / `required-features` | Thin wrappers around runners |
 | **Unit assertions** | `src/**` `#[cfg(test)]` | `--lib` | Single-module logic only |
 | **Cross-crate fakes** | `clip-sync` `test-utils` | dev-dep | Shared progress fakes, alignment corpus |
 
 **Rules:**
 
-1. **Integration runners** — **Phase 3.5 target:** `clip-sync-repair-harness` workspace crate,
+1. **Integration runners** — `clip-sync-repair-harness` workspace crate,
    `[dev-dependencies]` of `clip-sync-repair`; normal `use clip_sync_repair_harness::…` from tier
-   binaries. **Interim (Phase 3 landed):** `tests/common/*.rs` included per binary via `include!` —
-   see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy); do not add new
-   `include!` consumers after Phase 3.5 is scheduled — extend the harness crate instead.
+   binaries. Extend the harness crate for new shared runner logic — do not reintroduce `tests/common/`
+   or `include!` (Phase 3 interim pattern retired in Phase 3.5).
 2. **`test_support`** stays on the repair lib so integration binaries can call builders. Do not add
    new acceptance/oracle/integration `#[test]` modules there (fixture-builder unit tests OK); optional later: `test-support` feature or Phase 5 validate crate
    for heavy runners.
 3. **New RG row** — add `matrix.toml` entry **and** reuse `clip_sync_repair_harness::residual_gate`
    (or extend it). Do not copy `run_built_floor_oracle` / patch loops into a test file.
-4. **Catalog ≠ runner ≠ test** — `matrix.toml` inventories instances; runners live in the harness
-   crate (or interim `tests/common/`); `test_support/` holds fixtures only; `#[test]` fns only
+4. **Catalog ≠ runner ≠ test** — `matrix.toml` inventories instances; runners live in
+   `clip-sync-repair-harness`; `test_support/` holds fixtures only; `#[test]` fns only
    assert. Matrix-driven execution stays deferred (Phase 5).
 5. **Runner extraction** — follow [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) § Implementation when splitting floor/residual binaries; tier plan does not duplicate that runbook.
 
@@ -362,10 +361,9 @@ required-features = ["diagnostic-tests"]
 
 **Notes:**
 
-- **Runners:** Phase 3.5 moves shared runner code to `clip-sync-repair-harness` (see
-  [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up)). Until then, `tests/common/*.rs` stays
-  as included sources (not `[[test]]` targets); Phase 3 dropped `mod common` in favor of per-binary
-  `include!` (see [Phase 3 — `tests/common/` and Clippy](#phase-3--testscommon-and-clippy)).
+- **Runners:** shared runner code lives in `clip-sync-repair-harness` (see
+  [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up)). Phase 3's interim `tests/common/`
+  `include!` pattern is retired.
 - `autotests = false` prevents Cargo from auto-discovering a stray `tests/foo.rs` without an
   explicit entry — renames and splits must update `Cargo.toml` in the same PR.
 - `cli_mux_integration` already needs `ffmpeg-mux`; `required-features` replaces scattered
@@ -387,7 +385,7 @@ required-features = ["diagnostic-tests"]
 | `energy_signature_production.rs` | split → `integration_energy_smoke` + `oracle_energy` (integration) + `diag_energy_matrix` + `f1_production_scan_patch_smoke` + EC6 in `validate_residual_gate` | integration / diagnostic / validation | diag: `diagnostic-tests`; validation: `validation-tests` |
 | `floor_oracle_integration.rs` | split → `integration_floor_oracle_smoke` + `validate_floor_oracle` | integration / validation | validation: `validation-tests` |
 | `residual_gate_integration.rs` | split → `integration_residual_gate_smoke` + `validate_residual_gate` | integration / validation | validation: `validation-tests` |
-| `seam_residual_oracle.rs` | `seam_residual_oracle` | integration (oracle label) | — (see [Resolved decisions](#resolved-decisions)) |
+| `seam_residual_oracle.rs` | `seam_residual_oracle` | diagnostic (`diagnostic-tests`) | broadband H2-B rescue `#[ignore]` (~100s) |
 | `seam_residual_corpus.rs` | `seam_residual_corpus` + `diag_seam_residual` | integration / diagnostic | diag: `diagnostic-tests` |
 
 ---
@@ -1115,8 +1113,9 @@ consumers.
 | `+ --features diagnostic-tests` | + `diag_*` |
 | Full local / nightly | both tier features (+ `ffmpeg-mux` / `ffmpeg-tests` as needed) |
 
-Document in `development.md`; optional CI nightly row runs validation tier features before merge
-to main.
+Document in `development.md`. **No CI nightly job** — deferred (no infrastructure for scheduled
+ffmpeg + corpus validation); developers run `-Tier validation` locally before releases or large
+validation changes.
 
 **Done when:** default `cargo test -p clip-sync-repair` does not compile validation or diagnostic
 binaries; `cargo clippy -p clip-sync-repair --all-targets -- -D warnings` passes without tier
@@ -1338,8 +1337,8 @@ in `clip-sync-repair-harness`.
 |---------|-------|------|
 | **PR workspace** | `pr` (= `pr-align` + `pr-repair` + `clip-sync-cli`) | every PR |
 | **PR repair extended** | `pr-repair-extended` | optional / path filters on `clip-sync-repair/**` |
-| **Nightly** | `validation` + `validation-align` for both crates | scheduled; ffmpeg on runner |
-| **Manual** | `diagnostic` + `diagnostic-align` | tuning / CSV baselines |
+| **Validation** | `validation` (+ `validation-align` after Phase 2b) | **local / manual only** — not CI |
+| **Diagnostic** | `diagnostic` + `diagnostic-align` | tuning / CSV baselines (local) |
 
 See [PR contract](#pr-contract-required-ci-gates) for per-fn detail and wall budgets.
 
@@ -1359,16 +1358,26 @@ How GitHub Actions evolves as phases land. Current (Phase 1, live):
 | **0 — was** | — | `cargo test --workspace` | Runs full lib + all integration binaries; no ffmpeg; ~65s repair lib + integration compile cost |
 | **1 — Phase 1 (landed 2026-06-25)** | `test-tier.ps1` exists | ✅ `run: ./scripts/test-tier.ps1 -Tier pr` | Live in `ci.yml`; replaced workspace blanket test; Windows runner; no ffmpeg |
 | **2 — Phase 2 lands** | repair lib &lt;15s | keep `-Tier pr`; update `pr-repair` binary list + drop lib oracle `--skip`; document extended profile optional | `integration_*_smoke`, `oracle_energy`; script changes in same PR as file splits |
-| **3 — repair Phase 3** | feature gates | `pr` does **not** pass `validation-tests` / `diagnostic-tests` | Nightly job added (below) |
+| **3 — repair Phase 3** | feature gates | `pr` does **not** pass `validation-tests` / `diagnostic-tests` | Validation tier local-only (nightly CI deferred) |
 | **4 — Phase 2b** | align `tests/` binaries | `pr-align` in script; `pr` uses it instead of `corpus_` filter | align lib still heavy until 2c |
 | **5 — optional nextest** | script pain | `cargo nextest run --profile pr` | script remains fallback |
 
-### Nightly job (target, post–Phase 3 + 2b)
+### Nightly validation CI — deferred
 
-Separate workflow or `workflow_dispatch` / `schedule` job:
+**Decision (2026-06):** no scheduled GitHub Actions validation job. Runners lack the infrastructure
+we would need (ffmpeg install, `fetch_corpus_sources`, optional external corpus env vars, multi-minute
+wall time). The `validation` / `validation-align` script tiers remain for **local** pre-release runs.
+
+```powershell
+# Local validation (not CI)
+.\scripts\fetch_corpus_sources.ps1   # when floor-oracle / codec rows need real media
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair
+```
+
+Sketch below kept for reference if infrastructure appears later:
 
 ```yaml
-# sketch — not shipped with Phase 1
+# not shipped — reference only
 jobs:
   nightly-validation:
     runs-on: windows-latest
@@ -1408,6 +1417,7 @@ Closes gaps called out in plan review (2026-06-25).
 | **`f1_production_scan_patch_smoke`** | Lands in **`validate_residual_gate.rs`** with EC6 `f4_decoy_*` rows — no separate `validate_energy_corpus` binary. |
 | **Lib `energy_signature_production` tests** | `f1_production_haystack_scan_vs_oracle` → **`oracle_energy.rs`**; `scan_detects_f1_production_gap` + `f1_production_scan_and_domain_smoke` → **`integration_energy_smoke.rs`**; `production_matrix_contexts_skip_thirty_on_sixty_sec_fixture` → **stay in lib** (unit). |
 | **`test_support/` `#[test]` policy** | No acceptance/oracle/integration tests in `test_support/` after Phase 2. Fixture-builder unit tests (`energy_signature_fixtures.rs` `production_spec_tests`) **may stay** — they are not tier violations. |
+| **Nightly validation CI** | **Deferred** — no runner infrastructure. `test-tier.ps1 -Tier validation` is local/manual only; PR gate stays `-Tier pr` (+ manifest check + Clippy). Revisit only if scheduled runners with ffmpeg + corpus fetch become available. |
 
 ---
 
@@ -1422,12 +1432,12 @@ Closes gaps called out in plan review (2026-06-25).
 | `cargo test --tests` | Document as **misleading** (includes `--lib`); use tier script |
 | Workspace scope | Phase 1–2 repair-first; **Phase 2b** = `clip-sync` corpus + symphonia splits; **Phase 2c** = `align_videos` defer |
 | libtest `--skip` | Acceptable in Phase 1; reduce reliance after Phase 2 moves oracles |
-| Harness layout | Fixtures in `test_support/`; runners in `clip-sync-repair-harness` (Phase 3.5; interim `tests/common/` until then); catalogs data-only; thin `#[test]` in tier binaries — see [Harness organization](#harness-organization-fixtures-runners-catalogs) |
+| Harness layout | Fixtures in `test_support/`; runners in `clip-sync-repair-harness`; catalogs data-only; thin `#[test]` in tier binaries — see [Harness organization](#harness-organization-fixtures-runners-catalogs) |
 | PR contract | [PR contract](#pr-contract-required-ci-gates) is source of truth for CI; per-file splits in [inventory](#per-file-test-inventory-repair-binaries) |
 | Oracle (label) on PR | **Yes** for `seam_residual_disagreement_oracles` + `oracle_energy` SD rows (integration tier); not all `oracle_*` rows |
 | RG04 / energy smoke on PR | **integration** smokes (`integration_residual_gate_smoke`, `integration_energy_smoke`), not validation feature |
 | `#[ignore]` vs feature gates | Remove ignore when binary is feature-gated; see [Resolved decisions](#resolved-decisions) |
-| Integration runners (Phase 3 → 3.5) | Phase 3: interim per-binary `include!` + `allow(dead_code)` — [Phase 3](#phase-3--testscommon-and-clippy). **Target:** `clip-sync-repair-harness` dev-dep — [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
+| Integration runners | Phase 3.5 **landed:** `clip-sync-repair-harness` dev-dep — [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up). Phase 3 `include!` interim is retired — [Phase 3](#phase-3--testscommon-and-clippy) |
 | `cargo test --workspace` | Dev convenience only after Phase 1; not CI PR gate |
 | `test_support/` tests | Builders only for acceptance/oracle/integration; fixture-builder unit tests OK — see [Resolved decisions](#resolved-decisions) |
 | `validate_residual_gate` scope | `f1_production_scan_patch_smoke` + EC6 `f4_decoy_*` + future RG rows; no `validate_energy_corpus` crate/binary |

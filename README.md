@@ -20,7 +20,8 @@ clip-sync/
 └── crates/
     ├── clip-sync/              # shared alignment library
     ├── clip-sync-cli/          # analyzer binary (clip-sync)
-    └── clip-sync-repair/       # repair binary (clip-sync-repair) [in development]
+    ├── clip-sync-repair/       # repair binary (clip-sync-repair) [in development]
+    └── clip-sync-repair-harness/  # shared integration test runners (dev-dep of repair)
 ```
 
 | Crate | Binary | Role |
@@ -613,7 +614,8 @@ Quick start:
 
 ```powershell
 cargo build
-cargo test --workspace
+.\scripts\test-tier.ps1 -Tier pr          # CI PR gate (alignment + repair smoke + CLI)
+cargo test --workspace                    # local compile check only — not the PR gate
 ```
 
 ---

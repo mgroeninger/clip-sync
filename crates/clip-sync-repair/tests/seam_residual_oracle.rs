@@ -8,8 +8,10 @@
 //! false-positive / FLOOR_OK calibration substrate). Real-codec tier:
 //! `tests/floor_oracle/manifest.toml` + `source_gap_oracle_floor_csv` (Wikimedia sources).
 //!
-//! Run: `cargo test -p clip-sync-repair seam_residual_oracle_csv -- --ignored --nocapture`
-//! H2-B rescue: `cargo test -p clip-sync-repair broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
+//! Run (diagnostic tier):
+//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle -- --nocapture`
+//! Slow H2-B rescue row:
+//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
@@ -122,7 +124,7 @@ fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairCo
 /// Real Wikimedia/Musopen Vorbis truth gaps pass Pearson — rescue matches `veto` there; see
 /// `floor_oracle_veto_rescue_real_broadband_codec`.
 #[test]
-#[ignore = "slow (~100s): cargo test -p clip-sync-repair broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture"]
+#[ignore = "slow (~100s): cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture"]
 fn broadband_oracle_veto_rescue_patches_marginal() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_broadband_oracle(48_000, 1, 40.0);
@@ -249,7 +251,6 @@ fn run_oracle_config(
 /// configs, or does the coarse search leave the waveform seam too low to pass the Pearson gate?
 /// Compares default fit weights, `--full` (full grid + boundary extend), and structure isolation.
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_h2_placement_experiment -- --ignored --nocapture"]
 fn seam_residual_h2_placement_experiment() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_broadband_oracle(48_000, 1, 40.0);
@@ -286,7 +287,6 @@ fn seam_residual_h2_placement_experiment() {
 }
 
 #[test]
-#[ignore = "diagnostic: cargo test -p clip-sync-repair seam_residual_oracle_csv -- --ignored --nocapture"]
 fn seam_residual_oracle_csv() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_broadband_oracle(48_000, 1, 40.0);

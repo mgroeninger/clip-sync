@@ -102,7 +102,6 @@ try {
             '--test', 'integration_floor_oracle_smoke',
             '--test', 'integration_residual_gate_smoke',
             '--test', 'oracle_energy',
-            '--test', 'seam_residual_oracle',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration'
         )
@@ -148,7 +147,8 @@ try {
             '-p', 'clip-sync-repair',
             '--features', 'diagnostic-tests',
             '--test', 'diag_energy_matrix',
-            '--test', 'diag_seam_residual'
+            '--test', 'diag_seam_residual',
+            '--test', 'seam_residual_oracle'
         )
         # Straggler diagnostic #[ignore] rows still in --lib or integration binaries.
         Invoke-CargoTest @(
@@ -161,12 +161,6 @@ try {
             '--test', 'patch_audio_integration',
             '--', '--ignored',
             '--skip', 'patch_audio_fit_production_defaults'
-        )
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--test', 'seam_residual_oracle',
-            '--', '--ignored',
-            '--skip', 'broadband_oracle'
         )
     }
 

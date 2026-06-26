@@ -320,7 +320,7 @@ Split binaries (see [test-tier plan](../../../docs/TEMP-test-tier-plan.md)):
 **Leave in** `validate_floor_oracle.rs`: `source_gap_oracle_floor_csv` (calibration CSV).
 PR smokes: `integration_floor_oracle_smoke.rs`.
 
-From `seam_residual_oracle.rs` (optional): `broadband_oracle_veto_rescue_patches_marginal` only.
+From `seam_residual_oracle.rs` (diagnostic tier, `diagnostic-tests` feature): `broadband_oracle_veto_rescue_patches_marginal` (`#[ignore]`, ~100s).
 
 Update `matrix.toml` `location` fields when fns move.
 
