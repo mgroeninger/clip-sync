@@ -1,7 +1,7 @@
 # Anchor-based seam placement — plan (DRAFT)
 
-Status: **in progress** — P0–P3 core, bool `auto` trigger, Batch A–C (Pearson gate, ranking, Tier-2
-xcorr wired). Remaining: observability tags, user docs, optional corpus/diag rows.
+Status: **in progress** — P0–P4 + Batch A–D (Pearson gate, xcorr, observability tags). Remaining:
+user docs polish, optional corpus/diag rows.
 
 Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
 Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
@@ -262,6 +262,16 @@ Pattern to copy: `tests/seam_residual_oracle.rs`.
 
 Unit tests: `xcorr_rescues_ambiguous_pearson_pre_anchor`, `local_anchor_xcorr_peak_finds_lag_alignment`,
 `xcorr_not_run_when_pearson_deep_fail` in `gap_anchor_seam.rs`.
+
+### Batch D — Observability (done)
+
+| Surface | Fields | Location |
+|---------|--------|----------|
+| `GapPatchStatus::Patched` | `anchor_seam_used`, `anchor_bracket_move_frames` | `patch_result.rs` (JSON status) |
+| `GapTags` | same (tags mirror status for vocabulary) | `gap_tags.rs` |
+| Verbose stderr | `anchor_seam=true`, `anchor_move_frames=N` | `format_gap_tags_verbose_line` |
+| Human gap table | `patched (anchor …)` when `anchor_seam_used` | `cli/output.rs` `format_patched_gap_detail` |
+| Tag derivation | `GapTagsPatchContext` + `derive_gap_tags_from_status` | `patch_audio.rs`, `gap_tags.rs` |
 
 ---
 

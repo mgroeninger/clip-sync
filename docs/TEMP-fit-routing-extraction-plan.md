@@ -114,10 +114,46 @@ stays in `application` (I/O + measurement). Respects existing layering.
 
 The `defer_residual` dual path (`record_fit_joint_candidate` eager/`best` vs
 `record_fit_joint_candidate_to_pool` deferred/`pool`, threaded through `:840-1024`) exists only to
-control *when* residual is measured. Once `CandidateScore.confidence` is defined as
-**residual-finalized at scoring time**, the router never sees a provisional High and the pool-vs-best
-fork collapses to one path. Removes ~6 helper variants (the `_to_pool` twins,
-`global_best_joint_candidate`, the `defer_residual` branches). Net LOC should drop.
+control *when* residual is measured. The collapse is **always-pool + lazy-finalize-at-selection**:
+candidates are scored with **Pearson** confidence/rank only (no residual), and residual is applied at
+selection in router order — confirming the High screen ([`terminates_high`]) and walking
+[`pool_winner_order`] until a candidate's residual verdict passes (fall-through on veto). When
+residual measurement is disabled, finalize is a no-op, so one path serves both.
+
+> **Correction (step-2 review):** an earlier draft said "`confidence` residual-finalized *at scoring
+> time*" — that would have measured residual for every grid cell (a cold-path perf regression). The
+> real selection (`select_joint_fit_winner_with_residual:472-505`) sorts by *Pearson* rank then
+> applies residual lazily in order. The router therefore owns only the **order**; the driver keeps
+> the lazy residual loop. This still collapses the pool-vs-best fork (always pool, finalize a no-op
+> when residual off) and removes the `_to_pool` twins + `global_best_joint_candidate`.
+
+## 5b. Touch points (verified for step 3)
+
+Each driver branch and the router primitive + driver-owned residual step that replaces it. `FitJoint
+Candidate { outcome, ranking_score, boundary_move }` maps to `CandidateScore` as:
+`refined=outcome.refined, confidence=outcome.confidence (Pearson), boundary_move, ranking_score,
+anchor_seam_used=outcome.anchor_seam_used`.
+
+| Site (`patch_region.rs`) | Router primitive | Driver still owns |
+|--------------------------|------------------|-------------------|
+| baseline High `:862-886` | `terminates_high(baseline)` | residual confirm (`try_finalize_high…`) |
+| baseline accept `:888-913` | `baseline_only_accepts` | — |
+| `accepts_baseline_without_boundary_grid:538-547` | delegate → `baseline_only_accepts` | — |
+| anchor High `:759-787` | `best_high(pool)` + is-anchor | residual confirm |
+| anchor accept `:789-810` | `best_by_ranking(pool)` + is-anchor + `baseline_only_accepts` | — |
+| grid early High `:976-989` | `terminates_high(cell)`, scan order | residual confirm |
+| winner `select_joint_fit_winner…:463-505` | `pool_winner_order` | lazy residual walk + `best_below_floor` |
+
+**Two driver changes the wiring depends on (do these in step 3, not the router):**
+
+1. `evaluate_seam_gate_fit_candidate` must emit **Pearson** confidence with residual *unmeasured*
+   (today `:1446-1454` already does this in the `defer_residual` branch; make it unconditional). The
+   selected winner's final `confidence` comes from `finalize_fit_outcome_residual` at selection.
+2. Set `anchor_seam_used = anchor_seam_bracket` on the candidate **at construction** (the scorer knows
+   it), retiring the post-hoc `mark_anchor_outcome` stamping (`:723-740`, plan §6.3).
+
+`best_below_floor` stays driver state: gate failures recorded at scoring, residual vetoes recorded
+during the `pool_winner_order` walk.
 
 ---
 
@@ -143,8 +179,11 @@ fork collapses to one path. Removes ~6 helper variants (the `_to_pool` twins,
   (skip surfaces as hard-skip, not residual `not_applicable` — name predates the tier). Existing
   leaf-predicate unit tests cover the atoms. 9/9 green.
 - [x] **2. Introduce `application/fit_routing.rs`** — `CandidateScore` + pure fns
-  (`terminates_high`, `baseline_only_accepts`, `best_high`, `best_by_ranking`, `select_pool_winner`),
-  10 number-driven unit tests. Faithfully encodes the selection-vs-winner tie-break asymmetry. Carries
+  (`terminates_high`, `baseline_only_accepts`, `best_high`, `best_by_ranking`, `pool_winner_order`,
+  `select_pool_winner`), 10 number-driven unit tests. Faithfully encodes the selection-vs-winner
+  tie-break asymmetry. **Step-2 review fixes:** added `pool_winner_order` for the lazy residual
+  fall-through (single-winner was insufficient); dropped unused `pre`/`post` fields; corrected the
+  "residual-finalized" doc to "Pearson screen, driver applies residual in order" (see §5/§5b). Carries
   a temporary `#![allow(dead_code)]` (removed in step 3). No wiring.
 - [ ] **3. Rewire driver** — `patch_region` delegates each branch to the pure fns; collapse
   `defer_residual` (router sees residual-finalized `confidence`). Characterization + integration

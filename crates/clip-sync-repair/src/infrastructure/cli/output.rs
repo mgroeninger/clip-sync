@@ -436,6 +436,7 @@ struct PatchedGapDetail<'a> {
     align_adjustment_secs: f64,
     waveform_adjustment_secs: f64,
     structure_trusted: bool,
+    anchor_seam_used: bool,
     confidence: crate::domain::FillConfidence,
     patch_tier: PatchTier,
     diagnostics: bool,
@@ -450,6 +451,7 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
         align_adjustment_secs,
         waveform_adjustment_secs,
         structure_trusted,
+        anchor_seam_used,
         confidence,
         patch_tier,
         diagnostics,
@@ -464,7 +466,7 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
     };
     let placement = if structure_trusted {
         "struct"
-    } else if patch_tier == PatchTier::AnchorTrusted {
+    } else if anchor_seam_used || patch_tier == PatchTier::AnchorTrusted {
         "anchor"
     } else {
         ""
@@ -509,6 +511,7 @@ fn format_unified_gap_status(
             waveform_adjustment_secs,
             structure_trusted,
             confidence,
+            anchor_seam_used,
             ..
         } => format_patched_gap_detail(&PatchedGapDetail {
             pre_correlation: *pre_correlation,
@@ -516,6 +519,7 @@ fn format_unified_gap_status(
             align_adjustment_secs: *align_adjustment_secs,
             waveform_adjustment_secs: *waveform_adjustment_secs,
             structure_trusted: *structure_trusted,
+            anchor_seam_used: *anchor_seam_used,
             confidence: *confidence,
             patch_tier: outcome.tags.patch_tier,
             diagnostics: show_diagnostics,
@@ -682,6 +686,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 waveform_adjustment_secs,
                 structure_trusted,
                 confidence,
+                anchor_seam_used,
                 ..
             } => format_patched_gap_detail(&PatchedGapDetail {
                 pre_correlation: *pre_correlation,
@@ -689,6 +694,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 align_adjustment_secs: *align_adjustment_secs,
                 waveform_adjustment_secs: *waveform_adjustment_secs,
                 structure_trusted: *structure_trusted,
+                anchor_seam_used: *anchor_seam_used,
                 confidence: *confidence,
                 patch_tier: gap.tags.patch_tier,
                 diagnostics: true,
@@ -1368,18 +1374,41 @@ mod tests {
                 signature_mode_label: "energy",
                 fit_used_boundary_grid: false,
                 anchor_seam_used: true,
+                anchor_bracket_move_frames: 48_000,
                 anchor_trusted: true,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         );
         let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome::new(
-            0.0, 60.0, status, tags,
+            0.0, 60.0, status, tags.clone(),
         )]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false);
         assert!(text.contains("! patched (anchor 0.31→0.29)"));
         assert!(text.contains("[anchor trusted"));
+        assert!(tags.anchor_seam_used);
+        assert_eq!(tags.anchor_bracket_move_frames, 48_000);
+
+        let payload = RepairJsonOutput {
+            scan: super::GapScanJson::from(&report),
+            patch: Some(&summary),
+        };
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(
+            value["patch"]["gaps"][0]["status"]["patched"]["anchor_seam_used"],
+            true
+        );
+        assert_eq!(
+            value["patch"]["gaps"][0]["status"]["patched"]["anchor_bracket_move_frames"],
+            48_000
+        );
+        assert_eq!(value["patch"]["gaps"][0]["tags"]["anchor_seam_used"], true);
+        assert_eq!(
+            value["patch"]["gaps"][0]["tags"]["anchor_bracket_move_frames"],
+            48_000
+        );
     }
 
     #[test]

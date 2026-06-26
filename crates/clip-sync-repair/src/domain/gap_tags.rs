@@ -265,6 +265,12 @@ pub struct GapTags {
     pub signature_mode: Option<SignatureModeTag>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual_band: Option<ResidualBand>,
+    /// Editorial anchor seam won (not scan-throat placement alone).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub anchor_seam_used: bool,
+    /// Frames the winning anchor bracket moved from scan-refined baseline; omitted when 0.
+    #[serde(default, skip_serializing_if = "is_zero_frames")]
+    pub anchor_bracket_move_frames: usize,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -275,6 +281,7 @@ pub struct GapTagsPatchContext {
     pub signature_mode_label: &'static str,
     pub fit_used_boundary_grid: bool,
     pub anchor_seam_used: bool,
+    pub anchor_bracket_move_frames: usize,
     pub anchor_trusted: bool,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
@@ -417,6 +424,12 @@ pub fn derive_gap_tags_from_patch_outcome(
         fit_path: ctx.fit_path_tag(),
         signature_mode: ctx.signature_mode_tag(),
         residual_band: ctx.residual_band_tag(),
+        anchor_seam_used: ctx.anchor_seam_used,
+        anchor_bracket_move_frames: if ctx.anchor_seam_used {
+            ctx.anchor_bracket_move_frames
+        } else {
+            0
+        },
     }
 }
 
@@ -442,12 +455,16 @@ pub fn derive_gap_tags_from_status(
                 fit_path: None,
                 signature_mode: None,
                 residual_band: None,
+                anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
             }
         }
         GapPatchStatus::Patched {
             pre_correlation,
             post_correlation,
             confidence,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
             ..
         } => derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -460,7 +477,8 @@ pub fn derive_gap_tags_from_status(
                 thresholds,
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
-                anchor_seam_used: false,
+                anchor_seam_used: *anchor_seam_used,
+                anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 anchor_trusted: false,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -474,12 +492,21 @@ pub fn derive_gap_tags_from_status(
                 signature_mode_label: "bool",
                 fit_used_boundary_grid: false,
                 anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
     }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn is_zero_frames(frames: &usize) -> bool {
+    *frames == 0
 }
 
 /// Patch outcome view for tag derivation (application layer).
@@ -558,6 +585,15 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     if let Some(band) = tags.residual_band {
         parts.push(format!("residual_band={}", band.as_str()));
     }
+    if tags.anchor_seam_used {
+        parts.push("anchor_seam=true".to_string());
+        if tags.anchor_bracket_move_frames > 0 {
+            parts.push(format!(
+                "anchor_move_frames={}",
+                tags.anchor_bracket_move_frames
+            ));
+        }
+    }
     format!("           gap tags: {}", parts.join(" "))
 }
 
@@ -573,6 +609,7 @@ mod tests {
             signature_mode_label: "bool",
             fit_used_boundary_grid: false,
             anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
             anchor_trusted: false,
             residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -713,6 +750,49 @@ mod tests {
             Some(GapFillSkipReason::OutsideReferenceCoverage)
         );
         assert_eq!(tags.patch_tier, PatchTier::NotApplicable);
+    }
+
+    #[test]
+    fn verbose_line_includes_anchor_seam_metadata() {
+        let mut ctx = patch_ctx();
+        ctx.anchor_seam_used = true;
+        ctx.anchor_bracket_move_frames = 1_200;
+        ctx.anchor_trusted = true;
+        let tags = derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre: 0.31,
+                post: 0.29,
+                confidence: FillConfidence::Marginal,
+            },
+            ctx,
+        );
+        assert!(tags.anchor_seam_used);
+        assert_eq!(tags.anchor_bracket_move_frames, 1_200);
+        let line = format_gap_tags_verbose_line(&tags);
+        assert!(line.contains("anchor_seam=true"));
+        assert!(line.contains("anchor_move_frames=1200"));
+    }
+
+    #[test]
+    fn derive_from_status_preserves_anchor_metadata() {
+        let status = GapPatchStatus::Patched {
+            pre_correlation: 0.5,
+            post_correlation: 0.48,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            residual_db: None,
+            floor_db: None,
+            headroom_db: None,
+            anchor_seam_used: true,
+            anchor_bracket_move_frames: 900,
+        };
+        let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
+        assert!(tags.anchor_seam_used);
+        assert_eq!(tags.anchor_bracket_move_frames, 900);
     }
 
     #[test]

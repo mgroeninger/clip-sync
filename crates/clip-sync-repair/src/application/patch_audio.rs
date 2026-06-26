@@ -1242,6 +1242,15 @@ fn region_outcome_gap_tags(
     outcome: &RegionPatchOutcome,
     mut tag_ctx: GapTagsPatchContext,
 ) -> GapTags {
+    if let RegionPatchOutcome::Patched {
+        anchor_seam_used,
+        anchor_bracket_move_frames,
+        ..
+    } = outcome
+    {
+        tag_ctx.anchor_seam_used = *anchor_seam_used;
+        tag_ctx.anchor_bracket_move_frames = *anchor_bracket_move_frames;
+    }
     tag_ctx.residual = match outcome {
         RegionPatchOutcome::Patched { residual, .. } | RegionPatchOutcome::Skipped { residual, .. } => {
             *residual
@@ -1487,6 +1496,7 @@ fn prepare_region_patch(
         signature_mode_label,
         fit_used_boundary_grid: false,
         anchor_seam_used: false,
+        anchor_bracket_move_frames: 0,
         anchor_trusted: false,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
@@ -1710,6 +1720,7 @@ fn prepare_region_patch(
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
     tag_ctx.anchor_seam_used = anchor_seam_used;
+    tag_ctx.anchor_bracket_move_frames = anchor_bracket_move_frames;
     tag_ctx.anchor_trusted = anchor_trusted;
 
     if confidence == FillConfidence::Marginal {
@@ -2121,6 +2132,8 @@ mod tests {
             fit_path: None,
             signature_mode: None,
             residual_band: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
         }
     }
 
