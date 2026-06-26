@@ -188,27 +188,35 @@ Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-
 
 | Layer | Tier | Generator / fixture | Asserts |
 |-------|------|---------------------|---------|
-| `patch_audio_integration` | **committed** (CI) | Stereo sine + gap WAVs (`write_stereo_sine_with_gap`) | Patch count, skip reasons, fit marginal tier, gate regression, extension |
-| `patch_audio_integration` | **ignored** | Same fixtures, production-like fit config (`fill_border_search_secs = 10`, full extension grid) | `patch_audio_fit_production_defaults_smoke` — run before release |
-| `query_reference_integration` | **committed** | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
+| `patch_audio_integration` | **integration** (PR extended) | Stereo sine + gap WAVs (`write_stereo_sine_with_gap`) | Patch count, skip reasons, fit marginal tier, gate regression, extension (~15 min) |
+| `validate_patch_audio` | **validation** | Same sine fixtures, production-like fit config | `patch_audio_fit_production_defaults_smoke` (SP05) — run before release |
+| `query_reference_integration` | **integration** (PR) | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
 | `gap_corpus` | external / manual | `CLIP_SYNC_GAP_CORPUS` real media | Listen + skip/marginal counts (see gap corpus README) |
-| `gap_corpus_patch_timing_committed` | **committed** (CI) | Gap corpus WAVs + generated clean B reference | Patch wall-time budget (`max_patch_wall_secs` in manifest) |
-| `gap_corpus_patch_timing_production` | **ignored** | Same fixtures, `RepairConfig::default()` fit | Manual perf smoke before release |
+| `gap_corpus_patch_timing_committed` | **integration** (`#[ignore]`) | Gap corpus WAVs + generated clean B reference | Patch wall-time budget (`max_patch_wall_secs` in manifest) |
+| `gap_corpus_patch_timing_production` | **integration** (`#[ignore]`) | Same fixtures, `RepairConfig::default()` fit | Manual perf smoke before release |
 
-**CI command:**
+**CI command** (PR gate — does **not** run full `patch_audio_integration`; see [development.md](development.md) § Repair integration binary matrix):
 
 ```powershell
-cargo test -p clip-sync-repair patch_audio_integration
-cargo test -p clip-sync-repair patch_audio_fit_production_defaults -- --ignored
-cargo test -p clip-sync-repair gap_corpus_patch_timing_committed
-cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture
+# PR repair slice (default CI)
+.\scripts\test-tier.ps1 -Tier pr-repair
+
+# Extended seam grid (pre-release or patch/fit changes)
+.\scripts\test-tier.ps1 -Tier pr-repair-extended
+
+# Production-default fit smoke (validation tier)
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair
+
+# Ad hoc patch timing (ignored rows)
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_production -- --ignored --nocapture
 ```
 
 **Patch summary fields to track** (JSON / `PatchSummary`): `patched_count`, `skipped_count`, `patched_marginal_count`, per-gap `confidence`, `gap_*_adjust_frames`.
 
 ### Manual acceptance (external pair or `CLIP_SYNC_GAP_CORPUS`)
 
-Automated CI covers synthetic fixtures only (`patch_audio_integration`). This checklist is for **operator sign-off** after changing fit search, performance defaults, or `fill_repeat_penalty_weight` on **long-form or real media** (e.g. `CLIP_SYNC_GAP_CORPUS` — see [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md)). Record date, config path, and media identifiers when complete.
+Automated CI covers repair smokes (`pr-repair`: query-ref, gap corpus committed scan, energy scan→patch tripwire) — not the full sine seam grid or production-default fit. Run `pr-repair-extended` and `validation` tier before release. This checklist is for **operator sign-off** after changing fit search, performance defaults, or `fill_repeat_penalty_weight` on **long-form or real media** (e.g. `CLIP_SYNC_GAP_CORPUS` — see [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md)). Record date, config path, and media identifiers when complete.
 
 | Check | Pass? | Notes |
 |-------|-------|-------|
@@ -242,7 +250,7 @@ Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Pha
 | Domain oracle | **integration** (oracle label) | `tests/oracle_energy.rs` — U1–U8 (8 s integration fixtures), **EC-3** (`p3_`), **EC-6** score (`p4_f4_decoy_energy_separates_but_bool_ties`); **EC-1/EC-2** production geometry (`p1_`/`p2_`, `#[ignore]` — PR uses **U3/U5** instead) | Unified match on full B; energy vs bool discrimination |
 | Scan path | **integration** | `tests/integration_energy_smoke.rs` — `scan_detects_f1_production_gap`, `f1_production_scan_and_domain_smoke` | `ScanGaps` finds gap within ±0.35 s |
 | **End-to-end (CI smoke)** | **integration** | `corpus_scan_patch_smoke` in `integration_energy_smoke.rs` (~5 s) | Full scan → patch on 16 kHz / 32 s production-geometry F1; asserts one gap detected and patched |
-| Integration (fast) | **integration** | I1–I4 @ 8 s in `patch_audio_integration.rs` | Patch with oracle `GapReport`, structure-heavy weights |
+| Integration (fast) | **integration** | SP01–SP03 in `integration_energy_patch.rs`; SP04 in `patch_audio_integration.rs` | Patch with oracle `GapReport`, structure-heavy weights |
 | Mode matrix + EC-6 patch | **validation** / **diagnostic** | `validate_residual_gate.rs` (`f4_decoy_patch_discrimination`, …); `diag_energy_matrix.rs` (`energy_signature_mode_matrix`, …) | CSV rows (fixture × mode × context); **EC-6:** energy → true pause / bool → decoy |
 
 **CI commands** (prefer [test-tier.ps1](development.md#default--ci-commands); bare `cargo test -p clip-sync-repair` runs **`--lib` only** after Phase 3):

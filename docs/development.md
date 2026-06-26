@@ -172,6 +172,39 @@ corpus paths are resolved from `repair_tests_dir!()` in tier binaries (expands t
 To extend a runner: add or edit the module in `clip-sync-repair-harness/src/`, then call it from
 the relevant `tests/<tier>_*.rs` binary. Do not reintroduce `include!` or `tests/common/`.
 
+### Repair integration binary matrix
+
+Explicit `[[test]]` entries in `crates/clip-sync-repair/Cargo.toml` (`autotests = false`). **PR**
+means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tier pr`). See
+[test-acceptance-glossary.md](test-acceptance-glossary.md) for SD/SP/EC/RG row IDs.
+
+| Binary | Tier | Feature | PR | Acceptance / role |
+|--------|------|---------|----|-------------------|
+| `config_roundtrip` | integration | — | yes | TOML fixture deserialize + validate |
+| `scan_gaps_integration` | integration | — | yes | Chirp/silence `ScanGaps` |
+| `cli_wav_integration` | integration | — | yes | CLI `--wav` scan + patch |
+| `query_reference_integration` | integration | — | yes | Query-ref gap inside/outside mapped region |
+| `wav_bit_depth_integration` | integration | — | yes | Source-driven WAV output bit depth |
+| `integration_gap_corpus` | integration | — | yes (committed scan only) | Gap scan corpus manifest; timing/external/generated `#[ignore]` |
+| `integration_energy_smoke` | integration | — | yes | Scan→patch tripwire (`corpus_scan_patch_smoke`, EC01 e2e) |
+| `integration_energy_patch` | integration | — | **no** | SP01–SP03 (`i1_`–`i3_`); full `integration` tier only |
+| `integration_residual_gate_smoke` | integration | — | yes | RG04 off-regression baseline |
+| `integration_floor_oracle_smoke` | integration | — | yes | Floor manifest load + gap-frame geometry (not full codec matrix) |
+| `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
+| `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
+| `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
+| `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; `mux_writes_video` / 24-bit pipe `#[ignore]` |
+| `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
+| `validate_residual_gate` | validation | `validation-tests` | no | RG catalog rows + EC06 patch discrimination |
+| `validate_patch_audio` | validation | `validation-tests` | no | SP05 — production-default fit smoke |
+| `diag_energy_matrix` | diagnostic | `diagnostic-tests` | no | Energy mode matrix CSV |
+| `diag_seam_residual` | diagnostic | `diagnostic-tests` | no | Seam residual CSV |
+| `diag_patch_audio` | diagnostic | `diagnostic-tests` | no | Patch geometry CSV (I1/I3) |
+| `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
+
+† `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH`; ignored mux e2e rows need
+`--ignored` locally or validation-tier sign-off.
+
 **Clippy (local verification; CI runs the PR-equivalent line on every push/PR):**
 
 ```powershell

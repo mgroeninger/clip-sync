@@ -24,7 +24,7 @@ fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs
 | **CS** | Content shape | Acoustic/editorial seam hint | [gap-repair-guide.md](gap-repair-guide.md) Layer 2 |
 | **F** | Fixture geometry | Synthetic scenario layout (F1, F1-long, F4-decoy, …) | `test_support/`, guide § Corpus fixtures |
 | **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | `tests/oracle_energy.rs` (integration, oracle label) |
-| **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/patch_audio_integration.rs` |
+| **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/integration_energy_patch.rs` (SP01–SP03), `tests/patch_audio_integration.rs` (SP04), `tests/validate_patch_audio.rs` (SP05) |
 | **EC** | Energy corpus | Production-geometry signature acceptance | `tests/oracle_energy.rs` (domain), `tests/integration_energy_smoke.rs` (scan/e2e), `tests/integration_energy_patch.rs` (SP01–SP03 patch), `tests/validate_residual_gate.rs` (EC-6 patch, validation), `tests/diag_energy_matrix.rs` (matrix, diagnostic) |
 | **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
@@ -114,16 +114,19 @@ Defined in [energy-signature-plan.md](archive/energy-signature-plan.md).
 
 ## SP — signature patch pipeline
 
-8 s integration: domain + haystack + full `PatchAudio`. Helper:
-`assert_energy_integration_patch` in `patch_audio_integration.rs`.
+8 s integration: domain + haystack + full `PatchAudio`. Shared helper:
+`assert_energy_integration_patch` in `clip-sync-repair-harness` (`patch_audio` module).
 
-| ID | Fixture | Focus |
-|----|---------|-------|
-| **SP01** | F1 | energy — all three layers agree |
-| **SP02** | F1 | bool domain closer to decoy than energy |
-| **SP03** | F2 | energy @ pause₁, slide ≈ 0 |
-| **SP04** | F3 | `auto` domain ≡ bool |
-| **SP05** | — | full-suite regression (was I5) |
+| ID | Fixture | Focus | Binary | PR |
+|----|---------|-------|--------|-----|
+| **SP01** | F1 | energy — all three layers agree | `integration_energy_patch.rs` (`i1_*`) | no — `integration` tier |
+| **SP02** | F1 | bool domain closer to decoy than energy | `integration_energy_patch.rs` (`i2_*`) | no |
+| **SP03** | F2 | energy @ pause₁, slide ≈ 0 | `integration_energy_patch.rs` (`i3_*`) | no |
+| **SP04** | F3 | `auto` domain ≡ bool | `patch_audio_integration.rs` (`i4_*`) | no — `pr-repair-extended` |
+| **SP05** | — | production-default fit smoke (was I5) | `validate_patch_audio.rs` | no — `validation` tier |
+
+PR energy patch coverage uses `corpus_scan_patch_smoke` in `integration_energy_smoke.rs` (EC01
+e2e tripwire) plus SD domain rows on `oracle_energy.rs` — not the 8 s SP fixtures.
 
 **Legacy:** **I1–I5** → **SP01–SP05**; test fns `i1_*` … `i4_*` until renamed (`sig_sp01_*` target).
 
