@@ -259,9 +259,12 @@ Integration tests are **`tests/*.rs` at the crate root**, not files under `tests
 This directory holds **docs + `matrix.toml` only** until you add:
 
 ```text
+crates/clip-sync-repair-harness/src/
+  floor_oracle.rs              # floor-oracle pair builder (manifest + encode)
+  residual_gate.rs             # floor-oracle pipeline runner + assertions
+  seam_residual.rs             # seam residual score harness
+  energy_matrix.rs             # energy signature matrix row runners
 tests/
-  common/
-    residual_gate_runner.rs     # landed (phase 2)
   integration_floor_oracle_smoke.rs
   integration_residual_gate_smoke.rs
   validate_floor_oracle.rs
@@ -273,7 +276,8 @@ tests/
 
 ### Phase 1 — extract runner (no test moves)
 
-Move from `validate_floor_oracle.rs` into `tests/common/residual_gate_runner.rs`:
+Runner symbols now live in `clip-sync-repair-harness::residual_gate` (formerly
+`tests/common/residual_gate_runner.rs`):
 
 | Symbol | Role |
 |--------|------|

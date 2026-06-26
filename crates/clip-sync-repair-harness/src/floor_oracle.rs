@@ -1,4 +1,4 @@
-// Real-media floor-oracle pair builder for FLOOR_OK calibration (integration tests).
+//! Real-media floor-oracle pair builder for FLOOR_OK calibration (integration tests).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -185,16 +185,20 @@ pub struct BuiltFloorOracle {
     pub meta: SourceGapOracleMeta,
 }
 
-pub fn corpus_root() -> PathBuf {
+/// Floor-oracle corpus directory adjacent to clip-sync-repair integration binaries.
+///
+/// `repair_tests_dir` must be `env!("CARGO_MANIFEST_DIR")` from a `clip-sync-repair` `[[test]]`
+/// binary (the crate root), not the harness crate manifest dir.
+pub fn floor_oracle_corpus_root(repair_tests_dir: &Path) -> PathBuf {
     if let Ok(root) = std::env::var("CLIP_SYNC_WORKSPACE_ROOT") {
         return PathBuf::from(root)
             .join("crates/clip-sync-repair/tests/floor_oracle");
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/floor_oracle")
+    repair_tests_dir.join("tests/floor_oracle")
 }
 
-pub fn load_manifest() -> FloorOracleManifest {
-    let path = corpus_root().join("manifest.toml");
+pub fn load_manifest(repair_tests_dir: &Path) -> FloorOracleManifest {
+    let path = floor_oracle_corpus_root(repair_tests_dir).join("manifest.toml");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     toml::from_str(&text)

@@ -1,10 +1,5 @@
 //! Energy signature matrix / sweep diagnostics.
 
-#[allow(dead_code)]
-mod energy_signature_matrix {
-    include!("common/energy_signature_matrix.rs");
-}
-
 use std::time::Instant;
 
 use clip_sync::SymphoniaMediaReader;
@@ -21,8 +16,7 @@ use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
     production_repair_config, production_weight_sweep_config,
 };
-
-use energy_signature_matrix::{
+use clip_sync_repair_harness::energy_matrix::{
     format_slide, run_matrix_rows, run_oracle_control_row, run_oracle_matrix_rows,
 };
 

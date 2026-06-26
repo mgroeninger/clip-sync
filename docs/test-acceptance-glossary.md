@@ -11,7 +11,7 @@ that relates to **where** tests run (CI tiers — see [TEMP-test-tier-plan.md](T
 4. **F*** fixture IDs are geometry, not acceptance tier.
 
 **Harness vs acceptance IDs:** SD/SP/EC/RG name *what* a row proves; harness code is split —
-fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/*_catalog/`,
+fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs in `tests/*_catalog/`,
 `#[test]` in tier binaries. See [TEMP-test-tier-plan.md § Harness organization](TEMP-test-tier-plan.md#harness-organization-fixtures-runners-catalogs).
 
 ---
@@ -35,7 +35,7 @@ fixtures in `src/test_support/`, runners in `tests/common/`, catalogs in `tests/
 | Layer | Path | Holds |
 |-------|------|-------|
 | Fixtures | `clip-sync-repair/src/test_support/` | F* builders, production helpers — no `#[test]` |
-| Runners | `clip-sync-repair/tests/common/` | Shared pipeline drivers (floor oracle, residual gate) |
+| Runners | `clip-sync-repair-harness` (dev-dep of repair) | Shared pipeline drivers (floor oracle, residual gate, seam residual, energy matrix) |
 | Catalogs | `tests/residual_gate_catalog/`, `tests/floor_oracle/`, `tests/gap_corpus/` | `matrix.toml`, manifests, baselines — not binaries |
 | Tests | `tests/<tier>_*.rs` | Thin `#[test]` asserting SD/SP/EC/RG rows |
 

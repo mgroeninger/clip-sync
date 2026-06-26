@@ -1,4 +1,4 @@
-// Seam residual score harness.
+//! Seam residual score harness.
 
 use clip_sync_repair::domain::gap_fill_fit::{
     apply_residual_to_confidence, classify_fill_waveform_confidence, FillConfidence,

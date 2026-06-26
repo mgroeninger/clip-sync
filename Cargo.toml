@@ -3,5 +3,6 @@ members = [
     "crates/clip-sync",
     "crates/clip-sync-cli",
     "crates/clip-sync-repair",
+    "crates/clip-sync-repair-harness",
 ]
 resolver = "2"

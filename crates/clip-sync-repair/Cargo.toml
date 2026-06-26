@@ -37,6 +37,7 @@ hound = "3"
 
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }
+clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
 tempfile = "3"
 
 [[test]]

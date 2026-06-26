@@ -1,20 +1,14 @@
 //! Seam residual integration oracles (score-level acceptance).
 
-#[allow(dead_code)]
-mod seam_residual_scoring {
-    include!("common/seam_residual_scoring.rs");
-}
-
 use clip_sync_repair::domain::gap_fill_fit::{
-    apply_residual_to_confidence, ResidualGateError, FillConfidence,
+    apply_residual_to_confidence, FillConfidence, ResidualGateError,
 };
 use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
 use clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f4_decoy_production,
 };
-
-use seam_residual_scoring::{
+use clip_sync_repair_harness::seam_residual::{
     build_broadband, disagreement_at, score_placement, GateOutcomeLabel, PearsonTierLabel, Variant,
 };
 

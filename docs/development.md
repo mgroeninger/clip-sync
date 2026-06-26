@@ -148,11 +148,30 @@ cargo test -p clip-sync-repair --features validation-tests --test validate_floor
 cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture
 ```
 
+**Phase 3.5 (`clip-sync-repair-harness`):** shared integration runners live in the workspace
+crate `crates/clip-sync-repair-harness` (`clip_sync_repair_harness`), listed under
+`clip-sync-repair` `[dev-dependencies]`. Tier binaries import runners with normal `use` statements;
+corpus paths are resolved from `env!("CARGO_MANIFEST_DIR")` in the test binary (the repair crate
+root), passed into harness helpers such as `floor_oracle::load_manifest(repair_tests_dir)`.
+
+| Harness module | Former `tests/common/` file | Used by |
+|----------------|----------------------------|---------|
+| `floor_oracle` | `floor_oracle_fixtures.rs` | `integration_floor_oracle_smoke`, `validate_floor_oracle` |
+| `residual_gate` | `residual_gate_runner.rs` | `validate_floor_oracle` |
+| `seam_residual` | `seam_residual_scoring.rs` | `seam_residual_corpus`, `diag_seam_residual` |
+| `energy_matrix` | `energy_signature_matrix.rs` | `diag_energy_matrix` |
+
+To extend a runner: add or edit the module in `clip-sync-repair-harness/src/`, then call it from
+the relevant `tests/<tier>_*.rs` binary. Do not reintroduce `include!` or `tests/common/`.
+
 **Clippy (local verification; CI runs the PR-equivalent line on every push/PR):**
 
 ```powershell
 # PR-equivalent (no validation/diagnostic binaries)
 cargo clippy -p clip-sync-repair --all-targets -- -D warnings
+
+# Harness crate (shared runners)
+cargo clippy -p clip-sync-repair-harness -- -D warnings
 
 # Full repair harness
 cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagnostic-tests -- -D warnings

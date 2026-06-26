@@ -7,7 +7,7 @@
 > codec/corpus, or is a slow off-PR contract matrix). Select oracle tests by name filter
 > (`cargo test oracle_`) or acceptance ID — not by tier. See [Tier decision rule](#tier-decision-rule).
 
-> **Status:** Phases 1–3 landed (2026-06-25); Phase 3.5 (harness dev-dep crate) pending; Phases
+> **Status:** Phases 1–3.5 landed (2026-06-25); Phases
 > 2b–5 otherwise pending. See [Phase status](#phase-status).
 > Motivated by confusion between CI-fast tests, integration
 > tests, domain oracles, and validation/contract work (e.g. residual gate **RG01–RG05**, floor
@@ -30,7 +30,7 @@
 | **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
 | **2c** | `align_videos` integration move | Deferred |
 | **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** — interim `include!` harness; superseded by [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
-| **3.5** | `clip-sync-repair-harness` dev-dep crate; retire `tests/common/` `include!` | Pending |
+| **3.5** | `clip-sync-repair-harness` dev-dep crate; retire `tests/common/` `include!` | **Landed (2026-06-25)** |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 

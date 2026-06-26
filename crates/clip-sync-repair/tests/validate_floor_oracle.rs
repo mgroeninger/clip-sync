@@ -1,22 +1,14 @@
 //! Floor oracle validation (ffmpeg + corpus).
 
-#[allow(dead_code)]
-mod floor_oracle_fixtures {
-    include!("common/floor_oracle_fixtures.rs");
-}
-#[allow(dead_code)]
-mod residual_gate_runner {
-    include!("common/residual_gate_runner.rs");
-}
+use std::path::Path;
 
 use clip_sync_repair::domain::ResidualGateMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;
-
-use floor_oracle_fixtures::{
+use clip_sync_repair_harness::floor_oracle::{
     build_floor_oracle_pair, format_label, load_manifest, require_case_sources,
     require_validation_env, BuiltFloorOracle, FloorOracleCase, FloorOracleManifest, OracleVariant,
 };
-use residual_gate_runner::{
+use clip_sync_repair_harness::residual_gate::{
     assert_deadzone_punch_inert, assert_floor_expectations,
     assert_production_fit_gate_no_worse_than_off_baseline,
     assert_production_fit_pearson_deadzone,
@@ -25,6 +17,10 @@ use residual_gate_runner::{
     rescue_trigger, run_built_floor_oracle, run_built_floor_oracle_cfg,
     run_built_floor_oracle_production_fit, run_pearson_min, FloorOracleRun,
 };
+
+fn repair_tests_dir() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
 
 fn variant_label(variant: OracleVariant) -> &'static str {
     match variant {
@@ -77,7 +73,7 @@ fn print_csv_row(built: &BuiltFloorOracle, run: &FloorOracleRun) {
 fn source_gap_oracle_floor_csv() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let temp = tempfile::tempdir().expect("tempdir");
 
     print_csv_header();
@@ -116,7 +112,7 @@ fn source_gap_oracle_floor_csv() {
 #[test]
 fn floor_oracle_vorbis_64k_veto_no_false_veto() {
     require_validation_env();
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let case = manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_64k");
     require_case_sources(case);
     let temp = tempfile::tempdir().expect("tempdir");
@@ -137,7 +133,7 @@ fn floor_oracle_vorbis_64k_veto_no_false_veto() {
 fn floor_oracle_residual_gate_real_codec() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let ambient = manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same");
     let speech = manifest_case(&manifest, "cc_speech_gap_oracle_aac_same");
     let speech_vorbis = manifest_case(&manifest, "cc_speech_gap_oracle_vorbis_128k");
@@ -239,7 +235,7 @@ fn floor_oracle_residual_gate_real_codec() {
 fn floor_oracle_veto_rescue_real_broadband_codec() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let cases = [
         manifest_case(&manifest, "cc_music_gap_oracle_vorbis_128k"),
         manifest_case(&manifest, "cc_music_gap_oracle_vorbis_dual"),
@@ -272,7 +268,7 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
 fn gate_real_codec_production_fit() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let shaped_speech_ambient = [
         manifest_case(&manifest, "cc_ambient_gap_oracle_aac_same"),
         manifest_case(&manifest, "cc_speech_gap_oracle_aac_same"),
@@ -404,7 +400,7 @@ fn gate_real_codec_production_fit() {
 fn deadzone_punch_assert() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let ids = [
         "cc_music_punch_finale_aac_same",
         "cc_music_punch_finale_aac_dual",
@@ -440,7 +436,7 @@ fn deadzone_punch_assert() {
 fn source_gap_oracle_transient_csv() {
     require_validation_env();
 
-    let manifest = load_manifest();
+    let manifest = load_manifest(repair_tests_dir());
     let ids = [
         "cc_music_gap_oracle_aac_128k", // benign mid-content control
         "cc_music_transient_aac_same",

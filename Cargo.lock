@@ -188,6 +188,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clip-sync",
+ "clip-sync-repair-harness",
  "hound",
  "serde",
  "serde_json",
@@ -195,6 +196,19 @@ dependencies = [
  "thiserror 1.0.69",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "clip-sync-repair-harness"
+version = "0.1.0"
+dependencies = [
+ "clip-sync",
+ "clip-sync-repair",
+ "hound",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
