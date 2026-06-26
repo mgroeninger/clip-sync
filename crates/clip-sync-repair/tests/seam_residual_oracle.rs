@@ -19,8 +19,8 @@ use clip_sync_repair::domain::{
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
-    channel_noise, gap_anchor_secs, overwrite_channels, structure_slide_secs,
-    EnergySignatureFixture, ProductionScenarioSpec,
+    gap_anchor_secs, overwrite_channels, structure_slide_secs, EnergySignatureFixture,
+    ProductionScenarioSpec,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
@@ -80,20 +80,20 @@ fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergyS
     }
 }
 
-/// Center-dominant 5.1 variant of [`build_broadband_oracle`]: the center channel carries the
-/// same-master signal; the other five channels carry only quiet, decorrelated noise (>40 dB below the
-/// center), so seam channel selection follows the center and the surrounds neither cancel nor veto.
-/// Validates the per-channel residual path end-to-end (the mono downmix would be diluted by the
-/// surrounds; see residual-channel-alignment-plan § residual channel policy).
+/// Center-dominant 5.1 variant of [`build_broadband_oracle`]: only the center channel carries the
+/// same-master signal; the other five are silent, so the gap stays a clean all-channel dropout and
+/// seam channel selection follows the center. Validates the per-channel residual path end-to-end —
+/// selection must narrow to the center and patch (a mono downmix would attenuate it 6×; the
+/// dilution-vs-mono and noisy-surround cases are covered by the fast `policies.rs` unit tests).
 fn build_center_dominant_oracle(rate: u32, noise_amp: f64) -> EnergySignatureFixture {
     let channels = 6usize;
     let center = 2usize; // FC in FL FR FC LFE Ls Rs
     let mut fixture = build_broadband_oracle(rate, channels, noise_amp);
-    // build_broadband_oracle put the master on every channel; demote all but the center to quiet
-    // noise. Different seeds on A vs B → the surrounds do not cancel (independent content).
+    // build_broadband_oracle put the master on every channel; silence all but the center on both A
+    // and B (keeps the gap silent on every channel, matching a real dropout).
     let surrounds: Vec<usize> = (0..channels).filter(|&c| c != center).collect();
-    overwrite_channels(&mut fixture.a_samples, channels, &surrounds, channel_noise(0x0A, 0.003));
-    overwrite_channels(&mut fixture.b_samples, channels, &surrounds, channel_noise(0x0B, 0.003));
+    overwrite_channels(&mut fixture.a_samples, channels, &surrounds, |_, _| 0.0);
+    overwrite_channels(&mut fixture.b_samples, channels, &surrounds, |_, _| 0.0);
     fixture.id = "center_dominant_oracle";
     fixture
 }
