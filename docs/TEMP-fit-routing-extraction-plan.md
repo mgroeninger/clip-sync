@@ -211,20 +211,15 @@ residual measurement is disabled, finalize is a no-op, so one path serves both.
   > returned `Err` (skip). A live foot-gun instance (debug logging flipped which one ran). Collapsed
   > to the **defer/production** behavior (locked by characterization F4, used under residual-gating);
   > full suite confirms nothing relied on the non-defer skip.
-- [~] **4. Payoff suite** (number-driven routing tests). The *rule-level* assertions already exist
-  (step 2's 8 `fit_routing` tests: `terminates_high`, `selection_cmp`/`winner_cmp` tie-breaks,
-  `baseline_only_accepts`, plus the `composed_baseline_high…` case). The remaining bullets are
-  *composed orchestration* assertions and require step 5's seam (the driver, not a pure fn, owns
-  precedence) — or are already covered by `gap_tags` unit tests (tier) + characterization (end-to-end):
-  - `baseline pre=post=0.99 → E1, anchor search never invoked` (control-flow fact → needs step 5)
-  - `baseline dead-zone, anchor High → E3, anchor_seam_used, AnchorTrusted` (needs step 5)
-  - `all<floor → Skip(HardSkip)`; `floor–marginal symmetric → Skip(DeadZone)` (tier: `gap_tags`)
-  - `force + Marginal baseline, no better anchor → patch marginal` (the 3b divergence → needs step 5)
-- [ ] **5. `CandidateScorer` seam** (wanted) — put the bracket scorer behind a trait so
-  `evaluate_seam_gate_fit_joint` can run against a fake returning scripted `CandidateScore`s. Enables
-  the composed assertions in step 4: exit precedence, short-circuit/“anchor never invoked”, and the
-  `force` fall-through — all as fast deterministic number tests. Moderate refactor (inject the scorer
-  into the orchestration; production wires the real audio scorer).
+- [~] **4. Payoff suite** (number-driven routing tests). Rule-level assertions already exist (step 2's
+  8 `fit_routing` tests). The *composed orchestration* assertions — exit precedence, "anchor never
+  invoked", the `force` fall-through — need step 5's seam (the driver, not a pure fn, owns precedence);
+  tier classification is already in `gap_tags`. **The concrete test list is the gap-type → script
+  matrix in §10.**
+- [ ] **5. `FitCandidateSource` seam** (wanted) — put the audio-touching operations behind a trait so
+  `evaluate_seam_gate_fit_joint` runs against a fake with scripted scores/brackets. **Design in §9.**
+  Enables the §10 matrix as fast deterministic number tests. Moderate refactor (inject the source into
+  the orchestration; production wires the real audio-backed source).
 
 ## 8. What stays fixture-bound
 
@@ -233,6 +228,84 @@ scores baseline-dead-zone + anchor-bracket-high." Step 4/5 own *what the pipelin
 scores*; **one** anchor-rescue fixture (`build_w5_symmetric_weak_throat_anchor_rescue`) owns that the
 scores are physically realizable — together they finally pin the anchor-rescue path the original
 blind-spot finding exposed (A2/A5 patch the baseline throat, never the anchor).
+
+---
+
+## 9. Step 5 — `FitCandidateSource` seam (design)
+
+The orchestration touches audio in three spots; the trait abstracts exactly those so a fake can drive
+the **real** precedence loop with scripted numbers (no audio, no windows):
+
+```rust
+trait FitCandidateSource {
+    // quality + B-side placement for one A-side seam bracket (or a gate failure)
+    fn score(&mut self, refined: RefinedGapFrames, anchor_seam_bracket: bool)
+        -> Result<(SeamGateOutcome, f64), SeamGateFailure>;
+    // anchor brackets to try (empty = gate closed / none feasible)
+    fn anchor_brackets(&self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket>;
+    // residual probe at selection (identity when residual off; may Err on veto)
+    fn finalize_residual(&self, outcome: SeamGateOutcome) -> Result<SeamGateOutcome, SeamGateFailure>;
+}
+```
+
+- **Real impl** holds `&params` + `cache` + `baseline`; wraps `evaluate_seam_gate_fit_candidate`, the
+  anchor enumeration (`build_gap_signature` / `list_anchor_candidates_a` / `list_feasible_anchor_brackets`),
+  and `finalize_fit_outcome_residual`. Production behaviour is unchanged (parity via the full suite).
+- **Grid geometry stays in the orchestration** — pure frame arithmetic (`start_min..end_max`/`step`),
+  not audio — so the fake scripts only the three methods; the grid loop calls `score()` per
+  moved-edge cell.
+- **Fake** = scripted `refined → result` map + scripted brackets + a **call counter**. The counter is
+  what makes "`anchor_brackets` never called / grid never scored" assertable — control-flow facts no
+  other layer can express.
+- Routing reads only `confidence` / `ranking_score` / `boundary_move` / `anchor_seam_used` from a
+  scored outcome, so the fake builds `SeamGateOutcome`s via a helper that sets those and leaves
+  `alignment` / structure fields as harmless defaults (a routing test never inspects B-extraction).
+
+**Windows are mocked away.** The ~250 ms seam-scoring window (`seam_gate_frames`) and the anchor
+neighbourhood (`context_frames`) are properties of the *real* scorer; step-5 tests script
+positions + scores directly, so they exercise the *decision* over edge-pushed candidates regardless of
+windows. Windows only govern the audio→score *derivation* (the fixture, §8).
+
+**Edge-push coverage (what step 5 exercises).** Three distinct edge-pushing paths exist:
+
+| Path | Pushes edges | Step-5 coverage |
+|------|--------------|-----------------|
+| Anchor brackets (fit) — `try_anchor_seam_joint_search` | outward to editorial boundaries (contain the scan hole) | *decision* ✅ (fake supplies brackets); *derivation* ❌ (domain tests + fixture) |
+| Boundary grid (fit) — grid loop | blind `±step` outward nudge | ✅ geometry in orchestration; fake scores each cell |
+| Seam-extension retry — `retry_waveform_seam_extensions` | outward on seam fail, re-invokes the gate | ❌ **gate-mode only** (`patch_audio.rs` guard `fill_mode == Gate`), above `fit_joint`; own predicate tests |
+
+So step 5 covers the *decisions* over grid- and anchor-pushed candidates, not the anchor *derivation*
+(which boundary to push to — domain `gap_anchor_seam` tests + the §8 fixture) nor the gate-mode retry.
+
+## 10. Step 4 — gap-type → `FitCandidateSource` script matrix
+
+One trait, one fake, configured per row (a table of scripted responses, not N impls). Routing asserts
+**exit + confidence + `anchor_seam_used` + patched/skip**; **tier** (`DeadZone`/`HardSkip`/
+`AnchorTrusted`) is derived downstream by `gap_tags` (a follow-on assertion, not the router's output).
+
+| Gap type (guide) | `score(baseline)` | `anchor_brackets()` → `score(anchor)` | grid | mode | Exit → routing outcome |
+|---|---|---|---|---|---|
+| **W1** balanced good | `Ok` High (0.6/0.5) | — | — | any | **E1** → Patched High; `anchor_brackets()` not called |
+| **W2** balanced marginal | `Ok` Marginal (0.30/0.32) | none | — | BaselineOnly, ¬force | **E2** → Patched Marginal |
+| **W3** asym marginal (C3) | `Ok` Marginal (0.28/1.0) | none | — | BaselineOnly | **E2** → Patched Marginal (→ `AsymmetricPost`) |
+| **W4** asym dead zone | `Err` Waveform (0.23/1.0) | none | — | BaselineOnly | **E5** → Skip (→ `DeadZone`) |
+| **W5** symmetric weak | `Err` Waveform (0.14/0.14) | none | — | BaselineOnly | **E5** → Skip (→ `DeadZone`) |
+| **W5 + anchor rescue** | `Err` Waveform (0.14/0.14) | `[move=400]` → `Ok` High (0.55), `anchor_seam_used` | — | auto/force | **E3** → Patched, `anchor_seam_used`, `move>0` (→ `AnchorTrusted` if structure-trusted) |
+| **anchor marginal rescue** | `Err` (0.14/0.14) | `[move=400]` → `Ok` Marginal (0.30) | — | BaselineOnly+auto | **E4** → Patched Marginal, `anchor_seam_used` |
+| **hard skip** | `Err` Waveform (0.05/0.04) | none | — | any | **E5/E7** → Skip (→ `HardSkip`) |
+| **W6** structure fail | `Err` StructureAlignmentFailed | — | — | any | Skip (→ `StructureFail`) |
+| **force fall-through** (3b) | `Ok` Marginal (0.30) | none feasible | — | **force**+BaselineOnly | **E5** → Patched Marginal *(divergence resolved to defer behaviour)* |
+| **grid rescue** | `Err`/Marginal | none | one cell → `Ok` High | FullGrid | **E6** → Patched High (→ `fit_path=BoundaryGrid`) |
+| **baseline-High short-circuit** | `Ok` High (0.99) | *(scripted but)* | — | force | **E1** → Patched; **assert `anchor_brackets()` call count == 0** |
+
+Notes:
+- The **W5-skip vs W5-rescue** pair share the throat script (`Err 0.14/0.14`); the *only* difference is
+  whether `anchor_brackets()` yields a strong bracket — the one variable that flips skip→patch. That
+  pair is the original blind spot as a two-line diff.
+- **W4/W5 skip via E5** because a below-marginal baseline returns `Err` from `score()` → never enters
+  the pool → `select_winner` over an empty pool surfaces `best_below_floor`.
+- The **call-counter** rows (W1, baseline-High) assert the short-circuit *control flow*, not just the
+  outcome.
 
 ---
 
