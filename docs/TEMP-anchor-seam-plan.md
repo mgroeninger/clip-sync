@@ -1,7 +1,7 @@
 # Anchor-based seam placement — plan (DRAFT)
 
-Status: **in progress** — P0–P4 + Batch A–D (Pearson gate, xcorr, observability tags). Remaining:
-user docs polish, optional corpus/diag rows.
+Status: **in progress** — P0–P4 + Batch A–E (Pearson gate, xcorr, observability, user docs). Remaining:
+optional corpus/diag rows (Batch F).
 
 Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
 Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
@@ -236,8 +236,8 @@ record_fit_joint_candidate(baseline)           // existing
 | P2.5 | Outcome flag | `SeamGateOutcome` | `anchor_trusted: bool` (distinct from gate-mode `structure_trusted`) |
 | P2.6 | Tags | `gap_tags.rs` | `PatchTier::AnchorTrusted`, derive in `derive_gap_tags_from_patch_outcome` |
 | P2.7 | CLI output | `cli/output.rs` | Human line for `anchor_trusted` |
-| P2.8 | Docs | `cli-output.md`, `gap-repair-guide.md` | `patch_tier=anchor_trusted` vocabulary |
-| P2.9 | Profile notes | `repair_profile.rs` | Warn when `anchor_seam_mode=off` under failing baseline |
+| P2.8 | Docs | `cli-output.md`, `gap-repair-guide.md` | `patch_tier=anchor_trusted` vocabulary | **done** (Batch E) |
+| P2.9 | Profile notes | `repair_profile.rs` | Warn when `anchor_seam_mode=off` under failing baseline | **done** |
 
 ### P3 — Oracle + corpus
 
@@ -272,6 +272,18 @@ Unit tests: `xcorr_rescues_ambiguous_pearson_pre_anchor`, `local_anchor_xcorr_pe
 | Verbose stderr | `anchor_seam=true`, `anchor_move_frames=N` | `format_gap_tags_verbose_line` |
 | Human gap table | `patched (anchor …)` when `anchor_seam_used` | `cli/output.rs` `format_patched_gap_detail` |
 | Tag derivation | `GapTagsPatchContext` + `derive_gap_tags_from_status` | `patch_audio.rs`, `gap_tags.rs` |
+
+### Batch E — User-facing docs (done)
+
+| Doc | Contents |
+|-----|----------|
+| [gap-repair-guide.md](gap-repair-guide.md) | § Editorial anchor seam (W5 rescue), vocabulary tags, tuning knobs |
+| [gap-fill-modes.md](gap-fill-modes.md) | § Editorial anchor seam, flag matrix, W5 recipe, TOML keys |
+| [cli-output.md](cli-output.md) | Human `patched (anchor …)`, verbose `gap tags:` anchor fields |
+| [json-output.md](json-output.md) | `GapTags` / `GapPatchStatus` anchor fields |
+| [development.md](development.md) | `anchor_seam_oracle` in PR integration tier |
+| [README.md](../README.md) | Commented `anchor_seam_*` config keys |
+| P2.9 | `repair_profile.rs` `inactive_repair_flag_notes` when `anchor_seam_mode=off` | **done** (shipped earlier) |
 
 ---
 

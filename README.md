@@ -546,6 +546,14 @@ gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500
 gap_end_extend_step_ms = 20
 short_gap_one_strong_seam_fallback = true   # gate only
+# Editorial anchor seam (fit only; default off):
+# anchor_seam_mode = "off"                  # off | auto | force
+# max_anchor_bracket_secs = 5.0
+# max_anchors_per_side = 5
+# anchor_seam_min_prominence = 0.0
+# anchor_seam_min_match_pearson = 0.12
+# anchor_seam_min_xcorr_peak = 0.5
+# anchor_seam_xcorr_ambiguous_band = 0.15
 crossfade_ms = 10
 normalize_fill = true
 normalize_window_secs = 5.0

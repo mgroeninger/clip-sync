@@ -47,6 +47,7 @@ gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500
 gap_end_extend_step_ms = 20
 short_gap_one_strong_seam_fallback = true   # gate only
+# anchor_seam_mode = "off"                  # fit only: off | auto | force
 crossfade_ms = 10
 normalize_fill = true
 normalize_window_secs = 5.0

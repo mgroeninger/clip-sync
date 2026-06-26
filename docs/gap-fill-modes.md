@@ -16,6 +16,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | What does extension do in **gate**? | **Reactive retries** after waveform failure: extend end, then extend start, re-score. |
 | Why is repair slow? | **`--full`** or `fit_boundary_search = full_grid`: baseline not **High** → boundary grid. **Default** accepts marginal baseline and skips the grid. |
 | Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
+| Editorial anchor seam? | **`anchor_seam_mode = auto|force`** (`--anchor-seam-mode`): search speech peaks / bool onsets when throat Pearson is weak. **Fit only**; orthogonal to patch anchors. See [Editorial anchor seam](#editorial-anchor-seam). |
 
 ---
 
@@ -83,6 +84,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--max-fill-align-adjust-secs` | Legacy polish window only — **not** the main B search radius in fit | Structure polish window (legacy) |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
+| `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
 
 **Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`.
 
@@ -140,6 +142,61 @@ Seam Pearson is **peak-normalized** (level is removed) and computed on the chann
 This matters because seam Pearson on **near-silent audio is noise** (peak-normalized noise correlates to ~0). If scoring were locked to front L/R, a 5.1 mix with dialogue in the center channel and quiet fronts would show **pre/post ≈ 0** and skip a perfectly fillable gap. Following the signal-bearing channel(s) gives such gaps an honest seam score. (Mono/stereo content is unaffected — all channels carry signal, so all are scored as before.)
 
 The fit-mode **residual/floor** measurement follows the *same* selected channels (not a mono downmix that quiet surrounds would dilute): cancellation depth is measured per selected channel, while the integer alignment lag is found once across all of them by summed correlation. See [seam-scoring.md](seam-scoring.md) § Residual channel policy and [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md).
+
+---
+
+## Editorial anchor seam
+
+**Status:** shipped (fit mode). Design: [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md).
+
+When a fillable gap has a **quiet scan throat** but salient contour nearby (speech peak, bool onset), throat-only Pearson often lands in **W5** (symmetric weak, dead zone). Anchor seam searches **editorial boundaries** on A (energy peaks, bool transitions rising pre / falling post), enumerates feasible brackets, and scores B-side matchability at those anchor windows.
+
+```text
+Per gap (fit, when anchor search runs):
+  1. Baseline throat unified search (as today)
+  2. If anchor_seam_mode triggers:
+       list_anchor_candidates_a → feasible brackets
+       score each bracket (structure + waveform at anchors; optional Tier-2 xcorr)
+  3. Pick best joint candidate (anchor brackets compete with baseline / grid)
+```
+
+| Setting | Default | CLI | Notes |
+|---------|---------|-----|-------|
+| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour; `force` = always after baseline short-circuit |
+| `max_anchor_bracket_secs` | 5.0 | `--max-anchor-bracket-secs` | Max pre↔post anchor span |
+| `max_anchors_per_side` | 5 | `--max-anchors-per-side` | Cap per side (incl. scan fallback) |
+| `anchor_seam_min_prominence` | 0.0 | `--anchor-seam-min-prominence` | Energy peak filter |
+| `anchor_seam_min_match_pearson` | 0.12 | *(config)* | Per-anchor B matchability Pearson floor |
+| `anchor_seam_min_xcorr_peak` | 0.5 | *(config)* | Tier-2 GCC-PHAT rescue when Pearson ambiguous |
+| `anchor_seam_xcorr_ambiguous_band` | 0.15 | *(config)* | Pearson band below floor that may trigger xcorr |
+
+**Orthogonal to:**
+
+- **`--full` / boundary grid** — anchor search runs under `baseline_only` when triggered; does not require the grid.
+- **Patch anchors** (`anchored_retry`) — those fix offset drift between passes; anchor seam fixes seam placement for one gap.
+
+**Output:** `anchor_seam_used`, `anchor_bracket_move_frames` on patched gaps (JSON + `-v` `gap tags:`); human `patched (anchor …)` when anchor wins. See [cli-output.md](cli-output.md) and [gap-repair-guide.md](gap-repair-guide.md) § Editorial anchor seam.
+
+```toml
+[repair]
+anchor_seam_mode = "auto"          # off | auto | force
+# max_anchor_bracket_secs = 5.0
+# max_anchors_per_side = 5
+# anchor_seam_min_prominence = 0.0
+# anchor_seam_min_match_pearson = 0.12
+# anchor_seam_min_xcorr_peak = 0.5
+# anchor_seam_xcorr_ambiguous_band = 0.15
+```
+
+```powershell
+# W5 symmetric-weak skips with contour on energy path
+clip-sync-repair a.mkv b.mkv --mux out.mp4 `
+  --gap-signature-mode auto `
+  --anchor-seam-mode auto `
+  -v
+```
+
+`-v` emits `repair note: anchor_seam_mode=off: editorial anchor search inactive; use --anchor-seam-mode auto|force` when the mode is off.
 
 ---
 
@@ -280,6 +337,18 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
   -v
 ```
 
+**Symmetric weak + contour (W5 anchor rescue):**
+
+```powershell
+clip-sync-repair recording_with_gaps.mp4 reference.mkv `
+  --mux repaired.mp4 `
+  --gap-signature-mode auto `
+  --anchor-seam-mode auto `
+  -v
+```
+
+Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracket; separate knob).
+
 ---
 
 ## Config keys (fit-specific)
@@ -300,6 +369,13 @@ clip-sync-repair recording_with_gaps.mp4 reference.mkv `
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |
 | `max_fill_align_adjustment_secs` | `0.5` | `--max-fill-align-adjust-secs` | Legacy polish window |
+| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | Editorial anchor search: `off` \| `auto` \| `force` |
+| `max_anchor_bracket_secs` | `5.0` | `--max-anchor-bracket-secs` | Max anchor bracket span |
+| `max_anchors_per_side` | `5` | `--max-anchors-per-side` | Anchor candidates per side |
+| `anchor_seam_min_prominence` | `0.0` | `--anchor-seam-min-prominence` | Energy peak prominence floor |
+| `anchor_seam_min_match_pearson` | `0.12` | — | Per-anchor B matchability Pearson |
+| `anchor_seam_min_xcorr_peak` | `0.5` | — | Tier-2 xcorr rescue floor |
+| `anchor_seam_xcorr_ambiguous_band` | `0.15` | — | Pearson band that may trigger xcorr |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 
@@ -311,7 +387,7 @@ CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight`, and the B hays
 
 | `fill_mode` | Human patched row | JSON notes |
 |-------------|-------------------|------------|
-| `fit` | `patched (pre→post)` or `! patched` if marginal | `confidence`, `gap_*_adjust_frames`, `structure_trusted: false` |
+| `fit` | `patched (pre→post)` or `! patched` if marginal; `patched (anchor …)` when editorial anchor wins | `confidence`, `gap_*_adjust_frames`, `structure_trusted: false`, optional `anchor_seam_used` / `anchor_bracket_move_frames` |
 | `gate` | `patched (struct …)` if structure-trusted | `structure_trusted: true` when waveform skipped |
 
 Full field list: [json-output.md](json-output.md) § `GapPatchStatus`.

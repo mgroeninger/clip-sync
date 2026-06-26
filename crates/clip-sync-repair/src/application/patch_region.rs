@@ -28,6 +28,8 @@ use crate::domain::gap_anchor_seam::{
 use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
 
+use crate::application::fit_routing;
+
 /// Pearson floor used when partial structure trust softens the waveform gate.
 pub(crate) const PARTIAL_WAVEFORM_MIN_CORRELATION: f32 = 0.12;
 
@@ -150,6 +152,17 @@ struct FitJointCandidate {
     outcome: SeamGateOutcome,
     ranking_score: f64,
     boundary_move: usize,
+}
+
+impl FitJointCandidate {
+    /// Project to the pure routing inputs (`fit_routing`); identity/residual/anchor flags stay here.
+    fn score(&self) -> fit_routing::CandidateScore {
+        fit_routing::CandidateScore {
+            confidence: self.outcome.confidence,
+            boundary_move: self.boundary_move,
+            ranking_score: self.ranking_score,
+        }
+    }
 }
 
 /// Reused B haystack mono, channels, and structure timelines for joint-grid candidates.
@@ -469,12 +482,7 @@ fn select_joint_fit_winner_with_residual(
     haystack_secs: f64,
     grid_cells: Option<u32>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    pool.sort_by(|a, b| {
-        b.ranking_score
-            .partial_cmp(&a.ranking_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.boundary_move.cmp(&b.boundary_move))
-    });
+    pool.sort_by(|a, b| fit_routing::winner_cmp(&a.score(), &b.score()));
     for candidate in pool {
         match finalize_fit_outcome_residual(candidate.outcome, baseline, params, cache) {
             Ok(mut outcome) => {
@@ -540,11 +548,7 @@ pub(crate) fn accepts_baseline_without_boundary_grid(
     search: FitBoundarySearch,
     confidence: FillConfidence,
 ) -> bool {
-    search == FitBoundarySearch::BaselineOnly
-        && matches!(
-            confidence,
-            FillConfidence::High | FillConfidence::Marginal
-        )
+    fit_routing::baseline_only_accepts(search, confidence)
 }
 
 fn fit_haystack_secs(params: &SeamGateParams<'_>) -> f64 {
@@ -604,10 +608,7 @@ fn joint_candidate_ranking_cmp(
     a: &&FitJointCandidate,
     b: &&FitJointCandidate,
 ) -> std::cmp::Ordering {
-    a.ranking_score
-        .partial_cmp(&b.ranking_score)
-        .unwrap_or(std::cmp::Ordering::Equal)
-        .then_with(|| a.boundary_move.cmp(&b.boundary_move))
+    fit_routing::selection_cmp(&a.score(), &b.score())
 }
 
 fn global_best_joint_candidate<'a>(
@@ -624,7 +625,7 @@ fn global_best_joint_candidate<'a>(
 
 fn best_high_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCandidate> {
     pool.iter()
-        .filter(|c| c.outcome.confidence == FillConfidence::High)
+        .filter(|c| fit_routing::terminates_high(c.outcome.confidence))
         .max_by(joint_candidate_ranking_cmp)
 }
 
@@ -791,7 +792,7 @@ fn try_anchor_seam_joint_search(
         best_high_joint_candidate(pool).is_some_and(|c| c.outcome.anchor_seam_used)
     } else {
         best.as_ref().is_some_and(|c| {
-            c.outcome.anchor_seam_used && c.outcome.confidence == FillConfidence::High
+            c.outcome.anchor_seam_used && fit_routing::terminates_high(c.outcome.confidence)
         })
     };
     if anchor_high {
@@ -892,10 +893,10 @@ fn evaluate_seam_gate_fit_joint(
 
     let baseline_high = if defer_residual {
         pool.first()
-            .is_some_and(|c| c.outcome.confidence == FillConfidence::High)
+            .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
     } else {
         best.as_ref()
-            .is_some_and(|c| c.outcome.confidence == FillConfidence::High)
+            .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
     };
     if baseline_high {
         if defer_residual {
@@ -1009,7 +1010,7 @@ fn evaluate_seam_gate_fit_joint(
                         false,
                     );
                     if let Some(candidate) = pool.last() {
-                        if candidate.outcome.confidence == FillConfidence::High {
+                        if fit_routing::terminates_high(candidate.outcome.confidence) {
                             if let Some(outcome) = try_finalize_high_joint_candidate(
                                 candidate.clone(),
                                 baseline,
@@ -1037,7 +1038,7 @@ fn evaluate_seam_gate_fit_joint(
                     );
                     if best
                         .as_ref()
-                        .is_some_and(|c| c.outcome.confidence == FillConfidence::High)
+                        .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
                     {
                         let mut outcome = best.expect("high joint candidate").outcome;
                         outcome.fit_used_boundary_grid = true;

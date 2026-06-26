@@ -192,6 +192,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `integration_floor_oracle_smoke` | integration | — | yes | Floor manifest load + gap-frame geometry (not full codec matrix) |
 | `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
 | `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
+| `anchor_seam_oracle` | integration | — | yes | Editorial anchor seam A1–A5b + F4 regression (`tests/anchor_seam_oracle.rs`) |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |

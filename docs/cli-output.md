@@ -301,7 +301,8 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
   - `< fill_absolute_floor` (default 0.12) → skip
 - Unified scorer: `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)` (defaults 0.35 / 0.65).
 - Structure trust is not used (`structure_trusted` is always false).
-- **Anchor seam (`anchor_seam_mode = auto|force`):** when editorial anchors rescue a gap that would skip on throat Pearson alone, status shows `patched (anchor pre→post)` and `patch_tier=anchor_trusted` in tags (see [gap-repair-guide.md](gap-repair-guide.md) § `anchor_trusted`).
+- **Anchor seam (`anchor_seam_mode = auto|force`):** when editorial anchors rescue a gap, status shows `patched (anchor pre→post)` (or `! patched (anchor …)` when marginal). Tags may include `patch_tier=anchor_trusted` when throat Pearson is below `min_fill_correlation` but structure at anchors is strong. See [gap-repair-guide.md](gap-repair-guide.md) § Editorial anchor seam.
+- **Anchor metadata (JSON + `-v`):** `anchor_seam_used` and `anchor_bracket_move_frames` on patched gaps (`status.patched` and `tags`; omitted when false/0). Verbose `gap tags:` adds `anchor_seam=true` and `anchor_move_frames=N` when anchor search won.
 - CLI flags **`--no-structure-trust`** and **`--no-short-gap-one-strong-seam`** have **no effect** (gate-only).
 
 **Structure trust vs waveform gate (`fill_mode = gate` only)**
@@ -356,6 +357,13 @@ when `fill_mode = fit` and the gap has a positive refined frame count; `gate` mo
 structure and does not print this field. The same resolved value appears as the `signature_mode` tag
 on each `GapPatchOutcome` in `--format json`. Classification and tuning guidance:
 [gap-repair-guide.md](gap-repair-guide.md) § Layer 4.
+
+**Anchor seam metadata (`fit` only):** when `anchor_seam_mode` is active and a gap wins on an
+editorial bracket, `-v` appends `anchor_seam=true` and optionally `anchor_move_frames=N` to the
+`gap tags:` line. Human status uses the `anchor` placement prefix (`patched (anchor 0.31→0.29)`).
+JSON mirrors the same fields on `status.patched` and `tags` — see [json-output.md](json-output.md)
+§ `GapTags` / `GapPatchStatus`. When `anchor_seam_mode = off`, `-v` may emit
+`repair note: anchor_seam_mode=off: editorial anchor search inactive; use --anchor-seam-mode auto|force`.
 
 ---
 

@@ -1,7 +1,8 @@
 # Fit-joint routing extraction — plan (DRAFT)
 
-Status: **steps 1–2 done** (characterization lock + pure router module, both green). **Step 3 next**
-(wire `patch_region` driver to the router, collapse `defer_residual`) — the parity-critical part.
+Status: **steps 1–2 done**, **step 3a done** (decision logic delegated to `fit_routing`; lib +
+characterization green, integration verifying). **Step 3b** (collapse `defer_residual`) deferred as a
+scoped, higher-risk follow-up.
 
 > **Layer note:** the router lands in `application/fit_routing.rs`, not `domain/` as first sketched
 > — its skip type (`SeamGateFailure`) and candidate shape are application-coupled. Purity /
@@ -185,9 +186,19 @@ during the `pool_winner_order` walk.
   fall-through (single-winner was insufficient); dropped unused `pre`/`post` fields; corrected the
   "residual-finalized" doc to "Pearson screen, driver applies residual in order" (see §5/§5b). Carries
   a temporary `#![allow(dead_code)]` (removed in step 3). No wiring.
-- [ ] **3. Rewire driver** — `patch_region` delegates each branch to the pure fns; collapse
-  `defer_residual` (router sees residual-finalized `confidence`). Characterization + integration
-  suites must stay byte-for-byte unchanged. Remove the `allow(dead_code)`.
+- [x] **3a. Delegate decision logic** — `patch_region` now routes its decisions through
+  `fit_routing`: `joint_candidate_ranking_cmp → selection_cmp`, the winner sort → `winner_cmp`,
+  `accepts_baseline_without_boundary_grid → baseline_only_accepts`, and all six `confidence == High`
+  screens → `terminates_high`, via a `FitJointCandidate::score()` projection. Behaviour-identical
+  swaps (each delegate has the same body), so the control flow + `defer_residual` structure are
+  untouched. Router pared to the comparators + predicates the driver actually uses (no dead code; no
+  map-back). Parity: lib 283/0, characterization oracle 9/0. Integration (residual gate,
+  patch_audio) verifying.
+- [ ] **3b. Collapse `defer_residual`** (deferred, scoped follow-up) — make
+  `evaluate_seam_gate_fit_candidate` emit Pearson confidence unconditionally + apply residual at
+  selection; drop the pool-vs-best fork and the `_to_pool` twins; set `anchor_seam_used` at
+  construction. Higher-risk structural rewrite, guarded by the same suites. Split out from 3a so the
+  decision-logic delegation (low-risk, high-value) lands and is verified on its own.
 - [ ] **4. Payoff suite** (number-driven routing tests):
   - `baseline pre=post=0.99 → E1, anchors never built` (the A5 blind spot, asserted)
   - `baseline=0.10, anchor{pre:0.40,move:300} → E3, anchor_seam_used, AnchorTrusted`

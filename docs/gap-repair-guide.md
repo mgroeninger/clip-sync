@@ -101,6 +101,29 @@ The skip line always shows `min=0.12` in the status column; that is the **absolu
 
 **Surround (5.1) note:** seam Pearson follows the channel(s) carrying signal (within ~20 dB of the loudest), not a fixed front L/R pair — so a **center-dominant 5.1 mix** is scored on its center channel. Before this, near-silent front channels produced noise-correlation `pre/post ≈ 0` (a false **W5**) and skipped fillable gaps. If you still see persistent symmetric-weak seams on surround content, confirm the content isn't genuinely near-silent across *all* channels (then the skip is correct). See [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
 
+### Editorial anchor seam (W5 rescue)
+
+When the **scan throat** is quiet but salient audio exists nearby (speech peaks, bool onsets ±1 s), throat-only Pearson can land in **W5** (`symmetric_weak`, dead zone) even though a better editorial cut exists. **Editorial anchor seam** searches A-side anchor candidates (energy peaks, bool transitions, scan fallback), pairs feasible brackets, and re-scores waveform matchability at those anchors.
+
+**Not the same as [patch anchors](gap-fill-modes.md#patch-anchors)** (`anchored_retry`): patch anchors fix **clip offset drift** between passes; anchor seam fixes **where on A/B the seam is measured** for one gap.
+
+| `anchor_seam_mode` | Behavior |
+|--------------------|----------|
+| **`off`** (default) | Throat-only seam scoring; no anchor bracket search |
+| **`auto`** | Run when baseline throat `min(pre, post) < min_fill_correlation - fill_marginal_margin` **and** the gap signature has contour (`has_anchor_seam_contour`) |
+| **`force`** | Always run anchor bracket search after baseline fails the marginal short-circuit (diagnostics / oracles) |
+
+CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"`. Fit mode only; `-v` emits `repair note: anchor_seam_mode=off: …` when inactive.
+
+**Outcomes when anchor search wins:**
+
+- `anchor_seam_used = true` on patched gaps (JSON `status` + `tags`; verbose `anchor_seam=true`)
+- `anchor_bracket_move_frames` — how far the bracket moved from scan-refined edges (verbose `anchor_move_frames=N`)
+- Human status: `patched (anchor pre→post)` (any confidence) or `! patched (anchor …)` when marginal
+- `patch_tier = anchor_trusted` when structure is strong at both anchors but throat Pearson is in the marginal band — see § `anchor_trusted` below
+
+Anchor seam does **not** require `--full`; it runs under `baseline_only` when triggered. Tier-2 xcorr (ambiguous Pearson) reuses `residual_lag_secs` for max lag. Residual veto still applies (F4 decoy must skip).
+
 ---
 
 ## Layer 4 — Structure signature mode (`fit` only)
@@ -165,6 +188,8 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
 | `signature_mode` | `bool`, `energy` | Layer 4 (resolved) | `-v` `signature_mode=` |
 | `residual_band` | `cancels`, `correlates_only`, `no_floor` | Residual/floor headroom (fit mode) | `-v` `residual_band=`; JSON `tags` |
+| `anchor_seam_used` | `true` (omitted when false) | Fit mode: winning placement used an editorial anchor bracket, not scan throat alone | `-v` `anchor_seam=true`; JSON `status.patched` + `tags` |
+| `anchor_bracket_move_frames` | integer (omitted when 0) | Total frame displacement of anchor bracket from scan-refined baseline | `-v` `anchor_move_frames=`; JSON `status.patched` + `tags` |
 | `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap`, `residual_headroom_exceeded` | Patch skip enum | JSON `reason`; verbose skip line |
 
 `patch_tier` and `seam_shape` apply only when the gap reached patch with `fill_mode = fit`. Plan-only gaps use `patch_tier = not_applicable`.
@@ -178,6 +203,8 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](corpus-validation.md)) |
 | `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
 | `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate (gate mode) |
+| `anchor_seam_used` | `true`, `false` | JSON + `-v` tags; editorial anchor bracket won (fit mode) |
+| `anchor_bracket_move_frames` | integer | JSON + `-v` tags; bracket displacement from scan-refined baseline |
 | `anchor_trusted` | via `patch_tier=anchor_trusted` | Fit mode: strong structure at editorial anchors, throat Pearson below `min_fill_correlation` but patch accepted | Gap table `patched (anchor …)` + ` [anchor trusted · seam]`; JSON `tags.patch_tier` |
 | `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`) | JSON `patch.donor_relation`; patch summary header |
 
@@ -310,7 +337,7 @@ Tags are computed at patch time for fillable regions (preserving `fit_path` and 
 With **`-v`**, each fillable gap emits a line after placement:
 
 ```text
-           gap tags: plan=fillable tier=dead_zone seam=asymmetric_post fit_path=baseline_only signature_mode=bool
+           gap tags: plan=fillable tier=anchor_trusted seam=symmetric_weak fit_path=baseline_only signature_mode=energy anchor_seam=true anchor_move_frames=1200
 ```
 
 Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`. The same `tags` object is emitted on each `GapPatchOutcome` in `--format json` output. Corpus matrix rows and tuning records: [corpus-validation.md](corpus-validation.md) § Energy signature production corpus.
@@ -351,6 +378,7 @@ In gap table?
                     0.12 ≤ min < 0.27       → dead zone → --full, auto/energy
                   patched !                 → W2/W3 → listen (W3 echo risk)
                   patched (no !)            → W1 → done
+                  patched (anchor …)        → W5 rescue or anchor_trusted → listen
 ```
 
 ---
@@ -365,7 +393,7 @@ In gap table?
 | `B search window:` | B haystack; width ∝ `fill_border_search_secs` + context/margins |
 | `structure slide` / `waveform slide` | B placement vs nominal map |
 | `fit path:` | `baseline only` (default/quick) vs `boundary grid` (`--full`) |
-| `gap tags:` | Composed vocabulary tags (`plan`, `tier`, `seam`, `fit_path`, `signature_mode`) — see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary |
+| `gap tags:` | Composed vocabulary tags (`plan`, `tier`, `seam`, `fit_path`, `signature_mode`, `anchor_seam`, `anchor_move_frames`) — see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary |
 
 Full column semantics: [cli-output.md](cli-output.md).
 
@@ -383,6 +411,9 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | `fill_repeat_penalty_weight` | 0.4 | Down-rank repeat-at-border when seams weak (fit) |
 | `fill_border_search_secs` | 10 | B slide radius — larger = more CPU, helps edge-clamped matches |
 | `gap_signature_context_secs` | 3.0 | Structure context; raise for ambiguous long gaps |
+| `anchor_seam_mode` | `off` | `auto` for W5 + contour; `force` for diagnostics |
+| `max_anchor_bracket_secs` | 5.0 | Max span between pre/post editorial anchors |
+| `anchor_seam_min_match_pearson` | 0.12 | B-side anchor matchability Pearson floor |
 | Scan: `silence_fraction`, `absolute_silence_rms` | 0.01, 33 | Affects P5 vs P7 |
 | Output bit depth | automatic | `--wav` output is 24-bit int when A's source track is 24/32-bit or float; otherwise 16-bit int. Lossy sources (AAC, AC-3) have no detectable depth → always 16-bit. Shown in track info as `(decodable, 16-bit out)` / `(decodable, 24-bit out)`. See [pipeline.md](pipeline.md) § 5. |
 
