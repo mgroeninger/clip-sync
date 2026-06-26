@@ -1,6 +1,6 @@
 # Repair pipeline
 
-The `clip-sync-repair` execution pipeline, phase by phase, with the reference doc for each. This is the **map**; the linked docs are the territory.
+The `clip-sync-repair` execution pipeline, phase by phase, with the reference doc for each. This is the **map**; the linked docs are the territory. For **phase 4 routing and flags**, read together with [gap-fill-modes.md](gap-fill-modes.md).
 
 `clip-sync-repair` takes two recordings of the same event — **A** (has silent gaps) and **B** (the donor/reference) — and produces A with its gaps filled from B. It runs as a linear pipeline:
 
@@ -76,19 +76,67 @@ Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). Se
 
 ## 4. Per-gap patch
 
-**Write mode only.** `PatchAudio` decodes full A and B timelines, then for each fillable region calls `prepare_region_patch` → `evaluate_seam_gate` (`application/patch_region.rs`). In **`fit`** mode (default), steps 3–6 below are largely **one joint search** per bracket candidate, not six sequential passes; **`gate`** mode runs structure match then waveform gate, with reactive boundary retries on failure.
+**Write mode only.** Phase 4 detail — bracket routing, per-bracket measurement, and flag matrix — is in [gap-fill-modes.md](gap-fill-modes.md). This section is the **run-level** map; read both documents together for a complete picture.
 
-1. **Refine A gap edges** — tighten the reported gap boundaries against the actual silence.
-2. **Slice B haystack** — extract B around the nominal map: `gap_signature_context_secs` context + `fill_border_search_secs` slide radius + `fill_align_margin_secs` + length slack.
-3. **Placement search** — build the gap signature (`bool` / `energy` / `auto`; [gap-repair-guide.md](gap-repair-guide.md) § Layer 4) and locate the B fill. In `fit` mode: unified structure + waveform search over the haystack. In `gate` mode: structure match, then waveform Pearson at the structure winner.
-4. **Seam scoring & tiers** — border templates, channel selection, peak-normalized Pearson `pre`/`post`, structure gate + waveform tier (High / Marginal / skip). Mechanics: [seam-scoring.md](seam-scoring.md).
-5. **A-boundary extension grid** *(optional, fit)* — when `--full` / `fit_boundary_search = full_grid`, jointly search A gap start/end when baseline is not High. In `gate`, reactive extend-start/end retries after waveform failure instead.
-6. **Editorial anchor seam** *(optional, fit)* — when `anchor_seam_mode` triggers, search speech peaks / bool onsets for a better seam bracket when throat-only Pearson is weak ([gap-fill-modes.md](gap-fill-modes.md) § Editorial anchor seam, [gap-repair-guide.md](gap-repair-guide.md) § W5 rescue). Orthogonal to patch anchors (`anchored_retry`).
-7. **Residual / floor gate** *(fit, default on)* — after Pearson tiering, measure cancellation headroom vs a per-gap noise floor; default `residual_gate = veto` can skip high-headroom placements (anti-echo) or, with `veto_rescue`, recover Pearson dead-zone skips on same-master broadband seams. Design: [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md); channel policy: [seam-scoring.md](seam-scoring.md) § Residual channel policy.
-8. **Splice + crossfade + normalize** — collect winning B segments, then splice into A's timeline with crossfade and level match (`PatchAudio` splice pass).
+### `PatchAudio` run (once per write)
 
-- **References:** [gap-fill-modes.md](gap-fill-modes.md) (`fit` vs `gate`, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering, tiers, seam shapes, profiles), [seam-scoring.md](seam-scoring.md) (seam mechanics), [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (residual gate).
-- **Config:** `fill_mode`, `anchor_seam_mode`, `residual_gate`, `residual_*`, `fit_boundary_search`, plus patch knobs in §3.
+```text
+1. Fill plan           build_gap_fill_plan
+2. Decode A + B        full timelines; B resampled to A rate if needed
+3. Pass 1 (per gap)    prepare_region_patch → evaluate_seam_gate
+4. Anchored retry      optional pass 2 (fill_offset_mode = anchored_retry)
+5. Splice              apply RegionPatches into A PCM
+6. Summarize           PatchSummary
+```
+
+### Per gap (`prepare_region_patch`)
+
+| Step | What |
+|------|------|
+| **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored / anchored-retry pass 2) |
+| **A edge refine** | `refine_gap_frames` |
+| **B haystack** | Slice from full decoded B (context + border search + margin + slack) |
+| **Seam gate** | `evaluate_seam_gate` — **fit** (default) or **gate** (legacy); see below |
+| **Extract fill** | Winning B segment + optional normalize gain |
+| **Queue patch** | `RegionPatch` or skip + tags (splice happens in step 5 above) |
+
+### Fit mode: bracket routing order
+
+`evaluate_seam_gate_fit_joint` tries **A bracket strategies** in this precedence (E1–E7 in [gap-fill-modes.md](gap-fill-modes.md) § Fit-joint routing):
+
+```text
+1. Baseline throat bracket (scan-refined edges)
+2. E1 — baseline Pearson High (+ residual confirm) → return
+3. E2 — baseline_only profile: accept baseline High/Marginal → return
+       (skipped for Marginal when anchor_seam_mode = force — anchor runs first)
+4. Editorial anchor seam — if triggered; best anchor High/Marginal may return
+5. E5 — baseline_only: best pooled candidate or skip
+6. Boundary grid — only when fit_boundary_search = full_grid (--full)
+7. E6 — best Pearson High among all grid cells (+ residual confirm) → return
+8. E7 — best pooled candidate (ranking + residual walk) or skip
+```
+
+**Anchor runs before the boundary grid**, not after. The grid evaluates every cell when reached (no early exit on the first `High`); E6 picks the **best** `High` by ranking score.
+
+### Per-bracket measurement (fit)
+
+Each bracket candidate (baseline, anchor, or grid cell) runs the **same** evaluation in `evaluate_seam_gate_fit_candidate`:
+
+```text
+border templates → gap signature → unified B search (structure + waveform jointly)
+  → structure hard gate → (anchor matchability, if anchor bracket)
+  → Pearson tier (High / Marginal / skip)
+  → residual veto/rescue (lazy at pool selection when residual_gate is on)
+```
+
+Steps 3–7 in the old pedagogical list are **one joint search + gates**, not separate passes. Residual is not a separate macro stage — it applies when finalizing candidates.
+
+### Gate mode (legacy)
+
+Structure match on B → structure gate → waveform Pearson (optional structure-trust skip) → on failure, reactive extend end then start. No anchor seam, no residual gate, no unified fit search. See [gap-fill-modes.md](gap-fill-modes.md) § `fill_mode = gate`.
+
+- **References:** [gap-fill-modes.md](gap-fill-modes.md) (routing, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering), [seam-scoring.md](seam-scoring.md) (seam mechanics), [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (residual gate).
+- **Config:** `fill_mode`, `anchor_seam_mode`, `residual_gate`, `residual_*`, `fit_boundary_search`, plus §3 fill-plan knobs.
 - **Code:** `application/patch_audio.rs`, `application/patch_region.rs`, `application/fit_routing.rs`, `domain/gap_fill_fit.rs`, `domain/gap_structure.rs`, `domain/gap_energy.rs`, `domain/gap_anchor_seam.rs`.
 
 ## 5. Write / mux

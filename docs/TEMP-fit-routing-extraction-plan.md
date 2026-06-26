@@ -45,11 +45,11 @@ Strict precedence order, each a pure function of candidate scores + thresholds:
 | # | Exit | Condition | Current lines |
 |---|------|-----------|---------------|
 | E1 | Baseline High | baseline `confidence==High` **after residual finalize** | 862-886 |
-| E2 | Baseline accept | `BaselineOnly` ∧ baseline `∈{High,Marginal}` | 888-913 |
+| E2 | Baseline accept | `BaselineOnly` ∧ baseline `∈{High,Marginal}` — **not Marginal when `anchor_seam_mode = force`** | 888-913 |
 | E3 | Anchor High | anchor gate open ∧ best anchor cand `High` | 759-787 |
 | E4 | Anchor accept | `BaselineOnly` ∧ best anchor cand `Marginal` | 789-810 |
 | E5 | BaselineOnly winner | no grid: best of pool, else `Skip(best_below_floor)` | 939-952 |
-| E6 | Grid High (early) | any grid cell `High` → stop & return | 976-1012 |
+| E6 | Grid High | full grid done; **best** Pearson `High` by ranking (+ residual finalize) | after grid loop |
 | E7 | Grid winner | best of pool, else `Skip(best_below_floor)` | 1026-1045 |
 
 Anchor gate (whether E3/E4 are reachable) is already pure:

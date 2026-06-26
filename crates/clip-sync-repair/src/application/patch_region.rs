@@ -449,6 +449,18 @@ fn finalize_fit_outcome_residual(
     Ok(outcome)
 }
 
+/// E2: under `baseline_only`, accept baseline without grid — unless `force` anchor should run on marginal.
+fn baseline_accept_without_grid(
+    search: FitBoundarySearch,
+    confidence: FillConfidence,
+    anchor_seam_mode: AnchorSeamMode,
+) -> bool {
+    if anchor_seam_mode == AnchorSeamMode::Force && confidence == FillConfidence::Marginal {
+        return false;
+    }
+    accepts_baseline_without_boundary_grid(search, confidence)
+}
+
 fn try_finalize_high_joint_candidate(
     candidate: FitJointCandidate,
     baseline: RefinedGapFrames,
@@ -471,6 +483,35 @@ fn try_finalize_high_joint_candidate(
         outcome.fit_boundary_grid_cells = Some(cells);
     }
     Some(outcome)
+}
+
+/// E6: after the full boundary grid, pick the best Pearson-`High` by ranking (not first in walk order).
+fn try_finalize_best_grid_high(
+    defer_residual: bool,
+    best: &Option<FitJointCandidate>,
+    pool: &[FitJointCandidate],
+    baseline: RefinedGapFrames,
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    haystack_secs: f64,
+    grid_cells: u32,
+) -> Option<SeamGateOutcome> {
+    let candidate = if defer_residual {
+        best_high_joint_candidate(pool)?.clone()
+    } else {
+        best.as_ref().filter(|c| {
+            fit_routing::terminates_high(c.outcome.confidence)
+        })?
+        .clone()
+    };
+    try_finalize_high_joint_candidate(
+        candidate,
+        baseline,
+        params,
+        cache,
+        haystack_secs,
+        Some(grid_cells),
+    )
 }
 
 fn select_joint_fit_winner_with_residual(
@@ -923,9 +964,10 @@ fn evaluate_seam_gate_fit_joint(
         best.as_ref()
     };
     if let Some(candidate) = baseline_candidate {
-        if accepts_baseline_without_boundary_grid(
+        if baseline_accept_without_grid(
             params.fit_boundary_search,
             candidate.outcome.confidence,
+            params.anchor_seam_mode,
         ) {
             if defer_residual {
                 return select_joint_fit_winner_with_residual(
@@ -1009,20 +1051,6 @@ fn evaluate_seam_gate_fit_joint(
                         &cache,
                         false,
                     );
-                    if let Some(candidate) = pool.last() {
-                        if fit_routing::terminates_high(candidate.outcome.confidence) {
-                            if let Some(outcome) = try_finalize_high_joint_candidate(
-                                candidate.clone(),
-                                baseline,
-                                params,
-                                &cache,
-                                haystack_secs,
-                                Some(grid_cells),
-                            ) {
-                                return Ok(outcome);
-                            }
-                        }
-                    }
                 } else {
                     record_fit_joint_candidate(
                         &mut best,
@@ -1036,16 +1064,6 @@ fn evaluate_seam_gate_fit_joint(
                         &cache,
                         false,
                     );
-                    if best
-                        .as_ref()
-                        .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
-                    {
-                        let mut outcome = best.expect("high joint candidate").outcome;
-                        outcome.fit_used_boundary_grid = true;
-                        outcome.fit_boundary_grid_cells = Some(grid_cells);
-                        outcome.fit_haystack_secs = haystack_secs;
-                        return Ok(outcome);
-                    }
                 }
             }
             if try_end >= end_max {
@@ -1057,6 +1075,19 @@ fn evaluate_seam_gate_fit_joint(
             break;
         }
         try_start = try_start.saturating_sub(step).max(start_min);
+    }
+
+    if let Some(outcome) = try_finalize_best_grid_high(
+        defer_residual,
+        &best,
+        &pool,
+        baseline,
+        params,
+        &cache,
+        haystack_secs,
+        grid_cells,
+    ) {
+        return Ok(outcome);
     }
 
     if defer_residual {
@@ -2014,6 +2045,25 @@ mod tests {
         assert!(accepts_baseline_without_boundary_grid(
             FitBoundarySearch::BaselineOnly,
             FillConfidence::Marginal,
+        ));
+    }
+
+    #[test]
+    fn force_anchor_defers_baseline_marginal_short_circuit() {
+        assert!(!baseline_accept_without_grid(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::Marginal,
+            AnchorSeamMode::Force,
+        ));
+        assert!(baseline_accept_without_grid(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::Marginal,
+            AnchorSeamMode::Auto,
+        ));
+        assert!(baseline_accept_without_grid(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::High,
+            AnchorSeamMode::Force,
         ));
     }
 

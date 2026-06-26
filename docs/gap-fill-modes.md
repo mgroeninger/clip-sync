@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [pipeline.md](pipeline.md) (the full repair pipeline; this is phase 4), [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [seam-scoring.md](seam-scoring.md) (how seams are scored), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
+**Related:** [pipeline.md](pipeline.md) (phases 1–5 and `PatchAudio` run map — **read together with this doc**), [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [seam-scoring.md](seam-scoring.md) (how seams are scored), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 
@@ -14,30 +14,69 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | Does `--no-gap-end-extend` restore **gate**? | **No.** It only disables A-boundary extension. Use **`--fill-mode gate`** for legacy gating. |
 | What does extension do in **fit**? | **Proactive joint grid** over gap start/end (when flags are on), each cell runs unified B placement. |
 | What does extension do in **gate**? | **Reactive retries** after waveform failure: extend end, then extend start, re-score. |
-| Why is repair slow? | **`--full`** or `fit_boundary_search = full_grid`: baseline not **High** → boundary grid. **Default** accepts marginal baseline and skips the grid. |
+| Why is repair slow? | **`--full`** or `fit_boundary_search = full_grid`: every grid cell (~144 max) runs full per-bracket measurement. **Default** accepts marginal baseline and skips anchor + grid. |
 | Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
 | Editorial anchor seam? | **`anchor_seam_mode = auto|force`** (`--anchor-seam-mode`): search speech peaks / bool onsets when throat Pearson is weak. **Fit only**; orthogonal to patch anchors. See [Editorial anchor seam](#editorial-anchor-seam). |
+| Residual gate? | Default **`residual_gate = veto`** (fit only): anti-echo headroom veto after Pearson tiering; `veto_rescue` opt-in for broadband dead-zone rescue. See [Residual / floor gate](#residual--floor-gate). |
 
 ---
 
 ## Pipelines
 
+> **Together with [pipeline.md](pipeline.md):** that doc covers phases 1–5 and the `PatchAudio` run; **this doc** covers phase 4 routing (fit vs gate), per-bracket measurement, flags, and performance.
+
 ### `fill_mode = fit` (default)
 
+#### Per-gap setup (every bracket)
+
 ```text
-Per gap:
-  1. Map gap on A → B (fill_offset_mode)
-  2. Refine gap edges on A; structure-match on B (always)
-  3. Evaluate baseline bracket:
-       unified structure+waveform search on B
-       tier: High | Marginal | skip (fill_absolute_floor)
-     If High → done (fast path)
-  4. If extension flags on and not High:
-       joint grid: shift A start earlier × extend A end later
-       (gap_end_extend_max_ms / step_ms, capped ~12 steps/axis)
-       pick best combined candidate
-  5. Splice at winner
+1. Offset map on A → B (fill_offset_mode; see pipeline.md §3)
+2. Refine A gap edges; slice B haystack from full decoded B
 ```
+
+#### Bracket routing (`evaluate_seam_gate_fit_joint`)
+
+Bracket strategies are tried in **strict precedence**:
+
+| # | Exit | When it returns |
+|---|------|-----------------|
+| **E1** | Baseline High | Baseline throat bracket: Pearson `High`, residual finalize passes |
+| **E2** | Baseline accept | `baseline_only` profile (`default`, no `--full`): baseline `High` or `Marginal` — **except** `Marginal` is deferred when `anchor_seam_mode = force` (anchor runs first) |
+| **E3** | Anchor High | `anchor_seam_mode` triggered; best anchor bracket Pearson `High` (+ residual) |
+| **E4** | Anchor accept | `baseline_only` + best anchor `Marginal` |
+| **E5** | BaselineOnly winner | No grid: best pooled candidate (ranking + residual walk), else skip |
+| — | *(grid)* | Only when `fit_boundary_search = full_grid` (`--full`): enumerate all A start/end shifts |
+| **E6** | Grid High | After **full** grid: best Pearson `High` among all cells (+ residual) |
+| **E7** | Grid winner | Best pooled candidate after grid, else skip |
+
+```text
+baseline throat
+  → E1 / E2 short-circuits
+  → editorial anchor seam (if triggered) → E3 / E4
+  → E5 if baseline_only and still undecided
+  → boundary grid (full_grid only) → E6 / E7
+  → extract B fill → queue splice (PatchAudio splice pass)
+```
+
+- **Anchor before grid.** Anchor search does not require `--full`.
+- **Grid scans all cells** when reached; E6 picks the **best** `High` by `ranking_score`, not the first `High` in walk order.
+- **Default profile** (`baseline_only`): no boundary grid; marginal baseline patches without grid (unless `force` anchor defers E2).
+
+#### Per-bracket measurement (each candidate)
+
+Every bracket (baseline, anchor, grid cell) runs the same evaluation:
+
+```text
+border templates
+  → gap signature (bool / energy / auto)
+  → unified B search (structure weight + min(pre,post) waveform + repeat penalty + nominal bias)
+  → structure hard gate (min_structure_match_score)
+  → anchor B matchability (anchor brackets only)
+  → Pearson tier: High | Marginal | dead-zone skip
+  → residual veto/rescue (default on; measured lazily at pool selection when residual_gate active)
+```
+
+Unified search **jointly** scores structure and waveform when sliding B — it is not “structure match, then waveform gate” as separate placement passes. See [seam-scoring.md](seam-scoring.md) for how `pre`/`post` are built; see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) for headroom veto / dead-zone rescue.
 
 - **No** structure-trust waveform skip, **no** one-strong-seam / mean-only waveform shortcuts.
 - `structure_trusted` is always `false` in JSON.
@@ -96,11 +135,12 @@ Extension flags control **whether A’s gap edges may move** during patch planni
 
 ### Fit: joint boundary search
 
-When `gap_end_extend_on_post_seam_fail` and/or `gap_start_extend_on_pre_seam_fail` is **true** (defaults):
+When `gap_end_extend_on_post_seam_fail` and/or `gap_start_extend_on_pre_seam_fail` is **true** (defaults) **and** `fit_boundary_search = full_grid` (`--full`):
 
-- After baseline evaluation, if the result is not **High**, search a grid of `(start, end)` brackets within `gap_end_extend_max_ms` (default **500 ms**) and `gap_end_extend_step_ms` (default **20 ms**), with ~**12 steps per axis** cap.
-- Each grid cell runs **full unified B placement** (structure + waveform).
-- Winning cell sets `gap_start_adjust_frames` / `gap_end_adjust_frames` in JSON.
+- Runs **after** baseline and editorial anchor seam (see [Fit-joint routing](#fill_mode--fit-default) above).
+- Enumerates a grid of `(start, end)` brackets within `gap_end_extend_max_ms` (default **500 ms**) and `gap_end_extend_step_ms` (default **20 ms**), capped at ~**12 steps per axis** (~144 non-baseline cells).
+- Each cell runs **full per-bracket measurement** (unified B search + gates).
+- **E6:** after the full grid, the best Pearson `High` by `ranking_score` is finalized (with residual); **E7:** otherwise the best pooled candidate by ranking + residual walk.
 
 With **`--no-gap-end-extend --no-gap-start-extend`**: only the **baseline** bracket is evaluated (no grid). Still **fit** placement and tiering.
 
@@ -145,6 +185,28 @@ The fit-mode **residual/floor** measurement follows the *same* selected channels
 
 ---
 
+## Residual / floor gate
+
+**Fit mode only.** Runs as the last step of [per-bracket measurement](#per-bracket-measurement-each-candidate) (lazy at pool selection when `residual_gate` is active — see [pipeline.md](pipeline.md) §4).
+
+| Mode | Default | Effect |
+|------|---------|--------|
+| `veto` | **yes** | Skip when informative floor + headroom above margin (anti-echo) |
+| `veto_rescue` | no | Also upgrade Pearson dead-zone skips when cancellation is strong |
+| `off` | no | Measure only when `measure_residual` / debug |
+
+Design: [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md). JSON: `residual_band`, `residual_db` / `floor_db` / `headroom_db`; skip reason `residual_headroom_exceeded`.
+
+```toml
+[repair]
+# residual_gate = "veto"          # off | veto | veto_rescue
+# residual_floor_ok_db = -50.0
+# residual_headroom_margin_db = 6.0
+# residual_lag_secs = 0.01
+```
+
+---
+
 ## Editorial anchor seam
 
 **Status:** shipped (fit mode). Design: [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md).
@@ -153,16 +215,16 @@ When a fillable gap has a **quiet scan throat** but salient contour nearby (spee
 
 ```text
 Per gap (fit, when anchor search runs):
-  1. Baseline throat unified search (as today)
-  2. If anchor_seam_mode triggers:
-       list_anchor_candidates_a → feasible brackets
-       score each bracket (structure + waveform at anchors; optional Tier-2 xcorr)
-  3. Pick best joint candidate (anchor brackets compete with baseline / grid)
+  1. Baseline throat unified search
+  2. If anchor_seam_mode triggers (after E1; E2 may defer marginal baseline when force):
+       list_anchor_candidates_a → feasible brackets (min move_frames first)
+       score each bracket (per-bracket measurement pipeline)
+  3. Best anchor High/Marginal may return (E3/E4); else continue to grid or E5/E7
 ```
 
 | Setting | Default | CLI | Notes |
 |---------|---------|-----|-------|
-| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour; `force` = always after baseline short-circuit |
+| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour; `force` = always try anchor before grid (defers E2 marginal accept under `baseline_only`) |
 | `max_anchor_bracket_secs` | 5.0 | `--max-anchor-bracket-secs` | Max pre↔post anchor span |
 | `max_anchors_per_side` | 5 | `--max-anchors-per-side` | Cap per side (incl. scan fallback) |
 | `anchor_seam_min_prominence` | 0.0 | `--anchor-seam-min-prominence` | Energy peak filter |

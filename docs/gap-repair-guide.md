@@ -111,7 +111,7 @@ When the **scan throat** is quiet but salient audio exists nearby (speech peaks,
 |--------------------|----------|
 | **`off`** (default) | Throat-only seam scoring; no anchor bracket search |
 | **`auto`** | Run when baseline throat `min(pre, post) < min_fill_correlation - fill_marginal_margin` **and** the gap signature has contour (`has_anchor_seam_contour`) |
-| **`force`** | Always run anchor bracket search after baseline fails the marginal short-circuit (diagnostics / oracles) |
+| **`force`** | Always try anchor bracket search before the boundary grid; under `baseline_only`, defers accepting a **marginal** baseline (E2) so anchor can run first (diagnostics / oracles) |
 
 CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"`. Fit mode only; `-v` emits `repair note: anchor_seam_mode=off: …` when inactive.
 
