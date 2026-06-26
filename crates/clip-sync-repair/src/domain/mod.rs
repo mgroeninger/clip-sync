@@ -26,7 +26,7 @@ pub use patch_anchor::{
 pub use gap_tags::{
     classify_residual_band, classify_seam_shape, derive_donor_relation,
     derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status,
-    format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag,
+    format_gap_tags_status_suffix, format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag,
     GapPatchTierInput, GapTags, GapTagsPatchContext, PatchTier, PlanKind,
     RegionPatchOutcomeView, ResidualBand, SeamShape, SignatureModeTag,
 };

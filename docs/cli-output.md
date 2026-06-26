@@ -271,7 +271,7 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 - **Duration summary:** when patching ran, a sub-line under the header totals repaired/skipped seconds and points at the longest skipped gap (`gap #N at H:MM:SS`).
 - **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows follow timeline order (gap #1, #2, …).
 
-- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`).
+- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`). After patch, append vocabulary suffix ` [tier · seam]` when applicable (e.g. `[marginal · post-strong]`, `[hard skip · weak both sides]`, `[structure fail]`); see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary.
 - **Default patch detail (`fill_mode = fit`, default):** `patched (pre→post)` from waveform seam scores after slide search; `structure_trusted` is always false in JSON.
 - **Default patch detail (`fill_mode = gate`):** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.
 - **Verbose patch detail:** includes slide adjustment and full pre/post labels.

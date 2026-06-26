@@ -440,7 +440,7 @@ fn format_unified_gap_status(
         return gap_scan_status_label(gap, report).to_string();
     };
 
-    match &outcome.status {
+    let base = match &outcome.status {
         GapPatchStatus::Patched {
             pre_correlation,
             post_correlation,
@@ -482,7 +482,12 @@ fn format_unified_gap_status(
             }
             other => format!("not planned: {}", format_fill_skip_reason(other)),
         },
-    }
+    };
+
+    format!(
+        "{base}{}",
+        crate::domain::gap_tags::format_gap_tags_status_suffix(&outcome.tags)
+    )
 }
 
 fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'static str {
@@ -1302,6 +1307,29 @@ mod tests {
 
         let text = super::format_unified_gap_report(&report, Some(&summary), true);
         assert!(text.contains("struct pre=0.92 post=0.90 slide=+0.010s"));
+        assert!(text.contains("[high · balanced]"));
+    }
+
+    #[test]
+    fn unified_gap_report_shows_tier_seam_on_skipped() {
+        use crate::domain::{GapPatchSkipReason, GapPatchStatus, PatchSummary};
+
+        let report = minimal_report();
+        let summary = PatchSummary::from_outcomes(vec![gap_patch_outcome(
+            0.0,
+            1.5,
+            GapPatchStatus::Skipped {
+                reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.09,
+                    post_correlation: 1.0,
+                    min_correlation: 0.12,
+                },
+            },
+        )]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        assert!(text.contains("skipped: boundary correlation below threshold"));
+        assert!(text.contains("[hard skip · post-strong]"));
     }
 
     #[test]

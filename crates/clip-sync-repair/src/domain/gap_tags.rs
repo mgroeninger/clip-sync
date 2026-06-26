@@ -127,6 +127,18 @@ impl PatchTier {
             Self::NotApplicable => "not_applicable",
         }
     }
+
+    /// Short human label for the gap table status column.
+    pub const fn status_label(self) -> Option<&'static str> {
+        match self {
+            Self::NotApplicable => None,
+            Self::High => Some("high"),
+            Self::Marginal => Some("marginal"),
+            Self::DeadZone => Some("dead zone"),
+            Self::HardSkip => Some("hard skip"),
+            Self::StructureFail => Some("structure fail"),
+        }
+    }
 }
 
 /// Seam score shape heuristic (W-layer patterns).
@@ -148,6 +160,17 @@ impl SeamShape {
             Self::AsymmetricPre => "asymmetric_pre",
             Self::SymmetricWeak => "symmetric_weak",
             Self::NotApplicable => "not_applicable",
+        }
+    }
+
+    /// Short human label for the gap table status column.
+    pub const fn status_label(self) -> Option<&'static str> {
+        match self {
+            Self::NotApplicable => None,
+            Self::Balanced => Some("balanced"),
+            Self::AsymmetricPost => Some("post-strong"),
+            Self::AsymmetricPre => Some("pre-strong"),
+            Self::SymmetricWeak => Some("weak both sides"),
         }
     }
 }
@@ -493,6 +516,16 @@ fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
     }
 }
 
+/// Compact suffix for the human gap table status column: ` [marginal · post-strong]`.
+pub fn format_gap_tags_status_suffix(tags: &GapTags) -> String {
+    match (tags.patch_tier.status_label(), tags.seam_shape.status_label()) {
+        (None, None) => String::new(),
+        (Some(tier), None) => format!(" [{tier}]"),
+        (None, Some(seam)) => format!(" [{seam}]"),
+        (Some(tier), Some(seam)) => format!(" [{tier} · {seam}]"),
+    }
+}
+
 /// Verbose stderr line (`-v`): `gap tags: plan=… tier=… seam=…`.
 pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     let mut parts = vec![
@@ -600,6 +633,37 @@ mod tests {
         );
         assert_eq!(tags.patch_tier, PatchTier::StructureFail);
         assert_eq!(tags.seam_shape, SeamShape::NotApplicable);
+        assert_eq!(
+            format_gap_tags_status_suffix(&tags),
+            " [structure fail]"
+        );
+    }
+
+    #[test]
+    fn status_suffix_marginal_asymmetric_post() {
+        let tags = tags_from_patched(0.31, 1.0, FillConfidence::Marginal);
+        assert_eq!(
+            format_gap_tags_status_suffix(&tags),
+            " [marginal · post-strong]"
+        );
+    }
+
+    #[test]
+    fn status_suffix_hard_skip_symmetric_weak() {
+        let tags = tags_from_skip(0.03, 0.03);
+        assert_eq!(
+            format_gap_tags_status_suffix(&tags),
+            " [hard skip · weak both sides]"
+        );
+    }
+
+    #[test]
+    fn status_suffix_dead_zone_asymmetric_post() {
+        let tags = tags_from_skip(0.18, 0.87);
+        assert_eq!(
+            format_gap_tags_status_suffix(&tags),
+            " [dead zone · post-strong]"
+        );
     }
 
     #[test]

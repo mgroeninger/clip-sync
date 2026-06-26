@@ -159,8 +159,8 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 |-----|--------|--------------|-----------------|
 | `plan_kind` | `below_scan_floor`, `unfillable`, `not_planned`, `fillable` | Plan (P0–P5) | Status column / omitted |
 | `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable` | Plan (P1–P4) | `unfillable`, `not planned: …` |
-| `patch_tier` | `high`, `marginal`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | `patched`, `!`, `skipped: …` |
-| `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Derive from verbose `pre`/`post` |
+| `patch_tier` | `high`, `marginal`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | Gap table ` [tier · seam]` suffix; `patched`, `!`, `skipped: …` |
+| `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Gap table suffix (`post-strong`, `weak both sides`, …); `-v` `gap tags:` |
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
 | `signature_mode` | `bool`, `energy` | Layer 4 (resolved) | `-v` `signature_mode=` |
