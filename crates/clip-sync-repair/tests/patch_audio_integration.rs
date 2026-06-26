@@ -1765,6 +1765,7 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
     }
 }
 
+// Slowest row in this binary (~10–15 min debug solo; use `--test-threads=1`).
 #[test]
 fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     let fixture = build_drift_anchor_retry_fixture();

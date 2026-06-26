@@ -12,9 +12,10 @@ use clip_sync_repair::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
     AnchorSeamSide, AnchorSource,
 };
-use clip_sync_repair::domain::gap_tags::FitPathTag;
+use clip_sync_repair::domain::gap_tags::{FitPathTag, PatchTier, SeamShape};
 use clip_sync_repair::domain::{
-    FillMode, FitBoundarySearch, GapPatchStatus, GapSignatureMode, ResidualGateMode,
+    FillConfidence, FillMode, FitBoundarySearch, GapPatchOutcome, GapPatchStatus, GapSignatureMode,
+    ResidualGateMode,
 };
 use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::infrastructure::config::RepairConfig;
@@ -48,6 +49,48 @@ fn refined_scan_hole(fixture: &EnergySignatureFixture) -> RefinedGapFrames {
         0.0,
         (0.75 * fixture.sample_rate as f64).round() as usize,
     )
+}
+
+/// Routing decision facts locked by **step 1** of the fit-joint routing extraction
+/// (`docs/TEMP-fit-routing-extraction-plan.md`). These capture *which exit the router took* and the
+/// resulting vocabulary — the `route_fit_joint` refactor must preserve them byte-for-byte. They
+/// deliberately encode the current reality (e.g. A2/A5 patch on the baseline throat and never engage
+/// the anchor path: `anchor_seam_used = false`).
+#[derive(Debug, PartialEq)]
+struct RoutingFacts {
+    patched: bool,
+    confidence: Option<FillConfidence>,
+    anchor_seam_used: bool,
+    anchor_move_nonzero: bool,
+    patch_tier: PatchTier,
+    seam_shape: SeamShape,
+    fit_path: Option<FitPathTag>,
+}
+
+fn routing_facts(gap: &GapPatchOutcome) -> RoutingFacts {
+    let (patched, confidence, anchor_seam_used, anchor_move_nonzero) = match gap.status {
+        GapPatchStatus::Patched {
+            confidence,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
+            ..
+        } => (
+            true,
+            Some(confidence),
+            anchor_seam_used,
+            anchor_bracket_move_frames > 0,
+        ),
+        _ => (false, None, false, false),
+    };
+    RoutingFacts {
+        patched,
+        confidence,
+        anchor_seam_used,
+        anchor_move_nonzero,
+        patch_tier: gap.tags.patch_tier,
+        seam_shape: gap.tags.seam_shape,
+        fit_path: gap.tags.fit_path,
+    }
 }
 
 #[test]
@@ -147,15 +190,20 @@ fn a5_baseline_only_auto_patches_speech_peaks_without_boundary_grid() {
         .expect("patch");
 
     let gap = &response.summary.gaps[0];
-    assert!(
-        matches!(gap.status, GapPatchStatus::Patched { .. }),
-        "A5: expected patched gap under baseline_only+auto, got {:?}",
-        gap.status
-    );
+    // CHARACTERIZATION (step 1): A5 patches on the baseline throat (~0.99) and short-circuits before
+    // anchor search ever runs — `anchor_seam_used = false`. Locks current routing for the refactor.
     assert_eq!(
-        gap.tags.fit_path,
-        Some(FitPathTag::BaselineOnly),
-        "A5: anchor seam must patch without boundary grid"
+        routing_facts(gap),
+        RoutingFacts {
+            patched: true,
+            confidence: Some(FillConfidence::High),
+            anchor_seam_used: false,
+            anchor_move_nonzero: false,
+            patch_tier: PatchTier::High,
+            seam_shape: SeamShape::Balanced,
+            fit_path: Some(FitPathTag::BaselineOnly),
+        },
+        "A5 routing characterization"
     );
 }
 
@@ -189,15 +237,19 @@ fn a5b_baseline_only_auto_patches_speech_peaks_bool_mode() {
         .expect("patch");
 
     let gap = &response.summary.gaps[0];
-    assert!(
-        matches!(gap.status, GapPatchStatus::Patched { .. }),
-        "A5b: expected patched gap under bool+baseline_only+auto, got {:?}",
-        gap.status
-    );
+    // CHARACTERIZATION (step 1): bool-mode baseline throat patch; anchor path not engaged.
     assert_eq!(
-        gap.tags.fit_path,
-        Some(FitPathTag::BaselineOnly),
-        "A5b: anchor seam must patch without boundary grid in bool mode"
+        routing_facts(gap),
+        RoutingFacts {
+            patched: true,
+            confidence: Some(FillConfidence::High),
+            anchor_seam_used: false,
+            anchor_move_nonzero: false,
+            patch_tier: PatchTier::High,
+            seam_shape: SeamShape::Balanced,
+            fit_path: Some(FitPathTag::BaselineOnly),
+        },
+        "A5b routing characterization"
     );
 }
 
@@ -222,10 +274,22 @@ fn anchor_seam_f4_decoy_still_skips_under_residual_veto() {
     let response = PatchAudio::new(&reader, &progress)
         .execute(request, RepairConfig::default().crossfade_ms)
         .expect("patch");
-    assert!(
-        matches!(response.summary.gaps[0].status, GapPatchStatus::Skipped { .. }),
-        "F4 decoy should skip with residual veto, got {:?}",
-        response.summary.gaps[0].status
+    let gap = &response.summary.gaps[0];
+    // CHARACTERIZATION (step 1): the decoy is rejected as a correlation HARD-SKIP (min(pre,post) <
+    // 0.12), asymmetric-post shape — the router must keep skipping it. (NB: the skip surfaces as a
+    // correlation hard-skip, not a residual-veto `not_applicable` — the name predates this tier.)
+    assert_eq!(
+        routing_facts(gap),
+        RoutingFacts {
+            patched: false,
+            confidence: None,
+            anchor_seam_used: false,
+            anchor_move_nonzero: false,
+            patch_tier: PatchTier::HardSkip,
+            seam_shape: SeamShape::AsymmetricPost,
+            fit_path: Some(FitPathTag::BaselineOnly),
+        },
+        "F4 routing characterization"
     );
 }
 
@@ -321,10 +385,20 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
         .expect("patch");
 
     let gap = &response.summary.gaps[0];
-    assert!(
-        matches!(gap.status, GapPatchStatus::Patched { .. }),
-        "A2: expected patched C3 gap, got {:?}",
-        gap.status
+    // CHARACTERIZATION (step 1): C3 boundary gap patches *marginally* on the baseline throat with a
+    // symmetric-weak seam — the anchor path is not engaged. Lock current exit + tier.
+    assert_eq!(
+        routing_facts(gap),
+        RoutingFacts {
+            patched: true,
+            confidence: Some(FillConfidence::Marginal),
+            anchor_seam_used: false,
+            anchor_move_nonzero: false,
+            patch_tier: PatchTier::Marginal,
+            seam_shape: SeamShape::SymmetricWeak,
+            fit_path: Some(FitPathTag::BaselineOnly),
+        },
+        "A2 routing characterization"
     );
 }
 
