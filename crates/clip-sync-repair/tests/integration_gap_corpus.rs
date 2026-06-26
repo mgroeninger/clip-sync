@@ -1,4 +1,12 @@
-//! Gap scan corpus integration tests (`tests/gap_corpus/manifest.toml`).
+//! Gap scan corpus integration (`tests/gap_corpus/manifest.toml`).
+//!
+//! Tier: **integration**. Committed WAV scan cases run on PR; generated, external, patch-timing,
+//! and regenerate rows are `#[ignore]`.
+//!
+//! PR: **yes** (committed scan: `gap_corpus_committed`, `gap_corpus_manifest_loads`) — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test integration_gap_corpus`
+//! Ignored: `cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_generated -- --ignored`
 
 use clip_sync_repair::test_support::gap_corpus_fixtures::{
     corpus_root, load_manifest, run_gap_corpus_manifest_cases,

@@ -1,4 +1,11 @@
-//! Floor oracle integration smokes.
+//! Floor oracle integration smokes (manifest geometry only).
+//!
+//! Tier: **integration**. Loads `tests/floor_oracle/manifest.toml` and asserts gap-frame math —
+//! not the full codec matrix (see `validate_floor_oracle`, validation tier).
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test integration_floor_oracle_smoke`
 
 use clip_sync_repair_harness::floor_oracle::{
     gap_frames_for_case, load_manifest, FloorOracleCase, FloorOracleDefaults,

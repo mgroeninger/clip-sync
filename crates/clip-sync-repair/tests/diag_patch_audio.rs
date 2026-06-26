@@ -1,4 +1,11 @@
-//! Patch geometry CSV diagnostics (energy-signature I1 / I3).
+//! Patch geometry CSV diagnostics (SP01 / SP03 — `i1_` / `i3_` fixtures).
+//!
+//! Tier: **diagnostic** (`diagnostic-tests` feature). Verbose patch-geometry CSV for F1/F2 energy
+//! integration fixtures.
+//!
+//! PR: **no** — diagnostic tier with `-Nocapture`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_patch_audio -- --nocapture`
 
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration,

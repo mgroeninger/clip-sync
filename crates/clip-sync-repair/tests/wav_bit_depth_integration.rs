@@ -1,8 +1,12 @@
-/// Integration tests for source-driven WAV output bit depth.
-///
-/// Each test constructs a `MultiChannelPcm` with a specific `source_bit_depth`, writes it
-/// via `WavPatchedAudioWriter`, and asserts on the output `WavSpec`. These tests cover the
-/// `resolve_output_bit_depth` → `WavSpec` wiring end-to-end without going through the CLI.
+//! WAV output bit-depth integration.
+//!
+//! Tier: **integration**. `MultiChannelPcm` with varied `source_bit_depth` through
+//! `WavPatchedAudioWriter` — end-to-end `resolve_output_bit_depth` wiring without CLI.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test wav_bit_depth_integration`
+
 use clip_sync::{BitDepth, MultiChannelPcm};
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;

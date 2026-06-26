@@ -1,4 +1,11 @@
-//! Query-reference repair integration (Phase Q3).
+//! Query-reference repair integration.
+//!
+//! Tier: **integration**. Short chirp pairs in query-reference alignment mode; gaps inside vs
+//! outside the mapped B region under `fill_mode = gate`.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test query_reference_integration`
 
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};

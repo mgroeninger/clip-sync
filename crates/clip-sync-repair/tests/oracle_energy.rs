@@ -1,4 +1,12 @@
-//! Energy signature domain-acceptance oracles (SD/EC). Tier: integration (oracle label).
+//! Energy signature domain-acceptance oracles — **SD01–SD08** / **EC** domain rows.
+//!
+//! Tier: **integration** (oracle label). Short 8 s fixtures (`u1_`–`u8_`) + EC03/EC06 domain;
+//! EC01/EC02 production geometry (`p1_`/`p2_`) and slow control rows are `#[ignore]`.
+//!
+//! PR: **yes** (fast SD + EC03/EC06 domain) — `pr-repair`. Production EC01/EC02: oracle tier
+//! `--ignored` or `.\scripts\test-tier.ps1 -Tier oracle`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test oracle_energy`
 
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,

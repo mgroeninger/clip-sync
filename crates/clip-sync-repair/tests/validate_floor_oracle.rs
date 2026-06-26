@@ -1,4 +1,11 @@
-//! Floor oracle validation (ffmpeg + corpus).
+//! Floor oracle validation (real codec / ffmpeg matrix).
+//!
+//! Tier: **validation** (`validation-tests` feature). Runs manifest cases through ffmpeg-encoded
+//! sources; needs `ffmpeg` on PATH and `.\scripts\fetch_corpus_sources.ps1`.
+//!
+//! PR: **no** — `.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle`
 
 use clip_sync_repair::domain::ResidualGateMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;

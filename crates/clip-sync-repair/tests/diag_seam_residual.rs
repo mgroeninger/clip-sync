@@ -1,4 +1,11 @@
 //! Seam residual CSV diagnostics.
+//!
+//! Tier: **diagnostic** (`diagnostic-tests` feature). Score/disagreement dumps for F1/F2/F4 and
+//! broadband fixtures — human review, not pass/fail contract.
+//!
+//! PR: **no** — diagnostic tier with `-Nocapture`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_seam_residual -- --nocapture`
 
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f2_production, build_f4_decoy_production,

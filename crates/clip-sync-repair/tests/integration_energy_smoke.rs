@@ -1,4 +1,11 @@
-//! Integration energy smokes (scan→patch tripwire + lib scan/domain rows).
+//! Energy signature integration smokes — scan→patch tripwire + production scan/domain rows.
+//!
+//! Tier: **integration**. **EC01** e2e: `corpus_scan_patch_smoke` (16 kHz / 32 s F1 production
+//! geometry). Also `scan_detects_f1_production_gap` and `f1_production_scan_and_domain_smoke`.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test integration_energy_smoke`
 
 use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;

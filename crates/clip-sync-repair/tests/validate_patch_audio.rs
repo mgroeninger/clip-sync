@@ -1,4 +1,11 @@
-//! Patch-pipeline validation (production-default fit smokes; not energy/residual-gate rows).
+//! Patch-pipeline validation — **SP05** production-default fit smoke.
+//!
+//! Tier: **validation** (`validation-tests` feature). `patch_audio_fit_production_defaults_smoke`
+//! — sine fixtures with `fill_border_search_secs = 10` and full extension grid.
+//!
+//! PR: **no** — run before release via validation tier.
+//!
+//! Run: `cargo test -p clip-sync-repair --features validation-tests --test validate_patch_audio`
 
 use clip_sync_repair_harness::patch_audio::run_fit_production_defaults_smoke;
 

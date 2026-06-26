@@ -1,3 +1,11 @@
+//! CLI `--wav` integration (scan-gaps + patch-audio subprocess).
+//!
+//! Tier: **integration**. End-to-end CLI on mono chirp WAVs with a mid-file silence gap.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test cli_wav_integration`
+
 use std::path::Path;
 use std::process::Command;
 use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;

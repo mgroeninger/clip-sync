@@ -1,4 +1,11 @@
-//! Energy signature patch integration (SP01–SP03: I1–I3).
+//! Energy signature patch integration — **SP01–SP03** (`i1_`–`i3_`).
+//!
+//! Tier: **integration**. 8 s F1/F2 fixtures: domain + haystack + full `PatchAudio` via
+//! `assert_energy_integration_patch` (`clip-sync-repair-harness`).
+//!
+//! PR: **no** — full `integration` tier only (PR uses `corpus_scan_patch_smoke` + SD domain rows).
+//!
+//! Run: `cargo test -p clip-sync-repair --test integration_energy_patch`
 
 use clip_sync_repair::domain::GapSignatureMode;
 use clip_sync_repair::test_support::energy_signature_fixtures::{

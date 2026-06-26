@@ -1,3 +1,11 @@
+//! Repair TOML config roundtrip.
+//!
+//! Tier: **integration**. Loads `tests/fixtures/repair.toml` through `load_repair_app_config`.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test config_roundtrip`
+
 use std::path::PathBuf;
 use std::time::Duration;
 

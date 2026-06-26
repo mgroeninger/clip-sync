@@ -1,3 +1,13 @@
+//! Sine-seam patch integration (~15 min debug).
+//!
+//! Tier: **integration**. Stereo sine + gap WAV fixtures; fit/gate modes, marginal tier, extension
+//! grid, anchored retry. **SP04** (`i4_f3_auto_matches_bool_outcome`) is the only energy-signature
+//! row here; SP01–SP03 live in `integration_energy_patch.rs`.
+//!
+//! PR: **no** — `.\scripts\test-tier.ps1 -Tier pr-repair-extended` (or full `integration` tier).
+//!
+//! Run: `cargo test -p clip-sync-repair --test patch_audio_integration`
+
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 

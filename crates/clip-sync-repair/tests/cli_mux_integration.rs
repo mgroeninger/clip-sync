@@ -1,3 +1,12 @@
+//! CLI `--mux` integration (`ffmpeg-mux` feature).
+//!
+//! Tier: **integration**. Mux argument parsing and ffmpeg subprocess adapter. `mux_writes_video` and
+//! `mux_24bit_source_pipe_completes_successfully` are `#[ignore]` (need ffmpeg + disk I/O).
+//!
+//! PR: **compile + fast rows** when ffmpeg on PATH — `pr-repair`; full mux e2e via `--ignored`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features ffmpeg-mux --test cli_mux_integration`
+
 use std::process::Command;
 
 use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;

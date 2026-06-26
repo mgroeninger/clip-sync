@@ -1,3 +1,12 @@
+//! Gap scan integration on synthetic chirp/silence WAVs.
+//!
+//! Tier: **integration**. Exercises `ScanGaps` + aligner wiring (mono chirp pairs, zeroed silence
+//! regions). Optional AC-3 dual-track row behind `ac3` + `ffmpeg-tests`.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test scan_gaps_integration`
+
 use std::path::Path;
 use std::time::Duration;
 

@@ -1,4 +1,11 @@
-//! Residual gate validation rows (EC6 production smokes).
+//! Residual gate validation — **RG** catalog + **EC06** patch rows.
+//!
+//! Tier: **validation** (`validation-tests` feature). Exhaustive gate contract from
+//! `tests/residual_gate_catalog/matrix.toml` and F4-decoy patch discrimination smokes.
+//!
+//! PR: **no** — `.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features validation-tests --test validate_residual_gate`
 
 use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;

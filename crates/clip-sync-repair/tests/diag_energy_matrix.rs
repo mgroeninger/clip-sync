@@ -1,4 +1,11 @@
-//! Energy signature matrix / sweep diagnostics.
+//! Energy signature mode matrix / sweep diagnostics.
+//!
+//! Tier: **diagnostic** (`diagnostic-tests` feature). CSV export: fixture × `gap_signature_mode` ×
+//! context — emit data for tuning, not CI assertions.
+//!
+//! PR: **no** — `.\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture`.
+//!
+//! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture`
 
 use std::time::Instant;
 

@@ -1,6 +1,11 @@
-//! RG04 PR smoke — residual gate off-regression baseline.
+//! Residual gate off-regression baseline — **RG04**.
 //!
-//! Catalog: `tests/residual_gate_catalog/matrix.toml`.
+//! Tier: **integration**. Asserts `residual_gate = off` is a true no-op vs on for F1/F4 production
+//! fixtures. Catalog: `tests/residual_gate_catalog/matrix.toml`.
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test integration_residual_gate_smoke`
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
