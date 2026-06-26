@@ -13,7 +13,7 @@ patch_max_wall_secs  = 90.0   # CI fit-timing budget (5s border, no extension gr
 
 # ── committed cases (WAV files in tests/gap_corpus/wav/) ─────────────────────
 # These run in CI without any external tools.
-# Regenerate with: cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture
+# Regenerate with: cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenerate -- --ignored --nocapture
 
 [[case]]
 id    = "leading_silence_16s"
@@ -83,7 +83,7 @@ video_a = "wav/stereo_partial_gap_a.wav"
 expected_gaps = []
 
 # ── generated cases (WAV files created at test time) ─────────────────────────
-# Run with: cargo test -p clip-sync-repair gap_corpus_generated -- --ignored
+# Run with: cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_generated -- --ignored
 
 [[case]]
 id        = "generated_short_gap_above_min"
@@ -152,7 +152,7 @@ end_secs   = 12.0
 expected_gaps = []
 
 # ── external cases (real media files; set CLIP_SYNC_GAP_CORPUS to file dir) ──
-# Run with: CLIP_SYNC_GAP_CORPUS=F:\Video cargo test -p clip-sync-repair gap_corpus_external -- --ignored
+# Run with: CLIP_SYNC_GAP_CORPUS=F:\Video cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_external -- --ignored
 #
 # Ground truth derived from: ffmpeg -i 1.mkv -af silencedetect=noise=-60dB:d=1 -f null -
 # ffmpeg default (mono=0): all channels must be below the noise floor — matches our scanner.

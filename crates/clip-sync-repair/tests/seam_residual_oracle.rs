@@ -1,17 +1,15 @@
 //! P1 step 2 (in-memory tier): injected-gap **same-master** oracle through the real patch pipeline.
 //!
-//! Builds a broadband master, derives A (master with a silenced gap + independent codec-like noise)
-//! and B (the full master + independent noise) — a same-master, different-"encode" pair where the
-//! true fill sits at the gap timestamp (nominal == truth). Runs the actual `PatchAudio::execute`
-//! with `measure_residual = true` and reads `GapPatchOutcome.residual`, validating the JSON
-//! plumbing end-to-end and emitting a labeled headroom row at a known-correct fill (the
-//! false-positive / FLOOR_OK calibration substrate). Real-codec tier:
-//! `tests/floor_oracle/manifest.toml` + `source_gap_oracle_floor_csv` (Wikimedia sources).
+//! Tier: **integration** (default `[[test]]` binary). Builds a broadband master at production
+//! geometry (60 s), runs `PatchAudio::execute` with `measure_residual = true`, and validates
+//! residual JSON plumbing. Real-codec counterpart:
+//! `tests/floor_oracle/manifest.toml` + `validate_floor_oracle` (validation tier).
 //!
-//! Run (diagnostic tier):
-//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle -- --nocapture`
-//! Slow H2-B rescue row:
-//! `cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
+//! Run:
+//! `cargo test -p clip-sync-repair --test seam_residual_oracle -- --nocapture`
+//!
+//! Slow H2-B rescue row (`#[ignore]`): selected by `test-tier.ps1 -Tier diagnostic` or:
+//! `cargo test -p clip-sync-repair --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture`
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::SymphoniaMediaReader;
@@ -29,32 +27,13 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
 use clip_sync_repair::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
 };
-
-const PI: f64 = std::f64::consts::PI;
-
-fn lcg(state: &mut u64) -> f64 {
-    *state = state
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
-    ((*state >> 33) as f64 / (1u64 << 31) as f64) - 1.0
-}
-
-/// Broadband, non-stationary master (three chirps + shaped noise) — see the corpus harness.
-fn broadband_master(total: usize, rate: u32) -> Vec<f64> {
-    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
-    (0..total)
-        .map(|i| {
-            let t = i as f64 / rate as f64;
-            let c1 = (2.0 * PI * (150.0 * t + 0.5 * 40.0 * t * t)).sin() * 3000.0;
-            let c2 = (2.0 * PI * (400.0 * t - 0.5 * 15.0 * t * t)).sin() * 2000.0;
-            let c3 = (2.0 * PI * (900.0 * t + 0.5 * 25.0 * t * t)).sin() * 1200.0;
-            c1 + c2 + c3 + lcg(&mut seed) * 1500.0
-        })
-        .collect()
-}
+use clip_sync_repair_harness::seam_residual::{broadband_master, lcg};
 
 /// Same-master broadband oracle at production geometry: A = master with a silenced gap + noise,
 /// B = full master + independent noise. `nominal == truth == gap_start`.
+///
+/// Differs from `harness::seam_residual::build_broadband` (20 s score-harness fixture); this uses
+/// `ProductionScenarioSpec::production_standard` for pipeline oracle rows.
 fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergySignatureFixture {
     let ch = channels.max(1);
     let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
@@ -124,7 +103,7 @@ fn production_like_broadband_repair(residual_gate: ResidualGateMode) -> RepairCo
 /// Real Wikimedia/Musopen Vorbis truth gaps pass Pearson — rescue matches `veto` there; see
 /// `floor_oracle_veto_rescue_real_broadband_codec`.
 #[test]
-#[ignore = "slow (~100s): cargo test -p clip-sync-repair --features diagnostic-tests --test seam_residual_oracle broadband_oracle_veto_rescue_patches_marginal -- --ignored --nocapture"]
+#[ignore = "tier:diagnostic — slow (~100s); test-tier.ps1 -Tier diagnostic or --ignored --nocapture"]
 fn broadband_oracle_veto_rescue_patches_marginal() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = build_broadband_oracle(48_000, 1, 40.0);

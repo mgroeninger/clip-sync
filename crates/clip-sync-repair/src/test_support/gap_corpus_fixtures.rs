@@ -743,245 +743,196 @@ fn patch_audio_request_for_corpus_timing(
     patch_audio_request_from_repair(report, &repair)
 }
 
-// ── #[cfg(test)] ──────────────────────────────────────────────────────────────
+// ── integration corpus runners (called from `tests/integration_gap_corpus.rs`) ─
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+struct NeverCalledAligner;
+
+impl Aligner for NeverCalledAligner {
+    fn align(
+        &self,
+        _: clip_sync::AlignVideosRequest,
+        _: &dyn clip_sync::ProgressReporter,
+    ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
+        unreachable!("corpus tests use scan_after_alignment directly")
+    }
+}
+
+/// Run scan-after-alignment expectations for every non-ignored manifest case in `tier`.
+pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
+    use crate::application::ScanGaps;
+
+    let manifest = load_manifest();
+    let media_reader = SymphoniaMediaReader;
+    let progress = FakeProgressReporter;
+    let aligner = NeverCalledAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+
+    for case in manifest.case.iter().filter(|c| c.tier == tier && !c.ignore) {
+        let started = std::time::Instant::now();
+        let (_guard, video_a) = resolve_case_path(case, &manifest.defaults);
+
+        if tier == GapCorpusTier::Committed {
+            assert!(
+                video_a.is_file(),
+                "case {}: missing committed fixture {}",
+                case.id,
+                video_a.display()
+            );
+        }
+
+        let request = build_scan_request(video_a.clone(), video_a, case, &manifest.defaults);
+        let alignment = no_op_alignment();
+        let report = scan
+            .scan_after_alignment(request, alignment)
+            .unwrap_or_else(|e| panic!("case {} failed: {e}", case.id));
+
+        assert_gap_expectations(
+            &case.id,
+            &case.expected_gaps,
+            &report.gaps,
+            case.tolerance_secs,
+            &manifest.defaults,
+        );
+
+        eprintln!(
+            "case {}: {} gap(s) detected in {:.2?}",
+            case.id,
+            report.gaps.len(),
+            started.elapsed()
+        );
+    }
+}
+
+/// Patch wall-time budget guard for committed/generated corpus rows (fit mode, no full grid).
+pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
     use crate::application::{PatchAudio, PatchAudioResult};
 
-    #[test]
-    #[ignore = "run manually to regenerate: cargo test -p clip-sync-repair gap_corpus_regenerate -- --ignored --nocapture"]
-    fn gap_corpus_regenerate_committed_wav_fixtures() {
-        write_committed_wav_fixtures();
-        eprintln!("wrote fixtures under {}", corpus_root().join("wav").display());
-    }
+    let manifest = load_manifest();
+    let media_reader = SymphoniaMediaReader;
+    let progress = FakeProgressReporter;
+    let aligner = NeverCalledAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+    let patch = PatchAudio::new(&media_reader, &progress);
 
-    #[test]
-    fn gap_corpus_manifest_loads() {
-        let manifest = load_manifest();
-        assert!(manifest.version >= 1, "manifest version should be >= 1");
-        assert!(!manifest.case.is_empty(), "manifest should have at least one case");
-        let committed: Vec<_> = manifest.case.iter()
-            .filter(|c| c.tier == GapCorpusTier::Committed)
-            .collect();
-        assert!(!committed.is_empty(), "manifest should have at least one committed case");
-    }
+    for case in manifest
+        .case
+        .iter()
+        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty())
+    {
+        let max_wall_secs = case
+            .max_patch_wall_secs
+            .unwrap_or(manifest.defaults.patch_max_wall_secs);
 
-    struct NeverCalledAligner;
+        let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
 
-    impl Aligner for NeverCalledAligner {
-        fn align(
-            &self,
-            _: clip_sync::AlignVideosRequest,
-            _: &dyn clip_sync::ProgressReporter,
-        ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
-            unreachable!("corpus tests use scan_after_alignment directly")
-        }
-    }
-
-    fn run_manifest_cases(tier: GapCorpusTier) {
-        let manifest = load_manifest();
-        let media_reader = SymphoniaMediaReader;
-        let progress = FakeProgressReporter;
-        let aligner = NeverCalledAligner;
-        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
-
-        for case in manifest.case.iter().filter(|c| c.tier == tier && !c.ignore) {
-            let started = std::time::Instant::now();
-            let (_guard, video_a) = resolve_case_path(case, &manifest.defaults);
-
-            if tier == GapCorpusTier::Committed {
-                assert!(
-                    video_a.is_file(),
-                    "case {}: missing committed fixture {}",
-                    case.id,
-                    video_a.display()
-                );
-            }
-
-            let request = build_scan_request(video_a.clone(), video_a, case, &manifest.defaults);
-            let alignment = no_op_alignment();
-            let report = scan
-                .scan_after_alignment(request, alignment)
-                .unwrap_or_else(|e| panic!("case {} failed: {e}", case.id));
-
-            assert_gap_expectations(
-                &case.id,
-                &case.expected_gaps,
-                &report.gaps,
-                case.tolerance_secs,
-                &manifest.defaults,
-            );
-
-            eprintln!("case {}: {} gap(s) detected in {:.2?}", case.id, report.gaps.len(), started.elapsed());
-        }
-    }
-
-    fn run_patch_timing_cases(tier: GapCorpusTier) {
-        let manifest = load_manifest();
-        let media_reader = SymphoniaMediaReader;
-        let progress = FakeProgressReporter;
-        let aligner = NeverCalledAligner;
-        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
-        let patch = PatchAudio::new(&media_reader, &progress);
-
-        for case in manifest.case.iter().filter(|c| {
-            c.tier == tier && !c.ignore && !c.expected_gaps.is_empty()
-        }) {
-            let max_wall_secs = case
-                .max_patch_wall_secs
-                .unwrap_or(manifest.defaults.patch_max_wall_secs);
-
-            let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
-
-            if tier == GapCorpusTier::Committed {
-                assert!(
-                    video_a.is_file(),
-                    "case {}: missing committed fixture {}",
-                    case.id,
-                    video_a.display()
-                );
-            }
-
-            let temp_b = tempfile::tempdir().expect("tempdir for reference B");
-            let video_b = temp_b.path().join("reference_b.wav");
-            write_clean_chirp_reference(&video_b, &video_a);
-
-            let (sample_rate, channels, frames) = read_wav_metadata(&video_a);
-            let duration_secs = frames as f64 / f64::from(sample_rate);
-
-            let scan_request =
-                build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
-            let alignment = patch_corpus_alignment(duration_secs);
-            let report = scan
-                .scan_after_alignment(scan_request, alignment)
-                .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
-
-            assert_gap_expectations(
-                &case.id,
-                &case.expected_gaps,
-                &report.gaps,
-                case.tolerance_secs,
-                &manifest.defaults,
-            );
-
-            let fillable = report.gaps.iter().filter(|g| g.is_fillable()).count();
+        if tier == GapCorpusTier::Committed {
             assert!(
-                fillable > 0,
-                "case {}: expected at least one fillable gap for patch timing (got {fillable})",
-                case.id
-            );
-
-            let patch_request = patch_audio_request_for_corpus_timing(report);
-            let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
-            let started = std::time::Instant::now();
-            let result: PatchAudioResult = patch
-                .execute(patch_request, crossfade_ms)
-                .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
-
-            let elapsed = started.elapsed();
-            eprintln!(
-                "case {}: patch {} gap(s) ({} patched, {} skipped) in {:.2?} (channels={channels})",
+                video_a.is_file(),
+                "case {}: missing committed fixture {}",
                 case.id,
-                fillable,
-                result.summary.patched_count,
-                result.summary.skipped_count,
-                elapsed,
-            );
-
-            assert!(
-                elapsed.as_secs_f64() <= max_wall_secs,
-                "case {}: patch wall time {:.2?} exceeds {:.1}s budget",
-                case.id,
-                elapsed,
-                max_wall_secs
+                video_a.display()
             );
         }
+
+        let temp_b = tempfile::tempdir().expect("tempdir for reference B");
+        let video_b = temp_b.path().join("reference_b.wav");
+        write_clean_chirp_reference(&video_b, &video_a);
+
+        let (sample_rate, channels, frames) = read_wav_metadata(&video_a);
+        let duration_secs = frames as f64 / f64::from(sample_rate);
+
+        let scan_request =
+            build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+        let alignment = patch_corpus_alignment(duration_secs);
+        let report = scan
+            .scan_after_alignment(scan_request, alignment)
+            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+
+        assert_gap_expectations(
+            &case.id,
+            &case.expected_gaps,
+            &report.gaps,
+            case.tolerance_secs,
+            &manifest.defaults,
+        );
+
+        let fillable = report.gaps.iter().filter(|g| g.is_fillable()).count();
+        assert!(
+            fillable > 0,
+            "case {}: expected at least one fillable gap for patch timing (got {fillable})",
+            case.id
+        );
+
+        let patch_request = patch_audio_request_for_corpus_timing(report);
+        let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let started = std::time::Instant::now();
+        let result: PatchAudioResult = patch
+            .execute(patch_request, crossfade_ms)
+            .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
+
+        let elapsed = started.elapsed();
+        eprintln!(
+            "case {}: patch {} gap(s) ({} patched, {} skipped) in {:.2?} (channels={channels})",
+            case.id,
+            fillable,
+            result.summary.patched_count,
+            result.summary.skipped_count,
+            elapsed,
+        );
+
+        assert!(
+            elapsed.as_secs_f64() <= max_wall_secs,
+            "case {}: patch wall time {:.2?} exceeds {:.1}s budget",
+            case.id,
+            elapsed,
+            max_wall_secs
+        );
     }
+}
 
-    fn run_patch_timing_production_cases(tier: GapCorpusTier) {
-        let manifest = load_manifest();
-        let media_reader = SymphoniaMediaReader;
-        let progress = FakeProgressReporter;
-        let aligner = NeverCalledAligner;
-        let scan = ScanGaps::new(&media_reader, &progress, &aligner);
-        let patch = PatchAudio::new(&media_reader, &progress);
+/// Production-default fit patch smoke on committed/generated corpus rows (manual perf).
+pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
+    use crate::application::PatchAudio;
 
-        for case in manifest.case.iter().filter(|c| {
-            c.tier == tier && !c.ignore && !c.expected_gaps.is_empty()
-        }) {
-            let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
-            let temp_b = tempfile::tempdir().expect("tempdir for reference B");
-            let video_b = temp_b.path().join("reference_b.wav");
-            write_clean_chirp_reference(&video_b, &video_a);
+    let manifest = load_manifest();
+    let media_reader = SymphoniaMediaReader;
+    let progress = FakeProgressReporter;
+    let aligner = NeverCalledAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+    let patch = PatchAudio::new(&media_reader, &progress);
 
-            let (sample_rate, _, frames) = read_wav_metadata(&video_a);
-            let duration_secs = frames as f64 / f64::from(sample_rate);
+    for case in manifest
+        .case
+        .iter()
+        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty())
+    {
+        let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
+        let temp_b = tempfile::tempdir().expect("tempdir for reference B");
+        let video_b = temp_b.path().join("reference_b.wav");
+        write_clean_chirp_reference(&video_b, &video_a);
 
-            let scan_request =
-                build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
-            let report = scan
-                .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
-                .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+        let (sample_rate, _, frames) = read_wav_metadata(&video_a);
+        let duration_secs = frames as f64 / f64::from(sample_rate);
 
-            let started = std::time::Instant::now();
-            let patch_request = patch_audio_request_from_defaults(report);
-            let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
-            let result = patch
-                .execute(patch_request, crossfade_ms)
-                .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
-            let elapsed = started.elapsed();
-            eprintln!(
-                "case {}: production-default patch in {:.2?} ({} patched, {} skipped)",
-                case.id,
-                elapsed,
-                result.summary.patched_count,
-                result.summary.skipped_count,
-            );
-        }
-    }
+        let scan_request =
+            build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+        let report = scan
+            .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
+            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
 
-    // Wall-clock budget guard. `#[ignore]` to match its `_production` / `_generated` siblings:
-    // a wall-time assertion is load-sensitive and flakes when it competes with the rest of the
-    // lib suite for CPU (cargo parallelizes tests within a binary). Run on demand / in a dedicated
-    // CI step: `cargo test -p clip-sync-repair gap_corpus_patch_timing -- --ignored`.
-    #[test]
-    #[ignore = "wall-clock budget; run on demand: cargo test -p clip-sync-repair gap_corpus_patch_timing_committed -- --ignored --nocapture"]
-    fn gap_corpus_patch_timing_committed() {
-        run_patch_timing_cases(GapCorpusTier::Committed);
-    }
-
-    #[test]
-    #[ignore = "production-default fit; cargo test -p clip-sync-repair gap_corpus_patch_timing_production -- --ignored --nocapture"]
-    fn gap_corpus_patch_timing_production() {
-        run_patch_timing_production_cases(GapCorpusTier::Committed);
-    }
-
-    #[test]
-    #[ignore = "generates WAV fixtures at test time; cargo test -p clip-sync-repair gap_corpus_patch_timing_generated -- --ignored"]
-    fn gap_corpus_patch_timing_generated() {
-        run_patch_timing_cases(GapCorpusTier::Generated);
-    }
-
-    #[test]
-    fn gap_corpus_committed() {
-        run_manifest_cases(GapCorpusTier::Committed);
-    }
-
-    #[test]
-    #[ignore = "generates WAV fixtures at test time; cargo test -p clip-sync-repair gap_corpus_generated -- --ignored"]
-    fn gap_corpus_generated() {
-        run_manifest_cases(GapCorpusTier::Generated);
-    }
-
-    #[test]
-    #[ignore = "requires CLIP_SYNC_GAP_CORPUS env var pointing to real media files"]
-    fn gap_corpus_external() {
-        if std::env::var("CLIP_SYNC_GAP_CORPUS").is_err() {
-            eprintln!("skipping gap_corpus_external: CLIP_SYNC_GAP_CORPUS not set");
-            return;
-        }
-        run_manifest_cases(GapCorpusTier::External);
+        let started = std::time::Instant::now();
+        let patch_request = patch_audio_request_from_defaults(report);
+        let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let result = patch
+            .execute(patch_request, crossfade_ms)
+            .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
+        let elapsed = started.elapsed();
+        eprintln!(
+            "case {}: production-default patch in {:.2?} ({} patched, {} skipped)",
+            case.id,
+            elapsed,
+            result.summary.patched_count,
+            result.summary.skipped_count,
+        );
     }
 }

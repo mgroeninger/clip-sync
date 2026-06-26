@@ -6,8 +6,6 @@ pub mod ports;
 pub mod repair_videos;
 pub mod run_repair;
 pub mod scan_gaps;
-#[cfg(test)]
-pub mod testing;
 
 pub use error::RepairError;
 pub use patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};

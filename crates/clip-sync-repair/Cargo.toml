@@ -34,11 +34,11 @@ toml = "0.8"
 thiserror = "1"
 tracing = "0.1"
 hound = "3"
+tempfile = "3"
 
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }
 clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
-tempfile = "3"
 
 [[test]]
 name = "config_roundtrip"
@@ -63,6 +63,10 @@ path = "tests/cli_wav_integration.rs"
 [[test]]
 name = "wav_bit_depth_integration"
 path = "tests/wav_bit_depth_integration.rs"
+
+[[test]]
+name = "integration_gap_corpus"
+path = "tests/integration_gap_corpus.rs"
 
 [[test]]
 name = "integration_floor_oracle_smoke"

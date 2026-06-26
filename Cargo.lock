@@ -206,7 +206,6 @@ dependencies = [
  "clip-sync-repair",
  "hound",
  "serde",
- "serde_json",
  "tempfile",
  "toml",
 ]

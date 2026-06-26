@@ -1,18 +1,12 @@
 //! Floor oracle integration smokes.
 
-use std::path::Path;
-
 use clip_sync_repair_harness::floor_oracle::{
     gap_frames_for_case, load_manifest, FloorOracleCase, FloorOracleDefaults,
 };
 
-fn repair_tests_dir() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-}
-
 #[test]
 fn floor_oracle_manifest_loads() {
-    let manifest = load_manifest(repair_tests_dir());
+    let manifest = load_manifest(clip_sync_repair_harness::repair_tests_dir!());
     assert!(manifest.version >= 1);
     assert!(
         manifest.case.len() >= 18,
