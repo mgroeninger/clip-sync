@@ -374,7 +374,7 @@ pub fn preview_patch_geometry(
     }
 }
 
-fn slice_b_interleaved(
+pub(crate) fn slice_b_interleaved(
     b_samples: &[f32],
     channels: usize,
     sample_rate: u32,

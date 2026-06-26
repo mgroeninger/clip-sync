@@ -1422,10 +1422,22 @@ pub fn build_f4_decoy_production(
 }
 
 fn fill_speech_like(samples: &mut [f32], channels: usize, sample_rate: u32, start: usize, end: usize) {
+    fill_speech_like_at_freq(samples, channels, sample_rate, start, end, 440.0, 0.45);
+}
+
+fn fill_speech_like_at_freq(
+    samples: &mut [f32],
+    channels: usize,
+    sample_rate: u32,
+    start: usize,
+    end: usize,
+    freq_hz: f64,
+    amplitude: f32,
+) {
     let ch = channels.max(1);
     for frame in start..end.min(samples.len() / ch) {
         let t = frame as f64 / sample_rate as f64;
-        let amp = (0.45 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as f32;
+        let amp = (f64::from(amplitude) * (2.0 * std::f64::consts::PI * freq_hz * t).sin()) as f32;
         for c in 0..ch {
             samples[frame * ch + c] = amp;
         }
@@ -1492,6 +1504,61 @@ pub fn build_speech_peaks_offset_from_throat(
         b_dropout_shift_frames: 0,
         structure_params,
     }
+}
+
+/// **A6** oracle: silent throat on A, speech peaks ±`peak_offset_secs`; B peaks detuned so the
+/// nominal throat is symmetric-weak while gap fill keeps haystack structure for anchor brackets.
+pub fn build_w5_symmetric_weak_throat_anchor_rescue(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+) -> EnergySignatureFixture {
+    build_w5_symmetric_weak_throat_anchor_rescue_at_freq(sample_rate, channels, peak_offset_secs, 432.0)
+}
+
+/// Build W5 rescue fixture with detuned B peaks (`decoy_freq_hz` vs 440 Hz on A).
+pub fn build_w5_symmetric_weak_throat_anchor_rescue_at_freq(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+    decoy_freq_hz: f64,
+) -> EnergySignatureFixture {
+    let mut fixture =
+        build_speech_peaks_offset_from_throat(sample_rate, channels, peak_offset_secs);
+    decoy_b_detuned_peaks(&mut fixture, decoy_freq_hz);
+    fixture.id = "w5_symmetric_weak_throat_anchor_rescue";
+    fixture
+}
+
+/// Replace only B peak bursts with detuned speech; gap fill stays 440 Hz from the base builder.
+fn decoy_b_detuned_peaks(fixture: &mut EnergySignatureFixture, decoy_freq_hz: f64) {
+    let ch = fixture.channels.max(1);
+    let rate = fixture.sample_rate;
+    let peak_offset_frames = secs_to_frames(1.0, rate);
+    let burst_frames = secs_to_frames(0.35, rate);
+    let pre_burst_end = fixture.gap_start.saturating_sub(peak_offset_frames);
+    let pre_burst_start = pre_burst_end.saturating_sub(burst_frames);
+    let post_burst_start = fixture.gap_end + peak_offset_frames;
+    let post_burst_end = (post_burst_start + burst_frames).min(fixture.a_samples.len() / ch);
+
+    fill_speech_like_at_freq(
+        &mut fixture.b_samples,
+        ch,
+        rate,
+        pre_burst_start,
+        pre_burst_end,
+        decoy_freq_hz,
+        0.45,
+    );
+    fill_speech_like_at_freq(
+        &mut fixture.b_samples,
+        ch,
+        rate,
+        post_burst_start,
+        post_burst_end,
+        decoy_freq_hz,
+        0.45,
+    );
 }
 
 /// **C3** / A2 — flat pre, speech onset after silent gap (asymmetric post); bool rising post edge.

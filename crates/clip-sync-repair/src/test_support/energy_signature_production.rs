@@ -365,6 +365,143 @@ pub fn production_geometry_params(repair: &RepairConfig) -> crate::test_support:
     }
 }
 
+/// Baseline throat Pearson at the **nominal** B map (no unified slide) — W5 oracle preflight.
+pub fn oracle_nominal_throat_pearson(
+    fixture: &EnergySignatureFixture,
+    repair: &RepairConfig,
+) -> (f64, f64) {
+    use crate::domain::gap_fill_fit::WaveformSeamContext;
+    use crate::domain::policies::{
+        border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
+        interleaved_to_channels, interleaved_to_mono, GapBorderSpec, SeamPlacement, SeamTemplates,
+    };
+    use crate::test_support::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
+
+    let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
+    let alignment = oracle_injected_alignment(total_secs);
+    let preview = preview_patch_geometry(
+        fixture,
+        &alignment,
+        a_start,
+        a_end,
+        b_start,
+        b_end,
+        &production_geometry_params(repair),
+    );
+    let ch = fixture.channels.max(1);
+    let gap_frames = preview.refined.end_frame.saturating_sub(preview.refined.start_frame);
+    let border_frames = preview.patch_structure_params.bin_frames * 3;
+    let border_spec = GapBorderSpec {
+        gap_start_frame: preview.refined.start_frame,
+        gap_end_frame: preview.refined.end_frame,
+        border_frames,
+        border_standoff_frames: 0,
+        silence_peak_fraction: preview.patch_structure_params.silence_peak_fraction,
+        absolute_rms_floor: preview.patch_structure_params.absolute_silence_rms,
+    };
+    let haystack = slice_b_interleaved(
+        &fixture.b_samples,
+        ch,
+        fixture.sample_rate,
+        preview.b_extract_start_secs,
+        preview.b_extract_end_secs,
+    );
+    let (a_pre, a_post) = border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
+    let (a_pre_ch, a_post_ch) =
+        border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
+    let b_mono = interleaved_to_mono(&haystack, ch);
+    let b_ch = interleaved_to_channels(&haystack, ch);
+    let pre_window = a_pre.len().max(1);
+    let post_window = a_post.len().max(1);
+    let templates = SeamTemplates {
+        a_pre: &a_pre,
+        a_post: &a_post,
+        a_pre_ch: &a_pre_ch,
+        a_post_ch: &a_post_ch,
+        b_mono: &b_mono,
+        b_ch: &b_ch,
+    };
+    let _waveform = WaveformSeamContext {
+        templates: &templates,
+        gap_frames,
+        pre_window,
+        post_window,
+        b_total_frames: b_mono.len(),
+        repeat_window_frames: preview.patch_structure_params.bin_frames.max(1),
+        repeat_penalty_weight: 0.0,
+    };
+    fill_seam_correlations(
+        &templates,
+        SeamPlacement {
+            start: preview.offset_nominal_start,
+            gap_frames,
+            pre_window,
+            post_window,
+        },
+    )
+}
+
+/// Baseline throat Pearson from unified haystack search (best B slide at scan throat).
+pub fn oracle_baseline_throat_pearson(
+    fixture: &EnergySignatureFixture,
+    repair: &RepairConfig,
+) -> (f64, f64) {
+    use crate::domain::gap_fill_fit::UnifiedFitWeights;
+    use crate::test_support::energy_signature_fixtures::gap_report_times;
+    use crate::test_support::patch_geometry_preview::preview_patch_geometry;
+
+    let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
+    let alignment = oracle_injected_alignment(total_secs);
+    let preview = preview_patch_geometry(
+        fixture,
+        &alignment,
+        a_start,
+        a_end,
+        b_start,
+        b_end,
+        &production_geometry_params(repair),
+    );
+    let nominal_bias_scale = match repair.gap_signature_mode {
+        GapSignatureMode::Energy => repair.fill_fit_energy_nominal_bias_scale,
+        GapSignatureMode::Bool | GapSignatureMode::Auto => repair.fill_fit_nominal_bias_scale,
+    };
+    let weights = UnifiedFitWeights {
+        structure_weight: repair.fill_fit_structure_weight,
+        waveform_weight: repair.fill_fit_waveform_weight,
+        nominal_bias_scale,
+        late_start_penalty_scale: repair.fill_fit_late_start_penalty_scale,
+    };
+    let matched = preview
+        .unified_match_on_haystack(fixture, repair.gap_signature_mode, weights)
+        .expect("oracle baseline unified match on haystack");
+    (
+        matched.alignment.pre_correlation,
+        matched.alignment.post_correlation,
+    )
+}
+
+/// Repair knobs for the W5 anchor-rescue oracle (A6).
+pub fn w5_anchor_rescue_repair(anchor_seam_mode: crate::domain::AnchorSeamMode) -> RepairConfig {
+    let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
+    repair.fill_mode = crate::domain::FillMode::Fit;
+    repair.fit_boundary_search = crate::domain::FitBoundarySearch::BaselineOnly;
+    repair.gap_signature_mode = GapSignatureMode::Energy;
+    repair.anchor_seam_mode = anchor_seam_mode;
+    repair.residual_gate = crate::domain::ResidualGateMode::Off;
+    repair.min_fill_correlation = 0.35;
+    repair.fill_marginal_margin = 0.08;
+    repair.strong_structure_trust = 0.90;
+    repair.normalize_fill = false;
+    repair.fill_length_slack_secs = 0.05;
+    repair.min_border_discovery_secs = 0.25;
+    repair.border_standoff_secs = 0.0;
+    repair.fill_border_search_secs = 10.0;
+    repair.gap_end_extend_on_post_seam_fail = false;
+    repair.gap_start_extend_on_pre_seam_fail = false;
+    repair.gap_end_extend_max_ms = 0;
+    repair
+}
+
 /// Replace scan alignment with I1-style oracle injection (start + end clips, zero drift).
 pub fn inject_oracle_alignment(report: &mut GapReport, total_secs: f64) {
     report.alignment = oracle_injected_alignment(total_secs);

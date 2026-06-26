@@ -1,4 +1,4 @@
-//! Anchor seam oracle: speech peaks offset from silent throat (plan §7 rows A1–A5b, A2–A3).
+//! Anchor seam oracle: speech peaks offset from silent throat (plan §7 rows A1–A6, A2–A3).
 //!
 //! Tier: **integration** (`Invoke-RepairIntegrationOnly` in `scripts/test-tier.ps1`).
 //! Domain + pipeline oracles for editorial anchor search; distinct from sine-seam rows in
@@ -21,10 +21,12 @@ use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_c3_speech_boundary_asymmetric_post, build_f4_decoy_production,
-    build_speech_peaks_offset_from_throat, EnergySignatureFixture,
+    build_speech_peaks_offset_from_throat, build_w5_symmetric_weak_throat_anchor_rescue,
+    build_w5_symmetric_weak_throat_anchor_rescue_at_freq, EnergySignatureFixture,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
+    gap_report_from_energy_fixture, oracle_baseline_throat_pearson, oracle_nominal_throat_pearson,
+    patch_request_from_repair, production_fit_weights_config, w5_anchor_rescue_repair,
 };
 use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_request_with_options};
 
@@ -444,4 +446,135 @@ fn a3_flat_c1_anchor_off_and_force_same_outcome() {
         std::mem::discriminant(&force),
         "A3: flat C1 should behave the same with anchor off vs force (only scan edges); off={off:?} force={force:?}"
     );
+}
+
+const W5_AUTO_TRIGGER_FLOOR: f64 = 0.27;
+
+fn assert_w5_throat_symmetric_weak(pre: f64, post: f64) {
+    assert!(
+        pre < W5_AUTO_TRIGGER_FLOOR && post < W5_AUTO_TRIGGER_FLOOR,
+        "expected throat below auto trigger ({W5_AUTO_TRIGGER_FLOOR}): pre={pre:.3} post={post:.3}"
+    );
+    assert!(
+        (pre - post).abs() < 0.10,
+        "expected symmetric_weak throat: pre={pre:.3} post={post:.3}"
+    );
+}
+
+/// **A6** domain — W5 throat symmetric-weak; feasible peak anchor brackets exist.
+#[test]
+fn w5_fixture_throat_symmetric_weak_and_brackets_exist() {
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    let (pre, post) = oracle_nominal_throat_pearson(&fixture, &repair);
+    assert_w5_throat_symmetric_weak(pre, post);
+
+    let scan = refined_scan_hole(&fixture);
+    let params = anchor_params(&fixture);
+    let set = list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params);
+    assert!(
+        set.pre.iter().any(|c| {
+            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
+        }),
+        "A6: expected pre-anchor before throat: {:?}",
+        set.pre
+    );
+    let brackets = list_feasible_anchor_brackets(&set, scan, &params);
+    assert!(
+        brackets.iter().any(|b| b.move_frames > 0 && b.refined.start_frame < scan.start_frame),
+        "A6: expected movable bracket with pre-anchor before throat: {:?}",
+        brackets
+    );
+}
+
+/// **A6** pipeline — `anchor_seam_mode=auto` rescues symmetric-weak throat via peak bracket.
+#[test]
+fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    let request = patch_request_from_repair(report, &repair);
+
+    let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .expect("patch");
+
+    let gap = &response.summary.gaps[0];
+    let facts = routing_facts(gap);
+    assert!(facts.patched, "expected patched gap, got {:?}", gap.status);
+    assert!(facts.anchor_seam_used, "A6 auto: anchor path must win: {facts:?}");
+    assert!(facts.anchor_move_nonzero, "A6 auto: expected bracket move: {facts:?}");
+    assert!(
+        matches!(
+            facts.patch_tier,
+            PatchTier::AnchorTrusted | PatchTier::Marginal | PatchTier::High
+        ),
+        "A6 auto: unexpected tier: {:?}",
+        facts.patch_tier
+    );
+    if facts.patch_tier == PatchTier::AnchorTrusted {
+        assert_eq!(facts.seam_shape, SeamShape::SymmetricWeak);
+        assert_eq!(facts.confidence, Some(FillConfidence::Marginal));
+    }
+}
+
+/// **A6b** pipeline — `anchor_seam_mode=force` matches auto on W5 rescue fixture.
+#[test]
+fn w5_anchor_rescue_pipeline_engages_anchor_seam_force() {
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Force);
+    let request = patch_request_from_repair(report, &repair);
+
+    let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .expect("patch");
+
+    let gap = &response.summary.gaps[0];
+    let facts = routing_facts(gap);
+    assert!(facts.patched);
+    assert!(facts.anchor_seam_used, "A6b force: anchor path must win: {facts:?}");
+    assert!(facts.anchor_move_nonzero);
+}
+
+#[test]
+#[ignore = "manual fixture tuning — run with --ignored --nocapture"]
+fn probe_w5_anchor_rescue_scores() {
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    for freq in [432.0, 434.0, 436.0, 437.0, 438.0, 439.0, 441.0, 442.0] {
+        let fixture = build_w5_symmetric_weak_throat_anchor_rescue_at_freq(48_000, 1, 1.0, freq);
+        let (pre, post) = oracle_nominal_throat_pearson(&fixture, &repair);
+        let nmin = pre.min(post);
+        if nmin >= 0.10 && nmin < 0.27 && (pre - post).abs() < 0.10 {
+            let (b_pre, b_post) = oracle_baseline_throat_pearson(&fixture, &repair);
+            eprintln!(
+                "freq={freq}: nominal pre={pre:.3} post={post:.3} baseline pre={b_pre:.3} post={b_post:.3}"
+            );
+        }
+    }
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    let (pre, post) = oracle_nominal_throat_pearson(&fixture, &repair);
+    eprintln!("W5 nominal throat pearson: pre={pre:.4} post={post:.4} min={:.4}", pre.min(post));
+    let (b_pre, b_post) = oracle_baseline_throat_pearson(&fixture, &repair);
+    eprintln!(
+        "W5 baseline unified throat pearson: pre={b_pre:.4} post={b_post:.4} min={:.4}",
+        b_pre.min(b_post)
+    );
+    let scan = refined_scan_hole(&fixture);
+    let params = anchor_params(&fixture);
+    let brackets = list_feasible_anchor_brackets(
+        &list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params),
+        scan,
+        &params,
+    );
+    eprintln!("feasible brackets: {}", brackets.len());
+    for b in &brackets {
+        eprintln!(
+            "  bracket pre={} post={} move={}",
+            b.pre.frame, b.post.frame, b.move_frames
+        );
+    }
 }
