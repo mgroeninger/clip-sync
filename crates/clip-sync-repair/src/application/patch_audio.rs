@@ -36,6 +36,7 @@ use crate::domain::{
         PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable,
     },
     patch_result::{
+        format_gap_fill_marginal_verbose_line, format_gap_fill_marginal_warn_reason,
         format_gap_fill_skip_verbose_line, format_gap_patch_skip_warn_reason,
         residual_summary_scalar_fields, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
         GapPatchStatus, PatchSummary,
@@ -1086,6 +1087,34 @@ fn log_skip_gap_fill(
     }
 }
 
+fn log_marginal_gap_fill(
+    progress: &dyn ProgressReporter,
+    gaps: &[Gap],
+    a_start_secs: f64,
+    a_end_secs: f64,
+    pre: f64,
+    post: f64,
+    min: f32,
+    anchor_seam: bool,
+) {
+    progress.flush_progress();
+    if progress.detailed_extraction_progress() {
+        progress.phase_verbose(&format_gap_fill_marginal_verbose_line(
+            pre, post, min, anchor_seam,
+        ));
+    } else {
+        tracing::warn!(
+            "{}",
+            format_skip_gap_fill_log(
+                gaps,
+                a_start_secs,
+                a_end_secs,
+                &format_gap_fill_marginal_warn_reason(pre, post, min, anchor_seam),
+            )
+        );
+    }
+}
+
 fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
@@ -1645,11 +1674,26 @@ fn prepare_region_patch(
         fit_boundary_grid_cells,
         fit_haystack_secs,
         residual: residual_verdict,
+        anchor_seam_used,
+        anchor_trusted,
         ..
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
-    tag_ctx.anchor_seam_used = gate_outcome.anchor_seam_used;
-    tag_ctx.anchor_trusted = gate_outcome.anchor_trusted;
+    tag_ctx.anchor_seam_used = anchor_seam_used;
+    tag_ctx.anchor_trusted = anchor_trusted;
+
+    if confidence == FillConfidence::Marginal {
+        log_marginal_gap_fill(
+            progress,
+            &request.report.gaps,
+            region.a_start_secs,
+            region.a_end_secs,
+            report_pre,
+            report_post,
+            request.min_fill_correlation,
+            anchor_seam_used,
+        );
+    }
 
     let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
 

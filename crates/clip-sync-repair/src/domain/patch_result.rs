@@ -117,6 +117,44 @@ pub fn format_gap_fill_skip_verbose_line(reason: &GapPatchSkipReason) -> String 
     )
 }
 
+/// Human-readable marginal patch detail for stdout gap tables and verbose stderr (`-v`).
+pub fn format_gap_fill_marginal_detail(
+    pre: f64,
+    post: f64,
+    min: f32,
+    anchor_seam: bool,
+) -> String {
+    let kind = if anchor_seam {
+        "marginal anchor seam"
+    } else {
+        "marginal waveform seam"
+    };
+    format!("{kind} (pre={pre:.2} post={post:.2} min={min:.2})")
+}
+
+/// Short marginal reason for default-mode `tracing::warn` mid-run notifications.
+pub fn format_gap_fill_marginal_warn_reason(
+    pre: f64,
+    post: f64,
+    min: f32,
+    anchor_seam: bool,
+) -> String {
+    format_gap_fill_marginal_detail(pre, post, min, anchor_seam)
+}
+
+/// Verbose stderr line (`-v`) aligned with per-gap fill plan indentation.
+pub fn format_gap_fill_marginal_verbose_line(
+    pre: f64,
+    post: f64,
+    min: f32,
+    anchor_seam: bool,
+) -> String {
+    format!(
+        "           patched: {}",
+        format_gap_fill_marginal_detail(pre, post, min, anchor_seam)
+    )
+}
+
 /// Per-gap outcome after a patch pass (scan gaps in report order).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GapPatchOutcome {
@@ -286,6 +324,18 @@ mod format_tests {
         assert_eq!(
             format_gap_fill_skip_verbose_line(&reason),
             "           skipped: boundary correlation below threshold (pre=0.23 post=0.21 min=0.35)"
+        );
+    }
+
+    #[test]
+    fn gap_fill_marginal_verbose_line_matches_stdout_status() {
+        assert_eq!(
+            format_gap_fill_marginal_verbose_line(0.31, 1.0, 0.35, false),
+            "           patched: marginal waveform seam (pre=0.31 post=1.00 min=0.35)"
+        );
+        assert_eq!(
+            format_gap_fill_marginal_verbose_line(0.28, 0.9, 0.35, true),
+            "           patched: marginal anchor seam (pre=0.28 post=0.90 min=0.35)"
         );
     }
 

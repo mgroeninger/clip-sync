@@ -476,14 +476,6 @@ fn select_joint_fit_winner_with_residual(
     for candidate in pool {
         match finalize_fit_outcome_residual(candidate.outcome, baseline, params, cache) {
             Ok(mut outcome) => {
-                if outcome.confidence == FillConfidence::Marginal {
-                    tracing::warn!(
-                        pre = outcome.report_pre,
-                        post = outcome.report_post,
-                        min = params.min_fill_correlation,
-                        "marginal waveform seam patch (below min_fill_correlation)"
-                    );
-                }
                 outcome.fit_haystack_secs = haystack_secs;
                 if let Some(cells) = grid_cells {
                     outcome.fit_used_boundary_grid = true;
@@ -743,6 +735,10 @@ fn try_anchor_seam_joint_search(
             continue;
         }
         if defer_residual {
+            // `record_fit_joint_candidate_to_pool` only pushes on a passing gate; on failure the
+            // pool is unchanged. Mark only the candidate we actually appended — otherwise a failed
+            // bracket would stamp `anchor_seam_used` onto the prior entry (e.g. the baseline).
+            let pool_len_before = pool.len();
             record_fit_joint_candidate_to_pool(
                 pool,
                 best_below_floor,
@@ -752,8 +748,10 @@ fn try_anchor_seam_joint_search(
                 cache,
                 true,
             );
-            if let Some(candidate) = pool.last_mut() {
-                mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
+            if pool.len() > pool_len_before {
+                if let Some(candidate) = pool.last_mut() {
+                    mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
+                }
             }
         } else {
             record_fit_joint_candidate(
@@ -817,24 +815,8 @@ fn try_anchor_seam_joint_search(
                     params,
                     cache,
                 )?;
-                if outcome.confidence == FillConfidence::Marginal {
-                    tracing::warn!(
-                        pre = outcome.report_pre,
-                        post = outcome.report_post,
-                        min = params.min_fill_correlation,
-                        "marginal waveform seam patch (anchor seam, below min_fill_correlation)"
-                    );
-                }
                 outcome.fit_haystack_secs = haystack_secs;
                 return Ok(Some(outcome));
-            }
-            if candidate.outcome.confidence == FillConfidence::Marginal {
-                tracing::warn!(
-                    pre = candidate.outcome.report_pre,
-                    post = candidate.outcome.report_post,
-                    min = params.min_fill_correlation,
-                    "marginal waveform seam patch (anchor seam, below min_fill_correlation)"
-                );
             }
             let mut outcome = candidate.outcome.clone();
             outcome.fit_haystack_secs = haystack_secs;
@@ -937,14 +919,6 @@ fn evaluate_seam_gate_fit_joint(
                     &cache,
                     haystack_secs,
                     None,
-                );
-            }
-            if candidate.outcome.confidence == FillConfidence::Marginal {
-                tracing::warn!(
-                    pre = candidate.outcome.report_pre,
-                    post = candidate.outcome.report_post,
-                    min = params.min_fill_correlation,
-                    "marginal waveform seam patch (below min_fill_correlation)"
                 );
             }
             let mut outcome = candidate.outcome.clone();
@@ -1077,14 +1051,6 @@ fn evaluate_seam_gate_fit_joint(
     }
 
     if let Some(mut candidate) = best {
-        if candidate.outcome.confidence == FillConfidence::Marginal {
-            tracing::warn!(
-                pre = candidate.outcome.report_pre,
-                post = candidate.outcome.report_post,
-                min = params.min_fill_correlation,
-                "marginal waveform seam patch (below min_fill_correlation)"
-            );
-        }
         candidate.outcome.fit_used_boundary_grid = true;
         candidate.outcome.fit_boundary_grid_cells = Some(grid_cells);
         candidate.outcome.fit_haystack_secs = haystack_secs;

@@ -54,8 +54,10 @@ pub use repair_profile::{
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};
 pub use patch_result::{
-    format_gap_fill_skip_verbose_line, format_gap_patch_skip_reason,
-    format_gap_patch_skip_warn_reason, residual_summary_scalar_fields, GapFillSkipReason,
+    format_gap_fill_marginal_detail, format_gap_fill_marginal_verbose_line,
+    format_gap_fill_marginal_warn_reason, format_gap_fill_skip_verbose_line,
+    format_gap_patch_skip_reason, format_gap_patch_skip_warn_reason,
+    residual_summary_scalar_fields, GapFillSkipReason,
     GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
 };
 pub use track_match::{
