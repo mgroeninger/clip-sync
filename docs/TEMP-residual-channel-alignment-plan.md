@@ -264,8 +264,10 @@ tree — no cleanup needed.)
 | B | `application/patch_region.rs` (`measure_fit_residual_verdict` ~760) | Build `GapBorderSpec` from `(params, refined)`, call `selected_seam_channels`, pass `score_channels` + `cache.b_ch` into `SeamFloorParams`; build verdict from multichannel path. **No signature changes** to `finalize_fit_outcome_residual` or the candidate pool — selection is recomputed here, not threaded |
 | C | `application/patch_region.rs` (`FitHaystackCache`) | Already has `b_ch` — no new cache; extract `gap_border_spec(params, refined)` helper to DRY the two inline `GapBorderSpec` builds |
 | D | `application/patch_region.rs` (`log_residual_channel_breakdown`) | **Done** — `selected_channels` + per-channel headroom to the `RUST_LOG=debug` log (not JSON; verdict stays `Copy`, §4e) |
-| E | `tests/seam_residual_corpus.rs` | *TODO* — add 5.1 center-dominant row; keep mono fixtures green |
-| F | `docs/seam-scoring.md` | *TODO* — short § “Residual channel policy” pointing here |
+| E0 | `test_support/energy_signature_fixtures.rs` | *TODO* — `overwrite_channels` per-channel fixture helper (prereq for E1/E2; `write_frame` is uniform across channels, §7) |
+| E1 | `tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs` | *TODO* — reroute harness through `seam_chosen_and_floor_multichannel`; center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
+| E2 | `tests/seam_residual_oracle.rs` | *TODO* — center-dominant 6ch case in `seam_residual_oracle_csv` (real pipeline; §7 1b) |
+| F | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
 
 No change to: Pearson functions, structure match, fill search, gate mode legacy path (residual still
 fit-only until legacy path gets measurement — optional follow-up).
@@ -275,7 +277,8 @@ fit-only until legacy path gets measurement — optional follow-up).
 | Phase | Deliverable |
 |-------|-------------|
 | **P0 — domain + unit tests** | **Done** — per-channel cancel on fixed windows; aggregation; center-dominant test (`seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise`), stereo-equal, empty-selection, and aggregation/informative-decoupling tests in `policies.rs` |
-| **P1 — pipeline** | **Done** — wired in `measure_fit_residual_verdict` (recompute selection via `selected_seam_channels`, §4b); `log_residual_channel_breakdown` debug log. *TODO:* oracle + corpus 6ch rows |
+| **P1 — pipeline** | **Done** — wired in `measure_fit_residual_verdict` (recompute selection via `selected_seam_channels`, §4b); `log_residual_channel_breakdown` debug log |
+| **P1.5 — multichannel fixtures** | *TODO* — per-channel fixture helper (E0), then oracle 6ch (E2, §7 1b) and corpus 6ch + harness reroute (E1, §7 1a). Validates the now-live default-on veto on multichannel/stereo gaps |
 | **P2 — gate** | *TODO* — proceed with [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) veto on aligned measurements |
 
 Channel alignment is **not blocked** on lag-radius unification or `informative` — but those should
@@ -295,14 +298,61 @@ land in gate PR; this plan can merge independently as report-only measurement im
   non-matching channel → both measured at the matching channel's lag, proving alignment is not
   hijacked by the loudest channel (`..._shared_lag_follows_matching_channel`).
 
-**Corpus (`tests/seam_residual_corpus.rs`)**
+### Prerequisite — per-channel fixture helper (blocks both 1a and 1b)
 
-- New synthetic fixture or extend broadband builder with 6ch center-dominant layout.
-- CSV column `selected_channels` for calibration runs.
+**Why it's needed:** the existing builders can't express per-channel content. `write_frame`
+(`test_support/energy_signature_fixtures.rs`) writes the *same* amplitude to every channel, so
+`build_f1_production` / `build_f4_decoy_production` / `build_broadband` produce identical audio on all
+channels — a center-dominant layout is impossible. This must land before any multichannel fixture.
 
-**Integration**
+**Shape (channel-mask post-step, the cheap option):** keep the existing uniform builders, then add a
+helper that rewrites selected channels of the already-built interleaved A and B buffers:
 
-- Extend `seam_residual_oracle_csv` (optional 6ch variant) — headroom stays < 6 dB at true fill.
+```rust
+/// Overwrite `channels_to_replace` of an interleaved buffer with `gen(ch, frame)` (e.g. decorrelated
+/// noise or silence), leaving the others as the builder produced them. Apply identically-seeded to A
+/// and B for "same content" channels, differently-seeded for "different content" channels.
+pub fn overwrite_channels(
+    samples: &mut [f32], channels: usize,
+    channels_to_replace: &[usize], gen: impl Fn(usize, usize) -> f32,
+);
+```
+
+A **center-dominant 6ch** fixture is then: build a normal fixture (real signal on every channel),
+keep ch FC as-is on both A and B, overwrite FL/FR/LFE/Ls/Rs with **decorrelated broadband noise**
+(different seed on A vs B, so those channels do *not* cancel). The selection gate then keeps FC (and
+any channel within 20 dB), and residual must cancel on FC while the noise channels do not.
+
+### 1a — Corpus (`tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs`)
+
+Today `score_placement` calls the **mono** `seam_chosen_and_floor`, so a 6ch row added as-is would not
+exercise channel alignment. Required work:
+
+1. **Reroute the harness through the production path.** Add a multichannel scoring variant alongside
+   the mono one: build `GapBorderSpec`, call `selected_seam_channels`, and when the selection is
+   non-empty drive `seam_chosen_and_floor_multichannel(&params, &b_ch, &selected, …)` →
+   `SeamResidualVerdict::from_channel_residuals`; else fall back to today's mono path. Surface the
+   selected indices on `ScoredPlacement` for the CSV.
+2. **CSV columns** `selected_channels` and `path` (`mono` | `multichannel`) for calibration runs.
+3. **Assertions (center-dominant 6ch fixture, at truth and at the F4-style decoy):**
+   - *Truth, multichannel:* `worst_floor_db ≤ −40` (FC cancels), `informative == true`,
+     `worst_headroom_db` within `DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB` → gate **passes**.
+   - *Truth, mono vs multichannel (documents the fix):* the multichannel `worst_floor_db` is at least
+     **20 dB deeper** than the mono-harness `worst_floor_db` on the same fixture (the surround noise
+     dilutes the downmix). This is the corpus analog of the `..._follows_center` unit test, but on the
+     production scoring path.
+   - *Decoy, multichannel:* `informative == true` and `worst_headroom_db > DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB`
+     → gate **vetoes** (mirrors `f4_decoy_placement_informative_with_high_headroom`).
+
+### 1b — Integration oracle (`tests/seam_residual_oracle.rs`)
+
+The oracle runs the **real pipeline** (`PatchAudio::execute`), which already routes through
+`seam_chosen_and_floor_multichannel`, so no harness change is needed — only the fixture.
+
+- Add a center-dominant 6ch fixture (via the helper above) and a 6ch case to `seam_residual_oracle_csv`.
+- **Assertion:** at the true fill, `gap.residual.worst_headroom_db() < 6.0` (matches the existing
+  same-master oracle bar) and `informative == true`; a decoy placement skips with
+  `ResidualHeadroomExceeded`.
 
 All new tests run in CI (not `#[ignore]`); diagnostics stay ignored.
 
