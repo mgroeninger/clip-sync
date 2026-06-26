@@ -1515,16 +1515,6 @@ pub fn build_w5_symmetric_weak_throat_anchor_rescue(
     channels: usize,
     peak_offset_secs: f64,
 ) -> EnergySignatureFixture {
-    build_w5_symmetric_weak_throat_anchor_rescue_at_freq(sample_rate, channels, peak_offset_secs, 440.0)
-}
-
-/// Build W5 rescue fixture (`peak_freq_hz` reserved for manual detune sweeps).
-pub fn build_w5_symmetric_weak_throat_anchor_rescue_at_freq(
-    sample_rate: u32,
-    channels: usize,
-    peak_offset_secs: f64,
-    _peak_freq_hz: f64,
-) -> EnergySignatureFixture {
     let peak_offset_frames = secs_to_frames(peak_offset_secs, sample_rate);
     let mut fixture =
         build_speech_peaks_offset_from_throat(sample_rate, channels, peak_offset_secs);
