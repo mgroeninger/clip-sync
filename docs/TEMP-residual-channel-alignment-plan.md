@@ -266,7 +266,7 @@ tree — no cleanup needed.)
 | D | `application/patch_region.rs` (`log_residual_channel_breakdown`) | **Done** — `selected_channels` + per-channel headroom to the `RUST_LOG=debug` log (not JSON; verdict stays `Copy`, §4e) |
 | E | `test_support/energy_signature_fixtures.rs` | **Done** — `overwrite_channels` + `channel_noise` per-channel fixture helpers (prereq for F/G; `write_frame` is uniform across channels, §7 Prerequisite) |
 | F | `tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs` | *TODO* — reroute harness through `seam_chosen_and_floor_multichannel`; center-dominant 6ch row + assertions (§7 1a); keep mono fixtures green |
-| G | `tests/seam_residual_oracle.rs` | *TODO* — center-dominant 6ch case in `seam_residual_oracle_csv` (real pipeline; §7 1b) |
+| G | `tests/seam_residual_oracle.rs` | **Done** — `seam_residual_oracle_center_dominant_6ch` + `build_center_dominant_oracle` (real pipeline; §7 1b). **Diagnostic tier** (`required-features = ["diagnostic-tests"]`), not PR CI |
 | H | `docs/seam-scoring.md` | **Done** — “Residual channel policy” § (selection + shared lag) |
 
 No change to: Pearson functions, structure match, fill search, gate mode legacy path (residual still
@@ -278,7 +278,7 @@ fit-only until legacy path gets measurement — optional follow-up).
 |-------|-------------|
 | **P0 — domain + unit tests** | **Done** — per-channel cancel on fixed windows; aggregation; center-dominant test (`seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise`), stereo-equal, empty-selection, and aggregation/informative-decoupling tests in `policies.rs` |
 | **P1 — pipeline** | **Done** — wired in `measure_fit_residual_verdict` (recompute selection via `selected_seam_channels`, §4b); `log_residual_channel_breakdown` debug log |
-| **P1.5 — multichannel fixtures** | *TODO* — per-channel fixture helper (row E), then oracle 6ch (row G, §7 1b) and corpus 6ch + harness reroute (row F, §7 1a). Validates the now-live default-on veto on multichannel/stereo gaps |
+| **P1.5 — multichannel fixtures** | row E (fixture helper) **done**; row G (oracle 6ch, §7 1b, diagnostic tier) **done**; row F (corpus 6ch + harness reroute, §7 1a, PR-CI) *TODO* — the PR-CI guard on the now-live default-on veto |
 | **P2 — gate** | *TODO* — proceed with [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) veto on aligned measurements |
 
 Channel alignment is **not blocked** on lag-radius unification or `informative` — but those should
@@ -319,9 +319,17 @@ pub fn overwrite_channels(
 ```
 
 A **center-dominant 6ch** fixture is then: build a normal fixture (real signal on every channel),
-keep ch FC as-is on both A and B, overwrite FL/FR/LFE/Ls/Rs with **decorrelated broadband noise**
-(different seed on A vs B, so those channels do *not* cancel). The selection gate then keeps FC (and
-any channel within 20 dB), and residual must cancel on FC while the noise channels do not.
+keep ch FC as-is on both A and B, and demote FL/FR/LFE/Ls/Rs. Two variants:
+
+- **Real-pipeline (1b):** demote to **silence**. The pipeline's boundary refinement runs on the gap,
+  and noise in the surrounds' *gap region* perturbs it (observed: `floor_pre` ≈ −4 dB, pre window
+  mis-mapped). Silence keeps the gap a clean all-channel dropout. (Shipped `build_center_dominant_oracle`
+  uses this.)
+- **Score harness (1a):** decorrelated **noise** is fine (no real boundary refinement on the
+  synthetic placement) and additionally exercises "loud-but-non-cancelling" surrounds — use a
+  different `channel_noise` seed on A vs B so they do not cancel. Keep amplitude either well below the
+  20 dB selection gate (excluded) *or* within it (selected but high residual), depending on which
+  behavior the row asserts.
 
 ### 1a — Corpus (`tests/seam_residual_corpus.rs` + `common/seam_residual_scoring.rs`)
 
@@ -344,17 +352,32 @@ exercise channel alignment. Required work:
    - *Decoy, multichannel:* `informative == true` and `worst_headroom_db > DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB`
      → gate **vetoes** (mirrors `f4_decoy_placement_informative_with_high_headroom`).
 
-### 1b — Integration oracle (`tests/seam_residual_oracle.rs`)
+### 1b — Real-pipeline oracle (`tests/seam_residual_oracle.rs`) — **diagnostic tier, not PR CI**
 
 The oracle runs the **real pipeline** (`PatchAudio::execute`), which already routes through
-`seam_chosen_and_floor_multichannel`, so no harness change is needed — only the fixture.
+`seam_chosen_and_floor_multichannel`, so no harness change is needed — only the fixture. **Tier
+correction:** this file is gated `required-features = ["diagnostic-tests"]` in `Cargo.toml`, so it is
+**not** PR-CI; it is the slow (~40 s) on-demand confirmation. PR-CI multichannel coverage comes from
+the fast `policies.rs` unit tests (domain logic) and from 1a (integration tier) — *not* from 1b.
 
-- Add a center-dominant 6ch fixture (via the helper above) and a 6ch case to `seam_residual_oracle_csv`.
-- **Assertion:** at the true fill, `gap.residual.worst_headroom_db() < 6.0` (matches the existing
-  same-master oracle bar) and `informative == true`; a decoy placement skips with
-  `ResidualHeadroomExceeded`.
+- `build_center_dominant_oracle` (via `overwrite_channels`): 6ch, only the center carries the master,
+  the other five **silent** so the gap is a clean all-channel dropout. (Noise in the surrounds' *gap*
+  region perturbs boundary refinement and the pre-side reference window — observed `floor_pre` ≈ −4
+  dB; silence fixes it. Noisy-surround robustness is the unit tests' job, not the oracle's.)
+- **Assertion (truth):** `gap.residual.worst_headroom_db() < 6.0` and `informative == true`; both
+  floors cancel (≈ −44.8 dB). Decoy/veto is left to 1a (corpus has the F4 decoy infrastructure).
 
-All new tests run in CI (not `#[ignore]`); diagnostics stay ignored.
+### Tiering summary (answers "are these in the right test structure?")
+
+| Coverage | Where | Tier / CI |
+|----------|-------|-----------|
+| Per-channel domain logic + shared lag | `policies.rs` unit tests | lib unit — **PR CI**, fast |
+| Fixture helpers (`overwrite_channels`, `channel_noise`) | `energy_signature_fixtures.rs` unit tests | lib unit — **PR CI**, fast |
+| Multichannel via production scoring path | 1a (`seam_residual_corpus.rs`) | integration — **PR CI** (`pr-repair`) |
+| Multichannel via real `PatchAudio` pipeline | 1b (`seam_residual_oracle.rs`) | **diagnostic** — on-demand only |
+
+So 1a is the PR-CI guard on the now-live default-on veto for multichannel/stereo; 1b is the deeper
+real-pipeline confirmation run on demand.
 
 ## 8. Risks & open questions
 
