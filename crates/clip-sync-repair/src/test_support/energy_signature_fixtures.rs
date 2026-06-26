@@ -232,6 +232,44 @@ pub fn write_frame(samples: &mut Vec<f32>, channels: usize, frame: usize, amp: f
     }
 }
 
+/// Overwrite `channels_to_replace` of an interleaved buffer with `gen(channel, frame)`, leaving the
+/// other channels as the builder produced them. The base builders ([`write_frame`]) write identical
+/// audio to every channel; this turns such a buffer into a per-channel layout — e.g. a center-dominant
+/// 5.1 fixture: keep the signal channel(s) as-is and replace the surrounds/LFE with decorrelated noise
+/// (different seed on A vs B → those channels do **not** cancel) or silence. Out-of-range indices are
+/// ignored.
+pub fn overwrite_channels(
+    samples: &mut [f32],
+    channels: usize,
+    channels_to_replace: &[usize],
+    gen: impl Fn(usize, usize) -> f32,
+) {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    for frame in 0..total_frames {
+        for &ch in channels_to_replace {
+            if ch < channels {
+                samples[frame * channels + ch] = gen(ch, frame);
+            }
+        }
+    }
+}
+
+/// Deterministic decorrelated noise for [`overwrite_channels`]: a per-`(seed, channel, frame)` PRNG in
+/// `[-amplitude, amplitude]`. Use the **same** `seed` on A and B for a channel that should cancel
+/// (same-master), a **different** `seed` for one that should not (independent capture / noise).
+pub fn channel_noise(seed: u32, amplitude: f32) -> impl Fn(usize, usize) -> f32 {
+    move |ch, frame| {
+        let mut x = seed
+            .wrapping_mul(2_654_435_761)
+            .wrapping_add((ch as u32).wrapping_mul(40_503))
+            .wrapping_add(frame as u32);
+        x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let unit = (x >> 8) as f32 / (1u32 << 24) as f32; // [0, 1)
+        unit * 2.0 * amplitude - amplitude
+    }
+}
+
 fn write_post_with_rise(
     samples: &mut Vec<f32>,
     channels: usize,
@@ -1440,6 +1478,35 @@ mod production_spec_tests {
     fn gap_anchor_secs_sums_context_border_and_margin() {
         let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
         assert!((gap_anchor_secs(&spec) - 14.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn overwrite_channels_replaces_only_named_channels() {
+        let channels = 3usize;
+        let mut buf = vec![1.0f32; 4 * channels]; // 4 frames, all channels = 1.0
+        overwrite_channels(&mut buf, channels, &[0, 2, 9], |ch, frame| (ch * 10 + frame) as f32);
+        for frame in 0..4 {
+            assert_eq!(buf[frame * channels], (frame) as f32, "ch0 replaced");
+            assert_eq!(buf[frame * channels + 1], 1.0, "ch1 untouched");
+            assert_eq!(buf[frame * channels + 2], (20 + frame) as f32, "ch2 replaced");
+        }
+    }
+
+    #[test]
+    fn channel_noise_is_deterministic_seed_dependent_and_bounded() {
+        let a = channel_noise(7, 0.3);
+        let same = channel_noise(7, 0.3);
+        let diff = channel_noise(8, 0.3);
+        let mut decorrelated = false;
+        for frame in 0..256 {
+            let v = a(1, frame);
+            assert!((-0.3..0.3).contains(&v), "noise {v} within ±amplitude");
+            assert_eq!(v, same(1, frame), "same seed → identical");
+            if (v - diff(1, frame)).abs() > 1e-6 {
+                decorrelated = true;
+            }
+        }
+        assert!(decorrelated, "different seeds must produce different noise");
     }
 
     #[test]
