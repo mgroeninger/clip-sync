@@ -1,6 +1,7 @@
 # Residual channel alignment — plan (DRAFT)
 
-Status: **P0 + P1 implemented** (domain per-channel measurement + pipeline wiring + unit tests).
+Status: **P0 + P1 implemented** (domain per-channel measurement + shared cross-channel lag + pipeline
+wiring + unit tests).
 Remaining: P2 gate veto (separate PR, see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md)),
 corpus/oracle 6ch rows (§7), and doc cross-links (§5 rows E/F). Align residual/floor cancellation with
 Pearson’s **energy-selected per-channel** policy so surround and center-dominant mixes are measured on
@@ -123,7 +124,26 @@ Change **only** how we test energy and extract samples inside that range:
 
 3. **B side:** cancel against `b_ch[ch]`, not `b_mono`.
 
-4. **Lag + gain:** existing `seam_residual_for_side` unchanged (scalar LSQ + integer lag search).
+4. **Shared lag, per-channel gain (`shared_alignment_lag`).** The integer lag is a single physical
+   quantity — same master, same clock — so it is found **once across all selected channels**, not
+   independently per channel. For each candidate lag we sum the channels' peak-normalized correlation
+   (clamped at 0) and take the max; each channel then fits only its scalar gain and residual at that
+   **fixed** lag (`measure_a_win_at_delta` with `max_lag = 0`).
+
+   **Why summed correlation, not a mono downmix.** A naive "downmix all channels, find the lag on the
+   mix" *fails*: downmixing adds the non-matching/loud channels' **energy** into one waveform, so the
+   best-fitting lag of the mix is pulled away from the true lag of the channel that actually carries
+   the gap — corrupting alignment for every channel including the good one (observed: center channel
+   cancels to only −3.7 dB). Summing **correlations** instead adds **match quality**: a loud channel
+   whose B content does not match correlates ~0 at every lag and contributes nothing, while the
+   matching channel(s) contribute a sharp peak at the true lag. So all channels feed the alignment
+   with **no dependence on which one is dominant** — the original motivation — without the downmix
+   dilution. (Proven by `seam_chosen_and_floor_multichannel_shared_lag_follows_matching_channel`:
+   gap content in a non-front channel + a *louder* non-matching channel → both measured at the
+   matching channel's lag.)
+
+   The chosen-placement lag is the shared floor lag shifted by the placement slide (same
+   `chosen_lag_center` rule as the mono path), so chosen and floor compare the same B content.
 
 ### 4d. Per-channel headroom and aggregation
 
@@ -227,8 +247,11 @@ the pre+post `Vec<SeamChannelResidual>` and derives the scalar side summaries + 
 §4e table. `from_parts*` builders are kept unchanged for the mono/legacy/test callers.
 
 Internals refactored to share one cancel path: `walk_reference_frames` (frame-range walk with a
-pluggable energy predicate), `measure_a_win_at_delta`, and `chosen_and_floor_on_window` are now used
-by both the mono `seam_chosen_and_floor` and the per-channel function.
+pluggable energy predicate), `measure_a_win_at_delta`, `chosen_lag_center`, and
+`chosen_and_floor_on_window` are used by both the mono `seam_chosen_and_floor` and the per-channel
+function. The shared lag itself is computed by `shared_alignment_lag` (§4c step 4 — summed
+peak-normalized correlation across selected channels), and the per-channel measurements run at that
+fixed lag (`max_lag = 0`).
 
 (The dead `seam_residual_diagnostics` prototype this section once flagged is already gone from the
 tree — no cleanup needed.)
@@ -260,13 +283,17 @@ land in gate PR; this plan can merge independently as report-only measurement im
 
 ## 7. Test plan
 
-**Unit (`policies.rs`)**
+**Unit (`policies.rs`)** — all **done**, names in parentheses:
 
-- Center-dominant 5.1: FL/FR noise on B, signal on FC — per-channel headroom ≈ 0 at truth,
-  mono-downmix path shows **worse** cancellation (documents the fix).
-- Stereo equal energy: both channels selected; result matches mono fallback within ε.
-- Empty selection → mono fallback identical to current `seam_chosen_and_floor` tests.
-- Aggregation: one bad channel (high headroom) drives `worst_headroom_db` even if another cancels.
+- Center-dominant: FL/FR noise on B, signal on FC — center cancels deeply while the mono downmix
+  cancels far worse, documenting the fix (`..._follows_center_when_fronts_are_noise`).
+- Stereo equal energy: both channels selected; result matches mono fallback (`..._stereo_equal_matches_mono`).
+- Empty selection → mono fallback identical to `seam_chosen_and_floor` (`..._empty_selection_is_mono_fallback`).
+- Aggregation: one bad channel drives `worst_headroom_db`; a noisy surround does **not** flip
+  `informative` off (`from_channel_residuals_worst_headroom_and_best_floor_informative`).
+- **Shared lag robustness:** gap content in a non-front channel at a known lag + a *louder*
+  non-matching channel → both measured at the matching channel's lag, proving alignment is not
+  hijacked by the loudest channel (`..._shared_lag_follows_matching_channel`).
 
 **Corpus (`tests/seam_residual_corpus.rs`)**
 

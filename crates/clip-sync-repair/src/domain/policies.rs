@@ -1612,14 +1612,26 @@ fn chosen_and_floor_on_window(
     max_lag: i64,
 ) -> (SeamFloorProbe, SeamFloorProbe) {
     let floor = measure_a_win_at_delta(a_win, a_lo, source, b, nominal_delta, max_lag, 0);
+    let lag_center = chosen_lag_center(&floor, nominal_delta, chosen_delta, max_lag);
+    let chosen = measure_a_win_at_delta(a_win, a_lo, source, b, chosen_delta, max_lag, lag_center);
+    (chosen, floor)
+}
+
+/// Lag the chosen-placement probe should center on: the floor's best lag shifted by the placement
+/// slide, so chosen and floor compare the same B content. Falls back to `0` when the slide exceeds
+/// the lag radius or the floor did not cancel.
+fn chosen_lag_center(
+    floor: &SeamFloorProbe,
+    nominal_delta: i64,
+    chosen_delta: i64,
+    max_lag: i64,
+) -> i64 {
     let placement_error = chosen_delta - nominal_delta;
-    let lag_center = if placement_error.abs() <= max_lag && floor.residual_db.is_finite() {
+    if placement_error.abs() <= max_lag && floor.residual_db.is_finite() {
         floor.best_lag + nominal_delta - chosen_delta
     } else {
         0
-    };
-    let chosen = measure_a_win_at_delta(a_win, a_lo, source, b, chosen_delta, max_lag, lag_center);
-    (chosen, floor)
+    }
 }
 
 /// Measure the per-gap noise floor: slide a clean, energetic A reference window against B at the
@@ -1684,6 +1696,12 @@ pub struct SeamChannelResidual {
 /// per usable selected channel; when `score_channels` is empty or no channel is usable (e.g. B has
 /// fewer channels), falls back to a single mono-downmix entry so callers get uniform handling.
 ///
+/// **Alignment is shared, depth is per-channel.** The integer lag is found once across *all* selected
+/// channels by summing their per-channel correlation (see [`shared_alignment_lag`]), with no
+/// dependence on which channel happens to carry the gap, then each selected channel fits its own
+/// scalar gain and residual at that fixed lag. This keeps the time alignment robust on surround/center
+/// mixes while still measuring cancellation depth on the right channel.
+///
 /// `score_channels` must already be filtered to the channels of interest; indices `>= b_ch.len()`
 /// are skipped (A/B channel-count mismatch, Risk §8).
 pub fn seam_chosen_and_floor_multichannel(
@@ -1736,28 +1754,98 @@ pub fn seam_chosen_and_floor_multichannel(
             .collect();
     };
 
+    // Find the shared integer lag once by summing the per-channel correlation across selected
+    // channels, then measure each channel's depth at that fixed lag. Summing *correlations* (not a
+    // downmixed waveform) is what makes this robust: a loud channel whose B content differs (or is
+    // noise) correlates ~0 at every lag and so never pulls the alignment, while the channel(s) that
+    // actually match contribute a sharp peak at the true lag — no dependence on which channel that is.
+    let a_wins: Vec<Vec<f64>> = usable
+        .iter()
+        .map(|&ch| {
+            interleaved_channel_timeline_f64(params.a_samples, channels, ch, frames.a_lo, frames.a_hi)
+        })
+        .collect();
+    let shared_floor_lag = shared_alignment_lag(
+        &a_wins,
+        &usable,
+        b_ch,
+        frames.a_lo,
+        params.a_to_b_delta,
+        params.max_lag_frames,
+    );
+    let placement_error = chosen_delta - params.a_to_b_delta;
+    let shared_chosen_lag = if placement_error.abs() <= params.max_lag_frames {
+        shared_floor_lag + params.a_to_b_delta - chosen_delta
+    } else {
+        0
+    };
+
+    // Measure each selected channel's depth at the shared lag (max_lag = 0 → fixed lag); only the
+    // per-channel scalar gain adapts.
     usable
-        .into_iter()
-        .map(|ch| {
-            let a_win = interleaved_channel_timeline_f64(
-                params.a_samples,
-                channels,
-                ch,
-                frames.a_lo,
-                frames.a_hi,
-            );
-            let (chosen, floor) = chosen_and_floor_on_window(
-                &a_win,
+        .iter()
+        .zip(a_wins.iter())
+        .map(|(&ch, a_win)| {
+            let floor = measure_a_win_at_delta(
+                a_win,
                 frames.a_lo,
                 frames.source,
                 &b_ch[ch],
                 params.a_to_b_delta,
+                0,
+                shared_floor_lag,
+            );
+            let chosen = measure_a_win_at_delta(
+                a_win,
+                frames.a_lo,
+                frames.source,
+                &b_ch[ch],
                 chosen_delta,
-                params.max_lag_frames,
+                0,
+                shared_chosen_lag,
             );
             SeamChannelResidual { channel: ch, chosen, floor }
         })
         .collect()
+}
+
+/// The integer lag that best aligns A and B across *all* selected channels at once: the lag maximizing
+/// the summed peak-normalized correlation. Channels whose B content does not match contribute ~0 at
+/// every lag, so they neither pull nor veto the alignment — only matching channels shape the peak.
+/// Returns the nominal lag (`0`) when no lag produces positive aggregate correlation.
+fn shared_alignment_lag(
+    a_wins: &[Vec<f64>],
+    channels: &[usize],
+    b_ch: &[Vec<f64>],
+    a_lo: usize,
+    nominal_delta: i64,
+    max_lag: i64,
+) -> i64 {
+    let max_lag = max_lag.max(0);
+    let mut best_lag = 0i64;
+    let mut best_score = f64::NEG_INFINITY;
+    for lag in -max_lag..=max_lag {
+        let mut score = 0.0;
+        for (a_win, &ch) in a_wins.iter().zip(channels) {
+            let b = &b_ch[ch];
+            let w = a_win.len() as i64;
+            let lo = a_lo as i64 + nominal_delta + lag;
+            let hi = lo + w;
+            if lo < 0 || hi > b.len() as i64 {
+                continue;
+            }
+            score += seam_pearson(a_win, &b[lo as usize..hi as usize]).max(0.0);
+        }
+        if score > best_score {
+            best_score = score;
+            best_lag = lag;
+        }
+    }
+    if best_score > 0.0 {
+        best_lag
+    } else {
+        0
+    }
 }
 
 /// Default `floor_db` ceiling for an established same-master cancellation floor.
@@ -3214,6 +3302,92 @@ mod tests {
         assert!((mc[0].floor.residual_db - floor.residual_db).abs() < 1e-9);
         assert!((mc[0].chosen.residual_db - chosen.residual_db).abs() < 1e-9);
         assert_eq!(mc[0].floor.source, floor.source);
+    }
+
+    #[test]
+    fn seam_chosen_and_floor_multichannel_shared_lag_follows_matching_channel() {
+        // The gap content lives in ch2 with a true A→B lag of +3; ch0 is *louder* but its B content
+        // does not match A at all. The shared lag must come from the matching channel (ch2), and the
+        // non-matching loud channel must be measured at that same shared lag — proving alignment is
+        // not hijacked by the loudest channel. A naive mono downmix would let ch0's energy corrupt it.
+        let total = 2200usize;
+        let channels = 3usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+        let true_lag = 3i64;
+
+        // Broadband pseudo-random noise → sharply peaked autocorrelation (single, unambiguous lag).
+        let prng = |seed: u32| -> Vec<f64> {
+            let mut x = seed;
+            (0..total)
+                .map(|_| {
+                    x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                    (x >> 8) as f64 / f64::from(1u32 << 24) * 8000.0 - 4000.0
+                })
+                .collect()
+        };
+        let sig = prng(12345);
+        // ch2 B = signal; ch0 B = a *different* loud broadband waveform; ch1 silent.
+        let b_ch2 = sig.clone();
+        let b_ch0 = prng(999);
+        let b_ch1 = vec![0.0f64; total];
+        let b_ch = vec![b_ch0.clone(), b_ch1.clone(), b_ch2.clone()];
+        let b_mono: Vec<f64> =
+            (0..total).map(|i| (b_ch0[i] + b_ch1[i] + b_ch2[i]) / 3.0).collect();
+
+        // A: ch2 is B's signal at half level, shifted by +3 frames (the true lag); ch0 is loud,
+        // unrelated to ch0's B; ch1 silent.
+        let shift = true_lag as usize;
+        let a_ch2: Vec<f64> = (0..total)
+            .map(|i| if i + shift < total { sig[i + shift] * 0.5 } else { 0.0 })
+            .collect();
+        let a_ch0 = prng(7777);
+        let a_samples = interleave_a(&[a_ch0, b_ch1.clone(), a_ch2], 4000.0);
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0 / 32767.0,
+            max_lag_frames: 512,
+        };
+
+        // Both loud channels are selected (within 20 dB); ch1 is silent and excluded by the caller.
+        let mc = seam_chosen_and_floor_multichannel(
+            &params, &b_ch, &[0, 2], SeamSide::Pre, gap_start, gap_end, 0,
+        );
+        let by_ch = |ch: usize| mc.iter().find(|c| c.channel == ch).expect("channel present");
+
+        // Shared lag came from the matching channel: BOTH channels were measured at lag +3.
+        assert_eq!(by_ch(2).floor.best_lag, true_lag, "matching channel sets the shared lag");
+        assert_eq!(
+            by_ch(0).floor.best_lag,
+            true_lag,
+            "the loud non-matching channel is measured at the shared lag, not its own"
+        );
+        assert!(
+            by_ch(2).floor.residual_db < -40.0,
+            "matching channel cancels deeply at the shared lag, got {}",
+            by_ch(2).floor.residual_db
+        );
+        assert!(
+            by_ch(0).floor.residual_db > -6.0,
+            "non-matching channel does not cancel, got {}",
+            by_ch(0).floor.residual_db
+        );
+
+        let mc_post = seam_chosen_and_floor_multichannel(
+            &params, &b_ch, &[0, 2], SeamSide::Post, gap_start, gap_end, 0,
+        );
+        let verdict =
+            SeamResidualVerdict::from_channel_residuals(&mc, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512);
+        assert!(verdict.informative, "matching channel establishes the same-master regime");
     }
 
     #[test]
