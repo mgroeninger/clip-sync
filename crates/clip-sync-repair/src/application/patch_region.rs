@@ -715,7 +715,7 @@ fn try_anchor_seam_joint_search(
         baseline_post,
         params.min_fill_correlation,
         params.fill_marginal_margin,
-        baseline_signature.has_energy_contour(),
+        baseline_signature.has_anchor_seam_contour(),
     ) {
         return Ok(None);
     }

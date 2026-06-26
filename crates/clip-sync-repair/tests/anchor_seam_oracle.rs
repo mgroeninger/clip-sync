@@ -1,4 +1,8 @@
-//! Anchor seam oracle: speech peaks offset from silent throat (A1–A4 rows).
+//! Anchor seam oracle: speech peaks offset from silent throat (plan §7 rows A1–A5).
+//!
+//! Tier: **integration** (add to `Invoke-RepairIntegrationOnly` in `scripts/test-tier.ps1`).
+//! Domain + pipeline oracles for editorial anchor search; distinct from sine-seam rows in
+//! `patch_audio_integration.rs` and harness-backed SP01–SP03 in `integration_energy_patch.rs`.
 
 use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
@@ -8,8 +12,9 @@ use clip_sync_repair::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
     AnchorSeamSide, AnchorSource,
 };
+use clip_sync_repair::domain::gap_tags::FitPathTag;
 use clip_sync_repair::domain::{
-    GapPatchStatus, GapSignatureMode, ResidualGateMode,
+    FillMode, FitBoundarySearch, GapPatchStatus, GapSignatureMode, ResidualGateMode,
 };
 use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::infrastructure::config::RepairConfig;
@@ -17,7 +22,7 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f4_decoy_production, build_speech_peaks_offset_from_throat, EnergySignatureFixture,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
+    gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
 };
 use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_request_with_options};
 
@@ -79,7 +84,7 @@ fn anchor_seam_pipeline_patches_speech_peaks_fixture() {
     options.gap_signature_context_secs = 3.0;
     options.fill_border_search_secs = 10.0;
     options.fill_align_margin_secs = 1.0;
-    let mut repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+    let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
     repair.anchor_seam_mode = AnchorSeamMode::Force;
     repair.residual_gate = ResidualGateMode::VetoRescue;
     repair.min_fill_correlation = 0.35;
@@ -104,6 +109,94 @@ fn anchor_seam_pipeline_patches_speech_peaks_fixture() {
         matches!(response.summary.gaps[0].status, GapPatchStatus::Patched { .. }),
         "expected patched gap, got {:?}",
         response.summary.gaps[0].status
+    );
+}
+
+/// **A5** — `baseline_only` + `anchor_seam_mode=auto` patches without boundary grid (`--full`).
+///
+/// Uses [`patch_request_from_repair`] (TOML/CLI config path), not harness option overrides.
+#[test]
+fn a5_baseline_only_auto_patches_speech_peaks_without_boundary_grid() {
+    let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+
+    let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
+    repair.fill_mode = FillMode::Fit;
+    repair.fit_boundary_search = FitBoundarySearch::BaselineOnly;
+    repair.anchor_seam_mode = AnchorSeamMode::Auto;
+    repair.residual_gate = ResidualGateMode::VetoRescue;
+    repair.min_fill_correlation = 0.35;
+    // Geometry aligned with passing A1 pipeline oracle (harness-tuned haystack).
+    repair.normalize_fill = false;
+    repair.fill_length_slack_secs = 0.05;
+    repair.min_border_discovery_secs = 0.25;
+    repair.border_standoff_secs = 0.0;
+    repair.gap_end_extend_on_post_seam_fail = false;
+    repair.gap_start_extend_on_pre_seam_fail = false;
+    repair.gap_end_extend_max_ms = 0;
+
+    let request = patch_request_from_repair(report, &repair);
+    assert_eq!(request.fit_boundary_search, FitBoundarySearch::BaselineOnly);
+    assert_eq!(request.anchor_seam_mode, AnchorSeamMode::Auto);
+    assert_eq!(request.fill_mode, FillMode::Fit);
+
+    let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .expect("patch");
+
+    let gap = &response.summary.gaps[0];
+    assert!(
+        matches!(gap.status, GapPatchStatus::Patched { .. }),
+        "A5: expected patched gap under baseline_only+auto, got {:?}",
+        gap.status
+    );
+    assert_eq!(
+        gap.tags.fit_path,
+        Some(FitPathTag::BaselineOnly),
+        "A5: anchor seam must patch without boundary grid"
+    );
+}
+
+/// **A5b** — bool signature path: `baseline_only` + `anchor_seam_mode=auto` without boundary grid.
+#[test]
+fn a5b_baseline_only_auto_patches_speech_peaks_bool_mode() {
+    let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+
+    let mut repair = production_fit_weights_config(GapSignatureMode::Bool, 3.0);
+    repair.fill_mode = FillMode::Fit;
+    repair.fit_boundary_search = FitBoundarySearch::BaselineOnly;
+    repair.anchor_seam_mode = AnchorSeamMode::Auto;
+    repair.residual_gate = ResidualGateMode::VetoRescue;
+    repair.min_fill_correlation = 0.35;
+    repair.normalize_fill = false;
+    repair.fill_length_slack_secs = 0.05;
+    repair.min_border_discovery_secs = 0.25;
+    repair.border_standoff_secs = 0.0;
+    repair.gap_end_extend_on_post_seam_fail = false;
+    repair.gap_start_extend_on_pre_seam_fail = false;
+    repair.gap_end_extend_max_ms = 0;
+
+    let request = patch_request_from_repair(report, &repair);
+    assert_eq!(request.gap_signature_mode, GapSignatureMode::Bool);
+    assert_eq!(request.anchor_seam_mode, AnchorSeamMode::Auto);
+
+    let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .expect("patch");
+
+    let gap = &response.summary.gaps[0];
+    assert!(
+        matches!(gap.status, GapPatchStatus::Patched { .. }),
+        "A5b: expected patched gap under bool+baseline_only+auto, got {:?}",
+        gap.status
+    );
+    assert_eq!(
+        gap.tags.fit_path,
+        Some(FitPathTag::BaselineOnly),
+        "A5b: anchor seam must patch without boundary grid in bool mode"
     );
 }
 

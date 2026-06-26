@@ -49,14 +49,16 @@ pub enum GapSignature {
 }
 
 impl GapSignature {
-    /// True when the resolved signature carries non-flat energy contour (auto anchor trigger).
-    pub(crate) fn has_energy_contour(&self) -> bool {
+    /// True when the resolved signature has structure an anchor seam can latch onto (`auto` trigger).
+    pub(crate) fn has_anchor_seam_contour(&self) -> bool {
         match self {
             GapSignature::Energy(sig) => {
                 !energy_envelope_is_flat(&sig.pre_energy)
                     || !energy_envelope_is_flat(&sig.post_energy)
             }
-            GapSignature::Bool(_) => false,
+            GapSignature::Bool(sig) => {
+                bool_bins_have_anchor_contour(&sig.pre_bins, &sig.post_bins)
+            }
         }
     }
 
@@ -111,6 +113,24 @@ pub fn build_gap_signature(
             ),
         ),
     }
+}
+
+/// Activity transitions or mixed active/silent context (not flat silence or uniform activity).
+fn bool_bins_have_anchor_contour(pre: &[bool], post: &[bool]) -> bool {
+    let side_has_transition = |bins: &[bool]| bins.windows(2).any(|w| w[0] != w[1]);
+    if side_has_transition(pre) || side_has_transition(post) {
+        return true;
+    }
+    let mut any_active = false;
+    let mut any_silent = false;
+    for &active in pre.iter().chain(post.iter()) {
+        any_active |= active;
+        any_silent |= !active;
+        if any_active && any_silent {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) fn energy_envelope_is_flat(bins: &[f32]) -> bool {
@@ -235,5 +255,34 @@ mod tests {
         }
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
         assert!(matches!(sig, GapSignature::Bool(_)));
+    }
+
+    #[test]
+    fn flat_bool_signature_has_no_anchor_contour() {
+        let samples = vec![0.0f32; 400];
+        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Bool);
+        assert!(!sig.has_anchor_seam_contour());
+    }
+
+    #[test]
+    fn bool_onset_signature_has_anchor_contour() {
+        let mut samples = vec![0.0f32; 400];
+        for sample in samples.iter_mut().skip(130) {
+            *sample = 8_000.0_f32 / 32767.0;
+        }
+        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Bool);
+        assert!(sig.has_anchor_seam_contour());
+    }
+
+    #[test]
+    fn speech_peaks_bool_signature_has_anchor_contour() {
+        use crate::test_support::energy_signature_fixtures::build_speech_peaks_offset_from_throat;
+
+        let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
+        let sig = fixture.signature(GapSignatureMode::Bool);
+        assert!(
+            sig.has_anchor_seam_contour(),
+            "speech peaks fixture should expose bool activity contour for anchor auto"
+        );
     }
 }
