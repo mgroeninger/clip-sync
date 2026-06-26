@@ -22,27 +22,24 @@ non-default). Do them when adding backlog tests or when navigation hurts — not
 ## What this suite must establish
 
 The residual/floor gate ships as **default `veto`** (anti-echo), with `veto_rescue` an opt-in
-false-skip recovery. This collection of tests exists to establish **five claims — the gate's validity
-contract**. Everything else in this file (config profiles, taxonomy, the G5 ladder) is *how* we prove
-these without fooling ourselves. Each `matrix.toml` row carries a `claims` field naming which clause(s)
-it serves.
+false-skip recovery. This collection of tests establishes the gate's **validity contract** (C1a–C5
+below). Each `matrix.toml` row carries a `claims` field naming which clause(s) it serves.
 
 | # | Claim | Why it matters | Status | Instances |
 |---|-------|----------------|--------|-----------|
-| **C1** | **Veto fires on echo/decoy** — a seam Pearson would accept but residual rejects (high headroom) is vetoed. | The feature's reason to exist (F4). | **Proved score-level**; pipeline veto only under **calibration** → `production_fit` pipeline veto is a **gap**. | `disagreement_oracles` (B); `f4_decoy_residual_gate_vetoes_bool` (calibration, out-of-matrix) |
-| **C2** | **Abstains out-of-regime** — two-mic / different-capture → floor uninformative → no opinion. | Protects non-same-master pairs from any gate effect. | Calibration + **`production_fit`** (two_mic). | `gate_real_codec` (calibration); `gate_real_codec_production_fit` (two_mic) |
-| **C3** | **Never false-vetoes a truth gap** — a correct same-master fill is never rejected by the gate. | A veto that harms good fills is worse than no gate. | **`production_fit`** (gate never worse than off, guarded so ≥1 mid-content case patches) + calibration + M5 unit. | `gate_real_codec_production_fit`; `vorbis_64k_no_false_veto`; M5 units (`apply_residual_abstains_*`) |
-| **C4** | **`off` is a true no-op** — `residual_gate = off` changes nothing vs pre-gate behavior. | The opt-out must be costless and exact. | **`off_no_regression_baseline`** (fast F1; calibration + production_fit arms). | `off_no_regression_baseline` |
-| **C5** | **Rescue has real-media value** — does `veto_rescue` recover real gaps? | Decides whether rescue is worth shipping. | **Resolved: no** (synthetic-only; G5). Diagnostic only; correctly non-default. | `deadzone_finale_run_b`, `rescue_bb_synthetic`, `rescue_real_mid_safety` |
+| **C1a** | **Gate composition** — when `informative ∧ headroom > margin ∧ Pearson passes`, `apply_residual_to_confidence` vetoes | Proves the veto rule is wired correctly | **Proved** (score + unit) | `disagreement_oracles`; `f4_decoy_placement_informative_with_high_headroom`; `gap_fill_fit.rs` units |
+| **C1b** | **Pipeline veto fires** — `PatchAudio` under `production_fit` skips with `ResidualHeadroomExceeded` on an acoustic echo | Optional end-to-end proof the skip reason surfaces | **Not proved; optional** — **F4 out of scope (M6)** | — (see Backlog if pursued) |
+| **C2** | **Abstains out-of-regime** — two-mic / different-capture → floor uninformative → no opinion | Protects non-same-master pairs | Calibration + **`production_fit`** | `gate_real_codec`; `gate_real_codec_production_fit` (two_mic) |
+| **C3** | **Never false-vetoes a truth gap** | A veto that harms good fills is worse than no gate | **`production_fit`** + calibration + M5 units | `gate_real_codec_production_fit`; `vorbis_64k_no_false_veto`; `apply_residual_abstains_*` |
+| **C4** | **`off` is a true no-op** | Opt-out must be costless and exact | **Proved** | `off_no_regression_baseline` |
+| **C5** | **Rescue has real-media value** | Decides whether rescue should be default | **Resolved: no** (G5) | `deadzone_finale_run_b`, `deadzone_punch_assert`, `rescue_bb_synthetic` |
 
-**Reading the status column:** "calibration-only" means the only evidence runs under the relaxed
-`calibration` profile (`min_fill 0`), which — per G5 — does **not** prove shipped (`production_fit`)
-behavior. Note the inversion: **C1–C3 are the shipped default's safety contract yet are currently
-weaker than C5** (the opt-in feature whose answer is already settled). C3 now has a production_fit
-test (`gate_real_codec_production_fit`); the remaining highest-value gap is **C1 under
-`production_fit`** (a pipeline case where a veto actually fires) — see Backlog.
-A "mechanism" or `support` instance (e.g. FLOOR_OK calibration) underpins a claim without being the
-claim itself.
+**Reading the status column:** For default `veto`, **C1a + C3 + C4 + C2** are the shipped contract.
+**C1b** is not required to ship — no test asserts `ResidualHeadroomExceeded` from a pipeline run
+today, and F4 cannot provide it under production nominal-floor anchoring (**M6**). Score-level F4
+veto in `disagreement_oracles` proves **C1a** only (harness truth-anchors the floor at the decoy
+frame; production anchors at nominal → abstain). `f4_decoy_residual_gate_vetoes_bool` documents
+that pipeline behavior (abstain → patch), not C1b.
 
 ---
 
@@ -135,13 +132,15 @@ at the **decided** placement — not the same as “gap patched.”
 | Claim | A | B (P0) | C calibration | C `production_fit` |
 |-------|---|--------|---------------|---------------------|
 | Headroom / floor math | ✓ | ✓ | ✓ | ✓ |
+| C1a composition (veto rule) | ✓ | ✓ (F4 at fixed frame) | — | — |
+| C1b pipeline `ResidualHeadroomExceeded` | — | — | — | **not proved** (optional) |
 | H2-B rescue mechanism | — | ✓ | ✓ (synthetic) | ✓ (synthetic oracle) |
-| F4 veto (decoy) | — | ✓ | partial (`f4_decoy_*` uses calibration) | gap |
-| Truth gaps patch / gate inert | — | — | ✓ (relaxed floors) | **largely unasserted** |
-| Real-media rescue value (G5) | — | — | — | diagnostic (Run B) |
+| C3 truth / gate inert | — | — | ✓ (relaxed floors) | ✓ (`gate_real_codec_production_fit`) |
+| C2 two-mic abstain | — | — | ✓ | ✓ |
+| C5 rescue real-media value | — | — | — | resolved (Run B + punch assert) |
 
-This table is a *capability-by-layer* cut; the canonical contract is **C1–C5** in
-§ What this suite must establish (mapped per-row in `matrix.toml` `claims`).
+F4 pipeline (`f4_decoy_residual_gate_vetoes_bool`): documents **abstain** on F4 under veto — bool
+and energy paths patch; **not** C1b. See **M6**.
 
 ---
 
@@ -165,7 +164,7 @@ real codec dead zone, PRODUCTION_FIT ──► source_gap_oracle_transient_csv (
         │
         ▼
 G5 RESOLVED: rescue trigger does not occur on real codec noise (synthetic-only)
-   remaining: assert it (deadzone_punch_assert [planned]); explain NaN floor [planned]
+   deadzone_punch_assert [landed]; finale_floor_nan_probe [optional, M3-adjacent]
 ```
 
 | Step | Test / driver | Profile | What it actually shows |
@@ -174,8 +173,8 @@ G5 RESOLVED: rescue trigger does not occur on real codec noise (synthetic-only)
 | Score H2-B | `seam_residual_disagreement_oracles` | production Pearson | Dead zone + rescue at P0 truth |
 | Calibration gate | `floor_oracle_residual_gate_real_codec`, `floor_oracle_veto_rescue_real_broadband_codec` | **`calibration`** | Gate doesn't break truth under relaxed floors; rescue ≡ veto there — **not** “Pearson passes at truth” in production |
 | G5 probe | `source_gap_oracle_transient_csv` | **`production_fit`** | `rescue_trigger` CSV; finale dead zone |
-| G5 punch | same driver, punch manifest rows | **`production_fit`** | Native A borders — **tests** the NaN-floor confound hypothesis; result: floor *still* uninformative → confound **refuted** |
-| G5 assert | *(planned)* | **`production_fit`** | Assert rescue inert on punch rows; close the product question |
+| G5 punch | same driver, punch manifest rows | **`production_fit`** | Native A borders — confound **refuted** |
+| G5 assert | `deadzone_punch_assert` | **`production_fit`** | Rescue inert on punch rows (landed) |
 
 ### Run B manifest cases
 
@@ -221,12 +220,12 @@ when you add a planned test, put it in **Backlog** below (not in the matrix unti
 | `location` | `tests/<file>.rs::<test_fn>` (see `matrix.toml`) |
 | `fixture_ref` | Manifest case id(s) or harness fixture name |
 | `proves` | One-line epistemic claim (must match actual `config_profile`) |
-| `claims` | Which contract clause(s) the row serves: `C1`–`C5` or `support` (see § What this suite must establish) |
+| `claims` | Contract clause(s): `C1a`, `C1b`, `C2`–`C5`, or `support` (see § What this suite must establish) |
 
-**In matrix today (7 rows):** layer B disagreement oracles; synthetic rescue; Run B CSV; floor
-calibration CSV; three calibration gate tests. **Not in matrix** (by design): layer A units,
-layer B CSV diagnostics, oracle CSV experiments, F4 decoy pipeline test, manifest smokes — see
-matrix footer comments.
+**In matrix today:** layer B disagreement oracles (C1a); off regression (C4); production_fit gate
+(C2/C3); G5 diagnostic + punch assert (C5); calibration gate rows; floor calibration CSV. **Not in
+matrix** (by design): layer A units, layer B CSV diagnostics, `f4_decoy_residual_gate_vetoes_bool`
+(F4 pipeline abstain — documents M6, not C1b), manifest smokes — see matrix footer.
 
 ---
 
@@ -328,15 +327,7 @@ Update `matrix.toml` `location` fields when fns move.
 
 `validate_residual_gate.rs::residual_gate_matrix` (future) reads `tests/residual_gate_catalog/matrix.toml`,
 filters by `tier` / `assertion`, runs `run_built_floor_oracle_cfg` with the profile matching
-`config_profile`. **Do not build** until phase 1 lands and backlog asserts exist — not required for
-G5 closure.
-
-### First backlog items (no migration required)
-
-1. **`deadzone_punch_assert`** — in `validate_floor_oracle.rs`; copy Run B loop over punch cases only; use
-   `production_fit_repair_config`; assert skip + `!residual.informative` for AAC punch rows.
-2. **`gate_real_codec_production_fit`** — same runner, `RepairConfig::default()`, key manifest
-   cases; expect skips at finale/mid under production (documents shipped behavior).
+`config_profile`. **Do not build** until needed — not required for shipped contract closure.
 
 ### Verify
 
@@ -354,14 +345,15 @@ cargo test -p clip-sync-repair --features validation-tests --test validate_floor
 
 | id | Claim | Profile | Notes |
 |----|-------|---------|-------|
-| `off_no_regression_baseline` | **C4** | n/a (off) | **Landed** — `tests/integration_residual_gate_smoke.rs::off_no_regression_baseline`. |
-| `f4_decoy_veto_production_fit` | **C1** | `production_fit` | The remaining C1 gap: a pipeline case where a veto **actually fires** (echo/decoy Pearson would accept, residual rejects) under shipped floors. Today C1 is only score-level (`disagreement_oracles`) + the out-of-matrix calibration `f4_decoy_residual_gate_vetoes_bool`. |
-| `finale_floor_nan_probe` | C5 (sub) | — | *Needs design.* Explain *why* the finale floor is NaN. Entry point: `policies::seam_chosen_and_floor` → `select_reference_window` / `measure_window_at_delta` (does the reference-window energy gate fail, or does the B mapping fall out of range at the loud seam? M3-adjacent). **Done when:** NaN is attributed to either genuine cancellation failure or probe abstention, with a unit reproducing it. |
-| `p2_search_winner_bounds` | C3 (field) | `production_fit` | *Needs design.* Bound headroom on the **search winner** (not truth placement) to catch field over-/under-veto. No fixture or acceptance criterion yet — design before scheduling. |
+| `c1b_acoustic_echo_pipeline_veto` | **C1b** (optional) | `production_fit` | *Needs design.* Pipeline `ResidualHeadroomExceeded` on an **acoustic echo** fixture — Pearson passes shipped floors, informative nominal floor, headroom > margin, slide ≤ `max_lag`. **Not F4** (M6). Candidate homes: `validate_residual_gate.rs` or `patch_audio_integration.rs` (sine seam distortion). |
+| `finale_floor_nan_probe` | G5 (sub) | — | *Needs design.* Explain *why* the finale floor is NaN (M3-adjacent). Primary: `policies.rs` unit repro; optional diagnostic CSV in `diag_seam_residual.rs`. |
+| `p2_search_winner_bounds` | C3 (field) | `production_fit` | *Needs design.* Bound headroom on the **search winner** (not truth placement). |
 
-**Landed since this list was written** (now in `matrix.toml`): `gate_real_codec_production_fit`
-(C2/C3 — gate never worse than off; guarded so ≥1 mid-content case patches), `deadzone_punch_assert`
-(C5 lock).
+**Landed** (in `matrix.toml`): `off_no_regression_baseline` (C4), `gate_real_codec_production_fit`
+(C2/C3), `deadzone_punch_assert` (C5 lock).
+
+**Removed / not planned:** `f4_decoy_veto_production_fit` — conflicts with **M6** and production
+nominal-floor anchoring; F4 score veto is **C1a** only.
 
 Planned rows graduate to [`matrix.toml`](matrix.toml) when the test lands (see **Catalog**).
 

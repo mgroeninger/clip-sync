@@ -3,8 +3,9 @@
 Status: **P1 + P2 + P4 shipped** (default `residual_gate = veto`). Implemented: unified lag
 radius, `SeamResidualVerdict.informative`, fit-mode measurement, `apply_residual_to_confidence`,
 config/CLI, `ResidualHeadroomExceeded` skip reason, residual scalars on `Patched`, `residual_band`
-per-gap tag, `donor_relation` run diagnostic, real-codec gate oracle (AAC + Vorbis 128k). Not yet:
-`veto_rescue` as default; MP3 calibration (M4 deferred).
+per-gap tag, `donor_relation` run diagnostic, real-codec gate oracle (AAC + Vorbis 128k).
+`veto_rescue` ships opt-in (G5: not default). MP3 calibration deferred (M4). Validity contract:
+**C1a** proved; **C1b** pipeline veto optional (F4 excluded, **M6**).
 
 Builds on the floor/residual primitives in `policies.rs` (`seam_chosen_and_floor`,
 `seam_floor_probe`) and the corpus experiments in `tests/seam_residual_corpus.rs`.
@@ -42,8 +43,14 @@ From steps 1–2 and the alignment sweep (`tests/seam_residual_corpus.rs`):
 5. **The floor-informative check is the regime gate.** Two-mic / different-capture pairs cannot
    cancel → `floor_db` high → uninformative → the gate abstains automatically. `donor_relation` is
    therefore *derived from* the floor, not an independent input.
-6. **F4 is the value case:** decoy `seam_pre` 0.84 (Pearson nearly accepts) vs residual headroom
-   108 dB (residual rejects). The veto fires exactly here.
+6. **F4 illustrates the disagreement (score-level only):** at the decoy frame with a
+   **truth-anchored** floor, Pearson passes production floors while headroom blows up (~108 dB) —
+   the score harness in `seam_residual_corpus.rs` proves `apply_residual_to_confidence` would veto.
+   **Production does not fire veto on F4** (see **M6**): the pipeline anchors the floor at
+   **nominal** (`a_to_b_delta = nominal_delta` in `measure_fit_residual_verdict`), bool lands on
+   the decoy (nominal ≡ decoy → headroom ≈ 0 → abstain), and energy at truth slides beyond lag
+   reach (**M5** → abstain). F4 is an energy-vs-bool **signature** decoy, not an acoustic-echo
+   target for the shipped gate.
 
 **Why the two signals disagree (the root invariant).** Pearson endpoint identification and the
 residual gate measure *different things on different template bases*, and that is precisely why they
@@ -60,9 +67,12 @@ diverge on broadband (noise-like) seams:
 So on a *correct* same-master broadband fill, Pearson says reject (dead zone) while residual says
 accept (headroom ≈ 0). Two consequences flow from this single fact: the **rescue** path exists to
 recover those Pearson false-skips (constraint 4b dead-zone row), and the **veto** path exists for the
-mirror case where Pearson accepts a decoy that residual rejects (constraint 6 / F4). Unifying the
-residual side onto the *raw* window was H1; the trimmed-vs-raw asymmetry between the two systems is
-permanent by design, not a bug. See [residual-gate-findings.md](residual-gate-findings.md) H1/H2-B.
+mirror case where Pearson accepts a splice that **raw** cancellation rejects (high headroom with an
+informative nominal floor). F4 demonstrates that disagreement at **fixed placement** in the score
+harness; the shipped pipeline's nominal floor anchor and search geometry mean F4 is **not** where
+veto fires end-to-end (**M6**). Unifying the residual side onto the *raw* window was H1; the
+trimmed-vs-raw asymmetry between the two systems is permanent by design, not a bug. See
+[residual-gate-findings.md](residual-gate-findings.md) H1/H2-B and § C1 contract.
 
 ## 3. Current integration points (exact)
 
@@ -227,20 +237,29 @@ calibration and disagreement-table validation; use `off` for byte-identical regr
 
 - **P0 (done):** debug diagnostics; corpus harness; alignment sweep.
 - **P1 (shipped):** unified lag radii; residual on outcomes; `residual_band` tag; scalar fields on `Patched`; report when gate active or `measure_residual`.
-- **P2 (shipped, default):** veto (`residual_gate = veto` default); F4 corpus test; integration `f4_decoy_residual_gate_vetoes_bool` (ignored).
-- **P3 — rescue (`veto_rescue`):** false-skip rescue; validate it doesn't over-patch.
+- **P2 (shipped):** veto (`residual_gate = veto` available); F4 score corpus + `f4_decoy_residual_gate_vetoes_bool` (pipeline abstain on F4, not veto — **M6**).
+- **P3 — rescue (`veto_rescue`, shipped opt-in):** mechanism + safety tests; G5 resolved — not default.
 - **P4 (shipped):** default `veto`; `donor_relation` run diagnostic; `floor_oracle_residual_gate_real_codec` extended to Vorbis 128k speech/ambient.
 
 ## 9. Test plan
 
-- **Domain unit:** `apply_residual_to_confidence` truth table (each row of 4b); lag-radius unify
-  regression (sweep offset 100 no longer false-rejects); `informative` boundary at `FLOOR_OK`.
-- **Corpus (extend `tests/seam_residual_corpus.rs`):** the **disagreement table** — per fixture/
-  variant/placement, does the gate decision match the oracle, and where does it flip the Pearson
-  decision correctly (F4 veto) vs wrongly. Add a **two-mic-like** fixture to assert `NoOpinion`.
-- **Integration:** a same-master A/B pair (broadband) through `PatchAudio::execute` with
-  `residual_gate = veto` asserting the echo gap skips and the true gap patches; and with `off`
-  asserting byte-identical output to today.
+Validity contract is split **C1a / C1b** — see
+[`tests/residual_gate_catalog/README.md`](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md)
+and findings § C1 contract. **C1a (shipped contract)** is composition + score-level disagreement;
+**C1b (optional)** is pipeline `ResidualHeadroomExceeded` under `production_fit` on an **acoustic
+echo** fixture (not F4).
+
+- **Domain unit (C1a — done):** `apply_residual_to_confidence` truth table (each row of 4b);
+  lag-radius unify regression; `informative` boundary at `FLOOR_OK`; M5 reach abstention.
+- **Corpus score (C1a — done):** `tests/seam_residual_corpus.rs` disagreement table — F4 veto at
+  fixed decoy placement (truth-anchored floor in harness); broadband H2-B rescue; two-mic via floor
+  oracle.
+- **Pipeline safety (C3/C4 — done):** `gate_real_codec_production_fit`, `off_no_regression_baseline`;
+  `f4_decoy_residual_gate_vetoes_bool` documents F4 pipeline **abstain** (Pearson decides), not veto.
+- **Pipeline veto fire (C1b — optional, not scheduled):** would need a new fixture where the search
+  winner passes Pearson under `production_fit`, floor is informative at **nominal** anchor, headroom
+  exceeds margin, and slide ≤ `max_lag` — e.g. sine/echo distortion in `validate_residual_gate.rs`
+  or `patch_audio_integration.rs`. **Do not use F4** (M6).
 - **Regression:** existing energy-corpus tests unchanged with `residual_gate = off`.
 
 ## 10. Open questions / risks

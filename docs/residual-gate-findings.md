@@ -42,7 +42,7 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 | id | sev | what | notes |
 |----|-----|------|-------|
 | **M4** | med | **MP3 unvalidated.** | Codec-agnostic gate; excluded from calibration. |
-| **M6** | med | **F4 bool decoy + nominal-floor veto (accepted).** | Signature problem; not residual veto scope. |
+| **M6** | med | **F4 bool decoy + nominal-floor veto (accepted).** | Signature problem; not residual veto scope. Production anchors the floor at **nominal**; bool lands on the decoy (nominal ≡ decoy) → headroom ≈ 0 → **abstain**, not veto. Energy at truth slides beyond lag reach (**M5**) → abstain. Score harness C1 uses a **truth-anchored** floor at the decoy frame — that proves **C1a** composition, not pipeline veto on F4. See § C1 contract. |
 | **FD-1** | med | **Fractional-delay cancellation** (was L10 wiring path). | Integer lag caps cancellation (~−16 dB at 0.5 sample); headroom hides within reach (**M5**). See wiring plan §10 + **Fractional-delay review** below. |
 
 ## Open — low / smells
@@ -145,10 +145,23 @@ at the finale would close it. **Scope:** one corpus master (Grieg) + mid-content
 lower bitrates (higher codec noise) could differ, but the strongest available test — native borders,
 independent encodes, loudest broadband region — shows no rescue trigger.
 
+## C1 validation contract (split)
+
+The validity catalog splits **C1** into two claims. Only **C1a** is required to ship default
+`veto`; **C1b** is optional end-to-end proof.
+
+| ID | Claim | Status | Evidence |
+|----|-------|--------|----------|
+| **C1a** | **Gate composition** — when `informative ∧ headroom > margin ∧ Pearson passes`, `apply_residual_to_confidence` vetoes | **Proved** | `gap_fill_fit.rs` unit tests; `seam_residual_corpus.rs` (`f4_decoy_placement_informative_with_high_headroom`, `seam_residual_disagreement_oracles`). Score harness uses truth-anchored floor at fixed placement for F4 — valid for composition, **not** production pipeline geometry. |
+| **C1b** | **Pipeline veto fires** — `PatchAudio` under `production_fit` skips with `ResidualHeadroomExceeded` on a realistic acoustic echo | **Not proved; optional** | No test asserts this skip reason today. **F4 is out of scope (M6).** Real codec (Run B): Pearson dead zone + uninformative floor — no veto trigger. If pursued: new acoustic-echo fixture (sine distortion / cancellation failure within lag reach), likely `validate_residual_gate.rs`. |
+
+**Shipped safety contract** (more important than C1b for default `veto`): **C3** (never false-veto
+truth under `production_fit`) + **C4** (`off` no-op) + **C2** (two-mic abstain).
+
 ## Validation infrastructure
 
-- **`tests/seam_residual_corpus.rs`** — direct-scoring harness.
-- **`tests/seam_residual_oracle.rs`** — pipeline oracle + H2-B rescue.
-- **`tests/floor_oracle_integration.rs`** — real-codec FLOOR_OK + gate + `veto_rescue` safety; `source_gap_oracle_transient_csv` (Run B, G5: transient-anchored dead-zone probe under production fit-mode gate).
-- **`tests/energy_signature_production.rs`** — F4 bool+veto pipeline.
-- **Disagreement table** — `seam_residual_disagreement_oracles` (CI-fast).
+- **`tests/seam_residual_corpus.rs`** — score-level disagreement (C1a); CI-fast.
+- **`tests/validate_residual_gate.rs`** — F4 pipeline abstain (`f4_decoy_residual_gate_vetoes_bool`); EC-6 discrimination.
+- **`tests/validate_floor_oracle.rs`** — real-codec FLOOR_OK + gate + Run B (G5); `gate_real_codec_production_fit` (C2/C3).
+- **`tests/integration_residual_gate_smoke.rs`** — `off` no-op (C4).
+- **`tests/residual_gate_catalog/`** — validity contract inventory (`matrix.toml`, README).

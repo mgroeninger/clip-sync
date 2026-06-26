@@ -14,7 +14,8 @@
 #
 # claims: which validity-contract clause(s) the row serves
 #   (see README § "What this suite must establish"):
-#     C1 veto_fires            — veto rejects echo/decoy Pearson would accept
+#     C1a composition       — apply_residual_to_confidence vetoes when informative + high headroom + Pearson pass
+#     C1b pipeline_veto     — PatchAudio skips with ResidualHeadroomExceeded under production_fit (optional; not proved)
 #     C2 abstain_out_of_regime — two-mic / diff-capture → uninformative → no opinion
 #     C3 no_false_veto_truth   — correct same-master fill never vetoed
 #     C4 off_no_regression     — residual_gate = off is a true no-op
@@ -34,8 +35,8 @@ tier = "fast"
 assertion = "hard_assert"
 location = "tests/seam_residual_corpus.rs::seam_residual_disagreement_oracles"
 fixture_ref = ["f4_decoy", "f1_truth", "broadband_codec_noise"]
-proves = "F4 veto; H2-B rescue at truth (score-level)"
-claims = ["C1", "C5"]  # score-level only (layer B); not pipeline proof
+proves = "F4 veto at fixed decoy frame; H2-B rescue at truth (C1a score-level only)"
+claims = ["C1a", "C5"]  # layer B — composition, not C1b pipeline veto
 
 # --- Layer C (pipeline) — C4 off regression (fast in-memory) ---
 
@@ -177,19 +178,16 @@ proves = "Veto inert when off patches (calibration)"
 claims = ["C3"]  # no false-veto, calibration-only
 
 # Claim coverage (see README § "What this suite must establish"):
-#   C1 veto_fires            — score-level only (disagreement_oracles). Pipeline decoy veto = GAP
-#                              (only out-of-matrix f4_decoy_residual_gate_vetoes_bool, calibration).
-#                              No production_fit pipeline test exercises a veto actually firing.
+#   C1a composition       — disagreement_oracles (layer B) + gap_fill_fit.rs units.
+#   C1b pipeline_veto     — NOT PROVED; optional. F4 excluded (M6). No matrix row.
 #   C2 abstain_out_of_regime — gate_real_codec (calibration) + gate_real_codec_production_fit (two_mic).
-#   C3 no_false_veto_truth   — gate_real_codec_production_fit (music control patches + gate
-#                              no-worse-than-off) + vorbis_64k (calibration) + M5 units.
-#   C4 off_no_regression     — off_no_regression_baseline (fast F1; calibration + production_fit arms).
-#   C5 rescue_real_value     — resolved (synthetic-only); deadzone_finale_run_b diagnostic + deadzone_punch_assert.
-# Highest-value gap: C1 production_fit pipeline veto.
+#   C3 no_false_veto_truth   — gate_real_codec_production_fit + vorbis_64k (calibration) + M5 units.
+#   C4 off_no_regression     — off_no_regression_baseline.
+#   C5 rescue_real_value     — resolved; deadzone_finale_run_b + deadzone_punch_assert + rescue_bb_synthetic.
 #
 # Out of matrix scope (documented in README only):
-#   - Layer A unit tests (policies.rs)
+#   - Layer A unit tests (policies.rs, gap_fill_fit.rs)
 #   - Layer B diagnostic CSVs (seam_residual_*_csv)
-#   - seam_residual_oracle CSV / h2 experiment (migrate-candidate, not cataloged yet)
-#   - f4_decoy_residual_gate_vetoes_bool (calibration; signature-adjacent) — the only C1 pipeline test
+#   - seam_residual_oracle CSV / h2 experiment
+#   - f4_decoy_residual_gate_vetoes_bool — F4 pipeline abstain under veto (M6); not C1b
 #   - floor_oracle manifest smokes (fast, calibration-adjacent)
