@@ -151,6 +151,22 @@ start_secs = 10.0
 end_secs   = 12.0
 expected_gaps = []
 
+[[case]]
+id               = "generated_w5_speech_peaks_anchor"
+tier             = "generated"
+generator        = "w5_speech_peaks_throat"
+total_secs       = 60
+sample_rate      = 48000
+peak_offset_secs = 1.0
+channels         = 1
+min_gap_ms       = 1000
+tolerance_secs   = 0.75
+max_patch_wall_secs = 120.0
+# Silent dropout throat @ ~14 s with speech bursts 1 s before/after (W5 / anchor seam).
+[[case.expected_gaps]]
+start_secs = 14.0
+end_secs   = 15.0
+
 # ── external cases (real media files; set CLIP_SYNC_GAP_CORPUS to file dir) ──
 # Run with: CLIP_SYNC_GAP_CORPUS=F:\Video cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_external -- --ignored
 #

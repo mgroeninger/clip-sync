@@ -135,3 +135,8 @@ required-features = ["diagnostic-tests"]
 name = "diag_patch_audio"
 path = "tests/diag_patch_audio.rs"
 required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_anchor_seam"
+path = "tests/diag_anchor_seam.rs"
+required-features = ["diagnostic-tests"]

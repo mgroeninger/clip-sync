@@ -5,6 +5,9 @@ use tempfile::TempDir;
 
 use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader, TimelineOverlap};
 
+use crate::test_support::energy_signature_fixtures::{
+    build_speech_peaks_offset_from_throat, write_pcm_wav,
+};
 use crate::test_support::NoOpProgressReporter;
 
 use crate::application::ports::Aligner;
@@ -138,11 +141,19 @@ pub struct GapCorpusCase {
     /// Per-case patch wall-time budget (seconds); falls back to `[defaults].patch_max_wall_secs`.
     #[serde(default)]
     pub max_patch_wall_secs: Option<f64>,
+    /// Sample rate override for generated WAVs (falls back to `[defaults].sample_rate`).
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    /// For `w5_speech_peaks_throat`: speech-burst offset from silent throat (seconds).
+    #[serde(default)]
+    pub peak_offset_secs: Option<f64>,
 }
 
 pub struct GeneratedCasePaths {
     pub _temp: TempDir,
     pub video_a: PathBuf,
+    /// Present when the generator writes a matching B master (e.g. W5 speech peaks).
+    pub video_b: Option<PathBuf>,
 }
 
 // ── path resolution ───────────────────────────────────────────────────────────
@@ -164,31 +175,72 @@ pub fn load_manifest() -> GapCorpusManifest {
         .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
-/// Resolve the A-file path and optional temp guard for a case.
-/// Returns `(Option<TempDir>, PathBuf)` — the guard must stay alive for the test.
-pub fn resolve_case_path(
+/// Resolved media paths for a corpus case. Keep `_guard` alive for generated tier.
+pub struct ResolvedCasePaths {
+    pub _guard: Option<TempDir>,
+    pub video_a: PathBuf,
+    /// Matching B master when the generator provides one.
+    pub video_b: Option<PathBuf>,
+}
+
+/// Resolve A/B paths and optional temp guard for a case.
+pub fn resolve_case_paths(
     case: &GapCorpusCase,
     defaults: &GapCorpusDefaults,
-) -> (Option<TempDir>, PathBuf) {
+) -> ResolvedCasePaths {
     match case.tier {
         GapCorpusTier::Committed => {
             let root = corpus_root();
             let video_a = root.join(case.video_a.as_ref().expect("committed case needs video_a"));
-            (None, video_a)
+            ResolvedCasePaths {
+                _guard: None,
+                video_a,
+                video_b: None,
+            }
         }
         GapCorpusTier::Generated => {
             let paths = generate_case_wav(case, defaults);
-            let video_a = paths.video_a.clone();
-            (Some(paths._temp), video_a)
+            ResolvedCasePaths {
+                _guard: Some(paths._temp),
+                video_a: paths.video_a,
+                video_b: paths.video_b,
+            }
         }
         GapCorpusTier::External => {
             let corpus_dir = std::env::var("CLIP_SYNC_GAP_CORPUS")
                 .expect("CLIP_SYNC_GAP_CORPUS must be set for external tier");
             let video_a = PathBuf::from(corpus_dir)
                 .join(case.video_a.as_ref().expect("external case needs video_a"));
-            (None, video_a)
+            ResolvedCasePaths {
+                _guard: None,
+                video_a,
+                video_b: None,
+            }
         }
     }
+}
+
+/// Resolve the A-file path and optional temp guard for a case.
+/// Returns `(Option<TempDir>, PathBuf)` — the guard must stay alive for the test.
+pub fn resolve_case_path(
+    case: &GapCorpusCase,
+    defaults: &GapCorpusDefaults,
+) -> (Option<TempDir>, PathBuf) {
+    let resolved = resolve_case_paths(case, defaults);
+    (resolved._guard, resolved.video_a)
+}
+
+fn reference_video_b(
+    resolved: &ResolvedCasePaths,
+    video_a: &Path,
+    temp_b: &tempfile::TempDir,
+) -> PathBuf {
+    if let Some(path) = resolved.video_b.as_ref() {
+        return path.clone();
+    }
+    let video_b = temp_b.path().join("reference_b.wav");
+    write_clean_chirp_reference(&video_b, video_a);
+    video_b
 }
 
 // ── WAV generation ────────────────────────────────────────────────────────────
@@ -347,17 +399,74 @@ fn case_channels(case: &GapCorpusCase) -> u16 {
     case.channels.unwrap_or(1).max(1)
 }
 
+fn case_sample_rate(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> u32 {
+    case.sample_rate.unwrap_or(defaults.sample_rate)
+}
+
+/// Quiet chirp under silent regions so block-based gap scan sees non-silence outside the hole.
+fn apply_quiet_chirp_bed_where_silent(
+    samples: &mut [f32],
+    channels: usize,
+    sample_rate: u32,
+    amplitude: f32,
+) {
+    let ch = channels.max(1);
+    let frames = samples.len() / ch;
+    for frame in 0..frames {
+        if samples[frame * ch].abs() > 1e-6 {
+            continue;
+        }
+        let t = frame as f64 / f64::from(sample_rate);
+        let bed = (f64::from(amplitude) * (std::f64::consts::TAU * 300.0 * t).sin()) as f32;
+        for c in 0..ch {
+            samples[frame * ch + c] = bed;
+        }
+    }
+}
+
+fn zero_f32_frames(samples: &mut [f32], channels: usize, start: usize, end: usize) {
+    let ch = channels.max(1);
+    for frame in start..end.min(samples.len() / ch) {
+        for c in 0..ch {
+            samples[frame * ch + c] = 0.0;
+        }
+    }
+}
+
 pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> GeneratedCasePaths {
     let temp = TempDir::new().expect("tempdir");
     let total_secs = case.total_secs.unwrap_or(DEFAULT_TOTAL_SECS);
-    let sample_rate = defaults.sample_rate;
+    let sample_rate = case_sample_rate(case, defaults);
     let total_samples = u64::from(sample_rate) * u64::from(total_secs);
     let path = temp.path().join("a.wav");
 
     let channels = case_channels(case);
     let fraction = f64::from(case.amplitude_fraction.unwrap_or(1.0));
 
-    match case.generator.as_deref().unwrap_or("zeroed_chirp") {
+    let video_b = match case.generator.as_deref().unwrap_or("zeroed_chirp") {
+        "w5_speech_peaks_throat" => {
+            let peak_offset = case.peak_offset_secs.unwrap_or(1.0);
+            let mut fixture = build_speech_peaks_offset_from_throat(
+                sample_rate,
+                channels as usize,
+                peak_offset,
+            );
+            let gap_start = fixture.gap_start;
+            let gap_end = fixture.gap_end;
+            apply_quiet_chirp_bed_where_silent(
+                &mut fixture.a_samples,
+                channels as usize,
+                sample_rate,
+                0.08,
+            );
+            zero_f32_frames(&mut fixture.a_samples, channels as usize, gap_start, gap_end);
+            write_pcm_wav(&path, sample_rate, channels as usize, &fixture.a_samples);
+            let path_b = temp.path().join("b.wav");
+            write_pcm_wav(&path_b, sample_rate, channels as usize, &fixture.b_samples);
+            Some(path_b)
+        }
+        generator => {
+            match generator {
         "quiet_chirp" => {
             let amp = f64::from(case.amplitude_fraction.unwrap_or(0.05));
             if channels == 1 {
@@ -423,9 +532,16 @@ pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> 
             write_mono_wav(&path, sample_rate, samples);
             zero_wav_segments(&path, sample_rate, &case.gap_segments);
         }
-    }
+            }
+            None
+        }
+    };
 
-    GeneratedCasePaths { _temp: temp, video_a: path }
+    GeneratedCasePaths {
+        _temp: temp,
+        video_a: path,
+        video_b,
+    }
 }
 
 // ── committed fixture generation ──────────────────────────────────────────────
@@ -770,7 +886,9 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
 
     for case in manifest.case.iter().filter(|c| c.tier == tier && !c.ignore) {
         let started = std::time::Instant::now();
-        let (_guard, video_a) = resolve_case_path(case, &manifest.defaults);
+        let resolved = resolve_case_paths(case, &manifest.defaults);
+        let video_a = resolved.video_a.clone();
+        let video_b = resolved.video_b.clone().unwrap_or_else(|| video_a.clone());
 
         if tier == GapCorpusTier::Committed {
             assert!(
@@ -781,7 +899,7 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
             );
         }
 
-        let request = build_scan_request(video_a.clone(), video_a, case, &manifest.defaults);
+        let request = build_scan_request(video_a.clone(), video_b, case, &manifest.defaults);
         let alignment = no_op_alignment();
         let report = scan
             .scan_after_alignment(request, alignment)
@@ -824,7 +942,8 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
             .max_patch_wall_secs
             .unwrap_or(manifest.defaults.patch_max_wall_secs);
 
-        let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
+        let resolved = resolve_case_paths(case, &manifest.defaults);
+        let video_a = resolved.video_a.clone();
 
         if tier == GapCorpusTier::Committed {
             assert!(
@@ -836,8 +955,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
         }
 
         let temp_b = tempfile::tempdir().expect("tempdir for reference B");
-        let video_b = temp_b.path().join("reference_b.wav");
-        write_clean_chirp_reference(&video_b, &video_a);
+        let video_b = reference_video_b(&resolved, &video_a, &temp_b);
 
         let (sample_rate, channels, frames) = read_wav_metadata(&video_a);
         let duration_secs = frames as f64 / f64::from(sample_rate);
@@ -907,10 +1025,10 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
         .iter()
         .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty())
     {
-        let (_guard_a, video_a) = resolve_case_path(case, &manifest.defaults);
+        let resolved = resolve_case_paths(case, &manifest.defaults);
+        let video_a = resolved.video_a.clone();
         let temp_b = tempfile::tempdir().expect("tempdir for reference B");
-        let video_b = temp_b.path().join("reference_b.wav");
-        write_clean_chirp_reference(&video_b, &video_a);
+        let video_b = reference_video_b(&resolved, &video_a, &temp_b);
 
         let (sample_rate, _, frames) = read_wav_metadata(&video_a);
         let duration_secs = frames as f64 / f64::from(sample_rate);
@@ -936,4 +1054,133 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
             result.summary.skipped_count,
         );
     }
+}
+
+const W5_CORPUS_CASE_ID: &str = "generated_w5_speech_peaks_anchor";
+
+/// W5 production corpus: speech peaks offset from silent throat — scan, domain anchors, force patch.
+pub fn run_gap_corpus_w5_anchor_seam_case() {
+    use crate::application::PatchAudio;
+    use crate::domain::gap_anchor_seam::{
+        list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
+        AnchorSource,
+    };
+    use crate::domain::patch_result::GapPatchStatus;
+    use crate::domain::policies::refine_gap_frames;
+    use crate::domain::{FillMode, GapSignatureMode, ResidualGateMode};
+    use crate::infrastructure::config::RepairConfig;
+    use crate::test_support::energy_signature_production::{
+        gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
+    };
+
+    let manifest = load_manifest();
+    let case = manifest
+        .case
+        .iter()
+        .find(|c| c.id == W5_CORPUS_CASE_ID)
+        .unwrap_or_else(|| panic!("manifest missing case {W5_CORPUS_CASE_ID}"));
+
+    let sample_rate = case_sample_rate(case, &manifest.defaults);
+    let peak_offset = case.peak_offset_secs.unwrap_or(1.0);
+    let channels = case_channels(case) as usize;
+    let fixture = build_speech_peaks_offset_from_throat(sample_rate, channels, peak_offset);
+
+    let scan = refine_gap_frames(
+        &fixture.a_samples,
+        channels,
+        fixture.gap_start,
+        fixture.gap_end,
+        0.01,
+        0.0,
+        (0.75 * sample_rate as f64).round() as usize,
+    );
+    let anchor_params = AnchorSeamParams {
+        context_frames: fixture.context_frames,
+        max_anchors_per_side: 5,
+        max_bracket_frames: (5.0 * sample_rate as f64).round() as usize,
+        min_prominence: 0.0,
+        structure: fixture.structure_params,
+    };
+    let set = list_anchor_candidates_a(&fixture.a_samples, channels, scan, &anchor_params);
+    assert!(
+        set.pre.iter().any(|c| {
+            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
+        }),
+        "W5: expected salient pre-anchor before throat"
+    );
+    let brackets = list_feasible_anchor_brackets(&set, scan, &anchor_params);
+    assert!(
+        brackets.iter().any(|b| b.refined.start_frame < scan.start_frame),
+        "W5: expected feasible bracket with pre-anchor before throat"
+    );
+
+    let resolved = resolve_case_paths(case, &manifest.defaults);
+    let video_a = resolved.video_a.clone();
+    let temp_b = tempfile::tempdir().expect("tempdir for B");
+    let video_b = reference_video_b(&resolved, &video_a, &temp_b);
+
+    let media_reader = SymphoniaMediaReader;
+    let progress = NoOpProgressReporter;
+    let aligner = NeverCalledAligner;
+    let scan_gaps = ScanGaps::new(&media_reader, &progress, &aligner);
+
+    let (_, _, frames) = read_wav_metadata(&video_a);
+    let duration_secs = frames as f64 / f64::from(sample_rate);
+    let scan_request = build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+    let report = scan_gaps
+        .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
+        .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+
+    assert_gap_expectations(
+        &case.id,
+        &case.expected_gaps,
+        &report.gaps,
+        case.tolerance_secs,
+        &manifest.defaults,
+    );
+
+    let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
+    repair.fill_mode = FillMode::Fit;
+    repair.anchor_seam_mode = AnchorSeamMode::Force;
+    repair.residual_gate = ResidualGateMode::VetoRescue;
+    repair.min_fill_correlation = 0.35;
+    repair.fill_fit_structure_weight = 0.35;
+    repair.fill_fit_waveform_weight = 0.65;
+    repair.normalize_fill = false;
+    repair.fill_length_slack_secs = 0.05;
+    repair.min_border_discovery_secs = 0.25;
+    repair.border_standoff_secs = 0.0;
+    repair.gap_end_extend_on_post_seam_fail = false;
+    repair.gap_start_extend_on_pre_seam_fail = false;
+
+    let temp_patch = tempfile::tempdir().expect("tempdir for patch fixture");
+    let patch_report = gap_report_from_energy_fixture(temp_patch.path(), &fixture);
+    let request = patch_request_from_repair(patch_report, &repair);
+    let patch = PatchAudio::new(&media_reader, &progress);
+    let result = patch
+        .execute(request, RepairConfig::default().crossfade_ms)
+        .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
+
+    let gap = &result.summary.gaps[0];
+    assert!(
+        matches!(gap.status, GapPatchStatus::Patched { .. }),
+        "W5: expected patched gap, got {:?}",
+        gap.status
+    );
+    if let GapPatchStatus::Patched {
+        anchor_seam_used,
+        anchor_bracket_move_frames,
+        ..
+    } = gap.status
+    {
+        eprintln!(
+            "W5 patch routing: anchor_seam_used={anchor_seam_used}, move_frames={anchor_bracket_move_frames}"
+        );
+    }
+
+    eprintln!(
+        "case {}: W5 anchor seam corpus OK (scan gaps={}, patched)",
+        case.id,
+        report.gaps.len()
+    );
 }

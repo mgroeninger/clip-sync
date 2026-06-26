@@ -1,7 +1,6 @@
 # Anchor-based seam placement — plan (DRAFT)
 
-Status: **in progress** — P0–P4 + Batch A–E (Pearson gate, xcorr, observability, user docs). Remaining:
-optional corpus/diag rows (Batch F).
+Status: **done** — P0–P4 + Batch A–F (Pearson gate, xcorr, observability, user docs, corpus/diag).
 
 Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
 Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
@@ -247,8 +246,8 @@ record_fit_joint_candidate(baseline)           // existing
 | P3.2 | Domain oracle | `tests/anchor_seam_oracle.rs` (new) | A1: candidates pick peak frames, not throat |
 | P3.3 | Pipeline oracle | `tests/anchor_seam_oracle.rs` | A1 end-to-end: `PatchAudio` + `anchor_seam_mode=force` |
 | P3.4 | Regression rows | `tests/anchor_seam_oracle.rs` | A2–A4 (A3 domain + pipeline in oracle) |
-| P3.5 | Production corpus row | `gap_corpus_fixtures.rs` + manifest | One real W5 row |
-| P3.6 | Diagnostic (optional) | `tests/diag_anchor_seam.rs` | Per-gap candidate dump (`diagnostic-tests`) |
+| P3.5 | Production corpus row | `gap_corpus_fixtures.rs` + manifest | One real W5 row | **done** |
+| P3.6 | Diagnostic (optional) | `tests/diag_anchor_seam.rs` | Per-gap candidate dump (`diagnostic-tests`) | **done** |
 
 Pattern to copy: `tests/seam_residual_oracle.rs`.
 
@@ -284,6 +283,17 @@ Unit tests: `xcorr_rescues_ambiguous_pearson_pre_anchor`, `local_anchor_xcorr_pe
 | [development.md](development.md) | `anchor_seam_oracle` in PR integration tier |
 | [README.md](../README.md) | Commented `anchor_seam_*` config keys |
 | P2.9 | `repair_profile.rs` `inactive_repair_flag_notes` when `anchor_seam_mode=off` | **done** (shipped earlier) |
+
+### Batch F — Corpus + diagnostic (done)
+
+| # | Task | File(s) | Notes |
+|---|------|---------|-------|
+| P3.5 | W5 production corpus row | `gap_corpus_fixtures.rs`, `manifest.toml`, `integration_gap_corpus.rs` | `generated_w5_speech_peaks_anchor` — scan + domain anchors + force patch |
+| P3.6 | Diagnostic CSV | `test_support/anchor_seam_diagnostic.rs`, `tests/diag_anchor_seam.rs` | `speech_peaks`, C3, flat C1 (`diagnostic-tests`) |
+
+W5 generator adds a quiet chirp bed on silent regions so block-based scan detects the throat hole;
+patch oracle still uses the sparse `speech_peaks_offset_from_throat` fixture (baseline may win:
+`anchor_seam_used=false` until fit-routing extraction).
 
 ---
 

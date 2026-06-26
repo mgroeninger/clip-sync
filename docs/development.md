@@ -72,7 +72,7 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
 | `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `seam_residual_oracle` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `seam_residual_oracle` integration binaries |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -147,7 +147,7 @@ validation changes.
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `seam_residual_oracle` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `seam_residual_oracle` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -185,7 +185,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `cli_wav_integration` | integration | — | yes | CLI `--wav` scan + patch |
 | `query_reference_integration` | integration | — | yes | Query-ref gap inside/outside mapped region |
 | `wav_bit_depth_integration` | integration | — | yes | Source-driven WAV output bit depth |
-| `integration_gap_corpus` | integration | — | yes (committed scan only) | Gap scan corpus manifest; timing/external/generated `#[ignore]` |
+| `integration_gap_corpus` | integration | — | yes (committed scan + `gap_corpus_w5_anchor_seam`) | Gap scan corpus manifest; timing/external/generated `#[ignore]` |
 | `integration_energy_smoke` | integration | — | yes | Scan→patch tripwire (`corpus_scan_patch_smoke`, EC01 e2e) |
 | `integration_energy_patch` | integration | — | **no** | SP01–SP03 (`i1_`–`i3_`); full `integration` tier only |
 | `integration_residual_gate_smoke` | integration | — | yes | RG04 off-regression baseline |
@@ -201,6 +201,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_energy_matrix` | diagnostic | `diagnostic-tests` | no | Energy mode matrix CSV |
 | `diag_seam_residual` | diagnostic | `diagnostic-tests` | no | Seam residual CSV |
 | `diag_patch_audio` | diagnostic | `diagnostic-tests` | no | Patch geometry CSV (I1/I3) |
+| `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
 † `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored

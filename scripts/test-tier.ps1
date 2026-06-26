@@ -153,6 +153,7 @@ try {
             '--test', 'diag_energy_matrix',
             '--test', 'diag_seam_residual',
             '--test', 'diag_patch_audio',
+            '--test', 'diag_anchor_seam',
             '--test', 'seam_residual_oracle'
         )
         Invoke-CargoTest @(

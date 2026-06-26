@@ -17,6 +17,8 @@ tests default to `fill_mode = gate` where gate shortcuts are under test) and uni
   files committed in `tests/gap_corpus/wav/`.
 - **Generated** (`gap_corpus_generated`): builds WAV fixtures at test time using
   pure-Rust generators (no ffmpeg needed). Run with `--ignored`.
+- **W5 anchor seam** (`gap_corpus_w5_anchor_seam`): PR integration row — scan on
+  `generated_w5_speech_peaks_anchor`, domain anchor brackets, force-mode patch.
 - **External** (`gap_corpus_external`): real media files supplied by the user via
   `CLIP_SYNC_GAP_CORPUS`. Ground truth comes from running ffmpeg's `silencedetect`
   filter manually and recording the output in `manifest.toml`.
@@ -26,6 +28,9 @@ tests default to `fill_mode = gate` where gate shortcuts are under test) and uni
 ```powershell
 # Committed only (fast, always green in CI)
 cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_committed
+
+# W5 editorial anchor seam (scan + domain + force patch; ~50s)
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_w5_anchor_seam -- --nocapture
 
 # Patch timing on committed gap fixtures (scan + fit patch; 5s border, no extension grid)
 cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed -- --ignored --nocapture
@@ -64,6 +69,9 @@ enough (≈ 4 MB total) to commit directly.
      requires `channels >= 2`
    - `partial_channel_gap` — chirp on all channels, then zero `gap_segments` on
      `gap_channel` (default 1) only; requires `channels >= 2`
+   - `w5_speech_peaks_throat` — 60 s speech-peaks-offset fixture at `sample_rate`
+     (default 48 kHz); optional `peak_offset_secs`; writes matching A/B WAVs (A gets a
+     quiet chirp bed outside bursts so the scanner sees the hole)
 3. For **external**: record the ground truth with ffmpeg:
    ```
    ffmpeg -i FILE.mkv -af silencedetect=noise=-60dB:d=1 -f null -

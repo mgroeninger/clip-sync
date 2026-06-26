@@ -10,7 +10,7 @@
 use clip_sync_repair::test_support::gap_corpus_fixtures::{
     corpus_root, load_manifest, run_gap_corpus_manifest_cases,
     run_gap_corpus_patch_timing_cases, run_gap_corpus_patch_timing_production_cases,
-    write_committed_wav_fixtures, GapCorpusTier,
+    run_gap_corpus_w5_anchor_seam_case, write_committed_wav_fixtures, GapCorpusTier,
 };
 
 #[test]
@@ -42,6 +42,11 @@ fn gap_corpus_manifest_loads() {
 #[test]
 fn gap_corpus_committed() {
     run_gap_corpus_manifest_cases(GapCorpusTier::Committed);
+}
+
+#[test]
+fn gap_corpus_w5_anchor_seam() {
+    run_gap_corpus_w5_anchor_seam_case();
 }
 
 #[test]
