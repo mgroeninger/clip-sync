@@ -24,7 +24,7 @@ cargo test -p clip-sync --features he-aac,test-utils corpus_            # + HE-A
 .\scripts\generate_corpus.ps1                                            # regenerate committed WAV fixtures
 ```
 
-Full tier machinery: [development.md](development.md), [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md).
+Full tier machinery: [development.md](development.md), [test-tier-remainder.md](test-tier-remainder.md).
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
 - **Generated tier** — 20 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.

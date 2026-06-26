@@ -310,7 +310,7 @@ pub fn production_fit_repair_config(gate: ResidualGateMode) -> RepairConfig {
 
 ### Phase 2 — migrate gate tests (landed)
 
-Split binaries (see [test-tier plan](../../../docs/TEMP-test-tier-plan.md)):
+Split binaries (see [development.md](../../../docs/development.md)):
 
 - `integration_floor_oracle_smoke.rs` — manifest + gap_frames PR smokes
 - `integration_residual_gate_smoke.rs` — `off_no_regression_baseline` (RG04 PR)

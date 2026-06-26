@@ -77,6 +77,10 @@ name = "integration_energy_smoke"
 path = "tests/integration_energy_smoke.rs"
 
 [[test]]
+name = "integration_energy_patch"
+path = "tests/integration_energy_patch.rs"
+
+[[test]]
 name = "integration_residual_gate_smoke"
 path = "tests/integration_residual_gate_smoke.rs"
 
@@ -109,6 +113,11 @@ path = "tests/validate_residual_gate.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "validate_patch_audio"
+path = "tests/validate_patch_audio.rs"
+required-features = ["validation-tests"]
+
+[[test]]
 name = "diag_energy_matrix"
 path = "tests/diag_energy_matrix.rs"
 required-features = ["diagnostic-tests"]
@@ -116,4 +125,9 @@ required-features = ["diagnostic-tests"]
 [[test]]
 name = "diag_seam_residual"
 path = "tests/diag_seam_residual.rs"
+required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_patch_audio"
+path = "tests/diag_patch_audio.rs"
 required-features = ["diagnostic-tests"]

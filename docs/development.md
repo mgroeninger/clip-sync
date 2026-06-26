@@ -71,8 +71,8 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `he-aac` | no | Passthrough: `clip-sync/he-aac` |
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
-| `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `seam_residual_oracle` integration binaries |
+| `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `seam_residual_oracle` integration binaries |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -94,7 +94,9 @@ ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channel
 
 Tests are grouped into **execution tiers** (when CI runs them). Acceptance row IDs (SD, SP, EC,
 RG, …) describe **what** a test proves — see [test-acceptance-glossary.md](test-acceptance-glossary.md).
-Tier machinery is documented in [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md).
+Tier machinery: this doc (living reference). Migration history:
+[archive/test-tier-plan.md](archive/test-tier-plan.md). Open work:
+[test-tier-remainder.md](test-tier-remainder.md).
 
 There are **four** execution tiers. "**oracle**" is *not* a tier — it is a label (the `oracle_`
 file/test-name prefix) for domain-acceptance tests that assert against a computed ground-truth;
@@ -124,10 +126,10 @@ produced ambiguous bins.
    **integration**. This includes **oracle** tests — they keep the `oracle_` name prefix as a
    selection label but schedule as integration.
 
-**Speed is not a tier.** A slow repo-only test (e.g. `patch_audio_integration` SP rows) stays
+**Speed is not a tier.** A slow repo-only test (e.g. `integration_energy_patch` SP rows) stays
 *integration*; it is kept off the default PR via script selection (`pr-repair-extended`, name
 filters), not by relabeling it. Only external-dependency or exhaustive-contract work becomes
-*validation*. Full machinery: [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) § Tier decision rule.
+*validation*. Full machinery: [development.md](development.md) § Tier decision rule.
 
 **PR gate:** `.\scripts\test-tier.ps1 -Tier pr` (alignment committed corpus + repair smoke +
 CLI adapter tests). Does **not** run full `patch_audio_integration` (~15 min) or ignored
@@ -144,8 +146,8 @@ validation changes.
 | Feature | Binaries |
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
-| `validation-tests` | `validate_floor_oracle`, `validate_residual_gate` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `seam_residual_oracle` |
+| `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `seam_residual_oracle` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -165,6 +167,7 @@ corpus paths are resolved from `repair_tests_dir!()` in tier binaries (expands t
 | `residual_gate` | `residual_gate_runner.rs` | `validate_floor_oracle` |
 | `seam_residual` | `seam_residual_scoring.rs` | `seam_residual_corpus`, `diag_seam_residual` |
 | `energy_matrix` | `energy_signature_matrix.rs` | `diag_energy_matrix` |
+| `patch_audio` | (new) | `integration_energy_patch`, `diag_patch_audio`, `validate_patch_audio`; `patch_audio_integration` imports `PatchTestOptions` / runners |
 
 To extend a runner: add or edit the module in `clip-sync-repair-harness/src/`, then call it from
 the relevant `tests/<tier>_*.rs` binary. Do not reintroduce `include!` or `tests/common/`.
@@ -214,7 +217,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 .\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # local only — ffmpeg + fetch_corpus_sources
 .\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
 
-# Extended repair (pr-repair + patch_audio sine grid, skips i1_/i2_/i3_)
+# Extended repair (pr-repair + patch_audio sine grid; SP01–SP03 in integration_energy_patch)
 .\scripts\test-tier.ps1 -Tier pr-repair-extended
 ```
 
@@ -228,7 +231,7 @@ Use `-Tier validation` / `-Tier diagnostic` for feature-gated `validate_*` and `
 
 Do **not** use `cargo test --tests` for integration-only — Cargo still runs `--lib` with
 `--tests`. Use the script or an explicit `--test <binary>` list (see
-[TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) Phase 1).
+[archive/test-tier-plan.md](archive/test-tier-plan.md) Phase 1).
 
 **Local full workspace compile check** (not CI):
 
@@ -394,7 +397,8 @@ cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenera
 | `regenerate_committed_wav_fixtures` | `clip-sync` | `--ignored`; overwrites committed WAVs |
 | `gap_corpus_*` | `clip-sync-repair` | `--test integration_gap_corpus`; generated/external/patch_timing `--ignored` |
 | `pcm_discover_finds_*`, `refine_recovers_large` | `clip-sync` | `--ignored`; slow |
-| `mux_writes_video` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; ffmpeg on PATH (`pr-repair` when available) |
+| `mux_arg_rejected_without_feature` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; runs on `pr-repair` when ffmpeg is on PATH |
+| `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` | `clip-sync-repair` | `--test cli_mux_integration` with `ffmpeg-mux`; `#[ignore]` — run with `--ignored` locally |
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 

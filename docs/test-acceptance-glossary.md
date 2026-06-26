@@ -1,7 +1,7 @@
 # Test and operator acceptance glossary
 
 Stable IDs for **what** we prove (acceptance rows, operator vocabulary, gate contracts) and how
-that relates to **where** tests run (CI tiers — see [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md)).
+that relates to **where** tests run (CI tiers — see [development.md](development.md)).
 
 **Rules:**
 
@@ -12,7 +12,7 @@ that relates to **where** tests run (CI tiers — see [TEMP-test-tier-plan.md](T
 
 **Harness vs acceptance IDs:** SD/SP/EC/RG name *what* a row proves; harness code is split —
 fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs in `tests/*_catalog/`,
-`#[test]` in tier binaries. See [TEMP-test-tier-plan.md § Harness organization](TEMP-test-tier-plan.md#harness-organization-fixtures-runners-catalogs).
+`#[test]` in tier binaries. See [development.md](development.md) and [archive/test-tier-plan.md](archive/test-tier-plan.md#harness-organization-fixtures-runners-catalogs).
 
 ---
 
@@ -25,7 +25,7 @@ fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs
 | **F** | Fixture geometry | Synthetic scenario layout (F1, F1-long, F4-decoy, …) | `test_support/`, guide § Corpus fixtures |
 | **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | `tests/oracle_energy.rs` (integration, oracle label) |
 | **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/patch_audio_integration.rs` |
-| **EC** | Energy corpus | Production-geometry signature acceptance | `tests/oracle_energy.rs` (domain), `tests/integration_energy_smoke.rs` (scan/e2e), `tests/validate_residual_gate.rs` (EC-6 patch, validation), `tests/diag_energy_matrix.rs` (matrix, diagnostic) |
+| **EC** | Energy corpus | Production-geometry signature acceptance | `tests/oracle_energy.rs` (domain), `tests/integration_energy_smoke.rs` (scan/e2e), `tests/integration_energy_patch.rs` (SP01–SP03 patch), `tests/validate_residual_gate.rs` (EC-6 patch, validation), `tests/diag_energy_matrix.rs` (matrix, diagnostic) |
 | **RG** | Residual gate claim | Veto/rescue gate validity contract | [residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md), `matrix.toml` |
 | **PL** | Placement mode | Who picks B alignment in residual/floor harness | `matrix.toml` `placement` |
 | **CHK** | Signature checklist | One-off ship criteria (verbose output, fixture port) | [energy-signature-plan.md](archive/energy-signature-plan.md) |
@@ -42,7 +42,7 @@ fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs
 **CI tiers** (unit / integration / validation / diagnostic) describe **when** tests run, not
 acceptance ID families. "oracle" is a *label* (the `oracle_` name prefix for domain-acceptance
 rows), not a tier — those rows schedule as integration. See
-[TEMP-test-tier-plan.md](TEMP-test-tier-plan.md). Rough mapping:
+[development.md](development.md). Rough mapping:
 
 | Tier | Acceptance families |
 |------|---------------------|
@@ -211,7 +211,8 @@ Historical ship criteria from energy signature Phase 2 — not gap kinds.
 
 ## Related docs
 
-- [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) — CI tiers, file layout, `test-tier.ps1`
+- [development.md](development.md) — CI tiers, file layout, `test-tier.ps1` (living reference)
+- [archive/test-tier-plan.md](archive/test-tier-plan.md) — migration history
 - [gap-repair-guide.md](gap-repair-guide.md) — GK / CS in operator workflow
 - [corpus-validation.md](corpus-validation.md) — alignment corpus + EC rows
 - [energy-signature-plan.md](archive/energy-signature-plan.md) — SD / SP / CHK definitions

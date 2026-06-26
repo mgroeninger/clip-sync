@@ -34,9 +34,9 @@ How to read and steer a run:
 
 | Doc | Covers |
 |-----|--------|
-| [development.md](development.md) | Build, features, test commands, fixture regeneration |
-| [test-acceptance-glossary.md](test-acceptance-glossary.md) | Acceptance row IDs (SD, SP, EC, RG, …) and harness layout |
-| [TEMP-test-tier-plan.md](TEMP-test-tier-plan.md) | Execution tiers, `test-tier.ps1`, phase history |
+| [development.md](development.md) | Build, features, test commands, execution tiers, `test-tier.ps1` |
+| [archive/test-tier-plan.md](archive/test-tier-plan.md) | Tier migration history (archived 2026-06) |
+| [test-tier-remainder.md](test-tier-remainder.md) | Deferred tiers (2b, 2c, nextest, validate crate) |
 | [corpus-validation.md](corpus-validation.md) | Test corpus tiers, acceptance, energy-signature corpus |
 | [corpus-matrix.md](corpus-matrix.md) | Alignment corpus matrix |
 

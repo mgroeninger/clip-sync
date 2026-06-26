@@ -1,37 +1,47 @@
-# Temporary plan: test tiers (unit / integration / validation / diagnostic)
+# Test tier plan (archived)
 
-> **Tier model (v2, 2026-06-25):** four execution tiers — **unit / integration / validation /
+> **Archived 2026-06-25.** The **`clip-sync-repair` tier migration is complete.** Use
+> [development.md](../development.md) for current commands, features, and the tier decision rule.
+> Open / deferred work: [test-tier-remainder.md](../test-tier-remainder.md).
+
+## Landed summary (repair crate, 2026-06-25)
+
+| Phase | Outcome |
+|-------|---------|
+| **1** | `test-tier.ps1`, tier conventions, `development.md`, CI `-Tier pr` |
+| **2** | Oracle/smoke binary splits; `--lib` &lt;15s |
+| **2 follow-up** | `integration_gap_corpus`, `validate_patch_audio`, `diag_patch_audio` |
+| **3** | `autotests = false`, `validation-tests` / `diagnostic-tests`, explicit `[[test]]` |
+| **3.5** | `clip-sync-repair-harness` dev-dep (replaces `tests/common/` `include!`) |
+| **CI** | Manifest guard, Clippy (`clip-sync-repair` + harness); nightly validation **deferred** |
+
+**Not in scope of this archive closure:** Phase **2b** (`clip-sync` binaries), **2c**, **4** (nextest), **5** (validate crate) — see [test-tier-remainder.md](../test-tier-remainder.md).
+
+---
+
+> **Historical context (2026-06-25):** four execution tiers — **unit / integration / validation /
 > diagnostic**. "**oracle**" is **not a tier**; it is a *label* (the `oracle_` file/test-name prefix)
 > for domain-acceptance tests that assert against a computed ground-truth (SD/EC rows). An oracle
 > test is scheduled as **integration** (repo-only, deterministic) or **validation** (needs a real
 > codec/corpus, or is a slow off-PR contract matrix). Select oracle tests by name filter
 > (`cargo test oracle_`) or acceptance ID — not by tier. See [Tier decision rule](#tier-decision-rule).
 
-> **Status:** Phases 1–3.5 landed (2026-06-25); Phases
-> 2b–5 otherwise pending. See [Phase status](#phase-status).
-> Motivated by confusion between CI-fast tests, integration
-> tests, domain oracles, and validation/contract work (e.g. residual gate **RG01–RG05**, floor
-> oracle, energy acceptance **SD** / **EC**). Cargo exposes a single `cargo test` surface;
-> `clip-sync-repair --lib` already runs ~65s with 8 `#[ignore]` tests while mixing true units
-> with **EC01** / **EC06** domain oracles (legacy `p1_` / `p4_` test names).
-> Integration binaries add ~20 min (dominated by `patch_audio_integration`). There is no way to
-> run “integration only” or “validation only” without knowing per-file `--test` flags.
->
-> Archive to `docs/archive/test-tier-plan.md` when shipped (after Phase 2+ lands or is dropped).
-> Phase 1 conventions are already mirrored in [development.md](development.md); keep that doc
-> as the living reference and this one as the migration tracker.
+> **Status at archive:** Phases 1–3.5 and repair follow-ups **landed**; Phases 2b–5 tracked in
+> [test-tier-remainder.md](../test-tier-remainder.md). The problem statement below describes the
+> **pre-migration** state (circa 2026-06).
 
-## Phase status
+## Phase status (at archive)
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Conventions + `test-tier.ps1` + docs (no file moves) | **Landed (2026-06-25)** — script, CI `-Tier pr`, `development.md` all in place; see [acceptance criteria](#acceptance-criteria) |
-| **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** — see [acceptance criteria](#acceptance-criteria) |
-| **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending (stubs error with “Phase 2b” message) |
+| **1** | Conventions + `test-tier.ps1` + docs | **Landed (2026-06-25)** |
+| **2** | Physical separation, repair crate (`--lib` < 15s) | **Landed (2026-06-25)** |
+| **2 follow-up** | `integration_gap_corpus`, patch validate/diag binaries | **Landed (2026-06-25)** |
+| **2b** | Physical separation, `clip-sync` (`tests/` binaries) | Pending — [remainder](../test-tier-remainder.md) |
 | **2c** | `align_videos` integration move | Deferred |
-| **3** | Feature-gated tiers (`autotests = false`, `required-features`) + `tests/common/` per-binary includes (Clippy) | **Landed (2026-06-25)** — interim `include!` harness; superseded by [Phase 3.5](#phase-35--harness-dev-dep-crate-follow-up) |
-| **3.5** | `clip-sync-repair-harness` dev-dep crate; retire `tests/common/` `include!` | **Landed (2026-06-25)** |
-| **CI nightly validation** | Scheduled `validation` tier on GitHub Actions | **Deferred** — no runner infrastructure (ffmpeg, corpus fetch, wall time); run locally via `test-tier.ps1 -Tier validation` |
+| **3** | Feature-gated tiers + `[[test]]` catalog | **Landed (2026-06-25)** |
+| **3.5** | `clip-sync-repair-harness` dev-dep crate | **Landed (2026-06-25)** |
+| **CI nightly validation** | Scheduled `validation` tier on GitHub Actions | **Deferred** (no infrastructure) |
 | **4** | cargo-nextest profiles | Optional / pending |
 | **5** | `clip-sync-repair-validate` crate | Deferred |
 

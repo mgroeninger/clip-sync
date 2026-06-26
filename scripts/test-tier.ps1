@@ -1,6 +1,6 @@
 # Test tier selector for clip-sync workspace.
 # Run from repo root: .\scripts\test-tier.ps1 -Tier pr
-# See docs/TEMP-test-tier-plan.md and docs/development.md.
+# See docs/development.md and docs/test-tier-remainder.md.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
@@ -82,11 +82,7 @@ try {
 
     function Invoke-RepairPrRepairExtended {
         Invoke-RepairPrRepair
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--test', 'patch_audio_integration', '--',
-            '--skip', 'i1_', '--skip', 'i2_', '--skip', 'i3_'
-        )
+        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'patch_audio_integration')
     }
 
     function Invoke-RepairIntegrationOnly {
@@ -98,6 +94,7 @@ try {
             '--test', 'query_reference_integration',
             '--test', 'cli_wav_integration',
             '--test', 'integration_energy_smoke',
+            '--test', 'integration_energy_patch',
             '--test', 'integration_floor_oracle_smoke',
             '--test', 'integration_gap_corpus',
             '--test', 'integration_residual_gate_smoke',
@@ -134,18 +131,14 @@ try {
             '-p', 'clip-sync-repair',
             '--features', 'validation-tests',
             '--test', 'validate_floor_oracle',
-            '--test', 'validate_residual_gate'
+            '--test', 'validate_residual_gate',
+            '--test', 'validate_patch_audio'
         )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--test', 'integration_gap_corpus',
             'gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing',
             '--', '--ignored'
-        )
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--test', 'patch_audio_integration',
-            'patch_audio_fit_production_defaults', '--', '--ignored'
         )
     }
 
@@ -156,16 +149,11 @@ try {
             '--features', 'diagnostic-tests',
             '--test', 'diag_energy_matrix',
             '--test', 'diag_seam_residual',
+            '--test', 'diag_patch_audio',
             '--test', 'seam_residual_oracle'
         )
         # Straggler diagnostic #[ignore] rows still in --lib (golden generator, ffmpeg unit).
         Invoke-CargoTest @('-p', 'clip-sync-repair', '--lib', '--', '--ignored')
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--test', 'patch_audio_integration',
-            '--', '--ignored',
-            '--skip', 'patch_audio_fit_production_defaults'
-        )
     }
 
     function Invoke-PrAlign {
@@ -196,7 +184,7 @@ try {
 
     function Invoke-Phase2bStub {
         param([string] $TierName)
-        Write-Error "$TierName is not implemented until Phase 2b (clip-sync tests/ binaries). See docs/TEMP-test-tier-plan.md."
+        Write-Error "$TierName is not implemented until Phase 2b (clip-sync tests/ binaries). See docs/test-tier-remainder.md."
         exit 1
     }
 

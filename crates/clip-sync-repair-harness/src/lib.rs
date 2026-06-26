@@ -3,6 +3,7 @@
 
 pub mod energy_matrix;
 pub mod floor_oracle;
+pub mod patch_audio;
 pub mod residual_gate;
 pub mod seam_residual;
 
