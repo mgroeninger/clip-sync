@@ -32,9 +32,12 @@ pub use gap_tags::{
     RegionPatchOutcomeView, ResidualBand, SeamShape, SignatureModeTag,
 };
 pub use gap_anchor_seam::{
-    anchor_matchable_on_a, list_anchor_candidates_a, list_feasible_anchor_brackets,
-    should_run_anchor_seam, AnchorBracket, AnchorCandidate, AnchorCandidateSet, AnchorSeamMode,
-    AnchorSeamParams, AnchorSeamSide, AnchorSource,
+    anchor_bracket_both_matchable, anchor_matchable_on_a, list_anchor_candidates_a,
+    list_feasible_anchor_brackets, matchability_at_anchor, should_run_anchor_seam,
+    AnchorBracket, AnchorCandidate, AnchorCandidateSet, AnchorMatchability,
+    AnchorMatchabilityParams, AnchorSeamMode, AnchorSeamParams, AnchorSeamSide, AnchorSource,
+    DEFAULT_ANCHOR_MATCH_MIN_PEARSON, DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
+    DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
 };
 pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_fill_fit::{

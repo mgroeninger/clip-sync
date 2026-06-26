@@ -216,6 +216,15 @@ pub struct RepairConfig {
     /// Minimum energy-bin prominence for peak anchor candidates (0 = any local maximum).
     #[serde(default)]
     pub anchor_seam_min_prominence: f32,
+    /// Minimum anchor-window Pearson on B for editorial seam brackets.
+    #[serde(default = "default_anchor_seam_min_match_pearson")]
+    pub anchor_seam_min_match_pearson: f32,
+    /// Minimum GCC-PHAT peak at an anchor when Pearson is ambiguous.
+    #[serde(default = "default_anchor_seam_min_xcorr_peak")]
+    pub anchor_seam_min_xcorr_peak: f32,
+    /// Pearson band below `anchor_seam_min_match_pearson` that may trigger xcorr.
+    #[serde(default = "default_anchor_seam_xcorr_ambiguous_band")]
+    pub anchor_seam_xcorr_ambiguous_band: f32,
     /// Residual headroom gate (`off`, `veto`, `veto_rescue`); fit mode only.
     #[serde(default)]
     pub residual_gate: crate::domain::ResidualGateMode,
@@ -359,6 +368,15 @@ fn default_max_anchor_bracket_secs() -> f64 {
 fn default_max_anchors_per_side() -> usize {
     5
 }
+fn default_anchor_seam_min_match_pearson() -> f32 {
+    crate::domain::DEFAULT_ANCHOR_MATCH_MIN_PEARSON
+}
+fn default_anchor_seam_min_xcorr_peak() -> f32 {
+    crate::domain::DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK
+}
+fn default_anchor_seam_xcorr_ambiguous_band() -> f32 {
+    crate::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND
+}
 
 fn apply_profile_bundle_fields(
     repair: &mut RepairConfig,
@@ -450,6 +468,9 @@ impl Default for RepairConfig {
             max_anchor_bracket_secs: default_max_anchor_bracket_secs(),
             max_anchors_per_side: default_max_anchors_per_side(),
             anchor_seam_min_prominence: 0.0,
+            anchor_seam_min_match_pearson: default_anchor_seam_min_match_pearson(),
+            anchor_seam_min_xcorr_peak: default_anchor_seam_min_xcorr_peak(),
+            anchor_seam_xcorr_ambiguous_band: default_anchor_seam_xcorr_ambiguous_band(),
             residual_gate: crate::domain::ResidualGateMode::default(),
             residual_floor_ok_db: default_residual_floor_ok_db(),
             residual_headroom_margin_db: default_residual_headroom_margin_db(),
@@ -570,6 +591,9 @@ impl RepairConfig {
             max_anchor_bracket_secs: self.max_anchor_bracket_secs,
             max_anchors_per_side: self.max_anchors_per_side,
             anchor_seam_min_prominence: self.anchor_seam_min_prominence,
+            anchor_seam_min_match_pearson: self.anchor_seam_min_match_pearson,
+            anchor_seam_min_xcorr_peak: self.anchor_seam_min_xcorr_peak,
+            anchor_seam_xcorr_ambiguous_band: self.anchor_seam_xcorr_ambiguous_band,
             residual_gate: self.residual_gate,
             residual_floor_ok_db: self.residual_floor_ok_db,
             residual_headroom_margin_db: self.residual_headroom_margin_db,
@@ -777,6 +801,33 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "max_anchors_per_side".into(),
                 reason: "must be greater than zero".into(),
+            });
+        }
+        if !self.anchor_seam_min_match_pearson.is_finite()
+            || self.anchor_seam_min_match_pearson < -1.0
+            || self.anchor_seam_min_match_pearson > 1.0
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "anchor_seam_min_match_pearson".into(),
+                reason: "must be finite and in [-1, 1]".into(),
+            });
+        }
+        if !self.anchor_seam_min_xcorr_peak.is_finite()
+            || self.anchor_seam_min_xcorr_peak < 0.0
+            || self.anchor_seam_min_xcorr_peak > 1.0
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "anchor_seam_min_xcorr_peak".into(),
+                reason: "must be finite and in [0, 1]".into(),
+            });
+        }
+        if !self.anchor_seam_xcorr_ambiguous_band.is_finite()
+            || self.anchor_seam_xcorr_ambiguous_band < 0.0
+            || self.anchor_seam_xcorr_ambiguous_band > 1.0
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "anchor_seam_xcorr_ambiguous_band".into(),
+                reason: "must be finite and in [0, 1]".into(),
             });
         }
         if self.residual_lag_secs <= 0.0 {

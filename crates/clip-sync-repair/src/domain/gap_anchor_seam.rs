@@ -82,6 +82,45 @@ pub struct AnchorBracket {
     pub move_frames: usize,
 }
 
+/// Default minimum anchor-window Pearson for B-side matchability (below structure gate).
+pub const DEFAULT_ANCHOR_MATCH_MIN_PEARSON: f32 = 0.12;
+/// Default GCC-PHAT peak when Pearson is ambiguous at an anchor.
+pub const DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK: f32 = 0.5;
+/// Pearson band below [`AnchorMatchabilityParams::min_pearson`] that triggers optional xcorr.
+pub const DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND: f32 = 0.15;
+
+/// Thresholds for per-anchor B-side waveform matchability (fit seam gate).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnchorMatchabilityParams {
+    pub min_pearson: f32,
+    pub min_xcorr_peak: f32,
+    pub xcorr_ambiguous_band: f32,
+}
+
+impl Default for AnchorMatchabilityParams {
+    fn default() -> Self {
+        Self {
+            min_pearson: DEFAULT_ANCHOR_MATCH_MIN_PEARSON,
+            min_xcorr_peak: DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
+            xcorr_ambiguous_band: DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
+        }
+    }
+}
+
+impl AnchorMatchabilityParams {
+    pub fn from_repair_fields(
+        min_match_pearson: f32,
+        min_xcorr_peak: f32,
+        xcorr_ambiguous_band: f32,
+    ) -> Self {
+        Self {
+            min_pearson: min_match_pearson,
+            min_xcorr_peak,
+            xcorr_ambiguous_band,
+        }
+    }
+}
+
 /// Parameters for anchor candidate generation on A.
 #[derive(Debug, Clone, Copy)]
 pub struct AnchorSeamParams {
@@ -402,7 +441,20 @@ fn bool_transition_candidates(
         if prev == curr {
             continue;
         }
-        let frame = bin_to_anchor_frame(i, bin_frames, origin_frame, side, scan_edge);
+        let direction_ok = match side {
+            AnchorSeamSide::Pre => !prev && curr,
+            AnchorSeamSide::Post => prev && !curr,
+        };
+        if !direction_ok {
+            continue;
+        }
+        let frame = match side {
+            AnchorSeamSide::Pre => bin_to_anchor_frame(i, bin_frames, origin_frame, side, scan_edge),
+            AnchorSeamSide::Post => origin_frame
+                .saturating_add(i * bin_frames)
+                .saturating_sub(1)
+                .max(scan_edge),
+        };
         if !anchor_matchable_on_a(samples, channels, frame, side, params) {
             continue;
         }
@@ -462,21 +514,19 @@ fn median3(a: f32, b: f32, c: f32) -> f32 {
 /// B-side matchability at one anchor after unified placement is known.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnchorMatchability {
-    pub envelope: f64,
     pub pearson: f64,
     pub xcorr_peak: Option<f64>,
     pub matchable: bool,
 }
 
-/// Score waveform Pearson at one anchor; optional local xcorr when envelope is ambiguous.
+/// Score waveform Pearson at one anchor; optional local xcorr when Pearson is ambiguous.
 pub fn matchability_at_anchor(
     templates: &crate::domain::policies::SeamTemplates<'_>,
     placement: crate::domain::policies::SeamPlacement,
     side: AnchorSeamSide,
     pre_window: usize,
     post_window: usize,
-    envelope_score: f64,
-    envelope_floor: f64,
+    params: &AnchorMatchabilityParams,
     correlator: Option<&clip_sync::FftCorrelator>,
     max_lag_frames: i32,
 ) -> AnchorMatchability {
@@ -492,7 +542,10 @@ pub fn matchability_at_anchor(
         AnchorSeamSide::Pre => pre,
         AnchorSeamSide::Post => post,
     };
-    let ambiguous = envelope_score < envelope_floor + 0.15;
+    let min_pearson = f64::from(params.min_pearson);
+    let ambiguous = pearson.is_finite()
+        && pearson < min_pearson
+        && pearson >= min_pearson - f64::from(params.xcorr_ambiguous_band);
     let xcorr_peak = if ambiguous {
         correlator.and_then(|c| {
             local_anchor_xcorr_peak(c, templates, placement, side, pre_window, post_window, max_lag_frames)
@@ -500,14 +553,47 @@ pub fn matchability_at_anchor(
     } else {
         None
     };
+    let min_xcorr = f64::from(params.min_xcorr_peak);
     let matchable = pearson.is_finite()
-        && (pearson >= 0.12 || envelope_score >= envelope_floor || xcorr_peak.is_some_and(|p| p >= 0.5));
+        && (pearson >= min_pearson || xcorr_peak.is_some_and(|p| p >= min_xcorr));
     AnchorMatchability {
-        envelope: envelope_score,
         pearson,
         xcorr_peak,
         matchable,
     }
+}
+
+/// Both anchor windows must pass independent waveform matchability on B.
+pub fn anchor_bracket_both_matchable(
+    templates: &crate::domain::policies::SeamTemplates<'_>,
+    placement: crate::domain::policies::SeamPlacement,
+    pre_window: usize,
+    post_window: usize,
+    params: &AnchorMatchabilityParams,
+    correlator: Option<&clip_sync::FftCorrelator>,
+    max_lag_frames: i32,
+) -> bool {
+    let pre = matchability_at_anchor(
+        templates,
+        placement,
+        AnchorSeamSide::Pre,
+        pre_window,
+        post_window,
+        params,
+        correlator,
+        max_lag_frames,
+    );
+    let post = matchability_at_anchor(
+        templates,
+        placement,
+        AnchorSeamSide::Post,
+        pre_window,
+        post_window,
+        params,
+        correlator,
+        max_lag_frames,
+    );
+    pre.matchable && post.matchable
 }
 
 /// Local GCC-PHAT peak at an anchor window (Tier 2).
@@ -651,6 +737,89 @@ mod tests {
             "expected bool transition: {:?}",
             set.pre
         );
+    }
+
+    #[test]
+    fn bool_transition_direction_pre_rising_post_falling_only() {
+        let scan = RefinedGapFrames {
+            start_frame: 300,
+            end_frame: 350,
+        };
+        // Wrong pre: only falling edge (continuous active then silent before gap).
+        let mut falling_pre = vec![0.0f32; 800];
+        write_active(&mut falling_pre, 0, 290, 0.6);
+        let set = list_anchor_candidates_a(&falling_pre, 1, scan, &test_params());
+        assert!(
+            !set.pre.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            "falling pre edge must not produce bool transition: {:?}",
+            set.pre
+        );
+
+        // Wrong post: only rising edge (silent after gap then active).
+        let mut rising_post = vec![0.0f32; 800];
+        write_active(&mut rising_post, 400, 700, 0.6);
+        let set = list_anchor_candidates_a(&rising_post, 1, scan, &test_params());
+        assert!(
+            !set.post.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            "rising post edge must not produce bool transition: {:?}",
+            set.post
+        );
+
+        // Correct directions: rising pre, falling post.
+        let mut samples = vec![0.0f32; 800];
+        write_active(&mut samples, 280, 299, 0.6);
+        write_active(&mut samples, 350, 390, 0.6);
+        let set = list_anchor_candidates_a(&samples, 1, scan, &test_params());
+        assert!(
+            set.pre.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            "expected rising pre transition: {:?}",
+            set.pre
+        );
+        assert!(
+            set.post.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            "expected falling post transition: {:?}",
+            set.post
+        );
+    }
+
+    #[test]
+    fn matchability_requires_anchor_pearson_not_structure_recycle() {
+        let params = AnchorMatchabilityParams {
+            min_pearson: 0.12,
+            ..AnchorMatchabilityParams::default()
+        };
+        let a_pre = vec![1.0, 1.0, 1.0, 1.0];
+        let a_post = vec![1.0, 1.0, 1.0, 1.0];
+        let b_mono = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let templates = crate::domain::policies::SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &[vec![1.0; 4]],
+            a_post_ch: &[vec![1.0; 4]],
+            b_mono: &b_mono,
+            b_ch: &[b_mono.clone()],
+        };
+        let placement = crate::domain::policies::SeamPlacement {
+            start: 4,
+            gap_frames: 2,
+            pre_window: 4,
+            post_window: 4,
+        };
+        let pre = matchability_at_anchor(
+            &templates,
+            placement,
+            AnchorSeamSide::Pre,
+            4,
+            4,
+            &params,
+            None,
+            0,
+        );
+        assert!(
+            !pre.matchable,
+            "low anchor Pearson must fail even when structure scores would pass"
+        );
+        assert!(pre.pearson < 0.12);
     }
 
     #[test]

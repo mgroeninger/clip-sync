@@ -235,6 +235,10 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 max_anchor_bracket_secs: 5.0,
                 max_anchors_per_side: 5,
                 anchor_seam_min_prominence: 0.0,
+                anchor_seam_min_match_pearson: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_PEARSON,
+                anchor_seam_min_xcorr_peak: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
+                anchor_seam_xcorr_ambiguous_band:
+                    clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
             },
             10,
         )

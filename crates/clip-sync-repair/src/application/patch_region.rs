@@ -21,8 +21,8 @@ use crate::domain::gap_signature::{
     build_gap_signature, GapSignature, GapSignatureMode, StructureTimeline,
 };
 use crate::domain::gap_anchor_seam::{
-    list_anchor_candidates_a, list_feasible_anchor_brackets, matchability_at_anchor,
-    should_run_anchor_seam, AnchorSeamMode, AnchorSeamParams, AnchorSeamSide,
+    list_anchor_candidates_a, list_feasible_anchor_brackets, anchor_bracket_both_matchable,
+    should_run_anchor_seam, AnchorSeamMode, AnchorSeamParams,
 };
 use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
@@ -103,6 +103,7 @@ pub(crate) struct SeamGateParams<'a> {
     pub max_anchor_bracket_secs: f64,
     pub max_anchors_per_side: usize,
     pub anchor_seam_min_prominence: f32,
+    pub anchor_matchability: crate::domain::gap_anchor_seam::AnchorMatchabilityParams,
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     pub measure_residual: bool,
     /// Residual headroom gate mode (`off` = no gating; measurement still obeys `measure_residual`).
@@ -628,38 +629,22 @@ fn best_high_joint_candidate<'a>(
         .max_by(joint_candidate_ranking_cmp)
 }
 
-fn anchor_bracket_both_matchable(
+fn anchor_bracket_both_matchable_at_gate(
     templates: &policies::SeamTemplates<'_>,
     placement: policies::SeamPlacement,
     pre_window: usize,
     post_window: usize,
-    structure_pre: f64,
-    structure_post: f64,
-    envelope_floor: f64,
+    params: &SeamGateParams<'_>,
 ) -> bool {
-    let pre = matchability_at_anchor(
+    anchor_bracket_both_matchable(
         templates,
         placement,
-        AnchorSeamSide::Pre,
         pre_window,
         post_window,
-        structure_pre,
-        envelope_floor,
+        &params.anchor_matchability,
         None,
         0,
-    );
-    let post = matchability_at_anchor(
-        templates,
-        placement,
-        AnchorSeamSide::Post,
-        pre_window,
-        post_window,
-        structure_post,
-        envelope_floor,
-        None,
-        0,
-    );
-    pre.matchable && post.matchable
+    )
 }
 
 fn best_anchor_joint_candidate<'a>(
@@ -1398,14 +1383,12 @@ fn evaluate_seam_gate_fit_candidate(
             pre_window: waveform_gate_frames,
             post_window: post_gate_frames,
         };
-        if !anchor_bracket_both_matchable(
+        if !anchor_bracket_both_matchable_at_gate(
             &templates,
             placement,
             waveform_gate_frames,
             post_gate_frames,
-            structure_pre,
-            structure_post,
-            f64::from(params.min_structure_match_score),
+            params,
         ) {
             return Err(SeamGateFailure::WaveformBelowThreshold {
                 pre: alignment.pre_correlation,

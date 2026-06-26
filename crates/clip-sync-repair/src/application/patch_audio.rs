@@ -150,6 +150,9 @@ pub struct PatchAudioRequest {
     pub max_anchor_bracket_secs: f64,
     pub max_anchors_per_side: usize,
     pub anchor_seam_min_prominence: f32,
+    pub anchor_seam_min_match_pearson: f32,
+    pub anchor_seam_min_xcorr_peak: f32,
+    pub anchor_seam_xcorr_ambiguous_band: f32,
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
     pub measure_residual: bool,
@@ -208,6 +211,9 @@ pub struct PatchRequestSettings {
     pub max_anchor_bracket_secs: f64,
     pub max_anchors_per_side: usize,
     pub anchor_seam_min_prominence: f32,
+    pub anchor_seam_min_match_pearson: f32,
+    pub anchor_seam_min_xcorr_peak: f32,
+    pub anchor_seam_xcorr_ambiguous_band: f32,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,
@@ -264,6 +270,9 @@ impl PatchRequestSettings {
             max_anchor_bracket_secs: self.max_anchor_bracket_secs,
             max_anchors_per_side: self.max_anchors_per_side,
             anchor_seam_min_prominence: self.anchor_seam_min_prominence,
+            anchor_seam_min_match_pearson: self.anchor_seam_min_match_pearson,
+            anchor_seam_min_xcorr_peak: self.anchor_seam_min_xcorr_peak,
+            anchor_seam_xcorr_ambiguous_band: self.anchor_seam_xcorr_ambiguous_band,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
             residual_gate: self.residual_gate,
@@ -1592,6 +1601,11 @@ fn prepare_region_patch(
         max_anchor_bracket_secs: request.max_anchor_bracket_secs,
         max_anchors_per_side: request.max_anchors_per_side,
         anchor_seam_min_prominence: request.anchor_seam_min_prominence,
+        anchor_matchability: crate::domain::gap_anchor_seam::AnchorMatchabilityParams::from_repair_fields(
+            request.anchor_seam_min_match_pearson,
+            request.anchor_seam_min_xcorr_peak,
+            request.anchor_seam_xcorr_ambiguous_band,
+        ),
         measure_residual: request.measure_residual,
         residual_gate: request.residual_gate,
         residual_floor_ok_db: request.residual_floor_ok_db,
