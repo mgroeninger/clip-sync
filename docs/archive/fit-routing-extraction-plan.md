@@ -1,9 +1,10 @@
-# Fit-joint routing extraction — plan (DRAFT)
+# Fit-joint routing extraction — plan (COMPLETE / archived)
 
-Status: **steps 1–5 done.** 3a delegation + 3b `defer_residual` collapse → single always-pool path
-(debug-flips-the-path foot-gun gone); step 5 `FitCandidateSource` seam makes the orchestration
-number-testable; step 4 ships the gap-type → script matrix as fast `route_*` tests. lib 290/0 +
-characterization green; `patch_audio_integration` re-verifying after the step-5 split.
+Status: **steps 1–5 done & verified.** 3a delegation + 3b `defer_residual` collapse → single
+always-pool path (debug-flips-the-path foot-gun gone); step 5 `FitCandidateSource` seam makes the
+orchestration number-testable; step 4 ships the gap-type → script matrix as fast `route_*` tests.
+Final green: build clean (no warnings), lib 290/0, characterization 10/0, `patch_audio_integration`
+25/0, `validate_residual_gate` 5/0, `integration_residual_gate_smoke` 1/0, `seam_residual_oracle` 3/0.
 
 > **As-built note (doc reconciled to the code):** §§2–6 originally sketched a *monolithic*
 > `route_fit_joint(baseline, anchors, grid) → Decision`. The landed design is **surgical delegation**:

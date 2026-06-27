@@ -1,4 +1,4 @@
-//! Pure fit-joint routing decisions (`docs/TEMP-fit-routing-extraction-plan.md`).
+//! Pure fit-joint routing decisions (`docs/archive/fit-routing-extraction-plan.md`).
 //!
 //! Separates the **decision** layer (which candidate screens as terminal, how candidates rank and
 //! tie-break) from the **measurement** layer (scoring a bracket against B audio, and the
