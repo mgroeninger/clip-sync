@@ -8,8 +8,12 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_w5_anchor_rescue -- --nocapture`
 
+use clip_sync_repair::domain::gap_anchor_seam::AnchorSeamMode;
+use clip_sync_repair::test_support::energy_signature_fixtures::build_w5_noise_collar_anchor_rescue;
+use clip_sync_repair::test_support::energy_signature_production::w5_anchor_rescue_repair;
 use clip_sync_repair::test_support::w5_anchor_rescue_diag::{
-    score_w5_anchor_rescue_cell, W5AnchorRescueCell, W5AnchorRescueCellScores,
+    score_w5_anchor_rescue_cell, score_w5_fixture, W5AnchorRescueCell, W5AnchorRescueCellScores,
+    W5FixtureScores,
 };
 use clip_sync_repair_harness::w5_anchor_rescue_sweep::{
     anchor_rescue_pocket, coarse_w5_grid_default, decoupled_w5_grid, refine_w5_boundaries,
@@ -140,6 +144,64 @@ fn diag_w5_anchor_rescue_refine_boundaries() {
     println!("{}", sweep_csv(&refined));
     report_sweep("refined boundaries", &refined);
     maybe_write_csv(&refined, "w5_anchor_rescue_sweep_refined.csv");
+}
+
+fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
+    eprintln!("=== {label} ===");
+    eprintln!("  nominal: pre={:.4} post={:.4}", s.nominal.0, s.nominal.1);
+    match s.baseline {
+        Some((pre, post)) => eprintln!(
+            "  baseline throat: pre={pre:.4} post={post:.4} min={:.4}",
+            pre.min(post)
+        ),
+        None => eprintln!("  baseline throat: DEGENERATE (no unified match)"),
+    }
+    eprintln!("  joint_winner: {:?}", s.joint_winner);
+    eprintln!("  anchor_seam_would_run: {}", s.anchor_seam_would_run);
+    eprintln!("  brackets: {}", s.brackets.len());
+    for b in &s.brackets {
+        if b.passed_gate {
+            eprintln!(
+                "    move={} -> PASS pre={:.4} post={:.4} min={:.4} conf={:?}",
+                b.move_frames,
+                b.pre_pearson.unwrap_or(f64::NAN),
+                b.post_pearson.unwrap_or(f64::NAN),
+                b.min_pearson.unwrap_or(f64::NAN),
+                b.confidence,
+            );
+        } else {
+            eprintln!(
+                "    move={} -> FAIL [{}] pre={} post={}",
+                b.move_frames,
+                b.failure_stage.unwrap_or("?"),
+                b.pre_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
+                b.post_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
+            );
+        }
+    }
+}
+
+/// §8 Q1 faithful (noise-collar) fixture probe: does a genuine W5 (noise collar at the gap, anchors
+/// reachable only by a moving bracket) finally let a moving bracket pass at High? See
+/// docs/TEMP-w5-anchor-rescue-diag-plan.md §8 Q1.
+#[test]
+fn diag_w5_noise_collar() {
+    // (peak_offset=anchor distance, collar=noise width at gap, burst=anchor width, search_radius).
+    // Hunting a *fast* config: a near anchor that wins at a small radius (so A6 can run in debug).
+    for &(off, collar, burst, radius) in &[
+        (0.5_f64, 0.30_f64, 0.40_f64, 1.0_f64),
+        (0.6, 0.30, 0.50, 1.2),
+        (0.8, 0.40, 0.60, 1.5),
+        (1.0, 0.60, 1.00, 5.0), // known-good reference (slow)
+    ] {
+        let fixture = build_w5_noise_collar_anchor_rescue(48_000, 1, off, collar, burst);
+        let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, radius);
+        let scores = score_w5_fixture(&fixture, &repair);
+        print_fixture_scores(
+            &format!("noise_collar off={off} collar={collar} burst={burst} radius={radius}"),
+            &scores,
+        );
+    }
 }
 
 /// §8 Q1 decoupled exploration: fix `peak_offset=1.0`, sweep `(search, b_shift)` to test whether

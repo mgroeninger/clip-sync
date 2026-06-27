@@ -1444,6 +1444,30 @@ fn fill_speech_like_at_freq(
     }
 }
 
+/// Deterministic broadband noise (xorshift) at `amplitude`. Different `seed`s give **decorrelated**
+/// streams — used to model "same-master but encode-decorrelated" border audio that scores Pearson ~0.
+fn fill_noise(
+    samples: &mut [f32],
+    channels: usize,
+    start: usize,
+    end: usize,
+    amplitude: f32,
+    seed: u64,
+) {
+    let ch = channels.max(1);
+    let mut state = seed | 1;
+    for frame in start..end.min(samples.len() / ch) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let unit = ((state >> 33) as f64 / (1u64 << 31) as f64) as f32 - 0.5; // ~[-0.5, 0.5)
+        let v = unit * 2.0 * amplitude;
+        for c in 0..ch {
+            samples[frame * ch + c] = v;
+        }
+    }
+}
+
 fn zero_frames(samples: &mut [f32], channels: usize, start: usize, end: usize) {
     let ch = channels.max(1);
     for frame in start..end.min(samples.len() / ch) {
@@ -1572,6 +1596,83 @@ pub fn build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift(
         secs_to_frames(fill_border_search_secs, sample_rate);
     fixture.id = "w5_symmetric_weak_throat_anchor_rescue";
     fixture
+}
+
+/// **A6 faithful (noise-collar)** oracle — models the *real* W5 cause so anchor rescue can fire on
+/// PCM (plan §8 Q1; replaces the falsified delayed-copy + clamped-radius fixture). Layout on A:
+///
+/// ```text
+///  [speech burst]  silence  [noise collar][ GAP ][noise collar]  silence  [speech burst]
+///   <-- burst -->          <- collar ->         <- collar ->          <-- burst -->
+///                   |<-------- peak_offset -------->|
+/// ```
+///
+/// - **Noise collar** (independent broadband noise, above the silence floor) flanks the gap, so the
+///   baseline seam template's silence walk-off *stops on the collar* and scores Pearson ~0 — a
+///   genuine `symmetric_weak` from **content**, not from a clamped search radius.
+/// - **Speech bursts** (identical 440 Hz tone in A and B) sit at the editorial-anchor distance, so a
+///   *moving* bracket whose boundary lands on a burst correlates High.
+/// - **B** = A with identical bursts, **independent** collar noise (baseline decorrelates), and a
+///   speech fill in the gap. Use with a realistic search radius (e.g. `w5_anchor_rescue_repair(_, 5.0)`).
+pub fn build_w5_noise_collar_anchor_rescue(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+    collar_secs: f64,
+    burst_secs: f64,
+) -> EnergySignatureFixture {
+    let ch = channels.max(1);
+    let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = spec.bin_frames(sample_rate);
+    let context = spec.context_frames(sample_rate, total_frames);
+    let gap_frames = spec.min_gap_frames(sample_rate).max(bin_frames * 2);
+    let anchor = (gap_anchor_secs(&spec) * sample_rate as f64) as usize;
+    let gap_start = anchor.max(context + bin_frames);
+    let gap_end = gap_start + gap_frames;
+
+    let peak_offset = secs_to_frames(peak_offset_secs, sample_rate);
+    let collar = secs_to_frames(collar_secs, sample_rate);
+    let burst = secs_to_frames(burst_secs, sample_rate);
+
+    // Speech bursts (editorial anchors): inner edge at gap ± peak_offset, extending outward.
+    let pre_burst_inner = gap_start.saturating_sub(peak_offset);
+    let pre_burst_start = pre_burst_inner.saturating_sub(burst);
+    let post_burst_inner = gap_end + peak_offset;
+    let post_burst_end = (post_burst_inner + burst).min(total_frames);
+
+    let mut a = vec![0.0f32; total_frames * ch];
+    fill_speech_like(&mut a, ch, sample_rate, pre_burst_start, pre_burst_inner);
+    fill_speech_like(&mut a, ch, sample_rate, post_burst_inner, post_burst_end);
+    fill_noise(&mut a, ch, gap_start.saturating_sub(collar), gap_start, 0.18, 0xA1);
+    fill_noise(&mut a, ch, gap_end, gap_end + collar, 0.18, 0xA2);
+    zero_frames(&mut a, ch, gap_start, gap_end);
+
+    // B: same bursts (anchor match), independent collar noise (baseline decorrelates), speech fill.
+    let mut b = a.clone();
+    fill_noise(&mut b, ch, gap_start.saturating_sub(collar), gap_start, 0.18, 0xB1);
+    fill_noise(&mut b, ch, gap_end, gap_end + collar, 0.18, 0xB2);
+    fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
+
+    let structure_params =
+        spec.structure_match_params(sample_rate, gap_frames, secs_to_frames(5.0, sample_rate));
+
+    EnergySignatureFixture {
+        id: "w5_noise_collar_anchor_rescue",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start,
+        gap_end,
+        context_frames: context,
+        true_fill_start: gap_start,
+        true_fill_end: gap_end,
+        nominal_fill_start: gap_start,
+        nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
+        structure_params,
+    }
 }
 
 /// **C3** / A2 — flat pre, speech onset after silent gap (asymmetric post); bool rising post edge.

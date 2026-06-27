@@ -16,8 +16,8 @@ use clip_sync::MultiChannelPcm;
 
 use crate::application::patch_region::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
-    oracle_evaluate_fit_joint, oracle_score_fit_candidate, SeamGateConfig, SeamGateFailure,
-    SeamGateParams,
+    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateConfig,
+    SeamGateFailure, SeamGateParams,
 };
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorBracket, AnchorSeamMode,
@@ -285,25 +285,33 @@ impl W5CellContext {
 /// skip rather than aborting (plan §5.2.8 robustness).
 fn build_w5_cell_context(cell: &W5AnchorRescueCell) -> Option<W5CellContext> {
     let (fixture, repair) = build_w5_cell(cell);
+    context_from_fixture(&fixture, &repair)
+}
 
-    let baseline_throat = oracle_baseline_throat_pearson_opt(&fixture, &repair)?;
-    let nominal = oracle_nominal_throat_pearson(&fixture, &repair);
+/// Scoring context for an arbitrary fixture + repair (used by both the cell grid and ad-hoc fixture
+/// probes such as the noise-collar variant). `None` if the baseline unified match is degenerate.
+fn context_from_fixture(
+    fixture: &EnergySignatureFixture,
+    repair: &RepairConfig,
+) -> Option<W5CellContext> {
+    let baseline_throat = oracle_baseline_throat_pearson_opt(fixture, repair)?;
+    let nominal = oracle_nominal_throat_pearson(fixture, repair);
 
     // Production-equivalent per-gap geometry (B window, refined gap) for the haystack gate path.
     let temp = tempfile::tempdir().expect("tempdir");
-    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let (a_start, a_end, b_start, b_end, _total) = gap_report_times(&fixture);
+    let report = gap_report_from_energy_fixture(temp.path(), fixture);
+    let (a_start, a_end, b_start, b_end, _total) = gap_report_times(fixture);
     let preview = preview_patch_geometry(
-        &fixture,
+        fixture,
         &report.alignment,
         a_start,
         a_end,
         b_start,
         b_end,
-        &production_geometry_params(&repair),
+        &production_geometry_params(repair),
     );
     let silence_peak_fraction = report.silence_peak_fraction;
-    let request = patch_request_from_repair(report, &repair);
+    let request = patch_request_from_repair(report, repair);
 
     let ch = fixture.channels.max(1);
     let cfg = SeamGateConfig::from_repair(
@@ -418,6 +426,63 @@ pub fn score_w5_anchor_rescue_cell(cell: W5AnchorRescueCell) -> W5AnchorRescueCe
     }
 }
 
+fn joint_winner_of(joint: &OracleJointOutcome) -> W5JointWinner {
+    if !joint.patched {
+        W5JointWinner::Skip
+    } else if joint.anchor_seam_used && joint.anchor_move_frames > 0 {
+        W5JointWinner::Anchor {
+            move_frames: joint.anchor_move_frames,
+        }
+    } else {
+        W5JointWinner::Baseline
+    }
+}
+
+/// Scores for an arbitrary fixture + repair (ad-hoc probes such as the noise-collar variant), not
+/// tied to a `(peak_offset, search)` grid cell. `baseline` is `None` if the unified match degenerates.
+#[derive(Debug, Clone)]
+pub struct W5FixtureScores {
+    pub nominal: (f64, f64),
+    pub baseline: Option<(f64, f64)>,
+    pub brackets: Vec<W5BracketGateScore>,
+    pub joint_winner: W5JointWinner,
+    pub anchor_seam_would_run: bool,
+}
+
+/// Score an arbitrary fixture on the unified gate path: nominal + baseline throat, per-bracket gate
+/// scores (with `failure_stage`), production joint winner, and `anchor_seam_would_run`. Used to probe
+/// the noise-collar A6 variant (plan §8 Q1).
+pub fn score_w5_fixture(
+    fixture: &EnergySignatureFixture,
+    repair: &RepairConfig,
+) -> W5FixtureScores {
+    let Some(ctx) = context_from_fixture(fixture, repair) else {
+        return W5FixtureScores {
+            nominal: (f64::NAN, f64::NAN),
+            baseline: None,
+            brackets: Vec::new(),
+            joint_winner: W5JointWinner::Skip,
+            anchor_seam_would_run: false,
+        };
+    };
+    let brackets = score_brackets(&ctx);
+    let params = ctx.params();
+    let joint_winner = joint_winner_of(&oracle_evaluate_fit_joint(&params, ctx.baseline));
+    let anchor_seam_would_run = oracle_anchor_seam_would_run(
+        &params,
+        ctx.baseline,
+        ctx.baseline_throat.0,
+        ctx.baseline_throat.1,
+    );
+    W5FixtureScores {
+        nominal: ctx.nominal,
+        baseline: Some(ctx.baseline_throat),
+        brackets,
+        joint_winner,
+        anchor_seam_would_run,
+    }
+}
+
 /// Full Phase 2 evaluation: Phase 1 scores + production joint winner + `anchor_seam_would_run`.
 pub fn evaluate_w5_cell(cell: W5AnchorRescueCell) -> W5CellEvaluation {
     let started = Instant::now();
@@ -435,16 +500,7 @@ pub fn evaluate_w5_cell(cell: W5AnchorRescueCell) -> W5CellEvaluation {
     let scores = scores_from_ctx(&ctx, cell, started.elapsed().as_millis() as u64);
 
     let params = ctx.params();
-    let joint = oracle_evaluate_fit_joint(&params, ctx.baseline);
-    let joint_winner = if !joint.patched {
-        W5JointWinner::Skip
-    } else if joint.anchor_seam_used && joint.anchor_move_frames > 0 {
-        W5JointWinner::Anchor {
-            move_frames: joint.anchor_move_frames,
-        }
-    } else {
-        W5JointWinner::Baseline
-    };
+    let joint_winner = joint_winner_of(&oracle_evaluate_fit_joint(&params, ctx.baseline));
     let anchor_seam_would_run = oracle_anchor_seam_would_run(
         &params,
         ctx.baseline,

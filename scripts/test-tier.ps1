@@ -164,6 +164,15 @@ try {
             'broadband_oracle_veto_rescue_patches_marginal',
             '--', '--ignored'
         )
+        # A6 anchor-rescue pipeline (slow: full PatchAudio anchor rescue; release-only, times out in
+        # debug). Asserting #[ignore] rows on the noise-collar W5 fixture — plan §8 Q1.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--release',
+            '--test', 'anchor_seam_oracle',
+            'w5_anchor_rescue_pipeline',
+            '--', '--ignored'
+        )
         # Lib stragglers (golden generator; ffmpeg mux unit when feature enabled).
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',

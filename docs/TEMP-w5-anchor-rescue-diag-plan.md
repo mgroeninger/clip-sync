@@ -4,9 +4,11 @@ Status: **in progress** — routing proven (`route_w5_anchor_rescue_e3`); domain
 (`w5_fixture_throat_symmetric_weak_and_brackets_exist`); pipeline A6 `#[ignore]`. **Phase 0 done**
 (`SeamGateConfig`/`SeamGateGeometry` extraction). **Phase 1 done** (`diag_w5_anchor_rescue` /
 `w5_anchor_rescue_single_cell`; probe removed). **Phase 2 done** (`coarse_w5_grid` /
-`diag_w5_anchor_rescue_coarse_grid`) — **E3 pocket EMPTY in `(offset, search)`** (see §5.2.8 result);
-**Phase 3 blocked** pending §8 Q1 (independent B shift). Next actionable: decouple `b_shift_secs`
-from `peak_offset_secs` and re-sweep.
+`diag_w5_anchor_rescue_coarse_grid`) — E3 pocket empty in the *delayed-copy* fixture (see §5.2.8).
+**Phase 3 done (2026-06-27): A6 LOCKED IN** on a **faithful noise-collar fixture** — anchor rescue
+fires end-to-end through `PatchAudio` (`anchor_seam_used=true`, tier High). The original delayed-copy
+fixture was the wrong shape (its weak baseline came from an artificial clamped search radius, not
+content); the noise-collar fixture induces a genuine W5 from content. See §8 Q1.
 
 **Phase 0 prerequisite (do first):** extract the inline `SeamGateParams` construction
 (`patch_audio.rs` ~1577) into reusable builders — `SeamGateConfig::from_repair(...)` (run-constant
@@ -461,14 +463,27 @@ Document locked `(peak_offset, fill_border_search)` in fixture module doc commen
    structure-aligned moving bracket = 0.0258** (vs 0.35 High floor) — flat across all `b_shift`. So
    when a moved boundary aligns at all, its post seam is essentially dead; the fixture (delayed copy
    of A + fill at the shifted dropout) simply contains no B content that matches the *editorial-anchor*
-   seam — only the throat/`move=0` placement matches. This is **not** tunable (0.026 vs 0.35 is not a
-   near-miss), not ranking, not `b_shift`. **Decision needed** (not more sweeps): (a) redesign the
-   fixture so editorial-anchor seams have matchable B content while the throat stays weak — a from-
-   scratch B-content construction, significant effort, uncertain payoff; (b) validate anchor rescue on
-   **real corpus** content where editorial anchors naturally carry matchable B (defer §8 Q2 chirp bed /
-   real W5 corpus); or (c) accept routing E3 as proven (`route_w5_anchor_rescue_e3`, scripted) and keep
-   A6 pipeline `#[ignore]` with this documented synthetic-fixture limitation, deferring real-PCM
-   measurement to corpus.
+   seam — only the throat/`move=0` placement matches. This is **not** tunable on the delayed-copy fixture (0.026 vs 0.35
+   is not a near-miss), not ranking, not `b_shift`.
+
+   **RESOLVED (2026-06-27) — option (a) succeeded.** `build_w5_noise_collar_anchor_rescue` replaces
+   the delayed copy with the right *content* shape: the gap is flanked by a **decorrelated broadband
+   noise collar** (above the silence floor, so the seam template's silence walk-off stops on it →
+   baseline Pearson ~0 from **content**, at a realistic search radius — not a clamped one), with
+   **identical 440 Hz speech bursts at editorial-anchor distance** in A and B (so a *moving* bracket
+   that lands on a burst scores High). Oracle sweep: every config tried yields `joint_winner=Anchor`
+   with passing moving brackets at High (e.g. `off=0.5,collar=0.3,burst=0.4,radius=1.0` →
+   `Anchor{55199}`, baseline 0.021, two passers at ~0.99). End-to-end through `PatchAudio`:
+   `anchor_seam_used=true, anchor_move_nonzero=true, tier High`. **A6 pipeline tests un-`#[ignore]`d
+   for content (now repointed to the noise-collar fixture) but kept `#[ignore]` as *slow*** (full
+   PatchAudio anchor rescue ~40 s release, times out in debug) — run in release via
+   `test-tier.ps1` (`Invoke-RepairDiagnostic`, `--release … --ignored`).
+
+   **Follow-up (quality, not blocking):** the winning bracket is a *near* anchor now (move ~1.15 s),
+   but the fixture still admits several non-winning brackets and the burst geometry could be tightened
+   so the intended symmetric pair is unambiguously the winner; also consider raising
+   `anchor_seam_min_prominence` so the noise collar can't spawn spurious anchor candidates (would also
+   speed up the pipeline, possibly enough to promote A6 to the default debug lane).
 2. **Chirp bed on silence** — W5 corpus uses quiet chirp for scan; add to A6 fixture for structure
    without helping baseline High?
 3. **Soft CI gate** — optional `#[ignore]` test “coarse grid reports ≥1 E3 pocket” (diagnostic only,
