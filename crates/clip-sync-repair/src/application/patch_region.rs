@@ -23,7 +23,7 @@ use crate::domain::gap_signature::{
 };
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, anchor_bracket_both_matchable,
-    should_run_anchor_seam, AnchorSeamMode, AnchorSeamParams,
+    should_run_anchor_seam, AnchorBracket, AnchorSeamMode, AnchorSeamParams,
 };
 use crate::domain::gap_energy::EnergyTimeline;
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
@@ -208,16 +208,111 @@ impl FitHaystackCache {
     }
 }
 
+/// Non-audio knobs the fit-joint orchestration reads, so number tests can drive
+/// `evaluate_seam_gate_fit_joint_core` without building a `SeamGateParams` (step 5, plan §9).
+#[derive(Debug, Clone, Copy)]
+struct FitJointConfig {
+    fit_boundary_search: FitBoundarySearch,
+    anchor_seam_mode: AnchorSeamMode,
+    /// Grid sweep bounds (frame arithmetic; audio-independent).
+    start_min: usize,
+    end_max: usize,
+    step: usize,
+    /// B haystack seconds — stamped on the outcome as metadata.
+    haystack_secs: f64,
+}
+
+/// The audio-touching operations the fit-joint orchestration needs, behind a seam so a fake can
+/// drive the real precedence loop with scripted numbers (plan §9). The real impl ([`AudioFitSource`])
+/// wraps the existing audio functions; production behaviour is unchanged.
+trait FitCandidateSource {
+    /// Score one A-side seam bracket → Pearson-confidence outcome + ranking, or a gate failure.
+    fn score(
+        &mut self,
+        refined: RefinedGapFrames,
+        anchor_seam_bracket: bool,
+    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure>;
+    /// Editorial anchor brackets to try (empty = gate closed / mode off / none feasible).
+    fn anchor_brackets(&mut self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket>;
+    /// Apply the residual/floor verdict at selection (identity when residual is off; may `Err` on veto).
+    fn finalize_residual(
+        &mut self,
+        outcome: SeamGateOutcome,
+    ) -> Result<SeamGateOutcome, SeamGateFailure>;
+}
+
+/// Production [`FitCandidateSource`]: scores against real A/B PCM via the existing functions.
+struct AudioFitSource<'a> {
+    params: &'a SeamGateParams<'a>,
+    cache: &'a FitHaystackCache,
+    baseline: RefinedGapFrames,
+}
+
+impl FitCandidateSource for AudioFitSource<'_> {
+    fn score(
+        &mut self,
+        refined: RefinedGapFrames,
+        anchor_seam_bracket: bool,
+    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+        evaluate_seam_gate_fit_candidate(
+            refined,
+            self.baseline,
+            self.params,
+            self.cache,
+            anchor_seam_bracket,
+        )
+    }
+
+    fn anchor_brackets(&mut self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket> {
+        if self.params.anchor_seam_mode == AnchorSeamMode::Off {
+            return Vec::new();
+        }
+        let anchor_params = anchor_seam_gate_params(self.params, self.baseline);
+        let baseline_signature = build_gap_signature(
+            &self.params.a_pcm.samples,
+            self.params.channels,
+            self.baseline.start_frame,
+            self.baseline.end_frame,
+            self.params.context_frames,
+            &anchor_params.structure,
+            self.params.gap_signature_mode,
+        );
+        if !should_run_anchor_seam(
+            self.params.anchor_seam_mode,
+            baseline_pre,
+            baseline_post,
+            self.params.min_fill_correlation,
+            self.params.fill_marginal_margin,
+            baseline_signature.has_anchor_seam_contour(),
+        ) {
+            return Vec::new();
+        }
+        let candidates = list_anchor_candidates_a(
+            &self.params.a_pcm.samples,
+            self.params.channels,
+            self.baseline,
+            &anchor_params,
+        );
+        list_feasible_anchor_brackets(&candidates, self.baseline, &anchor_params)
+    }
+
+    fn finalize_residual(
+        &mut self,
+        outcome: SeamGateOutcome,
+    ) -> Result<SeamGateOutcome, SeamGateFailure> {
+        finalize_fit_outcome_residual(outcome, self.baseline, self.params, self.cache)
+    }
+}
+
 fn record_fit_joint_candidate_to_pool(
     pool: &mut Vec<FitJointCandidate>,
     best_below_floor: &mut Option<SeamGateFailure>,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
+    source: &mut dyn FitCandidateSource,
     anchor_seam_bracket: bool,
 ) {
-    match evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket) {
+    match source.score(refined, anchor_seam_bracket) {
         Ok((outcome, ranking_score)) => {
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
@@ -395,17 +490,14 @@ fn baseline_accept_without_grid(
 
 fn try_finalize_high_joint_candidate(
     candidate: FitJointCandidate,
-    baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
+    source: &mut dyn FitCandidateSource,
     haystack_secs: f64,
     grid_cells: Option<u32>,
 ) -> Option<SeamGateOutcome> {
     if candidate.outcome.confidence != FillConfidence::High {
         return None;
     }
-    let mut outcome = finalize_fit_outcome_residual(candidate.outcome, baseline, params, cache)
-        .ok()?;
+    let mut outcome = source.finalize_residual(candidate.outcome).ok()?;
     if outcome.confidence != FillConfidence::High {
         return None;
     }
@@ -420,35 +512,24 @@ fn try_finalize_high_joint_candidate(
 /// E6: after the full boundary grid, pick the best Pearson-`High` by ranking (not first in walk order).
 fn try_finalize_best_grid_high(
     pool: &[FitJointCandidate],
-    baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
+    source: &mut dyn FitCandidateSource,
     haystack_secs: f64,
     grid_cells: u32,
 ) -> Option<SeamGateOutcome> {
     let candidate = best_high_joint_candidate(pool)?.clone();
-    try_finalize_high_joint_candidate(
-        candidate,
-        baseline,
-        params,
-        cache,
-        haystack_secs,
-        Some(grid_cells),
-    )
+    try_finalize_high_joint_candidate(candidate, source, haystack_secs, Some(grid_cells))
 }
 
 fn select_joint_fit_winner_with_residual(
     mut pool: Vec<FitJointCandidate>,
     mut best_below_floor: Option<SeamGateFailure>,
-    baseline: RefinedGapFrames,
-    params: &SeamGateParams<'_>,
-    cache: &FitHaystackCache,
+    source: &mut dyn FitCandidateSource,
     haystack_secs: f64,
     grid_cells: Option<u32>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     pool.sort_by(|a, b| fit_routing::winner_cmp(&a.score(), &b.score()));
     for candidate in pool {
-        match finalize_fit_outcome_residual(candidate.outcome, baseline, params, cache) {
+        match source.finalize_residual(candidate.outcome) {
             Ok(mut outcome) => {
                 outcome.fit_haystack_secs = haystack_secs;
                 if let Some(cells) = grid_cells {
@@ -626,74 +707,38 @@ struct AnchorSeamJointSearchState<'a> {
     best_below_floor: &'a mut Option<SeamGateFailure>,
 }
 
-struct AnchorSeamJointSearchCtx<'a> {
+struct AnchorSeamJointSearchCtx {
     baseline: RefinedGapFrames,
     baseline_pre: f64,
     baseline_post: f64,
-    params: &'a SeamGateParams<'a>,
-    cache: &'a FitHaystackCache,
+    fit_boundary_search: FitBoundarySearch,
     haystack_secs: f64,
 }
 
 fn try_anchor_seam_joint_search(
     state: &mut AnchorSeamJointSearchState<'_>,
-    ctx: &AnchorSeamJointSearchCtx<'_>,
+    ctx: &AnchorSeamJointSearchCtx,
+    source: &mut dyn FitCandidateSource,
 ) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
     let AnchorSeamJointSearchState {
         pool,
         best_below_floor,
     } = state;
-    let AnchorSeamJointSearchCtx {
+    let &AnchorSeamJointSearchCtx {
         baseline,
         baseline_pre,
         baseline_post,
-        params,
-        cache,
+        fit_boundary_search,
         haystack_secs,
-    } = *ctx;
+    } = ctx;
 
-    if params.anchor_seam_mode == AnchorSeamMode::Off {
-        return Ok(None);
-    }
-
-    let anchor_params = anchor_seam_gate_params(params, baseline);
-    let baseline_signature = build_gap_signature(
-        &params.a_pcm.samples,
-        params.channels,
-        baseline.start_frame,
-        baseline.end_frame,
-        params.context_frames,
-        &anchor_params.structure,
-        params.gap_signature_mode,
-    );
-    if !should_run_anchor_seam(
-        params.anchor_seam_mode,
-        baseline_pre,
-        baseline_post,
-        params.min_fill_correlation,
-        params.fill_marginal_margin,
-        baseline_signature.has_anchor_seam_contour(),
-    ) {
-        return Ok(None);
-    }
-
-    let candidates = list_anchor_candidates_a(
-        &params.a_pcm.samples,
-        params.channels,
-        baseline,
-        &anchor_params,
-    );
-    let brackets = list_feasible_anchor_brackets(&candidates, baseline, &anchor_params);
+    // The source decides the gate (mode/contour) + enumeration; empty ⇒ anchor path not engaged.
+    let brackets = source.anchor_brackets(baseline_pre, baseline_post);
     if brackets.is_empty() {
         return Ok(None);
     }
 
-    tracing::debug!(
-        pre_candidates = candidates.pre.len(),
-        post_candidates = candidates.post.len(),
-        brackets = brackets.len(),
-        "anchor seam bracket search"
-    );
+    tracing::debug!(brackets = brackets.len(), "anchor seam bracket search");
 
     for bracket in brackets {
         if bracket.refined == baseline {
@@ -708,8 +753,7 @@ fn try_anchor_seam_joint_search(
             best_below_floor,
             bracket.refined,
             baseline,
-            params,
-            cache,
+            source,
             true,
         );
         if pool.len() > pool_len_before {
@@ -723,14 +767,10 @@ fn try_anchor_seam_joint_search(
     // confirmed by `try_finalize_high_joint_candidate`).
     if let Some(candidate) = best_high_joint_candidate(pool) {
         if candidate.outcome.anchor_seam_used {
-            if let Some(outcome) = try_finalize_high_joint_candidate(
-                candidate.clone(),
-                baseline,
-                params,
-                cache,
-                haystack_secs,
-                None,
-            ) {
+            let candidate = candidate.clone();
+            if let Some(outcome) =
+                try_finalize_high_joint_candidate(candidate, source, haystack_secs, None)
+            {
                 return Ok(Some(outcome));
             }
         }
@@ -739,11 +779,11 @@ fn try_anchor_seam_joint_search(
     // E4: under baseline-only, an anchor bracket that ranks best overall is accepted without the grid.
     if let Some(candidate) = best_anchor_joint_candidate(pool) {
         if accepts_baseline_without_boundary_grid(
-            params.fit_boundary_search,
+            fit_boundary_search,
             candidate.outcome.confidence,
         ) {
-            let mut outcome =
-                finalize_fit_outcome_residual(candidate.outcome.clone(), baseline, params, cache)?;
+            let outcome = candidate.outcome.clone();
+            let mut outcome = source.finalize_residual(outcome)?;
             outcome.fit_haystack_secs = haystack_secs;
             return Ok(Some(outcome));
         }
@@ -758,8 +798,6 @@ fn evaluate_seam_gate_fit_joint(
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     let step = boundary_search_step_frames(params.max_extend_frames, params.step_frames);
     let total_frames = params.a_pcm.samples.len() / params.channels.max(1);
-    let haystack_secs = fit_haystack_secs(params);
-
     let start_min = if params.gap_start_extend_on_pre_seam_fail {
         baseline.start_frame.saturating_sub(params.max_extend_frames)
     } else {
@@ -770,21 +808,44 @@ fn evaluate_seam_gate_fit_joint(
     } else {
         baseline.end_frame
     };
+    let config = FitJointConfig {
+        fit_boundary_search: params.fit_boundary_search,
+        anchor_seam_mode: params.anchor_seam_mode,
+        start_min,
+        end_max,
+        step,
+        haystack_secs: fit_haystack_secs(params),
+    };
+    let cache = FitHaystackCache::build(params);
+    let mut source = AudioFitSource {
+        params,
+        cache: &cache,
+        baseline,
+    };
+    evaluate_seam_gate_fit_joint_core(baseline, &config, &mut source)
+}
 
-    // Single pool path (the `defer_residual` fork is gone): candidates are scored with Pearson
-    // confidence; residual is applied at selection (`try_finalize_*` / `select_joint_fit_winner…`),
-    // a no-op when residual measurement is disabled. See docs/TEMP-fit-routing-extraction-plan.md §5.
+/// The fit-joint precedence loop (E1–E7), driven by a [`FitCandidateSource`] so it is testable with
+/// scripted numbers (no audio). Production calls it via [`evaluate_seam_gate_fit_joint`] with an
+/// [`AudioFitSource`]; tests use a scripted fake. See docs/archive/fit-routing-extraction-plan.md §9.
+///
+/// Single pool path (the `defer_residual` fork is gone): candidates score with Pearson confidence;
+/// residual is applied at selection (`try_finalize_*` / `select_joint_fit_winner…`), a no-op when
+/// residual measurement is disabled.
+fn evaluate_seam_gate_fit_joint_core(
+    baseline: RefinedGapFrames,
+    config: &FitJointConfig,
+    source: &mut dyn FitCandidateSource,
+) -> Result<SeamGateOutcome, SeamGateFailure> {
     let mut pool: Vec<FitJointCandidate> = Vec::new();
     let mut best_below_floor: Option<SeamGateFailure> = None;
-    let cache = FitHaystackCache::build(params);
 
     record_fit_joint_candidate_to_pool(
         &mut pool,
         &mut best_below_floor,
         baseline,
         baseline,
-        params,
-        &cache,
+        source,
         false,
     );
 
@@ -793,14 +854,10 @@ fn evaluate_seam_gate_fit_joint(
         .first()
         .is_some_and(|c| fit_routing::terminates_high(c.outcome.confidence))
     {
-        if let Some(outcome) = try_finalize_high_joint_candidate(
-            pool.first().expect("baseline high").clone(),
-            baseline,
-            params,
-            &cache,
-            haystack_secs,
-            None,
-        ) {
+        let candidate = pool.first().expect("baseline high").clone();
+        if let Some(outcome) =
+            try_finalize_high_joint_candidate(candidate, source, config.haystack_secs, None)
+        {
             return Ok(outcome);
         }
     }
@@ -809,17 +866,15 @@ fn evaluate_seam_gate_fit_joint(
     // withholds a Marginal baseline so anchor search runs first).
     if let Some(candidate) = pool.first() {
         if baseline_accept_without_grid(
-            params.fit_boundary_search,
+            config.fit_boundary_search,
             candidate.outcome.confidence,
-            params.anchor_seam_mode,
+            config.anchor_seam_mode,
         ) {
             return select_joint_fit_winner_with_residual(
                 pool,
                 best_below_floor,
-                baseline,
-                params,
-                &cache,
-                haystack_secs,
+                source,
+                config.haystack_secs,
                 None,
             );
         }
@@ -836,33 +891,32 @@ fn evaluate_seam_gate_fit_joint(
             baseline,
             baseline_pre,
             baseline_post,
-            params,
-            cache: &cache,
-            haystack_secs,
+            fit_boundary_search: config.fit_boundary_search,
+            haystack_secs: config.haystack_secs,
         },
+        source,
     )? {
         return Ok(outcome);
     }
 
     // E5: baseline-only never runs the grid — pick the pool winner (or skip on `best_below_floor`).
-    if params.fit_boundary_search == FitBoundarySearch::BaselineOnly {
+    if config.fit_boundary_search == FitBoundarySearch::BaselineOnly {
         return select_joint_fit_winner_with_residual(
             pool,
             best_below_floor,
-            baseline,
-            params,
-            &cache,
-            haystack_secs,
+            source,
+            config.haystack_secs,
             None,
         );
     }
 
-    let grid_cells = count_joint_boundary_grid_cells(baseline, start_min, end_max, step);
+    let grid_cells =
+        count_joint_boundary_grid_cells(baseline, config.start_min, config.end_max, config.step);
 
     let mut try_start = baseline.start_frame;
-    while try_start >= start_min {
+    while try_start >= config.start_min {
         let mut try_end = baseline.end_frame;
-        while try_end <= end_max {
+        while try_end <= config.end_max {
             if try_end > try_start
                 && (try_start != baseline.start_frame || try_end != baseline.end_frame)
             {
@@ -874,25 +928,24 @@ fn evaluate_seam_gate_fit_joint(
                         end_frame: try_end,
                     },
                     baseline,
-                    params,
-                    &cache,
+                    source,
                     false,
                 );
             }
-            if try_end >= end_max {
+            if try_end >= config.end_max {
                 break;
             }
-            try_end = (try_end + step).min(end_max);
+            try_end = (try_end + config.step).min(config.end_max);
         }
-        if try_start <= start_min {
+        if try_start <= config.start_min {
             break;
         }
-        try_start = try_start.saturating_sub(step).max(start_min);
+        try_start = try_start.saturating_sub(config.step).max(config.start_min);
     }
 
     // E6: best Pearson-High over the full grid (residual confirmed).
     if let Some(outcome) =
-        try_finalize_best_grid_high(&pool, baseline, params, &cache, haystack_secs, grid_cells)
+        try_finalize_best_grid_high(&pool, source, config.haystack_secs, grid_cells)
     {
         return Ok(outcome);
     }
@@ -901,10 +954,8 @@ fn evaluate_seam_gate_fit_joint(
     select_joint_fit_winner_with_residual(
         pool,
         best_below_floor,
-        baseline,
-        params,
-        &cache,
-        haystack_secs,
+        source,
+        config.haystack_secs,
         Some(grid_cells),
     )
 }
@@ -1854,5 +1905,342 @@ mod tests {
         assert_eq!(seam_post_gate_frames(12_000, 0), 0);
         assert_eq!(seam_post_gate_frames(12_000, 8), 8);
         assert_eq!(seam_post_gate_frames(12_000, 96_000), 12_000);
+    }
+
+    // ---- Step 4/5: number-driven orchestration tests (gap-type → FitCandidateSource script, §10) ----
+
+    use crate::domain::gap_anchor_seam::{AnchorCandidate, AnchorSeamSide, AnchorSource};
+
+    fn rgf(start_frame: usize, end_frame: usize) -> RefinedGapFrames {
+        RefinedGapFrames {
+            start_frame,
+            end_frame,
+        }
+    }
+
+    /// Minimal `SeamGateOutcome` from the routing-relevant numbers; other fields are inert defaults
+    /// the orchestration never reads.
+    fn scripted_outcome(
+        refined: RefinedGapFrames,
+        confidence: FillConfidence,
+        pre: f64,
+        post: f64,
+    ) -> SeamGateOutcome {
+        SeamGateOutcome {
+            refined,
+            alignment: FillAlignment {
+                start_frame: refined.start_frame,
+                fill_frames: refined.end_frame.saturating_sub(refined.start_frame),
+                pre_correlation: pre,
+                post_correlation: post,
+            },
+            report_pre: pre,
+            report_post: post,
+            structure_trusted: false,
+            structure_start_frame: refined.start_frame,
+            gap_frames: refined.end_frame.saturating_sub(refined.start_frame),
+            confidence,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            fit_haystack_secs: 0.0,
+            residual: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
+        }
+    }
+
+    fn ok_score(
+        refined: RefinedGapFrames,
+        confidence: FillConfidence,
+        pre: f64,
+        post: f64,
+        ranking: f64,
+    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+        Ok((scripted_outcome(refined, confidence, pre, post), ranking))
+    }
+
+    fn waveform_skip(pre: f64, post: f64) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+        Err(SeamGateFailure::WaveformBelowThreshold {
+            pre,
+            post,
+            min: 0.12,
+        })
+    }
+
+    /// An anchor bracket whose pre/post anchors are inert (routing reads only `refined`/`move_frames`).
+    fn scripted_bracket(refined: RefinedGapFrames, move_frames: usize) -> AnchorBracket {
+        let anchor = |frame, side| AnchorCandidate {
+            frame,
+            side,
+            source: AnchorSource::EnergyPeak,
+            prominence: 1.0,
+            rms: 1.0,
+        };
+        AnchorBracket {
+            refined,
+            pre: anchor(refined.start_frame, AnchorSeamSide::Pre),
+            post: anchor(refined.end_frame, AnchorSeamSide::Post),
+            move_frames,
+            center_drift_frames: 0,
+        }
+    }
+
+    /// Scripted [`FitCandidateSource`] (plan §9): a `refined → result` table, scripted anchor
+    /// brackets, and call counters — drives the real precedence loop with no audio.
+    struct ScriptedFitSource {
+        scores: Vec<(RefinedGapFrames, Result<(SeamGateOutcome, f64), SeamGateFailure>)>,
+        brackets: Vec<AnchorBracket>,
+        /// Candidates whose residual probe vetoes at selection (drives the fall-through path).
+        finalize_vetoes: Vec<RefinedGapFrames>,
+        score_calls: usize,
+        anchor_calls: usize,
+    }
+
+    impl ScriptedFitSource {
+        fn new() -> Self {
+            Self {
+                scores: Vec::new(),
+                brackets: Vec::new(),
+                finalize_vetoes: Vec::new(),
+                score_calls: 0,
+                anchor_calls: 0,
+            }
+        }
+        fn score_at(
+            mut self,
+            refined: RefinedGapFrames,
+            result: Result<(SeamGateOutcome, f64), SeamGateFailure>,
+        ) -> Self {
+            self.scores.push((refined, result));
+            self
+        }
+        fn brackets(mut self, brackets: Vec<AnchorBracket>) -> Self {
+            self.brackets = brackets;
+            self
+        }
+        /// Mark a candidate so its residual probe vetoes at selection.
+        fn veto_finalize(mut self, refined: RefinedGapFrames) -> Self {
+            self.finalize_vetoes.push(refined);
+            self
+        }
+    }
+
+    impl FitCandidateSource for ScriptedFitSource {
+        fn score(
+            &mut self,
+            refined: RefinedGapFrames,
+            _anchor_seam_bracket: bool,
+        ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+            self.score_calls += 1;
+            self.scores
+                .iter()
+                .find(|(r, _)| *r == refined)
+                .map(|(_, res)| res.clone())
+                .unwrap_or(Err(SeamGateFailure::StructureAlignmentFailed))
+        }
+        fn anchor_brackets(&mut self, _pre: f64, _post: f64) -> Vec<AnchorBracket> {
+            self.anchor_calls += 1;
+            self.brackets.clone()
+        }
+        fn finalize_residual(
+            &mut self,
+            outcome: SeamGateOutcome,
+        ) -> Result<SeamGateOutcome, SeamGateFailure> {
+            if self.finalize_vetoes.contains(&outcome.refined) {
+                // A residual veto. `select_joint_fit_winner_with_residual` records this as
+                // `best_below_floor` and walks on to the next candidate — the same fall-through arm
+                // `ResidualHeadroomExceeded` takes, which needs no `SeamResidualVerdict` to construct.
+                return Err(SeamGateFailure::WaveformBelowThreshold {
+                    pre: outcome.report_pre,
+                    post: outcome.report_post,
+                    min: 0.12,
+                });
+            }
+            Ok(outcome)
+        }
+    }
+
+    fn config(
+        fit_boundary_search: FitBoundarySearch,
+        anchor_seam_mode: AnchorSeamMode,
+    ) -> FitJointConfig {
+        FitJointConfig {
+            fit_boundary_search,
+            anchor_seam_mode,
+            start_min: 1_000,
+            end_max: 2_000,
+            step: 100,
+            haystack_secs: 0.0,
+        }
+    }
+
+    /// W1/E1: a High baseline short-circuits — anchor search is never even invoked.
+    #[test]
+    fn route_e1_baseline_high_short_circuits_anchor_never_invoked() {
+        let baseline = rgf(1_000, 2_000);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, ok_score(baseline, FillConfidence::High, 0.99, 0.99, 0.99))
+            .brackets(vec![scripted_bracket(rgf(800, 2_200), 400)]);
+        let out = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::FullGrid, AnchorSeamMode::Force),
+            &mut source,
+        )
+        .expect("E1 patch");
+        assert_eq!(out.confidence, FillConfidence::High);
+        assert!(!out.anchor_seam_used);
+        assert_eq!(source.anchor_calls, 0, "anchor search must not run when baseline is High");
+    }
+
+    /// W2/E2: a Marginal baseline is accepted without grid or anchor under baseline-only.
+    #[test]
+    fn route_e2_baseline_marginal_accepts_under_baseline_only() {
+        let baseline = rgf(1_000, 2_000);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, ok_score(baseline, FillConfidence::Marginal, 0.30, 0.32, 0.30));
+        let out = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
+            &mut source,
+        )
+        .expect("E2 patch");
+        assert_eq!(out.confidence, FillConfidence::Marginal);
+        assert!(!out.anchor_seam_used);
+        assert_eq!(source.anchor_calls, 0, "Marginal baseline accepts before anchor search");
+    }
+
+    /// W5/E5: symmetric-weak throat with no anchors → skip.
+    #[test]
+    fn route_w5_symmetric_weak_skips() {
+        let baseline = rgf(1_000, 2_000);
+        let mut source =
+            ScriptedFitSource::new().score_at(baseline, waveform_skip(0.14, 0.14));
+        let result = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
+            &mut source,
+        );
+        assert!(
+            matches!(result, Err(SeamGateFailure::WaveformBelowThreshold { .. })),
+            "W5 must skip as a waveform-below-threshold failure"
+        );
+    }
+
+    /// W5 + anchor rescue / E3: SAME weak throat as above, but one strong anchor bracket flips
+    /// skip → patch. This is the original blind spot as a two-line diff.
+    #[test]
+    fn route_w5_anchor_rescue_e3() {
+        let baseline = rgf(1_000, 2_000);
+        let anchor = rgf(800, 2_200);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, waveform_skip(0.14, 0.14))
+            .score_at(anchor, ok_score(anchor, FillConfidence::High, 0.55, 0.55, 0.31))
+            .brackets(vec![scripted_bracket(anchor, 400)]);
+        let out = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
+            &mut source,
+        )
+        .expect("E3 anchor rescue patch");
+        assert_eq!(out.confidence, FillConfidence::High);
+        assert!(out.anchor_seam_used, "the anchor path must be what patched this gap");
+        assert!(out.anchor_bracket_move_frames > 0);
+    }
+
+    /// Anchor marginal rescue / E4: weak throat, the only anchor bracket scores Marginal (not High),
+    /// so it is accepted under baseline-only without the grid.
+    #[test]
+    fn route_e4_anchor_marginal_accepts() {
+        let baseline = rgf(1_000, 2_000);
+        let anchor = rgf(800, 2_200);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, waveform_skip(0.14, 0.14))
+            .score_at(anchor, ok_score(anchor, FillConfidence::Marginal, 0.30, 0.30, 0.20))
+            .brackets(vec![scripted_bracket(anchor, 400)]);
+        let out = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
+            &mut source,
+        )
+        .expect("E4 anchor marginal accept");
+        assert_eq!(out.confidence, FillConfidence::Marginal);
+        assert!(out.anchor_seam_used, "the Marginal anchor must be what patched this gap");
+        assert!(out.anchor_bracket_move_frames > 0);
+    }
+
+    /// Force fall-through / E5: a Marginal baseline withheld by `force`, no better anchor, patches
+    /// the marginal baseline (the 3b divergence, resolved to the defer/production behaviour).
+    #[test]
+    fn route_force_marginal_fallthrough_patches_marginal() {
+        let baseline = rgf(1_000, 2_000);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, ok_score(baseline, FillConfidence::Marginal, 0.30, 0.30, 0.30));
+        let out = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Force),
+            &mut source,
+        )
+        .expect("force fall-through patches the marginal baseline");
+        assert_eq!(out.confidence, FillConfidence::Marginal);
+        assert!(!out.anchor_seam_used);
+        assert_eq!(source.anchor_calls, 1, "force must consult anchor search before falling back");
+    }
+
+    /// E6: full grid scored; a moved-edge cell scores High and wins.
+    #[test]
+    fn route_e6_grid_high_patches() {
+        let baseline = rgf(1_000, 2_000);
+        let cell = rgf(900, 2_000); // a feasible grid cell (start pushed out by `step`)
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, waveform_skip(0.14, 0.14))
+            .score_at(cell, ok_score(cell, FillConfidence::High, 0.50, 0.50, 0.50));
+        let cfg = FitJointConfig {
+            fit_boundary_search: FitBoundarySearch::FullGrid,
+            anchor_seam_mode: AnchorSeamMode::Off,
+            start_min: 900,
+            end_max: 2_100,
+            step: 100,
+            haystack_secs: 0.0,
+        };
+        let out = evaluate_seam_gate_fit_joint_core(baseline, &cfg, &mut source).expect("E6 grid patch");
+        assert_eq!(out.confidence, FillConfidence::High);
+        assert!(out.fit_used_boundary_grid, "grid winner must be tagged boundary_grid");
+        assert!(!out.anchor_seam_used);
+    }
+
+    /// Residual-veto fall-through (E6 → E7): the top-ranked grid `High` is vetoed at finalize, so the
+    /// next-ranked candidate wins. Exercises the lazy residual walk in
+    /// `select_joint_fit_winner_with_residual` + `try_finalize_best_grid_high`. Also pins that the
+    /// full grid is scored (no early-exit) via the `score_calls` counter.
+    #[test]
+    fn route_residual_veto_falls_through_to_next_candidate() {
+        let baseline = rgf(1_000, 2_000);
+        let top = rgf(900, 2_000); // higher rank, but its residual probe vetoes
+        let next = rgf(1_000, 2_100); // lower rank, passes residual
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, waveform_skip(0.14, 0.14))
+            .score_at(top, ok_score(top, FillConfidence::High, 0.60, 0.60, 0.60))
+            .score_at(next, ok_score(next, FillConfidence::High, 0.50, 0.50, 0.50))
+            .veto_finalize(top);
+        let cfg = FitJointConfig {
+            fit_boundary_search: FitBoundarySearch::FullGrid,
+            anchor_seam_mode: AnchorSeamMode::Off,
+            start_min: 900,
+            end_max: 2_100,
+            step: 100,
+            haystack_secs: 0.0,
+        };
+        let out = evaluate_seam_gate_fit_joint_core(baseline, &cfg, &mut source)
+            .expect("next-ranked candidate wins after the top is vetoed");
+        assert_eq!(out.confidence, FillConfidence::High);
+        assert_eq!(
+            out.refined.start_frame, next.start_frame,
+            "vetoed top (start=900) must fall through to the next-ranked candidate (start=1000)"
+        );
+        // Baseline + 3 feasible grid cells = 4; the full grid is scored, no early-exit on first High.
+        assert_eq!(source.score_calls, 4, "full grid must be scored");
     }
 }

@@ -3,8 +3,12 @@
 Status: **steps 1–5 done & verified.** 3a delegation + 3b `defer_residual` collapse → single
 always-pool path (debug-flips-the-path foot-gun gone); step 5 `FitCandidateSource` seam makes the
 orchestration number-testable; step 4 ships the gap-type → script matrix as fast `route_*` tests.
-Final green: build clean (no warnings), lib 290/0, characterization 10/0, `patch_audio_integration`
-25/0, `validate_residual_gate` 5/0, `integration_residual_gate_smoke` 1/0, `seam_residual_oracle` 3/0.
+Final green: build clean (no warnings), lib 291/0 (incl. 7 `route_*` orchestration tests),
+characterization 10/0, `patch_audio_integration` 25/0, `validate_residual_gate` 5/0,
+`integration_residual_gate_smoke` 1/0, `seam_residual_oracle` 3/0.
+
+> **Note:** steps 4/5 were briefly reverted by `d23c399` and restored from `745f57e` (+2 review
+> fixes) — see the Decision log.
 
 > **As-built note (doc reconciled to the code):** §§2–6 originally sketched a *monolithic*
 > `route_fit_joint(baseline, anchors, grid) → Decision`. The landed design is **surgical delegation**:
@@ -218,9 +222,11 @@ residual measurement is disabled, finalize is a no-op, so one path serves both.
   audio ops (score / anchor_brackets / finalize_residual) are behind the trait; grid geometry stays in
   the core. Production = `AudioFitSource` (behaviour-identical: lib 290/0, characterization 10/0,
   `patch_audio_integration` verifying). No warnings.
-- [x] **4. Payoff suite** — 6 number-driven `route_*` tests on `evaluate_seam_gate_fit_joint_core` via
-  `ScriptedFitSource` (per the §10 matrix): E1 + anchor-never-invoked (call counter), E2, W5 skip,
-  **W5-skip-vs-rescue E3** (the blind spot as a two-line diff), force fall-through E5, grid-High E6.
+- [x] **4. Payoff suite** — 8 number-driven `route_*` tests on `evaluate_seam_gate_fit_joint_core` via
+  `ScriptedFitSource` (per the §10 matrix), covering all seven exits: E1 + anchor-never-invoked (call
+  counter), E2, E3 **W5-skip-vs-rescue** (the blind spot as a two-line diff), E4 anchor-marginal
+  accept, E5 (W5 skip + force fall-through), E6 grid-High, E7 **residual-veto fall-through** (top
+  candidate vetoed at finalize → next wins; also asserts the full grid is scored via `score_calls`).
   Run in ~0 ms, no audio. Rule-level coverage (step 2's `fit_routing` tests) + tier (`gap_tags`)
   complete the picture.
 
@@ -326,3 +332,12 @@ Notes:
 - (resolved) `BaselineOnly` `force`+Marginal divergence → defer/production behaviour (step 3b note).
 - (open) `mark_anchor_outcome` retirement — blocked on plumbing `anchor_bracket_move_frames` to
   scoring time; left post-hoc with its guard (§5b #2).
+- (history) Steps 4/5 were committed in `745f57e`, then **inadvertently removed by `d23c399`**
+  ("…refactor candidate evaluation logic" — an agent "streamlined" away the `source` parameter,
+  reverting `patch_region.rs` byte-for-byte to the pre-step-5 `dab1104` and taking the `route_*` tests
+  with it). Restored from `745f57e`; see the two review fixes below. Lesson: the `FitCandidateSource`
+  indirection reads as removable cruft to a fresh agent — its doc comments now state it is a
+  deliberate test seam.
+- (review fix) Added `route_residual_veto_falls_through_to_next_candidate` (the residual-veto
+  fall-through in `select_joint_fit_winner_with_residual` was previously unexercised by the fake) and
+  made `ScriptedFitSource::score_calls` load-bearing (asserts the full grid is scored).
