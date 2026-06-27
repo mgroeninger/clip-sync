@@ -607,19 +607,13 @@ pub fn selected_seam_channels(
     seam_score_channel_indices(&a_pre_ch, &a_post_ch)
 }
 
-fn peak_normalize_f64(samples: &[f64]) -> Vec<f64> {
-    let peak = samples.iter().map(|s| s.abs()).fold(0.0f64, f64::max);
-    if peak <= f64::EPSILON {
-        return samples.to_vec();
-    }
-    samples.iter().map(|s| s / peak).collect()
-}
-
 fn seam_pearson(left: &[f64], right: &[f64]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
         return 0.0;
     }
-    normalized_correlation(&peak_normalize_f64(left), &peak_normalize_f64(right))
+    // Pearson r is invariant to positive per-vector scaling; `normalized_correlation` mean-centers
+    // and divides by RMS — peak normalization before it was redundant (G2).
+    normalized_correlation(left, right)
 }
 
 fn best_channel_correlation(scores: &[f64]) -> f64 {
@@ -1916,7 +1910,7 @@ pub fn residual_verdict_informative(
 /// search is centered on `floor.best_lag + nominal_delta − chosen_delta`. `informative` uses
 /// the supplied `floor_ok_db`. When `placement_slide_frames > max_lag_frames`, the gate abstains
 /// (`beyond_lag_reach`) — headroom is not meaningful outside the unified lag radius.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct SeamResidualVerdict {
     pub chosen_pre_db: f64,
     pub chosen_post_db: f64,
@@ -1932,6 +1926,25 @@ pub struct SeamResidualVerdict {
     /// Unified lag radius used for this verdict (`0` = reach check disabled).
     #[serde(skip_serializing_if = "is_zero_i64")]
     pub max_lag_frames: i64,
+}
+
+/// `PartialEq` for probe scalars: `NaN` compares equal to `NaN` (L1).
+fn residual_scalar_eq(a: f64, b: f64) -> bool {
+    a == b || (a.is_nan() && b.is_nan())
+}
+
+impl PartialEq for SeamResidualVerdict {
+    fn eq(&self, other: &Self) -> bool {
+        residual_scalar_eq(self.chosen_pre_db, other.chosen_pre_db)
+            && residual_scalar_eq(self.chosen_post_db, other.chosen_post_db)
+            && residual_scalar_eq(self.floor_pre_db, other.floor_pre_db)
+            && residual_scalar_eq(self.floor_post_db, other.floor_post_db)
+            && self.floor_source_pre == other.floor_source_pre
+            && self.floor_source_post == other.floor_source_post
+            && self.informative == other.informative
+            && self.placement_slide_frames == other.placement_slide_frames
+            && self.max_lag_frames == other.max_lag_frames
+    }
 }
 
 fn is_zero_u64(v: &u64) -> bool {
@@ -3606,6 +3619,30 @@ mod tests {
         let none = SeamFloorProbe::none();
         let verdict = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
         assert!(!verdict.informative);
+    }
+
+    #[test]
+    fn seam_pearson_invariant_under_positive_scale() {
+        let left: Vec<f64> = (0..64).map(|i| (i as f64 * 0.11).sin()).collect();
+        let right: Vec<f64> = (0..64)
+            .map(|i| (i as f64 * 0.11).sin() * 0.8 + 0.05)
+            .collect();
+        let base = seam_pearson(&left, &right);
+        let scaled_left: Vec<f64> = left.iter().map(|s| s * 3.0).collect();
+        let scaled_right: Vec<f64> = right.iter().map(|s| s * 7.0).collect();
+        assert!(
+            (base - seam_pearson(&scaled_left, &scaled_right)).abs() < 1e-12,
+            "Pearson r should be scale-invariant: {base} vs scaled"
+        );
+    }
+
+    #[test]
+    fn seam_residual_verdict_partial_eq_treats_nan_as_equal() {
+        let none = SeamFloorProbe::none();
+        let a = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
+        let b = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
+        assert!(a.chosen_pre_db.is_nan() && a.floor_pre_db.is_nan());
+        assert_eq!(a, b);
     }
 
     #[test]

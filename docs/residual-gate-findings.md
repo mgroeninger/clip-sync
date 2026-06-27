@@ -37,6 +37,8 @@ retired (L12).
 | **L12** | low | **Prototype path dead in production.** | Deleted `seam_residual_diagnostics`, `SeamResidual`, `SeamResidualDiagnostics`; tests target `seam_residual_for_side` / `seam_floor_probe`. |
 | **L13** | low | **`lsq_residual_ratio` silent-B false ~0 dB.** | `bb < LSQ_B_ENERGY_FLOOR` → abstain; tests `lsq_residual_ratio_abstains_when_b_silent`, `seam_residual_abstains_when_b_silent_at_placement`. |
 | **G4** | gap | **Channel-following residual.** | Same as **L2** — closed. |
+| **G2** | gap | **`peak_normalize_f64` redundant before Pearson.** | Removed; `seam_pearson` calls `normalized_correlation` directly; `seam_pearson_invariant_under_positive_scale`. |
+| **L1** | low | **NaN `PartialEq` on outcomes.** | `SeamResidualVerdict`: manual `PartialEq` with `residual_scalar_eq` (`NaN == NaN`); test `seam_residual_verdict_partial_eq_treats_nan_as_equal`. |
 | **A1–A3** | low | Head-shift artifact, clippy, corpus sha256. | Fixed/subsumed. |
 
 ## Open — medium
@@ -57,7 +59,6 @@ retired (L12).
 
 | id | sev | what | notes |
 |----|-----|------|-------|
-| **L1** | low | **NaN `PartialEq` on outcomes.** | `SeamGateOutcome` no longer derives `PartialEq` (only `Clone`). **`SeamResidualVerdict` still `PartialEq`** with raw `f64` fields that can be NaN; `GapPatchOutcome` wraps it. Remaining fix: `Option<f64>` or drop `PartialEq` on verdict types used in tests. |
 | **L6** | low | **Coarse outward walk step.** | Still `step_frames: window.max(1)` in `measure_fit_residual_verdict` (`patch_region.rs`). |
 
 ## Open — gaps in coverage
@@ -65,7 +66,6 @@ retired (L12).
 | id | sev | what | notes |
 |----|-----|------|-------|
 | **G1** | gap | **Residual on Pearson-only skipped gaps.** | **Veto skips (partial):** `GapPatchSkipReason::ResidualHeadroomExceeded` carries `headroom_db`, `floor_pre_db`, `floor_post_db`, `margin_db`; full `SeamResidualVerdict` on `GapPatchOutcome.residual` via `skipped_patch_with_residual`. **Still open:** Pearson/structure skips — `GapPatchStatus::Skipped` has only `reason`; no residual scalars. Analysis CSV (`diag_seam_residual`) covers offline cases. |
-| **G2** | gap | **`peak_normalize_f64` redundant before Pearson.** | `seam_pearson` peak-normalizes then calls `normalized_correlation` (z-score). Scale-invariant correlation may make peak norm redundant — remove when convenient (`policies.rs`). |
 
 ## Regressions
 
@@ -165,10 +165,8 @@ truth under `production_fit`) + **C4** (`off` no-op) + **C2** (two-mic abstain).
 | Priority | ID | Action |
 |----------|-----|--------|
 | med | **M3** | Floor-walk vs B haystack bounds — only if field evidence |
-| low | **L1** | `SeamResidualVerdict` `PartialEq` + NaN |
 | low | **L6** | Finer outward-walk step (optional) |
 | gap | **G1** | Residual on Pearson-only skips (veto skips done) |
-| gap | **G2** | Remove redundant `peak_normalize_f64` |
 | deferred | **M4**, **FD-1** | MP3 calibration; fractional-delay feature |
 | optional test | `finale_floor_nan_probe`, `c1b_acoustic_echo_pipeline_veto`, `p2_search_winner_bounds` | See catalog README backlog |
 
