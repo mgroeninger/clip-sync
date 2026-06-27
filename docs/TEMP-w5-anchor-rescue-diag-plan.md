@@ -2,7 +2,16 @@
 
 Status: **in progress** — routing proven (`route_w5_anchor_rescue_e3`); domain oracle green
 (`w5_fixture_throat_symmetric_weak_and_brackets_exist`); pipeline A6 `#[ignore]`; **Phase 1 spec
-ready**; probe slated for replacement by `diag_w5_anchor_rescue`.
+ready** (blocked on Phase 0 prerequisite below); probe slated for replacement by
+`diag_w5_anchor_rescue`.
+
+**Phase 0 prerequisite (do first):** extract the inline `SeamGateParams` construction
+(`patch_audio.rs` ~1577) into reusable builders — `SeamGateConfig::from_repair(...)` (run-constant
+tuning + frames) and `derive_seam_gate_geometry(cfg, …, gap_frames, …)` (per-gap window + the two
+`gap_frames`-derived counts `seam_gate_frames`/`border_frames`). Behavior-preserving refactor; the
+struct is `pub(crate)` and no test references it, so green-before = green-after. This lets the oracle
+call the **same** constructors production uses (no field-by-field hand-mirroring, no drift), and
+collapses task 1.4 to a thin call. See §5.1b for the revised contract.
 
 Companions: [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) §7 rows **A6/A6b**,
 [archive/fit-routing-extraction-plan.md](archive/fit-routing-extraction-plan.md) §8 (fixture-bound
@@ -89,9 +98,11 @@ baseline Marginal wins the joint pool while anchor brackets stay below High (~0.
 score each bracket on the **unified haystack path** (same as `AudioFitSource::score`), not
 `anchor_seam_diagnostic` (nominal placement + `matchability_at_anchor` only).
 
-**Score-path note:** `oracle_baseline_throat_pearson` and full `PatchAudio` can differ slightly on
-marginal cells; Phase 1 bracket scores use the gate wrapper below. Phase 3 pipeline lock-in is the
-final arbiter.
+**Score-path note:** with the Phase 0 builders, oracle bracket scores and production share the exact
+`SeamGateConfig`/`SeamGateGeometry` constructors, so they agree by construction (no marginal-cell
+drift). `oracle_baseline_throat_pearson` (a separate helper) may still differ slightly from full
+`PatchAudio`; Phase 1 bracket scores use the gate wrapper below, and Phase 3 pipeline lock-in remains
+the final arbiter.
 
 #### 5.1a Cell parameters
 
@@ -107,11 +118,12 @@ Defaults for existing tests: `peak_offset_secs = 1.0`, `fill_border_search_secs 
 
 #### 5.1b Bracket scoring contract
 
-Add a **crate-internal** oracle wrapper (Phase 1 — do not duplicate unified math in test_support):
+Add a **crate-internal** oracle wrapper (Phase 1 — reuse the Phase 0 builders, do **not** hand-build
+`SeamGateParams` field-by-field):
 
 | Piece | Location | Contract |
 |-------|----------|----------|
-| `seam_gate_params_from_energy_fixture(fixture, repair) -> SeamGateParams` | `test_support/w5_anchor_rescue_diag.rs` | Build `SeamGateParams` + baseline `RefinedGapFrames` the same way `patch_audio` does for a single gap (reuse `gap_report_from_energy_fixture` / `preview_patch_geometry` / `production_geometry_params`). |
+| `seam_gate_params_from_energy_fixture(fixture, repair) -> SeamGateParams` | `test_support/w5_anchor_rescue_diag.rs` | Build `SeamGateParams` + baseline `RefinedGapFrames` by calling the **Phase 0** constructors: `SeamGateConfig::from_repair(repair, rate, channels)` then `derive_seam_gate_geometry(cfg, a_pcm, b_samples, …, gap_frames, …)`. Derive the per-gap window via `gap_report_from_energy_fixture` / `preview_patch_geometry` / `production_geometry_params`; feed those into the geometry builder rather than reconstructing fields. |
 | `oracle_score_fit_candidate(...)` | `application/patch_region.rs` as `pub(crate)` | Thin wrapper: `evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket)` → `(pre, post, confidence, ranking_score)` or gate failure. |
 | `score_w5_bracket_at_gate(...)` | `w5_anchor_rescue_diag.rs` | Call wrapper with `refined = bracket.refined`, `anchor_seam_bracket = true`. Skip brackets where gate returns `Err` (record `passed_gate = false`). |
 
@@ -155,11 +167,12 @@ pub struct W5AnchorRescueCellScores {
 
 | # | Task | Location | Done when |
 |---|------|----------|-----------|
+| 0.1 | **Phase 0:** extract `SeamGateConfig::from_repair` + `derive_seam_gate_geometry`; switch production (`patch_audio.rs` ~1577 + the two retry struct-update sites in `patch_region.rs`) to them | `patch_region.rs`, `patch_audio.rs` | Behavior-preserving; full suite green unchanged. Per-gap bucket = `{a_pcm, b_samples, b_extract_start_secs, refined_b_start_secs, refined_b_end_secs, seam_gate_frames, border_frames, anchor_search_prior}`; everything else run-constant in `cfg`. Retry sites override only `refined_b_*` — must **not** recompute `seam_gate_frames`/`border_frames` |
 | 1.0 | `W5AnchorRescueCell` + `build_w5_cell(cell) -> (fixture, repair)` | `w5_anchor_rescue_diag.rs` | One call produces paired fixture + `w5_anchor_rescue_repair(Auto, search)` |
-| 1.1 | `build_w5_symmetric_weak_throat_anchor_rescue(…, peak_offset_secs, fill_border_search_secs)` | `energy_signature_fixtures.rs` | `b_dropout_shift_frames = peak_offset`; `structure_params.search_radius_frames = secs_to_frames(fill_border_search_secs)`; keep `peak_offset_secs` as 3rd arg for call-site compat |
-| 1.2 | `w5_anchor_rescue_repair(mode, fill_border_search_secs)` | `energy_signature_production.rs` | `fill_border_search_secs` param (default `0.78`); existing call sites unchanged |
+| 1.1 | `build_w5_symmetric_weak_throat_anchor_rescue(…, peak_offset_secs, fill_border_search_secs)` | `energy_signature_fixtures.rs` | `b_dropout_shift_frames = peak_offset`; `structure_params.search_radius_frames = secs_to_frames(fill_border_search_secs)`; add `fill_border_search_secs` as a 4th positional arg (Rust has no default args) — update the 4 call sites in `anchor_seam_oracle.rs` to pass `0.78` |
+| 1.2 | `w5_anchor_rescue_repair(mode, fill_border_search_secs)` | `energy_signature_production.rs` | adds `fill_border_search_secs` param — update existing call sites to pass `0.78`, **or** keep `w5_anchor_rescue_repair(mode)` as a thin wrapper forwarding `0.78` (pick one; positional arg means call sites cannot stay literally unchanged) |
 | 1.3 | `pub(crate) oracle_score_fit_candidate` | `patch_region.rs` | Returns gate Pearson + confidence for one `(refined, anchor_seam_bracket)` |
-| 1.4 | `seam_gate_params_from_energy_fixture` + `score_w5_anchor_rescue_cell` | `w5_anchor_rescue_diag.rs` | Full `W5AnchorRescueCellScores`; export via `test_support/mod.rs` |
+| 1.4 | `seam_gate_params_from_energy_fixture` (thin call to Phase 0 builders) + `score_w5_anchor_rescue_cell` | `w5_anchor_rescue_diag.rs` | Full `W5AnchorRescueCellScores`; export via `test_support/mod.rs`. Builds `SeamGateParams` via `SeamGateConfig::from_repair` + `derive_seam_gate_geometry` — no field-by-field reconstruction |
 | 1.5 | `tests/diag_w5_anchor_rescue.rs` | new binary | `w5_anchor_rescue_single_cell` prints CSV row + human summary; default cell `(1.0, 0.78)` |
 | 1.6 | Remove `probe_w5_anchor_rescue_scores` | `anchor_seam_oracle.rs` | Probe gone; domain + pipeline tests use parameterized builder where needed |
 | 1.7 | Wiring | `Cargo.toml`, `mod.rs`, `development.md`, `test-tier.ps1` | See §5.1e |
