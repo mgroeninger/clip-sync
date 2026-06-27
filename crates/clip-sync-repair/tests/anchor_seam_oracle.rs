@@ -25,8 +25,8 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     EnergySignatureFixture,
 };
 use clip_sync_repair::test_support::energy_signature_production::{
-    gap_report_from_energy_fixture, oracle_baseline_throat_pearson, oracle_nominal_throat_pearson,
-    patch_request_from_repair, production_fit_weights_config, w5_anchor_rescue_repair,
+    gap_report_from_energy_fixture, oracle_nominal_throat_pearson, patch_request_from_repair,
+    production_fit_weights_config, w5_anchor_rescue_repair,
 };
 use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_request_with_options};
 
@@ -464,8 +464,8 @@ fn assert_w5_throat_symmetric_weak(pre: f64, post: f64) {
 /// **A6** domain — W5 throat symmetric-weak; feasible peak anchor brackets exist.
 #[test]
 fn w5_fixture_throat_symmetric_weak_and_brackets_exist() {
-    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0, 0.78);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, 0.78);
     let (pre, post) = oracle_nominal_throat_pearson(&fixture, &repair);
     assert_w5_throat_symmetric_weak(pre, post);
 
@@ -494,10 +494,10 @@ fn w5_fixture_throat_symmetric_weak_and_brackets_exist() {
 #[test]
 #[ignore = "A6 pipeline: anchor bracket must reach High — see fixture TODO"]
 fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
-    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0, 0.78);
     let temp = tempfile::tempdir().expect("tempdir");
     let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, 0.78);
     let request = patch_request_from_repair(report, &repair);
 
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
@@ -527,10 +527,10 @@ fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
 #[test]
 #[ignore = "A6 pipeline: anchor bracket must reach High — see fixture TODO"]
 fn w5_anchor_rescue_pipeline_engages_anchor_seam_force() {
-    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0, 0.78);
     let temp = tempfile::tempdir().expect("tempdir");
     let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Force);
+    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Force, 0.78);
     let request = patch_request_from_repair(report, &repair);
 
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
@@ -544,30 +544,3 @@ fn w5_anchor_rescue_pipeline_engages_anchor_seam_force() {
     assert!(facts.anchor_move_nonzero);
 }
 
-#[test]
-#[ignore = "manual fixture tuning — run with --ignored --nocapture"]
-fn probe_w5_anchor_rescue_scores() {
-    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(48_000, 1, 1.0);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto);
-    let (pre, post) = oracle_nominal_throat_pearson(&fixture, &repair);
-    eprintln!("W5 nominal throat pearson: pre={pre:.4} post={post:.4} min={:.4}", pre.min(post));
-    let (b_pre, b_post) = oracle_baseline_throat_pearson(&fixture, &repair);
-    eprintln!(
-        "W5 baseline unified throat pearson: pre={b_pre:.4} post={b_post:.4} min={:.4}",
-        b_pre.min(b_post)
-    );
-    let scan = refined_scan_hole(&fixture);
-    let params = anchor_params(&fixture);
-    let brackets = list_feasible_anchor_brackets(
-        &list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params),
-        scan,
-        &params,
-    );
-    eprintln!("feasible brackets: {}", brackets.len());
-    for b in &brackets {
-        eprintln!(
-            "  bracket pre={} post={} move={}",
-            b.pre.frame, b.post.frame, b.move_frames
-        );
-    }
-}

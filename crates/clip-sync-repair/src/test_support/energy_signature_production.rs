@@ -481,7 +481,10 @@ pub fn oracle_baseline_throat_pearson(
 }
 
 /// Repair knobs for the W5 anchor-rescue oracle (A6).
-pub fn w5_anchor_rescue_repair(anchor_seam_mode: crate::domain::AnchorSeamMode) -> RepairConfig {
+pub fn w5_anchor_rescue_repair(
+    anchor_seam_mode: crate::domain::AnchorSeamMode,
+    fill_border_search_secs: f64,
+) -> RepairConfig {
     let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
     repair.fill_mode = crate::domain::FillMode::Fit;
     repair.fit_boundary_search = crate::domain::FitBoundarySearch::BaselineOnly;
@@ -495,7 +498,7 @@ pub fn w5_anchor_rescue_repair(anchor_seam_mode: crate::domain::AnchorSeamMode) 
     repair.fill_length_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
-    repair.fill_border_search_secs = 0.78;
+    repair.fill_border_search_secs = fill_border_search_secs;
     repair.gap_end_extend_on_post_seam_fail = false;
     repair.gap_start_extend_on_pre_seam_fail = false;
     repair.gap_end_extend_max_ms = 0;

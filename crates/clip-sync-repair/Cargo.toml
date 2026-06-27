@@ -140,3 +140,8 @@ required-features = ["diagnostic-tests"]
 name = "diag_anchor_seam"
 path = "tests/diag_anchor_seam.rs"
 required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_w5_anchor_rescue"
+path = "tests/diag_w5_anchor_rescue.rs"
+required-features = ["diagnostic-tests"]

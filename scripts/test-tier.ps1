@@ -154,6 +154,7 @@ try {
             '--test', 'diag_seam_residual',
             '--test', 'diag_patch_audio',
             '--test', 'diag_anchor_seam',
+            '--test', 'diag_w5_anchor_rescue',
             '--test', 'seam_residual_oracle'
         )
         Invoke-CargoTest @(

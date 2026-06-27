@@ -1514,6 +1514,7 @@ pub fn build_w5_symmetric_weak_throat_anchor_rescue(
     sample_rate: u32,
     channels: usize,
     peak_offset_secs: f64,
+    fill_border_search_secs: f64,
 ) -> EnergySignatureFixture {
     let peak_offset_frames = secs_to_frames(peak_offset_secs, sample_rate);
     let mut fixture =
@@ -1545,7 +1546,7 @@ pub fn build_w5_symmetric_weak_throat_anchor_rescue(
     fixture.true_fill_end = fixture.gap_end + shift;
     fixture.b_dropout_shift_frames = shift;
     fixture.structure_params.search_radius_frames =
-        secs_to_frames(0.78, sample_rate);
+        secs_to_frames(fill_border_search_secs, sample_rate);
     fixture.id = "w5_symmetric_weak_throat_anchor_rescue";
     fixture
 }

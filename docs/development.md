@@ -72,7 +72,7 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
 | `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `seam_residual_oracle` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `seam_residual_oracle` integration binaries |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -147,7 +147,7 @@ validation changes.
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `seam_residual_oracle` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `seam_residual_oracle` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -202,6 +202,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_seam_residual` | diagnostic | `diagnostic-tests` | no | Seam residual CSV |
 | `diag_patch_audio` | diagnostic | `diagnostic-tests` | no | Patch geometry CSV (I1/I3) |
 | `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
+| `diag_w5_anchor_rescue` | diagnostic | `diagnostic-tests` | no | W5 anchor-rescue single-cell scores (nominal/baseline + per-bracket gate CSV) |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
 † `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored
@@ -460,7 +461,7 @@ cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_regenera
 | `mux_reports_progress_for_short_fixture` | `clip-sync-repair` | `--lib` + `ffmpeg-mux`; `test-tier.ps1 -Tier diagnostic` when ffmpeg on PATH |
 | `broadband_oracle_veto_rescue_patches_marginal` | `clip-sync-repair` | `seam_residual_oracle`; `test-tier.ps1 -Tier diagnostic` |
 | `w5_anchor_rescue_pipeline_engages_anchor_seam_*` | `clip-sync-repair` | `anchor_seam_oracle`; A6 pipeline — `#[ignore]` until anchor bracket reaches High |
-| `probe_w5_anchor_rescue_scores` | `clip-sync-repair` | `anchor_seam_oracle`; manual fixture tuning (`--ignored --nocapture`) |
+| `w5_anchor_rescue_single_cell` | `clip-sync-repair` | `diag_w5_anchor_rescue` (`diagnostic-tests`); single-cell nominal/baseline + per-bracket gate scores |
 
 Feature-gated tests (not ignored, but **not compiled** without features): `media_reader_tests` blocks under `ffmpeg-tests` (includes backward-seek MP4/MKV and MKV padded-duration extent tests — WAV backward-seek runs in default `cargo test -p clip-sync`); **`extract_window_regression`** (`extract_window_regression.rs`) — cross-format `extract_loop` matrix: WAV mono + interleaved in default CI; MP4 AAC, MKV FLAC/MKV AAC, MP3, and MKV/AAC anchored-end extract/align behind `ffmpeg-tests`; `ac3_dual_track_b_scan_detects_gap` under `ac3` + `ffmpeg-tests`; `ac3_corpus_chirp` oxideav railing characterization under `ac3` + `ffmpeg-tests` (expects zero full-scale samples).
 

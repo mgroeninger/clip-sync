@@ -226,7 +226,7 @@ impl FitJointCandidate {
 }
 
 /// Reused B haystack mono, channels, and structure timelines for joint-grid candidates.
-struct FitHaystackCache {
+pub(crate) struct FitHaystackCache {
     b_mono: Vec<f64>,
     b_ch: Vec<Vec<f64>>,
     bool_timeline: gap_structure::ActivityTimeline,
@@ -234,7 +234,7 @@ struct FitHaystackCache {
 }
 
 impl FitHaystackCache {
-    fn build(params: &SeamGateParams<'_>) -> Self {
+    pub(crate) fn build(params: &SeamGateParams<'_>) -> Self {
         let channels = params.cfg.channels.max(1);
         let total_frames = params.geom.b_samples.len() / channels;
         let bin_frames = params.cfg.bin_frames.max(1);
@@ -1153,6 +1153,33 @@ fn log_residual_channel_breakdown(
         post_channel_headroom_db = ?post_headroom,
         "fill residual channel breakdown"
     );
+}
+
+/// Oracle-only: build the unified haystack cache once for a cell, then reuse across candidates
+/// (the cache depends only on `params`, not the candidate `refined`). W5 discovery, Phase 1.
+pub(crate) fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
+    FitHaystackCache::build(params)
+}
+
+/// Oracle-only: score one fit candidate at the seam gate (W5 discovery, Phase 1). Runs the same
+/// [`evaluate_seam_gate_fit_candidate`] production uses against a pre-built `cache`, returning gate
+/// Pearson `(pre, post)` + confidence + ranking score, or the gate failure. See
+/// docs/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
+pub(crate) fn oracle_score_fit_candidate(
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    refined: RefinedGapFrames,
+    baseline: RefinedGapFrames,
+    anchor_seam_bracket: bool,
+) -> Result<(f64, f64, FillConfidence, f64), SeamGateFailure> {
+    let (outcome, ranking_score) =
+        evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket)?;
+    Ok((
+        outcome.report_pre,
+        outcome.report_post,
+        outcome.confidence,
+        ranking_score,
+    ))
 }
 
 fn evaluate_seam_gate_fit_candidate(
