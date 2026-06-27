@@ -480,7 +480,7 @@ Called from `evaluate_seam_gate_fit_candidate` with the winning `FillAlignment`.
 | **A4** F4 decoy / wrong B slide | Residual veto; no anchor_trusted false patch |
 | **A5** `baseline_only` profile (energy) | Anchor search runs without requiring `--full` grid |
 | **A5b** `baseline_only` + bool signature | Same as A5 under `gap_signature_mode=bool` |
-| **A6** W5 symmetric-weak throat + shifted B dropout | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Fixture: `build_w5_symmetric_weak_throat_anchor_rescue` + `w5_anchor_rescue_repair` (`fill_border_search_secs` &lt; `peak_offset_secs`). Pipeline (`anchor_seam_used`, E3 High): **in progress** — `w5_anchor_rescue_pipeline_*` `#[ignore]`; tune via `probe_w5_anchor_rescue_scores` |
+| **A6** W5 symmetric-weak throat + shifted B dropout | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Fixture: `build_w5_symmetric_weak_throat_anchor_rescue` + `w5_anchor_rescue_repair` (`fill_border_search_secs` &lt; `peak_offset_secs`). Pipeline (`anchor_seam_used`, E3 High): **in progress** — `w5_anchor_rescue_pipeline_*` `#[ignore]`; fixture discovery via [TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md) (replaces `probe_w5_anchor_rescue_scores`) |
 | **A6b** A6 + `anchor_seam_mode=force` | Same fixture as A6; pipeline oracle paired with A6 |
 
 Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (candidate count bounded).
