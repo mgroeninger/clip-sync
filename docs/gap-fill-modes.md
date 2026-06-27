@@ -211,7 +211,7 @@ Design: [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan
 
 **Status:** shipped (fit mode). Design: [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md).
 
-When a fillable gap has a **quiet scan throat** but salient contour nearby (speech peak, bool onset), throat-only Pearson often lands in **W5** (symmetric weak, dead zone). Anchor seam searches **editorial boundaries** on A (energy peaks, bool transitions rising pre / falling post), enumerates feasible brackets, and scores B-side matchability at those anchor windows.
+When a fillable gap has a **quiet scan throat** but salient contour nearby (speech peak, bool onset in the flanking context halves), throat-only Pearson often lands in **W5** (symmetric weak, dead zone). Anchor seam searches **editorial boundaries** on A (energy peaks, bool transitions rising pre / falling post), enumerates feasible brackets, and scores B-side matchability at those anchor windows. Context geometry: [Signature context and contour geometry](#signature-context-and-contour-geometry).
 
 ```text
 Per gap (fit, when anchor search runs):
@@ -224,7 +224,7 @@ Per gap (fit, when anchor search runs):
 
 | Setting | Default | CLI | Notes |
 |---------|---------|-----|-------|
-| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour; `force` = always try anchor before grid (defers E2 marginal accept under `baseline_only`) |
+| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour in flanking context ([§ Signature context and contour geometry](#signature-context-and-contour-geometry)); `force` = always try anchor before grid (defers E2 marginal accept under `baseline_only`) |
 | `max_anchor_bracket_secs` | 5.0 | `--max-anchor-bracket-secs` | Max pre↔post anchor span |
 | `max_anchors_per_side` | 5 | `--max-anchors-per-side` | Cap per side (incl. scan fallback) |
 | `anchor_seam_min_prominence` | 0.0 | `--anchor-seam-min-prominence` | Energy peak filter |
@@ -316,6 +316,60 @@ Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 **Mode-coupled nominal bias:** energy-resolved gaps use `fill_fit_energy_nominal_bias_scale` (default `0.25`) for the distance-from-nominal penalty; bool keeps the base `fill_fit_nominal_bias_scale` (default `1.0`). The lower energy scale lets a confident contour override a **drifted nominal B map** (energy mode self-corrects), while only loosening far-off candidates — sub-second offsets are unaffected. Raise toward `1.0` to restore hard anchoring for energy gaps.
 
 **Context length (`gap_signature_context_secs`, default `3.0`):** keep 3 s. Larger values (10 / 30 s) widen the matched signature window for ambiguous/long drift gaps, but the synthetic corpus (contexts 3 / 10 / 30) showed no measurable patch benefit and a longer context costs more B decode/memory per gap. A manual knob to try on a stubborn gap, not a default to raise.
+
+See [Signature context and contour geometry](#signature-context-and-contour-geometry) for where contour is measured on the timeline, how the >5% flat test works, and how that geometry ties to editorial anchor seam.
+
+### Signature context and contour geometry
+
+Fit-mode structure matching, `gap_signature_mode = auto` resolution, and editorial anchor seam (`anchor_seam_mode = auto|force`) all use the **same context halves** on A — built from the **refined** gap edges (`refine_gap_frames`), not the raw scan timestamps. Code: `build_gap_energy_signature` / `build_gap_context_signature` in `domain/gap_energy.rs` and `domain/gap_structure.rs`; anchor candidates reuse the same frame ranges (`list_anchor_candidates_a` in `domain/gap_anchor_seam.rs`).
+
+#### Where on the timeline
+
+```text
+Timeline on A (defaults: context = 3 s, bin = 50 ms):
+
+  |←—— up to gap_signature_context_secs ——→|  gap interior  |←—— up to gap_signature_context_secs ——→|
+  [              pre half                  )[  start … end  ]([              post half                  )
+       contour / energy / bool here                    NOT measured here
+```
+
+| Half | Frame range (refined edges) | Includes gap interior? |
+|------|-----------------------------|-------------------------|
+| **Pre** | `[gap_start − context, gap_start)` | No — ends at gap start |
+| **Post** | `[gap_end, gap_end + context)` | No — starts at gap end |
+
+Salient audio **inside** the scanned silence (the dropout throat) does **not** count toward contour or anchor candidates. Variation must appear in the **flanking** context — anywhere from immediately adjacent to each refined edge out to `gap_signature_context_secs` (default **3 s**). A speech onset **2 s before** gap start qualifies; one **4 s** before does not unless you raise `--gap-signature-context-secs`.
+
+This is a different timescale from waveform seam Pearson (~250 ms at the border; see [seam-scoring.md](seam-scoring.md) §4).
+
+#### Bin resolution and energy envelope
+
+| Knob | Default | Role |
+|------|---------|------|
+| `gap_signature_context_secs` | `3.0` | Length of each pre/post half |
+| `gap_signature_bin_ms` | `50` | One structure bin (~60 bins per 3 s at 48 kHz) |
+
+Per bin (energy path): mono downmix → gated log-RMS (`ln(1+rms)` above silence floor) → **peak-normalize each half separately** before matching or flat tests.
+
+#### When `auto` picks energy vs bool
+
+`gap_signature_mode = auto` uses the **energy** envelope when `has_anchor_seam_contour()` is true; otherwise it falls back to **bool** (flat room tone, steady drone, near-uniform activity).
+
+**Energy contour** (`energy_envelope_is_flat`): after peak-normalizing a half, if `(max − min) / peak` across all bins in that half is **≤ 5%**, the half is **flat**. Contour exists when **either** the pre half **or** the post half is non-flat.
+
+**Bool contour** (same pre/post windows): activity **transitions** (silent ↔ active) in either half, or **mixed** active and silent bins across pre+post — not flat silence and not uniform activity throughout.
+
+#### Uses of the same geometry
+
+| Consumer | What contour / context controls |
+|----------|--------------------------------|
+| **`auto` signature mode** | Energy vs bool structure tier for unified B search |
+| **`anchor_seam_mode = auto`** | Whether anchor bracket search runs (with weak throat Pearson); same `has_anchor_seam_contour()` |
+| **Editorial anchor seam** | Energy-peak and bool-transition **candidate** frames on A (plus scan-refined fallback at throat edges) |
+
+Anchor `auto` also requires baseline throat `min(pre, post) < min_fill_correlation − fill_marginal_margin` (default **0.27**). `force` skips the contour gate. Default `anchor_seam_mode` is **`off`** — contour geometry matters only when anchor search is enabled. See [Editorial anchor seam](#editorial-anchor-seam).
+
+**Practical checks:** run with `-v` and read `signature_mode=` (resolved energy vs bool) and `repair note: anchor_seam_mode=off` when anchor is inactive. Flat flanks → bool path, no anchor `auto` trigger; W5 rescue needs salient contour in the ±3 s **flanks**, not only inside the hole.
 
 ---
 

@@ -103,14 +103,14 @@ The skip line always shows `min=0.12` in the status column; that is the **absolu
 
 ### Editorial anchor seam (W5 rescue)
 
-When the **scan throat** is quiet but salient audio exists nearby (speech peaks, bool onsets ±1 s), throat-only Pearson can land in **W5** (`symmetric_weak`, dead zone) even though a better editorial cut exists. **Editorial anchor seam** searches A-side anchor candidates (energy peaks, bool transitions, scan fallback), pairs feasible brackets, and re-scores waveform matchability at those anchors.
+When the **scan throat** is quiet but salient audio exists nearby (speech peaks, bool onsets in the **flanking context**), throat-only Pearson can land in **W5** (`symmetric_weak`, dead zone) even though a better editorial cut exists. **Editorial anchor seam** searches A-side anchor candidates (energy peaks, bool transitions, scan fallback), pairs feasible brackets, and re-scores waveform matchability at those anchors. Candidate search uses the same pre/post windows as structure signatures — see [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry).
 
 **Not the same as [patch anchors](gap-fill-modes.md#patch-anchors)** (`anchored_retry`): patch anchors fix **clip offset drift** between passes; anchor seam fixes **where on A/B the seam is measured** for one gap.
 
 | `anchor_seam_mode` | Behavior |
 |--------------------|----------|
 | **`off`** (default) | Throat-only seam scoring; no anchor bracket search |
-| **`auto`** | Run when baseline throat `min(pre, post) < min_fill_correlation - fill_marginal_margin` **and** the gap signature has contour (`has_anchor_seam_contour`) |
+| **`auto`** | Run when baseline throat `min(pre, post) < min_fill_correlation - fill_marginal_margin` **and** the gap signature has contour in the flanking context halves ([gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) § Signature context and contour geometry) |
 | **`force`** | Always try anchor bracket search before the boundary grid; under `baseline_only`, defers accepting a **marginal** baseline (E2) so anchor can run first (diagnostics / oracles) |
 
 CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"`. Fit mode only; `-v` emits `repair note: anchor_seam_mode=off: …` when inactive.
@@ -130,7 +130,7 @@ Anchor seam does **not** require `--full`; it runs under `baseline_only` when tr
 
 | Mode | Behavior | When to try |
 |------|----------|-------------|
-| **`auto`** (default) | Energy when pre/post envelope has contour (&gt;5% range); else bool | General long-form without per-gap tuning |
+| **`auto`** (default) | Energy when pre/post envelope has contour (&gt;5% peak-normalized range in flanking context); else bool — see [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) | General long-form without per-gap tuning |
 | **`bool`** | Active/silent bins | Talk/pause patterns; force when energy over-slides |
 | **`energy`** | Log-RMS envelope Pearson | Contour-rich gaps; ambiguous bool |
 
@@ -140,7 +140,7 @@ Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolve
 
 **Mode-coupled nominal bias.** When a gap resolves to **energy**, the search uses a lower distance-from-nominal penalty (`fill_fit_energy_nominal_bias_scale`, default **0.25**) than bool-resolved gaps (`fill_fit_nominal_bias_scale`, default **1.0**). An energy match is the signal that the alignment-supplied nominal B map may be wrong, so a confident energy contour is allowed to slide further off the nominal to the true pause — energy mode **self-corrects a drifted nominal map** without you touching the base bias. The penalty grows with distance, so this only loosens far-off (seconds of drift) candidates; sub-second offsets place the same either way. To restore the old hard anchoring for energy gaps, raise `fill_fit_energy_nominal_bias_scale` toward `1.0`. Both are config-only (no CLI flag).
 
-**Context length (`gap_signature_context_secs`).** Keep the **3 s** default. Raising it (10 / 30 s) widens the envelope/bool window matched on each side of the gap — in principle more disambiguating for hard gaps where 3 s of context aliases across several candidates — but the synthetic corpus matrix (contexts 3 / 10 / 30) showed **no measurable patch benefit**, and a longer context decodes and holds more B audio per gap (slower, more memory). Treat it as a manual knob to try on a specific stubborn drift gap, **not** a default to raise. CLI: `--gap-signature-context-secs`.
+**Context length (`gap_signature_context_secs`).** Keep the **3 s** default. Raising it (10 / 30 s) widens the envelope/bool window matched on each side of the gap — in principle more disambiguating for hard gaps where 3 s of context aliases across several candidates — but the synthetic corpus matrix (contexts 3 / 10 / 30) showed **no measurable patch benefit**, and a longer context decodes and holds more B audio per gap (slower, more memory). Treat it as a manual knob to try on a specific stubborn drift gap, **not** a default to raise. CLI: `--gap-signature-context-secs`. **Where** contour is measured (pre/post halves, gap interior excluded, 50 ms bins): [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry).
 
 ---
 
@@ -354,7 +354,7 @@ Map **shape + outcome** to the next run. Start from **original** video A unless 
 | Short marginal seams | P5 + W2 | `default` | Listen; `--full` if placement wrong | Lowering thresholds without listening |
 | **Boundary** gap (music→speech) | C3 + W3 | `default`, `-v` | `--full`; `--gap-signature-mode auto`; ↑ `fill_repeat_penalty_weight` | `--quick` if true match is near haystack edge |
 | Boundary gap, skipped | C3 + W4 | `default` | **`--full --gap-signature-mode auto`** | Patching MP4 re-scan only; widening marginal band without cause |
-| Symmetric weak (energy) | W5 | `--gap-signature-mode auto` + `--anchor-seam-mode auto` | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour ±1 s from throat |
+| Symmetric weak (energy) | W5 | `--gap-signature-mode auto` + `--anchor-seam-mode auto` | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour in flanking context (default ±3 s from each gap edge, not inside the hole) — [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) |
 | Long tail / huge gap | P6 + C5 + W6 | Expect skip | Manual edit; do not run `--full` on multi-minute gaps | `--full` on 200 s+ gaps (hours) |
 | Pre-overlap on A | P1 | Ignore | — | Patching |
 | Clip drift on long form | P5 (many) | `fill_offset=interpolated` if drift ≥ ~0.05 s | `anchored-retry` after some High patches | `interpolated` when drift tiny |
