@@ -50,7 +50,7 @@ on patched gaps; `residual_band` tag; `donor_relation` run diagnostic; real-code
 | id | sev | what | notes |
 |----|-----|------|-------|
 | **L1** | low | **NaN `PartialEq` on outcomes.** | `Option<f64>` or sanitize. |
-| **L2** | low | **Mono-only residual.** | **Resolved** — residual/floor now follows the same energy-selected channels as Pearson (`seam_chosen_and_floor_multichannel`); see [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md). |
+| **L2** | low | **Mono-only residual.** | **Resolved** — residual/floor now follows the same energy-selected channels as Pearson (`seam_chosen_and_floor_multichannel`); see [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md). |
 | **L4** | low | **Wasted verdict on soon-skipped gaps.** | Minor after L3. |
 | **L5** | low | **`SeamFloorSource` CSV vs JSON casing.** | Cosmetic. |
 | **L6** | low | **Coarse outward walk step.** | `step_frames = window`. |

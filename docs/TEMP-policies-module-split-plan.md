@@ -4,7 +4,7 @@ Status: **draft / not started**. Split `crates/clip-sync-repair/src/domain/polic
 lines) into a `policies/` directory with a stable `crate::domain::policies::*` re-export facade.
 **Opportunistic** — do alongside seam/residual work, not as a standalone refactor.
 
-Companions: [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md)
+Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (shipped)
 (first extraction target), [residual-gate-findings.md](residual-gate-findings.md) (L12 prototype
 retirement), [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
 
@@ -103,7 +103,7 @@ move it to `seam_residual.rs` behind `#[cfg(test)]` with a one-line doc comment.
 | Phase | Module | Trigger | Notes |
 |-------|--------|---------|-------|
 | **P0** | — | — | No change; file stays monolithic until a seam/residual PR needs it. |
-| **P1** | `seam_residual.rs` | [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md) or residual cleanup | Highest value; pairs with `residual_gate.rs`; retire L12 prototype. |
+| **P1** | `seam_residual.rs` | [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (shipped) or residual cleanup | Highest value; pairs with `residual_gate.rs`; retire L12 prototype. |
 | **P2** | `silence.rs` | Next `scan_gaps` / silence-threshold touch | Independent of seam; small, clear boundary. |
 | **P3** | `gap_borders.rs` | Border/standoff/refine work | `FillAlignment`, `RefinedGapFrames`, templates. |
 | **P4** | `seam_scoring.rs` + `seam_splice.rs` | Seam Pearson or crossfade change | Largest block; split scoring vs splice only if `seam_scoring` still feels large (~650 + ~120 lines). |
@@ -138,7 +138,7 @@ landings keep diffs reviewable.
 
 ## Related
 
-- [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md) — P1 trigger
+- [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) — shipped; P1 trigger for `seam_residual.rs` split
 - [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) — gate wiring (orthogonal)
 - [residual-gate-findings.md](residual-gate-findings.md) — L9–L13 smells to clean during P1
 - `crates/clip-sync-repair/src/domain/policies.rs` — current monolith

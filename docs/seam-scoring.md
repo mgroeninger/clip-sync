@@ -53,7 +53,7 @@ Residual/floor cancellation (fit mode) follows the **same** selection. `selected
 
 **Shared alignment, per-channel depth.** The integer lag is a single physical quantity (same master, same clock), so it is found **once across all selected channels** by `shared_alignment_lag` — the lag maximizing the *summed* peak-normalized correlation — then each channel fits only its scalar gain and residual at that fixed lag. Summing correlations (not downmixing waveforms) is what makes this robust to not knowing which channel carries the gap: a loud channel whose B content doesn't match correlates ~0 at every lag and never pulls the alignment, while the matching channel(s) shape a sharp peak at the true lag. (A literal mono downmix fails here — it injects the loud non-matching channels' energy into one waveform and drags the lag off the true value, so even the good channel stops cancelling.)
 
-Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [TEMP-residual-channel-alignment-plan.md](TEMP-residual-channel-alignment-plan.md).
+Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md).
 
 ## 3. Seam correlation (peak-normalized Pearson)
 
