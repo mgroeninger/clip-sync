@@ -11,6 +11,10 @@
 use clip_sync_repair::test_support::w5_anchor_rescue_diag::{
     score_w5_anchor_rescue_cell, W5AnchorRescueCell, W5AnchorRescueCellScores,
 };
+use clip_sync_repair_harness::w5_anchor_rescue_sweep::{
+    anchor_rescue_pocket, coarse_w5_grid_default, refine_w5_boundaries, sweep_csv,
+    write_w5_sweep_csv, W5SweepCell,
+};
 
 const CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,nominal_pre,nominal_post,\
 baseline_pre,baseline_post,bracket_pre,bracket_post,bracket_move,passed_gate,pre_pearson,\
@@ -108,4 +112,67 @@ fn w5_anchor_rescue_single_cell() {
     let scores = score_w5_anchor_rescue_cell(cell);
     print_cell_csv(&scores);
     print_human_summary(&scores);
+}
+
+/// Phase 2 coarse grid: regime map across `(peak_offset, fill_border_search)`. Emits CSV (stdout,
+/// and under `target/w5_anchor_rescue_sweep.csv` when `W5_SWEEP_CSV=1`) plus a regime tally and the
+/// E3 pocket (if any). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.
+#[test]
+fn diag_w5_anchor_rescue_coarse_grid() {
+    let cells = coarse_w5_grid_default();
+    println!("{}", sweep_csv(&cells));
+    report_sweep("coarse grid", &cells);
+    maybe_write_csv(&cells, "w5_anchor_rescue_sweep.csv");
+}
+
+/// Phase 2 boundary refine: one bisection pass on cells whose 4-neighbour regime differs, to bracket
+/// any `AnchorRescuePossible` pocket more tightly.
+#[test]
+fn diag_w5_anchor_rescue_refine_boundaries() {
+    let coarse = coarse_w5_grid_default();
+    let refined = refine_w5_boundaries(&coarse);
+    println!("{}", sweep_csv(&refined));
+    report_sweep("refined boundaries", &refined);
+    maybe_write_csv(&refined, "w5_anchor_rescue_sweep_refined.csv");
+}
+
+fn report_sweep(label: &str, cells: &[W5SweepCell]) {
+    use std::collections::BTreeMap;
+    let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+    for c in cells {
+        *tally.entry(c.regime.as_str()).or_default() += 1;
+    }
+    eprintln!("=== W5 {label}: {} cells ===", cells.len());
+    for (regime, count) in &tally {
+        eprintln!("  {regime}: {count}");
+    }
+    let pocket = anchor_rescue_pocket(cells);
+    if pocket.is_empty() {
+        eprintln!("  E3 pocket: EMPTY — no AnchorRescuePossible cell (plan §5.2.8)");
+    } else {
+        eprintln!("  E3 pocket: {} cell(s), best first:", pocket.len());
+        for c in pocket.iter().take(5) {
+            eprintln!(
+                "    offset={:.3} search={:.3} max_bracket_min={:?}",
+                c.peak_offset_secs(),
+                c.fill_border_search_secs(),
+                c.eval.scores.max_bracket_min(),
+            );
+        }
+    }
+}
+
+fn maybe_write_csv(cells: &[W5SweepCell], name: &str) {
+    if std::env::var("W5_SWEEP_CSV").as_deref() != Ok("1") {
+        return;
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join(name);
+    match write_w5_sweep_csv(cells, &path) {
+        Ok(()) => eprintln!("wrote {}", path.display()),
+        Err(e) => eprintln!("failed to write {}: {e}", path.display()),
+    }
 }

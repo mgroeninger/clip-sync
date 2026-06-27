@@ -1182,6 +1182,65 @@ pub(crate) fn oracle_score_fit_candidate(
     ))
 }
 
+/// Production-faithful joint-pool outcome for one oracle cell (W5 discovery, Phase 2). `patched`
+/// is false when the whole gate skipped (E5). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.2.
+pub(crate) struct OracleJointOutcome {
+    pub patched: bool,
+    pub anchor_seam_used: bool,
+    pub anchor_move_frames: usize,
+}
+
+/// Oracle-only: run the **full** fit-joint routing (E1–E7) on oracle-built `params` and report which
+/// candidate won the pool — exactly what `PatchAudio` would decide, without decoding. Phase 2.
+pub(crate) fn oracle_evaluate_fit_joint(
+    params: &SeamGateParams<'_>,
+    baseline: RefinedGapFrames,
+) -> OracleJointOutcome {
+    match evaluate_seam_gate_fit_joint(baseline, params) {
+        Ok(outcome) => OracleJointOutcome {
+            patched: true,
+            anchor_seam_used: outcome.anchor_seam_used,
+            anchor_move_frames: outcome.anchor_bracket_move_frames,
+        },
+        Err(_) => OracleJointOutcome {
+            patched: false,
+            anchor_seam_used: false,
+            anchor_move_frames: 0,
+        },
+    }
+}
+
+/// Oracle-only: would auto-mode anchor search run for this cell? Mirrors the gate inside
+/// `AudioFitSource::anchor_brackets` (baseline contour + score floor). Phase 2 CSV column.
+pub(crate) fn oracle_anchor_seam_would_run(
+    params: &SeamGateParams<'_>,
+    baseline: RefinedGapFrames,
+    baseline_pre: f64,
+    baseline_post: f64,
+) -> bool {
+    if params.cfg.anchor_seam_mode == AnchorSeamMode::Off {
+        return false;
+    }
+    let anchor_params = anchor_seam_gate_params(params, baseline);
+    let baseline_signature = build_gap_signature(
+        &params.geom.a_pcm.samples,
+        params.cfg.channels,
+        baseline.start_frame,
+        baseline.end_frame,
+        params.cfg.context_frames,
+        &anchor_params.structure,
+        params.cfg.gap_signature_mode,
+    );
+    should_run_anchor_seam(
+        params.cfg.anchor_seam_mode,
+        baseline_pre,
+        baseline_post,
+        params.cfg.min_fill_correlation,
+        params.cfg.fill_marginal_margin,
+        baseline_signature.has_anchor_seam_contour(),
+    )
+}
+
 fn evaluate_seam_gate_fit_candidate(
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,

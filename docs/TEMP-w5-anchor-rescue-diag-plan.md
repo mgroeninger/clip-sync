@@ -1,9 +1,12 @@
 # W5 anchor-rescue fixture discovery — plan (DRAFT)
 
 Status: **in progress** — routing proven (`route_w5_anchor_rescue_e3`); domain oracle green
-(`w5_fixture_throat_symmetric_weak_and_brackets_exist`); pipeline A6 `#[ignore]`; **Phase 1 spec
-ready** (blocked on Phase 0 prerequisite below); probe slated for replacement by
-`diag_w5_anchor_rescue`.
+(`w5_fixture_throat_symmetric_weak_and_brackets_exist`); pipeline A6 `#[ignore]`. **Phase 0 done**
+(`SeamGateConfig`/`SeamGateGeometry` extraction). **Phase 1 done** (`diag_w5_anchor_rescue` /
+`w5_anchor_rescue_single_cell`; probe removed). **Phase 2 done** (`coarse_w5_grid` /
+`diag_w5_anchor_rescue_coarse_grid`) — **E3 pocket EMPTY in `(offset, search)`** (see §5.2.8 result);
+**Phase 3 blocked** pending §8 Q1 (independent B shift). Next actionable: decouple `b_shift_secs`
+from `peak_offset_secs` and re-sweep.
 
 **Phase 0 prerequisite (do first):** extract the inline `SeamGateParams` construction
 (`patch_audio.rs` ~1577) into reusable builders — `SeamGateConfig::from_repair(...)` (run-constant
@@ -366,6 +369,22 @@ Export harness module from `harness/src/lib.rs`.
 
 Do not proceed to Phase 3 lock-in. Revisit §8 (geometry axes beyond `(offset, search)`), then re-run
 Phase 2 with expanded grid or fixture variant.
+
+**Phase 2 result (2026-06-27): E3 pocket is EMPTY.** Coarse grid `offset ∈ [0.6,1.1]` step 0.05,
+`search ∈ [0.65,0.85]` step 0.02 → **81 cells**: 28 `BaselineHigh`, 35 `AllSkip`, 18
+`BaselineMarginalWins`, **0 `AnchorRescuePossible`**; joint winners 46 `Baseline`, 35 `Skip`, **0
+`Anchor`**. Root cause — **baseline and bracket Pearson are coupled along this plane**: the search
+radius that lets an anchor bracket reach the shifted fill *also* lets the baseline unified search
+reach it, so wherever `max_bracket_min` is High the baseline is High too (e.g. `offset=0.80,
+search=0.79`: `max_bracket_min=0.977`, `baseline_min=0.969` → `BaselineHigh`, baseline wins E1). No
+cell has "bracket High while baseline weak", which is the precondition for E3. This confirms §8 Q1:
+the `(offset, search)` axes cannot produce the pocket because `b_shift = peak_offset` ties the fill's
+B location to the same radius both candidates search. **Next:** decouple the B shift from the search
+radius (§8 Q1 — independent `b_shift_secs`) so the post seam can stay weak at the baseline placement
+while an anchor bracket still reaches the fill, then re-run Phase 2. Reproduce:
+`cargo test -p clip-sync-repair --release --features diagnostic-tests --test diag_w5_anchor_rescue
+diag_w5_anchor_rescue_coarse_grid -- --nocapture` (CSV under `target/w5_anchor_rescue_sweep.csv` with
+`W5_SWEEP_CSV=1`).
 
 ### Phase 3 — Lock integration
 

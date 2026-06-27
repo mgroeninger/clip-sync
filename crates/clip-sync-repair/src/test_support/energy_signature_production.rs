@@ -446,6 +446,17 @@ pub fn oracle_baseline_throat_pearson(
     fixture: &EnergySignatureFixture,
     repair: &RepairConfig,
 ) -> (f64, f64) {
+    oracle_baseline_throat_pearson_opt(fixture, repair)
+        .expect("oracle baseline unified match on haystack")
+}
+
+/// Non-panicking baseline throat Pearson: `None` when the unified haystack match fails (degenerate
+/// geometry — e.g. an empty extract window for some discovery cells). Used by the W5 grid sweep so
+/// one bad cell does not abort the whole map.
+pub fn oracle_baseline_throat_pearson_opt(
+    fixture: &EnergySignatureFixture,
+    repair: &RepairConfig,
+) -> Option<(f64, f64)> {
     use crate::domain::gap_fill_fit::UnifiedFitWeights;
     use crate::test_support::energy_signature_fixtures::gap_report_times;
     use crate::test_support::patch_geometry_preview::preview_patch_geometry;
@@ -471,13 +482,11 @@ pub fn oracle_baseline_throat_pearson(
         nominal_bias_scale,
         late_start_penalty_scale: repair.fill_fit_late_start_penalty_scale,
     };
-    let matched = preview
-        .unified_match_on_haystack(fixture, repair.gap_signature_mode, weights)
-        .expect("oracle baseline unified match on haystack");
-    (
+    let matched = preview.unified_match_on_haystack(fixture, repair.gap_signature_mode, weights)?;
+    Some((
         matched.alignment.pre_correlation,
         matched.alignment.post_correlation,
-    )
+    ))
 }
 
 /// Repair knobs for the W5 anchor-rescue oracle (A6).
