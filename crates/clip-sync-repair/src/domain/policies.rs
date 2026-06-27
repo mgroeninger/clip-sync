@@ -3224,7 +3224,7 @@ mod tests {
             assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![0, 1]);
         }
 
-        // Center-dominant 3ch: only FC crosses the ~20 dB energy gate.
+        // Center-dominant 3ch: only FC crosses the ~20 dB energy gate in the border templates.
         {
             let total = 2000usize;
             let channels = 3usize;
@@ -3235,8 +3235,9 @@ mod tests {
             let fr_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.91).cos() * 2000.0).collect();
             let b_ch = vec![fl_b.clone(), fr_b.clone(), fc_b.clone()];
             let fc_a: Vec<f64> = fc_b.iter().map(|s| s * 0.5).collect();
-            let fl_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.37).cos() * 2000.0).collect();
-            let fr_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.71).sin() * 2000.0).collect();
+            // Fronts well below FC in the border region (>20 dB down) so only the center is selected.
+            let fl_a: Vec<f64> = vec![5.0; total];
+            let fr_a: Vec<f64> = vec![5.0; total];
             let a_samples = interleave_a(&[fl_a, fr_a, fc_a], 4000.0);
             let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
             assert_channel_selection_parity(

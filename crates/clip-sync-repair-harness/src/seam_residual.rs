@@ -482,7 +482,6 @@ pub fn score_placement_multichannel(
     let ch = setup.ch;
     let gap_start = setup.gap_start;
     let gap_end = setup.gap_end;
-    let gap_frames = setup.gap_frames;
     let pre_window = setup.pre_window;
     let post_window = setup.post_window;
     let b_mono = &setup.b_mono;
