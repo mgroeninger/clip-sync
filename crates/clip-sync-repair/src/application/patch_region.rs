@@ -62,21 +62,25 @@ pub(crate) struct SeamGateOutcome {
     pub anchor_trusted: bool,
 }
 
-pub(crate) struct SeamGateParams<'a> {
-    pub a_pcm: &'a MultiChannelPcm,
-    pub b_samples: &'a [f32],
-    pub b_extract_start_secs: f64,
-    pub refined_b_start_secs: f64,
-    pub refined_b_end_secs: f64,
+/// Run-constant seam-gate inputs: built once per repair run (via [`SeamGateConfig::from_repair`])
+/// and shared by reference across every gap's [`SeamGateParams`]. Holds tuning thresholds, modes,
+/// and the frame counts that derive from run-level `secs × sample_rate` (no per-gap dependence).
+/// The three `*_secs` fields feed [`derive_seam_gate_geometry`]'s per-gap frame math.
+#[derive(Clone, Copy)]
+pub(crate) struct SeamGateConfig {
     pub channels: usize,
     pub sample_rate: u32,
     pub context_frames: usize,
     pub bin_frames: usize,
-    pub seam_gate_frames: usize,
-    pub border_frames: usize,
     pub border_standoff_frames: usize,
     pub search_radius_frames: usize,
     pub fill_length_slack_frames: usize,
+    pub max_extend_frames: usize,
+    pub step_frames: usize,
+    pub residual_max_lag_frames: i64,
+    pub normalize_window_secs: f64,
+    pub min_border_discovery_secs: f64,
+    pub fill_seam_search_secs: f64,
     pub silence_peak_fraction: f32,
     pub absolute_silence_rms: f32,
     pub min_structure_match_score: f32,
@@ -95,11 +99,8 @@ pub(crate) struct SeamGateParams<'a> {
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
     pub fill_repeat_penalty_weight: f64,
-    pub max_extend_frames: usize,
-    pub step_frames: usize,
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
-    pub anchor_search_prior: Option<AnchorSearchPrior>,
     pub gap_signature_mode: GapSignatureMode,
     pub fit_boundary_search: FitBoundarySearch,
     pub anchor_seam_mode: AnchorSeamMode,
@@ -113,7 +114,66 @@ pub(crate) struct SeamGateParams<'a> {
     pub residual_gate: ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,
-    pub residual_max_lag_frames: i64,
+}
+
+/// Per-gap seam-gate geometry: rebuilt for each gap (the audio borrows plus the B window and the
+/// two `gap_frames`-derived frame counts `seam_gate_frames`/`border_frames`). See
+/// [`derive_seam_gate_geometry`].
+#[derive(Clone, Copy)]
+pub(crate) struct SeamGateGeometry<'a> {
+    pub a_pcm: &'a MultiChannelPcm,
+    pub b_samples: &'a [f32],
+    pub b_extract_start_secs: f64,
+    pub refined_b_start_secs: f64,
+    pub refined_b_end_secs: f64,
+    pub seam_gate_frames: usize,
+    pub border_frames: usize,
+    pub anchor_search_prior: Option<AnchorSearchPrior>,
+}
+
+pub(crate) struct SeamGateParams<'a> {
+    pub cfg: &'a SeamGateConfig,
+    pub geom: SeamGateGeometry<'a>,
+}
+
+/// Build per-gap [`SeamGateGeometry`] from run-constant `cfg` + this gap's window. Computes
+/// `seam_gate_frames`/`border_frames` from `gap_frames` so the oracle and production share one
+/// path (see docs/TEMP-w5-anchor-rescue-diag-plan.md Phase 0).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_seam_gate_geometry<'a>(
+    cfg: &SeamGateConfig,
+    a_pcm: &'a MultiChannelPcm,
+    b_samples: &'a [f32],
+    b_extract_start_secs: f64,
+    refined_b_start_secs: f64,
+    refined_b_end_secs: f64,
+    gap_frames: usize,
+    anchor_search_prior: Option<AnchorSearchPrior>,
+) -> SeamGateGeometry<'a> {
+    let correlate_frames = crate::application::patch_audio::correlate_frames_for_gap(
+        cfg.normalize_window_secs,
+        cfg.min_border_discovery_secs,
+        gap_frames,
+        cfg.sample_rate,
+    );
+    let seam_gate_frames = crate::application::patch_audio::seam_gate_frames_for(
+        correlate_frames,
+        cfg.fill_seam_search_secs,
+        cfg.sample_rate,
+    );
+    let border_frames =
+        crate::application::patch_audio::border_frames_from_secs(cfg.normalize_window_secs, cfg.sample_rate)
+            .min(correlate_frames);
+    SeamGateGeometry {
+        a_pcm,
+        b_samples,
+        b_extract_start_secs,
+        refined_b_start_secs,
+        refined_b_end_secs,
+        seam_gate_frames,
+        border_frames,
+        anchor_search_prior,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,7 +200,7 @@ pub(crate) fn evaluate_seam_gate(
     refined: RefinedGapFrames,
     params: &SeamGateParams<'_>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    if params.fill_mode == FillMode::Fit {
+    if params.cfg.fill_mode == FillMode::Fit {
         evaluate_seam_gate_fit_joint(refined, params)
     } else {
         evaluate_seam_gate_legacy(refined, params)
@@ -175,27 +235,27 @@ struct FitHaystackCache {
 
 impl FitHaystackCache {
     fn build(params: &SeamGateParams<'_>) -> Self {
-        let channels = params.channels.max(1);
-        let total_frames = params.b_samples.len() / channels;
-        let bin_frames = params.bin_frames.max(1);
+        let channels = params.cfg.channels.max(1);
+        let total_frames = params.geom.b_samples.len() / channels;
+        let bin_frames = params.cfg.bin_frames.max(1);
         Self {
-            b_mono: policies::interleaved_to_mono(params.b_samples, channels),
-            b_ch: policies::interleaved_to_channels(params.b_samples, channels),
+            b_mono: policies::interleaved_to_mono(params.geom.b_samples, channels),
+            b_ch: policies::interleaved_to_channels(params.geom.b_samples, channels),
             bool_timeline: gap_structure::ActivityTimeline::build(
-                params.b_samples,
+                params.geom.b_samples,
                 channels,
                 total_frames,
                 bin_frames,
-                params.silence_peak_fraction,
-                params.absolute_silence_rms,
+                params.cfg.silence_peak_fraction,
+                params.cfg.absolute_silence_rms,
             ),
             energy_timeline: EnergyTimeline::build(
-                params.b_samples,
+                params.geom.b_samples,
                 channels,
                 total_frames,
                 bin_frames,
-                params.silence_peak_fraction,
-                params.absolute_silence_rms,
+                params.cfg.silence_peak_fraction,
+                params.cfg.absolute_silence_rms,
             ),
         }
     }
@@ -264,32 +324,32 @@ impl FitCandidateSource for AudioFitSource<'_> {
     }
 
     fn anchor_brackets(&mut self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket> {
-        if self.params.anchor_seam_mode == AnchorSeamMode::Off {
+        if self.params.cfg.anchor_seam_mode == AnchorSeamMode::Off {
             return Vec::new();
         }
         let anchor_params = anchor_seam_gate_params(self.params, self.baseline);
         let baseline_signature = build_gap_signature(
-            &self.params.a_pcm.samples,
-            self.params.channels,
+            &self.params.geom.a_pcm.samples,
+            self.params.cfg.channels,
             self.baseline.start_frame,
             self.baseline.end_frame,
-            self.params.context_frames,
+            self.params.cfg.context_frames,
             &anchor_params.structure,
-            self.params.gap_signature_mode,
+            self.params.cfg.gap_signature_mode,
         );
         if !should_run_anchor_seam(
-            self.params.anchor_seam_mode,
+            self.params.cfg.anchor_seam_mode,
             baseline_pre,
             baseline_post,
-            self.params.min_fill_correlation,
-            self.params.fill_marginal_margin,
+            self.params.cfg.min_fill_correlation,
+            self.params.cfg.fill_marginal_margin,
             baseline_signature.has_anchor_seam_contour(),
         ) {
             return Vec::new();
         }
         let candidates = list_anchor_candidates_a(
-            &self.params.a_pcm.samples,
-            self.params.channels,
+            &self.params.geom.a_pcm.samples,
+            self.params.cfg.channels,
             self.baseline,
             &anchor_params,
         );
@@ -350,10 +410,10 @@ fn gap_border_spec(params: &SeamGateParams<'_>, refined: RefinedGapFrames) -> Ga
     GapBorderSpec {
         gap_start_frame: refined.start_frame,
         gap_end_frame: refined.end_frame,
-        border_frames: params.border_frames,
-        border_standoff_frames: params.border_standoff_frames,
-        silence_peak_fraction: params.silence_peak_fraction,
-        absolute_rms_floor: params.absolute_silence_rms,
+        border_frames: params.geom.border_frames,
+        border_standoff_frames: params.cfg.border_standoff_frames,
+        silence_peak_fraction: params.cfg.silence_peak_fraction,
+        absolute_rms_floor: params.cfg.absolute_silence_rms,
     }
 }
 
@@ -364,17 +424,18 @@ fn fit_residual_geometry(
 ) -> (usize, usize, usize) {
     let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
+        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.cfg.channels, &border_spec);
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
-        / params.sample_rate as f64;
-    let refined_b_start_secs = params.refined_b_start_secs + start_delta_secs;
-    let offset_nominal_start = ((refined_b_start_secs - params.b_extract_start_secs)
-        * params.sample_rate as f64)
+        / params.cfg.sample_rate as f64;
+    let refined_b_start_secs = params.geom.refined_b_start_secs + start_delta_secs;
+    let offset_nominal_start = ((refined_b_start_secs - params.geom.b_extract_start_secs)
+        * params.cfg.sample_rate as f64)
         .round() as usize;
     let waveform_gate_frames = params
+        .geom
         .seam_gate_frames
         .min(a_pre_border.len().max(1));
-    let post_gate_frames = seam_post_gate_frames(params.seam_gate_frames, a_post_border.len());
+    let post_gate_frames = seam_post_gate_frames(params.geom.seam_gate_frames, a_post_border.len());
     (
         offset_nominal_start,
         waveform_gate_frames,
@@ -401,7 +462,7 @@ fn log_residual_verdict_debug(
         floor_post_db = verdict.floor_post_db,
         headroom_db = verdict.worst_headroom_db(),
         informative = verdict.informative,
-        residual_gate = ?params.residual_gate,
+        residual_gate = ?params.cfg.residual_gate,
         "fill seam residual verdict"
     );
 }
@@ -436,7 +497,7 @@ fn finalize_fit_outcome_residual(
             verdict,
         );
     }
-    if !params.residual_gate.is_active() {
+    if !params.cfg.residual_gate.is_active() {
         outcome.residual = residual;
         return Ok(outcome);
     }
@@ -444,15 +505,15 @@ fn finalize_fit_outcome_residual(
     let pearson = classify_fill_waveform_confidence(
         outcome.report_pre,
         outcome.report_post,
-        params.min_fill_correlation,
-        params.fill_marginal_margin,
-        params.fill_absolute_floor,
+        params.cfg.min_fill_correlation,
+        params.cfg.fill_marginal_margin,
+        params.cfg.fill_absolute_floor,
     );
     let confidence = match apply_residual_to_confidence(
         pearson,
         &verdict,
-        params.residual_headroom_margin_db,
-        params.residual_gate.rescue_enabled(),
+        params.cfg.residual_headroom_margin_db,
+        params.cfg.residual_gate.rescue_enabled(),
     ) {
         Ok(confidence) => confidence,
         Err(ResidualGateError::HeadroomExceeded { margin_db, .. }) => {
@@ -467,7 +528,7 @@ fn finalize_fit_outcome_residual(
             return Err(SeamGateFailure::WaveformBelowThreshold {
                 pre: outcome.report_pre,
                 post: outcome.report_post,
-                min: params.fill_absolute_floor,
+                min: params.cfg.fill_absolute_floor,
             });
         }
     };
@@ -597,8 +658,8 @@ pub(crate) fn accepts_baseline_without_boundary_grid(
 }
 
 fn fit_haystack_secs(params: &SeamGateParams<'_>) -> f64 {
-    let channels = params.channels.max(1);
-    params.b_samples.len() as f64 / channels as f64 / f64::from(params.sample_rate)
+    let channels = params.cfg.channels.max(1);
+    params.geom.b_samples.len() as f64 / channels as f64 / f64::from(params.cfg.sample_rate)
 }
 
 fn baseline_seam_scores(
@@ -618,20 +679,20 @@ fn baseline_seam_scores(
 fn anchor_seam_gate_params(params: &SeamGateParams<'_>, baseline: RefinedGapFrames) -> AnchorSeamParams {
     let gap_frames = baseline.end_frame.saturating_sub(baseline.start_frame);
     AnchorSeamParams {
-        context_frames: params.context_frames,
-        max_anchors_per_side: params.max_anchors_per_side,
-        max_bracket_frames: (params.max_anchor_bracket_secs * f64::from(params.sample_rate))
+        context_frames: params.cfg.context_frames,
+        max_anchors_per_side: params.cfg.max_anchors_per_side,
+        max_bracket_frames: (params.cfg.max_anchor_bracket_secs * f64::from(params.cfg.sample_rate))
             .round()
             .max(1.0) as usize,
-        min_prominence: params.anchor_seam_min_prominence,
+        min_prominence: params.cfg.anchor_seam_min_prominence,
         structure: StructureMatchParams {
             gap_frames,
-            bin_frames: params.bin_frames.max(1),
-            search_radius_frames: params.search_radius_frames,
-            fill_length_slack_frames: params.fill_length_slack_frames,
-            max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.bin_frames),
-            silence_peak_fraction: params.silence_peak_fraction,
-            absolute_silence_rms: params.absolute_silence_rms,
+            bin_frames: params.cfg.bin_frames.max(1),
+            search_radius_frames: params.cfg.search_radius_frames,
+            fill_length_slack_frames: params.cfg.fill_length_slack_frames,
+            max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.cfg.bin_frames),
+            silence_peak_fraction: params.cfg.silence_peak_fraction,
+            absolute_silence_rms: params.cfg.absolute_silence_rms,
         },
     }
 }
@@ -675,6 +736,7 @@ fn anchor_bracket_both_matchable_at_gate(
 ) -> bool {
     static ANCHOR_XCORR: clip_sync::FftCorrelator = clip_sync::FftCorrelator;
     let max_lag = params
+        .cfg
         .residual_max_lag_frames
         .clamp(0, i32::MAX as i64) as i32;
     let correlator = if max_lag > 0 {
@@ -687,7 +749,7 @@ fn anchor_bracket_both_matchable_at_gate(
         placement,
         pre_window,
         post_window,
-        &params.anchor_matchability,
+        &params.cfg.anchor_matchability,
         correlator,
         max_lag,
     )
@@ -796,21 +858,21 @@ fn evaluate_seam_gate_fit_joint(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    let step = boundary_search_step_frames(params.max_extend_frames, params.step_frames);
-    let total_frames = params.a_pcm.samples.len() / params.channels.max(1);
-    let start_min = if params.gap_start_extend_on_pre_seam_fail {
-        baseline.start_frame.saturating_sub(params.max_extend_frames)
+    let step = boundary_search_step_frames(params.cfg.max_extend_frames, params.cfg.step_frames);
+    let total_frames = params.geom.a_pcm.samples.len() / params.cfg.channels.max(1);
+    let start_min = if params.cfg.gap_start_extend_on_pre_seam_fail {
+        baseline.start_frame.saturating_sub(params.cfg.max_extend_frames)
     } else {
         baseline.start_frame
     };
-    let end_max = if params.gap_end_extend_on_post_seam_fail {
-        (baseline.end_frame + params.max_extend_frames).min(total_frames)
+    let end_max = if params.cfg.gap_end_extend_on_post_seam_fail {
+        (baseline.end_frame + params.cfg.max_extend_frames).min(total_frames)
     } else {
         baseline.end_frame
     };
     let config = FitJointConfig {
-        fit_boundary_search: params.fit_boundary_search,
-        anchor_seam_mode: params.anchor_seam_mode,
+        fit_boundary_search: params.cfg.fit_boundary_search,
+        anchor_seam_mode: params.cfg.anchor_seam_mode,
         start_min,
         end_max,
         step,
@@ -961,8 +1023,8 @@ fn evaluate_seam_gate_fit_joint_core(
 }
 
 fn want_residual_measurement(params: &SeamGateParams<'_>) -> bool {
-    params.measure_residual
-        || params.residual_gate.is_active()
+    params.cfg.measure_residual
+        || params.cfg.residual_gate.is_active()
         || tracing::enabled!(tracing::Level::DEBUG)
 }
 
@@ -991,16 +1053,16 @@ fn measure_fit_residual_verdict(
     let chosen_delta = alignment_start_frame as i64 - refined.start_frame as i64;
     let nominal_delta = offset_nominal_start as i64 - refined.start_frame as i64;
     let floor_common = |window: usize| policies::SeamFloorParams {
-        a_samples: &params.a_pcm.samples,
-        channels: params.channels,
+        a_samples: &params.geom.a_pcm.samples,
+        channels: params.cfg.channels,
         b_mono: &cache.b_mono,
         window,
-        standoff_frames: params.border_standoff_frames,
+        standoff_frames: params.cfg.border_standoff_frames,
         a_to_b_delta: nominal_delta,
         step_frames: window.max(1),
-        max_walk_frames: params.sample_rate as usize * 3,
-        absolute_silence_rms: params.absolute_silence_rms,
-        max_lag_frames: params.residual_max_lag_frames,
+        max_walk_frames: params.cfg.sample_rate as usize * 3,
+        absolute_silence_rms: params.cfg.absolute_silence_rms,
+        max_lag_frames: params.cfg.residual_max_lag_frames,
     };
     let placement_slide = alignment_start_frame.abs_diff(offset_nominal_start) as u64;
 
@@ -1010,7 +1072,7 @@ fn measure_fit_residual_verdict(
     // spec Pearson uses (residual-channel-alignment-plan §4b). Empty ⇒ mono downmix path.
     let border_spec = gap_border_spec(params, refined);
     let selected: Vec<usize> =
-        policies::selected_seam_channels(&params.a_pcm.samples, params.channels, &border_spec)
+        policies::selected_seam_channels(&params.geom.a_pcm.samples, params.cfg.channels, &border_spec)
             .into_iter()
             .filter(|&ch| ch < cache.b_ch.len())
             .collect();
@@ -1036,9 +1098,9 @@ fn measure_fit_residual_verdict(
             &chosen_post,
             &floor_pre,
             &floor_post,
-            params.residual_floor_ok_db,
+            params.cfg.residual_floor_ok_db,
             placement_slide,
-            params.residual_max_lag_frames,
+            params.cfg.residual_max_lag_frames,
         ));
     }
 
@@ -1064,9 +1126,9 @@ fn measure_fit_residual_verdict(
     Some(policies::SeamResidualVerdict::from_channel_residuals(
         &pre,
         &post,
-        params.residual_floor_ok_db,
+        params.cfg.residual_floor_ok_db,
         placement_slide,
-        params.residual_max_lag_frames,
+        params.cfg.residual_max_lag_frames,
     ))
 }
 
@@ -1107,49 +1169,49 @@ fn evaluate_seam_gate_fit_candidate(
 
     let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
+        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.cfg.channels, &border_spec);
     let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
-        &params.a_pcm.samples,
-        params.channels,
+        &params.geom.a_pcm.samples,
+        params.cfg.channels,
         &border_spec,
     );
 
-    let gap_secs = gap_frames as f64 / params.sample_rate as f64;
+    let gap_secs = gap_frames as f64 / params.cfg.sample_rate as f64;
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
-        / params.sample_rate as f64;
+        / params.cfg.sample_rate as f64;
     let end_delta_secs = (refined.end_frame as i64 - baseline.end_frame as i64) as f64
-        / params.sample_rate as f64;
-    let refined_b_start_secs = params.refined_b_start_secs + start_delta_secs;
-    let refined_b_end_secs = params.refined_b_end_secs + end_delta_secs;
+        / params.cfg.sample_rate as f64;
+    let refined_b_start_secs = params.geom.refined_b_start_secs + start_delta_secs;
+    let refined_b_end_secs = params.geom.refined_b_end_secs + end_delta_secs;
 
-    let offset_nominal_start = ((refined_b_start_secs - params.b_extract_start_secs)
-        * params.sample_rate as f64)
+    let offset_nominal_start = ((refined_b_start_secs - params.geom.b_extract_start_secs)
+        * params.cfg.sample_rate as f64)
         .round() as usize;
-    let gap_end_in_haystack = ((refined_b_end_secs - params.b_extract_start_secs)
-        * params.sample_rate as f64)
+    let gap_end_in_haystack = ((refined_b_end_secs - params.geom.b_extract_start_secs)
+        * params.cfg.sample_rate as f64)
         .round() as usize;
 
     let structure_params = StructureMatchParams {
         gap_frames,
-        bin_frames: params.bin_frames.max(1),
-        search_radius_frames: params.search_radius_frames,
-        fill_length_slack_frames: params.fill_length_slack_frames,
-        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.bin_frames),
-        silence_peak_fraction: params.silence_peak_fraction,
-        absolute_silence_rms: params.absolute_silence_rms,
+        bin_frames: params.cfg.bin_frames.max(1),
+        search_radius_frames: params.cfg.search_radius_frames,
+        fill_length_slack_frames: params.cfg.fill_length_slack_frames,
+        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.cfg.bin_frames),
+        silence_peak_fraction: params.cfg.silence_peak_fraction,
+        absolute_silence_rms: params.cfg.absolute_silence_rms,
     };
 
     let signature = build_gap_signature(
-        &params.a_pcm.samples,
-        params.channels,
+        &params.geom.a_pcm.samples,
+        params.cfg.channels,
         refined.start_frame,
         refined.end_frame,
-        params.context_frames,
+        params.cfg.context_frames,
         &structure_params,
-        params.gap_signature_mode,
+        params.cfg.gap_signature_mode,
     );
 
-    let max_seam = params.seam_gate_frames;
+    let max_seam = params.geom.seam_gate_frames;
     let min_seam = (max_seam / 4).max(1);
     let waveform_gate_frames = if anchor_seam_bracket {
         policies::adaptive_seam_window_frames(
@@ -1169,7 +1231,7 @@ fn evaluate_seam_gate_fit_candidate(
             policies::border_active_extent_frames(&a_post_border),
         )
     } else {
-        params.seam_gate_frames
+        params.geom.seam_gate_frames
     };
     let post_gate_frames = seam_post_gate_frames(post_seam_cap, a_post_border.len());
     let templates = policies::SeamTemplates {
@@ -1186,27 +1248,27 @@ fn evaluate_seam_gate_fit_candidate(
         pre_window: waveform_gate_frames,
         post_window: post_gate_frames,
         b_total_frames: cache.b_mono.len(),
-        repeat_window_frames: params.border_frames.max(1),
-        repeat_penalty_weight: params.fill_repeat_penalty_weight,
+        repeat_window_frames: params.geom.border_frames.max(1),
+        repeat_penalty_weight: params.cfg.fill_repeat_penalty_weight,
     };
     // Mode-coupled nominal bias: an energy-resolved signature is the signal that the alignment
     // nominal map may be wrong, so loosen the distance-from-nominal penalty (the penalty grows
     // linearly with distance, so this mainly frees far-off / drifted candidates). Bool keeps base.
     let nominal_bias_scale = match signature {
-        GapSignature::Energy(_) => params.fill_fit_energy_nominal_bias_scale,
-        GapSignature::Bool(_) => params.fill_fit_nominal_bias_scale,
+        GapSignature::Energy(_) => params.cfg.fill_fit_energy_nominal_bias_scale,
+        GapSignature::Bool(_) => params.cfg.fill_fit_nominal_bias_scale,
     };
     let weights = UnifiedFitWeights {
-        structure_weight: params.fill_fit_structure_weight,
-        waveform_weight: params.fill_fit_waveform_weight,
+        structure_weight: params.cfg.fill_fit_structure_weight,
+        waveform_weight: params.cfg.fill_fit_waveform_weight,
         nominal_bias_scale,
-        late_start_penalty_scale: params.fill_fit_late_start_penalty_scale,
+        late_start_penalty_scale: params.cfg.fill_fit_late_start_penalty_scale,
     };
     let structure_timeline = cache.structure_timeline(&signature);
     let search_input = UnifiedFillSearchInput {
         signature: &signature,
-        b_samples: params.b_samples,
-        channels: params.channels,
+        b_samples: params.geom.b_samples,
+        channels: params.cfg.channels,
         waveform: &waveform,
         nominal_fill_start: offset_nominal_start,
         nominal_fill_end: gap_end_in_haystack,
@@ -1216,7 +1278,7 @@ fn evaluate_seam_gate_fit_candidate(
         &structure_params,
         weights,
         &structure_timeline,
-        params.anchor_search_prior,
+        params.geom.anchor_search_prior,
     )
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 
@@ -1260,9 +1322,9 @@ fn evaluate_seam_gate_fit_candidate(
     if !structure_passes_gate(
         structure_pre,
         structure_post,
-        params.min_structure_match_score,
+        params.cfg.min_structure_match_score,
         gap_secs,
-        params.short_gap_mean_correlation_secs,
+        params.cfg.short_gap_mean_correlation_secs,
     ) {
         return Err(SeamGateFailure::StructureBelowThreshold {
             pre: structure_pre,
@@ -1287,7 +1349,7 @@ fn evaluate_seam_gate_fit_candidate(
             return Err(SeamGateFailure::WaveformBelowThreshold {
                 pre: alignment.pre_correlation,
                 post: alignment.post_correlation,
-                min: params.fill_absolute_floor,
+                min: params.cfg.fill_absolute_floor,
             });
         }
     }
@@ -1297,22 +1359,22 @@ fn evaluate_seam_gate_fit_candidate(
     let pearson = classify_fill_waveform_confidence(
         pre_corr,
         post_corr,
-        params.min_fill_correlation,
-        params.fill_marginal_margin,
-        params.fill_absolute_floor,
+        params.cfg.min_fill_correlation,
+        params.cfg.fill_marginal_margin,
+        params.cfg.fill_absolute_floor,
     );
 
     // Pearson-only confidence: residual is applied later at selection, so the residual-gated rescue
     // here just keeps a sub-floor Pearson alive as Marginal for the finalize step to confirm/veto.
-    let confidence = if params.residual_gate.is_active() {
+    let confidence = if params.cfg.residual_gate.is_active() {
         match pearson {
             Ok(confidence) => confidence,
-            Err(_) if params.residual_gate.rescue_enabled() => FillConfidence::Marginal,
+            Err(_) if params.cfg.residual_gate.rescue_enabled() => FillConfidence::Marginal,
             Err(_) => {
                 return Err(SeamGateFailure::WaveformBelowThreshold {
                     pre: pre_corr,
                     post: post_corr,
-                    min: params.fill_absolute_floor,
+                    min: params.cfg.fill_absolute_floor,
                 });
             }
         }
@@ -1320,7 +1382,7 @@ fn evaluate_seam_gate_fit_candidate(
         pearson.map_err(|_| SeamGateFailure::WaveformBelowThreshold {
             pre: pre_corr,
             post: post_corr,
-            min: params.fill_absolute_floor,
+            min: params.cfg.fill_absolute_floor,
         })?
     };
 
@@ -1341,8 +1403,8 @@ fn evaluate_seam_gate_fit_candidate(
             structure_post,
             pre_corr,
             post_corr,
-            params.strong_structure_trust,
-            params.min_fill_correlation,
+            params.cfg.strong_structure_trust,
+            params.cfg.min_fill_correlation,
         );
 
     Ok((
@@ -1378,48 +1440,48 @@ fn evaluate_seam_gate_legacy(
         return Err(SeamGateFailure::StructureAlignmentFailed);
     }
 
-    let gap_secs = gap_frames as f64 / params.sample_rate as f64;
+    let gap_secs = gap_frames as f64 / params.cfg.sample_rate as f64;
     let border_spec = gap_border_spec(params, refined);
     let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.a_pcm.samples, params.channels, &border_spec);
+        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.cfg.channels, &border_spec);
     let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
-        &params.a_pcm.samples,
-        params.channels,
+        &params.geom.a_pcm.samples,
+        params.cfg.channels,
         &border_spec,
     );
-    let b_mono = policies::interleaved_to_mono(params.b_samples, params.channels);
-    let b_ch = policies::interleaved_to_channels(params.b_samples, params.channels);
+    let b_mono = policies::interleaved_to_mono(params.geom.b_samples, params.cfg.channels);
+    let b_ch = policies::interleaved_to_channels(params.geom.b_samples, params.cfg.channels);
 
-    let offset_nominal_start = ((params.refined_b_start_secs - params.b_extract_start_secs)
-        * params.sample_rate as f64)
+    let offset_nominal_start = ((params.geom.refined_b_start_secs - params.geom.b_extract_start_secs)
+        * params.cfg.sample_rate as f64)
         .round() as usize;
-    let gap_end_in_haystack = ((params.refined_b_end_secs - params.b_extract_start_secs)
-        * params.sample_rate as f64)
+    let gap_end_in_haystack = ((params.geom.refined_b_end_secs - params.geom.b_extract_start_secs)
+        * params.cfg.sample_rate as f64)
         .round() as usize;
 
     let structure_params = StructureMatchParams {
         gap_frames,
-        bin_frames: params.bin_frames.max(1),
-        search_radius_frames: params.search_radius_frames,
-        fill_length_slack_frames: params.fill_length_slack_frames,
-        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.bin_frames),
-        silence_peak_fraction: params.silence_peak_fraction,
-        absolute_silence_rms: params.absolute_silence_rms,
+        bin_frames: params.cfg.bin_frames.max(1),
+        search_radius_frames: params.cfg.search_radius_frames,
+        fill_length_slack_frames: params.cfg.fill_length_slack_frames,
+        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.cfg.bin_frames),
+        silence_peak_fraction: params.cfg.silence_peak_fraction,
+        absolute_silence_rms: params.cfg.absolute_silence_rms,
     };
 
     let signature = gap_structure::build_gap_context_signature(
-        &params.a_pcm.samples,
-        params.channels,
+        &params.geom.a_pcm.samples,
+        params.cfg.channels,
         refined.start_frame,
         refined.end_frame,
-        params.context_frames,
+        params.cfg.context_frames,
         &structure_params,
     );
 
     let mut alignment = gap_structure::match_gap_structure_in_b(
         &signature,
-        params.b_samples,
-        params.channels,
+        params.geom.b_samples,
+        params.cfg.channels,
         offset_nominal_start,
         gap_end_in_haystack,
         &structure_params,
@@ -1432,9 +1494,9 @@ fn evaluate_seam_gate_legacy(
     if !structure_passes_gate(
         structure_pre,
         structure_post,
-        params.min_structure_match_score,
+        params.cfg.min_structure_match_score,
         gap_secs,
-        params.short_gap_mean_correlation_secs,
+        params.cfg.short_gap_mean_correlation_secs,
     ) {
         return Err(SeamGateFailure::StructureBelowThreshold {
             pre: structure_pre,
@@ -1442,17 +1504,18 @@ fn evaluate_seam_gate_legacy(
         });
     }
 
-    let structure_trusted = !params.disable_structure_trust
-        && structure_pre >= params.strong_structure_trust
-        && structure_post >= params.strong_structure_trust;
+    let structure_trusted = !params.cfg.disable_structure_trust
+        && structure_pre >= params.cfg.strong_structure_trust
+        && structure_post >= params.cfg.strong_structure_trust;
 
     let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
         (structure_pre, structure_post, true)
     } else {
         let waveform_gate_frames = params
+            .geom
             .seam_gate_frames
             .min(a_pre_border.len().max(1));
-        let post_gate_frames = seam_post_gate_frames(params.seam_gate_frames, a_post_border.len());
+        let post_gate_frames = seam_post_gate_frames(params.geom.seam_gate_frames, a_post_border.len());
         let templates = policies::SeamTemplates {
             a_pre: &a_pre_border,
             a_post: &a_post_border,
@@ -1472,15 +1535,16 @@ fn evaluate_seam_gate_legacy(
             },
         );
 
-        let soften_waveform_gate = !params.disable_structure_trust
-            && structure_pre >= params.partial_structure_waveform_soften
-            && structure_post >= params.partial_structure_waveform_soften;
+        let soften_waveform_gate = !params.cfg.disable_structure_trust
+            && structure_pre >= params.cfg.partial_structure_waveform_soften
+            && structure_post >= params.cfg.partial_structure_waveform_soften;
         let effective_min_corr = if soften_waveform_gate {
             params
+                .cfg
                 .min_fill_correlation
                 .min(PARTIAL_WAVEFORM_MIN_CORRELATION)
         } else {
-            params.min_fill_correlation
+            params.cfg.min_fill_correlation
         };
 
         alignment.pre_correlation = pre_corr;
@@ -1490,9 +1554,9 @@ fn evaluate_seam_gate_legacy(
             &alignment,
             effective_min_corr,
             gap_secs,
-            params.short_gap_mean_correlation_secs,
-            params.short_gap_one_strong_seam_fallback,
-            params.disable_structure_trust,
+            params.cfg.short_gap_mean_correlation_secs,
+            params.cfg.short_gap_one_strong_seam_fallback,
+            params.cfg.disable_structure_trust,
         ) {
             return Err(SeamGateFailure::WaveformBelowThreshold {
                 pre: pre_corr,
@@ -1542,7 +1606,7 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
         return Err(initial_fail);
     }
 
-    let total_frames = params.a_pcm.samples.len() / params.channels.max(1);
+    let total_frames = params.geom.a_pcm.samples.len() / params.cfg.channels.max(1);
     let original_end = refined.end_frame;
     let max_end = (original_end + max_extend_frames).min(total_frames);
     if step_frames == 0 || original_end >= max_end {
@@ -1554,9 +1618,12 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
     while try_end + step_frames <= max_end {
         try_end += step_frames;
         refined.end_frame = try_end;
-        let refined_b_end_secs = try_end as f64 / params.sample_rate as f64 + gap_offset_secs;
+        let refined_b_end_secs = try_end as f64 / params.cfg.sample_rate as f64 + gap_offset_secs;
         let try_params = SeamGateParams {
-            refined_b_end_secs,
+            geom: SeamGateGeometry {
+                refined_b_end_secs,
+                ..params.geom
+            },
             ..*params
         };
         match evaluate_seam_gate(*refined, &try_params) {
@@ -1611,9 +1678,12 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
     while try_start >= step_frames && try_start - step_frames >= min_start {
         try_start -= step_frames;
         refined.start_frame = try_start;
-        let refined_b_start_secs = try_start as f64 / params.sample_rate as f64 + gap_offset_secs;
+        let refined_b_start_secs = try_start as f64 / params.cfg.sample_rate as f64 + gap_offset_secs;
         let try_params = SeamGateParams {
-            refined_b_start_secs,
+            geom: SeamGateGeometry {
+                refined_b_start_secs,
+                ..params.geom
+            },
             ..*params
         };
         match evaluate_seam_gate(*refined, &try_params) {

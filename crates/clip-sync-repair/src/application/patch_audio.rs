@@ -8,9 +8,8 @@ use clip_sync::{
 };
 
 use crate::application::patch_region::{
-    evaluate_seam_gate, retry_waveform_seam_extensions, SeamExtensionRetry, SeamGateFailure,
-    SeamGateOutcome,
-    SeamGateParams,
+    derive_seam_gate_geometry, evaluate_seam_gate, retry_waveform_seam_extensions,
+    SeamExtensionRetry, SeamGateConfig, SeamGateFailure, SeamGateOutcome, SeamGateParams,
 };
 use crate::application::error::RepairError;
 use crate::domain::{
@@ -1364,15 +1363,11 @@ fn prepare_region_patch(
     let border_search_secs = request.fill_border_search_secs;
     let min_border_discovery_secs = request.min_border_discovery_secs;
     let border_standoff_secs = request.border_standoff_secs;
-    let short_gap_mean_correlation_secs = request.short_gap_mean_correlation_secs;
     let fill_length_slack_secs = request.fill_length_slack_secs;
     let fill_seam_search_secs = request.fill_seam_search_secs;
     let gap_signature_context_secs = request.gap_signature_context_secs;
     let gap_signature_bin_ms = request.gap_signature_bin_ms;
     let min_structure_match_score = request.min_structure_match_score;
-    let strong_structure_trust = request.strong_structure_trust;
-    let disable_structure_trust = request.disable_structure_trust;
-    let partial_structure_waveform_soften = request.partial_structure_waveform_soften;
     let min_fill_correlation = request.min_fill_correlation;
     let normalize_fill = request.normalize_fill;
     let max_fill_gain_db = request.max_fill_gain_db;
@@ -1382,7 +1377,6 @@ fn prepare_region_patch(
     let gap_start_extend_on_pre_seam_fail = request.gap_start_extend_on_pre_seam_fail;
     let gap_end_extend_max_ms = request.gap_end_extend_max_ms;
     let gap_end_extend_step_ms = request.gap_end_extend_step_ms;
-    let short_gap_one_strong_seam_fallback = request.short_gap_one_strong_seam_fallback;
 
     debug_assert!(
         region.b_start_secs >= 0.0,
@@ -1567,79 +1561,32 @@ fn prepare_region_patch(
         (border_standoff_secs * sample_rate as f64).round() as usize;
     let search_radius_frames =
         (border_search_secs * sample_rate as f64).round() as usize;
-    let fill_length_slack_frames =
-        (fill_length_slack_secs * sample_rate as f64).round() as usize;
     let max_extend_frames =
         (gap_end_extend_max_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
     let step_frames =
         (gap_end_extend_step_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
 
-    let seam_params = SeamGateParams {
+    let cfg = SeamGateConfig::from_repair(request, sample_rate, channels, silence_peak_fraction);
+    let anchor_search_prior = anchor_search_prior_for_gap(
+        request,
+        patch_anchors,
+        anchored_retry_pass,
+        region,
+        b_extract_start_secs,
+        search_radius_frames,
+        sample_rate,
+    );
+    let geom = derive_seam_gate_geometry(
+        &cfg,
         a_pcm,
         b_samples,
         b_extract_start_secs,
         refined_b_start_secs,
         refined_b_end_secs,
-        channels,
-        sample_rate,
-        context_frames,
-        bin_frames,
-        seam_gate_frames,
-        border_frames,
-        border_standoff_frames,
-        search_radius_frames,
-        fill_length_slack_frames,
-        silence_peak_fraction,
-        absolute_silence_rms,
-        min_structure_match_score,
-        strong_structure_trust,
-        disable_structure_trust,
-        partial_structure_waveform_soften,
-        min_fill_correlation,
-        short_gap_mean_correlation_secs,
-        short_gap_one_strong_seam_fallback,
-        fill_mode: request.fill_mode,
-        fill_fit_structure_weight: request.fill_fit_structure_weight,
-        fill_fit_waveform_weight: request.fill_fit_waveform_weight,
-        fill_fit_nominal_bias_scale: request.fill_fit_nominal_bias_scale,
-        fill_fit_energy_nominal_bias_scale: request.fill_fit_energy_nominal_bias_scale,
-        fill_fit_late_start_penalty_scale: request.fill_fit_late_start_penalty_scale,
-        fill_marginal_margin: request.fill_marginal_margin,
-        fill_absolute_floor: request.fill_absolute_floor,
-        fill_repeat_penalty_weight: request.fill_repeat_penalty_weight,
-        max_extend_frames,
-        step_frames,
-        gap_end_extend_on_post_seam_fail,
-        gap_start_extend_on_pre_seam_fail,
-        anchor_search_prior: anchor_search_prior_for_gap(
-            request,
-            patch_anchors,
-            anchored_retry_pass,
-            region,
-            b_extract_start_secs,
-            search_radius_frames,
-            sample_rate,
-        ),
-        gap_signature_mode: request.gap_signature_mode,
-        fit_boundary_search: request.fit_boundary_search,
-        anchor_seam_mode: request.anchor_seam_mode,
-        max_anchor_bracket_secs: request.max_anchor_bracket_secs,
-        max_anchors_per_side: request.max_anchors_per_side,
-        anchor_seam_min_prominence: request.anchor_seam_min_prominence,
-        anchor_matchability: crate::domain::gap_anchor_seam::AnchorMatchabilityParams::from_repair_fields(
-            request.anchor_seam_min_match_pearson,
-            request.anchor_seam_min_xcorr_peak,
-            request.anchor_seam_xcorr_ambiguous_band,
-        ),
-        measure_residual: request.measure_residual,
-        residual_gate: request.residual_gate,
-        residual_floor_ok_db: request.residual_floor_ok_db,
-        residual_headroom_margin_db: request.residual_headroom_margin_db,
-        residual_max_lag_frames: crate::domain::residual_max_lag_frames(
-            sample_rate,
-            request.residual_lag_secs,
-        ),
-    };
+        gap_frames,
+        anchor_search_prior,
+    );
+    let seam_params = SeamGateParams { cfg: &cfg, geom };
 
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
         Ok(outcome) => outcome,
@@ -1969,12 +1916,93 @@ fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigVie
     }
 }
 
-fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
+impl SeamGateConfig {
+    /// Build the run-constant seam-gate config from a repair request. Same field math production
+    /// used inline in `prepare_region_patch`; reused by the W5 oracle so its scores match
+    /// production by construction. `silence_peak_fraction` comes from the per-run patch context.
+    pub(crate) fn from_repair(
+        request: &PatchAudioRequest,
+        sample_rate: u32,
+        channels: usize,
+        silence_peak_fraction: f32,
+    ) -> Self {
+        let context_frames =
+            (request.gap_signature_context_secs * sample_rate as f64).round() as usize;
+        let bin_frames =
+            ((request.gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
+        let border_standoff_frames =
+            (request.border_standoff_secs * sample_rate as f64).round() as usize;
+        let search_radius_frames =
+            (request.fill_border_search_secs * sample_rate as f64).round() as usize;
+        let fill_length_slack_frames =
+            (request.fill_length_slack_secs * sample_rate as f64).round() as usize;
+        let max_extend_frames =
+            (request.gap_end_extend_max_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
+        let step_frames =
+            (request.gap_end_extend_step_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
+        SeamGateConfig {
+            channels,
+            sample_rate,
+            context_frames,
+            bin_frames,
+            border_standoff_frames,
+            search_radius_frames,
+            fill_length_slack_frames,
+            max_extend_frames,
+            step_frames,
+            residual_max_lag_frames: crate::domain::residual_max_lag_frames(
+                sample_rate,
+                request.residual_lag_secs,
+            ),
+            normalize_window_secs: request.normalize_window_secs,
+            min_border_discovery_secs: request.min_border_discovery_secs,
+            fill_seam_search_secs: request.fill_seam_search_secs,
+            silence_peak_fraction,
+            absolute_silence_rms: request.absolute_silence_rms,
+            min_structure_match_score: request.min_structure_match_score,
+            strong_structure_trust: request.strong_structure_trust,
+            disable_structure_trust: request.disable_structure_trust,
+            partial_structure_waveform_soften: request.partial_structure_waveform_soften,
+            min_fill_correlation: request.min_fill_correlation,
+            short_gap_mean_correlation_secs: request.short_gap_mean_correlation_secs,
+            short_gap_one_strong_seam_fallback: request.short_gap_one_strong_seam_fallback,
+            fill_mode: request.fill_mode,
+            fill_fit_structure_weight: request.fill_fit_structure_weight,
+            fill_fit_waveform_weight: request.fill_fit_waveform_weight,
+            fill_fit_nominal_bias_scale: request.fill_fit_nominal_bias_scale,
+            fill_fit_energy_nominal_bias_scale: request.fill_fit_energy_nominal_bias_scale,
+            fill_fit_late_start_penalty_scale: request.fill_fit_late_start_penalty_scale,
+            fill_marginal_margin: request.fill_marginal_margin,
+            fill_absolute_floor: request.fill_absolute_floor,
+            fill_repeat_penalty_weight: request.fill_repeat_penalty_weight,
+            gap_end_extend_on_post_seam_fail: request.gap_end_extend_on_post_seam_fail,
+            gap_start_extend_on_pre_seam_fail: request.gap_start_extend_on_pre_seam_fail,
+            gap_signature_mode: request.gap_signature_mode,
+            fit_boundary_search: request.fit_boundary_search,
+            anchor_seam_mode: request.anchor_seam_mode,
+            max_anchor_bracket_secs: request.max_anchor_bracket_secs,
+            max_anchors_per_side: request.max_anchors_per_side,
+            anchor_seam_min_prominence: request.anchor_seam_min_prominence,
+            anchor_matchability:
+                crate::domain::gap_anchor_seam::AnchorMatchabilityParams::from_repair_fields(
+                    request.anchor_seam_min_match_pearson,
+                    request.anchor_seam_min_xcorr_peak,
+                    request.anchor_seam_xcorr_ambiguous_band,
+                ),
+            measure_residual: request.measure_residual,
+            residual_gate: request.residual_gate,
+            residual_floor_ok_db: request.residual_floor_ok_db,
+            residual_headroom_margin_db: request.residual_headroom_margin_db,
+        }
+    }
+}
+
+pub(crate) fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
     (window_secs * sample_rate as f64) as usize
 }
 
 /// Cap for fine-align slide search and seam correlation gate (frames).
-fn seam_gate_frames_for(
+pub(crate) fn seam_gate_frames_for(
     correlate_frames: usize,
     fill_seam_search_secs: f64,
     sample_rate: u32,
@@ -1984,7 +2012,7 @@ fn seam_gate_frames_for(
 }
 
 /// Seam correlation window sized to the gap (short gaps use shorter templates).
-fn correlate_frames_for_gap(
+pub(crate) fn correlate_frames_for_gap(
     normalize_window_secs: f64,
     min_border_discovery_secs: f64,
     gap_frames: usize,

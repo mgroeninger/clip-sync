@@ -87,6 +87,46 @@ where coarse neighbors **change regime**. See §5.2 for classifier inputs.
 
 ## 5. Implementation phases
 
+### Phase 0 — Extract `SeamGateConfig` / `SeamGateGeometry` (behavior-preserving) — **do first**
+
+**Acceptance gate for the whole PR:** full suite green, unchanged. `SeamGateParams` is `pub(crate)`
+and no test references it, so green-before = green-after is the only contract. Do **not** "improve"
+behavior anywhere.
+
+1. **Define `SeamGateConfig`** (owned, no lifetime, `#[derive(Clone, Copy)]`) — the 41 run-constant
+   fields, **plus** the three secs inputs currently living as `patch_audio` locals:
+   `normalize_window_secs`, `min_border_discovery_secs`, `fill_seam_search_secs`. *(Gotcha A — without
+   these the geometry builder can't compute `correlate_frames`.)*
+2. **Define `SeamGateGeometry<'a>`** (`Copy`) — the 8 per-gap fields: `a_pcm`, `b_samples`,
+   `b_extract_start_secs`, `refined_b_start_secs`, `refined_b_end_secs`, `seam_gate_frames`,
+   `border_frames`, `anchor_search_prior`. *(The catch: `seam_gate_frames`/`border_frames` belong here
+   because they ride `gap_frames` through `correlate_frames`.)*
+3. **Redefine `SeamGateParams<'a>`** as `{ cfg: &'a SeamGateConfig, geom: SeamGateGeometry<'a> }`.
+   *(Gotcha C — `cfg` is a borrow so the composite stays `Copy`; the `..*params` retry sites depend on
+   that.)*
+4. **`SeamGateConfig::from_repair(request, sample_rate, channels)`** — move the ~32 `request.*` copies
+   + run-constant frame derivations (`context_frames`, `bin_frames`, `border_standoff_frames`,
+   `search_radius_frames`, `fill_length_slack_frames`, `max_extend_frames`, `step_frames`,
+   `residual_max_lag_frames`) here.
+5. **`derive_seam_gate_geometry(cfg, a_pcm, b_samples, b_extract_start_secs, refined_b_start_secs,
+   refined_b_end_secs, gap_frames, anchor_search_prior)`** — computes `correlate_frames` from `cfg`'s
+   secs + `gap_frames`, then `seam_gate_frames`/`border_frames`.
+6. **Rewrite the production builder in `patch_audio.rs` (~1577):** hoist
+   `let cfg = SeamGateConfig::from_repair(...)` **above the per-gap loop** so the borrow outlives every
+   gap's params *(Gotcha C, part 2)*; inside the loop build `geom` via `derive_seam_gate_geometry(...)`
+   and assemble `SeamGateParams { cfg: &cfg, geom }`.
+7. **Update the two retry struct-update sites (`patch_region.rs:1558`, `:1615`):** rewrite as
+   `SeamGateParams { geom: SeamGateGeometry { refined_b_end_secs /* or _start_ */, ..params.geom },
+   ..*params }`. Override **only** the one secs field — do **not** recompute
+   `seam_gate_frames`/`border_frames` for the grown gap. *(Gotcha B — preserves existing behavior.)*
+8. **Migrate field access across `patch_region.rs`** (~18 consumer fns, `FitHaystackCache::build`,
+   `AudioFitSource`): `params.x` → `params.cfg.x` or `params.geom.x`. Compiler-driven.
+9. **Verify:** `cargo build` clean, then full repair test suite green with zero test-file edits.
+
+**Settled, don't spend time on:** the struct is already `Copy` (proven by `..*params` compiling today,
+so `AnchorSearchPrior`/`AnchorMatchabilityParams` are `Copy`); there is **no** `Debug` derive or
+whole-struct formatting to preserve (verified).
+
 ### Phase 1 — Single-cell diagnostic (replaces `probe_w5`) — **ready to implement**
 
 **Goal:** Strict **superset** of today's `probe_w5_anchor_rescue_scores`: nominal + baseline Pearson,
