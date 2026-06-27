@@ -16,7 +16,8 @@ use clip_sync::MultiChannelPcm;
 
 use crate::application::patch_region::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
-    oracle_evaluate_fit_joint, oracle_score_fit_candidate, SeamGateConfig, SeamGateParams,
+    oracle_evaluate_fit_joint, oracle_score_fit_candidate, SeamGateConfig, SeamGateFailure,
+    SeamGateParams,
 };
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorBracket, AnchorSeamMode,
@@ -26,7 +27,8 @@ use crate::domain::policies::RefinedGapFrames;
 use crate::domain::FillConfidence;
 use crate::infrastructure::config::RepairConfig;
 use crate::test_support::energy_signature_fixtures::{
-    build_w5_symmetric_weak_throat_anchor_rescue, gap_report_times, EnergySignatureFixture,
+    build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift, gap_report_times,
+    EnergySignatureFixture,
 };
 use crate::test_support::energy_signature_production::{
     gap_report_from_energy_fixture, oracle_baseline_throat_pearson_opt,
@@ -39,12 +41,18 @@ const HIGH_FLOOR: f64 = 0.35;
 
 /// One W5 discovery cell (Phase 1+). `fill_border_search_secs` must be `< peak_offset_secs` for the
 /// fixture to be valid (baseline unified search must not High-short-circuit at the throat).
+///
+/// `b_shift_secs` is the B dropout shift (where the fill lives on B). `None` couples it to
+/// `peak_offset_secs` (the original A6 fixture); `Some(x)` decouples it (§8 Q1 — see
+/// [`build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift`]).
 #[derive(Debug, Clone, Copy)]
 pub struct W5AnchorRescueCell {
-    /// B dropout shift = A peak offset (F1-style).
+    /// A peak offset — where the editorial anchors sit relative to the throat (F1-style).
     pub peak_offset_secs: f64,
     /// Repair + structure `search_radius`; must be `< peak_offset_secs`.
     pub fill_border_search_secs: f64,
+    /// B dropout shift; `None` = coupled (`= peak_offset_secs`).
+    pub b_shift_secs: Option<f64>,
 }
 
 impl Default for W5AnchorRescueCell {
@@ -52,11 +60,26 @@ impl Default for W5AnchorRescueCell {
         Self {
             peak_offset_secs: 1.0,
             fill_border_search_secs: 0.78,
+            b_shift_secs: None,
         }
     }
 }
 
 impl W5AnchorRescueCell {
+    /// Coupled cell `(peak_offset, search)` — `b_shift` tracks `peak_offset`.
+    pub fn coupled(peak_offset_secs: f64, fill_border_search_secs: f64) -> Self {
+        Self {
+            peak_offset_secs,
+            fill_border_search_secs,
+            b_shift_secs: None,
+        }
+    }
+
+    /// Effective B dropout shift in seconds (resolves the coupled default).
+    pub fn effective_b_shift_secs(&self) -> f64 {
+        self.b_shift_secs.unwrap_or(self.peak_offset_secs)
+    }
+
     /// `fill_border_search_secs >= peak_offset_secs` — the fixture is degenerate (baseline can High).
     pub fn is_invalid(&self) -> bool {
         self.fill_border_search_secs >= self.peak_offset_secs
@@ -65,11 +88,12 @@ impl W5AnchorRescueCell {
 
 /// Paired fixture + repair for one cell (`anchor_seam_mode = Auto`).
 pub fn build_w5_cell(cell: &W5AnchorRescueCell) -> (EnergySignatureFixture, RepairConfig) {
-    let fixture = build_w5_symmetric_weak_throat_anchor_rescue(
+    let fixture = build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift(
         48_000,
         1,
         cell.peak_offset_secs,
         cell.fill_border_search_secs,
+        cell.effective_b_shift_secs(),
     );
     let repair = crate::test_support::energy_signature_production::w5_anchor_rescue_repair(
         AnchorSeamMode::Auto,
@@ -90,7 +114,9 @@ fn anchor_params(fixture: &EnergySignatureFixture) -> AnchorSeamParams {
     }
 }
 
-/// One anchor bracket scored on the unified gate path.
+/// One anchor bracket scored on the unified gate path. `pre_pearson`/`post_pearson` carry the seam
+/// Pearson the gate measured **whether or not it passed** (so a failing bracket still shows its
+/// scores); `failure_stage` names which gate stage rejected it when `!passed_gate`.
 #[derive(Debug, Clone)]
 pub struct W5BracketGateScore {
     pub pre_frame: usize,
@@ -103,6 +129,25 @@ pub struct W5BracketGateScore {
     pub min_pearson: Option<f64>,
     pub confidence: Option<FillConfidence>,
     pub ranking_score: Option<f64>,
+    /// Which gate stage rejected the bracket (`None` when it passed). One of `structure_align`,
+    /// `structure_floor`, `waveform_floor`, `residual`.
+    pub failure_stage: Option<&'static str>,
+}
+
+/// Gate stage + measured pre/post for a rejection. `structure_align` carries no scores.
+fn failure_detail(failure: &SeamGateFailure) -> (&'static str, Option<f64>, Option<f64>) {
+    match failure {
+        SeamGateFailure::StructureAlignmentFailed => ("structure_align", None, None),
+        SeamGateFailure::StructureBelowThreshold { pre, post } => {
+            ("structure_floor", Some(*pre), Some(*post))
+        }
+        SeamGateFailure::WaveformBelowThreshold { pre, post, .. } => {
+            ("waveform_floor", Some(*pre), Some(*post))
+        }
+        SeamGateFailure::ResidualHeadroomExceeded { pre, post, .. } => {
+            ("residual", Some(*pre), Some(*post))
+        }
+    }
 }
 
 /// All Phase 1 scores for one cell.
@@ -329,18 +374,23 @@ fn score_brackets(ctx: &W5CellContext) -> Vec<W5BracketGateScore> {
                     min_pearson: Some(pre.min(post)),
                     confidence: Some(confidence),
                     ranking_score: Some(ranking_score),
+                    failure_stage: None,
                 },
-                Err(_) => W5BracketGateScore {
-                    pre_frame: bracket.pre.frame,
-                    post_frame: bracket.post.frame,
-                    move_frames: bracket.move_frames,
-                    passed_gate: false,
-                    pre_pearson: None,
-                    post_pearson: None,
-                    min_pearson: None,
-                    confidence: None,
-                    ranking_score: None,
-                },
+                Err(failure) => {
+                    let (stage, pre, post) = failure_detail(&failure);
+                    W5BracketGateScore {
+                        pre_frame: bracket.pre.frame,
+                        post_frame: bracket.post.frame,
+                        move_frames: bracket.move_frames,
+                        passed_gate: false,
+                        pre_pearson: pre,
+                        post_pearson: post,
+                        min_pearson: None,
+                        confidence: None,
+                        ranking_score: None,
+                        failure_stage: Some(stage),
+                    }
+                }
             }
         })
         .collect()

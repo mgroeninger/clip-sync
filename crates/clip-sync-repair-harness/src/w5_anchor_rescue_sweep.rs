@@ -77,9 +77,41 @@ pub fn coarse_w5_grid(
             if fill_border_search_secs >= peak_offset_secs {
                 continue; // invalid half-plane — never evaluated
             }
+            cells.push(W5SweepCell::evaluate(W5AnchorRescueCell::coupled(
+                peak_offset_secs,
+                fill_border_search_secs,
+            )));
+        }
+    }
+    cells
+}
+
+/// Decoupled (§8 Q1) sweep: fix `peak_offset_secs`, vary `(search, b_shift)`. Looks for the E3
+/// pocket the coupled grid cannot reach — a moving anchor bracket at High while the throat baseline
+/// stays weak. Skips `search >= offset` (invalid) and `b_shift <= search` (baseline would reach the
+/// fill, so it cannot stay weak).
+pub fn decoupled_w5_grid(
+    peak_offset_secs: f64,
+    search_range: (f64, f64),
+    search_step: f64,
+    b_shift_range: (f64, f64),
+    b_shift_step: f64,
+) -> Vec<W5SweepCell> {
+    let searches = frange(search_range, search_step);
+    let b_shifts = frange(b_shift_range, b_shift_step);
+    let mut cells = Vec::new();
+    for &fill_border_search_secs in &searches {
+        if fill_border_search_secs >= peak_offset_secs {
+            continue;
+        }
+        for &b_shift_secs in &b_shifts {
+            if b_shift_secs <= fill_border_search_secs {
+                continue; // baseline could reach the fill — not a weak-baseline regime
+            }
             cells.push(W5SweepCell::evaluate(W5AnchorRescueCell {
                 peak_offset_secs,
                 fill_border_search_secs,
+                b_shift_secs: Some(b_shift_secs),
             }));
         }
     }
@@ -141,10 +173,10 @@ pub fn refine_w5_boundaries(cells: &[W5SweepCell]) -> Vec<W5SweepCell> {
         }
         let peak_offset_secs = ok as f64 / 1_000_000.0;
         let fill_border_search_secs = sk as f64 / 1_000_000.0;
-        merged.push(W5SweepCell::evaluate(W5AnchorRescueCell {
+        merged.push(W5SweepCell::evaluate(W5AnchorRescueCell::coupled(
             peak_offset_secs,
             fill_border_search_secs,
-        }));
+        )));
     }
     merged
 }
@@ -157,10 +189,10 @@ fn joint_winner_label(w: W5JointWinner) -> String {
     }
 }
 
-/// CSV header for the sweep (plan §5.2.5).
-pub const SWEEP_CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,regime,joint_winner,\
-nominal_min,baseline_min,max_bracket_min,anchor_seam_would_run,bracket_count,passing_bracket_count,\
-wall_ms";
+/// CSV header for the sweep (plan §5.2.5; `b_shift_secs` added for §8 Q1 decoupled runs).
+pub const SWEEP_CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,b_shift_secs,regime,\
+joint_winner,nominal_min,baseline_min,max_bracket_min,anchor_seam_would_run,bracket_count,\
+passing_bracket_count,wall_ms";
 
 fn opt(value: Option<f64>) -> String {
     value.map(|v| format!("{v:.4}")).unwrap_or_default()
@@ -170,9 +202,10 @@ fn opt(value: Option<f64>) -> String {
 pub fn sweep_csv_row(cell: &W5SweepCell) -> String {
     let s = &cell.eval.scores;
     format!(
-        "{:.3},{:.3},{},{},{:.4},{:.4},{},{},{},{},{}",
+        "{:.3},{:.3},{:.3},{},{},{:.4},{:.4},{},{},{},{},{}",
         s.cell.peak_offset_secs,
         s.cell.fill_border_search_secs,
+        s.cell.effective_b_shift_secs(),
         cell.regime.as_str(),
         joint_winner_label(cell.eval.joint_winner),
         s.nominal_pre.min(s.nominal_post),

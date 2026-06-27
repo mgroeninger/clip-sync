@@ -1516,14 +1516,37 @@ pub fn build_w5_symmetric_weak_throat_anchor_rescue(
     peak_offset_secs: f64,
     fill_border_search_secs: f64,
 ) -> EnergySignatureFixture {
-    let peak_offset_frames = secs_to_frames(peak_offset_secs, sample_rate);
+    // Coupled default: the B dropout shift equals the A peak offset.
+    build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift(
+        sample_rate,
+        channels,
+        peak_offset_secs,
+        fill_border_search_secs,
+        peak_offset_secs,
+    )
+}
+
+/// **A6 decoupled** oracle: as [`build_w5_symmetric_weak_throat_anchor_rescue`] but the B dropout
+/// shift (`b_shift_secs` — where the true fill lives on B) is **independent** of the A peak offset
+/// (`peak_offset_secs` — where the editorial anchors sit). Decoupling these is the §8 Q1 lever for
+/// finding an E3 pocket: the coupled fixture (`b_shift == peak_offset`) has no cell where a *moving*
+/// anchor bracket reaches Pearson High while the baseline stays weak (Phase 2 finding), because the
+/// fill's B location tracks the same radius both candidates search. With `b_shift_secs` free, the
+/// fill can sit where a moving bracket's boundary reaches it but the throat baseline does not.
+pub fn build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+    fill_border_search_secs: f64,
+    b_shift_secs: f64,
+) -> EnergySignatureFixture {
     let mut fixture =
         build_speech_peaks_offset_from_throat(sample_rate, channels, peak_offset_secs);
 
     let ch = fixture.channels.max(1);
     let rate = fixture.sample_rate;
     let total_frames = fixture.a_samples.len() / ch;
-    let shift = peak_offset_frames;
+    let shift = secs_to_frames(b_shift_secs, sample_rate);
 
     let mut b = vec![0.0f32; fixture.b_samples.len()];
     for frame in shift..total_frames {

@@ -12,13 +12,13 @@ use clip_sync_repair::test_support::w5_anchor_rescue_diag::{
     score_w5_anchor_rescue_cell, W5AnchorRescueCell, W5AnchorRescueCellScores,
 };
 use clip_sync_repair_harness::w5_anchor_rescue_sweep::{
-    anchor_rescue_pocket, coarse_w5_grid_default, refine_w5_boundaries, sweep_csv,
-    write_w5_sweep_csv, W5SweepCell,
+    anchor_rescue_pocket, coarse_w5_grid_default, decoupled_w5_grid, refine_w5_boundaries,
+    sweep_csv, write_w5_sweep_csv, W5SweepCell,
 };
 
 const CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,nominal_pre,nominal_post,\
 baseline_pre,baseline_post,bracket_pre,bracket_post,bracket_move,passed_gate,pre_pearson,\
-post_pearson,min_pearson,confidence,ranking_score,wall_ms";
+post_pearson,min_pearson,confidence,ranking_score,wall_ms,failure_stage";
 
 fn opt(value: Option<f64>) -> String {
     value.map(|v| format!("{v:.4}")).unwrap_or_default()
@@ -29,7 +29,7 @@ fn print_cell_csv(scores: &W5AnchorRescueCellScores) {
     println!("{CSV_HEADER}");
     // Summary row (bracket columns empty).
     println!(
-        "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},,,,,,,,,,{}",
+        "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},,,,,,,,,,{},",
         c.peak_offset_secs,
         c.fill_border_search_secs,
         scores.nominal_pre,
@@ -45,7 +45,7 @@ fn print_cell_csv(scores: &W5AnchorRescueCellScores) {
             .map(|c| format!("{c:?}"))
             .unwrap_or_default();
         println!(
-            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{},{},{},{},{},{},{},{},{},",
+            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{},{},{},{},{},{},{},{},{},,{}",
             c.peak_offset_secs,
             c.fill_border_search_secs,
             scores.nominal_pre,
@@ -61,6 +61,7 @@ fn print_cell_csv(scores: &W5AnchorRescueCellScores) {
             opt(b.min_pearson),
             confidence,
             opt(b.ranking_score),
+            b.failure_stage.unwrap_or(""),
         );
     }
 }
@@ -99,8 +100,13 @@ fn print_human_summary(scores: &W5AnchorRescueCellScores) {
             );
         } else {
             eprintln!(
-                "    bracket pre={} post={} move={} -> gate FAILED",
-                b.pre_frame, b.post_frame, b.move_frames
+                "    bracket pre={} post={} move={} -> gate FAILED [{}]: pre={} post={}",
+                b.pre_frame,
+                b.post_frame,
+                b.move_frames,
+                b.failure_stage.unwrap_or("?"),
+                b.pre_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
+                b.post_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
             );
         }
     }
@@ -136,6 +142,17 @@ fn diag_w5_anchor_rescue_refine_boundaries() {
     maybe_write_csv(&refined, "w5_anchor_rescue_sweep_refined.csv");
 }
 
+/// §8 Q1 decoupled exploration: fix `peak_offset=1.0`, sweep `(search, b_shift)` to test whether
+/// decoupling the B dropout shift from the A peak offset opens an E3 pocket the coupled grid cannot
+/// reach (Phase 2 finding). See docs/TEMP-w5-anchor-rescue-diag-plan.md §8.
+#[test]
+fn diag_w5_anchor_rescue_decoupled_grid() {
+    let cells = decoupled_w5_grid(1.0, (0.30, 0.70), 0.10, (0.60, 1.40), 0.10);
+    println!("{}", sweep_csv(&cells));
+    report_sweep("decoupled grid (peak_offset=1.0)", &cells);
+    maybe_write_csv(&cells, "w5_anchor_rescue_sweep_decoupled.csv");
+}
+
 fn report_sweep(label: &str, cells: &[W5SweepCell]) {
     use std::collections::BTreeMap;
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
@@ -146,6 +163,39 @@ fn report_sweep(label: &str, cells: &[W5SweepCell]) {
     for (regime, count) in &tally {
         eprintln!("  {regime}: {count}");
     }
+    // Moving-bracket failure analysis — why E3 never wins (instrumentation, plan §8 Q1).
+    let mut stage_tally: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut moving_pass = 0usize;
+    let mut best_aligned_moving_post = f64::NAN; // best post among structure-aligned moving brackets
+    for c in cells {
+        for b in &c.eval.scores.brackets {
+            if b.move_frames == 0 {
+                continue;
+            }
+            if b.passed_gate {
+                moving_pass += 1;
+                continue;
+            }
+            if let Some(stage) = b.failure_stage {
+                *stage_tally.entry(stage).or_default() += 1;
+            }
+            // Brackets that reached the waveform floor stage are structure-aligned; their post
+            // Pearson tells us how far a moving bracket can get toward the 0.35 High floor.
+            if b.failure_stage == Some("waveform_floor") {
+                if let Some(post) = b.post_pearson {
+                    best_aligned_moving_post = if best_aligned_moving_post.is_nan() {
+                        post
+                    } else {
+                        best_aligned_moving_post.max(post)
+                    };
+                }
+            }
+        }
+    }
+    eprintln!(
+        "  moving brackets: {moving_pass} passed; failure stages: {stage_tally:?}; best aligned-moving post_pearson={best_aligned_moving_post:.4} (High floor 0.35)"
+    );
+
     let pocket = anchor_rescue_pocket(cells);
     if pocket.is_empty() {
         eprintln!("  E3 pocket: EMPTY — no AnchorRescuePossible cell (plan §5.2.8)");

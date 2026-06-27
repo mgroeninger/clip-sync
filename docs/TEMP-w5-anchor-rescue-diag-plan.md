@@ -445,8 +445,30 @@ Document locked `(peak_offset, fill_border_search)` in fixture module doc commen
 
 ## 8. Open questions
 
-1. **Independent B shift** — should `b_shift_secs` diverge from A `peak_offset_secs` if post seam
-   stays weak at anchor bracket?
+1. **Independent B shift** — ~~should `b_shift_secs` diverge from A `peak_offset_secs`?~~
+   **FALSIFIED (2026-06-27).** `build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift` +
+   `decoupled_w5_grid` (`diag_w5_anchor_rescue_decoupled_grid`): fixed `peak_offset=1.0`, swept
+   `search ∈ [0.3,0.7]`, `b_shift ∈ [0.6,1.4]` → 42 cells, **0 `AnchorRescuePossible`, 0 `Anchor`
+   joint wins**. Decoupling the B fill location did **not** make any *moving* bracket pass.
+   **Stronger structural finding:** across **all ~150 cells** evaluated (coupled coarse 81 + refine 30
+   + decoupled 42), `passing_bracket_count` is never > 1 and the single passer is always **`move=0`**
+   — i.e. *no moving anchor bracket ever passes the seam gate in this fixture family*, regardless of
+   `(peak_offset, search, b_shift)`. So the blocker is **not** where the fill lives on B; it is
+   structural to how moving brackets are constructed/scored. **Mechanism (instrumented, 2026-06-27):**
+   `W5BracketGateScore.failure_stage` now captures the `SeamGateFailure` stage + measured pre/post
+   for rejected brackets, tallied across the sweep. Decoupled grid (42 cells): moving-bracket
+   failures = **`structure_align` ×24, `waveform_floor` ×12**, and the **best post Pearson of any
+   structure-aligned moving bracket = 0.0258** (vs 0.35 High floor) — flat across all `b_shift`. So
+   when a moved boundary aligns at all, its post seam is essentially dead; the fixture (delayed copy
+   of A + fill at the shifted dropout) simply contains no B content that matches the *editorial-anchor*
+   seam — only the throat/`move=0` placement matches. This is **not** tunable (0.026 vs 0.35 is not a
+   near-miss), not ranking, not `b_shift`. **Decision needed** (not more sweeps): (a) redesign the
+   fixture so editorial-anchor seams have matchable B content while the throat stays weak — a from-
+   scratch B-content construction, significant effort, uncertain payoff; (b) validate anchor rescue on
+   **real corpus** content where editorial anchors naturally carry matchable B (defer §8 Q2 chirp bed /
+   real W5 corpus); or (c) accept routing E3 as proven (`route_w5_anchor_rescue_e3`, scripted) and keep
+   A6 pipeline `#[ignore]` with this documented synthetic-fixture limitation, deferring real-PCM
+   measurement to corpus.
 2. **Chirp bed on silence** — W5 corpus uses quiet chirp for scan; add to A6 fixture for structure
    without helping baseline High?
 3. **Soft CI gate** — optional `#[ignore]` test “coarse grid reports ≥1 E3 pocket” (diagnostic only,
