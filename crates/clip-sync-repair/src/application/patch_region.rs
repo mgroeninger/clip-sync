@@ -1907,6 +1907,42 @@ mod tests {
         assert_eq!(seam_post_gate_frames(12_000, 96_000), 12_000);
     }
 
+    // ---- structure_passes_gate: short gap accepts on the mean; long gap requires both sides ----
+    // (Direct unit coverage of the structural twin of `seams_pass_correlation_gate`, which was only
+    // exercised through the audio pipeline before.) min = 0.35, short-gap threshold = 2.0 s.
+
+    #[test]
+    fn structure_gate_short_gap_accepts_on_mean() {
+        // gap_secs <= 2.0 → mean(pre,post) >= 0.35 is enough, even with one weak side.
+        assert!(structure_passes_gate(0.60, 0.20, 0.35, 1.0, 2.0)); // mean 0.40 ≥ 0.35
+        assert!(!structure_passes_gate(0.20, 0.20, 0.35, 1.0, 2.0)); // mean 0.20 < 0.35
+        assert!(structure_passes_gate(0.35, 0.35, 0.35, 1.0, 2.0)); // mean exactly at floor
+    }
+
+    #[test]
+    fn structure_gate_long_gap_requires_both_sides() {
+        // gap_secs > 2.0 → BOTH sides must clear 0.35; the mean is irrelevant.
+        assert!(structure_passes_gate(0.60, 0.50, 0.35, 5.0, 2.0)); // both ≥ 0.35
+        assert!(!structure_passes_gate(0.60, 0.34, 0.35, 5.0, 2.0)); // post just under
+        assert!(structure_passes_gate(0.35, 0.35, 0.35, 5.0, 2.0)); // both exactly at floor
+    }
+
+    #[test]
+    fn structure_gate_short_vs_long_diverge_on_same_scores() {
+        // The load-bearing branch: identical asymmetric scores pass as a short gap (mean) but fail
+        // as a long gap (both-sides).
+        let (pre, post) = (0.60, 0.20);
+        assert!(structure_passes_gate(pre, post, 0.35, 1.0, 2.0));
+        assert!(!structure_passes_gate(pre, post, 0.35, 5.0, 2.0));
+    }
+
+    #[test]
+    fn structure_gate_threshold_boundary_is_short_gap_inclusive() {
+        // gap_secs == short_gap threshold uses the mean branch (the `<=`).
+        assert!(structure_passes_gate(0.50, 0.20, 0.35, 2.0, 2.0)); // mean 0.35 at the 2.0 s boundary
+        assert!(!structure_passes_gate(0.50, 0.20, 0.35, 2.0001, 2.0)); // just past → both-sides → post fails
+    }
+
     // ---- Step 4/5: number-driven orchestration tests (gap-type → FitCandidateSource script, §10) ----
 
     use crate::domain::gap_anchor_seam::{AnchorCandidate, AnchorSeamSide, AnchorSource};
