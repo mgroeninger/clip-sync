@@ -63,22 +63,37 @@ pub(crate) fn baseline_only_accepts(search: FitBoundarySearch, confidence: FillC
         && matches!(confidence, FillConfidence::High | FillConfidence::Marginal)
 }
 
+/// Total order on `ranking_score`: finite values compare naturally; **`NaN` ranks lowest**.
+///
+/// `ranking_score` can be `NaN` when both seam Pearsons are `NaN` (zero-variance borders) and the
+/// candidate is kept alive only by residual rescue. The old `partial_cmp(...).unwrap_or(Equal)` made
+/// such a value compare `Equal` to everything — a **non-transitive** comparator, which
+/// `max_by`/`sort_by` rely on being a total order (otherwise the winner is unspecified). Ranking
+/// `NaN` lowest keeps the order total *and* ensures an undefined-seam candidate can never win.
+fn ranking_total_cmp(a: f64, b: f64) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ord) => ord,
+        None => match (a.is_nan(), b.is_nan()) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => Ordering::Equal,
+        },
+    }
+}
+
 /// `max_by` order for *selecting* the best candidate: higher `ranking_score`, then higher
 /// `boundary_move`. Faithful to `patch_region::joint_candidate_ranking_cmp` (ranking asc, then move
-/// asc) used with `Iterator::max_by`.
+/// asc) used with `Iterator::max_by`; total over all `f64` (NaN-least, see [`ranking_total_cmp`]).
 pub(crate) fn selection_cmp(a: &CandidateScore, b: &CandidateScore) -> Ordering {
-    a.ranking_score
-        .partial_cmp(&b.ranking_score)
-        .unwrap_or(Ordering::Equal)
+    ranking_total_cmp(a.ranking_score, b.ranking_score)
         .then_with(|| a.boundary_move.cmp(&b.boundary_move))
 }
 
 /// `sort_by` order for the residual winner walk: higher `ranking_score` first, then **smaller**
-/// `boundary_move`. Faithful to the sort in `select_joint_fit_winner_with_residual`.
+/// `boundary_move`. Faithful to the sort in `select_joint_fit_winner_with_residual`; total over all
+/// `f64` (NaN-least, see [`ranking_total_cmp`]).
 pub(crate) fn winner_cmp(a: &CandidateScore, b: &CandidateScore) -> Ordering {
-    b.ranking_score
-        .partial_cmp(&a.ranking_score)
-        .unwrap_or(Ordering::Equal)
+    ranking_total_cmp(b.ranking_score, a.ranking_score)
         .then_with(|| a.boundary_move.cmp(&b.boundary_move))
 }
 
@@ -194,5 +209,92 @@ mod tests {
         assert!(!terminates_high(FillConfidence::Marginal));
         assert!(!baseline_only_accepts(FitBoundarySearch::FullGrid, FillConfidence::Marginal));
         assert!(terminates_high(FillConfidence::High));
+    }
+
+    // ---- Comparator total-order laws (incl. NaN), the property `max_by`/`sort_by` require ----
+
+    /// Curated `CandidateScore`s spanning the interesting `ranking_score` edge cases (incl. `NaN`,
+    /// `±inf`, `±0.0`) crossed with two `boundary_move`s — exhaustive over the cases that matter.
+    fn law_corpus() -> Vec<CandidateScore> {
+        let ranks = [
+            f64::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            0.5,
+            1.0,
+            f64::INFINITY,
+            f64::NAN,
+        ];
+        let mut out = Vec::new();
+        for &r in &ranks {
+            for &m in &[0usize, 7usize] {
+                out.push(cand(FillConfidence::High, m, r));
+            }
+        }
+        out
+    }
+
+    /// Assert `cmp` is a strict total order over `items`: reflexive, antisymmetric, transitive.
+    fn assert_total_order(
+        items: &[CandidateScore],
+        cmp: impl Fn(&CandidateScore, &CandidateScore) -> Ordering,
+        label: &str,
+    ) {
+        for a in items {
+            assert_eq!(cmp(a, a), Ordering::Equal, "{label}: not reflexive");
+            for b in items {
+                assert_eq!(
+                    cmp(a, b),
+                    cmp(b, a).reverse(),
+                    "{label}: not antisymmetric (rank {} vs {})",
+                    a.ranking_score,
+                    b.ranking_score
+                );
+            }
+        }
+        for a in items {
+            for b in items {
+                for c in items {
+                    if cmp(a, b) != Ordering::Greater && cmp(b, c) != Ordering::Greater {
+                        assert_ne!(
+                            cmp(a, c),
+                            Ordering::Greater,
+                            "{label}: not transitive (ranks {}, {}, {})",
+                            a.ranking_score,
+                            b.ranking_score,
+                            c.ranking_score
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selection_and_winner_cmp_are_total_orders_including_nan() {
+        let corpus = law_corpus();
+        assert_total_order(&corpus, |a, b| selection_cmp(a, b), "selection_cmp");
+        assert_total_order(&corpus, |a, b| winner_cmp(a, b), "winner_cmp");
+    }
+
+    #[test]
+    fn nan_ranking_never_wins() {
+        // A NaN-seam candidate (kept alive only by residual rescue) must rank last, never win.
+        let pool = vec![
+            cand(FillConfidence::High, 0, f64::NAN),
+            cand(FillConfidence::High, 0, 0.5),
+        ];
+        assert_eq!(
+            pool.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().ranking_score,
+            0.5,
+            "NaN must not win selection (max_by)"
+        );
+        let mut winner = pool.clone();
+        winner.sort_by(|a, b| winner_cmp(a, b));
+        assert_eq!(
+            winner[0].ranking_score, 0.5,
+            "NaN must not be the winner (sort_by first)"
+        );
     }
 }

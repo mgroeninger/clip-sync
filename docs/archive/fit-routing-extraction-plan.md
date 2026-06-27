@@ -340,4 +340,13 @@ Notes:
   deliberate test seam.
 - (review fix) Added `route_residual_veto_falls_through_to_next_candidate` (the residual-veto
   fall-through in `select_joint_fit_winner_with_residual` was previously unexercised by the fake) and
-  made `ScriptedFitSource::score_calls` load-bearing (asserts the full grid is scored).
+  made `ScriptedFitSource::score_calls` load-bearing (asserts the full grid is scored). Also added the
+  E4 (anchor-marginal-accept) case so all seven exits are covered.
+- (correctness hardening) `ranking_score` can be `NaN` (both seam Pearsons `NaN` on zero-variance
+  borders, kept alive by residual rescue under `VetoRescue`). The old `partial_cmp(...).unwrap_or(
+  Equal)` made `NaN` compare `Equal` to everything → a **non-transitive** comparator (UB-adjacent for
+  `max_by`/`sort_by`). Fixed in `fit_routing` via `ranking_total_cmp` (NaN ranks **lowest** → can
+  never win), with total-order law tests (`selection_cmp`/`winner_cmp` over finite/±inf/±0/NaN) +
+  `nan_ranking_never_wins`. Finite behaviour is unchanged (production parity). Surfaced by the
+  property-testing discussion; done **without** adding a property-test dependency, matching the repo's
+  example-based convention.
