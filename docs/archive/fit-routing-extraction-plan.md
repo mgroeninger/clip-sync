@@ -1,9 +1,9 @@
 # Fit-joint routing extraction — plan (DRAFT)
 
-Status: **steps 1–3 done** (3a delegation + 3b `defer_residual` collapse). Single always-pool path;
-the debug-flips-the-path foot-gun is eliminated. lib + characterization + residual-equivalence +
-`patch_audio_integration` + `validate_residual_gate` all green. **Steps 4–5 in progress** (number-driven
-payoff suite + `CandidateScorer` seam for composed orchestration assertions).
+Status: **steps 1–5 done.** 3a delegation + 3b `defer_residual` collapse → single always-pool path
+(debug-flips-the-path foot-gun gone); step 5 `FitCandidateSource` seam makes the orchestration
+number-testable; step 4 ships the gap-type → script matrix as fast `route_*` tests. lib 290/0 +
+characterization green; `patch_audio_integration` re-verifying after the step-5 split.
 
 > **As-built note (doc reconciled to the code):** §§2–6 originally sketched a *monolithic*
 > `route_fit_joint(baseline, anchors, grid) → Decision`. The landed design is **surgical delegation**:
@@ -211,15 +211,17 @@ residual measurement is disabled, finalize is a no-op, so one path serves both.
   > returned `Err` (skip). A live foot-gun instance (debug logging flipped which one ran). Collapsed
   > to the **defer/production** behavior (locked by characterization F4, used under residual-gating);
   > full suite confirms nothing relied on the non-defer skip.
-- [~] **4. Payoff suite** (number-driven routing tests). Rule-level assertions already exist (step 2's
-  8 `fit_routing` tests). The *composed orchestration* assertions — exit precedence, "anchor never
-  invoked", the `force` fall-through — need step 5's seam (the driver, not a pure fn, owns precedence);
-  tier classification is already in `gap_tags`. **The concrete test list is the gap-type → script
-  matrix in §10.**
-- [ ] **5. `FitCandidateSource` seam** (wanted) — put the audio-touching operations behind a trait so
-  `evaluate_seam_gate_fit_joint` runs against a fake with scripted scores/brackets. **Design in §9.**
-  Enables the §10 matrix as fast deterministic number tests. Moderate refactor (inject the source into
-  the orchestration; production wires the real audio-backed source).
+- [x] **5. `FitCandidateSource` seam** — landed (design §9). `evaluate_seam_gate_fit_joint` now splits
+  into a thin public wrapper (builds `FitJointConfig` + `AudioFitSource`) and
+  `evaluate_seam_gate_fit_joint_core(baseline, &config, &mut dyn FitCandidateSource)`. The three
+  audio ops (score / anchor_brackets / finalize_residual) are behind the trait; grid geometry stays in
+  the core. Production = `AudioFitSource` (behaviour-identical: lib 290/0, characterization 10/0,
+  `patch_audio_integration` verifying). No warnings.
+- [x] **4. Payoff suite** — 6 number-driven `route_*` tests on `evaluate_seam_gate_fit_joint_core` via
+  `ScriptedFitSource` (per the §10 matrix): E1 + anchor-never-invoked (call counter), E2, W5 skip,
+  **W5-skip-vs-rescue E3** (the blind spot as a two-line diff), force fall-through E5, grid-High E6.
+  Run in ~0 ms, no audio. Rule-level coverage (step 2's `fit_routing` tests) + tier (`gap_tags`)
+  complete the picture.
 
 ## 8. What stays fixture-bound
 
