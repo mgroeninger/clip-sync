@@ -1,5 +1,11 @@
 # Residual / floor gate — findings ledger
 
+> **Status:** **Shipped** (2026-06-26). Build ledger for P0→P4 residual/floor gate work; validity
+> contract **C1a + C2–C4** complete. **Archived** (2026-06-26). Living test contract:
+> [`crates/clip-sync-repair/tests/residual_gate_catalog/`](../../crates/clip-sync-repair/tests/residual_gate_catalog/).
+> Open follow-ups: [BACKLOG.md](../../BACKLOG.md) § Residual gate follow-ups. Outbound doc links are
+> relative to `docs/archive/`.
+
 Bugs, gaps, regressions, and smells found while building the residual/floor work (P0 prototype →
 P1 plumbing → P4 default `veto`). Companion to
 [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).

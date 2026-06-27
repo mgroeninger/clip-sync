@@ -69,7 +69,7 @@ here and [BACKLOG.md](../BACKLOG.md) Active plans.
 | Item | Notes |
 |------|--------|
 | **`diag_repair_golden`** | Deferred binary for `write_full_surface_repair_golden` (today: `--lib` + diagnostic tier name filter). |
-| **Doc grep** | Opportunistic fixes in `residual-gate-findings.md`, catalog READMEs for pre-migration paths (e.g. `energy_signature_production.rs`). |
+| **Doc grep** | Opportunistic fixes in `archive/residual-gate-findings.md`, catalog READMEs for pre-migration paths (e.g. `energy_signature_production.rs`). |
 
 ---
 

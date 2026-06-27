@@ -1,5 +1,14 @@
 # Residual / floor gate — end-to-end wiring design
 
+> **Status:** **Shipped** (2026-06-26). Default `residual_gate = veto`; unified lag radius;
+> `apply_residual_to_confidence`; config/CLI; reporting (`residual_band`, `donor_relation`). Validity
+> contract **C1a + C2–C4** complete; `veto_rescue` opt-in (G5: not default). **Archived**
+> (2026-06-26). User-facing behavior: [gap-fill-modes.md](../gap-fill-modes.md),
+> [gap-repair-guide.md](../gap-repair-guide.md). Test contract:
+> [`residual_gate_catalog/`](../../crates/clip-sync-repair/tests/residual_gate_catalog/). Follow-ups:
+> [BACKLOG.md](../../BACKLOG.md) § Residual gate follow-ups. Outbound links relative to
+> `docs/archive/`.
+
 Status: **P1 + P2 + P4 shipped** (default `residual_gate = veto`). Implemented: unified lag
 radius, `SeamResidualVerdict.informative`, fit-mode measurement, `apply_residual_to_confidence`,
 config/CLI, `ResidualHeadroomExceeded` skip reason, residual scalars on `Patched`, `residual_band`
@@ -10,7 +19,7 @@ per-gap tag, `donor_relation` run diagnostic, real-codec gate oracle (AAC + Vorb
 Builds on the floor/residual primitives in `policies.rs` (`seam_chosen_and_floor`,
 `seam_floor_probe`) and the corpus experiments in `tests/seam_residual_corpus.rs`.
 
-Companions: [seam-scoring.md](seam-scoring.md) (seam mechanics), [gap-fill-modes.md](gap-fill-modes.md)
+Companions: [seam-scoring.md](../seam-scoring.md) (seam mechanics), [gap-fill-modes.md](../gap-fill-modes.md)
 (fit/gate, tiers), [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) (the floor's other use).
 
 ---
@@ -285,8 +294,8 @@ echo** fixture (not F4).
 
 ## Related
 - [seam-scoring.md](seam-scoring.md) — seam pre/post mechanics the gate composes with
-- [gap-fill-modes.md](gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
-- [gap-repair-guide.md](gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
+- [gap-fill-modes.md](../gap-fill-modes.md) — fit tiers (`classify_fill_waveform_confidence`)
+- [gap-repair-guide.md](../gap-repair-guide.md) — vocabulary to extend (`residual_band`, `donor_relation`)
 - [nway-donor-alignment-plan.md](nway-donor-alignment-plan.md) — the floor's multi-donor use
-- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (L9–L13 fixed; fractional-delay deferred)
+- [residual-gate-findings.md](residual-gate-findings.md) — bug/gap/smell ledger (archived)
 - `tests/seam_residual_corpus.rs` — the experiments grounding §2 and §4e

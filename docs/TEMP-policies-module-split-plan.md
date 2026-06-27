@@ -5,7 +5,7 @@ lines) into a `policies/` directory with a stable `crate::domain::policies::*` r
 **Opportunistic** — do alongside seam/residual work, not as a standalone refactor.
 
 Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (shipped)
-(first extraction target), [residual-gate-findings.md](residual-gate-findings.md) (L12 prototype
+(first extraction target), [archive/residual-gate-findings.md](archive/residual-gate-findings.md) (L12 prototype
 retirement), [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
 
 ---
@@ -93,7 +93,7 @@ live in `seam_residual.rs` or `residual_gate.rs` — pick one home; re-export fr
 
 ### 4d. Retire prototype path (optional, same PR as `seam_residual` extract)
 
-[residual-gate-findings.md](residual-gate-findings.md) **L12**: `seam_residual_diagnostics` /
+[archive/residual-gate-findings.md](archive/residual-gate-findings.md) **L12**: `seam_residual_diagnostics` /
 `SeamResidual` are test-only. When extracting `seam_residual.rs`, either delete the prototype or
 move it to `seam_residual.rs` behind `#[cfg(test)]` with a one-line doc comment. Do not leave dead
 `floor_db` / `frac_lag` fields on the hot path (L9, L10).
@@ -139,6 +139,6 @@ landings keep diffs reviewable.
 ## Related
 
 - [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) — shipped; P1 trigger for `seam_residual.rs` split
-- [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) — gate wiring (orthogonal)
-- [residual-gate-findings.md](residual-gate-findings.md) — L9–L13 smells to clean during P1
+- [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) — gate wiring (orthogonal)
+- [archive/residual-gate-findings.md](archive/residual-gate-findings.md) — L9–L13 smells to clean during P1
 - `crates/clip-sync-repair/src/domain/policies.rs` — current monolith

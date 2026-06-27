@@ -76,7 +76,7 @@ border templates
   → residual veto/rescue (default on; measured lazily at pool selection when residual_gate active)
 ```
 
-Unified search **jointly** scores structure and waveform when sliding B — it is not “structure match, then waveform gate” as separate placement passes. See [seam-scoring.md](seam-scoring.md) for how `pre`/`post` are built; see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) for headroom veto / dead-zone rescue.
+Unified search **jointly** scores structure and waveform when sliding B — it is not “structure match, then waveform gate” as separate placement passes. See [seam-scoring.md](seam-scoring.md) for how `pre`/`post` are built; see [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) for headroom veto / dead-zone rescue.
 
 - **No** structure-trust waveform skip, **no** one-strong-seam / mean-only waveform shortcuts.
 - `structure_trusted` is always `false` in JSON.
@@ -195,7 +195,7 @@ The fit-mode **residual/floor** measurement follows the *same* selected channels
 | `veto_rescue` | no | Also upgrade Pearson dead-zone skips when cancellation is strong |
 | `off` | no | Measure only when `measure_residual` / debug |
 
-Design: [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md). JSON: `residual_band`, `residual_db` / `floor_db` / `headroom_db`; skip reason `residual_headroom_exceeded`.
+Design: [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md). JSON: `residual_band`, `residual_db` / `floor_db` / `headroom_db`; skip reason `residual_headroom_exceeded`.
 
 ```toml
 [repair]

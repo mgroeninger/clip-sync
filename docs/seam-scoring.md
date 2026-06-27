@@ -57,7 +57,7 @@ Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom chann
 
 ## 3. Seam correlation (peak-normalized Pearson)
 
-`seam_pearson` correlates two equal-length windows. **Pearson correlation is itself scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. (The `peak_normalize_f64` call in this path is therefore a no-op — it cannot change the correlation — and is dead work; see [residual-gate-findings.md](residual-gate-findings.md) G2. The level-invariance is a property of Pearson, not of that call.) It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) §2).
+`seam_pearson` correlates two equal-length windows via `normalized_correlation` (z-score Pearson). **Pearson correlation is scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) §2).
 
 ## 4. Pre/post windows at a placement
 

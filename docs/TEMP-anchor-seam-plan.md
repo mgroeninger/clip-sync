@@ -3,7 +3,7 @@
 Status: **done** — P0–P4 + Batch A–F (Pearson gate, xcorr, observability, user docs, corpus/diag).
 
 Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
-Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
+Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md).
 
 ---
 
@@ -132,7 +132,7 @@ When **both** anchors pass matchability on B:
 - **High / marginal** from anchor Pearson or envelope+residual compose (extend
   `classify_fill_waveform_confidence` / sibling).
 - When anchor windows are **low-RMS but residual cancels** → marginal via rescue (same invariant as
-  [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) §2).
+  [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) §2).
 - When structure confident at anchors but Pearson dead at throat → **`anchor_trusted`** patch tier
   (fit mode; vocabulary tag), with residual veto unchanged.
 
@@ -504,5 +504,5 @@ Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (ca
 |-----|----------|
 | [seam-scoring.md](seam-scoring.md) | Current seam definition, 250 ms throat |
 | [gap-repair-guide.md](gap-repair-guide.md) | W5, tiers, vocabulary |
-| [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) | Pearson vs residual on quiet seams |
+| [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) | Pearson vs residual on quiet seams |
 | [archive/energy-signature-plan.md](archive/energy-signature-plan.md) | Structure tier shipped |

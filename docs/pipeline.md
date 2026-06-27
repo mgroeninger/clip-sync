@@ -135,7 +135,7 @@ Steps 3–7 in the old pedagogical list are **one joint search + gates**, not se
 
 Structure match on B → structure gate → waveform Pearson (optional structure-trust skip) → on failure, reactive extend end then start. No anchor seam, no residual gate, no unified fit search. See [gap-fill-modes.md](gap-fill-modes.md) § `fill_mode = gate`.
 
-- **References:** [gap-fill-modes.md](gap-fill-modes.md) (routing, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering), [seam-scoring.md](seam-scoring.md) (seam mechanics), [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (residual gate).
+- **References:** [gap-fill-modes.md](gap-fill-modes.md) (routing, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering), [seam-scoring.md](seam-scoring.md) (seam mechanics), [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) (residual gate design record).
 - **Config:** `fill_mode`, `anchor_seam_mode`, `residual_gate`, `residual_*`, `fit_boundary_search`, plus §3 fill-plan knobs.
 - **Code:** `application/patch_audio.rs`, `application/patch_region.rs`, `application/fit_routing.rs`, `domain/gap_fill_fit.rs`, `domain/gap_structure.rs`, `domain/gap_energy.rs`, `domain/gap_anchor_seam.rs`.
 
@@ -167,7 +167,7 @@ Report-only / scan-only mode (default `dry_run = true`, no output paths) runs ph
 - [gap-repair-guide.md](gap-repair-guide.md) — reading and steering a repair run
 - [gap-fill-modes.md](gap-fill-modes.md) — `fit` vs `gate`, flag interactions, performance
 - [seam-scoring.md](seam-scoring.md) — how `pre`/`post` seams are identified and scored
-- [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) — residual/floor gate (fit mode, default `veto`)
+- [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) — residual/floor gate (fit mode, default `veto`; archived design record)
 - [cli-output.md](cli-output.md) / [json-output.md](json-output.md) — report layout
 - [corpus-validation.md](corpus-validation.md) — test corpus and acceptance
 - [PLAN.md](../PLAN.md) — architecture and application sketch

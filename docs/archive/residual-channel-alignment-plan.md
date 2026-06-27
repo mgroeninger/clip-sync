@@ -1,7 +1,7 @@
 # Residual channel alignment — plan
 
 > **Status:** **Shipped** (2026-06-26). P0–P1.5 complete, including Pearson/residual channel-selection
-> parity tests. The residual gate ([residual-gate-wiring-plan.md](../residual-gate-wiring-plan.md)) was
+> parity tests. The residual gate ([residual-gate-wiring-plan.md](residual-gate-wiring-plan.md)) was
 > already default-on (`residual_gate = veto`); this work re-based its inputs (`worst_headroom_db` +
 > `informative`) onto channel-aligned measurements — **live in production decisions**, not a
 > report-only improvement. There was no separate “P2 gate” in this plan: the gate was wired earlier;
@@ -16,7 +16,7 @@ it diverged from the original sketch (verdict stays `Copy`/scalar-only; explicit
 lag via summed correlation, not a mono downmix**) the reason is noted inline.
 
 Companions: [seam-scoring.md](../seam-scoring.md) (Pearson channel selection),
-[residual-gate-wiring-plan.md](../residual-gate-wiring-plan.md) (gate wiring),
+[residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) (gate wiring),
 [gap-fill-modes.md](../gap-fill-modes.md) § Multichannel seams.
 
 ---
@@ -183,7 +183,7 @@ CSV per-channel calibration columns; `fill_repeat_correlations` energy selection
 | **P1 — pipeline** | **Done** — `measure_fit_residual_verdict`, `log_residual_channel_breakdown` |
 | **P1.5 — multichannel fixtures** | **Done** — rows E/F/G |
 | **P1.6 — selection parity** | **Done** — `selected_seam_channels_matches_pearson_diagnostics` (unit); `seam_residual_channel_selection_matches_pearson` (integration) |
-| **P2 — gate** | **N/A** — gate shipped in [residual-gate-wiring-plan.md](../residual-gate-wiring-plan.md); this plan re-based gate inputs only |
+| **P2 — gate** | **N/A** — gate shipped in [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md); this plan re-based gate inputs only |
 
 ## 7. Test plan
 
@@ -248,7 +248,7 @@ All **met** (2026-06-26):
 ## Related
 
 - [seam-scoring.md](../seam-scoring.md) — Pearson channel selection (source of truth)
-- [residual-gate-wiring-plan.md](../residual-gate-wiring-plan.md) — headroom veto/rescue wiring
+- [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) — headroom veto/rescue wiring
 - [gap-repair-guide.md](../gap-repair-guide.md) — surround seam note (2026-06-23)
 - `domain/policies.rs` — `selected_seam_channels`, `seam_chosen_and_floor_multichannel`
 - `tests/seam_residual_oracle.rs` — end-to-end plumbing oracle

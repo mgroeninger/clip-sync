@@ -1499,4 +1499,4 @@ cargo test -p clip-sync --features validation-tests --test validate_alignment_co
 - [development.md](development.md) — build/test commands (update in Phase 1)
 - [corpus-validation.md](corpus-validation.md) — alignment corpus tiers (parallel pattern)
 - [crates/clip-sync-repair/tests/residual_gate_catalog/README.md](../crates/clip-sync-repair/tests/residual_gate_catalog/README.md) — RG contract catalog (legacy C1–C5)
-- [residual-gate-findings.md](residual-gate-findings.md) — shipped gate findings
+- [archive/residual-gate-findings.md](residual-gate-findings.md) — shipped gate findings
