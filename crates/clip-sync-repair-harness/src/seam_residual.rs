@@ -6,7 +6,7 @@ use clip_sync_repair::domain::gap_fill_fit::{
 };
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
-    interleaved_to_channels, interleaved_to_mono, seam_chosen_and_floor,
+    interleaved_to_channels, interleaved_to_mono, seam_channel_diagnostics, seam_chosen_and_floor,
     seam_chosen_and_floor_multichannel, selected_seam_channels, GapBorderSpec,
     DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamChannelResidual, SeamFloorParams, SeamFloorProbe, SeamPlacement,
     SeamResidualVerdict, SeamSide, SeamTemplates,
@@ -351,6 +351,112 @@ pub fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> Scored
     }
 }
 
+/// Owned seam-scoring inputs shared by [`score_placement_multichannel`] and
+/// [`pearson_and_residual_selected_channels`].
+struct MultichannelScoringSetup {
+    border_spec: GapBorderSpec,
+    ch: usize,
+    gap_start: usize,
+    gap_end: usize,
+    gap_frames: usize,
+    a_pre: Vec<f64>,
+    a_post: Vec<f64>,
+    a_pre_ch: Vec<Vec<f64>>,
+    a_post_ch: Vec<Vec<f64>>,
+    b_mono: Vec<f64>,
+    b_ch: Vec<Vec<f64>>,
+    pre_window: usize,
+    post_window: usize,
+}
+
+impl MultichannelScoringSetup {
+    fn from_fixture(fixture: &EnergySignatureFixture) -> Self {
+        let ch = fixture.channels.max(1);
+        let rate = fixture.sample_rate;
+        let gap_start = fixture.gap_start;
+        let gap_end = fixture.gap_end;
+        let gap_frames = gap_end - gap_start;
+        let geom = geometry_for(gap_frames, rate);
+
+        let border_spec = GapBorderSpec {
+            gap_start_frame: gap_start,
+            gap_end_frame: gap_end,
+            border_frames: geom.border_frames,
+            border_standoff_frames: geom.standoff_frames,
+            silence_peak_fraction: fixture.structure_params.silence_peak_fraction,
+            absolute_rms_floor: fixture.structure_params.absolute_silence_rms,
+        };
+        let (a_pre, a_post) = border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
+        let (a_pre_ch, a_post_ch) =
+            border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
+        let b_mono = interleaved_to_mono(&fixture.b_samples, ch);
+        let b_ch = interleaved_to_channels(&fixture.b_samples, ch);
+        let pre_window = geom.seam_gate_frames.min(a_pre.len().max(1));
+        let post_window = geom.seam_gate_frames.min(a_post.len()).max(1);
+
+        Self {
+            border_spec,
+            ch,
+            gap_start,
+            gap_end,
+            gap_frames,
+            a_pre,
+            a_post,
+            a_pre_ch,
+            a_post_ch,
+            b_mono,
+            b_ch,
+            pre_window,
+            post_window,
+        }
+    }
+
+    fn templates(&self) -> SeamTemplates<'_> {
+        SeamTemplates {
+            a_pre: &self.a_pre,
+            a_post: &self.a_post,
+            a_pre_ch: &self.a_pre_ch,
+            a_post_ch: &self.a_post_ch,
+            b_mono: &self.b_mono,
+            b_ch: &self.b_ch,
+        }
+    }
+
+    fn placement(&self, start: usize) -> SeamPlacement {
+        SeamPlacement {
+            start,
+            gap_frames: self.gap_frames,
+            pre_window: self.pre_window,
+            post_window: self.post_window,
+        }
+    }
+
+    fn pearson_selected(&self, start: usize) -> Vec<usize> {
+        seam_channel_diagnostics(&self.templates(), self.placement(start)).selected
+    }
+
+    fn residual_selected(&self, a_samples: &[f32]) -> Vec<usize> {
+        selected_seam_channels(a_samples, self.ch, &self.border_spec)
+            .into_iter()
+            .filter(|&c| c < self.b_ch.len())
+            .collect()
+    }
+}
+
+/// Energy-selected channels from the Pearson path vs the residual path at `start`.
+/// Both must match when A and B have the same channel layout (production filters residual to
+/// channels present on B).
+pub fn pearson_and_residual_selected_channels(
+    fixture: &EnergySignatureFixture,
+    start: usize,
+) -> (Vec<usize>, Vec<usize>) {
+    let setup = MultichannelScoringSetup::from_fixture(fixture);
+    (
+        setup.pearson_selected(start),
+        setup.residual_selected(&fixture.a_samples),
+    )
+}
+
 /// Multichannel result of [`score_placement_multichannel`]: the production verdict (built from the
 /// energy-selected channels), the channels selected, and the per-side per-channel residuals for CSV.
 pub struct ScoredPlacementMultichannel {
@@ -372,38 +478,18 @@ pub fn score_placement_multichannel(
     fixture: &EnergySignatureFixture,
     start: usize,
 ) -> ScoredPlacementMultichannel {
-    let ch = fixture.channels.max(1);
+    let setup = MultichannelScoringSetup::from_fixture(fixture);
+    let ch = setup.ch;
+    let gap_start = setup.gap_start;
+    let gap_end = setup.gap_end;
+    let gap_frames = setup.gap_frames;
+    let pre_window = setup.pre_window;
+    let post_window = setup.post_window;
+    let b_mono = &setup.b_mono;
+    let b_ch = &setup.b_ch;
+    let templates = setup.templates();
+    let placement = setup.placement(start);
     let rate = fixture.sample_rate;
-    let gap_start = fixture.gap_start;
-    let gap_end = fixture.gap_end;
-    let gap_frames = gap_end - gap_start;
-    let geom = geometry_for(gap_frames, rate);
-
-    let border_spec = GapBorderSpec {
-        gap_start_frame: gap_start,
-        gap_end_frame: gap_end,
-        border_frames: geom.border_frames,
-        border_standoff_frames: geom.standoff_frames,
-        silence_peak_fraction: fixture.structure_params.silence_peak_fraction,
-        absolute_rms_floor: fixture.structure_params.absolute_silence_rms,
-    };
-    let (a_pre, a_post) = border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
-    let (a_pre_ch, a_post_ch) =
-        border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
-    let b_mono = interleaved_to_mono(&fixture.b_samples, ch);
-    let b_ch = interleaved_to_channels(&fixture.b_samples, ch);
-
-    let pre_window = geom.seam_gate_frames.min(a_pre.len().max(1));
-    let post_window = geom.seam_gate_frames.min(a_post.len()).max(1);
-    let templates = SeamTemplates {
-        a_pre: &a_pre,
-        a_post: &a_post,
-        a_pre_ch: &a_pre_ch,
-        a_post_ch: &a_post_ch,
-        b_mono: &b_mono,
-        b_ch: &b_ch,
-    };
-    let placement = SeamPlacement { start, gap_frames, pre_window, post_window };
     let max_lag = residual_max_lag_frames(rate, DEFAULT_RESIDUAL_LAG_SECS);
     let (pearson_pre, pearson_post) = fill_seam_correlations(&templates, placement);
 
@@ -421,7 +507,7 @@ pub fn score_placement_multichannel(
         channels: ch,
         b_mono: &b_mono,
         window,
-        standoff_frames: geom.standoff_frames,
+        standoff_frames: setup.border_spec.border_standoff_frames,
         a_to_b_delta: delta_true,
         step_frames: window.max(1),
         max_walk_frames: rate as usize * 3,
@@ -430,10 +516,12 @@ pub fn score_placement_multichannel(
     };
 
     // Same selection production recomputes (`selected_seam_channels`), filtered to channels B has.
-    let selected: Vec<usize> = selected_seam_channels(&fixture.a_samples, ch, &border_spec)
-        .into_iter()
-        .filter(|&c| c < b_ch.len())
-        .collect();
+    let selected = setup.residual_selected(&fixture.a_samples);
+    debug_assert_eq!(
+        selected,
+        setup.pearson_selected(start),
+        "Pearson and residual channel selection must match at the harness placement"
+    );
 
     let (pre, post, verdict) = if selected.is_empty() {
         let (chosen_pre, floor_pre) =

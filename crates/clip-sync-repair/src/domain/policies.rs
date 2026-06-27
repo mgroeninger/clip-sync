@@ -3154,6 +3154,119 @@ mod tests {
         SeamFloorProbe { source: SeamFloorSource::Border, residual_db: db, gain: 1.0, best_lag: 0 }
     }
 
+    /// Pearson (`seam_channel_diagnostics`) and residual (`selected_seam_channels`) must agree on
+    /// which A-side channels carry border energy for a gap.
+    fn assert_channel_selection_parity(
+        a_samples: &[f32],
+        channels: usize,
+        spec: &GapBorderSpec,
+        b_ch: &[Vec<f64>],
+        placement: SeamPlacement,
+    ) {
+        let (a_pre, a_post) = border_templates_for_gap(a_samples, channels, spec);
+        let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, channels, spec);
+        let b_mono: Vec<f64> = b_ch
+            .first()
+            .map(|_| {
+                (0..b_ch[0].len())
+                    .map(|i| b_ch.iter().map(|ch| ch[i]).sum::<f64>() / b_ch.len() as f64)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch,
+        };
+        let pearson = seam_channel_diagnostics(&templates, placement).selected;
+        let residual = selected_seam_channels(a_samples, channels, spec);
+        assert_eq!(
+            pearson, residual,
+            "Pearson diagnostics and residual must select the same channels"
+        );
+    }
+
+    #[test]
+    fn selected_seam_channels_matches_pearson_diagnostics() {
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let border_frames = 128usize;
+        let standoff = 16usize;
+        let window = 128usize;
+        let start = gap_start;
+        let gap_frames = gap_end - gap_start;
+        let placement = || SeamPlacement {
+            start,
+            gap_frames,
+            pre_window: window,
+            post_window: window,
+        };
+
+        // Stereo, equal energy on both channels → both selected.
+        {
+            let total = 2000usize;
+            let channels = 2usize;
+            let l: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 4000.0).collect();
+            let r: Vec<f64> = (0..total).map(|i| (i as f64 * 0.4).cos() * 4000.0).collect();
+            let a_samples = interleave_a(&[l.clone(), r.clone()], 4000.0);
+            let b_ch = vec![l, r];
+            let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
+            assert_channel_selection_parity(
+                &a_samples,
+                channels,
+                &spec,
+                &b_ch,
+                placement(),
+            );
+            assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![0, 1]);
+        }
+
+        // Center-dominant 3ch: only FC crosses the ~20 dB energy gate.
+        {
+            let total = 2000usize;
+            let channels = 3usize;
+            let fc_b: Vec<f64> = (0..total)
+                .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
+                .collect();
+            let fl_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.53).sin() * 2000.0).collect();
+            let fr_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.91).cos() * 2000.0).collect();
+            let b_ch = vec![fl_b.clone(), fr_b.clone(), fc_b.clone()];
+            let fc_a: Vec<f64> = fc_b.iter().map(|s| s * 0.5).collect();
+            let fl_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.37).cos() * 2000.0).collect();
+            let fr_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.71).sin() * 2000.0).collect();
+            let a_samples = interleave_a(&[fl_a, fr_a, fc_a], 4000.0);
+            let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
+            assert_channel_selection_parity(
+                &a_samples,
+                channels,
+                &spec,
+                &b_ch,
+                placement(),
+            );
+            assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![2]);
+        }
+
+        // Near-silent borders → empty selection (mono fallback for both paths).
+        {
+            let total = 2000usize;
+            let channels = 2usize;
+            let a_samples = vec![0.0f32; total * channels];
+            let b_ch = vec![vec![0.0f64; total], vec![0.0f64; total]];
+            let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
+            assert_channel_selection_parity(
+                &a_samples,
+                channels,
+                &spec,
+                &b_ch,
+                placement(),
+            );
+            assert!(selected_seam_channels(&a_samples, channels, &spec).is_empty());
+        }
+    }
+
     #[test]
     fn seam_chosen_and_floor_multichannel_follows_center_when_fronts_are_noise() {
         // Center-dominant 5.1-style: FC carries same-master signal; FL/FR carry noise that does NOT

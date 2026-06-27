@@ -16,8 +16,8 @@ use clip_sync_repair::test_support::energy_signature_fixtures::{
     build_f1_production, build_f4_decoy_production, channel_noise, overwrite_channels,
 };
 use clip_sync_repair_harness::seam_residual::{
-    build_broadband, disagreement_at, score_placement, score_placement_multichannel,
-    GateOutcomeLabel, PearsonTierLabel, Variant,
+    build_broadband, disagreement_at, pearson_and_residual_selected_channels, score_placement,
+    score_placement_multichannel, GateOutcomeLabel, PearsonTierLabel, Variant,
 };
 
 #[test]
@@ -58,6 +58,49 @@ fn f4_decoy_placement_informative_with_high_headroom() {
     assert!(matches!(err, ResidualGateError::HeadroomExceeded { .. }));
 }
 
+/// Pearson seam scoring and residual/floor measurement must pick the same energy-selected channels.
+#[test]
+fn seam_residual_channel_selection_matches_pearson() {
+    let stereo = build_f1_production(48_000, 2, 3.0);
+    let (pearson, residual) =
+        pearson_and_residual_selected_channels(&stereo, stereo.true_fill_start);
+    assert_eq!(
+        pearson, residual,
+        "stereo F1: Pearson and residual channel selection must match"
+    );
+
+    let channels = 6usize;
+    let center = 2usize;
+    let mut center_dominant = build_f1_production(48_000, channels, 3.0);
+    let center_peak = center_dominant
+        .a_samples
+        .iter()
+        .skip(center)
+        .step_by(channels)
+        .fold(0.0f32, |m, &s| m.max(s.abs()));
+    let surr_amp = center_peak * 0.05;
+    let surrounds: Vec<usize> = (0..channels).filter(|&c| c != center).collect();
+    overwrite_channels(
+        &mut center_dominant.a_samples,
+        channels,
+        &surrounds,
+        channel_noise(0xA1, surr_amp),
+    );
+    overwrite_channels(
+        &mut center_dominant.b_samples,
+        channels,
+        &surrounds,
+        channel_noise(0xB2, surr_amp),
+    );
+    let (pearson, residual) =
+        pearson_and_residual_selected_channels(&center_dominant, center_dominant.true_fill_start);
+    assert_eq!(
+        pearson, residual,
+        "center-dominant 6ch: Pearson and residual channel selection must match"
+    );
+    assert_eq!(residual, vec![center]);
+}
+
 /// Center-dominant 6ch (plan §7 1a): the per-channel scoring path must follow the center channel —
 /// the only one carrying signal — for residual/floor, where a mono downmix would be diluted by the
 /// five quiet surrounds. This is the PR-CI guard on the now-live default-on veto for multichannel
@@ -84,6 +127,8 @@ fn seam_residual_center_dominant_follows_center_channel() {
     overwrite_channels(&mut fixture.b_samples, channels, &surrounds, channel_noise(0xB2, surr_amp));
 
     let truth = fixture.true_fill_start;
+    let (pearson_sel, residual_sel) = pearson_and_residual_selected_channels(&fixture, truth);
+    assert_eq!(pearson_sel, residual_sel, "Pearson and residual selection must match");
     let mc = score_placement_multichannel(&fixture, truth);
     let mono = score_placement(&fixture, truth);
 
