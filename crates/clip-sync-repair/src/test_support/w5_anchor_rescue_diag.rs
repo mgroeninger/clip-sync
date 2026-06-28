@@ -102,14 +102,14 @@ pub fn build_w5_cell(cell: &W5AnchorRescueCell) -> (EnergySignatureFixture, Repa
     (fixture, repair)
 }
 
-/// Anchor-search params matching the A6 domain oracle
-/// (`w5_fixture_throat_symmetric_weak_and_brackets_exist`).
-fn anchor_params(fixture: &EnergySignatureFixture) -> AnchorSeamParams {
+/// Anchor-search params; `min_prominence` comes from the repair so the diagnostic enumeration
+/// matches what the production joint routing admits.
+fn anchor_params(fixture: &EnergySignatureFixture, min_prominence: f32) -> AnchorSeamParams {
     AnchorSeamParams {
         context_frames: fixture.context_frames,
         max_anchors_per_side: 5,
         max_bracket_frames: (5.0 * fixture.sample_rate as f64).round() as usize,
-        min_prominence: 0.0,
+        min_prominence,
         structure: fixture.structure_params,
     }
 }
@@ -122,6 +122,10 @@ pub struct W5BracketGateScore {
     pub pre_frame: usize,
     pub post_frame: usize,
     pub move_frames: usize,
+    /// Energy-peak prominence of the pre/post anchors (`0` for scan-fallback). Drives candidate
+    /// filtering via `anchor_seam_min_prominence`.
+    pub pre_prominence: f32,
+    pub post_prominence: f32,
     pub passed_gate: bool,
     pub pre_pearson: Option<f64>,
     pub post_pearson: Option<f64>,
@@ -331,8 +335,9 @@ fn context_from_fixture(
     let baseline = preview.refined;
     let gap_frames = baseline.end_frame.saturating_sub(baseline.start_frame);
 
-    // Feasible brackets relative to the gate baseline (same helpers as the A6 domain oracle).
-    let aparams = anchor_params(&fixture);
+    // Feasible brackets relative to the gate baseline (same helpers as the A6 domain oracle);
+    // honor the repair's prominence floor so the enumeration matches the production joint.
+    let aparams = anchor_params(fixture, repair.anchor_seam_min_prominence);
     let candidates =
         list_anchor_candidates_a(&fixture.a_samples, fixture.channels, baseline, &aparams);
     let brackets = list_feasible_anchor_brackets(&candidates, baseline, &aparams);
@@ -376,6 +381,8 @@ fn score_brackets(ctx: &W5CellContext) -> Vec<W5BracketGateScore> {
                     pre_frame: bracket.pre.frame,
                     post_frame: bracket.post.frame,
                     move_frames: bracket.move_frames,
+                    pre_prominence: bracket.pre.prominence,
+                    post_prominence: bracket.post.prominence,
                     passed_gate: true,
                     pre_pearson: Some(pre),
                     post_pearson: Some(post),
@@ -390,6 +397,8 @@ fn score_brackets(ctx: &W5CellContext) -> Vec<W5BracketGateScore> {
                         pre_frame: bracket.pre.frame,
                         post_frame: bracket.post.frame,
                         move_frames: bracket.move_frames,
+                        pre_prominence: bracket.pre.prominence,
+                        post_prominence: bracket.post.prominence,
                         passed_gate: false,
                         pre_pearson: pre,
                         post_pearson: post,

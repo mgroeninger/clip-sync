@@ -160,9 +160,10 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
     eprintln!("  anchor_seam_would_run: {}", s.anchor_seam_would_run);
     eprintln!("  brackets: {}", s.brackets.len());
     for b in &s.brackets {
+        let prom = format!("prom(pre={:.3},post={:.3})", b.pre_prominence, b.post_prominence);
         if b.passed_gate {
             eprintln!(
-                "    move={} -> PASS pre={:.4} post={:.4} min={:.4} conf={:?}",
+                "    move={} {prom} -> PASS pre={:.4} post={:.4} min={:.4} conf={:?}",
                 b.move_frames,
                 b.pre_pearson.unwrap_or(f64::NAN),
                 b.post_pearson.unwrap_or(f64::NAN),
@@ -171,7 +172,7 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
             );
         } else {
             eprintln!(
-                "    move={} -> FAIL [{}] pre={} post={}",
+                "    move={} {prom} -> FAIL [{}] pre={} post={}",
                 b.move_frames,
                 b.failure_stage.unwrap_or("?"),
                 b.pre_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
@@ -186,19 +187,20 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
 /// docs/TEMP-w5-anchor-rescue-diag-plan.md §8 Q1.
 #[test]
 fn diag_w5_noise_collar() {
-    // (peak_offset=anchor distance, collar=noise width at gap, burst=anchor width, search_radius).
-    // Hunting a *fast* config: a near anchor that wins at a small radius (so A6 can run in debug).
-    for &(off, collar, burst, radius) in &[
-        (0.5_f64, 0.30_f64, 0.40_f64, 1.0_f64),
-        (0.6, 0.30, 0.50, 1.2),
-        (0.8, 0.40, 0.60, 1.5),
-        (1.0, 0.60, 1.00, 5.0), // known-good reference (slow)
+    // (peak_offset, collar, burst, search_radius, min_prominence). Short triangular bursts + a
+    // prominence floor between collar (~0.10 log-RMS) and burst should give ONE clean winner.
+    for &(off, collar, burst, radius, prom) in &[
+        (0.5_f64, 0.30_f64, 0.08_f64, 1.0_f64, 0.10_f32),
+        (0.5, 0.30, 0.08, 1.0, 0.12),
+        (0.5, 0.30, 0.06, 1.0, 0.10),
+        (0.6, 0.30, 0.10, 1.2, 0.12),
     ] {
         let fixture = build_w5_noise_collar_anchor_rescue(48_000, 1, off, collar, burst);
-        let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, radius);
+        let mut repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, radius);
+        repair.anchor_seam_min_prominence = prom;
         let scores = score_w5_fixture(&fixture, &repair);
         print_fixture_scores(
-            &format!("noise_collar off={off} collar={collar} burst={burst} radius={radius}"),
+            &format!("noise_collar off={off} collar={collar} burst={burst} radius={radius} prom={prom}"),
             &scores,
         );
     }

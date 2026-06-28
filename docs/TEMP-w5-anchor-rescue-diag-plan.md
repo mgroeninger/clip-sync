@@ -479,11 +479,20 @@ Document locked `(peak_offset, fill_border_search)` in fixture module doc commen
    PatchAudio anchor rescue ~40 s release, times out in debug) — run in release via
    `test-tier.ps1` (`Invoke-RepairDiagnostic`, `--release … --ignored`).
 
-   **Follow-up (quality, not blocking):** the winning bracket is a *near* anchor now (move ~1.15 s),
-   but the fixture still admits several non-winning brackets and the burst geometry could be tightened
-   so the intended symmetric pair is unambiguously the winner; also consider raising
-   `anchor_seam_min_prominence` so the noise collar can't spawn spurious anchor candidates (would also
-   speed up the pipeline, possibly enough to promote A6 to the default debug lane).
+   **Tightened (2026-06-27):** short **triangular** bursts (`fill_speech_like_triangular`) give one
+   clean high-prominence anchor each (a flat burst has no strict energy peak), and
+   `anchor_seam_min_prominence = 0.10` filters the collar's noise peaks. Final A6 config
+   `off=0.5, collar=0.3, burst=0.08, radius=1.0, prom=0.10`: **6 brackets, single passing winner**
+   (`move ≈ 40 799 ≈ 0.85 s`, seam 0.99/1.0), baseline 0.021. Release pair runs in **~8 s** (was 27),
+   debug **~154 s** (no longer times out, but still too slow for the default lane → stays release-tier
+   `#[ignore]`). Per-bracket prominence is now exposed in the diagnostic.
+
+   **Production lead (not done; needs corpus calibration):** the `anchor_seam_min_prominence` default
+   is **0.0**, which on real broadband content admits noise-jitter anchors (wasted unified searches +
+   mis-anchor risk). A calibrated non-zero default is plausible but must be validated on **real
+   corpus** (the three sources in `tests/corpus/sources.toml`: Grieg/orchestral, Schiphol/restaurant,
+   Amis/interview), and the prominence units need pinning down (probe printed 0.5–1.0, not the
+   hand-calc `ln(1+rms)` ~0.10/0.28). Tracked in memory `anchor-seam-min-prominence-default`.
 2. **Chirp bed on silence** — W5 corpus uses quiet chirp for scan; add to A6 fixture for structure
    without helping baseline High?
 3. **Soft CI gate** — optional `#[ignore]` test “coarse grid reports ≥1 E3 pocket” (diagnostic only,

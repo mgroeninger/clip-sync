@@ -1425,6 +1425,36 @@ fn fill_speech_like(samples: &mut [f32], channels: usize, sample_rate: u32, star
     fill_speech_like_at_freq(samples, channels, sample_rate, start, end, 440.0, 0.45);
 }
 
+/// 440 Hz tone under a **triangular** amplitude envelope (0 at edges, peak at center). Unlike the
+/// flat [`fill_speech_like`], this yields a single dominant energy bin → one clean anchor candidate
+/// with high prominence (the energy-peak detector needs a strict local max; a flat burst has none).
+/// Keep it short (a few bins): the seam Pearson is still ~1.0 because B = A (identical window).
+fn fill_speech_like_triangular(
+    samples: &mut [f32],
+    channels: usize,
+    sample_rate: u32,
+    start: usize,
+    end: usize,
+    amplitude: f32,
+) {
+    let ch = channels.max(1);
+    let end = end.min(samples.len() / ch);
+    if end <= start {
+        return;
+    }
+    let span = (end - start) as f64;
+    for frame in start..end {
+        let t = (frame - start) as f64 / span;
+        let env = 1.0 - (2.0 * t - 1.0).abs(); // triangle: 0 → 1 → 0
+        let time = frame as f64 / sample_rate as f64;
+        let amp = (f64::from(amplitude) * env * (2.0 * std::f64::consts::PI * 440.0 * time).sin())
+            as f32;
+        for c in 0..ch {
+            samples[frame * ch + c] = amp;
+        }
+    }
+}
+
 fn fill_speech_like_at_freq(
     samples: &mut [f32],
     channels: usize,
@@ -1642,8 +1672,9 @@ pub fn build_w5_noise_collar_anchor_rescue(
     let post_burst_end = (post_burst_inner + burst).min(total_frames);
 
     let mut a = vec![0.0f32; total_frames * ch];
-    fill_speech_like(&mut a, ch, sample_rate, pre_burst_start, pre_burst_inner);
-    fill_speech_like(&mut a, ch, sample_rate, post_burst_inner, post_burst_end);
+    // Triangular bursts → one clean high-prominence anchor each (a flat burst has no strict peak).
+    fill_speech_like_triangular(&mut a, ch, sample_rate, pre_burst_start, pre_burst_inner, 0.45);
+    fill_speech_like_triangular(&mut a, ch, sample_rate, post_burst_inner, post_burst_end, 0.45);
     fill_noise(&mut a, ch, gap_start.saturating_sub(collar), gap_start, 0.18, 0xA1);
     fill_noise(&mut a, ch, gap_end, gap_end + collar, 0.18, 0xA2);
     zero_frames(&mut a, ch, gap_start, gap_end);

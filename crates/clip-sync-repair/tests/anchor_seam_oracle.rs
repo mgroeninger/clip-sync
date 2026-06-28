@@ -487,22 +487,28 @@ fn w5_fixture_throat_symmetric_weak_and_brackets_exist() {
     );
 }
 
+/// Faithful **noise-collar** A6 fixture + repair (plan §8 Q1): gap flanked by *decorrelated*
+/// broadband noise (baseline seam ~0 from **content**, not a clamped radius), with short triangular
+/// speech anchors a moving bracket reaches at High. `anchor_seam_min_prominence` filters the collar's
+/// noise peaks so the intended near anchor is the unique passing bracket (~6 candidates, 1 winner).
+fn noise_collar_a6_request(mode: AnchorSeamMode, temp: &std::path::Path) -> PatchAudioRequest {
+    let fixture = build_w5_noise_collar_anchor_rescue(48_000, 1, 0.5, 0.3, 0.08);
+    let report = gap_report_from_energy_fixture(temp, &fixture);
+    let mut repair = w5_anchor_rescue_repair(mode, 1.0);
+    repair.anchor_seam_min_prominence = 0.10;
+    patch_request_from_repair(report, &repair)
+}
+
 /// **A6** pipeline — `anchor_seam_mode=auto` rescues a genuine symmetric-weak throat via a moving
-/// editorial-anchor bracket, end-to-end through `PatchAudio`. Uses the faithful **noise-collar**
-/// fixture (plan §8 Q1): the gap is flanked by *decorrelated* broadband noise, so the baseline seam
-/// is ~0 from **content** (not a clamped search radius), while matching speech anchors a moving
-/// bracket reaches score High.
+/// editorial-anchor bracket, end-to-end through `PatchAudio`.
 ///
-/// **Slow** (full PatchAudio + anchor search; ~40 s release, times out in debug) — `#[ignore]`d from
-/// the default lane and run in release via `test-tier.ps1` with `--ignored`.
+/// **Slow** (full PatchAudio + anchor search; ~30 s release / ~150 s debug) — `#[ignore]`d from the
+/// default lane and run in release via `test-tier.ps1` with `--ignored`.
 #[test]
-#[ignore = "slow: full PatchAudio anchor rescue (~40s release; times out debug) — run via test-tier release --ignored"]
+#[ignore = "slow: full PatchAudio anchor rescue (~30s release / ~150s debug) — run via test-tier release --ignored"]
 fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
-    let fixture = build_w5_noise_collar_anchor_rescue(48_000, 1, 0.5, 0.3, 0.4);
     let temp = tempfile::tempdir().expect("tempdir");
-    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, 1.0);
-    let request = patch_request_from_repair(report, &repair);
+    let request = noise_collar_a6_request(AnchorSeamMode::Auto, temp.path());
 
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
         .execute(request, RepairConfig::default().crossfade_ms)
@@ -526,13 +532,10 @@ fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
 /// **A6b** pipeline — `anchor_seam_mode=force` matches auto on the noise-collar W5 fixture.
 /// Slow; see [`w5_anchor_rescue_pipeline_engages_anchor_seam_auto`].
 #[test]
-#[ignore = "slow: full PatchAudio anchor rescue (~40s release; times out debug) — run via test-tier release --ignored"]
+#[ignore = "slow: full PatchAudio anchor rescue (~30s release / ~150s debug) — run via test-tier release --ignored"]
 fn w5_anchor_rescue_pipeline_engages_anchor_seam_force() {
-    let fixture = build_w5_noise_collar_anchor_rescue(48_000, 1, 0.5, 0.3, 0.4);
     let temp = tempfile::tempdir().expect("tempdir");
-    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
-    let repair = w5_anchor_rescue_repair(AnchorSeamMode::Force, 1.0);
-    let request = patch_request_from_repair(report, &repair);
+    let request = noise_collar_a6_request(AnchorSeamMode::Force, temp.path());
 
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
         .execute(request, RepairConfig::default().crossfade_ms)
