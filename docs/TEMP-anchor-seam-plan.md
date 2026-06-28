@@ -244,7 +244,7 @@ record_fit_joint_candidate(baseline)           // existing
 |---|------|---------|-------|
 | P3.1 | Synthetic fixture | `energy_signature_fixtures.rs` | `speech_peaks_offset_from_throat(secs)`; **A6** `build_w5_symmetric_weak_throat_anchor_rescue` (F1-style B shift) |
 | P3.2 | Domain oracle | `tests/anchor_seam_oracle.rs` (new) | A1: candidates pick peak frames, not throat; **A6** domain row **done** |
-| P3.3 | Pipeline oracle | `tests/anchor_seam_oracle.rs` | A1 end-to-end: `PatchAudio` + `anchor_seam_mode=force`; **A6/A6b** pipeline `#[ignore]` until bracket reaches High |
+| P3.3 | Pipeline oracle | `tests/anchor_seam_oracle.rs` | A1 end-to-end: `PatchAudio` + `anchor_seam_mode=force`; **A6/A6b** pipeline **done** — noise-collar fixture, anchor rescue fires on PCM; release-tier `#[ignore]` (slow) |
 | P3.4 | Regression rows | `tests/anchor_seam_oracle.rs` | A2–A4 (A3 domain + pipeline in oracle) |
 | P3.5 | Production corpus row | `gap_corpus_fixtures.rs` + manifest | One real W5 row | **done** |
 | P3.6 | Diagnostic (optional) | `tests/diag_anchor_seam.rs` | Per-gap candidate dump (`diagnostic-tests`) | **done** |
@@ -480,7 +480,7 @@ Called from `evaluate_seam_gate_fit_candidate` with the winning `FillAlignment`.
 | **A4** F4 decoy / wrong B slide | Residual veto; no anchor_trusted false patch |
 | **A5** `baseline_only` profile (energy) | Anchor search runs without requiring `--full` grid |
 | **A5b** `baseline_only` + bool signature | Same as A5 under `gap_signature_mode=bool` |
-| **A6** W5 symmetric-weak throat + shifted B dropout | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Fixture: `build_w5_symmetric_weak_throat_anchor_rescue` + `w5_anchor_rescue_repair` (`fill_border_search_secs` &lt; `peak_offset_secs`). Pipeline (`anchor_seam_used`, E3 High): **in progress** — `w5_anchor_rescue_pipeline_*` `#[ignore]`; fixture discovery via [TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md) (replaces `probe_w5_anchor_rescue_scores`) |
+| **A6** W5 symmetric-weak throat | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Pipeline (`anchor_seam_used`, E3 High): **done (2026-06-27)** — `w5_anchor_rescue_pipeline_{auto,force}` pass end-to-end on the faithful **noise-collar** fixture `build_w5_noise_collar_anchor_rescue` (decorrelated noise collar → genuine W5 from content; triangular speech anchors a moving bracket reaches). Release-tier `#[ignore]` (slow). Discovery write-up: [archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md) |
 | **A6b** A6 + `anchor_seam_mode=force` | Same fixture as A6; pipeline oracle paired with A6 |
 
 Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (candidate count bounded).

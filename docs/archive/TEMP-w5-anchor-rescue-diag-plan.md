@@ -1,14 +1,22 @@
-# W5 anchor-rescue fixture discovery — plan (DRAFT)
+# W5 anchor-rescue fixture discovery — plan (DONE — archived 2026-06-27)
 
-Status: **in progress** — routing proven (`route_w5_anchor_rescue_e3`); domain oracle green
-(`w5_fixture_throat_symmetric_weak_and_brackets_exist`); pipeline A6 `#[ignore]`. **Phase 0 done**
-(`SeamGateConfig`/`SeamGateGeometry` extraction). **Phase 1 done** (`diag_w5_anchor_rescue` /
-`w5_anchor_rescue_single_cell`; probe removed). **Phase 2 done** (`coarse_w5_grid` /
-`diag_w5_anchor_rescue_coarse_grid`) — E3 pocket empty in the *delayed-copy* fixture (see §5.2.8).
-**Phase 3 done (2026-06-27): A6 LOCKED IN** on a **faithful noise-collar fixture** — anchor rescue
-fires end-to-end through `PatchAudio` (`anchor_seam_used=true`, tier High). The original delayed-copy
-fixture was the wrong shape (its weak baseline came from an artificial clamped search radius, not
-content); the noise-collar fixture induces a genuine W5 from content. See §8 Q1.
+Status: **COMPLETE.** A6 anchor rescue is proven end-to-end on real PCM and locked in. This document
+is the discovery write-up; it is archived for the reasoning trail. Live acceptance status lives in
+[TEMP-anchor-seam-plan.md](../TEMP-anchor-seam-plan.md) §7 (A6/A6b rows).
+
+**Outcome.** All phases done. Phase 0 — extracted `SeamGateConfig`/`SeamGateGeometry` (shared
+constructors, no oracle/production drift). Phase 1 — `diag_w5_anchor_rescue` single-cell scorer.
+Phase 2 — `coarse_w5_grid` regime sweep: **no E3 pocket in the delayed-copy fixture** (its weak
+baseline was an artifact of a clamped search radius, not content — see §5.2.8 and §8 Q1). Phase 3 —
+A6 **locked in** on a faithful **noise-collar** fixture (`build_w5_noise_collar_anchor_rescue`):
+decorrelated noise collar → genuine W5 from content; triangular speech anchors a moving bracket
+reaches at High. `w5_anchor_rescue_pipeline_{auto,force}` pass through full `PatchAudio`
+(`anchor_seam_used=true`, tier High); kept `#[ignore]` as **slow** (release-tier, ~8 s pair).
+Frozen config: `off=0.5, collar=0.3, burst=0.08, radius=1.0, prom=0.10`.
+
+**Key negative results (the reasoning's value):** decoupling `b_shift` was falsified; raising the
+`anchor_seam_min_prominence` default was investigated and **refuted** by real-content calibration
+(real anchors ≤ 0.073; a 0.10 floor would disable rescue on real audio — keep default 0.0). See §8 Q1.
 
 **Phase 0 prerequisite (do first):** extract the inline `SeamGateParams` construction
 (`patch_audio.rs` ~1577) into reusable builders — `SeamGateConfig::from_repair(...)` (run-constant
@@ -92,7 +100,7 @@ where coarse neighbors **change regime**. See §5.2 for classifier inputs.
 
 ## 5. Implementation phases
 
-### Phase 0 — Extract `SeamGateConfig` / `SeamGateGeometry` (behavior-preserving) — **do first**
+### Phase 0 — Extract `SeamGateConfig` / `SeamGateGeometry` (behavior-preserving) — **done**
 
 **Acceptance gate for the whole PR:** full suite green, unchanged. `SeamGateParams` is `pub(crate)`
 and no test references it, so green-before = green-after is the only contract. Do **not** "improve"
@@ -132,7 +140,7 @@ behavior anywhere.
 so `AnchorSearchPrior`/`AnchorMatchabilityParams` are `Copy`); there is **no** `Debug` derive or
 whole-struct formatting to preserve (verified).
 
-### Phase 1 — Single-cell diagnostic (replaces `probe_w5`) — **ready to implement**
+### Phase 1 — Single-cell diagnostic (replaces `probe_w5`) — **done**
 
 **Goal:** Strict **superset** of today's `probe_w5_anchor_rescue_scores`: nominal + baseline Pearson,
 feasible bracket list, **plus per-bracket gate-path scores**. Correct **diagnostic** tier, reusable
@@ -261,7 +269,7 @@ cargo test -p clip-sync-repair --features diagnostic-tests --test diag_w5_anchor
 numbers (nominal ~0, baseline pre ~0.81); at least one bracket row with `passed_gate` and Pearson
 columns populated.
 
-### Phase 2 — Regime map (coarse + boundary refine) — **spec below; implement after Phase 1**
+### Phase 2 — Regime map (coarse + boundary refine) — **done**
 
 Phase 2 consumes `score_w5_anchor_rescue_cell` and adds regime classification + grid sweep. See
 **§5.2** for full requirements (not started until Phase 1 exit criteria pass).
@@ -431,17 +439,22 @@ Pattern to copy: [diag_anchor_seam.rs](../crates/clip-sync-repair/tests/diag_anc
 
 ---
 
-## 7. Validation checklist (when Phase 3 lands)
+## 7. Validation checklist — **VERIFIED (2026-06-27)**
 
-| Check | Expect |
-|-------|--------|
-| `w5_fixture_throat_symmetric_weak_and_brackets_exist` | nominal symmetric-weak; movable brackets |
-| `w5_anchor_rescue_pipeline_engages_anchor_seam_auto` | `patched`, `anchor_seam_used`, `anchor_move_nonzero` |
-| `w5_anchor_rescue_pipeline_engages_anchor_seam_force` | same |
-| `route_w5_anchor_rescue_e3` | unchanged — routing still independent |
-| `gap_corpus_w5_anchor_seam` | still patched (may remain `anchor_seam_used=false` until corpus geometry updated) |
+A6 pipeline tests run on the **noise-collar** fixture (`build_w5_noise_collar_anchor_rescue`), not the
+original delayed-copy fixture (which could not stage rescue — §5.2.8). Frozen config:
+`off=0.5, collar=0.3, burst=0.08, radius=1.0, anchor_seam_min_prominence=0.10`.
 
-Document locked `(peak_offset, fill_border_search)` in fixture module doc comment.
+| Check | Expect | Result |
+|-------|--------|--------|
+| `w5_fixture_throat_symmetric_weak_and_brackets_exist` | nominal symmetric-weak; movable brackets | ✅ pass (default suite) |
+| `w5_anchor_rescue_pipeline_engages_anchor_seam_auto` | `patched`, `anchor_seam_used`, `anchor_move_nonzero` | ✅ pass (release tier; tier High) |
+| `w5_anchor_rescue_pipeline_engages_anchor_seam_force` | same | ✅ pass (release tier) |
+| `route_w5_anchor_rescue_e3` | unchanged — routing still independent | ✅ pass (lib unit) |
+| `gap_corpus_w5_anchor_seam` | still patched | ✅ pass (may remain `anchor_seam_used=false` — corpus geometry unchanged) |
+
+A6 tests are `#[ignore]` (slow, ~8 s release pair) — run via `test-tier.ps1` `Invoke-RepairDiagnostic`
+(`--release … --ignored`).
 
 ---
 
@@ -497,10 +510,18 @@ Document locked `(peak_offset, fill_border_search)` in fixture module doc commen
    keep the default 0.0.** The synthetic fixture's prominence scale is unrepresentative; candidate
    count on real content is bounded by `max_anchors_per_side` (5), not a prominence floor. Tracked in
    memory `anchor-seam-min-prominence-default`.
-2. **Chirp bed on silence** — W5 corpus uses quiet chirp for scan; add to A6 fixture for structure
-   without helping baseline High?
-3. **Soft CI gate** — optional `#[ignore]` test “coarse grid reports ≥1 E3 pocket” (diagnostic only,
-   never PR)?
+2. **Chirp bed on silence** — ~~add a quiet chirp bed to the A6 fixture for structure?~~
+   **Not pursued — unnecessary.** The noise-collar fixture induces a genuine W5 from content without a
+   chirp bed; A6 passes end-to-end as-is.
+3. **Soft CI gate** — ~~optional `#[ignore]` "coarse grid reports ≥1 E3 pocket" diagnostic?~~
+   **Not pursued — moot.** The coarse grid has **no** E3 pocket (the delayed-copy fixture can't stage
+   rescue); A6 is validated via the noise-collar pipeline tests instead. A grid-pocket CI gate would
+   assert a false premise.
+
+**Follow-up leads (out of scope for this plan; tracked in agent memory):** (i) generalize the
+`failure_stage` gate-failure instrumentation beyond W5; (ii) if anchor prominence is ever revisited,
+make it level- and timescale-invariant (it conflates level × contrast at the 50 ms bin scale — see
+the `anchor-seam-min-prominence-default` memory). Neither blocks anything.
 
 ---
 
