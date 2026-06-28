@@ -112,6 +112,11 @@ path = "tests/validate_floor_oracle.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "calibrate_anchor_prominence"
+path = "tests/calibrate_anchor_prominence.rs"
+required-features = ["validation-tests"]
+
+[[test]]
 name = "validate_residual_gate"
 path = "tests/validate_residual_gate.rs"
 required-features = ["validation-tests"]

@@ -487,12 +487,16 @@ Document locked `(peak_offset, fill_border_search)` in fixture module doc commen
    debug **~154 s** (no longer times out, but still too slow for the default lane → stays release-tier
    `#[ignore]`). Per-bracket prominence is now exposed in the diagnostic.
 
-   **Production lead (not done; needs corpus calibration):** the `anchor_seam_min_prominence` default
-   is **0.0**, which on real broadband content admits noise-jitter anchors (wasted unified searches +
-   mis-anchor risk). A calibrated non-zero default is plausible but must be validated on **real
-   corpus** (the three sources in `tests/corpus/sources.toml`: Grieg/orchestral, Schiphol/restaurant,
-   Amis/interview), and the prominence units need pinning down (probe printed 0.5–1.0, not the
-   hand-calc `ln(1+rms)` ~0.10/0.28). Tracked in memory `anchor-seam-min-prominence-default`.
+   **Production lead — investigated and REFUTED (2026-06-27).** Hypothesis: raise the
+   `anchor_seam_min_prominence` default (0.0) to filter noise anchors. Real-content calibration
+   (`calibrate_anchor_prominence_csv`, harness `anchor_prominence`, validation tier; the three
+   `sources.toml` archetypes — Grieg/orchestral, Schiphol/restaurant, Amis/interview, 60 s each)
+   measured energy-peak prominences: **median ~0.002, p90 ~0.005–0.016, max 0.073** across all three.
+   A 0.10–0.15 floor (which filtered the synthetic noise collar, whose isolated bursts read ~0.5–1.0)
+   would reject **100 % of real anchors** → silently disable anchor rescue on real audio. **Decision:
+   keep the default 0.0.** The synthetic fixture's prominence scale is unrepresentative; candidate
+   count on real content is bounded by `max_anchors_per_side` (5), not a prominence floor. Tracked in
+   memory `anchor-seam-min-prominence-default`.
 2. **Chirp bed on silence** — W5 corpus uses quiet chirp for scan; add to A6 fixture for structure
    without helping baseline High?
 3. **Soft CI gate** — optional `#[ignore]` test “coarse grid reports ≥1 E3 pocket” (diagnostic only,
