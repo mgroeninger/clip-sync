@@ -7,7 +7,10 @@ use clap::Parser;
 use clip_sync::{ProgressReporter, SymphoniaMediaReader};
 
 use crate::application::error::RepairError;
+use crate::application::gap_fingerprint::characterize_gaps_with_gate;
+use crate::application::patch_audio::decode_ab;
 use crate::application::run_repair::{PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair};
+use crate::domain::GapReport;
 use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::cli::{self, args::Args, exit_code::exit_code_for, output::print_repair_output, validate_repair_profile_flags};
@@ -62,7 +65,46 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     )?;
     let outcome = run_repair_with_defaults(input, &progress)?;
 
+    if let Some(dir) = args.gap_fingerprints.clone() {
+        dump_gap_fingerprints(&args, &config, &outcome.report, &progress, &dir)?;
+    }
+
     print_repair_outcome(&args, &config, outcome)
+}
+
+/// Diagnostic: decode A/B (shared `decode_ab`), characterize each gap, and write a licensing-safe
+/// corpus directory (`corpus.json` + per-gap files + `manifest.json`). Gaps named via
+/// `--fingerprint-gap` get full detail (per-bracket gate `failure_stage` + lag); the rest summary.
+fn dump_gap_fingerprints(
+    args: &Args,
+    config: &RepairAppConfig,
+    report: &GapReport,
+    progress: &dyn ProgressReporter,
+    dir: &std::path::Path,
+) -> Result<(), RepairError> {
+    progress.phase("characterizing gaps (--dump-gap-fingerprints)");
+    let media_reader = SymphoniaMediaReader;
+    let decoded = decode_ab(&media_reader, report, progress)?;
+    let request = config.repair.patch_settings().into_request(report.clone());
+    let mut corpus = characterize_gaps_with_gate(
+        report,
+        &decoded.a_pcm,
+        &decoded.b_samples_full,
+        &request,
+        &args.fingerprint_gap,
+    );
+    // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
+    corpus.source.scan_recipe.min_gap_ms =
+        Some((config.repair.min_gap_secs() * 1000.0).round() as u64);
+    corpus.source.scan_recipe.absolute_silence_rms = Some(config.repair.absolute_silence_rms);
+
+    let n = crate::application::gap_fingerprint::write_corpus_dir(&corpus, dir)
+        .map_err(|e| RepairError::Config(format!("write gap corpus to {}: {e}", dir.display())))?;
+    progress.phase(&format!(
+        "wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}",
+        dir.display()
+    ));
+    Ok(())
 }
 
 fn validate_config(config: &RepairAppConfig) -> Result<(), RepairError> {

@@ -2,3 +2,7 @@
 **/*.rs.bk
 *.pdb
 tests/corpus/_sources/
+gaps.json
+# Generated gap-fingerprint corpus output + the local (identifying) source-id map.
+/gap-files/
+*.sources.local.toml

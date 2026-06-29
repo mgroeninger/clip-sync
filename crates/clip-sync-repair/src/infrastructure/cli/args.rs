@@ -24,6 +24,16 @@ pub struct Args {
     #[arg(short, long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
+    /// Diagnostic: after scan, write a licensing-safe gap-fingerprint corpus into DIR
+    /// (`corpus.json` with all gaps + one self-contained JSON per gap + `manifest.json`).
+    #[arg(long, value_name = "DIR")]
+    pub gap_fingerprints: Option<PathBuf>,
+
+    /// Gap index (repeatable) to characterize at full detail (per-bracket scores + lag). Others get
+    /// the cheap summary tier. Only meaningful with --gap-fingerprints.
+    #[arg(long, value_name = "IDX")]
+    pub fingerprint_gap: Vec<usize>,
+
     /// Output format.
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
