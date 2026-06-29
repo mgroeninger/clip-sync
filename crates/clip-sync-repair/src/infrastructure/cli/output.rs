@@ -912,6 +912,7 @@ mod tests {
                         pre_correlation: 0.22,
                         post_correlation: 0.19,
                         min_correlation: 0.35,
+                        best_attempt: None,
                     },
                 },
             ),
@@ -1101,6 +1102,7 @@ mod tests {
                         pre_correlation: 0.1,
                         post_correlation: 0.08,
                         min_correlation: 0.35,
+                        best_attempt: None,
                     },
                 },
             ),
@@ -1454,6 +1456,7 @@ mod tests {
                     pre_correlation: 0.09,
                     post_correlation: 1.0,
                     min_correlation: 0.12,
+                    best_attempt: None,
                 },
             },
         )]);

@@ -1321,14 +1321,21 @@ fn seam_failure_outcome(
                 pre_correlation: pre,
                 post_correlation: post,
                 min_correlation: min_structure_match_score,
+                best_attempt: None,
             },
             None,
         ),
-        SeamGateFailure::WaveformBelowThreshold { pre, post, min } => (
+        SeamGateFailure::WaveformBelowThreshold {
+            pre,
+            post,
+            min,
+            best_attempt,
+        } => (
             GapPatchSkipReason::CorrelationBelowThreshold {
                 pre_correlation: pre,
                 post_correlation: post,
                 min_correlation: min,
+                best_attempt,
             },
             None,
         ),
@@ -2244,6 +2251,7 @@ mod tests {
                     pre_correlation: 0.1,
                     post_correlation: 0.1,
                     min_correlation: 0.35,
+                    best_attempt: None,
                 }),
                 dummy_region_tags(),
             ),

@@ -339,7 +339,7 @@ Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two i
 
 | Pattern | `GapPatchSkipReason` |
 |---------|----------------------|
-| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform floor failed after retries (`fit` or `gate`) |
+| `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform floor failed after retries (`fit` or `gate`). `min` is the floor checked (`fill_absolute_floor` or structure min), not `min_fill_correlation`. When anchor/grid/extension scored higher, adds `best pre=… post=… @ baseline\|anchor\|grid\|extension`. |
 | `skipped: boundary alignment failed` | Structure bracket failed on B |
 | `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
 | `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |

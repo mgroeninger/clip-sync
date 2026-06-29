@@ -38,6 +38,63 @@ pub enum GapFillSkipReason {
     OutsideReferenceCoverage,
 }
 
+/// Which fit-joint placement produced a seam Pearson score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeamScoreSource {
+    Baseline,
+    Anchor,
+    Grid,
+    Extension,
+}
+
+/// One waveform seam score from a scored placement (baseline, anchor bracket, grid cell, or extension).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SeamScoreAttempt {
+    pub pre_correlation: f64,
+    pub post_correlation: f64,
+    pub source: SeamScoreSource,
+}
+
+impl SeamScoreAttempt {
+    pub fn min_pearson(self) -> f64 {
+        self.pre_correlation.min(self.post_correlation)
+    }
+}
+
+pub fn format_seam_score_source(source: SeamScoreSource) -> &'static str {
+    match source {
+        SeamScoreSource::Baseline => "baseline",
+        SeamScoreSource::Anchor => "anchor",
+        SeamScoreSource::Grid => "grid",
+        SeamScoreSource::Extension => "extension",
+    }
+}
+
+fn format_correlation_below_threshold(
+    pre_correlation: f64,
+    post_correlation: f64,
+    min_correlation: f32,
+    best_attempt: Option<SeamScoreAttempt>,
+) -> String {
+    let base = format!(
+        "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+    );
+    let Some(best) = best_attempt else {
+        return base;
+    };
+    let reported_min = pre_correlation.min(post_correlation);
+    if best.min_pearson() <= reported_min + 1e-9 {
+        return base;
+    }
+    format!(
+        "{base}; best pre={:.2} post={:.2} @ {}",
+        best.pre_correlation,
+        best.post_correlation,
+        format_seam_score_source(best.source),
+    )
+}
+
 /// Why a planned gap was not patched during splice.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +105,8 @@ pub enum GapPatchSkipReason {
         pre_correlation: f64,
         post_correlation: f64,
         min_correlation: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        best_attempt: Option<SeamScoreAttempt>,
     },
     AlignedSegmentOutOfRange,
     ZeroLengthGap,
@@ -70,8 +129,12 @@ pub fn format_gap_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
             pre_correlation,
             post_correlation,
             min_correlation,
-        } => format!(
-            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+            best_attempt,
+        } => format_correlation_below_threshold(
+            *pre_correlation,
+            *post_correlation,
+            *min_correlation,
+            *best_attempt,
         ),
         GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
         GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
@@ -99,8 +162,12 @@ pub fn format_gap_patch_skip_warn_reason(reason: &GapPatchSkipReason) -> String 
             pre_correlation,
             post_correlation,
             min_correlation,
-        } => format!(
-            "boundary correlation below threshold (pre={pre_correlation:.2} post={post_correlation:.2} min={min_correlation:.2})"
+            best_attempt,
+        } => format_correlation_below_threshold(
+            *pre_correlation,
+            *post_correlation,
+            *min_correlation,
+            *best_attempt,
         ),
         GapPatchSkipReason::ResidualHeadroomExceeded { .. } => {
             "residual headroom exceeded (anti-echo veto)".into()
@@ -334,11 +401,29 @@ mod format_tests {
     use super::*;
 
     #[test]
+    fn correlation_skip_includes_best_attempt_when_higher() {
+        let reason = GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation: 0.06,
+            post_correlation: 0.06,
+            min_correlation: 0.12,
+            best_attempt: Some(SeamScoreAttempt {
+                pre_correlation: 0.18,
+                post_correlation: 0.31,
+                source: SeamScoreSource::Anchor,
+            }),
+        };
+        let text = format_gap_patch_skip_reason(&reason);
+        assert!(text.contains("pre=0.06 post=0.06"));
+        assert!(text.contains("best pre=0.18 post=0.31 @ anchor"));
+    }
+
+    #[test]
     fn gap_fill_skip_verbose_line_matches_stdout_status() {
         let reason = GapPatchSkipReason::CorrelationBelowThreshold {
             pre_correlation: 0.23,
             post_correlation: 0.21,
             min_correlation: 0.35,
+            best_attempt: None,
         };
         assert_eq!(
             format_gap_fill_skip_verbose_line(&reason),

@@ -88,6 +88,7 @@ pub fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
             pre_correlation,
             post_correlation,
             min_correlation,
+            ..
         } => format!(
             "correlation_below(pre={pre_correlation:.4},post={post_correlation:.4},min={min_correlation})"
         ),

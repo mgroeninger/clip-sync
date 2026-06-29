@@ -621,6 +621,7 @@ mod tests {
             pre_correlation: pre,
             post_correlation: post,
             min_correlation: 0.35,
+            best_attempt: None,
         };
         derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Skipped(&reason),

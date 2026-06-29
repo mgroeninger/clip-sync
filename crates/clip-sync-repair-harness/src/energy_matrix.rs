@@ -149,6 +149,7 @@ pub fn format_skip_reason(status: &GapPatchStatus) -> String {
                 pre_correlation,
                 post_correlation,
                 min_correlation,
+                ..
             } => format!(
                 "correlation_below_threshold(pre={pre_correlation},post={post_correlation},min={min_correlation})"
             ),

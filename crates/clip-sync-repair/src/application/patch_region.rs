@@ -13,6 +13,7 @@ use crate::domain::gap_fill_fit::{
 };
 use crate::domain::residual_gate::ResidualGateMode;
 use crate::domain::patch_anchor::AnchorSearchPrior;
+use crate::domain::patch_result::{SeamScoreAttempt, SeamScoreSource};
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate,
     short_gap_one_strong_seam_passes,
@@ -187,6 +188,7 @@ pub(crate) enum SeamGateFailure {
         pre: f64,
         post: f64,
         min: f32,
+        best_attempt: Option<SeamScoreAttempt>,
     },
     ResidualHeadroomExceeded {
         pre: f64,
@@ -204,6 +206,64 @@ pub(crate) fn evaluate_seam_gate(
         evaluate_seam_gate_fit_joint(refined, params)
     } else {
         evaluate_seam_gate_legacy(refined, params)
+    }
+}
+
+fn waveform_below_threshold(pre: f64, post: f64, min: f32) -> SeamGateFailure {
+    SeamGateFailure::WaveformBelowThreshold {
+        pre,
+        post,
+        min,
+        best_attempt: None,
+    }
+}
+
+fn consider_waveform_attempt(
+    best: &mut Option<SeamScoreAttempt>,
+    pre: f64,
+    post: f64,
+    source: SeamScoreSource,
+) {
+    let min_score = pre.min(post);
+    if !min_score.is_finite() {
+        return;
+    }
+    let better = best
+        .map(|b| min_score > b.min_pearson() + 1e-9)
+        .unwrap_or(true);
+    if better {
+        *best = Some(SeamScoreAttempt {
+            pre_correlation: pre,
+            post_correlation: post,
+            source,
+        });
+    }
+}
+
+fn outcome_score_source(outcome: &SeamGateOutcome, baseline: RefinedGapFrames) -> SeamScoreSource {
+    if outcome.anchor_seam_used {
+        SeamScoreSource::Anchor
+    } else if outcome.refined == baseline {
+        SeamScoreSource::Baseline
+    } else {
+        SeamScoreSource::Grid
+    }
+}
+
+fn enrich_waveform_failure(
+    fail: SeamGateFailure,
+    best_waveform: &Option<SeamScoreAttempt>,
+) -> SeamGateFailure {
+    let SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. } = fail else {
+        return fail;
+    };
+    let reported_min = pre.min(post);
+    let best_attempt = (*best_waveform).filter(|b| b.min_pearson() > reported_min + 1e-9);
+    SeamGateFailure::WaveformBelowThreshold {
+        pre,
+        post,
+        min,
+        best_attempt,
     }
 }
 
@@ -366,14 +426,22 @@ impl FitCandidateSource for AudioFitSource<'_> {
 
 fn record_fit_joint_candidate_to_pool(
     pool: &mut Vec<FitJointCandidate>,
-    best_below_floor: &mut Option<SeamGateFailure>,
+    recorded_failure: &mut Option<SeamGateFailure>,
+    best_waveform: &mut Option<SeamScoreAttempt>,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     source: &mut dyn FitCandidateSource,
     anchor_seam_bracket: bool,
+    score_source: SeamScoreSource,
 ) {
     match source.score(refined, anchor_seam_bracket) {
         Ok((outcome, ranking_score)) => {
+            consider_waveform_attempt(
+                best_waveform,
+                outcome.report_pre,
+                outcome.report_post,
+                score_source,
+            );
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
             pool.push(FitJointCandidate {
@@ -382,23 +450,20 @@ fn record_fit_joint_candidate_to_pool(
                 boundary_move,
             });
         }
-        Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min }) => {
-            if best_below_floor.is_none() {
-                *best_below_floor = Some(SeamGateFailure::WaveformBelowThreshold {
-                    pre,
-                    post,
-                    min,
-                });
+        Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. }) => {
+            consider_waveform_attempt(best_waveform, pre, post, score_source);
+            if recorded_failure.is_none() {
+                *recorded_failure = Some(waveform_below_threshold(pre, post, min));
             }
         }
         Err(fail @ SeamGateFailure::ResidualHeadroomExceeded { .. }) => {
-            if best_below_floor.is_none() {
-                *best_below_floor = Some(fail);
+            if recorded_failure.is_none() {
+                *recorded_failure = Some(fail);
             }
         }
         Err(other) => {
-            if pool.is_empty() && best_below_floor.is_none() {
-                *best_below_floor = Some(other);
+            if pool.is_empty() && recorded_failure.is_none() {
+                *recorded_failure = Some(other);
             }
         }
     }
@@ -525,11 +590,11 @@ fn finalize_fit_outcome_residual(
             });
         }
         Err(ResidualGateError::PearsonBelowFloor(_)) => {
-            return Err(SeamGateFailure::WaveformBelowThreshold {
-                pre: outcome.report_pre,
-                post: outcome.report_post,
-                min: params.cfg.fill_absolute_floor,
-            });
+            return Err(waveform_below_threshold(
+                outcome.report_pre,
+                outcome.report_post,
+                params.cfg.fill_absolute_floor,
+            ));
         }
     };
     outcome.confidence = confidence;
@@ -583,13 +648,16 @@ fn try_finalize_best_grid_high(
 
 fn select_joint_fit_winner_with_residual(
     mut pool: Vec<FitJointCandidate>,
-    mut best_below_floor: Option<SeamGateFailure>,
+    mut recorded_failure: Option<SeamGateFailure>,
+    mut best_waveform: Option<SeamScoreAttempt>,
+    baseline: RefinedGapFrames,
     source: &mut dyn FitCandidateSource,
     haystack_secs: f64,
     grid_cells: Option<u32>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     pool.sort_by(|a, b| fit_routing::winner_cmp(&a.score(), &b.score()));
     for candidate in pool {
+        let score_source = outcome_score_source(&candidate.outcome, baseline);
         match source.finalize_residual(candidate.outcome) {
             Ok(mut outcome) => {
                 outcome.fit_haystack_secs = haystack_secs;
@@ -600,23 +668,23 @@ fn select_joint_fit_winner_with_residual(
                 return Ok(outcome);
             }
             Err(fail @ SeamGateFailure::ResidualHeadroomExceeded { .. }) => {
-                if best_below_floor.is_none() {
-                    best_below_floor = Some(fail);
+                if recorded_failure.is_none() {
+                    recorded_failure = Some(fail);
                 }
             }
-            Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min }) => {
-                if best_below_floor.is_none() {
-                    best_below_floor = Some(SeamGateFailure::WaveformBelowThreshold {
-                        pre,
-                        post,
-                        min,
-                    });
+            Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. }) => {
+                consider_waveform_attempt(&mut best_waveform, pre, post, score_source);
+                if recorded_failure.is_none() {
+                    recorded_failure = Some(waveform_below_threshold(pre, post, min));
                 }
             }
             Err(other) => return Err(other),
         }
     }
-    Err(best_below_floor.unwrap_or(SeamGateFailure::StructureAlignmentFailed))
+    Err(enrich_waveform_failure(
+        recorded_failure.unwrap_or(SeamGateFailure::StructureAlignmentFailed),
+        &best_waveform,
+    ))
 }
 
 /// Count non-baseline joint A-boundary grid cells (for verbose diagnostics).
@@ -664,12 +732,12 @@ fn fit_haystack_secs(params: &SeamGateParams<'_>) -> f64 {
 
 fn baseline_seam_scores(
     baseline_candidate: Option<&FitJointCandidate>,
-    best_below_floor: &Option<SeamGateFailure>,
+    recorded_failure: &Option<SeamGateFailure>,
 ) -> (f64, f64) {
     if let Some(c) = baseline_candidate {
         return (c.outcome.report_pre, c.outcome.report_post);
     }
-    match best_below_floor {
+    match recorded_failure {
         Some(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => (*pre, *post),
         Some(SeamGateFailure::ResidualHeadroomExceeded { pre, post, .. }) => (*pre, *post),
         _ => (0.0, 0.0),
@@ -766,7 +834,8 @@ fn best_anchor_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCa
 
 struct AnchorSeamJointSearchState<'a> {
     pool: &'a mut Vec<FitJointCandidate>,
-    best_below_floor: &'a mut Option<SeamGateFailure>,
+    recorded_failure: &'a mut Option<SeamGateFailure>,
+    best_waveform: &'a mut Option<SeamScoreAttempt>,
 }
 
 struct AnchorSeamJointSearchCtx {
@@ -784,7 +853,8 @@ fn try_anchor_seam_joint_search(
 ) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
     let AnchorSeamJointSearchState {
         pool,
-        best_below_floor,
+        recorded_failure,
+        best_waveform,
     } = state;
     let &AnchorSeamJointSearchCtx {
         baseline,
@@ -812,11 +882,13 @@ fn try_anchor_seam_joint_search(
         let pool_len_before = pool.len();
         record_fit_joint_candidate_to_pool(
             pool,
-            best_below_floor,
+            recorded_failure,
+            best_waveform,
             bracket.refined,
             baseline,
             source,
             true,
+            SeamScoreSource::Anchor,
         );
         if pool.len() > pool_len_before {
             if let Some(candidate) = pool.last_mut() {
@@ -900,15 +972,18 @@ fn evaluate_seam_gate_fit_joint_core(
     source: &mut dyn FitCandidateSource,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
     let mut pool: Vec<FitJointCandidate> = Vec::new();
-    let mut best_below_floor: Option<SeamGateFailure> = None;
+    let mut recorded_failure: Option<SeamGateFailure> = None;
+    let mut best_waveform: Option<SeamScoreAttempt> = None;
 
     record_fit_joint_candidate_to_pool(
         &mut pool,
-        &mut best_below_floor,
+        &mut recorded_failure,
+        &mut best_waveform,
         baseline,
         baseline,
         source,
         false,
+        SeamScoreSource::Baseline,
     );
 
     // E1: a High baseline short-circuits in any mode (residual confirmed by `try_finalize_high…`).
@@ -934,7 +1009,9 @@ fn evaluate_seam_gate_fit_joint_core(
         ) {
             return select_joint_fit_winner_with_residual(
                 pool,
-                best_below_floor,
+                recorded_failure,
+                best_waveform,
+                baseline,
                 source,
                 config.haystack_secs,
                 None,
@@ -942,12 +1019,13 @@ fn evaluate_seam_gate_fit_joint_core(
         }
     }
 
-    let (baseline_pre, baseline_post) = baseline_seam_scores(pool.first(), &best_below_floor);
+    let (baseline_pre, baseline_post) = baseline_seam_scores(pool.first(), &recorded_failure);
 
     if let Some(outcome) = try_anchor_seam_joint_search(
         &mut AnchorSeamJointSearchState {
             pool: &mut pool,
-            best_below_floor: &mut best_below_floor,
+            recorded_failure: &mut recorded_failure,
+            best_waveform: &mut best_waveform,
         },
         &AnchorSeamJointSearchCtx {
             baseline,
@@ -961,11 +1039,13 @@ fn evaluate_seam_gate_fit_joint_core(
         return Ok(outcome);
     }
 
-    // E5: baseline-only never runs the grid — pick the pool winner (or skip on `best_below_floor`).
+    // E5: baseline-only never runs the grid — pick the pool winner (or skip on recorded failure).
     if config.fit_boundary_search == FitBoundarySearch::BaselineOnly {
         return select_joint_fit_winner_with_residual(
             pool,
-            best_below_floor,
+            recorded_failure,
+            best_waveform,
+            baseline,
             source,
             config.haystack_secs,
             None,
@@ -984,7 +1064,8 @@ fn evaluate_seam_gate_fit_joint_core(
             {
                 record_fit_joint_candidate_to_pool(
                     &mut pool,
-                    &mut best_below_floor,
+                    &mut recorded_failure,
+                    &mut best_waveform,
                     RefinedGapFrames {
                         start_frame: try_start,
                         end_frame: try_end,
@@ -992,6 +1073,7 @@ fn evaluate_seam_gate_fit_joint_core(
                     baseline,
                     source,
                     false,
+                    SeamScoreSource::Grid,
                 );
             }
             if try_end >= config.end_max {
@@ -1015,7 +1097,9 @@ fn evaluate_seam_gate_fit_joint_core(
     // E7: best of the pool, or skip with the recorded below-floor failure.
     select_joint_fit_winner_with_residual(
         pool,
-        best_below_floor,
+        recorded_failure,
+        best_waveform,
+        baseline,
         source,
         config.haystack_secs,
         Some(grid_cells),
@@ -1432,11 +1516,11 @@ fn evaluate_seam_gate_fit_candidate(
             post_gate_frames,
             params,
         ) {
-            return Err(SeamGateFailure::WaveformBelowThreshold {
-                pre: alignment.pre_correlation,
-                post: alignment.post_correlation,
-                min: params.cfg.fill_absolute_floor,
-            });
+            return Err(waveform_below_threshold(
+                alignment.pre_correlation,
+                alignment.post_correlation,
+                params.cfg.fill_absolute_floor,
+            ));
         }
     }
 
@@ -1457,18 +1541,20 @@ fn evaluate_seam_gate_fit_candidate(
             Ok(confidence) => confidence,
             Err(_) if params.cfg.residual_gate.rescue_enabled() => FillConfidence::Marginal,
             Err(_) => {
-                return Err(SeamGateFailure::WaveformBelowThreshold {
-                    pre: pre_corr,
-                    post: post_corr,
-                    min: params.cfg.fill_absolute_floor,
-                });
+                return Err(waveform_below_threshold(
+                    pre_corr,
+                    post_corr,
+                    params.cfg.fill_absolute_floor,
+                ));
             }
         }
     } else {
-        pearson.map_err(|_| SeamGateFailure::WaveformBelowThreshold {
-            pre: pre_corr,
-            post: post_corr,
-            min: params.cfg.fill_absolute_floor,
+        pearson.map_err(|_| {
+            waveform_below_threshold(
+                pre_corr,
+                post_corr,
+                params.cfg.fill_absolute_floor,
+            )
         })?
     };
 
@@ -1644,11 +1730,7 @@ fn evaluate_seam_gate_legacy(
             params.cfg.short_gap_one_strong_seam_fallback,
             params.cfg.disable_structure_trust,
         ) {
-            return Err(SeamGateFailure::WaveformBelowThreshold {
-                pre: pre_corr,
-                post: post_corr,
-                min: effective_min_corr,
-            });
+            return Err(waveform_below_threshold(pre_corr, post_corr, effective_min_corr));
         }
         (pre_corr, post_corr, false)
     };
@@ -1683,20 +1765,21 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
     initial_fail: SeamGateFailure,
     max_extend_frames: usize,
     step_frames: usize,
+    best_waveform: &mut Option<SeamScoreAttempt>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    let SeamGateFailure::WaveformBelowThreshold { pre, post, min } = initial_fail else {
+    let SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. } = initial_fail else {
         return Err(initial_fail);
     };
 
     if !post_seam_extension_candidate(pre, post, min) {
-        return Err(initial_fail);
+        return Err(enrich_waveform_failure(initial_fail, best_waveform));
     }
 
     let total_frames = params.geom.a_pcm.samples.len() / params.cfg.channels.max(1);
     let original_end = refined.end_frame;
     let max_end = (original_end + max_extend_frames).min(total_frames);
     if step_frames == 0 || original_end >= max_end {
-        return Err(initial_fail);
+        return Err(enrich_waveform_failure(initial_fail, best_waveform));
     }
 
     let mut try_end = original_end;
@@ -1722,8 +1805,14 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
                 );
                 return Ok(outcome);
             }
-            Err(fail @ SeamGateFailure::WaveformBelowThreshold { .. }) => {
-                last_fail = fail;
+            Err(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => {
+                consider_waveform_attempt(
+                    best_waveform,
+                    pre,
+                    post,
+                    SeamScoreSource::Extension,
+                );
+                last_fail = waveform_below_threshold(pre, post, min);
             }
             Err(other) => {
                 refined.end_frame = original_end;
@@ -1733,7 +1822,7 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
     }
 
     refined.end_frame = original_end;
-    Err(last_fail)
+    Err(enrich_waveform_failure(last_fail, best_waveform))
 }
 
 /// Shift `refined.start_frame` earlier in steps when the pre seam failed waveform correlation.
@@ -1744,19 +1833,20 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
     initial_fail: SeamGateFailure,
     max_extend_frames: usize,
     step_frames: usize,
+    best_waveform: &mut Option<SeamScoreAttempt>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    let SeamGateFailure::WaveformBelowThreshold { pre, post, min } = initial_fail else {
+    let SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. } = initial_fail else {
         return Err(initial_fail);
     };
 
     if !pre_seam_extension_candidate(pre, post, min) {
-        return Err(initial_fail);
+        return Err(enrich_waveform_failure(initial_fail, best_waveform));
     }
 
     let original_start = refined.start_frame;
     let min_start = original_start.saturating_sub(max_extend_frames);
     if step_frames == 0 || original_start <= min_start {
-        return Err(initial_fail);
+        return Err(enrich_waveform_failure(initial_fail, best_waveform));
     }
 
     let mut try_start = original_start;
@@ -1782,8 +1872,14 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
                 );
                 return Ok(outcome);
             }
-            Err(fail @ SeamGateFailure::WaveformBelowThreshold { .. }) => {
-                last_fail = fail;
+            Err(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => {
+                consider_waveform_attempt(
+                    best_waveform,
+                    pre,
+                    post,
+                    SeamScoreSource::Extension,
+                );
+                last_fail = waveform_below_threshold(pre, post, min);
             }
             Err(other) => {
                 refined.start_frame = original_start;
@@ -1793,7 +1889,7 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
     }
 
     refined.start_frame = original_start;
-    Err(last_fail)
+    Err(enrich_waveform_failure(last_fail, best_waveform))
 }
 
 pub(crate) struct SeamExtensionRetry {
@@ -1811,12 +1907,19 @@ pub(crate) fn retry_waveform_seam_extensions(
     initial_fail: SeamGateFailure,
     retry: SeamExtensionRetry,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    let SeamGateFailure::WaveformBelowThreshold { .. } = initial_fail else {
+    let SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. } = initial_fail else {
         return Err(initial_fail);
     };
 
+    let mut best_waveform = None;
+    consider_waveform_attempt(
+        &mut best_waveform,
+        pre,
+        post,
+        SeamScoreSource::Baseline,
+    );
     let step = retry.step_frames.max(1);
-    let mut last_fail = initial_fail;
+    let mut last_fail = waveform_below_threshold(pre, post, min);
 
     if retry.gap_end_extend_on_post_seam_fail {
         match try_extend_gap_end_for_post_seam(
@@ -1826,6 +1929,7 @@ pub(crate) fn retry_waveform_seam_extensions(
             last_fail,
             retry.max_extend_frames,
             step,
+            &mut best_waveform,
         ) {
             Ok(outcome) => return Ok(outcome),
             Err(fail) => last_fail = fail,
@@ -1840,10 +1944,11 @@ pub(crate) fn retry_waveform_seam_extensions(
             last_fail,
             retry.max_extend_frames,
             step,
+            &mut best_waveform,
         );
     }
 
-    Err(last_fail)
+    Err(enrich_waveform_failure(last_fail, &best_waveform))
 }
 
 fn structure_passes_gate(
@@ -2155,11 +2260,7 @@ mod tests {
     }
 
     fn waveform_skip(pre: f64, post: f64) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
-        Err(SeamGateFailure::WaveformBelowThreshold {
-            pre,
-            post,
-            min: 0.12,
-        })
+        Err(waveform_below_threshold(pre, post, 0.12))
     }
 
     /// An anchor bracket whose pre/post anchors are inert (routing reads only `refined`/`move_frames`).
@@ -2245,11 +2346,11 @@ mod tests {
                 // A residual veto. `select_joint_fit_winner_with_residual` records this as
                 // `best_below_floor` and walks on to the next candidate — the same fall-through arm
                 // `ResidualHeadroomExceeded` takes, which needs no `SeamResidualVerdict` to construct.
-                return Err(SeamGateFailure::WaveformBelowThreshold {
-                    pre: outcome.report_pre,
-                    post: outcome.report_post,
-                    min: 0.12,
-                });
+                return Err(waveform_below_threshold(
+                    outcome.report_pre,
+                    outcome.report_post,
+                    0.12,
+                ));
             }
             Ok(outcome)
         }
@@ -2305,6 +2406,36 @@ mod tests {
     }
 
     /// W5/E5: symmetric-weak throat with no anchors → skip.
+    /// W5 symmetric weak skip records the throat failure and the best anchor/grid attempt.
+    #[test]
+    fn skip_reports_best_waveform_when_anchor_scores_higher_but_still_fails() {
+        let baseline = rgf(1_000, 2_000);
+        let anchor = rgf(800, 2_200);
+        let mut source = ScriptedFitSource::new()
+            .score_at(baseline, waveform_skip(0.06, 0.06))
+            .score_at(anchor, waveform_skip(0.18, 0.31))
+            .brackets(vec![scripted_bracket(anchor, 400)]);
+        let result = evaluate_seam_gate_fit_joint_core(
+            baseline,
+            &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Force),
+            &mut source,
+        );
+        let Err(SeamGateFailure::WaveformBelowThreshold {
+            pre,
+            post,
+            best_attempt,
+            ..
+        }) = result
+        else {
+            panic!("expected waveform skip");
+        };
+        assert!((pre - 0.06).abs() < 1e-9 && (post - 0.06).abs() < 1e-9);
+        let best = best_attempt.expect("best attempt across fall-through");
+        assert!((best.pre_correlation - 0.18).abs() < 1e-9);
+        assert!((best.post_correlation - 0.31).abs() < 1e-9);
+        assert_eq!(best.source, SeamScoreSource::Anchor);
+    }
+
     #[test]
     fn route_w5_symmetric_weak_skips() {
         let baseline = rgf(1_000, 2_000);

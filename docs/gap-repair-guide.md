@@ -86,6 +86,31 @@ Fit classifies the winning candidate using `min(pre, post)` after unified struct
 
 The skip line always shows `min=0.12` in the status column; that is the **absolute floor** label, not the reason a score of 0.23 failed (dead zone vs hard skip).
 
+### What the skip `pre` / `post` scores mean
+
+Fit mode tries several placements in order: **baseline** (scan throat) → **anchor** brackets (when anchor seam runs) → **boundary grid** cells (when `--full` / `full_grid`). Gate mode may also **extend** the gap edges and re-score.
+
+| Field | Meaning |
+|-------|---------|
+| **`pre` / `post`** | Waveform Pearson at the **first** placement that recorded the skip (usually baseline throat). Structure-only skips use structure envelope scores instead (`pre=0 post=0` is common). |
+| **`min`** | The threshold checked at that failure — `fill_absolute_floor` (**0.12**) for waveform skips, `min_structure_match_score` for structure skips. **Not** `min_fill_correlation` (0.35). |
+| **`best pre=… post=… @ …`** | When a later placement scored higher, the **best** `min(pre, post)` seen across baseline / anchor / grid / extension, and which step found it (`baseline`, `anchor`, `grid`, `extension`). Omitted when nothing beat the reported scores. |
+| **`[tier · seam]` suffix** | Derived from the reported `pre`/`post` (first failure), not from `best`. |
+
+Tags and tier on a skip row describe the **throat (first) failure**. Use `best` when tuning thresholds or deciding whether `--full` / `--anchor-seam-mode auto` might help.
+
+**Tuning with the scores:** classification always uses `min(pre, post)` on the **winning** candidate (both seams must hold). Three knobs:
+
+| Knob | Default | What it changes |
+|------|---------|-----------------|
+| `min_fill_correlation` | 0.35 | High tier floor; marginal band top (`min_fill_correlation − fill_marginal_margin` = **0.27**); also caps the effective hard floor |
+| `fill_marginal_margin` | 0.08 | Marginal band width (default **0.27–0.35**) |
+| `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)` |
+
+Lowering `--min-fill-correlation` only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need `--fill-absolute-floor`, better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
+
+For per-bracket fall-through detail without re-running repair, use `--gap-fingerprints` (see [gap-fingerprint.md](gap-fingerprint.md)).
+
 ### Seam patterns (within fit)
 
 > How `pre`/`post` are built (border templates, channel selection, peak-normalized Pearson, windows): [seam-scoring.md](seam-scoring.md).
@@ -222,7 +247,7 @@ Synthetic energy-signature oracles ([corpus-validation.md](corpus-validation.md)
 
 \*Guide-only hints for run notes — not computed by `gap_tags.rs`.
 
-**Structure vs waveform skip:** `skipped: boundary correlation below threshold` covers both structure-below-threshold and waveform-below-threshold. Use verbose scores and JSON `min_correlation` to distinguish; structure-only failures often show `pre=0 post=0` before waveform tier runs. Tag as `patch_tier=structure_fail` only for `boundary alignment failed`; correlation skips use `dead_zone` / `hard_skip` via score bands below.
+**Structure vs waveform skip:** `skipped: boundary correlation below threshold` covers both structure-below-threshold and waveform-below-threshold. Use verbose scores and JSON `min_correlation` to distinguish; structure-only failures often show `pre=0 post=0` before waveform tier runs. Tag as `patch_tier=structure_fail` only for `boundary alignment failed`; correlation skips use `dead_zone` / `hard_skip` via score bands below. When waveform search tried multiple placements, the skip line may add `best pre=… post=… @ anchor|grid|…` — see Layer 3 § What the skip `pre` / `post` scores mean.
 
 ### Deriving tags from a run
 
