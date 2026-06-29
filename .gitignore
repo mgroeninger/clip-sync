@@ -2,7 +2,8 @@
 **/*.rs.bk
 *.pdb
 tests/corpus/_sources/
-gaps.json
 # Generated gap-fingerprint corpus output + the local (identifying) source-id map.
+# Scratch/output dir; curated regression exemplars live committed under
+# crates/clip-sync-repair/tests/gap_corpus/fingerprints/ instead.
 /gap-files/
 *.sources.local.toml

@@ -89,3 +89,16 @@ enough (≈ 4 MB total) to commit directly.
 ## Size budget
 
 Committed WAVs: < 5 MB total (currently ≈ 4 MB with stereo fixtures).
+
+## Gap-fingerprint exemplars (`fingerprints/`)
+
+Curated, committed **gap-fingerprint** JSONs — licensing-safe numeric characterizations (levels, lag
+verdicts, geometry; no samples, no transcripts; see `docs/gap-fingerprint.md`). Kept here deliberately,
+separate from the gitignored `gap-files/` scratch/output dir that `--gap-fingerprints` overwrites.
+
+| File | Role |
+|------|------|
+| `g003_timing_offset.json` | Real W5 **timing-offset** exemplar (the gate skipped a recoverable, drifting seam). Regression-guarded by `tests/w5_timing_offset.rs::g003_real_fingerprint_is_timing_offset_exemplar`, and the ground truth the synthetic `build_w5_timing_offset_seam` is calibrated against. |
+
+The identifying `id → title/path` map for any real source stays in a gitignored `*.sources.local.toml`,
+never here.

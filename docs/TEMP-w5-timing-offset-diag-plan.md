@@ -1,9 +1,9 @@
 # W5 timing-offset gap — fixture + recoverability diagnostic (DRAFT)
 
-Status: **DRAFT** — Phase A (fixture, incl. skip-faithful refinement) + B (self-validation) + C
-(recoverability diag) **done**; the fixture now reproduces g003's **skip** (not just its lag signature)
-and the gate probe asserts it. Phase D (promote g003 to corpus) not started. See §5 Phase C results and
-§6.
+Status: **Phases A–D done.** A (fixture, incl. skip-faithful refinement), B (self-validation), C
+(recoverability diag), D (g003 committed as the real `timing_offset` exemplar with a regression test).
+The fixture reproduces g003's **skip** (not just its lag signature) and the gate probe asserts it. Only
+gate detection/rescue (the per-seam fractional shift) remains deferred (§6b). See §5 Phase C results, §6.
 
 Companion to [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md) and
 [archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md). Reading:
@@ -86,12 +86,12 @@ pub fn build_w5_timing_offset_seam(
 ) -> EnergySignatureFixture
 ```
 
-Construction:
+Construction (final, skip-faithful — see §6 for the refinement that got here):
 
-1. **A:** broadband-noise collar (`fill_noise`, single seed, above silence floor — the lag-0-dead,
-   peak-alive ingredient; a tone stays correlated at lag 0 and would *not* reproduce `waveform_floor`),
-   triangular anchor bursts at gap ± `peak_offset`, zeroed throat.
-2. **B = resample_linear(A, offset0, drift)** over the whole timeline — collar and bursts shift by the
+1. **A:** a **continuous non-stationary broadband bed** flanking the gap (`fill_noise_band_limited`,
+   `hold = 48`, single seed, above silence floor; per-50 ms-bin amplitude modulation), then a zeroed
+   throat. No isolated tone/burst features — the bed's louder modulation bins are the anchor candidates.
+2. **B = resample_linear(A, offset0, drift, ref_secs)** over the whole timeline — the bed shifts by the
    drift map (lag-0 decorrelates, sweep recovers), envelope unchanged.
 3. **Overwrite B's throat** `[gap_start, gap_end]` with `fill_speech_like` (B carries audio in the
    A-only dropout, as in the other W5 fixtures).
@@ -99,7 +99,8 @@ Construction:
 **Why resample (not independent seeds like the noise collar):** the noise-collar fixture used
 *different* seeds for A vs B → genuinely decorrelated, **no** lag recovers (`decorrelated`). Resampling
 the *same* noise is the essential difference: lag-0 dies but the sweep peaks at the shift
-(`timing_offset`). That single change is what makes this fixture model g003 rather than A6.
+(`timing_offset`). That single change is what makes this fixture model g003 rather than A6. The collar
+shape (continuous, non-stationary, `hold = 48`) is what makes the *gate* skip it — see §6.
 
 To reproduce g003: `seam_offset_ms ≈ 16`, `drift_ppm` chosen so the post seam lands ≈ −8 ms (≈ +1700
 ppm given ~5 s pre↔post separation). The diagnostic (Phase C) sweeps both.
@@ -108,14 +109,16 @@ ppm given ~5 s pre↔post separation). The diagnostic (Phase C) sweeps both.
 
 ## 5. Phases
 
-### Phase A — fixture builder (default tier) — **DONE (2026-06-29)**
+### Phase A — fixture builder (default tier) — **DONE (2026-06-29; refined skip-faithful, §6)**
 
 `build_w5_timing_offset_seam` + private helpers `resample_linear(src, ch, offset0_secs, drift,
-ref_secs, sample_rate)` (lag anchored at the gap via `ref_secs`, not accumulated from t=0) and
-`fill_noise_band_limited(.., hold)` (broad-autocorrelation collar) in `energy_signature_fixtures.rs`.
-No new struct fields (`b_dropout_shift_frames = 0`). The collar uses `hold = 128` so a realistic skew's
-within-window drift barely dents the recovered peak (white noise would not survive the fractional
-resample — see Phase B debugging).
+ref_secs, sample_rate)` (lag anchored at the gap via `ref_secs`, not accumulated from t=0),
+`fill_noise_band_limited(.., hold)`, and `modulate_per_bin(.., bin_frames, seed, gmin, gmax)` in
+`energy_signature_fixtures.rs`. No new struct fields (`b_dropout_shift_frames = 0`). Collar `hold = 48`
+(~1 ms autocorrelation): wide enough that within-window drift still recovers under the lag sweep, narrow
+enough that the pre↔post drift split across the gap defeats any single placement (§6). The first cut
+used `hold = 128` + isolated triangular bursts and reproduced the lag signature but **not** the skip —
+see §6 for the refinement.
 
 ### Phase B — self-validation test (default tier, fast)
 
@@ -177,18 +180,33 @@ move cannot incidentally re-align. The current uniform band-limited collar is lo
 slide/move escapes. Options: a non-repeating broadband bed (e.g. distinct noise per bin), or modulated
 content where the 50 ms envelope is flat but the waveform carries unrecoverable-by-move fine structure.
 
-### Phase D — promote g003 as the regression anchor — NOT STARTED
+### Phase D — promote g003 as the regression anchor — **DONE (2026-06-29)**
 
-Promote `gap-files/68686c7f_..._timing_offset.json` into the corpus library (`gap_corpus_fixtures.rs` +
-manifest) as the canonical **real** `timing_offset` exemplar the synthetic is calibrated against
-(licensing-safe — no samples; see [gap-fingerprint.md](gap-fingerprint.md) § Source identity).
+A single **curated** copy of the g003 fingerprint is committed at
+`tests/gap_corpus/fingerprints/g003_timing_offset.json` — deliberately **separate** from the gitignored
+`gap-files/` scratch/output dir (which `--gap-fingerprints` overwrites). It is the canonical **real**
+`timing_offset` exemplar, guarded by the default-tier test
+`g003_real_fingerprint_is_timing_offset_exemplar` in `tests/w5_timing_offset.rs`: every measured seam
+reads `timing_offset` (lag-0 dead, strong recovered peak), the offset drifts `|pre| > |post|` (−16 vs
+−8 ms), and the gate **skipped** the gap.
+
+Why curated-copy, not committing `gap-files/`: a fingerprint is licensing-safe (numbers only, no
+samples — `docs/gap-fingerprint.md`), so the worry isn't licensing; it's *fixture hygiene*. A regression
+test should own one frozen, deliberately-chosen file, not depend on a scratch/output directory. So
+`/gap-files/` stays gitignored and the curated copy lives under `tests/` beside the WAV corpus. The
+identifying `id → title` map stays in a gitignored `*.sources.local.toml`, never committed.
+
+One note: the exemplar is parsed via a **minimal struct** (`index`, `lag`, `outcome` only), not the
+whole `GapCorpus` — it predates a `seams.per_channel` schema change (`Option`→`(f64,f64)`) and no longer
+round-trips whole. The minimal parse makes the regression robust to unrelated schema drift; regenerating
+the file with current code (needs the real media) would let it round-trip again.
 
 ### Wiring (Phase C) — **DONE**
 
 `Cargo.toml` `[[test]] name = "diag_w5_timing_offset"` (`required-features = ["diagnostic-tests"]`),
-`test_support/mod.rs` `pub mod w5_timing_offset_diag;`. Default Phase A/B test
+`test_support/mod.rs` `pub mod w5_timing_offset_diag;`, `scripts/test-tier.ps1` `Invoke-RepairDiagnostic`
+(grid in the main lane, slow gate probe via `--ignored`), `development.md` rows. Default Phase A/B/D test
 (`[[test]] name = "w5_timing_offset"`, no features) registered (the crate has `autotests = false`).
-*Pending:* `scripts/test-tier.ps1` `Invoke-RepairDiagnostic` entry + `development.md` row.
 
 ---
 
