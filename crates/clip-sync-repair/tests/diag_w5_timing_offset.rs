@@ -1,5 +1,5 @@
 //! W5 **timing-offset** recoverability diagnostic (Phase C).
-//! See `docs/TEMP-w5-timing-offset-diag-plan.md` §5 Phase C.
+//! See `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §5 Phase C.
 //!
 //! Tier: **diagnostic** (`diagnostic-tests` feature). Emits data for human review; no PR gate.
 //!

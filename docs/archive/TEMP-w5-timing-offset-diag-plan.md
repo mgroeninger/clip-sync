@@ -1,13 +1,15 @@
-# W5 timing-offset gap — fixture + recoverability diagnostic (DRAFT)
+# W5 timing-offset gap — fixture + recoverability diagnostic (COMPLETE — archived 2026-06-29)
 
-Status: **Phases A–D done.** A (fixture, incl. skip-faithful refinement), B (self-validation), C
-(recoverability diag), D (g003 committed as the real `timing_offset` exemplar with a regression test).
-The fixture reproduces g003's **skip** (not just its lag signature) and the gate probe asserts it. Only
-gate detection/rescue (the per-seam fractional shift) remains deferred (§6b). See §5 Phase C results, §6.
+Status: **COMPLETE — Phases A–D done; archived.** A (fixture, incl. skip-faithful refinement), B
+(self-validation), C (recoverability diag), D (g003 committed as the real `timing_offset` exemplar with
+a regression test). The fixture reproduces g003's **skip** (not just its lag signature) and the gate
+probe asserts it. The production correction is **deferred to a follow-on**:
+[../TEMP-w5-timing-offset-rescue-plan.md](../TEMP-w5-timing-offset-rescue-plan.md) (§6b sketches it). See
+§5 Phase C results, §6.
 
-Companion to [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md) and
-[archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md). Reading:
-[gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint, [seam-scoring.md](seam-scoring.md) §3–4.
+Companion to [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) and
+[TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md). Reading:
+[../gap-fingerprint.md](../gap-fingerprint.md) § Lag fingerprint, [../seam-scoring.md](../seam-scoring.md) §3–4.
 
 ---
 
@@ -234,14 +236,28 @@ Result (asserted by `diag_w5_timing_offset_gate_probe`): drift cells `{16 ms/−
 32 ms/−9000}` → **Skip, 0 passing brackets, all 19 `waveform_floor`**; constant `16 ms/0 ppm` →
 **Baseline** (recoverable). The fixture now reproduces g003 end-to-end.
 
-## 6b. Deferred — detection + rescue in the production gate (out of plan)
+## 6b. Deferred — detection + rescue in the production gate (follow-on)
 
-The fingerprint separates `timing_offset` from `decorrelated` cleanly (`peak_r 0.99` vs the `< 0.3`
-threshold). The sharpened understanding: the missing gate capability is a **fractional shift at the
-chosen seam** (what recovers g003), distinct from the integer bracket move the anchor path already does.
-Open work: (i) run the lag sweep at the seam *inside* the gate; (ii) apply the recovered `frac_lag` as a
-per-seam fractional shift and re-gate under a new tier. The skip-faithful fixture + recoverability data
-now exist to justify and test it; still deferred as a separate effort.
+**Detection is in hand:** `summarize_lag_curve` (pub) returns the `timing_offset` vs `decorrelated`
+verdict (`peak_r 0.99` vs the `< 0.3` threshold) plus the recovered pre/post `frac_lag`. It is not yet
+called near the gate — wiring it there is small.
+
+**The correction is the real work, and it has two regimes** — the original framing ("apply the recovered
+`frac_lag` as a per-seam fractional shift") only covers the first:
+
+- **Constant offset** (`frac_lag_pre ≈ frac_lag_post`): one sub-sample shift of the B fill aligns both
+  seams. Easy, and largely already handled — the haystack slide recovers a constant offset, which is why
+  constant offsets do **not** skip (Phase C `drift=0 → Baseline`).
+- **Drift / skew** (g003: −16 ms pre vs −8 ms post): **no single shift fixes both seams.** The fill must
+  be **time-warped (resampled)** by the implied rate ratio so its start aligns to the pre offset and its
+  end to the post offset — inverting the A/B clock skew across the fill. `resample_interleaved` (already
+  used in `patch_audio.rs` to rate-match B) is the reusable primitive; the new logic measures the skew
+  and applies it per-fill, then re-gates under a new tier (`timing_offset_trusted`), residual veto
+  unchanged.
+
+The skip-faithful fixture + recoverability data now exist to justify and test it. Tracked in
+[../TEMP-w5-timing-offset-rescue-plan.md](../TEMP-w5-timing-offset-rescue-plan.md) (gated on a prevalence
+scan — g003 is the only real exemplar so far).
 
 ---
 
@@ -249,6 +265,7 @@ now exist to justify and test it; still deferred as a separate effort.
 
 | Doc | Contents |
 |-----|----------|
-| [gap-fingerprint.md](gap-fingerprint.md) | Lag fingerprint, `timing_offset` vs `decorrelated` verdict |
-| [archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md) | The *decorrelated* W5 class (A6); diag harness this reuses |
-| [seam-scoring.md](seam-scoring.md) | Seam definition, 250 ms throat, lag-0 Pearson |
+| [../gap-fingerprint.md](../gap-fingerprint.md) | Lag fingerprint, `timing_offset` vs `decorrelated` verdict |
+| [TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md) | The *decorrelated* W5 class (A6); diag harness this reuses |
+| [../seam-scoring.md](../seam-scoring.md) | Seam definition, 250 ms throat, lag-0 Pearson |
+| [../TEMP-w5-timing-offset-rescue-plan.md](../TEMP-w5-timing-offset-rescue-plan.md) | Follow-on: production detection + drift-resample rescue |

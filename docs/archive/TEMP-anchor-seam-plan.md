@@ -7,7 +7,7 @@ config and flags: [gap-fill-modes.md](../gap-fill-modes.md) § Editorial anchor 
 
 **Sibling W5 classes:** This plan covers **editorial** rescue (move the cut to matchable peaks).
 **Timing-offset** W5 (`timing_offset` lag fingerprint, g003) is a separate class — see
-[TEMP-w5-timing-offset-diag-plan.md](../TEMP-w5-timing-offset-diag-plan.md). A6 fixture discovery:
+[TEMP-w5-timing-offset-diag-plan.md](TEMP-w5-timing-offset-diag-plan.md). A6 fixture discovery:
 [TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md).
 
 Companions: [seam-scoring.md](../seam-scoring.md), [gap-repair-guide.md](../gap-repair-guide.md) § W5 /
@@ -515,4 +515,4 @@ Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (ca
 | [gap-repair-guide.md](../gap-repair-guide.md) | W5, tiers, vocabulary |
 | [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) | Pearson vs residual on quiet seams |
 | [energy-signature-plan.md](energy-signature-plan.md) | Structure tier shipped |
-| [TEMP-w5-timing-offset-diag-plan.md](../TEMP-w5-timing-offset-diag-plan.md) | Sibling W5 class: timing-offset skips (g003) |
+| [TEMP-w5-timing-offset-diag-plan.md](TEMP-w5-timing-offset-diag-plan.md) | Sibling W5 class: timing-offset skips (g003) |
