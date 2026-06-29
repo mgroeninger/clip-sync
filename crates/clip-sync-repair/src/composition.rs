@@ -66,7 +66,14 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     let outcome = run_repair_with_defaults(input, &progress)?;
 
     if let Some(dir) = args.gap_fingerprints.clone() {
-        dump_gap_fingerprints(&args, &config, &outcome.report, &progress, &dir)?;
+        // Repair takes priority: a real repair (--mux) wins over the fingerprint diagnostic.
+        if args.mux.is_some() {
+            eprintln!(
+                "warning: --mux takes priority; ignoring --gap-fingerprints / --fingerprint-gap"
+            );
+        } else {
+            dump_gap_fingerprints(&args, &config, &outcome.report, &progress, &dir)?;
+        }
     }
 
     print_repair_outcome(&args, &config, outcome)
@@ -82,7 +89,7 @@ fn dump_gap_fingerprints(
     progress: &dyn ProgressReporter,
     dir: &std::path::Path,
 ) -> Result<(), RepairError> {
-    progress.phase("characterizing gaps (--dump-gap-fingerprints)");
+    progress.phase("characterizing gaps for fingerprinting");
     let media_reader = SymphoniaMediaReader;
     let decoded = decode_ab(&media_reader, report, progress)?;
     let request = config.repair.patch_settings().into_request(report.clone());
@@ -92,6 +99,7 @@ fn dump_gap_fingerprints(
         &decoded.b_samples_full,
         &request,
         &args.fingerprint_gap,
+        progress,
     );
     // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
     corpus.source.scan_recipe.min_gap_ms =

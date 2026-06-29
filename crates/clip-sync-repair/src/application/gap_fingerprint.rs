@@ -1106,25 +1106,26 @@ fn anchor_params_from_gate(
     }
 }
 
-/// Characterize gaps with **authoritative** gate scoring (the bin path). All gaps are built at the
-/// cheap summary tier; each Full-tier gap then gets its per-bracket `failure_stage` + seam, baseline
-/// seam, outcome, and lag from the production gate (`oracle_*`). Per gap this runs **N + 2** unified
-/// searches (N brackets via `oracle_score_fit_candidate`, the baseline, and one `place_on_b` for the
-/// lag placement) — no redundant joint eval, no per-bracket `place_on_b`.
+/// Characterize the gaps in `select` (empty ⇒ **all** gaps) at **full** authoritative detail (the bin
+/// path). Each gap gets its per-bracket `failure_stage` + seam, baseline seam, outcome, and lag from
+/// the production gate (`oracle_*`) — **N + 2** unified searches per gap (N brackets via
+/// `oracle_score_fit_candidate`, the baseline via the zero-move bracket, and one `place_on_b` for the
+/// lag placement). Only the selected gaps are built; unselected gaps are never characterized.
 pub(crate) fn characterize_gaps_with_gate(
     report: &crate::domain::GapReport,
     a_pcm: &clip_sync::MultiChannelPcm,
     b_samples_full: &[f32],
     request: &crate::application::PatchAudioRequest,
-    full_gaps: &[usize],
+    select: &[usize],
+    progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::application::patch_region::{oracle_build_fit_cache, oracle_score_fit_candidate};
 
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
     let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
-    // Build every gap cheaply (summary: baseline structure/seam, no per-bracket search, no lag).
-    let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, &[]);
+    // Build only the selected gaps (summary base: baseline structure/seam, no per-bracket, no lag).
+    let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
 
     let gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
         request,
@@ -1145,10 +1146,11 @@ pub(crate) fn characterize_gaps_with_gate(
         + cfg.fill_border_search_secs
         + cfg.fill_align_margin_secs;
 
-    for (i, gap) in report.gaps.iter().enumerate() {
-        if !full_gaps.contains(&i) {
-            continue;
-        }
+    let total_gaps = corpus.gaps.len() as u64;
+    for (gn, fp) in corpus.gaps.iter_mut().enumerate() {
+        progress.progress("fingerprint-gap", gn as u64 + 1, total_gaps);
+        let i = fp.index;
+        let gap = &report.gaps[i];
         let Some(b_start) = gap.video_b_start_secs else { continue };
         let refined = refine_gap_frames(
             &a_pcm.samples,
@@ -1184,7 +1186,6 @@ pub(crate) fn characterize_gaps_with_gate(
         );
         let params = crate::application::patch_region::SeamGateParams { cfg: &gate_cfg, geom };
         let cache = oracle_build_fit_cache(&params);
-        let fp = &mut corpus.gaps[i];
         fp.tier = DetailTier::Full;
 
         // Per-bracket authoritative seam + failure_stage (gate enumeration). The zero-move bracket is
@@ -1197,7 +1198,9 @@ pub(crate) fn characterize_gaps_with_gate(
         let mut any_ok = false;
         let mut best_energy: Option<(f64, RefinedGapFrames)> = None;
         let mut infos = Vec::with_capacity(brackets.len());
-        for br in &brackets {
+        let bracket_total = brackets.len() as u64;
+        for (bn, br) in brackets.iter().enumerate() {
+            progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
             let (seam_pre, seam_post, stage) =
                 match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
                     Ok((pre, post, _, _)) => {
@@ -1266,12 +1269,10 @@ pub(crate) fn characterize_gaps_with_gate(
     corpus
 }
 
-/// Characterize every gap in a scan `report` against already-decoded full A/B PCM (B passed whole
-/// as the haystack). Gaps whose index is in `full_gaps` get [`DetailTier::Full`]; the rest
-/// [`DetailTier::Summary`]. A gap with no B mapping is characterized A-only.
-///
-/// This is the orchestrator core: the `--dump-gap-fingerprints` bin path decodes A/B (as the patch
-/// path already does), calls this, and serializes the returned [`GapCorpus`] to JSON.
+/// Build A-side **summary** fingerprints for the gaps in `select` (empty ⇒ all) against decoded
+/// full A/B PCM: geometry + levels + contour + anchors + a baseline structure/seam per gap. The
+/// authoritative gate detail (brackets / `failure_stage` / lag / outcome) is layered on by
+/// [`characterize_gaps_with_gate`]. A gap with no B mapping is characterized A-only.
 pub fn characterize_gaps(
     report: &crate::domain::GapReport,
     a_samples: &[f32],
@@ -1279,7 +1280,7 @@ pub fn characterize_gaps(
     sample_rate: u32,
     channels: usize,
     cfg: &FingerprintConfig,
-    full_gaps: &[usize],
+    select: &[usize],
 ) -> GapCorpus {
     let rate = f64::from(sample_rate).max(1.0);
     let ch = channels.max(1);
@@ -1292,10 +1293,12 @@ pub fn characterize_gaps(
         + cfg.fill_length_slack_secs.max(cfg.fill_align_margin_secs)
         + cfg.fill_align_margin_secs;
 
+    let take_all = select.is_empty();
     let gaps = report
         .gaps
         .iter()
         .enumerate()
+        .filter(|(i, _)| take_all || select.contains(i))
         .map(|(i, gap)| {
             let has_b = gap.video_b_start_secs.is_some();
             let gap_offset_secs = gap
@@ -1330,12 +1333,7 @@ pub fn characterize_gaps(
                 gap_offset_secs,
                 config: *cfg,
             };
-            let tier = if full_gaps.contains(&i) {
-                DetailTier::Full
-            } else {
-                DetailTier::Summary
-            };
-            build_gap_fingerprint(i, &inputs, tier)
+            build_gap_fingerprint(i, &inputs, DetailTier::Summary)
         })
         .collect();
 

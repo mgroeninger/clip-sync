@@ -29,8 +29,9 @@ pub struct Args {
     #[arg(long, value_name = "DIR")]
     pub gap_fingerprints: Option<PathBuf>,
 
-    /// Gap index (repeatable) to characterize at full detail (per-bracket scores + lag). Others get
-    /// the cheap summary tier. Only meaningful with --gap-fingerprints.
+    /// Gap index (repeatable). When given, characterize ONLY these gaps; omit to characterize ALL
+    /// gaps. Each characterized gap gets full detail (per-bracket scores + lag). Use the normal repair
+    /// gap table to pick which gaps are worth characterizing. Only meaningful with --gap-fingerprints.
     #[arg(long, value_name = "IDX")]
     pub fingerprint_gap: Vec<usize>,
 

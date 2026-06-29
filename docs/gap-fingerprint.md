@@ -7,7 +7,7 @@ regression/calibration corpus.
 
 Source: `application/gap_fingerprint.rs`. Plan (archived): [TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md).
 
-> Status: **P1 complete** — schema + builder + oracle `failure_stage` + `--dump-gap-fingerprints`
+> Status: **P1 complete** — schema + builder + oracle `failure_stage` + `--gap-fingerprints`
 > bin path + per-gap corpus library, all wired. Validated on real media.
 
 ## Producing fingerprints
@@ -16,11 +16,21 @@ Source: `application/gap_fingerprint.rs`. Plan (archived): [TEMP-gap-fingerprint
 clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 ```
 
-- `--gap-fingerprints DIR` — after scan, write a corpus directory containing `corpus.json` (all gaps,
-  for quick inspection), one self-contained single-gap JSON **per gap** (the library), and a
-  non-identifying `manifest.json`.
-- `--fingerprint-gap IDX` (repeatable) — characterize these gaps at **full** detail (per-bracket gate
-  `failure_stage` + lag); the rest get the cheap **summary** tier.
+- `--gap-fingerprints DIR` — after scan, write a corpus directory: `corpus.json` (all characterized
+  gaps), one self-contained single-gap JSON **per gap** (the library), and a non-identifying
+  `manifest.json`.
+- `--fingerprint-gap IDX` (repeatable) — characterize **only** these gaps. Omit it to characterize
+  **all** gaps. Each characterized gap gets full detail (per-bracket gate `failure_stage` + lag).
+
+To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
+every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in
+the API (`characterize_gaps`) but the bin path always characterizes its selected gaps at full detail,
+because only the full tier carries the A-vs-B verdict (lag / `failure_stage`) needed to build a fixture.
+
+**Repair takes priority.** This is a repair tool first, so a real repair wins over the diagnostic:
+if `--mux` is set, fingerprinting is **skipped** (with a warning if `--gap-fingerprints` was also
+passed). `--gap-fingerprints` therefore runs on a scan-only / `--wav` run. *(Note: `--gap-fingerprints`
+with `--wav` currently runs both and decodes A/B twice — fine, but not free.)*
 
 ## Shape
 
