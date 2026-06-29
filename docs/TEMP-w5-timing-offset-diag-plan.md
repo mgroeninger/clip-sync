@@ -5,7 +5,7 @@ Status: **DRAFT** — Phase A (fixture, incl. skip-faithful refinement) + B (sel
 and the gate probe asserts it. Phase D (promote g003 to corpus) not started. See §5 Phase C results and
 §6.
 
-Companion to [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) and
+Companion to [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md) and
 [archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md). Reading:
 [gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint, [seam-scoring.md](seam-scoring.md) §3–4.
 

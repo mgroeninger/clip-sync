@@ -209,7 +209,7 @@ Design: [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan
 
 ## Editorial anchor seam
 
-**Status:** shipped (fit mode). Design: [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md).
+**Status:** shipped (fit mode). Design: [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md).
 
 When a fillable gap has a **quiet scan throat** but salient contour nearby (speech peak, bool onset in the flanking context halves), throat-only Pearson often lands in **W5** (symmetric weak, dead zone). Anchor seam searches **editorial boundaries** on A (energy peaks, bool transitions rising pre / falling post), enumerates feasible brackets, and scores B-side matchability at those anchor windows. Context geometry: [Signature context and contour geometry](#signature-context-and-contour-geometry).
 

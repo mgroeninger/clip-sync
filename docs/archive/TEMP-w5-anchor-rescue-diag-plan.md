@@ -2,7 +2,8 @@
 
 Status: **COMPLETE.** A6 anchor rescue is proven end-to-end on real PCM and locked in. This document
 is the discovery write-up; it is archived for the reasoning trail. Live acceptance status lives in
-[TEMP-anchor-seam-plan.md](../TEMP-anchor-seam-plan.md) §7 (A6/A6b rows).
+[gap-repair-guide.md](../gap-repair-guide.md) § Editorial anchor seam and
+[TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) §7 (A6/A6b rows).
 
 **Outcome.** All phases done. Phase 0 — extracted `SeamGateConfig`/`SeamGateGeometry` (shared
 constructors, no oracle/production drift). Phase 1 — `diag_w5_anchor_rescue` single-cell scorer.
@@ -403,7 +404,7 @@ diag_w5_anchor_rescue_coarse_grid -- --nocapture` (CSV under `target/w5_anchor_r
 | 3.1 | Pick cell from Phase 2 CSV (`AnchorRescuePossible`, best `max_bracket_min`) | human |
 | 3.2 | Freeze defaults in fixture builder + `w5_anchor_rescue_repair` | `test_support` |
 | 3.3 | Un-ignore `w5_anchor_rescue_pipeline_engages_anchor_seam_{auto,force}` | `anchor_seam_oracle.rs` |
-| 3.4 | Update [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) §7 A6 row; archive or mark this plan **done** | docs |
+| 3.4 | Update [TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md) §7 A6 row; archive plan **done** (2026-06-29) | docs |
 
 Optional: one pipeline run per finalist only (not per grid cell).
 

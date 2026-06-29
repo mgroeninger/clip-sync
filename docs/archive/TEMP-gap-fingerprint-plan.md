@@ -14,7 +14,7 @@ blockers. The **alignment-drift fix** for the real file is a separate, open thre
 plan).
 
 Companions: [seam-scoring.md](../seam-scoring.md), [gap-fill-modes.md](../gap-fill-modes.md),
-[TEMP-anchor-seam-plan.md](../TEMP-anchor-seam-plan.md), [cli-output.md](../cli-output.md),
+[TEMP-anchor-seam-plan.md](TEMP-anchor-seam-plan.md), [cli-output.md](../cli-output.md),
 [json-output.md](../json-output.md), [gap-fingerprint.md](../gap-fingerprint.md).
 
 ---

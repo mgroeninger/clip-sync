@@ -1,9 +1,18 @@
-# Anchor-based seam placement — plan (DRAFT)
+# Anchor-based seam placement — plan (DONE — archived 2026-06-29)
 
-Status: **done** — P0–P4 + Batch A–F (Pearson gate, xcorr, observability, user docs, corpus/diag).
+Status: **COMPLETE.** P0–P4 + Batch A–F shipped (Pearson gate, xcorr, observability, user docs,
+corpus/diag). Live behavior: [gap-repair-guide.md](../gap-repair-guide.md) § Editorial anchor seam;
+config and flags: [gap-fill-modes.md](../gap-fill-modes.md) § Editorial anchor seam. Default
+`anchor_seam_mode = auto` (2026-06-29).
 
-Companions: [seam-scoring.md](seam-scoring.md), [gap-repair-guide.md](gap-repair-guide.md) § W5 /
-Vocabulary, [gap-fill-modes.md](gap-fill-modes.md) § extension / `baseline_only`, [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md).
+**Sibling W5 classes:** This plan covers **editorial** rescue (move the cut to matchable peaks).
+**Timing-offset** W5 (`timing_offset` lag fingerprint, g003) is a separate class — see
+[TEMP-w5-timing-offset-diag-plan.md](../TEMP-w5-timing-offset-diag-plan.md). A6 fixture discovery:
+[TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md).
+
+Companions: [seam-scoring.md](../seam-scoring.md), [gap-repair-guide.md](../gap-repair-guide.md) § W5 /
+Vocabulary, [gap-fill-modes.md](../gap-fill-modes.md) § extension / `baseline_only`,
+[residual-gate-wiring-plan.md](residual-gate-wiring-plan.md).
 
 ---
 
@@ -132,7 +141,7 @@ When **both** anchors pass matchability on B:
 - **High / marginal** from anchor Pearson or envelope+residual compose (extend
   `classify_fill_waveform_confidence` / sibling).
 - When anchor windows are **low-RMS but residual cancels** → marginal via rescue (same invariant as
-  [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) §2).
+  [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) §2).
 - When structure confident at anchors but Pearson dead at throat → **`anchor_trusted`** patch tier
   (fit mode; vocabulary tag), with residual veto unchanged.
 
@@ -276,19 +285,19 @@ Unit tests: `xcorr_rescues_ambiguous_pearson_pre_anchor`, `local_anchor_xcorr_pe
 
 | Doc | Contents |
 |-----|----------|
-| [gap-repair-guide.md](gap-repair-guide.md) | § Editorial anchor seam (W5 rescue), vocabulary tags, tuning knobs |
-| [gap-fill-modes.md](gap-fill-modes.md) | § Editorial anchor seam, flag matrix, W5 recipe, TOML keys |
-| [cli-output.md](cli-output.md) | Human `patched (anchor …)`, verbose `gap tags:` anchor fields |
-| [json-output.md](json-output.md) | `GapTags` / `GapPatchStatus` anchor fields |
-| [development.md](development.md) | `anchor_seam_oracle` in PR integration tier |
-| [README.md](../README.md) | Commented `anchor_seam_*` config keys |
+| [gap-repair-guide.md](../gap-repair-guide.md) | § Editorial anchor seam (W5 rescue), vocabulary tags, tuning knobs |
+| [gap-fill-modes.md](../gap-fill-modes.md) | § Editorial anchor seam, flag matrix, W5 recipe, TOML keys |
+| [cli-output.md](../cli-output.md) | Human `patched (anchor …)`, verbose `gap tags:` anchor fields |
+| [json-output.md](../json-output.md) | `GapTags` / `GapPatchStatus` anchor fields |
+| [development.md](../development.md) | `anchor_seam_oracle` in PR integration tier |
+| [README.md](../../README.md) | Commented `anchor_seam_*` config keys |
 | P2.9 | `repair_profile.rs` `inactive_repair_flag_notes` when `anchor_seam_mode=off` | **done** (shipped earlier) |
 
 ### Batch F — Corpus + diagnostic (done)
 
 | # | Task | File(s) | Notes |
 |---|------|---------|-------|
-| P3.5 | W5 production corpus row | `gap_corpus_fixtures.rs`, `manifest.toml`, `integration_gap_corpus.rs` | `generated_w5_speech_peaks_anchor` — scan + domain anchors + force patch |
+| P3.5 | W5 production corpus row | `gap_corpus_fixtures.rs`, `manifest.toml`, `integration_gap_corpus.rs` | `generated_w5_speech_peaks_anchor` — scan + domain anchors + default auto patch |
 | P3.6 | Diagnostic CSV | `test_support/anchor_seam_diagnostic.rs`, `tests/diag_anchor_seam.rs` | `speech_peaks`, C3, flat C1 (`diagnostic-tests`) |
 
 W5 generator adds a quiet chirp bed on silent regions so block-based scan detects the throat hole;
@@ -480,7 +489,7 @@ Called from `evaluate_seam_gate_fit_candidate` with the winning `FillAlignment`.
 | **A4** F4 decoy / wrong B slide | Residual veto; no anchor_trusted false patch |
 | **A5** `baseline_only` profile (energy) | Anchor search runs without requiring `--full` grid |
 | **A5b** `baseline_only` + bool signature | Same as A5 under `gap_signature_mode=bool` |
-| **A6** W5 symmetric-weak throat | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Pipeline (`anchor_seam_used`, E3 High): **done (2026-06-27)** — `w5_anchor_rescue_pipeline_{auto,force}` pass end-to-end on the faithful **noise-collar** fixture `build_w5_noise_collar_anchor_rescue` (decorrelated noise collar → genuine W5 from content; triangular speech anchors a moving bracket reaches). Release-tier `#[ignore]` (slow). Discovery write-up: [archive/TEMP-w5-anchor-rescue-diag-plan.md](archive/TEMP-w5-anchor-rescue-diag-plan.md) |
+| **A6** W5 symmetric-weak throat | Domain: nominal throat &lt; 0.27, feasible peak brackets (`w5_fixture_throat_symmetric_weak_and_brackets_exist`). Pipeline (`anchor_seam_used`, E3 High): **done (2026-06-27)** — `w5_anchor_rescue_pipeline_{auto,force}` pass end-to-end on the faithful **noise-collar** fixture `build_w5_noise_collar_anchor_rescue` (decorrelated noise collar → genuine W5 from content; triangular speech anchors a moving bracket reaches). Release-tier `#[ignore]` (slow). Discovery write-up: [TEMP-w5-anchor-rescue-diag-plan.md](TEMP-w5-anchor-rescue-diag-plan.md) |
 | **A6b** A6 + `anchor_seam_mode=force` | Same fixture as A6; pipeline oracle paired with A6 |
 
 Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (candidate count bounded).
@@ -502,7 +511,8 @@ Track: `patch_tier`, `seam_shape`, `anchor_trusted` (new), wall time per gap (ca
 
 | Doc | Contents |
 |-----|----------|
-| [seam-scoring.md](seam-scoring.md) | Current seam definition, 250 ms throat |
-| [gap-repair-guide.md](gap-repair-guide.md) | W5, tiers, vocabulary |
-| [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) | Pearson vs residual on quiet seams |
-| [archive/energy-signature-plan.md](archive/energy-signature-plan.md) | Structure tier shipped |
+| [seam-scoring.md](../seam-scoring.md) | Current seam definition, 250 ms throat |
+| [gap-repair-guide.md](../gap-repair-guide.md) | W5, tiers, vocabulary |
+| [residual-gate-wiring-plan.md](residual-gate-wiring-plan.md) | Pearson vs residual on quiet seams |
+| [energy-signature-plan.md](energy-signature-plan.md) | Structure tier shipped |
+| [TEMP-w5-timing-offset-diag-plan.md](../TEMP-w5-timing-offset-diag-plan.md) | Sibling W5 class: timing-offset skips (g003) |
