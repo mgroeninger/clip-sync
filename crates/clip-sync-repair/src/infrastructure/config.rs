@@ -994,6 +994,15 @@ dry_run = true
     }
 
     #[test]
+    fn repair_app_config_defaults_anchor_seam_mode_to_auto() {
+        let config = RepairAppConfig::default();
+        assert_eq!(
+            config.repair.anchor_seam_mode,
+            crate::domain::AnchorSeamMode::Auto,
+        );
+    }
+
+    #[test]
     fn repair_app_config_defaults_fill_mode_to_fit() {
         let config = RepairAppConfig::default();
         assert_eq!(config.repair.fill_mode, crate::domain::FillMode::Fit);

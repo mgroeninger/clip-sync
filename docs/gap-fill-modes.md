@@ -224,7 +224,7 @@ Per gap (fit, when anchor search runs):
 
 | Setting | Default | CLI | Notes |
 |---------|---------|-----|-------|
-| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | `auto` = below marginal floor + contour in flanking context ([§ Signature context and contour geometry](#signature-context-and-contour-geometry)); `force` = always try anchor before grid (defers E2 marginal accept under `baseline_only`) |
+| `anchor_seam_mode` | `auto` | `--anchor-seam-mode` | `auto` = below marginal floor + contour in flanking context ([§ Signature context and contour geometry](#signature-context-and-contour-geometry)); `force` = always try anchor before grid (defers E2 marginal accept under `baseline_only`); `off` = disable |
 | `max_anchor_bracket_secs` | 5.0 | `--max-anchor-bracket-secs` | Max pre↔post anchor span |
 | `max_anchors_per_side` | 5 | `--max-anchors-per-side` | Cap per side (incl. scan fallback) |
 | `anchor_seam_min_prominence` | 0.0 | `--anchor-seam-min-prominence` | Energy peak filter |
@@ -367,9 +367,9 @@ Per bin (energy path): mono downmix → gated log-RMS (`ln(1+rms)` above silence
 | **`anchor_seam_mode = auto`** | Whether anchor bracket search runs (with weak throat Pearson); same `has_anchor_seam_contour()` |
 | **Editorial anchor seam** | Energy-peak and bool-transition **candidate** frames on A (plus scan-refined fallback at throat edges) |
 
-Anchor `auto` also requires baseline throat `min(pre, post) < min_fill_correlation − fill_marginal_margin` (default **0.27**). `force` skips the contour gate. Default `anchor_seam_mode` is **`off`** — contour geometry matters only when anchor search is enabled. See [Editorial anchor seam](#editorial-anchor-seam).
+Anchor `auto` also requires baseline throat `min(pre, post) < min_fill_correlation − fill_marginal_margin` (default **0.27**). `force` skips the contour gate. Default `anchor_seam_mode` is **`auto`**. See [Editorial anchor seam](#editorial-anchor-seam).
 
-**Practical checks:** run with `-v` and read `signature_mode=` (resolved energy vs bool) and `repair note: anchor_seam_mode=off` when anchor is inactive. Flat flanks → bool path, no anchor `auto` trigger; W5 rescue needs salient contour in the ±3 s **flanks**, not only inside the hole.
+**Practical checks:** run with `-v` and read `signature_mode=` (resolved energy vs bool). When anchor is explicitly `off`, `-v` emits `repair note: anchor_seam_mode=off`. Flat flanks → bool path, no anchor `auto` trigger; W5 rescue needs salient contour in the ±3 s **flanks**, not only inside the hole.
 
 ---
 
@@ -485,7 +485,7 @@ Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracke
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |
 | `max_fill_align_adjustment_secs` | `0.5` | `--max-fill-align-adjust-secs` | Legacy polish window |
-| `anchor_seam_mode` | `off` | `--anchor-seam-mode` | Editorial anchor search: `off` \| `auto` \| `force` |
+| `anchor_seam_mode` | `auto` | `--anchor-seam-mode` | Editorial anchor search: `off` \| `auto` \| `force` |
 | `max_anchor_bracket_secs` | `5.0` | `--max-anchor-bracket-secs` | Max anchor bracket span |
 | `max_anchors_per_side` | `5` | `--max-anchors-per-side` | Anchor candidates per side |
 | `anchor_seam_min_prominence` | `0.0` | `--anchor-seam-min-prominence` | Energy peak prominence floor |

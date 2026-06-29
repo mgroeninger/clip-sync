@@ -159,7 +159,7 @@ which is offset anchors for `anchored_retry`.
 | **P3** | Oracle + corpus rows | `tests/`, `test_support/energy_signature_fixtures.rs` |
 | **P4** (optional) | Local PCM xcorr at anchors | `PcmCorrelator` adapter |
 
-**Default behavior:** ship behind `repair.anchor_seam_mode = off | auto | force`;
+**Default behavior:** `repair.anchor_seam_mode = auto | off | force` (default **`auto`**);
 `auto` enables when baseline throat `min(pre,post) < marginal_floor` and signature contour present:
 energy mode uses `energy_envelope_is_flat`; bool mode uses activity transitions or mixed
 active/silent bins (`GapSignature::has_anchor_seam_contour`).

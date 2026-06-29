@@ -1058,7 +1058,7 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
 
 const W5_CORPUS_CASE_ID: &str = "generated_w5_speech_peaks_anchor";
 
-/// W5 production corpus: speech peaks offset from silent throat — scan, domain anchors, force patch.
+/// W5 production corpus: speech peaks offset from silent throat — scan, domain anchors, default auto patch.
 pub fn run_gap_corpus_w5_anchor_seam_case() {
     use crate::application::PatchAudio;
     use crate::domain::gap_anchor_seam::{
@@ -1141,7 +1141,7 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
 
     let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
     repair.fill_mode = FillMode::Fit;
-    repair.anchor_seam_mode = AnchorSeamMode::Force;
+    repair.anchor_seam_mode = AnchorSeamMode::default();
     repair.residual_gate = ResidualGateMode::VetoRescue;
     repair.min_fill_correlation = 0.35;
     repair.fill_fit_structure_weight = 0.35;

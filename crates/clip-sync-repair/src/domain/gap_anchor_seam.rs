@@ -13,8 +13,8 @@ use crate::domain::policies::{is_silent_frame, RefinedGapFrames};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnchorSeamMode {
-    #[default]
     Off,
+    #[default]
     /// Run when baseline throat `min(pre, post)` is below the marginal floor and energy contour exists.
     Auto,
     /// Always run anchor bracket search after baseline fails the marginal short-circuit.

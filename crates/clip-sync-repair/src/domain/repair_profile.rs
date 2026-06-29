@@ -322,7 +322,7 @@ mod tests {
             fill_anchor_search_prior_weight: 0.0,
             fill_anchor_retry_marginal: false,
             fill_offset_mode: FillOffsetMode::Recommended,
-            anchor_seam_mode: AnchorSeamMode::Off,
+            anchor_seam_mode: AnchorSeamMode::default(),
         }
     }
 

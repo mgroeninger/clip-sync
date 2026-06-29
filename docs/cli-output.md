@@ -362,7 +362,7 @@ on each `GapPatchOutcome` in `--format json`. Classification and tuning guidance
 editorial bracket, `-v` appends `anchor_seam=true` and optionally `anchor_move_frames=N` to the
 `gap tags:` line. Human status uses the `anchor` placement prefix (`patched (anchor 0.31→0.29)`).
 JSON mirrors the same fields on `status.patched` and `tags` — see [json-output.md](json-output.md)
-§ `GapTags` / `GapPatchStatus`. When `anchor_seam_mode = off`, `-v` may emit
+§ `GapTags` / `GapPatchStatus`. When `anchor_seam_mode = off` (non-default), `-v` may emit
 `repair note: anchor_seam_mode=off: editorial anchor search inactive; use --anchor-seam-mode auto|force`.
 
 ---

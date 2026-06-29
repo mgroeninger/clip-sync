@@ -30,6 +30,18 @@ use clip_sync_repair::test_support::energy_signature_production::{
 };
 use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_request_with_options};
 
+/// Default `RepairConfig` ships `anchor_seam_mode = auto` (integration tier / `pr-repair`).
+#[test]
+fn default_repair_config_anchor_seam_mode_is_auto() {
+    assert_eq!(RepairConfig::default().anchor_seam_mode, AnchorSeamMode::Auto);
+
+    let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = gap_report_from_energy_fixture(temp.path(), &fixture);
+    let request = patch_request_from_repair(report, &RepairConfig::default());
+    assert_eq!(request.anchor_seam_mode, AnchorSeamMode::Auto);
+}
+
 fn anchor_params(fixture: &EnergySignatureFixture) -> AnchorSeamParams {
     AnchorSeamParams {
         context_frames: fixture.context_frames,
@@ -508,7 +520,7 @@ fn noise_collar_a6_request(mode: AnchorSeamMode, temp: &std::path::Path) -> Patc
 #[ignore = "slow: full PatchAudio anchor rescue (~30s release / ~150s debug) — run via test-tier release --ignored"]
 fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let request = noise_collar_a6_request(AnchorSeamMode::Auto, temp.path());
+    let request = noise_collar_a6_request(AnchorSeamMode::default(), temp.path());
 
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
         .execute(request, RepairConfig::default().crossfade_ms)

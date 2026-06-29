@@ -138,7 +138,7 @@ When the **scan throat** is quiet but salient audio exists nearby (speech peaks,
 | **`auto`** | Run when baseline throat `min(pre, post) < min_fill_correlation - fill_marginal_margin` **and** the gap signature has contour in the flanking context halves ([gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) § Signature context and contour geometry) |
 | **`force`** | Always try anchor bracket search before the boundary grid; under `baseline_only`, defers accepting a **marginal** baseline (E2) so anchor can run first (diagnostics / oracles) |
 
-CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"`. Fit mode only; `-v` emits `repair note: anchor_seam_mode=off: …` when inactive.
+CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"` (default). Fit mode only; `-v` emits `repair note: anchor_seam_mode=off: …` when explicitly set to off.
 
 **Outcomes when anchor search wins:**
 
@@ -379,7 +379,7 @@ Map **shape + outcome** to the next run. Start from **original** video A unless 
 | Short marginal seams | P5 + W2 | `default` | Listen; `--full` if placement wrong | Lowering thresholds without listening |
 | **Boundary** gap (music→speech) | C3 + W3 | `default`, `-v` | `--full`; `--gap-signature-mode auto`; ↑ `fill_repeat_penalty_weight` | `--quick` if true match is near haystack edge |
 | Boundary gap, skipped | C3 + W4 | `default` | **`--full --gap-signature-mode auto`** | Patching MP4 re-scan only; widening marginal band without cause |
-| Symmetric weak (energy) | W5 | `--gap-signature-mode auto` + `--anchor-seam-mode auto` | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour in flanking context (default ±3 s from each gap edge, not inside the hole) — [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) |
+| Symmetric weak (energy) | W5 | `default`, `-v` (anchor `auto` on by default) | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour in flanking context (default ±3 s from each gap edge, not inside the hole) — [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) |
 | Long tail / huge gap | P6 + C5 + W6 | Expect skip | Manual edit; do not run `--full` on multi-minute gaps | `--full` on 200 s+ gaps (hours) |
 | Pre-overlap on A | P1 | Ignore | — | Patching |
 | Clip drift on long form | P5 (many) | `fill_offset=interpolated` if drift ≥ ~0.05 s | `anchored-retry` after some High patches | `interpolated` when drift tiny |
@@ -436,7 +436,7 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | `fill_repeat_penalty_weight` | 0.4 | Down-rank repeat-at-border when seams weak (fit) |
 | `fill_border_search_secs` | 10 | B slide radius — larger = more CPU, helps edge-clamped matches |
 | `gap_signature_context_secs` | 3.0 | Structure context; raise for ambiguous long gaps |
-| `anchor_seam_mode` | `off` | `auto` for W5 + contour; `force` for diagnostics |
+| `anchor_seam_mode` | `auto` | `force` for diagnostics; `off` to disable editorial anchor search |
 | `max_anchor_bracket_secs` | 5.0 | Max span between pre/post editorial anchors |
 | `anchor_seam_min_match_pearson` | 0.12 | B-side anchor matchability Pearson floor |
 | Scan: `silence_fraction`, `absolute_silence_rms` | 0.01, 33 | Affects P5 vs P7 |
