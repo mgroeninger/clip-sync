@@ -17,3 +17,4 @@ pub mod energy_signature_production;
 pub mod gap_corpus_fixtures;
 pub mod patch_geometry_preview;
 pub mod w5_anchor_rescue_diag;
+pub mod w5_timing_offset_diag;

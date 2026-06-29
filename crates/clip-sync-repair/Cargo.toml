@@ -45,6 +45,10 @@ name = "anchor_seam_oracle"
 path = "tests/anchor_seam_oracle.rs"
 
 [[test]]
+name = "w5_timing_offset"
+path = "tests/w5_timing_offset.rs"
+
+[[test]]
 name = "config_roundtrip"
 path = "tests/config_roundtrip.rs"
 
@@ -154,4 +158,9 @@ required-features = ["diagnostic-tests"]
 [[test]]
 name = "diag_anchor_quiet_gap"
 path = "tests/diag_anchor_quiet_gap.rs"
+required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_w5_timing_offset"
+path = "tests/diag_w5_timing_offset.rs"
 required-features = ["diagnostic-tests"]

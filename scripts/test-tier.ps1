@@ -86,7 +86,7 @@ try {
     }
 
     function Invoke-RepairIntegrationOnly {
-        $args = @(
+        $cargoArgs = @(
             '-p', 'clip-sync-repair',
             '--test', 'config_roundtrip',
             '--test', 'scan_gaps_integration',
@@ -104,11 +104,11 @@ try {
             '--test', 'wav_bit_depth_integration'
         )
         if (Test-FfmpegOnPath) {
-            $args += '--features', 'ffmpeg-mux', '--test', 'cli_mux_integration'
+            $cargoArgs += '--features', 'ffmpeg-mux', '--test', 'cli_mux_integration'
         } else {
             Write-Host '>> omit cli_mux_integration (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
-        Invoke-CargoTest $args
+        Invoke-CargoTest $cargoArgs
     }
 
     function Invoke-RepairOracle {
@@ -155,7 +155,16 @@ try {
             '--test', 'diag_patch_audio',
             '--test', 'diag_anchor_seam',
             '--test', 'diag_w5_anchor_rescue',
+            '--test', 'diag_w5_timing_offset',
             '--test', 'seam_residual_oracle'
+        )
+        # W5 timing-offset gate probe (slow: full unified gate per cell; release-only by preference).
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--features', 'diagnostic-tests',
+            '--test', 'diag_w5_timing_offset',
+            'diag_w5_timing_offset_gate_probe',
+            '--', '--ignored'
         )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',

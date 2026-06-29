@@ -1507,6 +1507,203 @@ fn zero_frames(samples: &mut [f32], channels: usize, start: usize, end: usize) {
     }
 }
 
+/// Deterministic **band-limited** broadband noise: a fresh xorshift sample held for `hold` frames
+/// (zero-order hold → spectrum rolls off near `sample_rate / (2·hold)`). Unlike white [`fill_noise`],
+/// this survives fractional resampling faithfully (linear interpolation of a band-limited signal keeps
+/// correlation ~1 at the recovered lag), which is what the timing-offset fixture needs: lag-0 dead, the
+/// lag sweep recovering near-perfectly. A large integer shift still fully decorrelates it.
+fn fill_noise_band_limited(
+    samples: &mut [f32],
+    channels: usize,
+    start: usize,
+    end: usize,
+    amplitude: f32,
+    seed: u64,
+    hold: usize,
+) {
+    let ch = channels.max(1);
+    let hold = hold.max(1);
+    let mut state = seed | 1;
+    let mut held = 0.0f32;
+    for (i, frame) in (start..end.min(samples.len() / ch)).enumerate() {
+        if i % hold == 0 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let unit = ((state >> 33) as f64 / (1u64 << 31) as f64) as f32 - 0.5; // ~[-0.5, 0.5)
+            held = unit * 2.0 * amplitude;
+        }
+        for c in 0..ch {
+            samples[frame * ch + c] = held;
+        }
+    }
+}
+
+/// Scale each `bin_frames`-long block of `[start, end)` by a fresh deterministic gain in
+/// `[gmin, gmax]` (xorshift from `seed`). Turns statistically-uniform noise into a **non-stationary**
+/// bed: the 50 ms-bin energy profile becomes a distinctive, non-repeating contour that pins the
+/// structure (envelope) placement to bin resolution, and a moved bracket lands on a *different* contour
+/// it cannot re-slide into waveform alignment. The modulation rides the signal, so it re-aligns under
+/// the recovering lag (the timing-offset signature survives). See
+/// `docs/TEMP-w5-timing-offset-diag-plan.md` §6 (non-stationary collar).
+fn modulate_per_bin(
+    samples: &mut [f32],
+    channels: usize,
+    start: usize,
+    end: usize,
+    bin_frames: usize,
+    seed: u64,
+    gmin: f32,
+    gmax: f32,
+) {
+    let ch = channels.max(1);
+    let bin_frames = bin_frames.max(1);
+    let end = end.min(samples.len() / ch);
+    let mut state = seed | 1;
+    let mut gain = gmin;
+    for (i, frame) in (start..end).enumerate() {
+        if i % bin_frames == 0 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let unit = (state >> 33) as f32 / (1u64 << 31) as f32; // ~[0, 1)
+            gain = gmin + unit * (gmax - gmin);
+        }
+        for c in 0..ch {
+            samples[frame * ch + c] *= gain;
+        }
+    }
+}
+
+/// Resample `src` (interleaved, `ch` channels) under a linear time map and return a new buffer of the
+/// same length, sampled by per-channel linear interpolation (0 outside `src`'s range). The B-vs-A lag
+/// is `lag(t) = offset0_secs + (t − ref_secs)·drift`, so `t_A = t_B − lag(t_B)`. A positive
+/// `offset0_secs` delays B relative to A *at the reference time*; `drift` (dimensionless slope, secs per
+/// sec) tilts the lag linearly so pre and post seams carry **different** offsets — the seam *skew* of
+/// the g003 signature. Anchoring at `ref_secs` (the gap) keeps the seam offset ≈ `offset0_secs` instead
+/// of letting drift accumulate from t=0. See `docs/TEMP-w5-timing-offset-diag-plan.md` §4.
+fn resample_linear(
+    src: &[f32],
+    channels: usize,
+    offset0_secs: f64,
+    drift: f64,
+    ref_secs: f64,
+    sample_rate: u32,
+) -> Vec<f32> {
+    let ch = channels.max(1);
+    let total = src.len() / ch;
+    let sr = f64::from(sample_rate.max(1));
+    let mut dst = vec![0.0f32; src.len()];
+    for j in 0..total {
+        let t_b = j as f64 / sr;
+        let lag = offset0_secs + (t_b - ref_secs) * drift;
+        let t_a = t_b - lag;
+        let idx = t_a * sr;
+        let lo = idx.floor();
+        if lo < 0.0 || lo as usize + 1 >= total {
+            continue; // outside src → silence
+        }
+        let lo_i = lo as usize;
+        let frac = (idx - lo) as f32;
+        for c in 0..ch {
+            let a = src[lo_i * ch + c];
+            let b = src[(lo_i + 1) * ch + c];
+            dst[j * ch + c] = a + (b - a) * frac;
+        }
+    }
+    dst
+}
+
+/// **g003** class — W5 *timing-offset* seam: structure/envelope aligns, but the waveform seam is dead
+/// at lag 0 while a multi-millisecond shift recovers near-perfect correlation (lag verdict
+/// `timing_offset`), and the recovered offset **drifts** across the gap (pre ≠ post). Reproduces the
+/// real fingerprint `gap-files/68686c7f_..._timing_offset.json`.
+///
+/// Distinct from [`build_w5_noise_collar_anchor_rescue`]: there the collar uses *independent* seeds for
+/// A and B (genuinely `decorrelated`, no lag recovers). Here B is a **resample of A** (same noise, shifted),
+/// so lag-0 dies but the sweep peaks at the shift. The collar is band-limited so the fractional resample
+/// recovers faithfully. See `docs/TEMP-w5-timing-offset-diag-plan.md` §4.
+pub fn build_w5_timing_offset_seam(
+    sample_rate: u32,
+    channels: usize,
+    peak_offset_secs: f64,
+    collar_secs: f64,
+    seam_offset_ms: f64,
+    drift_ppm: f64,
+) -> EnergySignatureFixture {
+    let ch = channels.max(1);
+    let spec = ProductionScenarioSpec::production_standard(60.0, 3.0);
+    let total_frames = secs_to_frames(spec.total_secs, sample_rate);
+    let bin_frames = spec.bin_frames(sample_rate);
+    let context = spec.context_frames(sample_rate, total_frames);
+    let gap_frames = spec.min_gap_frames(sample_rate).max(bin_frames * 2);
+    let anchor = (gap_anchor_secs(&spec) * sample_rate as f64) as usize;
+    let gap_start = anchor.max(context + bin_frames);
+    let gap_end = gap_start + gap_frames;
+
+    // A: a **continuous non-stationary broadband bed** flanking the gap — no isolated tone/burst
+    // features — then a zeroed throat. Three properties make the fixture *skip-faithful* (it reproduces
+    // g003's skip, not just its lag signature):
+    //   * `hold = 48` (~500 Hz, ~1 ms autocorrelation) is wide enough that the *within-window* drift of
+    //     a realistic skew still recovers under the lag sweep, yet **narrower than the pre↔post drift
+    //     split across the gap** — so no single B placement aligns both seams (the unified
+    //     waveform-dominated search cannot escape the offset, at any bracket). A constant offset (no
+    //     split) stays recoverable, as it should be (it is not g003).
+    //   * per-50 ms-bin modulation gives the bed a distinctive, non-repeating energy contour: the
+    //     louder bins are energy-peak **anchor candidates** (as real speech onsets are), but they are
+    //     embedded in continuous drifting content, so aligning a peak's coarse envelope leaves the
+    //     waveform sub-bin misaligned — every bracket fails. (Isolated bursts on silence would *not*
+    //     work: a localized feature's envelope shift equals its waveform shift, so one slide recovers
+    //     it and the anchor path escapes — observed during Phase A refinement.)
+    //   * the bed is continuous (spans the signature context), so the gap is a clean hole in content and
+    //     a moved bracket never reaches self-similar or silent ground it could re-slide onto.
+    // The modulation rides the signal, so it re-aligns under the recovering lag — the timing-offset lag
+    // signature is preserved. See `docs/TEMP-w5-timing-offset-diag-plan.md` §6.
+    let bed_span = context.max(secs_to_frames(peak_offset_secs + collar_secs, sample_rate));
+    let pre_bed = gap_start.saturating_sub(bed_span);
+    let post_bed_end = (gap_end + bed_span).min(total_frames);
+    let mut a = vec![0.0f32; total_frames * ch];
+    fill_noise_band_limited(&mut a, ch, pre_bed, gap_start, 0.3, 0xC1, 48);
+    fill_noise_band_limited(&mut a, ch, gap_end, post_bed_end, 0.3, 0xC2, 48);
+    modulate_per_bin(&mut a, ch, pre_bed, gap_start, bin_frames, 0xD1, 0.25, 1.0);
+    modulate_per_bin(&mut a, ch, gap_end, post_bed_end, bin_frames, 0xD2, 0.25, 1.0);
+    zero_frames(&mut a, ch, gap_start, gap_end);
+
+    // B: the same content, time-shifted by the linear skew (lag-0 decorrelates, the lag sweep recovers),
+    // then the A-only dropout filled with independent speech so B carries audio in the hole. The skew is
+    // anchored at the gap center so the seam offset stays ≈ `seam_offset_ms` (drift only tilts pre↔post).
+    let gap_center_secs = (gap_start + gap_end) as f64 / 2.0 / sample_rate as f64;
+    let mut b = resample_linear(
+        &a,
+        ch,
+        seam_offset_ms / 1000.0,
+        drift_ppm * 1e-6,
+        gap_center_secs,
+        sample_rate,
+    );
+    fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
+
+    let structure_params =
+        spec.structure_match_params(sample_rate, gap_frames, secs_to_frames(5.0, sample_rate));
+
+    EnergySignatureFixture {
+        id: "w5_timing_offset_seam",
+        a_samples: a,
+        b_samples: b,
+        channels: ch,
+        sample_rate,
+        gap_start,
+        gap_end,
+        context_frames: context,
+        true_fill_start: gap_start,
+        true_fill_end: gap_end,
+        nominal_fill_start: gap_start,
+        nominal_fill_end: gap_end,
+        b_dropout_shift_frames: 0,
+        structure_params,
+    }
+}
+
 /// A1 oracle: silent dropout throat on A with salient speech bursts `peak_offset_secs` before/after.
 pub fn build_speech_peaks_offset_from_throat(
     sample_rate: u32,
