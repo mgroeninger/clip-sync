@@ -1,7 +1,34 @@
 # W5 timing-offset — production detection + drift-resample rescue (DRAFT)
 
-Status: **DRAFT — not started.** Framed as completing the *place → align → validate* resolution ladder
-(§2). Gated on P0 (prevalence scan) as a go/no-go.
+Status: **ARCHIVED / SHELVED — this approach is the wrong one (2026-06-29); the gaps are still fillable.**
+Superseded by [TEMP-seam-splice-dualfit-plan.md](../TEMP-seam-splice-dualfit-plan.md): the real mechanism
+is a **silence-splice** (un-stretched shoulders separated by a step between the two per-side lags),
+repaired by fitting each seam independently + reconciling the step with a length edit validated by the
+**existing** gate — not a per-seam warp. The
+per-seam *detect-and-warp* model is dead: (i) the steps aren't clock skew (not drift, not block-quantized),
+and (ii) the local lag/uniqueness/residual probes are **mis-calibrated for cross-encoding, periodic,
+same-master** content — they can't confirm what is, by **operator ground truth, the same soundtrack in
+every pair**. So "no clean offset survives the trustworthiness filter" reflects *local-measurement*
+failure, not unfillability. The earlier redirect — trust the global clip alignment + a cross-codec-robust
+seam validator — lives in
+[TEMP-gap-vocabulary-redesign-plan.md](../TEMP-gap-vocabulary-redesign-plan.md) §7d and
+[TEMP-cross-codec-seam-impl-plan.md](../TEMP-cross-codec-seam-impl-plan.md) (itself now largely superseded;
+see the dual-fit plan). **Do not implement this plan's
+warp/per-seam-detect;** keep the synthetic g003 fixture + detection primitives as regression assets.
+Original framing below.
+
+---
+
+_Original status:_ Framed as completing the *place → align →
+validate* resolution ladder (§2), gated on P0 (prevalence scan). **But the clock-skew → time-warp model
+(§7, P2 step 3) is refuted by the real corpus:** the pre↔post seam **steps are NOT clip drift** (the
+offset doesn't accumulate with gap time — `diag_fingerprint_corpus` mechanism check, well-sampled files
+reject it) and are **NOT block/frame-quantized** (no clean dropped-buffer signature). A step of tens-to-
+100+ ms across a 1–2 s gap is physically impossible as smooth clock skew (drift over 2 s ≈ µs). So the
+warp path applies only to the **synthetic** g003 fixture (which was *built* on the skew model). The real
+mechanism is **undetermined** — real timeline discontinuity vs periodicity-corrupted lag measurement —
+pending the uniqueness re-scan (`second_peak_r`). **Do not implement P2's warp** until the mechanism is
+resolved. The detect stage (P1) and the **constant-shift** path (P2 step 2, §8) are unaffected.
 
 Follow-on to [archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md)
 (the diagnostic that characterized the class and shipped the skip-faithful fixture + recoverability data
