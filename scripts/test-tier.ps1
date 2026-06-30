@@ -156,6 +156,7 @@ try {
             '--test', 'diag_anchor_seam',
             '--test', 'diag_w5_anchor_rescue',
             '--test', 'diag_w5_timing_offset',
+            '--test', 'diag_fingerprint_corpus',
             '--test', 'seam_residual_oracle'
         )
         # W5 timing-offset gate probe (slow: full unified gate per cell; release-only by preference).

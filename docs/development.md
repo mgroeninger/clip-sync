@@ -72,7 +72,7 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
 | `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_fingerprint_corpus`, `seam_residual_oracle` integration binaries |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -147,7 +147,7 @@ validation changes.
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_fingerprint_corpus`, `seam_residual_oracle` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -204,6 +204,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
 | `diag_w5_anchor_rescue` | diagnostic | `diagnostic-tests` | no | W5 anchor-rescue single-cell scores (nominal/baseline + per-bracket gate CSV) |
 | `diag_w5_timing_offset` | diagnostic | `diagnostic-tests` | no | W5 timing-offset recoverability grid (`offset × drift` lag CSV); slow gate-probe row `#[ignore]` |
+| `diag_fingerprint_corpus` | diagnostic | `diagnostic-tests` | no | Cross-corpus `--gap-fingerprints` analyzer (P0 prevalence); reads `GAP_FP_DIRS`, tallies verdicts / constant-vs-drift; skips if unset |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
 † `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored

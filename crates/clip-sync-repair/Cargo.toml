@@ -164,3 +164,8 @@ required-features = ["diagnostic-tests"]
 name = "diag_w5_timing_offset"
 path = "tests/diag_w5_timing_offset.rs"
 required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_fingerprint_corpus"
+path = "tests/diag_fingerprint_corpus.rs"
+required-features = ["diagnostic-tests"]

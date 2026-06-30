@@ -4,6 +4,7 @@
 pub mod anchor_prominence;
 pub mod energy_matrix;
 pub mod floor_oracle;
+pub mod gap_fingerprint_corpus;
 pub mod patch_audio;
 pub mod residual_gate;
 pub mod seam_residual;

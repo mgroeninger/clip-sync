@@ -108,9 +108,21 @@ sweep is enough.
 
 ### P0 — Prevalence scan (go/no-go) — **do first**
 
-Run `--gap-fingerprints` across the real corpus; count gaps whose lag verdict is `timing_offset`, split
-**constant** (`|frac_lag_pre − frac_lag_post|` small) vs **drift**. Deliverable: a count and the drift
-distribution. **Decision (also picks minimal vs structural, §2):** if the class is rare, stop or ship the
+Run `--gap-fingerprints` per A/B pair (one output dir each, e.g. `gap-files/1`..`gap-files/N`), then
+aggregate with the **cross-corpus analyzer** (shipped 2026-06-29,
+`clip_sync_repair_harness::gap_fingerprint_corpus`, driver `tests/diag_fingerprint_corpus.rs`):
+
+```powershell
+$env:GAP_FP_DIRS = "gap-files"        # auto-discovers gap-files/1 .. gap-files/N (each pair's corpus.json)
+$env:GAP_FP_CSV  = "1"                # optional: per-gap CSV under target/gap_fingerprint_corpus.csv
+cargo test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_corpus -- --nocapture
+```
+
+It tallies, across every pair, the lag-verdict mix and gate outcomes, and prints the headline:
+**`timing_offset` gaps the gate *skipped*** (the addressable class), split **constant** (single shift)
+vs **drift** (needs time-warp, `|frac_lag_pre − frac_lag_post| > eps`, default 1 ms via
+`GAP_FP_DRIFT_EPS_MS`), plus the drift / seam-offset / `min(peak_r)` distributions and a per-pair
+breakdown. **Decision (also picks minimal vs structural, §2):** if the class is rare, stop or ship the
 minimal bolt-on; if common, the structural first-class lag stage + routing earns its keep. A new tier +
 resample path is not worth it for one exemplar. (Constant-offset detection/shift may still be a cheap
 standalone win; see §8.) Cost: hours, existing tooling, no production code.

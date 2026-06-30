@@ -160,6 +160,11 @@ pub struct GapFingerprint {
     pub seams: Option<SeamScores>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lag: Option<LagFingerprint>,
+    /// Lag at the **decision placement** — the structure-slid throat (zero-move) seam the gate scores
+    /// for patch/skip — as opposed to `lag`, measured at the best-structure *editorial bracket* (a
+    /// diagnostic placement that can sit far from the throat). This is the registration-relevant lag.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub baseline_lag: Option<LagFingerprint>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
 }
@@ -951,6 +956,9 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
     let mut structure = None;
     let mut seams = None;
     let mut lag = None;
+    let mut baseline_lag = None;
+    // Throat (decision) placement, captured from the baseline `place_on_b` for the decision-seam lag.
+    let mut baseline_placement: Option<(usize, Option<usize>)> = None;
     let mut brackets: Vec<BracketInfo> = raw_brackets
         .iter()
         .map(|b| BracketInfo {
@@ -979,6 +987,7 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         };
 
         if let Some(base) = place_on_b(inputs.a_samples, ch, refined, b_haystack, &b_mono, &b_ch, nominal_of(refined.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
+            baseline_placement = Some((base.start_frame, base.selected_channels.first().copied()));
             structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
             seams = Some(SeamScores {
                 baseline_pre: base.seam_pre,
@@ -991,6 +1000,10 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         }
 
         if tier == DetailTier::Full {
+            // Decision-seam lag: at the structure-slid throat placement (the seam the gate decides on).
+            if let Some((start_frame, selected)) = baseline_placement {
+                baseline_lag = Some(lag_at_placement(inputs.a_samples, ch, refined, &b_mono, &b_ch, selected, start_frame, bin_frames, cfg, inputs.sample_rate));
+            }
             // Per-bracket scoring; remember the best-structure energy-peak bracket's placement for lag.
             let mut best: Option<(f64, usize, RefinedGapFrames, Option<usize>)> = None;
             for (i, br) in raw_brackets.iter().enumerate() {
@@ -1034,6 +1047,7 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         structure,
         seams,
         lag,
+        baseline_lag,
         outcome: None,
     }
 }
@@ -1254,14 +1268,25 @@ pub(crate) fn characterize_gaps_with_gate(
             skip_reason: (!patched).then(|| "gate skipped".into()),
         });
 
-        // Lag: one placement search at the best (highest-seam) speech bracket.
-        if let Some((_, refined_b)) = best_energy {
-            let b_mono = interleaved_to_mono(b_slice, ch);
-            let b_ch = interleaved_to_channels(b_slice, ch);
-            let nominal = (((refined_b.start_frame as f64 / rate + gap_offset - b_extract_start_secs) * rate)
+        // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
+        let b_mono = interleaved_to_mono(b_slice, ch);
+        let b_ch = interleaved_to_channels(b_slice, ch);
+        let nominal_of = |start: usize| {
+            (((start as f64 / rate + gap_offset - b_extract_start_secs) * rate)
                 .round()
-                .max(0.0)) as usize;
-            if let Some(p) = place_on_b(&a_pcm.samples, ch, refined_b, b_slice, &b_mono, &b_ch, nominal, context_frames, bin_frames, search_radius_frames, &cfg) {
+                .max(0.0)) as usize
+        };
+
+        // Decision-seam lag (#2): at the structure-slid THROAT placement — the seam the gate decides
+        // patch/skip on under baseline_only — not the moved best-energy bracket the diagnostic `lag`
+        // measures. This is the registration-relevant lag.
+        if let Some(p) = place_on_b(&a_pcm.samples, ch, refined, b_slice, &b_mono, &b_ch, nominal_of(refined.start_frame), context_frames, bin_frames, search_radius_frames, &cfg) {
+            fp.baseline_lag = Some(lag_at_placement(&a_pcm.samples, ch, refined, &b_mono, &b_ch, p.selected_channels.first().copied(), p.start_frame, bin_frames, &cfg, sample_rate));
+        }
+
+        // Diagnostic lag: one placement search at the best (highest-seam) speech bracket.
+        if let Some((_, refined_b)) = best_energy {
+            if let Some(p) = place_on_b(&a_pcm.samples, ch, refined_b, b_slice, &b_mono, &b_ch, nominal_of(refined_b.start_frame), context_frames, bin_frames, search_radius_frames, &cfg) {
                 fp.lag = Some(lag_at_placement(&a_pcm.samples, ch, refined_b, &b_mono, &b_ch, p.selected_channels.first().copied(), p.start_frame, bin_frames, &cfg, sample_rate));
             }
         }
@@ -1703,6 +1728,7 @@ mod tests {
                 }],
                 post_anchor: vec![],
             }),
+            baseline_lag: None,
             outcome: None,
         }
     }
@@ -1822,6 +1848,7 @@ mod tests {
                 mono_post: 0.0290,
             }),
             lag: None,
+            baseline_lag: None,
             outcome: Some(GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "hard_skip".into(),
@@ -1836,6 +1863,7 @@ mod tests {
         assert_eq!(fp, back);
         // Absent optionals stay out of the wire form.
         assert!(!json.contains("\"lag\""));
+        assert!(!json.contains("\"baseline_lag\""));
         assert!(!json.contains("\"brackets\""));
     }
 }
