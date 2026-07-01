@@ -11,6 +11,22 @@
 //!     (= (peak−mean)/std), top-2 spacing — across window sizes (250 ms / 500 ms / 1 s / 2 s);
 //!   * **wide-envelope segment uniqueness** — bucketed RMS envelope lag curve at a few bin sizes.
 //!
+//! **Spot-check `b_mapped` registration (ledger C2)** — the `[fine uniqueness]` block already anchors B at
+//! `geometry.b_mapped_*` (same frame as capture after A2). Compare pre/post `peak@lag` and `peak_z` at
+//! 1000 ms against `baseline_lag` / `splice` in a fresh fingerprint scan.
+//!
+//! Pair-6 one-sided-dead (done): `SPLICE_EXP_GAPS=2,6,7,9,10` on `gap-files/6/corpus.json`.
+//! Pair-7 confirm (ledger C2): gaps that were dead at F1 throat — typically `SPLICE_EXP_GAPS=3,4`:
+//! ```powershell
+//! $env:SPLICE_EXP_CORPUS = "gap-files/7/corpus.json"
+//! $env:SPLICE_EXP_A = "path\to\pair7-A.mkv"
+//! $env:SPLICE_EXP_B = "path\to\pair7-B.m4v"
+//! $env:SPLICE_EXP_GAPS = "3,4"
+//! cargo test -p clip-sync-repair --features diagnostic-tests --test diag_splice_timescale -- --nocapture
+//! ```
+//! Pass criteria: both shoulders `peak_r` ≥ 0.9 at 1000 ms with a stable `peak@lag` (not pinned at ±200 ms
+//! edge). Optional: widen `SPLICE_EXP_FINE_LAG_MS` if a shoulder still pins.
+//!
 //! Nothing here writes the schema — it prints a report so the *winning* timescales/representations are
 //! chosen from data. Run (paths are yours; `blah.*` are placeholders):
 //! ```powershell

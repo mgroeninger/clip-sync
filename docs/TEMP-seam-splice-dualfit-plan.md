@@ -4,13 +4,9 @@
 > This doc is the *detail* for the mechanism + repair; the ledger is the authoritative index of what is
 > proven / open / important. Do not add a competing next-steps list here — update the ledger.
 
-Status: **DRAFT — registration policy decided (`b_mapped`, pair-6 proven); CAP implementation pending (ledger
-A2); repair unbuilt (A3).** The *per-seam warp* and *cross-codec validator* directions are **refuted** (B2:
-zero genuine one-sided-dead in pair-6 — all placement artifacts at `structure_start_frame`, §3.7); the
-cross-codec plan is **archived**. Capture schema (1 s `peak_z`, donor-interior, energy-weighted level,
-splice-step, wide-envelope) is coded + unit-tested but still registers at `structure_start_frame`. **Next:**
-implement **`b_mapped` registration in capture** (§3.7), re-classify skips, then `diag_splice_dualfit` — not
-another rescan first.
+Status: **DRAFT — `b_mapped` registration in capture (ledger A2) DONE; repair unbuilt (A3).** The *per-seam
+warp* and *cross-codec validator* directions are **refuted** (B2). Capture schema is coded; **next:** spot-check
+pair-7 (`diag_splice_timescale`), re-classify skips, `diag_splice_dualfit`, then rescan.
 
 Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
 (per-seam detect-and-warp — archived, dead) and
@@ -326,11 +322,11 @@ registration is trustworthy.
 - `geometry.b_mapped_*` — stable gross map (the registration anchor).
 - `diag_splice_timescale` — timescale/uniqueness sweeps + `[outward-anchor]` block.
 - `anchors` / `gap_anchor_seam` — feature location (for a future `peak_z`-ranked anchor if needed).
-- **Gap:** capture still centers registration on `structure_start_frame` (A2 unbuilt).
+- **Gap:** capture now uses `b_mapped` for registration metrics; gate bracket scoring still uses structure alignment.
 
-**Status.** Pair-6 one-sided-dead sweep **complete** — bucket collapses at `b_mapped` (C1/B2). Registration
-policy **`b_mapped`** (C2/B13). **Next:** implement in capture → spot-check pair-7 if needed → re-classify
-bracket-exhausted skips → `diag_splice_dualfit`.
+**Status.** Pair-6 one-sided-dead sweep **complete** (C1/B2). Pair-7 spot-check **7·g3/7·g4** — both shoulders
+0.90+ @ +94 / +118 ms (C2 **proven**). **`b_mapped` in capture** (A2) **done**. **Next:** rescan → re-classify
+skips → `diag_splice_dualfit`.
 
 ## 4. Repair approach (unbuilt — design)
 

@@ -937,7 +937,18 @@ fn place_on_b(
     })
 }
 
-/// Pre/post lag summaries of one A border vs one B signal at a placement.
+/// B-frame index in the decoded B haystack for the gross A→B map at `a_start_frame`
+/// (`geometry.b_mapped_*` — ledger A2 / §3.7).
+fn b_mapped_frame_in_haystack(
+    a_start_frame: usize,
+    sample_rate: f64,
+    gap_offset_secs: f64,
+    b_extract_start_secs: f64,
+) -> usize {
+    (((a_start_frame as f64 / sample_rate + gap_offset_secs - b_extract_start_secs) * sample_rate)
+        .round()
+        .max(0.0)) as usize
+}
 #[allow(clippy::too_many_arguments)]
 fn lag_pair(
     a_pre: &[f64],
@@ -1125,7 +1136,7 @@ fn seam_probe_side(a_win: &[f64], b_ctx: &[f64], level_rms: f64, fine_max_lag: i
 const SEAM_PROBE_FINE_LAG_MS: f64 = 25.0;
 const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
 
-/// Pre/post [`SeamProbe`]s at a placement (mono). Built at the **throat** placement to diagnose a dead
+/// Pre/post [`SeamProbe`]s at a placement (mono). Built at **`b_mapped`** registration to diagnose a dead
 /// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
 #[allow(clippy::too_many_arguments)]
 fn seam_probe_at_placement(a_samples: &[f32], channels: usize, refined: RefinedGapFrames, b_mono: &[f64], start_frame: usize, bin_frames: usize, cfg: &FingerprintConfig, sample_rate: u32, gap_floor_db: f64) -> SeamProbeFingerprint {
@@ -1240,7 +1251,7 @@ fn wide_envelope_side(
     })
 }
 
-/// Pre/post wide-envelope confirmers at the decision (throat) placement — cross-scale check vs `baseline_lag`.
+/// Pre/post wide-envelope confirmers at **`b_mapped`** registration — cross-scale check vs `baseline_lag`.
 #[allow(clippy::too_many_arguments)]
 fn wide_envelope_at_placement(
     a_samples: &[f32],
@@ -1446,8 +1457,7 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
     let mut seams = None;
     let mut lag = None;
     let mut baseline_lag = None;
-    // Throat (decision) placement, captured from the baseline `place_on_b` for the decision-seam lag.
-    let mut baseline_placement: Option<(usize, Option<usize>)> = None;
+    // Per-bracket scoring in Full tier; Summary tier only needs baseline structure/seam at `b_mapped`.
     let mut brackets: Vec<BracketInfo> = raw_brackets
         .iter()
         .map(|b| BracketInfo {
@@ -1469,14 +1479,16 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
         // Each A boundary maps to its own B nominal: a_time + gap_offset, in haystack frame coords.
         let gap_offset_secs = inputs.gap_offset_secs;
-        let nominal_of = |a_start_frame: usize| -> usize {
-            (((a_start_frame as f64 / rate + gap_offset_secs - inputs.b_extract_start_secs) * rate)
-                .round()
-                .max(0.0)) as usize
+        let b_mapped_start = |a_start_frame: usize| -> usize {
+            b_mapped_frame_in_haystack(
+                a_start_frame,
+                rate,
+                gap_offset_secs,
+                inputs.b_extract_start_secs,
+            )
         };
 
-        if let Some(base) = place_on_b(inputs.a_samples, ch, refined, b_haystack, &b_mono, &b_ch, nominal_of(refined.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
-            baseline_placement = Some((base.start_frame, base.selected_channels.first().copied()));
+        if let Some(base) = place_on_b(inputs.a_samples, ch, refined, b_haystack, &b_mono, &b_ch, b_mapped_start(refined.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
             structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
             seams = Some(SeamScores {
                 baseline_pre: base.seam_pre,
@@ -1489,15 +1501,24 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         }
 
         if tier == DetailTier::Full {
-            // Decision-seam lag: at the structure-slid throat placement (the seam the gate decides on).
-            if let Some((start_frame, selected)) = baseline_placement {
-                baseline_lag = Some(lag_at_placement(inputs.a_samples, ch, refined, &b_mono, &b_ch, selected, start_frame, bin_frames, cfg, inputs.sample_rate));
-            }
+            // Decision-seam lag at `b_mapped` nominal + ±200 ms sweep (ledger A2) — not structure throat.
+            baseline_lag = Some(lag_at_placement(
+                inputs.a_samples,
+                ch,
+                refined,
+                &b_mono,
+                &b_ch,
+                None,
+                b_mapped_start(refined.start_frame),
+                bin_frames,
+                cfg,
+                inputs.sample_rate,
+            ));
             // Per-bracket scoring; remember the best-structure energy-peak bracket's placement for lag.
             let mut best: Option<(f64, usize, RefinedGapFrames, Option<usize>)> = None;
             for (i, br) in raw_brackets.iter().enumerate() {
                 let refined_b = br.refined;
-                if let Some(p) = place_on_b(inputs.a_samples, ch, refined_b, b_haystack, &b_mono, &b_ch, nominal_of(refined_b.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
+                if let Some(p) = place_on_b(inputs.a_samples, ch, refined_b, b_haystack, &b_mono, &b_ch, b_mapped_start(refined_b.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
                     brackets[i].structure_pre = Some(p.structure_pre);
                     brackets[i].structure_post = Some(p.structure_post);
                     brackets[i].seam_pre = Some(p.seam_pre);
@@ -1616,10 +1637,10 @@ fn anchor_params_from_gate(
 }
 
 /// Characterize the gaps in `select` (empty ⇒ **all** gaps) at **full** authoritative detail (the bin
-/// path). Each gap gets its per-bracket `failure_stage` + seam, baseline seam, outcome, and lag from
-/// the production gate (`oracle_*`) — **N + 2** unified searches per gap (N brackets via
-/// `oracle_score_fit_candidate`, the baseline via the zero-move bracket, and one `place_on_b` for the
-/// lag placement). Only the selected gaps are built; unselected gaps are never characterized.
+/// path). Each gap gets its per-bracket `failure_stage` + seam, `b_mapped` registration metrics, outcome,
+/// and diagnostic lag from the production gate (`oracle_*`) — **N + 1** unified searches per gap (N
+/// brackets via `oracle_score_fit_candidate`, plus optional `place_on_b` for the best-energy diagnostic
+/// `lag` field). Only the selected gaps are built; unselected gaps are never characterized.
 pub(crate) fn characterize_gaps_with_gate(
     report: &crate::domain::GapReport,
     a_pcm: &clip_sync::MultiChannelPcm,
@@ -1772,56 +1793,71 @@ pub(crate) fn characterize_gaps_with_gate(
         // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
         let b_mono = interleaved_to_mono(b_slice, ch);
         let b_ch = interleaved_to_channels(b_slice, ch);
-        let nominal_of = |start: usize| {
-            (((start as f64 / rate + gap_offset - b_extract_start_secs) * rate)
-                .round()
-                .max(0.0)) as usize
+        let b_mapped_start = b_mapped_frame_in_haystack(
+            refined.start_frame,
+            rate,
+            gap_offset,
+            b_extract_start_secs,
+        );
+        let b_mapped_bracket = |refined_b: RefinedGapFrames| {
+            b_mapped_frame_in_haystack(refined_b.start_frame, rate, gap_offset, b_extract_start_secs)
         };
 
-        // Decision-seam lag (#2) + residual + seam-probe + donor + wide-envelope + splice — ALL at the
-        // gate's own zero-move **throat** placement (`oracle_throat_structure_frame`), the exact B frame the
-        // gate scores patch/skip on, rather than a separate `place_on_b` that diverged from it (review F1).
-        // Correlation/uniqueness is mono (frozen, §3.6a), so no per-channel `selected` is needed.
+        // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±200 ms lag sweep.
+        // Correlation/uniqueness is mono (frozen, §3.6a).
+        fp.baseline_lag = Some(lag_at_placement(
+            &a_pcm.samples, ch, refined, &b_mono, &b_ch, None, b_mapped_start, bin_frames, &cfg, sample_rate,
+        ));
+        fp.seam_probe = Some(seam_probe_at_placement(
+            &a_pcm.samples, ch, refined, &b_mono, b_mapped_start, bin_frames, &cfg, sample_rate,
+            f64::from(fp.levels.gap_floor_db),
+        ));
+        fp.donor_interior = donor_interior_at(
+            &b_mono,
+            b_mapped_start,
+            refined.end_frame.saturating_sub(refined.start_frame),
+            f64::from(fp.levels.gap_floor_db),
+            sample_rate,
+        );
+        fp.wide_envelope = Some(wide_envelope_at_placement(
+            &a_pcm.samples,
+            ch,
+            refined,
+            &b_mono,
+            b_mapped_start,
+            &cfg,
+            sample_rate,
+        ));
+        if let Some(ref bl) = fp.baseline_lag {
+            fp.splice = splice_summary_from_lag(bl);
+        }
+
+        // Residual stays at the gate's structure throat (same-source cancellation as the gate scores).
         if let Some(throat_frame) = oracle_throat_structure_frame(&params, &cache, refined) {
-            fp.baseline_lag = Some(lag_at_placement(&a_pcm.samples, ch, refined, &b_mono, &b_ch, None, throat_frame, bin_frames, &cfg, sample_rate));
             fp.residual = oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
-                // A silent gap cancels to ~0 ⇒ `to_db = -inf`; serde_json writes non-finite as `null`,
-                // which breaks strict consumers (it silently dropped whole pairs from the analyzer). Floor
-                // to a finite dB — perfect cancellation reads as a very low level, preserving the meaning.
                 chosen_pre_db: finite_db(v.chosen_pre_db),
                 chosen_post_db: finite_db(v.chosen_post_db),
                 floor_pre_db: finite_db(v.floor_pre_db),
                 floor_post_db: finite_db(v.floor_post_db),
                 informative: v.informative,
             });
-            fp.seam_probe = Some(seam_probe_at_placement(
-                &a_pcm.samples, ch, refined, &b_mono, throat_frame, bin_frames, &cfg, sample_rate,
-                f64::from(fp.levels.gap_floor_db),
-            ));
-            fp.donor_interior = donor_interior_at(
-                &b_mono,
-                throat_frame,
-                refined.end_frame.saturating_sub(refined.start_frame),
-                f64::from(fp.levels.gap_floor_db),
-                sample_rate,
-            );
-            fp.wide_envelope = Some(wide_envelope_at_placement(
-                &a_pcm.samples,
-                ch,
-                refined,
-                &b_mono,
-                throat_frame,
-                &cfg,
-                sample_rate,
-            ));
-            if let Some(ref bl) = fp.baseline_lag {
-                fp.splice = splice_summary_from_lag(bl);
-            }
         }
 
         // Diagnostic lag: one placement search at the best (highest-seam) speech bracket.
         if let Some((_, refined_b)) = best_energy {
-            if let Some(p) = place_on_b(&a_pcm.samples, ch, refined_b, b_slice, &b_mono, &b_ch, nominal_of(refined_b.start_frame), context_frames, bin_frames, search_radius_frames, &cfg) {
+            if let Some(p) = place_on_b(
+                &a_pcm.samples,
+                ch,
+                refined_b,
+                b_slice,
+                &b_mono,
+                &b_ch,
+                b_mapped_bracket(refined_b),
+                context_frames,
+                bin_frames,
+                search_radius_frames,
+                &cfg,
+            ) {
                 fp.lag = Some(lag_at_placement(&a_pcm.samples, ch, refined_b, &b_mono, &b_ch, p.selected_channels.first().copied(), p.start_frame, bin_frames, &cfg, sample_rate));
             }
         }

@@ -15,9 +15,8 @@ Target: `VOCAB` · `PIPE` (detect/repair) · `CAP` (fingerprint capture) · `—
 ```text
 Primary dual-fit cohort: the 6-pair corpus — 19 matched, 6 skipped. The 6 bracket-exhausted skips are the
   dual-fit targets. Counts in B1/B8 refer to this cohort.
-Extended scans on disk: dirs 1–7 (dir 1 = 25 gaps; 69 gaps total) are a SUPERSET and are F1-placement
-  (not yet `b_mapped` registration). Treat as EXPLORATORY — do not merge their rates with the primary cohort or use
-  them to calibrate gates until capture registers at `b_mapped` (A2).
+Extended scans on disk: dirs 1–7 predate **`b_mapped` capture** (A2) — treat as exploratory until re-scanned
+  with the current binary.
 ```
 
 ---
@@ -28,17 +27,15 @@ The claims that actually gate a working repair. Everything else is supporting.
 
 | # | Claim / task | Conf | Why it's the blocker |
 |---|--------------|------|----------------------|
-| A1 | **Quiet-gap mis-registration is a `structure_start_frame` wander**, not decorrelation. Flat envelopes let the structure search drift; the gross map (`b_mapped`) is stable. Proven on 6·g6, 7·g3, and all five pair-6 one-sided-dead gaps (dead at F1 throat, 0.98+ both sides @ `b_mapped`). | PROVEN | Diagnosis done. Capture still registers at `structure_start_frame` → wrong lags, false one-sided-dead, false `donor_interior`. |
-| A2 | **`b_mapped` registration** — center `baseline_lag` / detect metrics on geometry `b_mapped` nominal + existing ±200 ms lag sweep; **not** `structure_start_frame`. Outward-anchor (RMS loudest) is **not** the primary fix (pair-6 sweep). | DECIDED (pair-6) · **CAP unbuilt** | Policy settled on pair-6; must land in `gap_fingerprint.rs` before a trustworthy rescan or detect. See §3.7. |
+| A1 | **Quiet-gap mis-registration is `structure_start_frame` wander**, not decorrelation. Proven: pair-6 (5/5 one-sided-dead), pair-7 **7·g3** (pre 0.986@+94 ms, z 18) and **7·g4** (pre 0.902@+118 ms, post 0.988@+113 ms) — all dead at F1 throat, clean at `b_mapped`. | PROVEN | Diagnosis done. Capture fixed (A2); on-disk corpora need rescan. |
+| A2 | **`b_mapped` registration** — center `baseline_lag` / detect metrics on geometry `b_mapped` nominal + existing ±200 ms lag sweep; **not** `structure_start_frame`. Outward-anchor (RMS loudest) is **not** the primary fix (pair-6 sweep). | **DONE (CAP)** | Landed in `gap_fingerprint.rs`. Rescan + skip re-classification next. |
 | A3 | **Dual-fit repair** (independent per-side fit → length reconcile → unchanged gate passes) actually works. | OPEN (unbuilt) | This is the product. Prove offline (`diag_splice_dualfit` simulation) before wiring. **Re-classify the 6 skips after A2** — some may patch once registration is correct. |
-| A4 | **Donor continuity** — B carries unbroken content across the hole. | OPEN / PARTIAL | Coded + partially populated. `donor_interior` at `structure_start_frame` inherits A1 (6·g6 false "silent hole"). Re-measure at `b_mapped` post A2 (C5). |
+| A4 | **Donor continuity** — B carries unbroken content across the hole. | OPEN / PARTIAL | Coded; now measured at `b_mapped` in capture. On-disk `donor_interior` still from pre-A2 scans — re-measure on rescan (C5). |
 | A5 | **Threshold calibration** (`peak_z ≥ 12`, prominence, continuity) on the real distribution. | OPEN | Needs a **`b_mapped` rescan** (post A2). Calibrate on both patched and skipped distributions (C6). |
 
-**Sequencing consequence (important):** on-disk `gap-files/` scans are **F1-placement rescans** at
-`structure_start_frame` — treat as exploratory for quiet gaps. **Next engineering step:** implement **`b_mapped`
-registration in capture** (A2), spot-check pair-7 / other pairs if needed (C2), **re-classify bracket-exhausted
-skips**, then **`diag_splice_dualfit`** (C3/A3). Rescan only after A2 lands. Do not wire RMS outward-anchor
-into production capture (parked — §D10).
+**Sequencing consequence:** on-disk `gap-files/` predates **`b_mapped` capture** — exploratory until re-scanned.
+**Pair-7 spot-check done** (7·g3, 7·g4 — C2). **Next:** rescan primary cohort → **re-classify bracket-exhausted
+skips** → **`diag_splice_dualfit`** (C3/A3).
 
 ---
 
@@ -47,12 +44,12 @@ into production capture (parked — §D10).
 | # | Claim | Conf | Target | Incorporation |
 |---|-------|------|--------|---------------|
 | B1 | Patch vs skip = **bracket-search success, not step magnitude** (5·g3 vs 1·g19; full step overlap; best-bracket seam 0.62 vs 0.11) | PROVEN | VOCAB + PIPE | Vocab: `bracket_search` axis; W5 = "lag-0/bracket validation failed." Detect: scope dual-fit to `bracket_exhausted`. |
-| B2 | **No genuine cross-encoding *type*** — `one-sided-dead` is a placement artifact, not decorrelation. Pair-6 sweep: **5/5** one-sided-dead gaps recover at `b_mapped` (~−131 ms constant offset, both shoulders 0.98+). Earlier: 6·g6, 7·g3. | PROVEN | — | Refutes cross-codec validator (archived); same-master axis constant on this corpus. Zero genuine one-sided-dead in pair-6. |
-| B13 | **`b_mapped` + ±200 ms lag search** resolves quiet-gap registration on pair-6 — ordinary centered lag at the gross map finds the peak; structure search was the failure mode. | PROVEN (pair-6) | CAP | Register detect/fingerprint lags at `b_mapped` nominal, not `structure_start_frame`. |
+| B2 | **No genuine cross-encoding *type*** — `one-sided-dead` is a placement artifact. Pair-6: **5/5** @ `b_mapped` (~−131 ms). Pair-7 spot-check: **7·g3**, **7·g4** both shoulders 0.90+ @ +94 / +118 ms. | PROVEN | — | Refutes cross-codec validator; zero genuine one-sided-dead in all tested pairs. |
+| B13 | **`b_mapped` + ±200 ms lag search** resolves quiet-gap registration — pair-6 and pair-7 (7·g3/7·g4) confirmed. | PROVEN | CAP | Policy implemented in `gap_fingerprint.rs`. |
 | B3 | Uniqueness needs a **1 s window + `peak_z`** (retire 250 ms `second_peak_r`) | PROVEN | CAP (schema) | Decision frozen §3.6a. **Schema done, not corpus:** trustworthy population waits on A2 (`b_mapped` capture) + rescan; calibrate thresholds then (A5). |
 | B4 | Level/SNR on **energy-weighted downmix** (straight mono `/N` buries 5.1 center 13–15 dB) | PROVEN | CAP (schema) | Frozen; schema done, corpus partial (as B3). |
 | B5 | **Correlation on mono** (representation doesn't matter — Pearson scale-invariant) | PROVEN | CAP (schema) | Simplifies: no per-channel correlation. Schema done. |
-| B6 | **F1 placement** — register at the gate's own throat, not a divergent `place_on_b` | PROVEN | PIPE (done) | Done via `gate_structure_align`. F1 fixed gate-vs-capture divergence; **quiet-gap wander** is A1/B13 (`b_mapped` policy, CAP pending). |
+| B6 | **F1 placement** — register at the gate's own throat, not a divergent `place_on_b` | PROVEN | PIPE (done) | Done via `gate_structure_align`. Quiet-gap registration is separate — **`b_mapped`** (B13/A2). |
 | B11 | **Dual-fit ≠ what bracket search already does** — the winning bracket's boundary move is *not* the throat step (5·g3: +72 ms step vs 2600 ms `move_frames`; 0/18 patched gaps have `\|step\|` within 20 ms of a bracket delta) | PROVEN | PIPE | Confirms dual-fit is a distinct operation (interior length edit), not a re-run of anchor/boundary search. Scopes §4. |
 | B12 | **Wide-envelope lag concordance** — 100 ms-bin envelope peak lag agrees with the fine-waveform lag | SUPP (pair 1) | CAP (schema) | Secondary registration confirmer; populate at `b_mapped` post A2. |
 | B7 | **Content is un-stretched within a side** (both shoulders align at a single lag each) | SUPP | — | The premise that makes reconciliation a **pure trim/pad**, not a warp (A3). |
@@ -66,10 +63,10 @@ into production capture (parked — §D10).
 
 | # | Question | Conf | Imp | How to prove |
 |---|----------|------|-----|--------------|
-| C1 | Does the **`one-sided-dead` bucket collapse** when registration uses `b_mapped`? | **PROVEN (pair-6)** | CRIT | Done: 5/5 pair-6 gaps (6·g2, 6·g6, 6·g7, 6·g9, 6·g10) recover @ `b_mapped`. Optional spot-check on other pairs if one-sided-dead appears. |
-| C2 | Which **placement** for registration — `structure_start_frame`, `b_mapped`, or outward-anchor? | **DECIDED (pair-6)** | CRIT | **`b_mapped`** wins. Outward-anchor RMS loudest is not primary (6·g9/6·g10: z drops when anchor picks sustained tone). Light confirm on pair-7 (7·g3/7·g4 already partial). |
-| C3 | Does the **dual-fit repair pass the unchanged gate** on the known skips? | OPEN | CRIT | Offline `diag_splice_dualfit` after A2 + skip re-classification. |
-| C4 | Is **±200 ms lag search** sufficient at `b_mapped`? | **PROVEN (pair-6)** | HIGH | Pair-6 cluster ~−131 ms — well inside ±200 ms at correct placement. Revisit only if another pair pins at the edge. |
+| C1 | Does the **`one-sided-dead` bucket collapse** at `b_mapped`? | **PROVEN** | CRIT | Pair-6: 5/5. Pair-7: 7·g3, 7·g4. No further one-sided-dead pairs known on this corpus. |
+| C2 | Which **placement** for registration? | **PROVEN** | CRIT | **`b_mapped`**. Pair-6 + pair-7 confirmed. RMS outward-anchor not primary (D10). |
+| C3 | Does the **dual-fit repair pass the unchanged gate** on the known skips? | OPEN | CRIT | Offline `diag_splice_dualfit` after rescan + skip re-classification. |
+| C4 | Is **±200 ms lag search** sufficient at `b_mapped`? | **PROVEN** | HIGH | Pair-6 ~−131 ms; pair-7 +94 ms / +118 ms — all inside ±200 ms, not edge-pinned. |
 | C5 | **Donor continuity** true for the skip targets? (= A4, ranked) | OPEN / PARTIAL | HIGH | Re-measure at **`b_mapped`** post A2 capture — on-disk `donor_interior` mis-reads quiet gaps (6·g6). |
 | C6 | **Threshold calibration** — `peak_z`/prominence/continuity floors on the real distribution. | OPEN | HIGH | **`b_mapped` rescan** (post A2). Calibrate on BOTH patched and skipped distributions. Detect gates ≠ patch gates. |
 | C7 | **Trim magnitude ≈ measured `step_ms`** — the length edit the repair applies matches the fingerprinted step | OPEN | HIGH | Falls out of the C3 (`diag_splice_dualfit`) simulation: compare samples trimmed for a gate-passing fill vs `SpliceSummary.step_ms`. A large mismatch ⇒ wrong model. |
@@ -97,12 +94,10 @@ into production capture (parked — §D10).
 
 Parked **CAP** items — not on the critical path until **`b_mapped` registration** (A2) lands.
 
-**Next CAP change (A2):** move decision metrics (`baseline_lag`, `seam_probe`, `donor_interior`,
-`wide_envelope`, `splice`) from `oracle_throat_structure_frame` to **`b_mapped` nominal** + ±200 ms lag
-sweep. F1 fixed gate-vs-capture divergence; A2 fixes structure wander on quiet gaps.
+**Next CAP change (A2):** done — decision metrics register at **`b_mapped` nominal**; `residual` stays at gate
+throat. Re-scan when ready.
 
-**F1 (mostly done).** Today those metrics register at `oracle_throat_structure_frame` (structure-aligned).
-**Remnant:** top-level `fp.structure` still comes from the summary pass's `place_on_b` and is not refreshed in the gate
+**F1 (mostly done).** Registration metrics no longer use `oracle_throat_structure_frame`. **Remnant:** top-level `fp.structure` still comes from the summary pass's `place_on_b` and is not refreshed in the gate
 overlay; corpus `structure_min` stats may disagree with the oracle throat. `fp.seams.baseline_*` is updated
 from the zero-move oracle bracket.
 
@@ -143,17 +138,14 @@ placement.
 envelope}`. Name types from a **`b_mapped` rescan** (post A2). W5 → "same-master, lag-0/bracket validation failed."
 
 **Pipeline (detect → repair; `seam-splice-dualfit` §4).** Order:
-1. **Implement `b_mapped` registration in capture** (A2) — policy proven on pair-6 (B13). *Before another rescan.*
-2. **Re-classify skips** — some bracket-exhausted gaps may patch once registration is correct; dual-fit only
-   on those that remain exhausted.
-3. **Detect** = `bracket_exhausted` (B1) ∧ both-sides-recoverable at `b_mapped` (B3) ∧ donor-continuous (A4).
-4. **Repair** = independent per-side fit → trim/pad step (B7) → unchanged gate (A3). Prove via `diag_splice_dualfit` (C3).
-5. **Calibrate** thresholds (A5/C6) on the `b_mapped` corpus.
+1. **Rescan primary cohort** with `b_mapped` capture (dirs 1–6 or full set).
+2. **Re-classify skips** via `diag_fingerprint_corpus` — bracket-exhausted set may shrink.
+3. **Detect** = `bracket_exhausted` (B1) ∧ both-sides-recoverable at `b_mapped` (B3) ∧ donor-continuous (A4/C5).
+4. **Repair** = `diag_splice_dualfit` (C3) → wire §4 behind flag (A3).
+5. **Calibrate** thresholds (A5/C6).
 
-**Dual-fit addressable set (primary cohort):** still **6 bracket-exhausted skips** until re-classified post A2.
-Pair-6 one-sided-dead gaps are **not** a separate mechanism — they are **`b_mapped` registration failures**
-at the F1 throat (B2). Expect the dual-fit candidate set to shrink once capture uses `b_mapped`.
+**Dual-fit addressable set (primary cohort):** still **6 bracket-exhausted skips** until re-classified on a
+`b_mapped` rescan. One-sided-dead is fully refuted (B2/C1) — not a separate rescue path.
 
-**One-line status:** registration **policy decided** (`b_mapped`, pair-6 proven); **CAP implementation**
-(A2) is the live blocker, then **skip re-classification** + **`diag_splice_dualfit`** (A3/C3). One-sided-dead
-is fully refuted (B2).
+**One-line status:** registration **closed** (C1/C2/C4/B13). **Live blocker:** rescan → skip re-classification →
+**`diag_splice_dualfit`** (C3/A3).
