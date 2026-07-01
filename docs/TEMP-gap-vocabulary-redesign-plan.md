@@ -1,11 +1,19 @@
 # Gap vocabulary redesign — measurement-first grouping (DRAFT)
 
-Status: **DRAFT — direction validated; P0 + P1 capture DONE.** Full 6-pair corpus analyzed (19 matched, 6
-skipped). The **registration axis** is confirmed: per-side lag-resolved Pearson at each shoulder's *own*
-best lag plus the **step** between them — not the single throat Pearson@0 (which conflated misalignment,
-silence-splice, and a ±25 ms-window artifact into one "dead seam"). **Patch vs skip** is **bracket-search
-success**, not step magnitude. Mechanism + repair: [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md).
-Analysis review: [TEMP-seam-splice-dualfit-plan-review.md](TEMP-seam-splice-dualfit-plan-review.md).
+> **Status & next-steps for the whole effort live in the ledger:**
+> [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md). This doc is the *detail* for the
+> vocabulary redesign; the ledger is the authoritative proven/open/important index.
+
+Status: **DRAFT — direction validated; P0 + P1 capture DONE; P2 clustering BLOCKED on registration placement.**
+Full 6-pair corpus analyzed (19 matched, 6 skipped). The **registration axis** is confirmed: per-side
+lag-resolved Pearson at each shoulder's *own* best lag plus the **step** between them — not the single throat
+Pearson@0 (which conflated misalignment, silence-splice, and a ±25 ms-window artifact into one "dead seam").
+**Patch vs skip** is **bracket-search success**, not step magnitude. **But clustering the corpus into named
+types (P2) must wait until quiet-gap registration is corrected (ledger A1/A2 — `structure_start_frame`
+wanders on quiet gaps), or the coordinates it clusters on are wrong.** Mechanism + repair:
+[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md).
+Bracket-vs-step + proof index:
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (B1, B11; C3, C7).
 
 Reading: [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary (the taxonomy this revises),
 [gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint,
@@ -13,7 +21,7 @@ Reading: [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary (the taxonomy 
 [archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md) (the class that
 exposed the defect). Siblings:
 [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) (mechanism + repair — unbuilt),
-[TEMP-seam-splice-dualfit-plan-review.md](TEMP-seam-splice-dualfit-plan-review.md) (bracket-vs-step analysis),
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (proven/open index),
 [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) (superseded —
 validator-swap refuted; R2/R4 retained as diagnostics),
 [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) (archived warp path).
@@ -93,6 +101,15 @@ Candidate further axes. Keep only if **physically independent**, **robustly meas
 
 **Re-scan pending:** committed `gap-files/` scans predate several fields (`donor_interior`, `splice`,
 `peak_z` @ 1 s, `wide_envelope`). Capture schema is complete in code; one re-scan populates them.
+
+**Registration measurement for quiet gaps — outward-anchor (operator idea; see dualfit §3.7).** For a gap
+inside a *long quiet section*, no window *centered* on the seam (250 ms edge **or** 1–2 s wide-envelope) has
+distinctive signal — so both the uniqueness (`peak_z`) and the structure placement (`structure_start_frame`)
+fail there. The fix is to measure the registration axis by **searching outward to the nearest distinctive
+(loud) feature per side, lag-aligning there, and carrying the lag back to the seam** (same-master rigid
+content, negligible drift over 1–2 s). Validated: a 500 ms window at a distant loud feature beats a 2 s
+window centered on the quiet gap (7·g3 pre `peak_z` 15 vs 11; 7·g4 post 10.6→21.6). This is the registration
+measurement for the quiet regime, distinct from the centered wide-envelope of §2b's uniqueness row.
 
 Deliberately *excluded* as non-axes (they re-project the above): the raw `min(pre,post)` Pearson tier
 (derived), `seam_shape` (Pearson geometry), `content_hint` flat/contour (≈ envelope axis).
@@ -255,7 +272,7 @@ validate with **unchanged** waveform gate — see
 only (not high-step patches like 5·g3 where 18/25 brackets already pass).
 
 **Proof sequencing:** P3 from fingerprints now; P1/P2 via offline `diag_splice_dualfit` simulation before
-§4 repair — see [TEMP-seam-splice-dualfit-plan-review.md](TEMP-seam-splice-dualfit-plan-review.md).
+§4 repair — see [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7).
 
 ### 7f. Superseded hypotheses (tombstone)
 
@@ -275,7 +292,7 @@ only (not high-step patches like 5·g3 where 18/25 brackets already pass).
 | [gap-repair-guide.md](gap-repair-guide.md) | The Pearson-rooted vocabulary being revised |
 | [gap-fingerprint.md](gap-fingerprint.md) | Measurements (lag, levels, donor_interior, splice, …) |
 | [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) | Mechanism + repair (unbuilt) |
-| [TEMP-seam-splice-dualfit-plan-review.md](TEMP-seam-splice-dualfit-plan-review.md) | Bracket-vs-step; proof vs fingerprint |
+| [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) | Proven/open index; bracket-vs-step; proof sequencing |
 | [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) | Superseded validator-swap |
 | [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) | Archived warp path |
 | [archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md) | The class that exposed the conflation |
