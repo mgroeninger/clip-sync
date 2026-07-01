@@ -176,6 +176,17 @@ pub struct GapFingerprint {
     /// — the donor half of the fill predicate (§3/§4). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_interior: Option<DonorInterior>,
+    /// Donor occupancy at the **nominal** geometry `b_mapped` span (NO per-shoulder lag) — the
+    /// registration-independent sibling of `donor_interior`, so it dodges the aliased-lag confound the
+    /// aligned span inherits. `silence_fraction ≈ 1` ⇒ B is quiet at the same program time as A's gap ⇒
+    /// program-quiet, not a fillable dropout (D11). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_interior_nominal: Option<DonorInterior>,
+    /// Symmetric B-side level profile over the nominal `b_mapped` span + context — the counterpart to
+    /// `levels` (A), computed by the same `level_profile` logic. Lets "quiet in both masters ⇒ not a
+    /// dropout" compare B's gap level against B's *own* noise floor (D11). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub b_levels: Option<LevelProfile>,
     /// First-class splice summary: the per-side registration step + peaks/uniqueness the repair predicate
     /// reads directly (instead of re-deriving from `baseline_lag`). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -219,6 +230,61 @@ pub struct LevelProfile {
     pub speech_peak_db: f32,
     pub noise_floor_db: f32,
     pub gap_floor_db: f32,
+}
+
+/// Span args for [`level_profile`]: the gap window and the surrounding context window (in frames).
+struct LevelProfileSpan {
+    gap_start: usize,
+    gap_end: usize,
+    context_start: usize,
+    context_end: usize,
+}
+
+/// Build a [`LevelProfile`] over `[context_start, context_end)` (binned), with `noise_floor` taken from the
+/// context bins *outside* `[gap_start, gap_end)` and `gap_floor` the loudest bin *inside* it. `bin_rms(f,
+/// end)` returns the mono RMS (linear) over `[f, end)`. Shared by the A-side (interleaved downmix) and the
+/// symmetric B-side (mono) paths so the two profiles are computed by *identical* logic (D11) and cannot drift.
+fn level_profile(bin_rms: impl Fn(usize, usize) -> f32, span: LevelProfileSpan, bin_frames: usize, bin_ms: u32) -> LevelProfile {
+    let mut profile_db = Vec::new();
+    let mut context_bins_db = Vec::new();
+    let mut f = span.context_start;
+    while f < span.context_end {
+        let end = (f + bin_frames).min(span.context_end);
+        let db = to_db(bin_rms(f, end));
+        profile_db.push(db);
+        if f < span.gap_start || f >= span.gap_end {
+            context_bins_db.push(db);
+        }
+        f = end;
+    }
+    let gap_floor_db = {
+        let mut mx = SILENCE_FLOOR_DB;
+        let mut g = span.gap_start;
+        while g < span.gap_end {
+            let end = (g + bin_frames).min(span.gap_end);
+            mx = mx.max(to_db(bin_rms(g, end)));
+            g = end;
+        }
+        mx
+    };
+    LevelProfile {
+        bin_ms,
+        speech_peak_db: profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max),
+        noise_floor_db: median(context_bins_db),
+        gap_floor_db,
+        floor_db: SILENCE_FLOOR_DB,
+        profile_db,
+    }
+}
+
+/// Mono RMS (linear) over `b_mono[start..end]` — the B-side accessor for [`level_profile`] / nominal donor.
+fn mono_slice_rms(b_mono: &[f64], start: usize, end: usize) -> f32 {
+    let end = end.min(b_mono.len());
+    if start >= end {
+        return 0.0;
+    }
+    let s = &b_mono[start..end];
+    ((s.iter().map(|v| v * v).sum::<f64>() / s.len() as f64).sqrt()) as f32
 }
 
 /// The relative silence-test quantities that decide whether a noisy collar is walked off the seam.
@@ -1691,36 +1757,17 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
     // --- intrinsic (A-side) ---
     let pre_start = refined.start_frame.saturating_sub(context_frames);
     let post_end = (refined.end_frame + context_frames).min(total_a);
-    let mut profile_db = Vec::new();
-    let mut context_bins_db = Vec::new();
-    let mut f = pre_start;
-    while f < post_end {
-        let end = (f + bin_frames).min(post_end);
-        let db = to_db(mono_rms(inputs.a_samples, ch, f, end));
-        profile_db.push(db);
-        if f < refined.start_frame || f >= refined.end_frame {
-            context_bins_db.push(db);
-        }
-        f = end;
-    }
-    let gap_floor_db = {
-        let mut mx = SILENCE_FLOOR_DB;
-        let mut g = refined.start_frame;
-        while g < refined.end_frame {
-            let end = (g + bin_frames).min(refined.end_frame);
-            mx = mx.max(to_db(mono_rms(inputs.a_samples, ch, g, end)));
-            g = end;
-        }
-        mx
-    };
-    let levels = LevelProfile {
-        bin_ms: cfg.gap_signature_bin_ms as u32,
-        speech_peak_db: profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max),
-        noise_floor_db: median(context_bins_db),
-        gap_floor_db,
-        floor_db: SILENCE_FLOOR_DB,
-        profile_db,
-    };
+    let levels = level_profile(
+        |f, end| mono_rms(inputs.a_samples, ch, f, end),
+        LevelProfileSpan {
+            gap_start: refined.start_frame,
+            gap_end: refined.end_frame,
+            context_start: pre_start,
+            context_end: post_end,
+        },
+        bin_frames,
+        cfg.gap_signature_bin_ms as u32,
+    );
 
     let collar_start = refined.start_frame.saturating_sub(border_frames);
     let collar_rms = mono_rms(inputs.a_samples, ch, collar_start, refined.start_frame);
@@ -1916,6 +1963,8 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         residual: None,
         seam_probe: None,
         donor_interior: None,
+        donor_interior_nominal: None,
+        b_levels: None,
         splice: None,
         wide_envelope: None,
         splice_dualfit: None,
@@ -2212,6 +2261,22 @@ pub(crate) fn characterize_gaps_with_gate(
                 .unwrap_or(b_mapped_start + gap_frames);
             fp.donor_interior =
                 donor_interior_at(&b_mono, b_pre_aligned, b_post_aligned, f64::from(fp.levels.gap_floor_db), sample_rate);
+            // Registration-independent B occupancy + symmetric B level profile at the NOMINAL geometry
+            // b_mapped span (no per-shoulder lag) — the "quiet in both masters ⇒ not a dropout" signals (D11).
+            let b_gap_end = b_mapped_start + gap_frames;
+            fp.donor_interior_nominal =
+                donor_interior_at(&b_mono, b_mapped_start, b_gap_end, f64::from(fp.levels.gap_floor_db), sample_rate);
+            fp.b_levels = Some(level_profile(
+                |f, end| mono_slice_rms(&b_mono, f, end),
+                LevelProfileSpan {
+                    gap_start: b_mapped_start,
+                    gap_end: b_gap_end,
+                    context_start: b_mapped_start.saturating_sub(context_frames),
+                    context_end: (b_gap_end + context_frames).min(b_mono.len()),
+                },
+                bin_frames,
+                cfg.gap_signature_bin_ms as u32,
+            ));
             // Dual-fit viability at the same aligned shoulders (only meaningful when the post lag resolved).
             if post_gross_frames.is_some() {
                 fp.splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
@@ -2974,6 +3039,8 @@ mod tests {
             splice: None,
             wide_envelope: None,
             splice_dualfit: None,
+            donor_interior_nominal: None,
+            b_levels: None,
             outcome: None,
         }
     }
@@ -3136,6 +3203,8 @@ mod tests {
                 post: None,
             }),
             splice_dualfit: None,
+            donor_interior_nominal: None,
+            b_levels: None,
             outcome: Some(GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "hard_skip".into(),

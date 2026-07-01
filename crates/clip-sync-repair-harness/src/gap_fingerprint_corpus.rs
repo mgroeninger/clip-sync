@@ -42,6 +42,9 @@ struct GapEntry {
     index: usize,
     #[serde(default)]
     geometry: Option<Geometry>,
+    /// A-side level profile (summary levels only) — dropout depth vs program-quiet (D11).
+    #[serde(default)]
+    levels: Option<BLevels>,
     /// Diagnostic lag at the best editorial bracket (may sit far from the decision seam).
     #[serde(default)]
     lag: Option<Lag>,
@@ -66,6 +69,12 @@ struct GapEntry {
     /// Donor B energy across the gap-mapped span (bridges the hole?).
     #[serde(default)]
     donor_interior: Option<DonorInterior>,
+    /// Donor occupancy at the **nominal** geometry span (no lag) — registration-independent (D11).
+    #[serde(default)]
+    donor_interior_nominal: Option<DonorInterior>,
+    /// Symmetric B-side level profile over the nominal span (counterpart to A `levels`; D11).
+    #[serde(default)]
+    b_levels: Option<BLevels>,
     /// First-class splice summary (step + per-side peaks / peak_z).
     #[serde(default)]
     splice: Option<Splice>,
@@ -82,9 +91,17 @@ struct GapEntry {
 #[derive(Deserialize)]
 struct DonorInterior {
     rms_db: f64,
-    #[allow(dead_code)]
     silence_fraction: f64,
     continuous: bool,
+}
+
+/// Projection of the symmetric B-side `LevelProfile` (only the summary levels the analyzer reads).
+#[derive(Deserialize)]
+struct BLevels {
+    gap_floor_db: f64,
+    noise_floor_db: f64,
+    #[allow(dead_code)]
+    speech_peak_db: f64,
 }
 
 #[derive(Deserialize)]
@@ -435,6 +452,19 @@ pub struct GapRow {
     pub dualfit_post_global_r: Option<f64>,
     /// Min of the two seam-peak prominences (±30 ms): low ⇒ periodic/alias match, PASS not trustworthy.
     pub dualfit_seam_prom: Option<f64>,
+    /// D11 — registration-independent B occupancy at the nominal geometry span. `silence ≈ 1` ⇒ B is quiet
+    /// at the same program time as A's gap ⇒ program-quiet, not a fillable dropout.
+    pub donor_nominal_silence: Option<f64>,
+    pub donor_nominal_cont: Option<bool>,
+    /// Donor occupancy at the *aligned* span (from `donor_interior`) — disagreement with the nominal one
+    /// flags a registration that moved the span onto different content (alias signal).
+    pub donor_aligned_silence: Option<f64>,
+    /// B-side gap floor and noise floor (symmetric `b_levels`) — is B's gap quiet vs B's *own* floor?
+    pub b_gap_floor_db: Option<f64>,
+    pub b_noise_floor_db: Option<f64>,
+    /// A-side gap floor (from `levels`) — deep-silent dropout vs quiet-at-noise-floor passage.
+    pub a_gap_floor_db: Option<f64>,
+    pub a_noise_floor_db: Option<f64>,
 }
 
 impl GapRow {
@@ -530,6 +560,22 @@ impl GapRow {
             && self.both_sides_recoverable()
     }
 
+    /// D11 — is this "gap" a **program-quiet** passage (quiet in *both* masters) rather than a fillable
+    /// dropout? Uses the registration-independent nominal-span B occupancy: `silence ≈ 1` ⇒ B is quiet at
+    /// the same program time as A's gap ⇒ nothing to fill, not a repair failure. `None` if not captured.
+    pub fn program_quiet(&self) -> Option<bool> {
+        self.donor_nominal_silence.map(|s| s >= PROGRAM_QUIET_SILENCE_FRAC)
+    }
+
+    /// Nominal vs aligned donor occupancy disagree strongly ⇒ the per-shoulder registration moved the span
+    /// onto different content — a registration/alias smell independent of `peak_z`. `None` if either absent.
+    pub fn donor_span_disagrees(&self) -> Option<bool> {
+        match (self.donor_nominal_silence, self.donor_aligned_silence) {
+            (Some(n), Some(a)) => Some((n - a).abs() >= 0.5),
+            _ => None,
+        }
+    }
+
     /// Largest seam-offset magnitude (ms) seen on either side — recoverability needs this within the
     /// lag search window.
     pub fn max_offset_ms(&self) -> Option<f64> {
@@ -541,6 +587,10 @@ impl GapRow {
         }
     }
 }
+
+/// D11 — B is at least this silent over the nominal-span (fraction of sub-floor bins) ⇒ program-quiet, not
+/// a fillable dropout. Real dropouts read ~0 (B occupied); program-quiet passages ~0.9–1.0 (B silent too).
+const PROGRAM_QUIET_SILENCE_FRAC: f64 = 0.5;
 
 /// Full aggregation across every pair dir found.
 #[derive(Debug, Clone, Default)]
@@ -809,6 +859,13 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             (None, Some(b)) => Some(b),
             (None, None) => None,
         }),
+        donor_nominal_silence: gap.donor_interior_nominal.as_ref().map(|d| d.silence_fraction),
+        donor_nominal_cont: gap.donor_interior_nominal.as_ref().map(|d| d.continuous),
+        donor_aligned_silence: gap.donor_interior.as_ref().map(|d| d.silence_fraction),
+        b_gap_floor_db: gap.b_levels.as_ref().map(|l| l.gap_floor_db),
+        b_noise_floor_db: gap.b_levels.as_ref().map(|l| l.noise_floor_db),
+        a_gap_floor_db: gap.levels.as_ref().map(|l| l.gap_floor_db),
+        a_noise_floor_db: gap.levels.as_ref().map(|l| l.noise_floor_db),
     }
 }
 
@@ -1449,6 +1506,70 @@ impl CorpusReport {
                 r.peak_r_post.unwrap_or(f64::NAN),
                 if r.patched() { "patched" } else { "skip" },
             );
+        }
+        s
+    }
+
+    /// **Occupancy — dropout vs program-quiet (D11).** Uses the registration-independent nominal-span B
+    /// occupancy (`donor_interior_nominal`): a "gap" where B is *also* silent at the same program time is a
+    /// program-quiet passage, not a fillable dropout — correctly skipped, and NOT a repair failure. Also
+    /// flags nominal-vs-aligned donor disagreement (the per-shoulder registration moved onto other content).
+    pub fn occupancy_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(
+            s,
+            "=== occupancy: fillable dropout vs program-quiet (nominal-span B silence, registration-independent) ==="
+        );
+        let matched = self.matched();
+        let have: Vec<&&GapRow> = matched.iter().filter(|r| r.donor_nominal_silence.is_some()).collect();
+        if have.is_empty() {
+            let _ = writeln!(s, "  (no donor_interior_nominal in corpus — re-scan with the current binary to populate)");
+            return s;
+        }
+        let quiet = have.iter().filter(|r| r.program_quiet() == Some(true)).count();
+        let _ = writeln!(
+            s,
+            "  among matched with nominal donor ({}): dropout {} · program-quiet {} (B ≥ {:.0}% silent at the same program time)",
+            have.len(),
+            have.len() - quiet,
+            quiet,
+            PROGRAM_QUIET_SILENCE_FRAC * 100.0
+        );
+        let skip_quiet: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip") && r.program_quiet() == Some(true))
+            .collect();
+        let _ = writeln!(
+            s,
+            "  → skipped-and-program-quiet: {} — correctly skipped, NOT fill misses (drop from the addressable denominator)",
+            skip_quiet.len()
+        );
+        let disagree = have.iter().filter(|r| r.donor_span_disagrees() == Some(true)).count();
+        let _ = writeln!(
+            s,
+            "  nominal-vs-aligned donor disagreement (registration moved span onto other content): {}/{}",
+            disagree,
+            have.len()
+        );
+        if !skip_quiet.is_empty() {
+            let _ = writeln!(s, "  program-quiet skips (A gapflr/nflr | B gapflr/nflr | Bsil nom/aln | step):");
+            for r in &skip_quiet {
+                let o = |v: Option<f64>| v.map(|x| format!("{x:6.1}")).unwrap_or_else(|| "   —  ".into());
+                let _ = writeln!(
+                    s,
+                    "    {:<12} g{:<3} | A {}/{} | B {}/{} | {:.2}/{:.2} | step {:>7.1}",
+                    r.pair,
+                    r.index,
+                    o(r.a_gap_floor_db),
+                    o(r.a_noise_floor_db),
+                    o(r.b_gap_floor_db),
+                    o(r.b_noise_floor_db),
+                    r.donor_nominal_silence.unwrap_or(f64::NAN),
+                    r.donor_aligned_silence.unwrap_or(f64::NAN),
+                    r.seam_step_ms().unwrap_or(f64::NAN),
+                );
+            }
         }
         s
     }

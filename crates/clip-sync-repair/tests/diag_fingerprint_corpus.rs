@@ -61,6 +61,7 @@ fn diag_fingerprint_corpus() {
     print!("{}", report.gate_text());
     print!("{}", report.seam_probe_text());
     print!("{}", report.splice_text());
+    print!("{}", report.occupancy_text());
     print!("{}", report.dualfit_viability_text());
     print!("{}", report.dualfit_scope_text());
     print!("{}", report.mechanism_text());
