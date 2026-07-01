@@ -184,6 +184,10 @@ pub struct GapFingerprint {
     /// agree with the fine-waveform lag (§3.6a cross-scale check). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub wide_envelope: Option<WideEnvelopeFingerprint>,
+    /// Dual-fit repair viability at the per-shoulder placement — the gate-equivalent seam score for a
+    /// length-reconciled fill (ledger C3/C7). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
 }
@@ -409,6 +413,42 @@ pub struct LagSummary {
     pub verdict: LagVerdict,
 }
 
+/// Search knobs for a per-shoulder lag correlation sweep (`lag_side_sweep` / [`lag_pair`]).
+#[derive(Debug, Clone, Copy)]
+struct LagSweepParams {
+    window: usize,
+    max_lag: i64,
+    sample_rate: u32,
+    channel: LagChannel,
+}
+
+impl LagSweepParams {
+    fn win_ms(self) -> u32 {
+        ((self.window as f64) * 1000.0 / f64::from(self.sample_rate.max(1))) as u32
+    }
+
+    fn max_lag_ms(self) -> u32 {
+        let ml = self.max_lag.max(0) as usize;
+        ((ml as f64) * 1000.0 / f64::from(self.sample_rate.max(1))) as u32
+    }
+
+    fn ml(self) -> usize {
+        self.max_lag.max(0) as usize
+    }
+}
+
+/// One shoulder of a [`lag_pair`] sweep: an A border template vs the B haystack around `anchor_frame`.
+#[derive(Debug, Clone, Copy)]
+struct LagSideSweep<'a> {
+    a_border: &'a [f64],
+    b_signal: &'a [f64],
+    anchor_frame: usize,
+    /// `true` for the pre shoulder (last `window` samples of `a_border`); `false` for post (first `window`).
+    pre_shoulder: bool,
+    /// Samples added to each lag bin in the returned summary (sequential post: gross map to `b_mapped_end`).
+    gross_lag_shift: i64,
+}
+
 /// Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
 /// versus the measured noise floor. `chosen_*_db ≤ floor_*_db` with `informative` ⇒ genuine same source
 /// (the strong test, beyond mere correlation). A shallow residual above the floor ⇒ B differs.
@@ -438,11 +478,14 @@ const DONOR_BIN_MS: f64 = 50.0;
 /// A donor with no internal sub-floor run longer than this is treated as continuous (bridges the gap).
 const DONOR_CONTINUITY_MS: f64 = 150.0;
 
-/// Donor-interior energy of `b_mono` over the gap-mapped span `[start_frame, start_frame + gap_frames)`
-/// (B's audio that would fill A's hole). `None` for an empty/over-range span.
-fn donor_interior_at(b_mono: &[f64], start_frame: usize, gap_frames: usize, gap_floor_db: f64, sample_rate: u32) -> Option<DonorInterior> {
-    let end = (start_frame + gap_frames).min(b_mono.len());
-    if gap_frames == 0 || start_frame >= end {
+/// Donor-interior energy of `b_mono` over the **aligned** bridge span `[start_frame, end_frame)` (B's
+/// audio that would fill A's hole). Callers pass the sequentially-registered shoulders
+/// (`b_mapped_start + L_pre`, `b_mapped_end + L_post_gross`, concerns doc §Registration fix — design),
+/// not the naive A-length span, so continuity metrics reflect the true bridge even when `D_B != D_A`.
+/// `None` for an empty/over-range span.
+fn donor_interior_at(b_mono: &[f64], start_frame: usize, end_frame: usize, gap_floor_db: f64, sample_rate: u32) -> Option<DonorInterior> {
+    let end = end_frame.min(b_mono.len());
+    if start_frame >= end {
         return None;
     }
     let span = &b_mono[start_frame..end];
@@ -482,6 +525,46 @@ pub struct SpliceSummary {
     pub pre_peak_z: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_peak_z: Option<f64>,
+}
+
+/// **Dual-fit viability** — the offline repair simulation promoted into the scan (ledger C3/C7; supersedes
+/// the `diag_splice_dualfit` harness, which decoded B separately and drifted from the scan). Each shoulder
+/// is placed at its own `baseline_lag` (`b_mapped_start + L_pre`, `b_mapped_end + L_post_gross`) and the
+/// pre/post seams are scored at lag 0 against the gate thresholds — i.e. *would a length-reconciled fill
+/// pass the gate?* The trim/pad is interior, so it does not move the shoulder seams: `trim_frames`
+/// (`bridge − gap`) equals the registration step in frames. Computed on the scan's own decode.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SpliceDualfit {
+    pub pre_seam_r: f64,
+    pub post_seam_r: f64,
+    pub gap_frames: usize,
+    pub bridge_frames: i64,
+    /// `bridge − gap`: >0 ⇒ trim, <0 ⇒ pad. Equals the registration step in frames.
+    pub trim_frames: i64,
+    /// Does `min(pre, post)` clear both `min_fill_correlation` and `fill_absolute_floor`?
+    pub gate_pass: bool,
+    /// **Validator — is the step necessary?** Post seam scored at the *pre* offset (step forced to 0).
+    /// If this clears the gate too, a single constant shift suffices and the reported step is a
+    /// registration artifact, not a real splice. If only `post_seam_r` (own lag) passes, the step is real.
+    pub post_seam_global_r: f64,
+    /// **Validator — is the seam unique?** Prominence of each seam's placement peak over its best rival
+    /// within ±30 ms. Low prominence ⇒ the seam correlates at many lags (periodic/alias), so a PASS is not
+    /// a trustworthy registration. `None` when the sweep window is out of range.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_prom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_prom: Option<f64>,
+}
+
+/// ± lag sweep (ms) used to gauge each dual-fit seam's peak uniqueness (the periodicity/alias guard).
+const DUALFIT_SEAM_UNIQ_LAG_MS: f64 = 30.0;
+
+/// Prominence of a seam's placement peak over its tallest rival within ±`max_lag`. `b_ctx` must be laid
+/// out so lag 0 aligns `a_win` at the placement (`b_ctx[max_lag .. max_lag + a_win.len()]`). Low prominence
+/// ⇒ the seam matches at many lags (periodic) ⇒ the dual-fit placement is not a unique registration.
+fn seam_prominence(a_win: &[f64], b_ctx: &[f64], max_lag: i64, sample_rate: u32) -> Option<f64> {
+    let curve = lag_correlation_curve(a_win, b_ctx, max_lag);
+    summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono).and_then(|s| s.prominence)
 }
 
 /// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
@@ -700,7 +783,7 @@ impl Default for FingerprintConfig {
             fill_marginal_margin: 0.08,
             fill_absolute_floor: 0.12,
             max_refine_secs: 0.75,
-            lag_max_lag_ms: 200,
+            lag_max_lag_ms: 600,
             lag_window_secs: 1.0,
         }
     }
@@ -838,23 +921,38 @@ struct PlacementScores {
     mono_post: f64,
 }
 
-/// Structure-best placement of the A bracket `refined` on the B haystack, plus the seam there.
-/// Structure-dominant weights so the placement locks to the energy-best (mirrors the production
-/// "structure aligns, seam read there" story). `None` if the match degenerates.
-#[allow(clippy::too_many_arguments)]
-fn place_on_b(
-    a_samples: &[f32],
+/// Inputs for [`place_on_b`] — structure+waveform unified search on the B haystack.
+struct PlaceOnBInput<'a> {
+    a_samples: &'a [f32],
     channels: usize,
     refined: RefinedGapFrames,
-    b_haystack: &[f32],
-    b_mono: &[f64],
-    b_ch: &[Vec<f64>],
+    b_haystack: &'a [f32],
+    b_mono: &'a [f64],
+    b_ch: &'a [Vec<f64>],
     nominal_fill_start: usize,
     context_frames: usize,
     bin_frames: usize,
     search_radius_frames: usize,
-    cfg: &FingerprintConfig,
-) -> Option<PlacementScores> {
+    cfg: &'a FingerprintConfig,
+}
+
+/// Structure-best placement of the A bracket `refined` on the B haystack, plus the seam there.
+/// Structure-dominant weights so the placement locks to the energy-best (mirrors the production
+/// "structure aligns, seam read there" story). `None` if the match degenerates.
+fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
+    let PlaceOnBInput {
+        a_samples,
+        channels,
+        refined,
+        b_haystack,
+        b_mono,
+        b_ch,
+        nominal_fill_start,
+        context_frames,
+        bin_frames,
+        search_radius_frames,
+        cfg,
+    } = *input;
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.checked_sub(refined.start_frame)?;
     if gap_frames == 0 {
@@ -949,66 +1047,122 @@ fn b_mapped_frame_in_haystack(
         .round()
         .max(0.0)) as usize
 }
-#[allow(clippy::too_many_arguments)]
+
+/// Correlate one A border shoulder against B over ±`params.max_lag` around `side.anchor_frame`.
+fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagSummary> {
+    let ml = params.ml();
+    let w = params.window.min(side.a_border.len());
+    let in_range = if side.pre_shoulder {
+        w >= 8 && side.anchor_frame >= w + ml
+    } else {
+        w >= 8 && side.anchor_frame >= ml
+    };
+    if !in_range {
+        return None;
+    }
+    let (lo, hi) = if side.pre_shoulder {
+        let lo = side.anchor_frame - w - ml;
+        let hi = (side.anchor_frame + ml).min(side.b_signal.len());
+        (lo, hi)
+    } else {
+        let lo = side.anchor_frame - ml;
+        let hi = (side.anchor_frame + w + ml).min(side.b_signal.len());
+        (lo, hi)
+    };
+    if hi <= lo {
+        return None;
+    }
+    let a_win = if side.pre_shoulder {
+        &side.a_border[side.a_border.len() - w..]
+    } else {
+        &side.a_border[..w]
+    };
+    let curve = lag_correlation_curve(a_win, &side.b_signal[lo..hi], params.max_lag);
+    if side.gross_lag_shift == 0 {
+        summarize_lag_curve(&curve, params.sample_rate, params.win_ms(), params.max_lag_ms(), params.channel)
+    } else {
+        let gross_curve: Vec<(i64, f64)> = curve
+            .into_iter()
+            .map(|(l, r)| (l + side.gross_lag_shift, r))
+            .collect();
+        summarize_lag_curve(
+            &gross_curve,
+            params.sample_rate,
+            params.win_ms(),
+            params.max_lag_ms(),
+            params.channel,
+        )
+    }
+}
+
 fn lag_pair(
     a_pre: &[f64],
     a_post: &[f64],
     b_signal: &[f64],
     start_frame: usize,
     gap_frames: usize,
-    window: usize,
-    max_lag: i64,
-    channel: LagChannel,
-    sample_rate: u32,
+    params: LagSweepParams,
 ) -> (Option<LagSummary>, Option<LagSummary>) {
-    let ml = max_lag.max(0) as usize;
-    let win_ms = ((window as f64) * 1000.0 / f64::from(sample_rate.max(1))) as u32;
-    let max_lag_ms = ((ml as f64) * 1000.0 / f64::from(sample_rate.max(1))) as u32;
-    let pre = (|| {
-        let w = window.min(a_pre.len());
-        if w < 8 || start_frame < w + ml {
-            return None;
-        }
-        let hi = (start_frame + ml).min(b_signal.len());
-        let lo = start_frame - w - ml;
-        if hi <= lo {
-            return None;
-        }
-        let curve = lag_correlation_curve(&a_pre[a_pre.len() - w..], &b_signal[lo..hi], max_lag);
-        summarize_lag_curve(&curve, sample_rate, win_ms, max_lag_ms, channel)
-    })();
-    let post = (|| {
-        let w = window.min(a_post.len());
-        let post_base = start_frame + gap_frames;
-        if w < 8 || post_base < ml {
-            return None;
-        }
-        let lo = post_base - ml;
-        let hi = (post_base + w + ml).min(b_signal.len());
-        if hi <= lo {
-            return None;
-        }
-        let curve = lag_correlation_curve(&a_post[..w], &b_signal[lo..hi], max_lag);
-        summarize_lag_curve(&curve, sample_rate, win_ms, max_lag_ms, channel)
-    })();
+    let pre = lag_side_sweep(
+        LagSideSweep {
+            a_border: a_pre,
+            b_signal,
+            anchor_frame: start_frame,
+            pre_shoulder: true,
+            gross_lag_shift: 0,
+        },
+        params,
+    );
+    // Sequential per-shoulder registration (concerns doc §Registration fix — design): center the post
+    // search on `start_frame + gap_frames + round(L_pre)`, not the naive `start_frame + gap_frames`.
+    // Un-shifted centering forces `|L_pre + (D_B - D_A)|` (clip offset stacked with bridge-length
+    // mismatch) into one ±max_lag window; shifting by the measured pre lag isolates the bridge mismatch
+    // alone in the post search. The returned post lags are then shifted back so callers keep receiving
+    // "gross" lags relative to `start_frame + gap_frames` (`b_mapped_end`) — i.e. `L_post_gross =
+    // L_pre + L_post_fine` — for compatibility with existing consumers (`splice_summary_from_lag`,
+    // `b_mapped_end`-relative alignment).
+    let pre_shift = pre.map(|p| p.frac_lag_samples.round() as i64).unwrap_or(0);
+    let post_base = (start_frame as i64 + gap_frames as i64 + pre_shift).max(0) as usize;
+    let post = lag_side_sweep(
+        LagSideSweep {
+            a_border: a_post,
+            b_signal,
+            anchor_frame: post_base,
+            pre_shoulder: false,
+            gross_lag_shift: pre_shift,
+        },
+        params,
+    );
     (pre, post)
+}
+
+/// Inputs for [`lag_at_placement`] — A/B windows + gate placement for a single lag fingerprint.
+struct LagAtPlacementInput<'a> {
+    a_samples: &'a [f32],
+    channels: usize,
+    refined: RefinedGapFrames,
+    b_mono: &'a [f64],
+    b_ch: &'a [Vec<f64>],
+    selected: Option<usize>,
+    start_frame: usize,
+    cfg: &'a FingerprintConfig,
+    sample_rate: u32,
 }
 
 /// Lag fingerprint for a placement: A's kept border vs the B haystack swept over ±`max_lag`, on the
 /// mono downmix **and** the gate-selected channel (where a multichannel failure lives).
-#[allow(clippy::too_many_arguments)]
-fn lag_at_placement(
-    a_samples: &[f32],
-    channels: usize,
-    refined: RefinedGapFrames,
-    b_mono: &[f64],
-    b_ch: &[Vec<f64>],
-    selected: Option<usize>,
-    start_frame: usize,
-    _bin_frames: usize,
-    cfg: &FingerprintConfig,
-    sample_rate: u32,
-) -> LagFingerprint {
+fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
+    let LagAtPlacementInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        b_ch,
+        selected,
+        start_frame,
+        cfg,
+        sample_rate,
+    } = *input;
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     // §3.6a: uniqueness needs a ~1 s window. Discover that much border (plus the lag-search slack) so the
@@ -1026,6 +1180,13 @@ fn lag_at_placement(
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
 
+    let sweep = LagSweepParams {
+        window,
+        max_lag,
+        sample_rate,
+        channel: LagChannel::Mono,
+    };
+
     let mut out = LagFingerprint::default();
     let mut add = |pre: Option<LagSummary>, post: Option<LagSummary>| {
         if let Some(p) = pre {
@@ -1036,12 +1197,22 @@ fn lag_at_placement(
         }
     };
 
-    let (pre, post) = lag_pair(&a_pre, &a_post, b_mono, start_frame, gap_frames, window, max_lag, LagChannel::Mono, sample_rate);
+    let (pre, post) = lag_pair(&a_pre, &a_post, b_mono, start_frame, gap_frames, sweep);
     add(pre, post);
 
     if let Some(sel) = selected {
         if sel < b_ch.len() && sel < a_pre_ch.len() && sel < a_post_ch.len() && !a_pre_ch[sel].is_empty() {
-            let (pre, post) = lag_pair(&a_pre_ch[sel], &a_post_ch[sel], &b_ch[sel], start_frame, gap_frames, window, max_lag, LagChannel::Selected(sel), sample_rate);
+            let (pre, post) = lag_pair(
+                &a_pre_ch[sel],
+                &a_post_ch[sel],
+                &b_ch[sel],
+                start_frame,
+                gap_frames,
+                LagSweepParams {
+                    channel: LagChannel::Selected(sel),
+                    ..sweep
+                },
+            );
             add(pre, post);
         }
     }
@@ -1138,8 +1309,39 @@ const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
 
 /// Pre/post [`SeamProbe`]s at a placement (mono). Built at **`b_mapped`** registration to diagnose a dead
 /// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
-#[allow(clippy::too_many_arguments)]
-fn seam_probe_at_placement(a_samples: &[f32], channels: usize, refined: RefinedGapFrames, b_mono: &[f64], start_frame: usize, bin_frames: usize, cfg: &FingerprintConfig, sample_rate: u32, gap_floor_db: f64) -> SeamProbeFingerprint {
+/// `post_shift_frames` is the measured pre-side lag (rounded, from `baseline_lag`'s mono pre entry) —
+/// the same sequential-registration shift `lag_pair` applies (concerns doc §Registration fix — design),
+/// so the post probe isn't centered on the un-shifted `start_frame + gap_frames` while `baseline_lag`'s
+/// post search is. The post fine-lag half-width is also raised to `cfg.lag_max_lag_ms` (from the ±25 ms
+/// `SEAM_PROBE_FINE_LAG_MS`) since, even after shifting, the residual search still needs to cover the
+/// bridge-length mismatch (`D_B - D_A`), not just fine sub-frame jitter. `recovered_lag_ms` is reported
+/// gross-relative (shifted back by `post_shift_frames`) to stay comparable with `baseline_lag`.
+struct SeamProbeAtPlacementInput<'a> {
+    a_samples: &'a [f32],
+    channels: usize,
+    refined: RefinedGapFrames,
+    b_mono: &'a [f64],
+    start_frame: usize,
+    post_shift_frames: i64,
+    bin_frames: usize,
+    cfg: &'a FingerprintConfig,
+    sample_rate: u32,
+    gap_floor_db: f64,
+}
+
+fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFingerprint {
+    let SeamProbeAtPlacementInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        start_frame,
+        post_shift_frames,
+        bin_frames,
+        cfg,
+        sample_rate,
+        gap_floor_db,
+    } = *input;
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     let rate = f64::from(sample_rate).max(1.0);
@@ -1156,6 +1358,8 @@ fn seam_probe_at_placement(a_samples: &[f32], channels: usize, refined: RefinedG
     let fine_max_lag = ((SEAM_PROBE_FINE_LAG_MS / 1000.0) * rate).round() as i64;
     let fine_bin = ((SEAM_PROBE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
     let ml = fine_max_lag.max(0) as usize;
+    let post_max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as i64;
+    let post_ml = post_max_lag.max(0) as usize;
 
     let pre = (|| {
         let w = window.min(a_pre.len());
@@ -1173,20 +1377,115 @@ fn seam_probe_at_placement(a_samples: &[f32], channels: usize, refined: RefinedG
     })();
     let post = (|| {
         let w = window.min(a_post.len());
-        let post_base = start_frame + gap_frames;
-        if w < 8 || post_base < ml {
+        let post_base = (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
+        if w < 8 || post_base < post_ml {
             return None;
         }
-        let lo = post_base - ml;
-        let hi = (post_base + w + ml).min(b_mono.len());
+        let lo = post_base - post_ml;
+        let hi = (post_base + w + post_ml).min(b_mono.len());
         if hi <= lo {
             return None;
         }
         // Level over the raw seam span (the w frames starting at the gap end), energy-weighted downmix.
         let level_rms = weighted_downmix_rms(a_samples, ch, post_base, post_base + w);
-        seam_probe_side(&a_post[..w], &b_mono[lo..hi], level_rms, fine_max_lag, sample_rate, fine_bin, gap_floor_db)
+        seam_probe_side(&a_post[..w], &b_mono[lo..hi], level_rms, post_max_lag, sample_rate, fine_bin, gap_floor_db)
     })();
+    let post_shift_ms = post_shift_frames as f64 * 1000.0 / rate;
+    let post = post.map(|mut sp| {
+        sp.recovered_lag_ms += post_shift_ms;
+        sp
+    });
     SeamProbeFingerprint { pre, post }
+}
+
+/// Inputs for [`splice_dualfit_at`] — the A/B PCM plus the already-aligned bridge shoulders.
+struct SpliceDualfitInput<'a> {
+    a_samples: &'a [f32],
+    channels: usize,
+    refined: RefinedGapFrames,
+    b_mono: &'a [f64],
+    /// `b_mapped_start + round(L_pre)` and `b_mapped_end + round(L_post_gross)` — the same aligned
+    /// shoulders `donor_interior` uses (computed once by the caller).
+    b_pre_aligned: usize,
+    b_post_aligned: usize,
+    cfg: &'a FingerprintConfig,
+    sample_rate: u32,
+}
+
+/// Dual-fit viability: score the pre/post seams at lag 0 with each shoulder at its own baseline lag, over
+/// the gate's own `fill_seam_search_secs` window, and gate on `min(pre, post)`. The interior trim/pad does
+/// not touch the shoulder seams, so this is exactly "would the length-reconciled fill pass?" — the C3/C7
+/// question, on the scan's decode. `None` when either seam window falls out of range.
+fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
+    let SpliceDualfitInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        b_pre_aligned,
+        b_post_aligned,
+        cfg,
+        sample_rate,
+    } = *input;
+    let ch = channels.max(1);
+    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    let rate = f64::from(sample_rate).max(1.0);
+    let window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames: window,
+        border_standoff_frames: 0,
+        silence_peak_fraction: cfg.silence_peak_fraction,
+        absolute_rms_floor: cfg.absolute_silence_rms,
+    };
+    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
+
+    let w_pre = window.min(a_pre.len());
+    let pre_seam_r = (w_pre >= 8 && b_pre_aligned >= w_pre).then(|| {
+        normalized_correlation(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_aligned - w_pre..b_pre_aligned])
+    })?;
+    let w_post = window.min(a_post.len());
+    let post_seam_r = (w_post >= 8 && b_post_aligned + w_post <= b_mono.len()).then(|| {
+        normalized_correlation(&a_post[..w_post], &b_mono[b_post_aligned..b_post_aligned + w_post])
+    })?;
+
+    let pre_seam_r = finite_corr(pre_seam_r);
+    let post_seam_r = finite_corr(post_seam_r);
+    let bridge_frames = b_post_aligned as i64 - b_pre_aligned as i64;
+    let smin = pre_seam_r.min(post_seam_r);
+    let gate_pass =
+        smin >= f64::from(cfg.min_fill_correlation) && smin >= f64::from(cfg.fill_absolute_floor);
+
+    // Validator 1 — is the step necessary? Post seam at the pre offset (step forced 0): `b_pre_aligned`
+    // shifted forward by the gap length keeps the pre shoulder's lag on the post side.
+    let b_post_global = b_pre_aligned + gap_frames;
+    let post_seam_global_r = (w_post >= 8 && b_post_global + w_post <= b_mono.len())
+        .then(|| finite_corr(normalized_correlation(&a_post[..w_post], &b_mono[b_post_global..b_post_global + w_post])))
+        .unwrap_or(f64::NAN);
+
+    // Validator 2 — is each seam a unique (non-periodic) match? Prominence of the placement peak over its
+    // best rival within ±30 ms.
+    let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
+    let mlu = ml.max(0) as usize;
+    let pre_seam_prom = (w_pre >= 8 && b_pre_aligned >= w_pre + mlu && b_pre_aligned + mlu <= b_mono.len())
+        .then(|| seam_prominence(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_aligned - w_pre - mlu..b_pre_aligned + mlu], ml, sample_rate))
+        .flatten();
+    let post_seam_prom = (w_post >= 8 && b_post_aligned >= mlu && b_post_aligned + w_post + mlu <= b_mono.len())
+        .then(|| seam_prominence(&a_post[..w_post], &b_mono[b_post_aligned - mlu..b_post_aligned + w_post + mlu], ml, sample_rate))
+        .flatten();
+
+    Some(SpliceDualfit {
+        pre_seam_r,
+        post_seam_r,
+        gap_frames,
+        bridge_frames,
+        trim_frames: bridge_frames - gap_frames as i64,
+        gate_pass,
+        post_seam_global_r,
+        pre_seam_prom,
+        post_seam_prom,
+    })
 }
 
 /// §3.6a frozen wide-envelope confirmer: 100 ms RMS bins, 2 s seam window, ±400 ms lag on the envelope.
@@ -1252,26 +1551,44 @@ fn wide_envelope_side(
 }
 
 /// Pre/post wide-envelope confirmers at **`b_mapped`** registration — cross-scale check vs `baseline_lag`.
-#[allow(clippy::too_many_arguments)]
-fn wide_envelope_at_placement(
-    a_samples: &[f32],
+/// `post_shift_frames` mirrors `lag_pair`'s sequential centering (concerns doc §Registration fix —
+/// design): the post window is centered on `start_frame + gap_frames + post_shift_frames`, and its
+/// search half-width is raised to `cfg.lag_max_lag_ms` (aligned with `baseline_lag`, not the frozen
+/// ±400 ms `WIDE_ENV_MAX_LAG_MS`) so it can still resolve the bridge-length mismatch after shifting.
+/// `peak_lag_ms` is reported gross-relative for comparability with `baseline_lag`.
+struct WideEnvelopeAtPlacementInput<'a> {
+    a_samples: &'a [f32],
     channels: usize,
     refined: RefinedGapFrames,
-    b_mono: &[f64],
+    b_mono: &'a [f64],
     start_frame: usize,
-    cfg: &FingerprintConfig,
+    post_shift_frames: i64,
+    cfg: &'a FingerprintConfig,
     sample_rate: u32,
-) -> WideEnvelopeFingerprint {
+}
+
+fn wide_envelope_at_placement(input: &WideEnvelopeAtPlacementInput<'_>) -> WideEnvelopeFingerprint {
+    let WideEnvelopeAtPlacementInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        start_frame,
+        post_shift_frames,
+        cfg,
+        sample_rate,
+    } = *input;
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     let rate = f64::from(sample_rate).max(1.0);
     let window = ((WIDE_ENV_WINDOW_SECS * rate).round() as usize).max(8);
     let wide_lag = ((WIDE_ENV_MAX_LAG_MS / 1000.0) * rate).round() as usize;
+    let post_wide_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as usize;
     let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
     let border_spec = GapBorderSpec {
         gap_start_frame: refined.start_frame,
         gap_end_frame: refined.end_frame,
-        border_frames: window + wide_lag,
+        border_frames: (window + wide_lag).max(window + post_wide_lag),
         border_standoff_frames: 0,
         silence_peak_fraction: cfg.silence_peak_fraction,
         absolute_rms_floor: cfg.absolute_silence_rms,
@@ -1298,17 +1615,22 @@ fn wide_envelope_at_placement(
     })();
     let post = (|| {
         let w = window.min(a_post.len());
-        let post_base = start_frame + gap_frames;
-        if w < env_bin || post_base < wide_lag {
+        let post_base = (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
+        if w < env_bin || post_base < post_wide_lag {
             return None;
         }
-        let lo = post_base.saturating_sub(wide_lag);
-        let hi = (post_base + w + wide_lag).min(b_mono.len());
+        let lo = post_base.saturating_sub(post_wide_lag);
+        let hi = (post_base + w + post_wide_lag).min(b_mono.len());
         if hi <= lo {
             return None;
         }
-        wide_envelope_side(&a_post[..w], &b_mono[lo..hi], sample_rate, env_bin, wide_lag)
+        wide_envelope_side(&a_post[..w], &b_mono[lo..hi], sample_rate, env_bin, post_wide_lag)
     })();
+    let post_shift_ms = post_shift_frames as f64 * 1000.0 / rate;
+    let post = post.map(|mut ep| {
+        ep.peak_lag_ms += post_shift_ms;
+        ep
+    });
     WideEnvelopeFingerprint { pre, post }
 }
 
@@ -1488,7 +1810,19 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
             )
         };
 
-        if let Some(base) = place_on_b(inputs.a_samples, ch, refined, b_haystack, &b_mono, &b_ch, b_mapped_start(refined.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
+        if let Some(base) = place_on_b(&PlaceOnBInput {
+            a_samples: inputs.a_samples,
+            channels: ch,
+            refined,
+            b_haystack,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+            nominal_fill_start: b_mapped_start(refined.start_frame),
+            context_frames,
+            bin_frames,
+            search_radius_frames,
+            cfg,
+        }) {
             structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
             seams = Some(SeamScores {
                 baseline_pre: base.seam_pre,
@@ -1501,24 +1835,35 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         }
 
         if tier == DetailTier::Full {
-            // Decision-seam lag at `b_mapped` nominal + ±200 ms sweep (ledger A2) — not structure throat.
-            baseline_lag = Some(lag_at_placement(
-                inputs.a_samples,
-                ch,
+            // Decision-seam lag at `b_mapped` nominal + ±600 ms sweep (ledger A2) — not structure throat.
+            baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
+                a_samples: inputs.a_samples,
+                channels: ch,
                 refined,
-                &b_mono,
-                &b_ch,
-                None,
-                b_mapped_start(refined.start_frame),
-                bin_frames,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+                selected: None,
+                start_frame: b_mapped_start(refined.start_frame),
                 cfg,
-                inputs.sample_rate,
-            ));
+                sample_rate: inputs.sample_rate,
+            }));
             // Per-bracket scoring; remember the best-structure energy-peak bracket's placement for lag.
             let mut best: Option<(f64, usize, RefinedGapFrames, Option<usize>)> = None;
             for (i, br) in raw_brackets.iter().enumerate() {
                 let refined_b = br.refined;
-                if let Some(p) = place_on_b(inputs.a_samples, ch, refined_b, b_haystack, &b_mono, &b_ch, b_mapped_start(refined_b.start_frame), context_frames, bin_frames, search_radius_frames, cfg) {
+                if let Some(p) = place_on_b(&PlaceOnBInput {
+                    a_samples: inputs.a_samples,
+                    channels: ch,
+                    refined: refined_b,
+                    b_haystack,
+                    b_mono: &b_mono,
+                    b_ch: &b_ch,
+                    nominal_fill_start: b_mapped_start(refined_b.start_frame),
+                    context_frames,
+                    bin_frames,
+                    search_radius_frames,
+                    cfg,
+                }) {
                     brackets[i].structure_pre = Some(p.structure_pre);
                     brackets[i].structure_post = Some(p.structure_post);
                     brackets[i].seam_pre = Some(p.seam_pre);
@@ -1534,7 +1879,17 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
                 }
             }
             if let Some((_, start_frame, refined_b, selected)) = best {
-                lag = Some(lag_at_placement(inputs.a_samples, ch, refined_b, &b_mono, &b_ch, selected, start_frame, bin_frames, cfg, inputs.sample_rate));
+                lag = Some(lag_at_placement(&LagAtPlacementInput {
+                    a_samples: inputs.a_samples,
+                    channels: ch,
+                    refined: refined_b,
+                    b_mono: &b_mono,
+                    b_ch: &b_ch,
+                    selected,
+                    start_frame,
+                    cfg,
+                    sample_rate: inputs.sample_rate,
+                }));
             }
         }
     }
@@ -1563,6 +1918,7 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         donor_interior: None,
         splice: None,
         wide_envelope: None,
+        splice_dualfit: None,
         outcome: None,
     }
 }
@@ -1595,7 +1951,12 @@ impl FingerprintConfig {
             fill_marginal_margin: request.fill_marginal_margin,
             fill_absolute_floor: request.fill_absolute_floor,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
-            lag_max_lag_ms: 200,
+            // `b_mapped_start`/`b_mapped_end` share a single rigid per-gap offset (gap_offset_secs) —
+            // pre/post are NOT independently registered. The full-corpus rescan showed real steps up
+            // to 322 ms from that nominal, so ±200 ms clips genuine peaks off the search edge and
+            // manufactures false one-sided-dead/decorrelated verdicts. 600 ms matches the width already
+            // validated offline (SPLICE_EXP_FINE_LAG_MS=600, §1b-i/§3.6).
+            lag_max_lag_ms: 600,
             lag_window_secs: 1.0,
         }
     }
@@ -1803,31 +2164,78 @@ pub(crate) fn characterize_gaps_with_gate(
             b_mapped_frame_in_haystack(refined_b.start_frame, rate, gap_offset, b_extract_start_secs)
         };
 
-        // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±200 ms lag sweep.
-        // Correlation/uniqueness is mono (frozen, §3.6a).
-        fp.baseline_lag = Some(lag_at_placement(
-            &a_pcm.samples, ch, refined, &b_mono, &b_ch, None, b_mapped_start, bin_frames, &cfg, sample_rate,
-        ));
-        fp.seam_probe = Some(seam_probe_at_placement(
-            &a_pcm.samples, ch, refined, &b_mono, b_mapped_start, bin_frames, &cfg, sample_rate,
-            f64::from(fp.levels.gap_floor_db),
-        ));
-        fp.donor_interior = donor_interior_at(
-            &b_mono,
-            b_mapped_start,
-            refined.end_frame.saturating_sub(refined.start_frame),
-            f64::from(fp.levels.gap_floor_db),
-            sample_rate,
-        );
-        fp.wide_envelope = Some(wide_envelope_at_placement(
-            &a_pcm.samples,
-            ch,
+        // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag
+        // sweep, sequentially centered (concerns doc §Registration fix — design). Correlation/uniqueness
+        // is mono (frozen, §3.6a).
+        fp.baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
             refined,
-            &b_mono,
-            b_mapped_start,
-            &cfg,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+            selected: None,
+            start_frame: b_mapped_start,
+            cfg: &cfg,
             sample_rate,
-        ));
+        }));
+        // L_pre / L_post_gross (mono) drive the same sequential post centering in seam_probe/wide_envelope,
+        // and the aligned bridge span for donor_interior — see lag_pair's doc comment for the derivation.
+        let pre_shift_frames = fp
+            .baseline_lag
+            .as_ref()
+            .and_then(|l| mono_lag_side(l, true))
+            .map(|s| s.frac_lag_samples.round() as i64)
+            .unwrap_or(0);
+        let post_gross_frames = fp
+            .baseline_lag
+            .as_ref()
+            .and_then(|l| mono_lag_side(l, false))
+            .map(|s| s.frac_lag_samples.round() as i64);
+        fp.seam_probe = Some(seam_probe_at_placement(&SeamProbeAtPlacementInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
+            refined,
+            b_mono: &b_mono,
+            start_frame: b_mapped_start,
+            post_shift_frames: pre_shift_frames,
+            bin_frames,
+            cfg: &cfg,
+            sample_rate,
+            gap_floor_db: f64::from(fp.levels.gap_floor_db),
+        }));
+        {
+            let b_pre_aligned = (b_mapped_start as i64 + pre_shift_frames).max(0) as usize;
+            // Fall back to the naive A-length span when the post lag search found no peak, rather than
+            // dropping donor_interior entirely.
+            let b_post_aligned = post_gross_frames
+                .map(|g| (b_mapped_start as i64 + gap_frames as i64 + g).max(0) as usize)
+                .unwrap_or(b_mapped_start + gap_frames);
+            fp.donor_interior =
+                donor_interior_at(&b_mono, b_pre_aligned, b_post_aligned, f64::from(fp.levels.gap_floor_db), sample_rate);
+            // Dual-fit viability at the same aligned shoulders (only meaningful when the post lag resolved).
+            if post_gross_frames.is_some() {
+                fp.splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
+                    a_samples: &a_pcm.samples,
+                    channels: ch,
+                    refined,
+                    b_mono: &b_mono,
+                    b_pre_aligned,
+                    b_post_aligned,
+                    cfg: &cfg,
+                    sample_rate,
+                });
+            }
+        }
+        fp.wide_envelope = Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
+            refined,
+            b_mono: &b_mono,
+            start_frame: b_mapped_start,
+            post_shift_frames: pre_shift_frames,
+            cfg: &cfg,
+            sample_rate,
+        }));
         if let Some(ref bl) = fp.baseline_lag {
             fp.splice = splice_summary_from_lag(bl);
         }
@@ -1845,20 +2253,30 @@ pub(crate) fn characterize_gaps_with_gate(
 
         // Diagnostic lag: one placement search at the best (highest-seam) speech bracket.
         if let Some((_, refined_b)) = best_energy {
-            if let Some(p) = place_on_b(
-                &a_pcm.samples,
-                ch,
-                refined_b,
-                b_slice,
-                &b_mono,
-                &b_ch,
-                b_mapped_bracket(refined_b),
+            if let Some(p) = place_on_b(&PlaceOnBInput {
+                a_samples: &a_pcm.samples,
+                channels: ch,
+                refined: refined_b,
+                b_haystack: b_slice,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+                nominal_fill_start: b_mapped_bracket(refined_b),
                 context_frames,
                 bin_frames,
                 search_radius_frames,
-                &cfg,
-            ) {
-                fp.lag = Some(lag_at_placement(&a_pcm.samples, ch, refined_b, &b_mono, &b_ch, p.selected_channels.first().copied(), p.start_frame, bin_frames, &cfg, sample_rate));
+                cfg: &cfg,
+            }) {
+                fp.lag = Some(lag_at_placement(&LagAtPlacementInput {
+                    a_samples: &a_pcm.samples,
+                    channels: ch,
+                    refined: refined_b,
+                    b_mono: &b_mono,
+                    b_ch: &b_ch,
+                    selected: p.selected_channels.first().copied(),
+                    start_frame: p.start_frame,
+                    cfg: &cfg,
+                    sample_rate,
+                }));
             }
         }
     }
@@ -2189,6 +2607,100 @@ mod tests {
         assert!(curve.iter().all(|(_, r)| r.is_finite()));
     }
 
+    /// Pre-fix post search: center on `start_frame + gap_frames` with no pre-shift — stacks
+    /// `L_pre + (D_B - D_A)` into one ±max_lag window (concerns doc §Registration fix).
+    fn naive_lag_pair_post(
+        a_post: &[f64],
+        b_signal: &[f64],
+        start_frame: usize,
+        gap_frames: usize,
+        params: LagSweepParams,
+    ) -> Option<LagSummary> {
+        lag_side_sweep(
+            LagSideSweep {
+                a_border: a_post,
+                b_signal,
+                anchor_frame: start_frame + gap_frames,
+                pre_shoulder: false,
+                gross_lag_shift: 0,
+            },
+            params,
+        )
+    }
+
+    /// Regression: when `|L_pre + (D_B - D_A)|` exceeds ±max_lag but `|D_B - D_A|` alone fits,
+    /// sequential `lag_pair` finds the post shoulder while naive centering does not.
+    #[test]
+    fn lag_pair_sequential_decouples_pre_offset_from_bridge_mismatch() {
+        const RATE: u32 = 48_000;
+        let w = 4_000usize;
+        let max_lag = 4_000i64;
+        let ml = max_lag as usize;
+        let start_frame = 30_000usize;
+        let gap_frames = 20_000usize; // D_A — keep post burst out of the pre search window
+        let l_pre_true = 3_000i64;
+        let bridge_delta = 1_500i64; // |L_pre + bridge| = 4500 > max_lag; |bridge| = 1500 <= max_lag
+
+        let b_post_match = start_frame as i64 + l_pre_true + gap_frames as i64 + bridge_delta;
+        let naive_lag_needed = b_post_match - (start_frame + gap_frames) as i64;
+        assert_eq!(naive_lag_needed, l_pre_true + bridge_delta);
+        assert!(naive_lag_needed.unsigned_abs() > max_lag as u64);
+
+        let mut b_signal = vec![0.0f64; 100_000];
+
+        let (a_pre, pre_ctx) = shifted_pair(l_pre_true as f64, w, max_lag);
+        let pre_lo = start_frame.saturating_sub(w + ml);
+        for (i, &v) in pre_ctx.iter().enumerate() {
+            if pre_lo + i < b_signal.len() {
+                b_signal[pre_lo + i] = v;
+            }
+        }
+
+        let (a_post, post_ctx) = shifted_pair(bridge_delta as f64, w, max_lag);
+        let seq_post_base = start_frame as i64 + gap_frames as i64 + l_pre_true;
+        let post_lo = (seq_post_base - ml as i64).max(0) as usize;
+        for (i, &v) in post_ctx.iter().enumerate() {
+            if post_lo + i < b_signal.len() {
+                b_signal[post_lo + i] = v;
+            }
+        }
+
+        let sweep = LagSweepParams {
+            window: w,
+            max_lag,
+            sample_rate: RATE,
+            channel: LagChannel::Mono,
+        };
+
+        let (pre, post_seq) = lag_pair(&a_pre, &a_post, &b_signal, start_frame, gap_frames, sweep);
+        let pre = pre.expect("pre shoulder");
+        let post_seq = post_seq.expect("sequential post shoulder");
+        assert!(
+            (pre.frac_lag_samples - l_pre_true as f64).abs() < 5.0,
+            "pre lag {} should land near {l_pre_true}",
+            pre.frac_lag_samples
+        );
+        assert!(pre.peak_r > 0.95, "pre peak_r {}", pre.peak_r);
+
+        let gross_post_expected = l_pre_true + bridge_delta;
+        assert!(
+            (post_seq.frac_lag_samples - gross_post_expected as f64).abs() < 5.0,
+            "gross post lag {} should land near {gross_post_expected}",
+            post_seq.frac_lag_samples
+        );
+        assert!(post_seq.peak_r > 0.95, "sequential post peak_r {}", post_seq.peak_r);
+
+        let post_naive = naive_lag_pair_post(&a_post, &b_signal, start_frame, gap_frames, sweep)
+            .expect("naive post summary");
+        assert!(
+            post_naive.peak_r < post_seq.peak_r - 0.15,
+            "naive post should be worse than sequential (naive r {} at lag {} vs sequential r {})",
+            post_naive.peak_r,
+            post_naive.frac_lag_samples,
+            post_seq.peak_r
+        );
+    }
+
     #[test]
     fn weighted_downmix_recovers_center_dominant_level() {
         // 6ch center-dominant 5.1 seam: loud center (idx 2), quiet L/R, silent surrounds/LFE.
@@ -2461,6 +2973,7 @@ mod tests {
             donor_interior: None,
             splice: None,
             wide_envelope: None,
+            splice_dualfit: None,
             outcome: None,
         }
     }
@@ -2622,6 +3135,7 @@ mod tests {
                 }),
                 post: None,
             }),
+            splice_dualfit: None,
             outcome: Some(GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "hard_skip".into(),

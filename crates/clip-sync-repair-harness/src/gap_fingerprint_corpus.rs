@@ -69,6 +69,9 @@ struct GapEntry {
     /// First-class splice summary (step + per-side peaks / peak_z).
     #[serde(default)]
     splice: Option<Splice>,
+    /// Dual-fit repair viability at the per-shoulder placement (gate-equivalent seam score; C3/C7).
+    #[serde(default)]
+    splice_dualfit: Option<SpliceDualfit>,
     /// Wide (100 ms-bin) envelope segment-identity confirmer at the decision seam.
     #[serde(default)]
     wide_envelope: Option<WideEnvelopeFp>,
@@ -93,6 +96,21 @@ struct Splice {
     pre_peak_z: Option<f64>,
     #[serde(default)]
     post_peak_z: Option<f64>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+struct SpliceDualfit {
+    pre_seam_r: f64,
+    post_seam_r: f64,
+    #[allow(dead_code)]
+    trim_frames: i64,
+    gate_pass: bool,
+    #[serde(default)]
+    post_seam_global_r: f64,
+    #[serde(default)]
+    pre_seam_prom: Option<f64>,
+    #[serde(default)]
+    post_seam_prom: Option<f64>,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -187,8 +205,20 @@ struct Lag {
     post_anchor: Vec<LagEntry>,
 }
 
+/// Mirrors `gap_fingerprint::LagChannel`'s externally-tagged repr (`"mono"` / `{"selected":N}`).
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LagChannelTag {
+    Mono,
+    Selected(usize),
+}
+
 #[derive(Deserialize)]
 struct LagEntry {
+    /// Absent in pre-A2 fingerprints (single-entry mono-only arrays); `.first()`-style fallback below
+    /// treats a missing channel as mono so old data keeps working.
+    #[serde(default)]
+    channel: Option<LagChannelTag>,
     peak_r: f64,
     #[serde(default)]
     second_peak_r: Option<f64>,
@@ -277,10 +307,11 @@ impl SeamDiag {
     }
 }
 
-/// Silence-splice classification from the **±200 ms** per-side `baseline_lag` peaks (not the ±25 ms
-/// `seam_probe.recovered_r`, which mislabels any step > 25 ms as "cross-codec"). See
-/// `docs/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the addressable
-/// silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
+/// Silence-splice classification from the **±600 ms** per-side `baseline_lag` peaks, sequentially
+/// centered (concerns doc §Registration fix — design: post search is centered on `S + D_A + round(L_pre)`,
+/// not the naive `S + D_A`), not the ±25 ms `seam_probe.recovered_r`, which mislabels any step > 25 ms as
+/// "cross-codec". See `docs/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
+/// addressable silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpliceDiag {
     /// Both shoulders align uniquely at their own lag ⇒ a silence-splice: fit each seam independently and
@@ -289,8 +320,9 @@ pub enum SpliceDiag {
     /// Both shoulders align, but a uniqueness margin is thin ⇒ the per-side lag (and so the `step`) may be
     /// a periodic alias — confirm before trusting.
     AliasSuspect,
-    /// A shoulder fails to reach the peak floor at **any** lag in ±200 ms ⇒ not a splice. This is the only
-    /// signature that would revive a genuine cross-encoding / different-content case.
+    /// A shoulder fails to reach the peak floor at **any** lag in ±600 ms of its sequentially-centered
+    /// search ⇒ not a splice. This is the only signature that would revive a genuine cross-encoding /
+    /// different-content case.
     OneSidedDead,
 }
 
@@ -308,12 +340,17 @@ const SEAM_QUIET_SNR_DB: f64 = 6.0;
 const SEAM_RECOVER_R: f64 = 0.5;
 /// R2/R4 above this (with waveform dead) is the cross-codec validator-mismatch signal.
 const SEAM_ROBUST_R: f64 = 0.5;
-/// A shoulder must reach this `peak_r` at its own lag (over the ±200 ms `baseline_lag` sweep) to count as
+/// A shoulder must reach this `peak_r` at its own lag (over the ±600 ms `baseline_lag` sweep) to count as
 /// cleanly recoverable — the both-sides-recoverable floor. Heuristic; calibrate against the corpus.
 const SPLICE_MIN_PEAK_R: f64 = 0.85;
 /// §3.6a robust-uniqueness floors (1 s window) — used when `peak_z` is present on the fingerprint.
+/// **`peak_z` is primary** (whole-curve z-score; deflates on periodic/leveled content, so it is the
+/// periodicity-robust test — ledger B3). `SPLICE_MIN_PROMINENCE` is a *tiebreaker* at a deliberately low
+/// floor: prominence is a single-rival term that over-flags leveled/limited audio (2026-07-01: 9/32
+/// alias-suspect were prominence-only false-flags with `peak_z` 12.6–26; 4 were gate-patched — A5/C6). The
+/// 0.15 floor only catches a genuine near-duplicate rival (e.g. 6·g9 `prom 0.11`).
 const SPLICE_MIN_PEAK_Z: f64 = 12.0;
-const SPLICE_MIN_PROMINENCE: f64 = 0.45;
+const SPLICE_MIN_PROMINENCE: f64 = 0.15;
 
 /// One gap's aggregated row.
 #[derive(Debug, Clone)]
@@ -388,6 +425,16 @@ pub struct GapRow {
     pub seam_snr_db: Option<f64>,
     pub seam_diag: Option<SeamDiag>,
     pub skew: SkewClass,
+    /// Dual-fit viability (scan-native `splice_dualfit`): pre/post seam Pearson at the per-shoulder
+    /// placement and whether they clear the gate — "would a length-reconciled fill pass?" (C3/C7).
+    pub dualfit_pre_r: Option<f64>,
+    pub dualfit_post_r: Option<f64>,
+    pub dualfit_pass: Option<bool>,
+    /// Post seam at the pre offset (step forced 0): validates whether the step is *necessary* (real) or a
+    /// single constant shift also works (spurious step / registration artifact).
+    pub dualfit_post_global_r: Option<f64>,
+    /// Min of the two seam-peak prominences (±30 ms): low ⇒ periodic/alias match, PASS not trustworthy.
+    pub dualfit_seam_prom: Option<f64>,
 }
 
 impl GapRow {
@@ -435,7 +482,7 @@ impl GapRow {
         }
     }
 
-    /// **Silence-splice classification** from the ±200 ms per-side `baseline_lag` peaks — the
+    /// **Silence-splice classification** from the ±600 ms per-side `baseline_lag` peaks — the
     /// authoritative read (the ±25 ms `seam_probe.recovered_r` mislabels any step > 25 ms). `Splice` =
     /// both shoulders clean & unique ⇒ addressable by independent fit + length reconciliation;
     /// `OneSidedDead` = a shoulder aligns at no lag ⇒ the only genuine cross-encoding candidate. `None`
@@ -445,7 +492,9 @@ impl GapRow {
         if pre.min(post) < SPLICE_MIN_PEAK_R {
             return Some(SpliceDiag::OneSidedDead);
         }
-        // §3.6a: prefer peak_z + prominence when the rescan captured them on both sides.
+        // §3.6a: `peak_z` is the primary (periodicity-robust) uniqueness test; prominence is only a
+        // low-floor tiebreaker for genuine near-duplicate rivals (see `SPLICE_MIN_PROMINENCE`). Prefer both
+        // when the rescan captured them on both sides.
         if let (Some(z), Some(prom)) = (self.uniqueness_z, self.uniqueness_prom) {
             if z < SPLICE_MIN_PEAK_Z || prom < SPLICE_MIN_PROMINENCE {
                 return Some(SpliceDiag::AliasSuspect);
@@ -622,10 +671,18 @@ fn read_corpus_json(path: &Path) -> Option<CorpusFile> {
 
 fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs: f64) -> GapRow {
     // Registration is read at the **decision** seam (`baseline_lag`, #2); fall back to the diagnostic
-    // best-bracket `lag` for older fingerprints that predate it. Mono summary is written first.
+    // best-bracket `lag` for older fingerprints that predate it. Select the mono entry explicitly (P2-1):
+    // capture pushes mono first today, but `.first()` silently picks whatever is first if channel order
+    // ever changes — match on `channel` instead, falling back to `.first()` only when `channel` is absent
+    // (pre-A2 fingerprints, which only ever wrote one mono entry anyway).
+    fn mono_entry(v: &[LagEntry]) -> Option<&LagEntry> {
+        v.iter()
+            .find(|e| e.channel == Some(LagChannelTag::Mono))
+            .or_else(|| v.first())
+    }
     let lag = gap.baseline_lag.as_ref().or(gap.lag.as_ref());
-    let pre = lag.and_then(|l| l.pre_anchor.first());
-    let post = lag.and_then(|l| l.post_anchor.first());
+    let pre = lag.and_then(|l| mono_entry(&l.pre_anchor));
+    let post = lag.and_then(|l| mono_entry(&l.post_anchor));
     let verdict = pre.or(post).map(|s| s.verdict.clone());
     let frac_lag_pre_ms = pre.map(|s| s.frac_lag_ms);
     let frac_lag_post_ms = post.map(|s| s.frac_lag_ms);
@@ -742,6 +799,16 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         seam_snr_db: seam.map(|p| p.snr_db),
         seam_diag: seam.map(seam_diag),
         skew,
+        dualfit_pre_r: gap.splice_dualfit.as_ref().map(|d| d.pre_seam_r),
+        dualfit_post_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_r),
+        dualfit_pass: gap.splice_dualfit.as_ref().map(|d| d.gate_pass),
+        dualfit_post_global_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_global_r),
+        dualfit_seam_prom: gap.splice_dualfit.as_ref().and_then(|d| match (d.pre_seam_prom, d.post_seam_prom) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }),
     }
 }
 
@@ -1246,7 +1313,8 @@ impl CorpusReport {
         let _ = writeln!(s, "=== seam diagnosis: why is the waveform seam dead? ===");
         let _ = writeln!(
             s,
-            "  (NOTE: recov/cross-codec here use the ±25 ms seam_probe — see the silence-splice view for the ±200 ms truth)"
+            "  (NOTE: recov/cross-codec here use the seam_probe (±25 ms pre / ±600 ms sequentially-centered \
+             post) — see the silence-splice view for the ±600 ms baseline_lag truth)"
         );
         let matched = self.matched();
         let skipped: Vec<&&GapRow> =
@@ -1299,18 +1367,20 @@ impl CorpusReport {
         s
     }
 
-    /// **Silence-splice view** — the authoritative seam read, from the ±200 ms per-side `baseline_lag`
-    /// peaks (the ±25 ms `seam_probe.recovered_r` underlying `seam_probe_text` mislabels any step > 25 ms
-    /// as "cross-codec"). Classifies every matched gap: `splice` (both shoulders clean & unique at their
-    /// own lag, separated by a step — addressable by independent fit + length reconciliation),
-    /// `alias-suspect` (a thin uniqueness margin), or `one-sided-dead` (a shoulder aligns at no lag — the
-    /// only genuine cross-encoding candidate). Lists the skipped gaps with both per-side peaks + the step.
+    /// **Silence-splice view** — the authoritative seam read, from the ±600 ms per-side `baseline_lag`
+    /// peaks, sequentially centered (concerns doc §Registration fix — design) so pre offset and
+    /// bridge-length mismatch don't stack into one search window (the ±25 ms `seam_probe.recovered_r`
+    /// underlying `seam_probe_text` mislabels any step > 25 ms as "cross-codec"). Classifies every matched
+    /// gap: `splice` (both shoulders clean & unique at their own lag, separated by a step — addressable by
+    /// independent fit + length reconciliation), `alias-suspect` (a thin uniqueness margin), or
+    /// `one-sided-dead` (a shoulder aligns at no lag — the only genuine cross-encoding candidate). Lists
+    /// the skipped gaps with both per-side peaks + the step.
     pub fn splice_text(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();
         let _ = writeln!(
             s,
-            "=== silence-splice view (±200 ms baseline per-side; supersedes the ±25 ms recov diagnosis) ==="
+            "=== silence-splice view (±600 ms sequentially-centered baseline per-side; supersedes the ±25 ms recov diagnosis) ==="
         );
         let matched = self.matched();
 
@@ -1383,6 +1453,96 @@ impl CorpusReport {
         s
     }
 
+    /// **Dual-fit viability (scan-native `splice_dualfit`; C3/C7).** The offline `diag_splice_dualfit`
+    /// simulation promoted into the scan: each shoulder placed at its own baseline lag, seams scored at
+    /// lag 0 vs the gate thresholds — "would a length-reconciled fill pass?" — on the scan's own decode
+    /// (no separate ffmpeg path). Reports the pass rate among the bracket-exhausted skips and lists each.
+    pub fn dualfit_viability_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(
+            s,
+            "=== dual-fit viability (scan-native splice_dualfit; per-shoulder placement, gate-equiv seam @ lag 0) ==="
+        );
+        let matched = self.matched();
+        let measured: Vec<&&GapRow> = matched.iter().filter(|r| r.dualfit_pass.is_some()).collect();
+        if measured.is_empty() {
+            let _ = writeln!(
+                s,
+                "  (no splice_dualfit in corpus — re-scan with the current binary to populate)"
+            );
+            return s;
+        }
+        let pass = measured.iter().filter(|r| r.dualfit_pass == Some(true)).count();
+        let _ = writeln!(s, "  among matched with splice_dualfit ({}): {pass} would pass a length-reconciled fill", measured.len());
+
+        // The decision cohort: bracket-exhausted skips (0 brackets pass) — the dual-fit targets.
+        let skips: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip") && r.brackets_passing == 0)
+            .collect();
+        let skip_pass = skips.iter().filter(|r| r.dualfit_pass == Some(true)).count();
+        let _ = writeln!(
+            s,
+            "  bracket-exhausted skips: {}/{} would pass dual-fit (the C3 answer)",
+            skip_pass,
+            skips.len()
+        );
+        // Validators: is the step necessary (post fails at the pre offset), and is the seam unique (prom)?
+        let step_spurious = skips
+            .iter()
+            .filter(|r| r.dualfit_pass == Some(true) && r.dualfit_post_global_r.is_some_and(|g| g >= 0.35))
+            .count();
+        let _ = writeln!(
+            s,
+            "  validators — of the {skip_pass} dual-fit passes: {} also pass a single global shift (step SPURIOUS ⇒ registration miss, not a splice); {} need the step (real splice)",
+            step_spurious,
+            skip_pass.saturating_sub(step_spurious)
+        );
+        if !skips.is_empty() {
+            let _ = writeln!(
+                s,
+                "  skipped gaps (dualfit pre | post | post@pre-off | seam-prom | donor | step | br → verdict):"
+            );
+            for r in &skips {
+                let glob = r.dualfit_post_global_r.map(|v| format!("{v:>6.3}")).unwrap_or_else(|| "  —  ".into());
+                let prom = r.dualfit_seam_prom.map(|v| format!("{v:.2}")).unwrap_or_else(|| " — ".into());
+                let donor = match r.donor_continuous {
+                    Some(true) => "cont",
+                    Some(false) => "BROKEN",
+                    None => "—",
+                };
+                let verdict = match (r.dualfit_pass, r.dualfit_post_global_r) {
+                    (Some(true), Some(g)) if g >= 0.35 => "PASS (step spurious)",
+                    (Some(true), _) => "PASS (step real)",
+                    (Some(false), _) => "fail",
+                    (None, _) => "—",
+                };
+                let _ = writeln!(
+                    s,
+                    "    {:<12} g{:<3} | pre {:>6.3} | post {:>6.3} | {} | prom {} | {:<6} | step {:>7.1} | {}/{} → {}",
+                    r.pair,
+                    r.index,
+                    r.dualfit_pre_r.unwrap_or(f64::NAN),
+                    r.dualfit_post_r.unwrap_or(f64::NAN),
+                    glob,
+                    prom,
+                    donor,
+                    r.seam_step_ms().unwrap_or(f64::NAN),
+                    r.brackets_passing,
+                    r.brackets_total,
+                    verdict,
+                );
+            }
+            let _ = writeln!(
+                s,
+                "  (post@pre-off ≥ 0.35 ⇒ a constant shift also fixes it — the \"step\" is a registration artifact.\n   \
+                 seam-prom low ⇒ periodic/alias match, PASS not trustworthy.  donor BROKEN ⇒ nothing clean to fill with.)"
+            );
+        }
+        s
+    }
+
     /// **Dual-fit scope (review C1/S4)** — proves patch/skip is *bracket-search success*, not step
     /// magnitude, and narrows the dual-fit target to bracket-exhausted-yet-recoverable skips. Answerable
     /// from `brackets[]` + `baseline_lag` on the *current* corpora (no re-scan needed).
@@ -1447,14 +1607,20 @@ impl CorpusReport {
         "=== measurement provenance ===\n\
          structure (envelope) : bucketed 50 ms-bin envelope correlation · ~3 s context each side · at the structure/envelope placement\n\
          seam (waveform)      : sample-level Pearson · ~250 ms seam border · at the throat placement · scored at lag 0\n\
-         baseline_lag         : waveform correlation sweep · 1 s border · ±200 ms search · at the throat · mono\n\
-         splice               : first-class step + per-side peak_r / peak_z from baseline_lag (post − pre)\n\
-         wide_envelope        : 100 ms-bin RMS envelope · 2 s window · ±400 ms search · segment-identity confirmer\n\
+         baseline_lag         : waveform correlation sweep · 1 s border · ±600 ms search, post sequentially\n\
+                                 centered on pre lag (S + D_A + round(L_pre), not the naive S + D_A) · at\n\
+                                 b_mapped (not the throat) · mono; reported gross-relative to b_mapped_end\n\
+         splice               : first-class step + per-side peak_r / peak_z from baseline_lag (post − pre);\n\
+                                 ≈ bridge-length mismatch (D_B − D_A) once sequential centering is in effect\n\
+         wide_envelope        : 100 ms-bin RMS envelope · 2 s window · ±400 ms pre / ±600 ms sequentially-\n\
+                                 centered post · segment-identity confirmer · at b_mapped\n\
          offset/step          : (pre+post)/2 and post−pre of baseline_lag (or splice.step_ms), ms\n\
          residual headroom    : sample-level least-squares cancellation (dB vs floor) · ~250 ms seam · at the throat\n\
          uniqueness           : peak_z + prominence at 1 s window (≥12 / ≥0.45); legacy margin = peak_r − 2nd peak\n\
-         donor_interior       : B RMS / continuity over the gap-mapped span (bridges the hole?)\n\
-         seam probe           : at the throat seam — wav (Pearson@0) · R2 · R4 · env (10 ms-bin) · recov (±25 ms) · snr (energy-weighted downmix)\n"
+         donor_interior       : B RMS / continuity over the sequentially-aligned bridge span [S + L_pre,\n\
+                                 b_mapped_end + L_post_gross) (bridges the hole?) · at b_mapped\n\
+         seam probe           : at b_mapped (not the throat) — wav (Pearson@0) · R2 · R4 · env (10 ms-bin) ·\n\
+                                 recov (±25 ms pre / ±600 ms sequentially-centered post) · snr (energy-weighted downmix)\n"
             .to_string()
     }
 

@@ -175,3 +175,8 @@ required-features = ["diagnostic-tests"]
 name = "diag_splice_timescale"
 path = "tests/diag_splice_timescale.rs"
 required-features = ["diagnostic-tests"]
+
+[[test]]
+name = "diag_splice_dualfit"
+path = "tests/diag_splice_dualfit.rs"
+required-features = ["diagnostic-tests"]

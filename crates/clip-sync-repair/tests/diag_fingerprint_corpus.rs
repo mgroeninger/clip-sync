@@ -5,7 +5,7 @@
 //! verdicts + gate outcomes across every A/B pair — the numbers P0 needs (how many `timing_offset`
 //! gaps the gate skipped, constant vs drift).
 //!
-//! Run (point at the parent holding `1/`..`6/`, or a comma-separated list of dirs):
+//! Run (point at the parent holding `1/`..`7/`, or a comma-separated list of dirs):
 //! ```powershell
 //! $env:GAP_FP_DIRS = "gap-files"            # auto-discovers gap-files/1 .. gap-files/6
 //! # optional: $env:GAP_FP_DRIFT_EPS_MS = "1.0"; $env:GAP_FP_CSV = "1"
@@ -61,6 +61,7 @@ fn diag_fingerprint_corpus() {
     print!("{}", report.gate_text());
     print!("{}", report.seam_probe_text());
     print!("{}", report.splice_text());
+    print!("{}", report.dualfit_viability_text());
     print!("{}", report.dualfit_scope_text());
     print!("{}", report.mechanism_text());
     print!("{}", report.trustworthy_text());
