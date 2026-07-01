@@ -1,11 +1,12 @@
 # Seam-repair status ledger — proven / open / important (triage index)
 
-**Purpose.** The two working docs
-([TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md),
-[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md)) hold ~30 claims at every
-stage of proof. This ledger is the **index over them**: one row per claim, scored **Confidence × Importance
-× Target**, so we can see the critical path and what to incorporate. The two docs stay the detail; this is
-the map. Update this when a claim's status changes.
+**Purpose.** The working docs
+([TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) — repair algorithm,
+[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) — vocabulary,
+[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) — pipeline perf/assembly, D12)
+hold the claims/plans at every stage of proof. This ledger is the **index over them**: one row per claim,
+scored **Confidence × Importance × Target**, so we can see the critical path and what to incorporate. The
+docs stay the detail; this is the map. Update this when a claim's status changes.
 
 **Legend.** Confidence: `PROVEN` (data) · `SUPP` (strong, small n) · `DECIDED` (policy chosen, not yet in code) · `OPEN` · `REFUTED`.
 Importance: `CRIT` (blocks a working repair) · `HIGH` · `MED` · `LOW`.
@@ -81,15 +82,16 @@ scan-native **`splice_dualfit`** field (added 2026-07-01, after the rescan) — 
 | # | Item | Why parked |
 |---|------|-----------|
 | D1 | **Mechanism of the step** (silence-splice vs resampler vs PTS; sub-frame, not quantized) | The repair *measures* the step; the physical cause doesn't change the fix. Interesting, not blocking. |
-| D2 | **Decorrelated / different-content regime** | Untestable — this corpus is all same-master. Revisit only with different-content data. |
+| D2 | **Decorrelated / different-content regime** | Untestable directly — this corpus is all same-master. But same-master **decoys** can stand in for different-content negatives (see **D8**: mine periodic/alias-suspect placements; construct level-matched substitution fills). Revisit with genuine different-content data when available. |
 | D3 | **Channel-scope / donor-displacement axes** (vocab §2b) | Surface in analyzer later; not decision-relevant for dual-fit. |
 | D4 | **Keep vs deprecate W-tiers**; reconcile `gap_tags.rs`/`content_hint`/`seam_shape` | Vocab P3/P4 decision; after the type set is named. |
-| D5 | **Perf** (FFT lag, dedup search, decode reuse) | Deliberately deferred until the plan is proven. **FFT lag sweep now scoped** (~50–150×, `rustfft` present, gate on `fft≈naive` test) — see **Capture parked → FFT lag sweep** below. |
+| D5 | **Perf** (FFT lag, dedup search, decode reuse) | **Now owned by [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12).** FFT lag sweep scoped (~50–150×, `rustfft` present, gate on `fft≈naive` test) — full spec in **Capture parked → FFT lag sweep** below, migration ordering in the perf doc §3. |
 | D6 | **No regression on existing patches** (dual-fit flag off ⇒ unchanged) | Verify after A3 (repair built) — a run-comparison, not an open question yet. |
 | D7 | **Audibility of the trim point** (splice at low-energy interior sounds clean) | After A3; gate-pass is necessary, not sufficient (needs a listen). |
-| D8 | **Decoy / wrong-placement safety** (a deliberately wrong B offset still fails the gate) | After A3; corpus has only weak negatives (failed brackets), so this needs a synthetic/shifted-haystack test. |
+| D8 | **Decoy / wrong-placement safety** (a deliberately wrong B fill still fails the gate) — the corpus has **no genuine negatives** (all same-master), the biggest blind spot the re-scan can't fix. | After A3. **A fair decoy must pass structure but fail the seam** (else it tests nothing): a *too-different* decoy (cross-pair/noise/silence) fails structure trivially; a *matching-shoulders/wrong-interior* decoy is **not a fair test** — A's gap is empty, so B's interior is unverifiable from A (accepting it is a limit, not a gate bug). **Offset-perturbation doesn't work** — the structure/lag search self-corrects a metadata lie; you must change the *audio* so the correct answer isn't available. **Construction (two ways):** (A) **Mine** — periodic/repeated content yields structurally-similar-but-fine-wrong placements for free; the **alias-suspect cluster (pair 6)** *is* a set of natural decoys — offer a repeated-phrase location as a fill candidate and check the seam rejects. (B) **Construct** — on a known-good fillable gap, overwrite B's fill region (mapped span **and** shoulders) with a different, **active, level-matched** passage of the *same* B (single-master ⇒ true content is unique ⇒ search can't route around it); a correct gate flips fill→skip. **Make it a margin:** sweep decoy content-distance (near-repeat → distant) to map the seam's discrimination boundary = the reject-safety margin / headroom on the 0.35 floor. Start with mining (free); build substitution only for the parameterized margin. |
 | D9 | **Fingerprint diagnostic stubs** (F2/F3) | Gate path omits per-bracket `structure_*` and leaves `GateOutcome` vocabulary tags empty. Fine for diagnostics today. See **Capture parked**. |
 | D10 | **RMS outward-anchor as primary registration** | Pair-6 sweep: loudest ≠ most unique (6·g9 pre z 22→9, 6·g10 pre z 27→9 on sustained tones). `b_mapped` + centered lag already finds −131 ms. Keep `[outward-anchor]` in `diag_splice_timescale` as diagnostic only; if revived, select by **`peak_z` distinctiveness**, not RMS. |
+| D12 | **Pipeline performance redesign** — the detect→gate→fingerprint path grew for *exploration*, never reviewed for throughput. | **Own doc: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md).** §1 audit done (2026-07-01): gate inventory, measurement→gate map labeling each field **decision/repair/diagnostic**, cost hierarchy, overlaps. Key finding — two paths (lean production `PatchAudio` vs diagnostic `characterize_gaps_with_gate` that runs *every* measurement per gap); the diagnostic-only set (`seam_probe`, `wide_envelope`, diag `lag`, `b_levels`) is computed unconditionally and belongs behind a flag. Absorbs D5 + the "Perf" capture-parked block. §2–§4 (target/migration/validation) scaffolded, not decided. |
 | D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** (classify, don't count as fill misses) | **2026-07-01 finding (pair 6, archived corpus).** The gaps split cleanly by B-side occupancy: *real dropouts* (g4/g5/g12/g13 — A deep-silent `gap_floor −83…−99`, **B occupied** `silence 0%`, continuous, small step) **patch**; the *skip cluster* (g1/g2/g3/g6/g8/g9/g10/g11 — A quiet-at-noise-floor `gap_floor ≈ −77`, **B also silent** `silence 89–100%`, discontinuous, large step +50…+419) is **program-quiet present in both masters** → nothing to fill → correctly skipped. **Not a repair failure.** `donor_interior.silence_fraction`/`continuous` already carries the signal; it just isn't *used* as a gap classifier (only as a dual-fit exclusion). **Action (parked):** promote a `donor-silent ⇒ non-dropout` class so these leave the addressable denominator instead of counting as dual-fit/fill misses. Caveat: "B silent" has two readings — genuine program-quiet vs aliased registration landing on a silent B spot (large step + low `peak_z` is the alias signature) — same skip outcome either way; `splice_dualfit` on rescan disambiguates. Refutes my earlier "high gap floor = occupied busy ambience" — B is *silent*, so it's quiet-in-both, not occupied-in-both. |
 
 ---
