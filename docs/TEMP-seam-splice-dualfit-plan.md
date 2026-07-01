@@ -4,9 +4,9 @@
 > This doc is the *detail* for the mechanism + repair; the ledger is the authoritative index of what is
 > proven / open / important. Do not add a competing next-steps list here — update the ledger.
 
-Status: **DRAFT — `b_mapped` registration in capture (ledger A2) DONE; repair unbuilt (A3).** The *per-seam
-warp* and *cross-codec validator* directions are **refuted** (B2). Capture schema is coded; **next:** spot-check
-pair-7 (`diag_splice_timescale`), re-classify skips, `diag_splice_dualfit`, then rescan.
+Status: **DRAFT — `b_mapped` capture (A2) DONE; `diag_splice_dualfit` scaffold DONE; §4 repair unbuilt (A3).**
+The *per-seam warp* and *cross-codec validator* directions are **refuted** (B2). **Next:** rescan primary
+cohort → re-classify skips → **run `diag_splice_dualfit`** on bracket-exhausted gaps (C3/C7).
 
 Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
 (per-seam detect-and-warp — archived, dead) and
@@ -324,9 +324,9 @@ registration is trustworthy.
 - `anchors` / `gap_anchor_seam` — feature location (for a future `peak_z`-ranked anchor if needed).
 - **Gap:** capture now uses `b_mapped` for registration metrics; gate bracket scoring still uses structure alignment.
 
-**Status.** Pair-6 one-sided-dead sweep **complete** (C1/B2). Pair-7 spot-check **7·g3/7·g4** — both shoulders
-0.90+ @ +94 / +118 ms (C2 **proven**). **`b_mapped` in capture** (A2) **done**. **Next:** rescan → re-classify
-skips → `diag_splice_dualfit`.
+**Status.** Pair-6 one-sided-dead sweep **complete** (C1/B2). Pair-7 spot-check **7·g3/7·g4** (C2 **proven**).
+**`b_mapped` in capture** (A2) **done**. **`diag_splice_dualfit` scaffold** (§4.1) **done**. **Next:** rescan →
+run dualfit diag on bracket-exhausted skips (C3/C7) → wire §4 repair.
 
 ## 4. Repair approach (unbuilt — design)
 
@@ -350,6 +350,64 @@ Open: the "no single shift fixes both seams" geometry is exactly what the length
 the reconciliation is a pure trim/pad (not a within-side warp) — §1 finding (1) says content is
 un-stretched, so it should be.
 
+### 4.1. Offline gate simulation — `diag_splice_dualfit` (scaffold)
+
+**Purpose.** De-risk §4 steps 2–4 **before** wiring repair (ledger C3/A3, C7). Answers: *if we apply
+independent per-side lags at `b_mapped` and reconcile the step-length mismatch, do both seams pass the
+**unchanged** production Pearson gate?*
+
+**Location.** `crates/clip-sync-repair/tests/diag_splice_dualfit.rs` — tier **diagnostic**
+(`diagnostic-tests` feature). Sibling: `diag_splice_timescale` (§3.6 registration/uniqueness experiments).
+
+**Inputs (from `corpus.json` + media):**
+
+| Source | Fields used |
+|--------|-------------|
+| `geometry` | `a_refined_*`, `b_mapped_*` — decode windows + B anchors |
+| `baseline_lag` | mono pre/post `frac_lag_ms`, `peak_r` (longest `window_ms` entry per side) |
+| `splice` | `step_ms` — cross-check vs computed `post − pre` lag |
+| `outcome` / `brackets` | tier, bracket pass count, best seam — compare to simulation |
+
+**Algorithm (per gap):**
+
+1. Decode A/B mono around the gap (ffmpeg span decode, channel-matched B stream — same as timescale diag).
+2. Read per-side lags `Lpre`, `Lpost` from `baseline_lag` (registered at **`b_mapped`** in current capture).
+3. Align B shoulders independently: `b_pre_aligned = b_mapped_start + Lpre`, `b_post_aligned = b_mapped_end + Lpost`.
+4. Extract the B **bridge** `[b_pre_aligned .. b_post_aligned]`; compute `Δtrim = len(bridge) − gap_frames`
+   (should equal step in samples).
+5. **Reconcile** (reported): trim or pad `|Δtrim|` at the lowest-RMS interior sample (§4 step 3 model).
+6. **Score post-dual-fit seams @ lag 0:** Pearson on A pre/post border vs B at the lag-aligned positions,
+   using `fill_seam_search_secs` window (default **250 ms**).
+7. **PASS** if `min(pre, post) ≥ min_fill_correlation` (0.35) **and** `≥ fill_absolute_floor` (0.12) —
+   same thresholds as production gate.
+
+**Default gap selection:** all gaps with `outcome.tier == skip` and `baseline_lag` present. Override with
+`SPLICE_DUALFIT_GAPS`; set `SPLICE_DUALFIT_ALL=1` to include patched gaps.
+
+**Run:**
+
+```powershell
+$env:SPLICE_DUALFIT_CORPUS = "gap-files/1/corpus.json"   # or SPLICE_EXP_CORPUS
+$env:SPLICE_DUALFIT_A = "F:\Video\A.mkv"                 # or SPLICE_EXP_A
+$env:SPLICE_DUALFIT_B = "F:\Video\B.m4v"                 # or SPLICE_EXP_B
+$env:SPLICE_DUALFIT_GAPS = "19,22"                       # optional — bracket-exhausted skips
+# optional: SPLICE_DUALFIT_MIN_CORR=0.35  SPLICE_DUALFIT_ABS_FLOOR=0.12  SPLICE_DUALFIT_SEAM_SECS=0.25
+cargo test -p clip-sync-repair --features diagnostic-tests --test diag_splice_dualfit -- --nocapture
+```
+
+**Scaffold limits (not yet §4 repair):**
+
+- Scores **independent lag alignment** at the shoulders — the core P1 question — but does **not** splice the
+  reconciled fill into a haystack and re-score through the full gate path.
+- **Mono** downmix only (matches frozen §3.6a correlation choice).
+- On-disk `gap-files/` predates **`b_mapped` capture** until re-scanned — stale `baseline_lag` will mislead;
+  prefer a fresh fingerprint pass before trusting C3 results.
+- Length reconcile is **computed and reported** (`Δtrim` vs `splice.step_ms` for C7) but seam PASS/FAIL does
+  not yet depend on the trimmed bridge content.
+
+**Status:** scaffold **built** (2026-06-30); **C3/C7 proof OPEN** until run on a `b_mapped` rescan of the
+primary cohort's bracket-exhausted skips.
+
 ## 5. Status / next
 
 **Next-steps are maintained in one place — the ledger's critical path:**
@@ -357,6 +415,6 @@ un-stretched, so it should be.
 separate checklist (that fragmentation is how the outward-anchor idea kept getting dropped).
 
 Done here (detail): analyzer `splice_text`/`SpliceDiag`/`both_sides_recoverable`/`dualfit_scope_text`; full
-6-pair + F1-rescan analysis; §3.6/§3.6a frozen decisions; §3.7 `b_mapped` policy + pair-6 sweep; outward-anchor
-diagnostic in `diag_splice_timescale`; F1 placement fix; non-finite guards. **Live blocker:** implement
-**`b_mapped` in capture** (ledger A2) → re-classify skips → **`diag_splice_dualfit`** (A3/C3).
+6-pair + F1-rescan analysis; §3.6/§3.6a frozen decisions; §3.7 `b_mapped` policy + pair-6/7 validation;
+`diag_splice_timescale`; `diag_splice_dualfit` scaffold (§4.1); F1 + `b_mapped` capture. **Live blocker:**
+rescan → run §4.1 on bracket-exhausted skips (C3) → wire §4 repair (A3).

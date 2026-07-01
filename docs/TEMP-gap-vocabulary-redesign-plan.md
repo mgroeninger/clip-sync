@@ -271,8 +271,9 @@ validate with **unchanged** waveform gate — see
 [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md). Scope: **bracket-exhausted** skips
 only (not high-step patches like 5·g3 where 18/25 brackets already pass).
 
-**Proof sequencing:** P3 from fingerprints now; P1/P2 via offline `diag_splice_dualfit` simulation before
-§4 repair — see [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7).
+**Proof sequencing:** P3 from fingerprints now; P1/P2/C3/C7 via **`diag_splice_dualfit`** (§4.1 — scaffold
+built, not yet run on `b_mapped` rescan) before §4 repair — see
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7).
 
 ### 7f. Superseded hypotheses (tombstone)
 
@@ -291,7 +292,7 @@ only (not high-step patches like 5·g3 where 18/25 brackets already pass).
 |-----|----------|
 | [gap-repair-guide.md](gap-repair-guide.md) | The Pearson-rooted vocabulary being revised |
 | [gap-fingerprint.md](gap-fingerprint.md) | Measurements (lag, levels, donor_interior, splice, …) |
-| [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) | Mechanism + repair (unbuilt) |
+| [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) | Mechanism + repair (unbuilt); §4.1 `diag_splice_dualfit` |
 | [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) | Proven/open index; bracket-vs-step; proof sequencing |
 | [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) | Superseded validator-swap |
 | [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) | Archived warp path |
