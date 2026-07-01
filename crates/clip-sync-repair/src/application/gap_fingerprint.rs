@@ -546,7 +546,7 @@ const DONOR_CONTINUITY_MS: f64 = 150.0;
 
 /// Donor-interior energy of `b_mono` over the **aligned** bridge span `[start_frame, end_frame)` (B's
 /// audio that would fill A's hole). Callers pass the sequentially-registered shoulders
-/// (`b_mapped_start + L_pre`, `b_mapped_end + L_post_gross`, concerns doc §Registration fix — design),
+/// (`b_mapped_start + L_pre`, `b_mapped_end + L_post_gross`, ledger A2 sequential registration),
 /// not the naive A-length span, so continuity metrics reflect the true bridge even when `D_B != D_A`.
 /// `None` for an empty/over-range span.
 fn donor_interior_at(b_mono: &[f64], start_frame: usize, end_frame: usize, gap_floor_db: f64, sample_rate: u32) -> Option<DonorInterior> {
@@ -1179,7 +1179,7 @@ fn lag_pair(
         },
         params,
     );
-    // Sequential per-shoulder registration (concerns doc §Registration fix — design): center the post
+    // Sequential per-shoulder registration (ledger A2 sequential registration): center the post
     // search on `start_frame + gap_frames + round(L_pre)`, not the naive `start_frame + gap_frames`.
     // Un-shifted centering forces `|L_pre + (D_B - D_A)|` (clip offset stacked with bridge-length
     // mismatch) into one ±max_lag window; shifting by the measured pre lag isolates the bridge mismatch
@@ -1376,7 +1376,7 @@ const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
 /// Pre/post [`SeamProbe`]s at a placement (mono). Built at **`b_mapped`** registration to diagnose a dead
 /// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
 /// `post_shift_frames` is the measured pre-side lag (rounded, from `baseline_lag`'s mono pre entry) —
-/// the same sequential-registration shift `lag_pair` applies (concerns doc §Registration fix — design),
+/// the same sequential-registration shift `lag_pair` applies (ledger A2 sequential registration),
 /// so the post probe isn't centered on the un-shifted `start_frame + gap_frames` while `baseline_lag`'s
 /// post search is. The post fine-lag half-width is also raised to `cfg.lag_max_lag_ms` (from the ±25 ms
 /// `SEAM_PROBE_FINE_LAG_MS`) since, even after shifting, the residual search still needs to cover the
@@ -1617,8 +1617,7 @@ fn wide_envelope_side(
 }
 
 /// Pre/post wide-envelope confirmers at **`b_mapped`** registration — cross-scale check vs `baseline_lag`.
-/// `post_shift_frames` mirrors `lag_pair`'s sequential centering (concerns doc §Registration fix —
-/// design): the post window is centered on `start_frame + gap_frames + post_shift_frames`, and its
+/// `post_shift_frames` mirrors `lag_pair`'s sequential centering (ledger A2): the post window is centered on `start_frame + gap_frames + post_shift_frames`, and its
 /// search half-width is raised to `cfg.lag_max_lag_ms` (aligned with `baseline_lag`, not the frozen
 /// ±400 ms `WIDE_ENV_MAX_LAG_MS`) so it can still resolve the bridge-length mismatch after shifting.
 /// `peak_lag_ms` is reported gross-relative for comparability with `baseline_lag`.
@@ -2214,7 +2213,7 @@ pub(crate) fn characterize_gaps_with_gate(
         };
 
         // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag
-        // sweep, sequentially centered (concerns doc §Registration fix — design). Correlation/uniqueness
+        // sweep, sequentially centered (ledger A2 sequential registration). Correlation/uniqueness
         // is mono (frozen, §3.6a).
         fp.baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
             a_samples: &a_pcm.samples,
@@ -2673,7 +2672,7 @@ mod tests {
     }
 
     /// Pre-fix post search: center on `start_frame + gap_frames` with no pre-shift — stacks
-    /// `L_pre + (D_B - D_A)` into one ±max_lag window (concerns doc §Registration fix).
+    /// `L_pre + (D_B - D_A)` into one ±max_lag window (ledger A2).
     fn naive_lag_pair_post(
         a_post: &[f64],
         b_signal: &[f64],

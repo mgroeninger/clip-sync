@@ -325,7 +325,7 @@ impl SeamDiag {
 }
 
 /// Silence-splice classification from the **±600 ms** per-side `baseline_lag` peaks, sequentially
-/// centered (concerns doc §Registration fix — design: post search is centered on `S + D_A + round(L_pre)`,
+/// centered (ledger A2: post search is centered on `S + D_A + round(L_pre)`,
 /// not the naive `S + D_A`), not the ±25 ms `seam_probe.recovered_r`, which mislabels any step > 25 ms as
 /// "cross-codec". See `docs/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
 /// addressable silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
@@ -1425,7 +1425,7 @@ impl CorpusReport {
     }
 
     /// **Silence-splice view** — the authoritative seam read, from the ±600 ms per-side `baseline_lag`
-    /// peaks, sequentially centered (concerns doc §Registration fix — design) so pre offset and
+    /// peaks, sequentially centered (ledger A2) so pre offset and
     /// bridge-length mismatch don't stack into one search window (the ±25 ms `seam_probe.recovered_r`
     /// underlying `seam_probe_text` mislabels any step > 25 ms as "cross-codec"). Classifies every matched
     /// gap: `splice` (both shoulders clean & unique at their own lag, separated by a step — addressable by
