@@ -190,6 +190,7 @@ dependencies = [
  "clip-sync",
  "clip-sync-repair-harness",
  "hound",
+ "rustfft",
  "serde",
  "serde_json",
  "tempfile",

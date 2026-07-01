@@ -56,7 +56,14 @@ fn diag_fingerprint_corpus() {
         "no gaps found under {dirs:?} — did the scans finish writing corpus.json?"
     );
 
+    print!("{}", report.legend_text());
     print!("{}", report.summary_text());
+    print!("{}", report.gate_text());
+    print!("{}", report.seam_probe_text());
+    print!("{}", report.splice_text());
+    print!("{}", report.dualfit_scope_text());
+    print!("{}", report.mechanism_text());
+    print!("{}", report.trustworthy_text());
 
     if std::env::var("GAP_FP_CSV").as_deref() == Ok("1") {
         let path = repo_root().join("target").join("gap_fingerprint_corpus.csv");

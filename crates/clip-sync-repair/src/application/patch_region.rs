@@ -9,7 +9,7 @@ use crate::domain::gap_fill_fit::{
     classify_fill_waveform_confidence, fit_anchor_candidate_ranking_score,
     fit_candidate_ranking_score,
     match_gap_fill_unified_in_b_with_timeline, FillConfidence, ResidualGateError,
-    UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
+    UnifiedFillMatch, UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
 };
 use crate::domain::residual_gate::ResidualGateMode;
 use crate::domain::patch_anchor::AnchorSearchPrior;
@@ -1216,6 +1216,28 @@ fn measure_fit_residual_verdict(
     ))
 }
 
+/// Residual headroom verdict at a given placement — **fingerprint** use (the same-source axis). Reuses
+/// the production [`measure_fit_residual_verdict`] at the decision (throat) placement, with the throat
+/// as its own baseline. Requires `params.cfg.measure_residual` (the fingerprint sets it on its cfg).
+pub(crate) fn oracle_measure_residual(
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    refined: RefinedGapFrames,
+    structure_start_frame: usize,
+) -> Option<policies::SeamResidualVerdict> {
+    let (offset_nominal_start, waveform_gate_frames, post_gate_frames) =
+        fit_residual_geometry(refined, refined, params);
+    measure_fit_residual_verdict(
+        params,
+        cache,
+        refined,
+        structure_start_frame,
+        offset_nominal_start,
+        waveform_gate_frames,
+        post_gate_frames,
+    )
+}
+
 /// Debug-log per-channel residual headroom so surround/center mixes show which channels cancelled
 /// (RUST_LOG=debug). Mirrors the `fill seam channel diagnostics` log on the scoring side.
 fn log_residual_channel_breakdown(
@@ -1325,13 +1347,35 @@ pub(crate) fn oracle_anchor_seam_would_run(
     )
 }
 
-fn evaluate_seam_gate_fit_candidate(
+/// Outputs of the gate's structure-alignment step, **shared** by `evaluate_seam_gate_fit_candidate` and
+/// the throat-placement read (`oracle_throat_structure_frame`) so registration metrics land at the SAME B
+/// placement the gate scored — one code path, no second `place_on_b`, no divergence (review F1).
+struct GateStructureAlign {
+    a_pre_border: Vec<f64>,
+    a_post_border: Vec<f64>,
+    a_pre_ch: Vec<Vec<f64>>,
+    a_post_ch: Vec<Vec<f64>>,
+    gap_frames: usize,
+    gap_secs: f64,
+    waveform_gate_frames: usize,
+    post_gate_frames: usize,
+    unified: UnifiedFillMatch,
+}
+
+/// The gate's structure-alignment search for one `(refined, baseline)` candidate: builds the same border
+/// templates / signature / waveform context the seam gate uses, runs the unified fill search, and returns
+/// the placement (`unified.alignment.start_frame`) plus the windows the waveform gate needs. Fails only
+/// when the search finds **no** placement (`StructureAlignmentFailed`); a weak-structure or weak-waveform
+/// result still returns the placement, so a *skipped* gap's registration metrics can be read at the gate's
+/// throat. This is the single source of the structure placement — `evaluate_seam_gate_fit_candidate` runs
+/// the waveform/residual gate on top of it.
+fn gate_structure_align(
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     anchor_seam_bracket: bool,
-) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+) -> Result<GateStructureAlign, SeamGateFailure> {
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
         return Err(SeamGateFailure::StructureAlignmentFailed);
@@ -1452,29 +1496,24 @@ fn evaluate_seam_gate_fit_candidate(
     )
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 
-    let alignment = unified.alignment;
-    let structure_pre = unified.structure_pre;
-    let structure_post = unified.structure_post;
-    let structure_start_frame = alignment.start_frame;
-
     // Per-gap seam diagnostics (RUST_LOG=debug): which channels were scored and their
     // per-channel correlations at the winning placement — explains low pre/post on surround.
     if tracing::enabled!(tracing::Level::DEBUG) {
         let diag = policies::seam_channel_diagnostics(
             &templates,
             policies::SeamPlacement {
-                start: alignment.start_frame,
+                start: unified.alignment.start_frame,
                 gap_frames,
                 pre_window: waveform_gate_frames,
                 post_window: post_gate_frames,
             },
         );
         tracing::debug!(
-            start_frame = alignment.start_frame,
-            seam_pre = alignment.pre_correlation,
-            seam_post = alignment.post_correlation,
-            structure_pre,
-            structure_post,
+            start_frame = unified.alignment.start_frame,
+            seam_pre = unified.alignment.pre_correlation,
+            seam_post = unified.alignment.post_correlation,
+            structure_pre = unified.structure_pre,
+            structure_post = unified.structure_post,
             signature = signature.mode_label(),
             selected_channels = ?diag.selected,
             per_channel = ?diag.per_channel,
@@ -1482,8 +1521,65 @@ fn evaluate_seam_gate_fit_candidate(
             mono_post = diag.mono.1,
             "fill seam channel diagnostics"
         );
-
     }
+
+    Ok(GateStructureAlign {
+        a_pre_border,
+        a_post_border,
+        a_pre_ch,
+        a_post_ch,
+        gap_frames,
+        gap_secs,
+        waveform_gate_frames,
+        post_gate_frames,
+        unified,
+    })
+}
+
+/// Read the gate's zero-move **throat** placement (B haystack frame) for a gap — the placement the
+/// decision seam scores at. Used so `baseline_lag` / `seam_probe` / `donor_interior` / `wide_envelope` /
+/// `splice` are measured at the gate's frame, not a separate `place_on_b` (review F1). `None` when the
+/// structure search finds no placement (the gap isn't a dual-fit candidate then anyway).
+pub(crate) fn oracle_throat_structure_frame(
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    refined: RefinedGapFrames,
+) -> Option<usize> {
+    gate_structure_align(refined, refined, params, cache, true)
+        .ok()
+        .map(|g| g.unified.alignment.start_frame)
+}
+
+fn evaluate_seam_gate_fit_candidate(
+    refined: RefinedGapFrames,
+    baseline: RefinedGapFrames,
+    params: &SeamGateParams<'_>,
+    cache: &FitHaystackCache,
+    anchor_seam_bracket: bool,
+) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+    let GateStructureAlign {
+        a_pre_border,
+        a_post_border,
+        a_pre_ch,
+        a_post_ch,
+        gap_frames,
+        gap_secs,
+        waveform_gate_frames,
+        post_gate_frames,
+        unified,
+    } = gate_structure_align(refined, baseline, params, cache, anchor_seam_bracket)?;
+    let templates = policies::SeamTemplates {
+        a_pre: &a_pre_border,
+        a_post: &a_post_border,
+        a_pre_ch: &a_pre_ch,
+        a_post_ch: &a_post_ch,
+        b_mono: &cache.b_mono,
+        b_ch: &cache.b_ch,
+    };
+    let alignment = unified.alignment;
+    let structure_pre = unified.structure_pre;
+    let structure_post = unified.structure_post;
+    let structure_start_frame = alignment.start_frame;
 
     // Residual/floor is probed once at selection (`finalize_fit_outcome_residual`), never per scored
     // candidate — keeping the grid/anchor cold path cheap. Scored candidates carry no verdict.

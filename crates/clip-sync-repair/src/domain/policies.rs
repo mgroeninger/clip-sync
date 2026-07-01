@@ -594,6 +594,22 @@ fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> 
     (0..n).filter(|&ch| energy[ch] >= threshold).collect()
 }
 
+/// The **loudest** energy-passing seam channel — argmax of per-channel border energy (max of pre/post
+/// mean-square), or `None` when every channel is near-silent. Use this for a single-channel
+/// *representative* (e.g. the lag/probe diagnostic) instead of `selected_seam_channels().first()`, which
+/// returns the **lowest-index** passing channel — index order, an arbitrary pick that lands on L over a
+/// louder C in a center-dominant mix. The gate's multichannel decision still uses the full
+/// `selected_seam_channels` set; this only changes which single channel a diagnostic follows.
+pub fn loudest_seam_channel(a_samples: &[f32], channels: usize, spec: &GapBorderSpec) -> Option<usize> {
+    let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, channels, spec);
+    let n = a_pre_ch.len().min(a_post_ch.len());
+    (0..n)
+        .map(|ch| (ch, template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch]))))
+        .filter(|&(_, e)| e > f64::EPSILON)
+        .max_by(|(_, x), (_, y)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(ch, _)| ch)
+}
+
 /// Energy-selected seam channels for a gap, computed from the same per-channel border templates
 /// Pearson scores — the single entry point so residual/floor measurement follows the *same*
 /// channels as seam scoring (see `seam-scoring.md`). Returns empty when every channel is
@@ -3279,6 +3295,34 @@ mod tests {
             );
             assert!(selected_seam_channels(&a_samples, channels, &spec).is_empty());
         }
+    }
+
+    #[test]
+    fn loudest_seam_channel_picks_by_energy_not_index() {
+        let (gap_start, gap_end, border_frames, standoff) = (800usize, 1000usize, 128usize, 16usize);
+        let total = 2000usize;
+        let channels = 3usize;
+        let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
+
+        // ch0 (L) moderate, ch1 (R) silent, ch2 (C) loudest. Both 0 and 2 pass the −20 dB energy gate,
+        // so `selected_seam_channels` returns [0, 2] in index order and `.first()` = 0 (the *quieter*
+        // channel). `loudest_seam_channel` must instead return 2 (the channel that carries the level).
+        let l_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 2000.0).collect();
+        let r_a: Vec<f64> = vec![5.0; total];
+        let c_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.31).sin() * 4000.0).collect();
+        let a_samples = interleave_a(&[l_a, r_a, c_a], 4000.0);
+
+        assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![0, 2]);
+        assert_eq!(
+            selected_seam_channels(&a_samples, channels, &spec).first().copied(),
+            Some(0),
+            ".first() picks the lowest-index passing channel (the quieter L)"
+        );
+        assert_eq!(
+            loudest_seam_channel(&a_samples, channels, &spec),
+            Some(2),
+            "loudest_seam_channel follows the level to the center channel"
+        );
     }
 
     #[test]

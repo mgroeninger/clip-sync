@@ -165,6 +165,25 @@ pub struct GapFingerprint {
     /// diagnostic placement that can sit far from the throat). This is the registration-relevant lag.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub baseline_lag: Option<LagFingerprint>,
+    /// Residual cancellation at the decision seam (the strong same-source confirm). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual: Option<ResidualInfo>,
+    /// Seam recovery / encoding-robust envelope / level at the decision seam — diagnoses *why* a
+    /// waveform seam is dead (mis-alignment vs cross-encoding vs quiet). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seam_probe: Option<SeamProbeFingerprint>,
+    /// Does donor B actually carry audio across the hole? Energy/continuity of B over the gap-mapped span
+    /// — the donor half of the fill predicate (§3/§4). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_interior: Option<DonorInterior>,
+    /// First-class splice summary: the per-side registration step + peaks/uniqueness the repair predicate
+    /// reads directly (instead of re-deriving from `baseline_lag`). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub splice: Option<SpliceSummary>,
+    /// Wide (100 ms-bin) envelope segment-identity confirmer at the decision seam — its peak lag should
+    /// agree with the fine-waveform lag (§3.6a cross-scale check). Full tier, gate path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub wide_envelope: Option<WideEnvelopeFingerprint>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
 }
@@ -299,6 +318,40 @@ pub struct LagFingerprint {
     pub post_anchor: Vec<LagSummary>,
 }
 
+/// Seam diagnostic at the **decision (throat) placement**, one per side. Built to separate *why* a
+/// waveform seam is dead: **recovery** (does sample-level Pearson come back under a fine lag → residual
+/// mis-alignment, fixable) vs **encoding-robust** envelope agreement (same content present despite the
+/// raw waveform differing → cross-encoding) vs **level/SNR** (is the seam just too quiet to score?).
+/// All sample-level / fine-bin measurements over the ~`fill_seam_search_secs` seam border window.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SeamProbe {
+    /// Sample-level waveform Pearson at lag 0 — the gate's decision metric (≈ `seams.baseline`).
+    pub waveform_r: f64,
+    /// Best waveform Pearson over a fine ±lag search (`fine_max_lag_ms`); recovery ⇒ mis-alignment.
+    pub recovered_r: f64,
+    pub recovered_lag_ms: f64,
+    /// **R2** — band-limited (~300 Hz) waveform Pearson at lag 0: cross-codec-robust (drops the
+    /// high-frequency detail codecs alter). High while `waveform_r` low ⇒ validator mismatch candidate.
+    pub bandlimited_r: f64,
+    /// **R4** — magnitude-spectrum correlation: phase- and small-shift-invariant cross-codec-robust score.
+    pub spectrum_r: f64,
+    /// Correlation of the fine (~10 ms-bin) RMS envelope over the same window — encoding- and
+    /// small-shift-robust (≈ structure-at-seam; the R1-vs-R5 redundancy check).
+    pub envelope_r: f64,
+    /// Seam-window level (dBFS) and SNR vs the gap floor — is the seam energetic enough to score?
+    pub rms_db: f64,
+    pub snr_db: f64,
+}
+
+/// Per-side seam probes at the decision placement (mono; one entry per measured side).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SeamProbeFingerprint {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre: Option<SeamProbe>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post: Option<SeamProbe>,
+}
+
 /// Which signal the lag curve was measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -330,11 +383,124 @@ pub struct LagSummary {
     pub lag0_r: f64,
     /// Best correlation at an integer lag.
     pub peak_r: f64,
+    /// **Uniqueness guard:** the highest *competing* local-maximum correlation away from the main peak.
+    /// A value near `peak_r` means the match is ambiguous — periodic content (tones, music) peaks at
+    /// many lags, so a high `peak_r` may be a false same-source positive. `peak_r − second_peak_r` is
+    /// the margin by which the chosen lag wins. `None` for fingerprints written before this field.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub second_peak_r: Option<f64>,
+    /// **Robust uniqueness:** z-score of the peak over the whole lag curve, `(peak_r − mean)/std`. Unlike
+    /// `second_peak_r` (one rival), this measures how far the peak stands out from the *entire* lag
+    /// landscape — the metric the §3.6a experiment found separates real registration from periodic
+    /// ambiguity at a 1 s window (ambiguous ≈ 6, unique ≥ 15). `None` when the curve has no spread.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub peak_z: Option<f64>,
+    /// `peak_r − second_peak_r` — prominence of the chosen lag over the tallest competing local max.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub prominence: Option<f64>,
+    /// `|lag(peak) − lag(second peak)|` in ms — spacing to the tallest rival. A spacing that recurs across
+    /// gaps is the content's periodicity period (judge the peak *given* it); scattered ⇒ unique.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub top2_spacing_ms: Option<f64>,
     pub peak_lag_samples: i64,
     /// Parabolic-interpolated (possibly fractional) lag of the peak.
     pub frac_lag_samples: f64,
     pub frac_lag_ms: f64,
     pub verdict: LagVerdict,
+}
+
+/// Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
+/// versus the measured noise floor. `chosen_*_db ≤ floor_*_db` with `informative` ⇒ genuine same source
+/// (the strong test, beyond mere correlation). A shallow residual above the floor ⇒ B differs.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ResidualInfo {
+    pub chosen_pre_db: f64,
+    pub chosen_post_db: f64,
+    pub floor_pre_db: f64,
+    pub floor_post_db: f64,
+    /// The noise floor established cancellation on every measured side — the residual is interpretable.
+    pub informative: bool,
+}
+
+/// **Donor-interior energy** over the B span mapped to fill the gap. The gap is a hole in A; this measures
+/// whether **B carries audio there** — the donor half of the fill predicate (§3/§4). `silence_fraction` /
+/// `longest_silence_ms` come from 50 ms RMS bins vs the gap floor; `continuous` ⇒ no internal sub-floor run
+/// longer than `DONOR_CONTINUITY_MS`, i.e. B bridges the hole unbroken.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DonorInterior {
+    pub rms_db: f64,
+    pub silence_fraction: f64,
+    pub longest_silence_ms: f64,
+    pub continuous: bool,
+}
+
+const DONOR_BIN_MS: f64 = 50.0;
+/// A donor with no internal sub-floor run longer than this is treated as continuous (bridges the gap).
+const DONOR_CONTINUITY_MS: f64 = 150.0;
+
+/// Donor-interior energy of `b_mono` over the gap-mapped span `[start_frame, start_frame + gap_frames)`
+/// (B's audio that would fill A's hole). `None` for an empty/over-range span.
+fn donor_interior_at(b_mono: &[f64], start_frame: usize, gap_frames: usize, gap_floor_db: f64, sample_rate: u32) -> Option<DonorInterior> {
+    let end = (start_frame + gap_frames).min(b_mono.len());
+    if gap_frames == 0 || start_frame >= end {
+        return None;
+    }
+    let span = &b_mono[start_frame..end];
+    let rms = (span.iter().map(|v| v * v).sum::<f64>() / span.len() as f64).sqrt();
+    let bin = ((DONOR_BIN_MS / 1000.0) * f64::from(sample_rate)).round().max(1.0) as usize;
+    let floor_amp = 10f64.powf(gap_floor_db / 20.0);
+    let (mut total, mut silent, mut run, mut longest) = (0usize, 0usize, 0usize, 0usize);
+    for chunk in span.chunks(bin) {
+        let r = (chunk.iter().map(|v| v * v).sum::<f64>() / chunk.len() as f64).sqrt();
+        total += 1;
+        if r < floor_amp {
+            silent += 1;
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let longest_silence_ms = longest as f64 * DONOR_BIN_MS;
+    Some(DonorInterior {
+        rms_db: f64::from(to_db(rms as f32)),
+        silence_fraction: silent as f64 / total.max(1) as f64,
+        longest_silence_ms,
+        continuous: longest_silence_ms < DONOR_CONTINUITY_MS,
+    })
+}
+
+/// First-class splice summary, derived from the per-side `baseline_lag` (mono): the registration `step`
+/// (`post_lag − pre_lag`) the length-reconciliation repair acts on, plus the per-side peak and robust
+/// uniqueness (`peak_z`) the addressability predicate gates on. Promoted so the gate reads it directly.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SpliceSummary {
+    pub step_ms: f64,
+    pub pre_peak_r: f64,
+    pub post_peak_r: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_peak_z: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_peak_z: Option<f64>,
+}
+
+/// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
+/// agree with the fine-waveform peak lag (segment identity at macro scale; §3.6a). `prominence` is the
+/// margin over the tallest rival envelope peak.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EnvPeak {
+    pub peak_r: f64,
+    pub peak_lag_ms: f64,
+    pub prominence: f64,
+}
+
+/// Pre/post wide-envelope confirmer at the decision seam.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WideEnvelopeFingerprint {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre: Option<EnvPeak>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post: Option<EnvPeak>,
 }
 
 /// Final gate decision tags for the gap (mirrors the stdout gap tags).
@@ -423,17 +589,48 @@ pub fn summarize_lag_curve(
     };
 
     let rate = f64::from(sample_rate).max(1.0);
+    // Robust uniqueness from curve shape: prominence + spacing to the tallest rival, and the peak's
+    // z-score over the whole curve (§3.6a — the metric that separates registration from periodicity).
+    let second = secondary_peak(curve, pi);
+    let n = curve.len() as f64;
+    let mean = curve.iter().map(|(_, r)| *r).sum::<f64>() / n.max(1.0);
+    let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / n.max(1.0)).sqrt();
     Some(LagSummary {
         window_ms,
         max_lag_ms,
         channel,
-        lag0_r,
-        peak_r,
+        lag0_r: finite_corr(lag0_r),
+        peak_r: finite_corr(peak_r),
+        second_peak_r: second.map(|(_, r)| r),
+        peak_z: (std > 1e-9).then(|| (peak_r - mean) / std),
+        prominence: second.map(|(_, r)| peak_r - r),
+        top2_spacing_ms: second.map(|(lag, _)| (peak_lag - lag).unsigned_abs() as f64 * 1000.0 / rate),
         peak_lag_samples: peak_lag,
         frac_lag_samples: frac_lag,
         frac_lag_ms: frac_lag * 1000.0 / rate,
         verdict: classify_lag(lag0_r, frac_r, peak_lag),
     })
+}
+
+/// The tallest **competing** local maximum `(lag, r)` that is not the main peak at `peak_index`. Within
+/// the main peak's lobe the curve falls off monotonically (no local maxima), so a separate local maximum
+/// is a genuine rival lag — the periodicity / ambiguity signal. `None` when the peak is unrivalled.
+fn secondary_peak(curve: &[(i64, f64)], peak_index: usize) -> Option<(i64, f64)> {
+    let mut best: Option<(i64, f64)> = None;
+    for i in 1..curve.len().saturating_sub(1) {
+        if i == peak_index {
+            continue;
+        }
+        let (lag, r) = curve[i];
+        // Local maximum: ≥ both neighbours (≥ tolerates plateaus without double-counting the main lobe).
+        if r >= curve[i - 1].1 && r >= curve[i + 1].1 {
+            best = Some(match best {
+                Some((_, br)) if br >= r => best.unwrap(),
+                _ => (lag, r),
+            });
+        }
+    }
+    best
 }
 
 /// Verdict thresholds (see plan §4). `peak` is the parabolic-interpolated peak correlation.
@@ -476,6 +673,10 @@ pub struct FingerprintConfig {
     pub fill_absolute_floor: f32,
     pub max_refine_secs: f64,
     pub lag_max_lag_ms: u32,
+    /// Window (seconds) for the lag-uniqueness measurement. §3.6a froze this at **1 s** — it separates
+    /// real registration from periodic ambiguity (250 ms is ambiguous on quiet produced audio, where a
+    /// rival local max is nearly as tall; 1 s breaks the tie). Drives `peak_z` / `prominence`.
+    pub lag_window_secs: f64,
 }
 
 impl Default for FingerprintConfig {
@@ -500,6 +701,7 @@ impl Default for FingerprintConfig {
             fill_absolute_floor: 0.12,
             max_refine_secs: 0.75,
             lag_max_lag_ms: 200,
+            lag_window_secs: 1.0,
         }
     }
 }
@@ -528,6 +730,27 @@ fn to_db(rms: f32) -> f32 {
         SILENCE_FLOOR_DB
     } else {
         20.0 * rms.log10()
+    }
+}
+
+/// Replace a non-finite dB (e.g. residual cancellation to ~0 ⇒ `-inf`) with the silence floor, so it
+/// serializes as a finite number rather than JSON `null` (which breaks strict consumers / the analyzer).
+fn finite_db(db: f64) -> f64 {
+    if db.is_finite() {
+        db
+    } else {
+        f64::from(SILENCE_FLOOR_DB)
+    }
+}
+
+/// Replace a non-finite correlation (`normalized_correlation` of a constant/silent window ⇒ `NaN`) with
+/// `0.0` — a NaN "no signal" reads as zero correlation. Keeps the JSON finite (no `null` ⇒ no silent
+/// whole-gap drop in strict consumers).
+fn finite_corr(x: f64) -> f64 {
+    if x.is_finite() {
+        x
+    } else {
+        0.0
     }
 }
 
@@ -771,24 +994,26 @@ fn lag_at_placement(
     b_ch: &[Vec<f64>],
     selected: Option<usize>,
     start_frame: usize,
-    bin_frames: usize,
+    _bin_frames: usize,
     cfg: &FingerprintConfig,
     sample_rate: u32,
 ) -> LagFingerprint {
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    // §3.6a: uniqueness needs a ~1 s window. Discover that much border (plus the lag-search slack) so the
+    // template isn't capped to the ~150 ms `bin_frames*3` used for the structure probe.
+    let window = ((cfg.lag_window_secs * f64::from(sample_rate)).round() as usize).max(8);
+    let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * f64::from(sample_rate)).round() as i64;
     let border_spec = GapBorderSpec {
         gap_start_frame: refined.start_frame,
         gap_end_frame: refined.end_frame,
-        border_frames: bin_frames * 3,
+        border_frames: window + max_lag.max(0) as usize,
         border_standoff_frames: 0,
         silence_peak_fraction: cfg.silence_peak_fraction,
         absolute_rms_floor: cfg.absolute_silence_rms,
     };
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
-    let window = ((cfg.fill_seam_search_secs * f64::from(sample_rate)).round() as usize).max(8);
-    let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * f64::from(sample_rate)).round() as i64;
 
     let mut out = LagFingerprint::default();
     let mut add = |pre: Option<LagSummary>, post: Option<LagSummary>| {
@@ -810,6 +1035,270 @@ fn lag_at_placement(
         }
     }
     out
+}
+
+/// `~10 ms`-bin RMS envelope — the encoding-/small-shift-robust representation for the seam probe.
+fn fine_rms_envelope(x: &[f64], bin: usize) -> Vec<f64> {
+    let bin = bin.max(1);
+    x.chunks(bin)
+        .map(|c| (c.iter().map(|v| v * v).sum::<f64>() / c.len() as f64).sqrt())
+        .collect()
+}
+
+/// RMS of the **energy-weighted** downmix over interleaved frames `[lo, hi)`. Each channel is weighted by
+/// its own energy, so a loud center isn't diluted by quiet surrounds/LFE the way a straight `1/N` mix is
+/// (which buried these 5.1 seams 13–15 dB and over-flagged them "quiet" — §3.6a froze level on this mix).
+/// Correlation stays on mono; only the level/SNR uses this. `0.0` for an empty/over-range span.
+fn weighted_downmix_rms(samples: &[f32], channels: usize, lo: usize, hi: usize) -> f64 {
+    let ch = channels.max(1);
+    let total_frames = samples.len() / ch;
+    let hi = hi.min(total_frames);
+    if hi <= lo {
+        return 0.0;
+    }
+    let n = (hi - lo) as f64;
+    let mut ms = vec![0.0f64; ch];
+    for f in lo..hi {
+        let base = f * ch;
+        for (c, m) in ms.iter_mut().enumerate() {
+            let s = samples.get(base + c).copied().unwrap_or(0.0) as f64;
+            *m += s * s;
+        }
+    }
+    let total: f64 = ms.iter().sum();
+    if total <= f64::EPSILON {
+        return 0.0;
+    }
+    let weights: Vec<f64> = ms.iter().map(|e| e / total).collect();
+    let mut acc = 0.0;
+    for f in lo..hi {
+        let base = f * ch;
+        let y: f64 = weights
+            .iter()
+            .enumerate()
+            .map(|(c, w)| samples.get(base + c).copied().unwrap_or(0.0) as f64 * w)
+            .sum();
+        acc += y * y;
+    }
+    (acc / n).sqrt()
+}
+
+/// One side's [`SeamProbe`]: waveform Pearson at lag 0, recovery over ±`fine_max_lag`, encoding-robust
+/// envelope correlation, and level/SNR. Correlation is on the mono `a_win`; the level/SNR is taken from
+/// `level_rms` (the energy-weighted-downmix RMS at the raw seam, computed by the caller). `b_ctx` spans
+/// `±fine_max_lag` around the seam (lag 0 ⇒ `b_ctx[fine_max_lag .. + a_win.len()]`).
+fn seam_probe_side(a_win: &[f64], b_ctx: &[f64], level_rms: f64, fine_max_lag: i64, sample_rate: u32, fine_bin: usize, gap_floor_db: f64) -> Option<SeamProbe> {
+    let w = a_win.len();
+    let ml = fine_max_lag.max(0) as usize;
+    let rate = f64::from(sample_rate).max(1.0);
+    if w < 8 || ml + w > b_ctx.len() {
+        return None;
+    }
+    let curve = lag_correlation_curve(a_win, b_ctx, fine_max_lag);
+    if curve.is_empty() {
+        return None;
+    }
+    let waveform_r = curve.iter().find(|(l, _)| *l == 0).map(|(_, r)| *r).unwrap_or(f64::NAN);
+    let &(peak_lag, recovered_r) = curve
+        .iter()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
+    let b0 = &b_ctx[ml..ml + w];
+    let envelope_r =
+        normalized_correlation(&fine_rms_envelope(a_win, fine_bin), &fine_rms_envelope(b0, fine_bin));
+    let bandlimited_r = crate::domain::seam_robust::bandlimited_pearson(
+        a_win, b0, sample_rate, crate::domain::seam_robust::BANDLIMITED_CUTOFF_HZ,
+    );
+    let spectrum_r = crate::domain::seam_robust::spectrum_correlation(a_win, b0);
+    let rms_db = f64::from(to_db(level_rms as f32));
+    Some(SeamProbe {
+        waveform_r: finite_corr(waveform_r),
+        recovered_r: finite_corr(recovered_r),
+        recovered_lag_ms: peak_lag as f64 * 1000.0 / rate,
+        bandlimited_r: finite_corr(bandlimited_r),
+        spectrum_r: finite_corr(spectrum_r),
+        envelope_r: finite_corr(envelope_r),
+        rms_db,
+        snr_db: rms_db - gap_floor_db,
+    })
+}
+
+const SEAM_PROBE_FINE_LAG_MS: f64 = 25.0;
+const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
+
+/// Pre/post [`SeamProbe`]s at a placement (mono). Built at the **throat** placement to diagnose a dead
+/// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
+#[allow(clippy::too_many_arguments)]
+fn seam_probe_at_placement(a_samples: &[f32], channels: usize, refined: RefinedGapFrames, b_mono: &[f64], start_frame: usize, bin_frames: usize, cfg: &FingerprintConfig, sample_rate: u32, gap_floor_db: f64) -> SeamProbeFingerprint {
+    let ch = channels.max(1);
+    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    let rate = f64::from(sample_rate).max(1.0);
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames: bin_frames * 3,
+        border_standoff_frames: 0,
+        silence_peak_fraction: cfg.silence_peak_fraction,
+        absolute_rms_floor: cfg.absolute_silence_rms,
+    };
+    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
+    let window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+    let fine_max_lag = ((SEAM_PROBE_FINE_LAG_MS / 1000.0) * rate).round() as i64;
+    let fine_bin = ((SEAM_PROBE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
+    let ml = fine_max_lag.max(0) as usize;
+
+    let pre = (|| {
+        let w = window.min(a_pre.len());
+        if w < 8 || start_frame < w + ml {
+            return None;
+        }
+        let lo = start_frame - w - ml;
+        let hi = (start_frame + ml).min(b_mono.len());
+        if hi <= lo {
+            return None;
+        }
+        // Level over the raw seam span (the w frames ending at the gap), on the energy-weighted downmix.
+        let level_rms = weighted_downmix_rms(a_samples, ch, start_frame - w, start_frame);
+        seam_probe_side(&a_pre[a_pre.len() - w..], &b_mono[lo..hi], level_rms, fine_max_lag, sample_rate, fine_bin, gap_floor_db)
+    })();
+    let post = (|| {
+        let w = window.min(a_post.len());
+        let post_base = start_frame + gap_frames;
+        if w < 8 || post_base < ml {
+            return None;
+        }
+        let lo = post_base - ml;
+        let hi = (post_base + w + ml).min(b_mono.len());
+        if hi <= lo {
+            return None;
+        }
+        // Level over the raw seam span (the w frames starting at the gap end), energy-weighted downmix.
+        let level_rms = weighted_downmix_rms(a_samples, ch, post_base, post_base + w);
+        seam_probe_side(&a_post[..w], &b_mono[lo..hi], level_rms, fine_max_lag, sample_rate, fine_bin, gap_floor_db)
+    })();
+    SeamProbeFingerprint { pre, post }
+}
+
+/// §3.6a frozen wide-envelope confirmer: 100 ms RMS bins, 2 s seam window, ±400 ms lag on the envelope.
+const WIDE_ENV_BIN_MS: f64 = 100.0;
+const WIDE_ENV_WINDOW_SECS: f64 = 2.0;
+const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
+
+/// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
+fn mono_lag_side<'a>(lag: &'a LagFingerprint, pre: bool) -> Option<&'a LagSummary> {
+    let entries = if pre { &lag.pre_anchor } else { &lag.post_anchor };
+    entries.iter().find(|s| s.channel == LagChannel::Mono)
+}
+
+/// First-class splice summary from decision-seam `baseline_lag` (mono): step + per-side peaks / `peak_z`.
+pub fn splice_summary_from_lag(lag: &LagFingerprint) -> Option<SpliceSummary> {
+    let pre = mono_lag_side(lag, true)?;
+    let post = mono_lag_side(lag, false)?;
+    Some(SpliceSummary {
+        step_ms: post.frac_lag_ms - pre.frac_lag_ms,
+        pre_peak_r: pre.peak_r,
+        post_peak_r: post.peak_r,
+        pre_peak_z: pre.peak_z,
+        post_peak_z: post.peak_z,
+    })
+}
+
+/// One side of the wide-envelope segment-identity confirmer: bucketed RMS envelope lag peak + prominence.
+fn wide_envelope_side(
+    a_win: &[f64],
+    b_wave_ctx: &[f64],
+    sample_rate: u32,
+    env_bin: usize,
+    wide_lag_samples: usize,
+) -> Option<EnvPeak> {
+    if a_win.len() < env_bin.max(8) {
+        return None;
+    }
+    let rate = f64::from(sample_rate).max(1.0);
+    let ea = fine_rms_envelope(a_win, env_bin);
+    let eb = fine_rms_envelope(b_wave_ctx, env_bin);
+    if ea.len() < 3 {
+        return None;
+    }
+    let env_max_lag = (wide_lag_samples / env_bin.max(1)) as i64;
+    if env_max_lag < 1 {
+        return None;
+    }
+    let curve = lag_correlation_curve(&ea, &eb, env_max_lag);
+    if curve.is_empty() {
+        return None;
+    }
+    let (pi, &(peak_lag_bin, peak_r)) = curve
+        .iter()
+        .enumerate()
+        .max_by(|(_, (_, x)), (_, (_, y))| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
+    let prominence = secondary_peak(&curve, pi).map(|(_, r)| peak_r - r).unwrap_or(0.0);
+    let peak_lag_ms = peak_lag_bin as f64 * env_bin as f64 * 1000.0 / rate;
+    Some(EnvPeak {
+        peak_r: finite_corr(peak_r),
+        peak_lag_ms,
+        prominence: finite_corr(prominence),
+    })
+}
+
+/// Pre/post wide-envelope confirmers at the decision (throat) placement — cross-scale check vs `baseline_lag`.
+#[allow(clippy::too_many_arguments)]
+fn wide_envelope_at_placement(
+    a_samples: &[f32],
+    channels: usize,
+    refined: RefinedGapFrames,
+    b_mono: &[f64],
+    start_frame: usize,
+    cfg: &FingerprintConfig,
+    sample_rate: u32,
+) -> WideEnvelopeFingerprint {
+    let ch = channels.max(1);
+    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    let rate = f64::from(sample_rate).max(1.0);
+    let window = ((WIDE_ENV_WINDOW_SECS * rate).round() as usize).max(8);
+    let wide_lag = ((WIDE_ENV_MAX_LAG_MS / 1000.0) * rate).round() as usize;
+    let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames: window + wide_lag,
+        border_standoff_frames: 0,
+        silence_peak_fraction: cfg.silence_peak_fraction,
+        absolute_rms_floor: cfg.absolute_silence_rms,
+    };
+    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
+
+    let pre = (|| {
+        let w = window.min(a_pre.len());
+        if w < env_bin || start_frame < w + wide_lag {
+            return None;
+        }
+        let lo = start_frame.saturating_sub(w + wide_lag);
+        let hi = (start_frame + wide_lag).min(b_mono.len());
+        if hi <= lo {
+            return None;
+        }
+        wide_envelope_side(
+            &a_pre[a_pre.len() - w..],
+            &b_mono[lo..hi],
+            sample_rate,
+            env_bin,
+            wide_lag,
+        )
+    })();
+    let post = (|| {
+        let w = window.min(a_post.len());
+        let post_base = start_frame + gap_frames;
+        if w < env_bin || post_base < wide_lag {
+            return None;
+        }
+        let lo = post_base.saturating_sub(wide_lag);
+        let hi = (post_base + w + wide_lag).min(b_mono.len());
+        if hi <= lo {
+            return None;
+        }
+        wide_envelope_side(&a_post[..w], &b_mono[lo..hi], sample_rate, env_bin, wide_lag)
+    })();
+    WideEnvelopeFingerprint { pre, post }
 }
 
 fn classify_bracket_stage(
@@ -1048,6 +1537,11 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
         seams,
         lag,
         baseline_lag,
+        residual: None,
+        seam_probe: None,
+        donor_interior: None,
+        splice: None,
+        wide_envelope: None,
         outcome: None,
     }
 }
@@ -1081,6 +1575,7 @@ impl FingerprintConfig {
             fill_absolute_floor: request.fill_absolute_floor,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
             lag_max_lag_ms: 200,
+            lag_window_secs: 1.0,
         }
     }
 }
@@ -1133,7 +1628,10 @@ pub(crate) fn characterize_gaps_with_gate(
     select: &[usize],
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
-    use crate::application::patch_region::{oracle_build_fit_cache, oracle_score_fit_candidate};
+    use crate::application::patch_region::{
+        oracle_build_fit_cache, oracle_measure_residual, oracle_score_fit_candidate,
+        oracle_throat_structure_frame,
+    };
 
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
@@ -1141,12 +1639,15 @@ pub(crate) fn characterize_gaps_with_gate(
     // Build only the selected gaps (summary base: baseline structure/seam, no per-bracket, no lag).
     let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
 
-    let gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
+    let mut gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
         request,
         sample_rate,
         channels,
         report.silence_peak_fraction,
     );
+    // Force the same-source residual probe on for every gap (the fingerprint records it; the gate
+    // would otherwise only measure it when the residual gate is active or DEBUG logging is on).
+    gate_cfg.measure_residual = true;
     let rate = f64::from(sample_rate).max(1.0);
     let ch = channels.max(1);
     let b_total = b_samples_full.len() / ch;
@@ -1277,11 +1778,45 @@ pub(crate) fn characterize_gaps_with_gate(
                 .max(0.0)) as usize
         };
 
-        // Decision-seam lag (#2): at the structure-slid THROAT placement — the seam the gate decides
-        // patch/skip on under baseline_only — not the moved best-energy bracket the diagnostic `lag`
-        // measures. This is the registration-relevant lag.
-        if let Some(p) = place_on_b(&a_pcm.samples, ch, refined, b_slice, &b_mono, &b_ch, nominal_of(refined.start_frame), context_frames, bin_frames, search_radius_frames, &cfg) {
-            fp.baseline_lag = Some(lag_at_placement(&a_pcm.samples, ch, refined, &b_mono, &b_ch, p.selected_channels.first().copied(), p.start_frame, bin_frames, &cfg, sample_rate));
+        // Decision-seam lag (#2) + residual + seam-probe + donor + wide-envelope + splice — ALL at the
+        // gate's own zero-move **throat** placement (`oracle_throat_structure_frame`), the exact B frame the
+        // gate scores patch/skip on, rather than a separate `place_on_b` that diverged from it (review F1).
+        // Correlation/uniqueness is mono (frozen, §3.6a), so no per-channel `selected` is needed.
+        if let Some(throat_frame) = oracle_throat_structure_frame(&params, &cache, refined) {
+            fp.baseline_lag = Some(lag_at_placement(&a_pcm.samples, ch, refined, &b_mono, &b_ch, None, throat_frame, bin_frames, &cfg, sample_rate));
+            fp.residual = oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
+                // A silent gap cancels to ~0 ⇒ `to_db = -inf`; serde_json writes non-finite as `null`,
+                // which breaks strict consumers (it silently dropped whole pairs from the analyzer). Floor
+                // to a finite dB — perfect cancellation reads as a very low level, preserving the meaning.
+                chosen_pre_db: finite_db(v.chosen_pre_db),
+                chosen_post_db: finite_db(v.chosen_post_db),
+                floor_pre_db: finite_db(v.floor_pre_db),
+                floor_post_db: finite_db(v.floor_post_db),
+                informative: v.informative,
+            });
+            fp.seam_probe = Some(seam_probe_at_placement(
+                &a_pcm.samples, ch, refined, &b_mono, throat_frame, bin_frames, &cfg, sample_rate,
+                f64::from(fp.levels.gap_floor_db),
+            ));
+            fp.donor_interior = donor_interior_at(
+                &b_mono,
+                throat_frame,
+                refined.end_frame.saturating_sub(refined.start_frame),
+                f64::from(fp.levels.gap_floor_db),
+                sample_rate,
+            );
+            fp.wide_envelope = Some(wide_envelope_at_placement(
+                &a_pcm.samples,
+                ch,
+                refined,
+                &b_mono,
+                throat_frame,
+                &cfg,
+                sample_rate,
+            ));
+            if let Some(ref bl) = fp.baseline_lag {
+                fp.splice = splice_summary_from_lag(bl);
+            }
         }
 
         // Diagnostic lag: one placement search at the best (highest-seam) speech bracket.
@@ -1570,6 +2105,45 @@ mod tests {
     }
 
     #[test]
+    fn lag_summary_flags_competing_peak_for_periodic_curve() {
+        // Unique peak: one hump, monotonic falloff → no rival local maximum.
+        let unique: Vec<(i64, f64)> = (-5..=5).map(|l| (l, 1.0 - 0.1 * (l as f64).abs())).collect();
+        let s = summarize_lag_curve(&unique, 48_000, 10, 1, LagChannel::Mono).expect("summary");
+        assert!(
+            s.second_peak_r.map_or(true, |r| r < s.peak_r - 0.3),
+            "a unique peak should have no strong rival: {:?}",
+            s.second_peak_r
+        );
+
+        // Periodic-like: two humps of similar height → a rival near peak_r (low uniqueness margin).
+        let periodic = vec![
+            (-4, 0.2), (-3, 0.9), (-2, 0.5), (-1, 0.3), (0, 0.85), (1, 0.4), (2, 0.2), (3, 0.1), (4, 0.05),
+        ];
+        let s2 = summarize_lag_curve(&periodic, 48_000, 10, 1, LagChannel::Mono).expect("summary");
+        assert!(
+            s2.second_peak_r.is_some_and(|r| r > 0.8),
+            "a periodic curve should expose a competing peak near peak_r: {:?}",
+            s2.second_peak_r
+        );
+
+        // Robust uniqueness fields: the unique (monotonic) curve has NO rival → prominence `None` (best
+        // case); the periodic one has a rival near the peak → low prominence. peak_z stands out further for
+        // the unique curve. Spacing is the lag gap to the rival.
+        assert!(s.prominence.is_none(), "a unrivalled peak has no prominence value: {:?}", s.prominence);
+        assert!(s2.prominence.is_some_and(|p| p < 0.1), "periodic: low prominence {:?}", s2.prominence);
+        // peak_z is computed (finite, positive) whenever the curve has spread; its discriminating power is
+        // validated on real flat-floor curves in the §3.6a experiment, not these broad toy humps.
+        assert!(s.peak_z.is_some_and(|z| z.is_finite() && z > 0.0), "peak_z computed: {:?}", s.peak_z);
+        assert!(s2.peak_z.is_some_and(|z| z.is_finite() && z > 0.0), "peak_z computed: {:?}", s2.peak_z);
+        // periodic peak at lag 0, rival at lag −3 → spacing 3 samples = 62.5 µs at 48 kHz.
+        assert!(
+            s2.top2_spacing_ms.is_some_and(|ms| (ms - 3.0 * 1000.0 / 48_000.0).abs() < 1e-6),
+            "spacing to the rival lag: {:?}",
+            s2.top2_spacing_ms
+        );
+    }
+
+    #[test]
     fn lag_curve_truncates_when_context_too_short() {
         // b_ctx shorter than a.len() + 2*max_lag → fewer than the full set of lags, no panic.
         let a = base_noise(1, 100);
@@ -1577,6 +2151,119 @@ mod tests {
         let curve = lag_correlation_curve(&a, &b_ctx, 64);
         assert!(curve.len() < (2 * 64 + 1));
         assert!(curve.iter().all(|(_, r)| r.is_finite()));
+    }
+
+    #[test]
+    fn weighted_downmix_recovers_center_dominant_level() {
+        // 6ch center-dominant 5.1 seam: loud center (idx 2), quiet L/R, silent surrounds/LFE.
+        let ch = 6;
+        let n = 480;
+        let mut s = vec![0.0f32; n * ch];
+        for f in 0..n {
+            s[f * ch + 2] = (std::f64::consts::TAU * 200.0 * f as f64 / 48_000.0).sin() as f32 * 0.5;
+            s[f * ch] = 0.005;
+            s[f * ch + 1] = -0.005;
+        }
+        let weighted = weighted_downmix_rms(&s, ch, 0, n);
+        let mono: Vec<f64> = s.chunks(ch).map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64).collect();
+        let mono_rms = (mono.iter().map(|v| v * v).sum::<f64>() / mono.len() as f64).sqrt();
+        // The straight 1/6 mix buries the center; the energy-weighted mix keeps it (~0.5/√2 ≈ 0.35).
+        assert!(weighted > 0.2, "weighted preserves center level: {weighted}");
+        assert!(weighted > mono_rms * 3.0, "weighted {weighted} ≫ straight mono {mono_rms}");
+        // Over-range / empty spans are guarded.
+        assert_eq!(weighted_downmix_rms(&s, ch, 10, 10), 0.0);
+        assert_eq!(weighted_downmix_rms(&s, ch, n - 5, n + 100), weighted_downmix_rms(&s, ch, n - 5, n));
+    }
+
+    #[test]
+    fn donor_interior_detects_bridge_vs_hole() {
+        let sr = 48_000u32;
+        let floor_db = -60.0;
+        let half = sr as usize / 2; // 0.5 s span
+        let tone: Vec<f64> =
+            (0..sr as usize).map(|i| (std::f64::consts::TAU * 200.0 * i as f64 / 48_000.0).sin() * 0.3).collect();
+
+        // Continuous donor: B carries audio across the whole span → bridges the hole.
+        let d = donor_interior_at(&tone, 0, half, floor_db, sr).expect("donor");
+        assert!(d.continuous && d.silence_fraction < 0.05, "bridged donor: {d:?}");
+        assert!(d.rms_db > floor_db);
+
+        // Donor with its OWN hole: 250 ms of silence inside the span breaks continuity.
+        let mut holed = tone.clone();
+        for v in holed.iter_mut().take(half).skip(sr as usize / 4) {
+            *v = 0.0;
+        }
+        let d2 = donor_interior_at(&holed, 0, half, floor_db, sr).expect("donor");
+        assert!(!d2.continuous, "internal silence breaks continuity: {d2:?}");
+        assert!(d2.longest_silence_ms >= DONOR_CONTINUITY_MS, "{d2:?}");
+
+        // Empty / over-range spans guarded.
+        assert!(donor_interior_at(&tone, 10, 0, floor_db, sr).is_none());
+    }
+
+    #[test]
+    fn splice_summary_from_baseline_lag_mono() {
+        let lag = LagFingerprint {
+            pre_anchor: vec![LagSummary {
+                window_ms: 1000,
+                max_lag_ms: 200,
+                channel: LagChannel::Mono,
+                lag0_r: 0.1,
+                peak_r: 0.99,
+                second_peak_r: Some(0.2),
+                peak_z: Some(16.0),
+                prominence: Some(0.79),
+                top2_spacing_ms: Some(40.0),
+                peak_lag_samples: -500,
+                frac_lag_samples: -500.0,
+                frac_lag_ms: -10.5,
+                verdict: LagVerdict::TimingOffset,
+            }],
+            post_anchor: vec![LagSummary {
+                window_ms: 1000,
+                max_lag_ms: 200,
+                channel: LagChannel::Mono,
+                lag0_r: 0.2,
+                peak_r: 0.96,
+                second_peak_r: Some(0.3),
+                peak_z: Some(14.0),
+                prominence: Some(0.66),
+                top2_spacing_ms: Some(50.0),
+                peak_lag_samples: -300,
+                frac_lag_samples: -300.0,
+                frac_lag_ms: -6.2,
+                verdict: LagVerdict::TimingOffset,
+            }],
+        };
+        let s = splice_summary_from_lag(&lag).expect("splice");
+        assert!((s.step_ms - 4.3).abs() < 0.01, "step {}", s.step_ms);
+        assert!((s.pre_peak_r - 0.99).abs() < 1e-6);
+        assert!((s.post_peak_r - 0.96).abs() < 1e-6);
+        assert_eq!(s.pre_peak_z, Some(16.0));
+        assert_eq!(s.post_peak_z, Some(14.0));
+    }
+
+    #[test]
+    fn wide_envelope_finds_shifted_segment_peak() {
+        let rate = 48_000u32;
+        let r = f64::from(rate);
+        let max_lag = ((WIDE_ENV_MAX_LAG_MS / 1000.0) * r).round() as i64;
+        let window = (WIDE_ENV_WINDOW_SECS * r).round() as usize;
+        let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * r).round() as usize;
+        // Offset must be visible at 100 ms-bin resolution (~1 bin = 100 ms).
+        let offset_samples = env_bin as f64;
+        let (a, b_ctx) = shifted_pair(offset_samples, window, max_lag);
+        let wide_lag = max_lag as usize;
+        let peak = wide_envelope_side(&a, &b_ctx, rate, env_bin, wide_lag).expect("env peak");
+        assert!(peak.peak_r > 0.9, "segment match {}", peak.peak_r);
+        let expected_ms = offset_samples * 1000.0 / r;
+        assert!(
+            (peak.peak_lag_ms - expected_ms).abs() < 50.0,
+            "env peak lag {} should land near {expected_ms} ms",
+            peak.peak_lag_ms
+        );
+        // Non-vacuous: `finite_corr` guarantees finite outputs even on a flat/degenerate envelope.
+        assert!(peak.prominence.is_finite() && peak.peak_r.is_finite(), "finite: {peak:?}");
     }
 
     fn write_speech(buf: &mut [f32], start: usize, end: usize, freq: f64, amp: f32) {
@@ -1721,6 +2408,10 @@ mod tests {
                     channel: LagChannel::Mono,
                     lag0_r: 0.02,
                     peak_r: 0.99,
+                    second_peak_r: Some(0.20),
+                    peak_z: Some(12.5),
+                    prominence: Some(0.79),
+                    top2_spacing_ms: Some(40.0),
                     peak_lag_samples: -778,
                     frac_lag_samples: -778.0,
                     frac_lag_ms: -16.2,
@@ -1729,6 +2420,11 @@ mod tests {
                 post_anchor: vec![],
             }),
             baseline_lag: None,
+            residual: None,
+            seam_probe: None,
+            donor_interior: None,
+            splice: None,
+            wide_envelope: None,
             outcome: None,
         }
     }
@@ -1849,6 +2545,47 @@ mod tests {
             }),
             lag: None,
             baseline_lag: None,
+            residual: Some(ResidualInfo {
+                chosen_pre_db: -42.0,
+                chosen_post_db: -38.0,
+                floor_pre_db: -40.0,
+                floor_post_db: -39.0,
+                informative: true,
+            }),
+            seam_probe: Some(SeamProbeFingerprint {
+                pre: Some(SeamProbe {
+                    waveform_r: 0.04,
+                    recovered_r: 0.95,
+                    recovered_lag_ms: -8.0,
+                    bandlimited_r: 0.8,
+                    spectrum_r: 0.85,
+                    envelope_r: 0.9,
+                    rms_db: -30.0,
+                    snr_db: 20.0,
+                }),
+                post: None,
+            }),
+            donor_interior: Some(DonorInterior {
+                rms_db: -28.0,
+                silence_fraction: 0.0,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            splice: Some(SpliceSummary {
+                step_ms: 4.2,
+                pre_peak_r: 0.99,
+                post_peak_r: 0.96,
+                pre_peak_z: Some(15.0),
+                post_peak_z: Some(14.0),
+            }),
+            wide_envelope: Some(WideEnvelopeFingerprint {
+                pre: Some(EnvPeak {
+                    peak_r: 0.98,
+                    peak_lag_ms: -110.0,
+                    prominence: 0.55,
+                }),
+                post: None,
+            }),
             outcome: Some(GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "hard_skip".into(),

@@ -16,6 +16,7 @@ pub mod patch_result;
 pub mod policies;
 pub mod repair_profile;
 pub mod residual_gate;
+pub mod seam_robust;
 pub mod track_match;
 
 pub use fill_mode::FillMode;

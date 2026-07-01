@@ -4,13 +4,13 @@
 > This doc is the *detail* for the mechanism + repair; the ledger is the authoritative index of what is
 > proven / open / important. Do not add a competing next-steps list here — update the ledger.
 
-Status: **DRAFT — measurement largely proven & frozen; the live blocker is registration placement for quiet
-gaps (ledger A1/A2); repair unbuilt (A3).** The *per-seam warp* and *cross-codec validator* directions are
-**refuted** (no genuine cross-encoding shoulder survives correct placement — 6·g6/7·g3 were artifacts, §1b-i /
-§3.7); the cross-codec plan is **archived**. Capture additions (1 s `peak_z`, donor-interior, energy-weighted
-level, splice-step, wide-envelope) are coded + unit-tested. **The rescan is NOT the next step:** it registers
-at `structure_start_frame`, which *wanders on quiet gaps* (§3.7), so it would reproduce the quiet-gap
-mis-registration — settle the registration placement (outward-anchor / `b_mapped`) first.
+Status: **DRAFT — registration policy decided (`b_mapped`, pair-6 proven); CAP implementation pending (ledger
+A2); repair unbuilt (A3).** The *per-seam warp* and *cross-codec validator* directions are **refuted** (B2:
+zero genuine one-sided-dead in pair-6 — all placement artifacts at `structure_start_frame`, §3.7); the
+cross-codec plan is **archived**. Capture schema (1 s `peak_z`, donor-interior, energy-weighted level,
+splice-step, wide-envelope) is coded + unit-tested but still registers at `structure_start_frame`. **Next:**
+implement **`b_mapped` registration in capture** (§3.7), re-classify skips, then `diag_splice_dualfit` — not
+another rescan first.
 
 Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
 (per-seam detect-and-warp — archived, dead) and
@@ -196,14 +196,10 @@ calibrate); level/SNR on the **energy-weighted downmix**; wide-envelope confirme
       `dualfit_scope_text` C1 view — done (gates on `peak_z` when present; calibrate thresholds post-rescan).
 
 **Capture schema is code-complete and unit-tested; full crate builds clean.** But **hold the rescan** — it
-registers at `structure_start_frame`, which mis-registers quiet gaps (§3.7 / ledger A1). Settle the
-registration placement (bake outward-anchor into capture, or register at `b_mapped`) *before* committing to
-another multi-hour scan, or it reproduces the quiet-gap artifacts.
-**Deferred — re-evaluate AFTER the F1 rescan, do NOT change pre-emptively:** the production lag search is
-±200 ms (`lag_max_lag_ms`). The pre-F1 data showed many "one-sided-dead" peaks pinned at the ±200 ms edge,
-but those are likely `place_on_b` artifacts (6·g6 is within ±200 at the *correct* placement). If the
-F1-corrected rescan still shows edge-pinned peaks (genuine offsets > 200 ms), widen `lag_max_lag_ms` then —
-not now (doubling the lag range ~doubles the per-gap lag cost, and perf is already deferred).
+registers at `structure_start_frame`, which mis-registers quiet gaps (§3.7 / ledger A1). Implement
+**`b_mapped` registration** in capture (ledger A2) *before* another multi-hour scan.
+**Lag width:** pair-6 proves ±200 ms is sufficient at `b_mapped` (~−131 ms cluster inside range; ledger C4).
+Widen `lag_max_lag_ms` only if a post-A2 corpus still shows edge-pinned peaks at the correct placement.
 1. **Donor-interior energy** over the `b_mapped_start..b_mapped_end` span: RMS / silence-fraction of B
    through the hole + a **donor-continuity flag** (B runs unbroken pre-anchor→post-anchor). Turns "B
    almost certainly fits" into measured. *Cheap (one RMS pass).*
@@ -291,68 +287,50 @@ Knobs: `SPLICE_EXP_GAPS` (which gaps), `SPLICE_EXP_SR`, and `SPLICE_EXP_FINE_LAG
 probe a lag pinned at the ±200 ms edge — the B-context pad scales to match). Used in §1b-i to settle 6·g6's
 "one-sided-dead" as a clipped large offset at the wrong placement, not decorrelation.
 
-## 3.7. Outward-anchor registration — the quiet-gap fix (operator idea; first-class)
+## 3.7. Quiet-gap registration — `b_mapped` policy (+ outward-anchor diagnostic)
 
-**Problem this solves.** A gap that is pure silence sitting inside a *larger* quiet/low-volume section has
-**no distinctive signal anywhere near the seam** — not at the 250 ms edge, and not in a 1–2 s window
-*centered* on the gap either (the whole neighborhood is quiet). Two failures follow, and they are the same
-disease:
-1. **Uniqueness ceiling** — the local shoulder can never establish a unique lag (thin `peak_z`), no matter
-   the window size, because there is nothing distinctive to lock onto. (This is *not* fixed by §3.2's
-   wider *centered* envelope — that still includes the quiet edge.)
-2. **Placement wander** — the gate's structure search (`structure_start_frame`, which F1 registers on) has a
-   flat envelope, so it drifts to a structure-plausible but **waveform-wrong** placement → the shoulder
-   reads dead. **Proven on real data:** 6·g6 and 7·g3 both read *one-sided-dead* at `structure_start_frame`
-   but are **clean at `b_mapped`** (6·g6 post 0.175→0.995 @ −132.8; 7·g3 pre 0.115→0.986). Neither is
-   decorrelated — both are quiet-region placement artifacts.
+**Problem (A1 — proven).** A gap in a larger quiet/low-volume section has **no distinctive signal at the seam**
+and the gate's structure search (`structure_start_frame`, which F1 registers on) **wanders** on flat envelopes
+→ shoulders read dead. This is **not** decorrelation — the gross A→B map is already right. **Proven:** 6·g6 and
+7·g3 read one-sided-dead at `structure_start_frame` but clean at `b_mapped`; pair-6 sweep (2026-06-30, 4 s
+reach) found **5/5** one-sided-dead gaps recoverable at `b_mapped` (~−131 ms constant offset, both
+shoulders 0.98+): 6·g2, 6·g6, 6·g7, 6·g9, 6·g10.
 
-**The method (operator idea, articulated repeatedly — capture it here so it stops getting dropped).** For a
-quiet shoulder, do **not** align at the gap edge. Instead:
-1. **Search outward**, away from the gap, to the **nearest distinctive (loud) feature** within the coherent
-   span (stop at the first other discontinuity). "Distinctive" ≈ high RMS / spectrally rich; RMS is the
-   cheap proxy.
-2. **Lag-align there**, where uniqueness is high and the lag search is reliable.
-3. **Carry that lag back** to place the seam near the gap. Because it is the **same rigid master with
-   negligible drift** over a second or two (drift over 1–2 s ≈ µs), the lag measured at a feature 0.5–2 s
-   out is valid at the quiet seam.
-4. Do it **per side** (nearest loud feature before the gap → pre lag; after → post lag). The per-side lags
-   give the registration, and the **step falls out** — measured far more robustly than the quiet throat can.
+**Primary fix (B13 — policy decided, CAP pending).** Register lag / detect metrics at **`b_mapped` nominal**
+(geometry `b_mapped_start_secs` → B frame) and run the **existing ±200 ms centered lag sweep**. On pair-6 the
+ordinary search at `b_mapped` already finds the peak — no outward search required. **Capture change:** move
+`baseline_lag`, `seam_probe`, `donor_interior`, `wide_envelope`, and `splice` off
+`oracle_throat_structure_frame` onto `b_mapped` nominal in `gap_fingerprint.rs`. The gate may still use
+structure alignment for bracket scoring; fingerprint **registration** coordinates must not follow the wander.
 
-This decouples the two things we had been conflating: **where we align** (a distinctive feature) from
-**where we place the seam** (near the gap). It fixes the uniqueness ceiling *and* the placement wander in
-one move.
+**Outward-anchor (operator idea — diagnostic only, not primary).** Search outward from each shoulder to a
+loudest feature, lag-align there, carry lag back. Built in `diag_splice_timescale` as `[outward-anchor]`
+(RMS-loudest `500 ms` window within ±4000 ms). **Pair-6 sweep result:** it is **`b_mapped` placement** that
+resolves one-sided-dead, not outward-anchor per se. RMS loudest is an **imperfect** selector — loudest ≠ most
+unique (6·g9 pre z 22→9, 6·g10 pre z 27→9 when anchor lands on sustained tone). Sometimes helps (6·g2 pre
+z 3→7, 6·g6 post z 10→14). **Do not wire RMS outward-anchor into production capture** (ledger D10). If
+revisited, select by **`peak_z` distinctiveness**, not RMS.
 
-**Outward-anchor is a registration *method*, not a gap *type* — it is orthogonal to the taxonomy.** All it
-does is produce *trustworthy per-side lags* for a quiet gap; the gap is then classified by the **same**
-coordinates as any other (step ≈ 0 → constant offset; step ≠ 0 & both unique → stepped splice; thin
-uniqueness even at the loud anchor → genuinely ambiguous). It does not remove a real step (each side is
-anchored independently, so a genuine pre/post lag difference still shows) and does not manufacture one.
-**Its expected effect is to collapse the `one-sided-dead` bucket**, because that was never a type — it was
-the *symptom* of a shoulder that couldn't register (quiet ceiling + `structure_start_frame` wander; proven
-on 6·g6 / 7·g3). After outward-anchoring, the only residual `one-sided-dead` is (1) genuinely decorrelated
-content (≈ none in this corpus) or (2) a side with **no reachable distinctive feature** in its coherent span
-— which is "registration not established," not "content dead."
+**What outward-anchor still explains.** It articulates *why* a quiet shoulder fails at the edge (uniqueness
+ceiling + structure wander) and why the diagnostic `lag` field (best-energy bracket) can read higher `peak_z`
+than the quiet throat. It remains useful as a harness experiment, not as the capture registration method.
 
-**Boundary condition.** The loud feature must be in the **same coherent span** as the seam — no *other*
-splice/discontinuity between the feature and the gap — or the carried lag is wrong. In practice the nearest
-loud feature is well inside the quiet pocket, so it is a bounded outward search.
+**Per-side registration and step.** At `b_mapped`, pair-6 gaps show **constant offset** (~−131 ms, step ≈ 0)
+with both shoulders recoverable — the stepped-splice vs constant-offset taxonomy still applies once
+registration is trustworthy.
 
-**Building blocks that already exist** (this is a re-use, not a from-scratch build):
-- `anchors` — energy-peak features already located near each gap (time, `rms_db`, prominence).
-- the diagnostic `lag` field — measured at the gate's **best-energy bracket** (a louder placement) and
-  already shows the effect: **3·g3 post `peak_z` 5.8→26.3, 6·g5 pre 2.6→18.3** vs the quiet throat.
-- `gap_anchor_seam` bracket machinery (locates/moves to anchors).
-- **Gap:** the gate picks the anchor by *seam score* and validates at **lag 0** (no per-side lag search),
-  so offset gaps still fail; and uniqueness/registration is measured at the quiet throat, not at the anchor.
+**Boundary condition (outward-anchor only).** A carried lag is valid only if the anchor feature is in the
+**same coherent span** as the seam — no other splice between feature and gap.
 
-**Status.** Built into `diag_splice_timescale` as the `[outward-anchor]` block (2026-06-30): scans each
-shoulder outward to the loudest `ANCHOR_WIN_MS` window within `±ANCHOR_MAX_OUT_MS` and lag-searches there,
-reporting edge-vs-anchor `peak_z`/lag. **Validating** on 6·g6, 7·g3, and dir-1 one-sided-dead gaps. If the
-quiet dead shoulders lock in sharply at the anchor (as 3·g3/6·g5 and the `b_mapped` flips predict), this
-becomes:
-- the **detect's registration method** for quiet gaps (§4 step 1/2) — replacing blind trust in
-  `structure_start_frame`;
-- a **capture field** for the next scan (per-side anchor offset + lag + `peak_z`).
+**Building blocks that already exist:**
+- `geometry.b_mapped_*` — stable gross map (the registration anchor).
+- `diag_splice_timescale` — timescale/uniqueness sweeps + `[outward-anchor]` block.
+- `anchors` / `gap_anchor_seam` — feature location (for a future `peak_z`-ranked anchor if needed).
+- **Gap:** capture still centers registration on `structure_start_frame` (A2 unbuilt).
+
+**Status.** Pair-6 one-sided-dead sweep **complete** — bucket collapses at `b_mapped` (C1/B2). Registration
+policy **`b_mapped`** (C2/B13). **Next:** implement in capture → spot-check pair-7 if needed → re-classify
+bracket-exhausted skips → `diag_splice_dualfit`.
 
 ## 4. Repair approach (unbuilt — design)
 
@@ -360,9 +338,9 @@ becomes:
    recoverable** at their own lag (the frozen 1 s `peak_z` / prominence thresholds, §3.6a), and **donor
    continuity** holds (§3 capture item: `donor_interior.continuous`). Note (§1b): detect must NOT run on
    gaps that already patch.
-2. **Fit each seam independently** at its own per-side lag (Lpre, Lpost). **For quiet gaps, establish Lpre /
-   Lpost by the outward-anchor method (§3.7)** — align on the nearest distinctive feature per side and carry
-   its lag to the seam — rather than trusting the quiet throat / `structure_start_frame`.
+2. **Fit each seam independently** at its own per-side lag (Lpre, Lpost). Lags come from **`b_mapped`
+   registration** (§3.7) — center the lag search on geometry `b_mapped` nominal + ±200 ms sweep — not
+   `structure_start_frame`. Outward-anchor is diagnostic-only (D10).
 3. **Reconcile the step:** the donor's bridging segment is `step` longer/shorter than A's hole. Trim or
    pad `|step|` at the **lowest-energy interior sample** of the fill (smallest audible splice).
 4. **Validate with the EXISTING gate:** after reconciliation both seams butt against their B-matched
@@ -383,6 +361,6 @@ un-stretched, so it should be.
 separate checklist (that fragmentation is how the outward-anchor idea kept getting dropped).
 
 Done here (detail): analyzer `splice_text`/`SpliceDiag`/`both_sides_recoverable`/`dualfit_scope_text`; full
-6-pair + F1-rescan analysis; §3.6/§3.6a frozen decisions; §3.7 outward-anchor built + partially validated;
-F1 placement fix; non-finite guards. **The live blocker is registration placement for quiet gaps (ledger
-A1/A2), then the unbuilt §4 repair (A3) — not the rescan.**
+6-pair + F1-rescan analysis; §3.6/§3.6a frozen decisions; §3.7 `b_mapped` policy + pair-6 sweep; outward-anchor
+diagnostic in `diag_splice_timescale`; F1 placement fix; non-finite guards. **Live blocker:** implement
+**`b_mapped` in capture** (ledger A2) → re-classify skips → **`diag_splice_dualfit`** (A3/C3).

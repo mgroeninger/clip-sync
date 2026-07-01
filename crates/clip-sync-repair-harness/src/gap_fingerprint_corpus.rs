@@ -48,14 +48,135 @@ struct GapEntry {
     /// Lag at the **decision** placement (structure-slid throat) — the registration-relevant one (#2).
     #[serde(default)]
     baseline_lag: Option<Lag>,
+    /// Residual cancellation at the decision seam (the strong same-source confirm).
+    #[serde(default)]
+    residual: Option<Residual>,
+    /// Envelope/structure match at the baseline placement (bucketed, 50 ms bins, ~3 s context).
+    #[serde(default)]
+    structure: Option<PairScore>,
+    /// Waveform seam Pearson at the throat (sample-level, ~250 ms) — the gate's actual decision seam.
+    #[serde(default)]
+    seams: Option<PairScore>,
+    /// Per-bracket gate scores + which stage rejected each (the authoritative skip reason).
+    #[serde(default)]
+    brackets: Vec<Bracket>,
+    /// Seam recovery / encoding-robust envelope / level at the decision seam (diagnoses dead seams).
+    #[serde(default)]
+    seam_probe: Option<SeamProbeFp>,
+    /// Donor B energy across the gap-mapped span (bridges the hole?).
+    #[serde(default)]
+    donor_interior: Option<DonorInterior>,
+    /// First-class splice summary (step + per-side peaks / peak_z).
+    #[serde(default)]
+    splice: Option<Splice>,
+    /// Wide (100 ms-bin) envelope segment-identity confirmer at the decision seam.
+    #[serde(default)]
+    wide_envelope: Option<WideEnvelopeFp>,
     #[serde(default)]
     outcome: Option<Outcome>,
+}
+
+#[derive(Deserialize)]
+struct DonorInterior {
+    rms_db: f64,
+    #[allow(dead_code)]
+    silence_fraction: f64,
+    continuous: bool,
+}
+
+#[derive(Deserialize)]
+struct Splice {
+    step_ms: f64,
+    pre_peak_r: f64,
+    post_peak_r: f64,
+    #[serde(default)]
+    pre_peak_z: Option<f64>,
+    #[serde(default)]
+    post_peak_z: Option<f64>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+struct EnvPeak {
+    #[allow(dead_code)]
+    peak_r: f64,
+    peak_lag_ms: f64,
+    #[allow(dead_code)]
+    prominence: f64,
+}
+
+#[derive(Deserialize)]
+struct WideEnvelopeFp {
+    #[serde(default)]
+    pre: Option<EnvPeak>,
+    #[serde(default)]
+    post: Option<EnvPeak>,
+}
+
+#[derive(Deserialize)]
+struct SeamProbeFp {
+    #[serde(default)]
+    pre: Option<SeamProbe>,
+    #[serde(default)]
+    post: Option<SeamProbe>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+struct SeamProbe {
+    waveform_r: f64,
+    recovered_r: f64,
+    #[allow(dead_code)]
+    recovered_lag_ms: f64,
+    #[serde(default)]
+    bandlimited_r: f64,
+    #[serde(default)]
+    spectrum_r: f64,
+    envelope_r: f64,
+    #[allow(dead_code)]
+    rms_db: f64,
+    snr_db: f64,
+}
+
+#[derive(Deserialize)]
+struct PairScore {
+    #[serde(default)]
+    baseline_pre: Option<f64>,
+    #[serde(default)]
+    baseline_post: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct Bracket {
+    #[serde(default)]
+    seam_pre: Option<f64>,
+    #[serde(default)]
+    seam_post: Option<f64>,
+    #[serde(default)]
+    failure_stage: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Residual {
+    // `Option` because the writer emits non-finite dB (a silent gap cancels to ~0 ⇒ `to_db(0) = -inf`) as
+    // JSON `null`; a required `f64` here would fail the **whole** `corpus.json` parse and silently drop
+    // every measured gap in the pair (it did — see the residual-null bug). `None` ⇒ residual unavailable.
+    #[serde(default)]
+    chosen_pre_db: Option<f64>,
+    #[serde(default)]
+    chosen_post_db: Option<f64>,
+    #[serde(default)]
+    floor_pre_db: Option<f64>,
+    #[serde(default)]
+    floor_post_db: Option<f64>,
+    #[serde(default)]
+    informative: bool,
 }
 
 #[derive(Deserialize)]
 struct Geometry {
     #[serde(default)]
     duration_secs: Option<f64>,
+    #[serde(default)]
+    a_refined_start_secs: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -69,6 +190,16 @@ struct Lag {
 #[derive(Deserialize)]
 struct LagEntry {
     peak_r: f64,
+    #[serde(default)]
+    second_peak_r: Option<f64>,
+    /// Robust uniqueness (post-rescan): z-score of the peak over the whole lag curve. `None` for older
+    /// fingerprints. Once populated this is the addressability gate (§3.6a: unique ≥ ~12 at the 1 s window).
+    /// (`prominence` is also written to the fingerprint but the analyzer gates on `peak_z`.)
+    #[serde(default)]
+    peak_z: Option<f64>,
+    /// `peak_r − second_peak_r` — prominence of the chosen lag over the tallest rival.
+    #[serde(default)]
+    prominence: Option<f64>,
     frac_lag_ms: f64,
     verdict: String,
 }
@@ -119,6 +250,71 @@ impl GapKind {
     }
 }
 
+/// Why a waveform seam is dead, from the seam probe (the measurement that was missing). Decides the
+/// *opposite* fixes: `Misaligned` → finer alignment; `CrossEncoding` → encoding-robust validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeamDiag {
+    /// Seam too quiet to score reliably (SNR below floor).
+    Quiet,
+    /// Raw waveform recovers under a fine ±lag ⇒ residual mis-alignment (the lag-best/R3 diagnostic;
+    /// shelved as a *fix* but informative — a sub-bin shift would clear the sample-level seam).
+    Misaligned,
+    /// Doesn't recover by a shift, but a **cross-codec-robust** metric (R2 band-limited / R4 spectrum)
+    /// agrees ⇒ same content, sample-level differs (cross-encoding); the validator-mismatch candidate.
+    CrossCodec,
+    /// Neither — no recovery and robust metrics low (genuinely weak / different at the seam).
+    Unresolved,
+}
+
+impl SeamDiag {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SeamDiag::Quiet => "quiet",
+            SeamDiag::Misaligned => "misaligned(R3)",
+            SeamDiag::CrossCodec => "cross-codec(R2/R4)",
+            SeamDiag::Unresolved => "unresolved",
+        }
+    }
+}
+
+/// Silence-splice classification from the **±200 ms** per-side `baseline_lag` peaks (not the ±25 ms
+/// `seam_probe.recovered_r`, which mislabels any step > 25 ms as "cross-codec"). See
+/// `docs/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the addressable
+/// silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpliceDiag {
+    /// Both shoulders align uniquely at their own lag ⇒ a silence-splice: fit each seam independently and
+    /// reconcile the `step` with a length edit (the addressable case).
+    Splice,
+    /// Both shoulders align, but a uniqueness margin is thin ⇒ the per-side lag (and so the `step`) may be
+    /// a periodic alias — confirm before trusting.
+    AliasSuspect,
+    /// A shoulder fails to reach the peak floor at **any** lag in ±200 ms ⇒ not a splice. This is the only
+    /// signature that would revive a genuine cross-encoding / different-content case.
+    OneSidedDead,
+}
+
+impl SpliceDiag {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SpliceDiag::Splice => "splice",
+            SpliceDiag::AliasSuspect => "alias-suspect",
+            SpliceDiag::OneSidedDead => "one-sided-dead",
+        }
+    }
+}
+
+const SEAM_QUIET_SNR_DB: f64 = 6.0;
+const SEAM_RECOVER_R: f64 = 0.5;
+/// R2/R4 above this (with waveform dead) is the cross-codec validator-mismatch signal.
+const SEAM_ROBUST_R: f64 = 0.5;
+/// A shoulder must reach this `peak_r` at its own lag (over the ±200 ms `baseline_lag` sweep) to count as
+/// cleanly recoverable — the both-sides-recoverable floor. Heuristic; calibrate against the corpus.
+const SPLICE_MIN_PEAK_R: f64 = 0.85;
+/// §3.6a robust-uniqueness floors (1 s window) — used when `peak_z` is present on the fingerprint.
+const SPLICE_MIN_PEAK_Z: f64 = 12.0;
+const SPLICE_MIN_PROMINENCE: f64 = 0.45;
+
 /// One gap's aggregated row.
 #[derive(Debug, Clone)]
 pub struct GapRow {
@@ -127,6 +323,8 @@ pub struct GapRow {
     pub b_id: String,
     pub index: usize,
     pub duration_secs: Option<f64>,
+    /// A-timeline position of the gap (refined start, s) — for the per-file offset-trend (drift) test.
+    pub a_start_secs: Option<f64>,
     /// Plan classification from the fingerprint outcome (`fillable` / …). Today the fingerprint only
     /// characterizes `fillable` gaps, so this is uniform — surfaced for validation + future-proofing.
     pub plan_kind: Option<String>,
@@ -141,6 +339,54 @@ pub struct GapRow {
     pub frac_lag_post_ms: Option<f64>,
     pub peak_r_pre: Option<f64>,
     pub peak_r_post: Option<f64>,
+    /// **Uniqueness margin** = worst (smaller) of pre/post `peak_r − second_peak_r`. Low ⇒ the lag
+    /// match is ambiguous (a competing peak nearly as tall — periodic content), so the `timing_offset` /
+    /// same-source verdict may be a false positive. `None` for fingerprints predating `second_peak_r`.
+    pub uniqueness_margin: Option<f64>,
+    /// **Robust uniqueness** = worst (smaller) of pre/post `peak_z` (peak's z-score over the lag curve).
+    /// The §3.6a-validated metric that separates registration from periodicity at the 1 s window
+    /// (unique ≥ ~12). `None` for fingerprints predating the rescan that captures `peak_z`. Preferred over
+    /// `uniqueness_margin` once present.
+    pub uniqueness_z: Option<f64>,
+    /// Worst (smaller) of pre/post lag-curve **prominence** (`peak_r − second_peak_r`). Paired with
+    /// `uniqueness_z` for the §3.6a addressability gate once the rescan populates both.
+    pub uniqueness_prom: Option<f64>,
+    /// First-class splice step (`post_lag − pre_lag`) when the fingerprint carries `splice`.
+    pub splice_step_ms: Option<f64>,
+    /// Donor B bridges the gap interior without a sub-floor hole (from `donor_interior.continuous`).
+    pub donor_continuous: Option<bool>,
+    /// Donor-interior RMS (dBFS) over the gap-mapped B span.
+    pub donor_rms_db: Option<f64>,
+    /// Wide-envelope (100 ms-bin) peak lag at the pre seam — cross-scale check vs `baseline_lag`.
+    pub wide_env_pre_lag_ms: Option<f64>,
+    pub wide_env_post_lag_ms: Option<f64>,
+    /// **Residual headroom** (dB) = worst-side `chosen_db − floor_db`. ≤ 0 ⇒ B cancels A to the noise
+    /// floor ⇒ genuine same source (the strong confirm); > 0 ⇒ residual above floor ⇒ B differs.
+    pub residual_headroom_db: Option<f64>,
+    /// Whether the residual floor was measurable (the headroom is interpretable).
+    pub residual_informative: Option<bool>,
+    /// `min(pre,post)` envelope/structure match at baseline — how well the **placement** matched.
+    pub structure_min: Option<f64>,
+    /// `min(pre,post)` waveform seam Pearson at the throat — the gate's **decision** seam.
+    pub seam_min: Option<f64>,
+    /// Best `min(pre,post)` waveform seam any bracket reached (how close it got to passing).
+    pub best_bracket_seam: Option<f64>,
+    /// Anchor/grid brackets the gate scored, and how many **passed** (no `failure_stage`). Patch/skip is
+    /// **bracket-pass success, not step magnitude** (review C1): ≥1 passing ⇒ patch; 0 passing ⇒ skip. The
+    /// dual-fit target is the *bracket-exhausted* skips, not all stepped gaps.
+    pub brackets_total: usize,
+    pub brackets_passing: usize,
+    /// Failure stage of the bracket that came closest (`structure_align`/`structure_floor`/
+    /// `waveform_floor`/`residual`); `None` if a bracket passed (gap patched).
+    pub closest_failure_stage: Option<String>,
+    /// Seam-probe metrics at the worst (most-blocking) side, and the resulting diagnosis. `None` until
+    /// the corpus is re-fingerprinted with the seam probe.
+    pub seam_recovered_r: Option<f64>,
+    pub seam_bandlimited_r: Option<f64>,
+    pub seam_spectrum_r: Option<f64>,
+    pub seam_envelope_r: Option<f64>,
+    pub seam_snr_db: Option<f64>,
+    pub seam_diag: Option<SeamDiag>,
     pub skew: SkewClass,
 }
 
@@ -153,6 +399,86 @@ impl GapRow {
     /// `|frac_lag_pre − frac_lag_post|` in ms when both are present.
     pub fn drift_ms(&self) -> Option<f64> {
         Some((self.frac_lag_pre_ms? - self.frac_lag_post_ms?).abs())
+    }
+
+    /// **Registration decomposition — offset:** the signed lag at the gap centre, `(pre + post)/2`.
+    /// This is "where the kept content sits in B" — a constant clip offset / clip-drift residual that a
+    /// single shift would fix. (The structure search centres B on the gap, so this is the average pull.)
+    pub fn seam_mid_ms(&self) -> Option<f64> {
+        Some((self.frac_lag_pre_ms? + self.frac_lag_post_ms?) / 2.0)
+    }
+
+    /// **Registration decomposition — step:** the signed `post − pre`. Zero ⇒ a clean constant-offset
+    /// dropout (one shift aligns both seams). A large step ⇒ the A↔B timeline *steps* at the gap — the
+    /// two kept sides need different alignment (an edit / length discontinuity), recoverable by neither a
+    /// shift nor a smooth warp. (Whether a large step is a *real* divergence or a spurious lag lock is
+    /// what the `uniqueness_margin` then decides.)
+    pub fn seam_step_ms(&self) -> Option<f64> {
+        self.splice_step_ms
+            .or_else(|| Some(self.frac_lag_post_ms? - self.frac_lag_pre_ms?))
+    }
+
+    /// Wide-envelope peak lag agrees with fine waveform lag within this tolerance (ms).
+    pub fn wide_env_agrees(&self, tol_ms: f64) -> Option<bool> {
+        let pre_ok = match (self.frac_lag_pre_ms, self.wide_env_pre_lag_ms) {
+            (Some(f), Some(w)) => (f - w).abs() <= tol_ms,
+            _ => true,
+        };
+        let post_ok = match (self.frac_lag_post_ms, self.wide_env_post_lag_ms) {
+            (Some(f), Some(w)) => (f - w).abs() <= tol_ms,
+            _ => true,
+        };
+        if self.wide_env_pre_lag_ms.is_none() && self.wide_env_post_lag_ms.is_none() {
+            None
+        } else {
+            Some(pre_ok && post_ok)
+        }
+    }
+
+    /// **Silence-splice classification** from the ±200 ms per-side `baseline_lag` peaks — the
+    /// authoritative read (the ±25 ms `seam_probe.recovered_r` mislabels any step > 25 ms). `Splice` =
+    /// both shoulders clean & unique ⇒ addressable by independent fit + length reconciliation;
+    /// `OneSidedDead` = a shoulder aligns at no lag ⇒ the only genuine cross-encoding candidate. `None`
+    /// when a side has no lag peak (can't judge).
+    pub fn splice_diag(&self) -> Option<SpliceDiag> {
+        let (pre, post) = (self.peak_r_pre?, self.peak_r_post?);
+        if pre.min(post) < SPLICE_MIN_PEAK_R {
+            return Some(SpliceDiag::OneSidedDead);
+        }
+        // §3.6a: prefer peak_z + prominence when the rescan captured them on both sides.
+        if let (Some(z), Some(prom)) = (self.uniqueness_z, self.uniqueness_prom) {
+            if z < SPLICE_MIN_PEAK_Z || prom < SPLICE_MIN_PROMINENCE {
+                return Some(SpliceDiag::AliasSuspect);
+            }
+            return Some(SpliceDiag::Splice);
+        }
+        if self.uniqueness_margin.is_some_and(|m| m < LOW_UNIQUENESS_MARGIN) {
+            Some(SpliceDiag::AliasSuspect)
+        } else {
+            Some(SpliceDiag::Splice)
+        }
+    }
+
+    /// Both shoulders reach the peak floor at their own lag AND the match is unique ⇒ the step is a
+    /// trustworthy splice amount the length-reconciliation repair can act on.
+    pub fn both_sides_recoverable(&self) -> bool {
+        self.splice_diag() == Some(SpliceDiag::Splice)
+    }
+
+    /// The gate scored brackets but **none passed** — anchor/boundary search is exhausted. This (not step
+    /// magnitude) is what makes a gap skip (review C1). `false` for patched gaps and gaps with no brackets.
+    pub fn bracket_exhausted(&self) -> bool {
+        self.brackets_total > 0 && self.brackets_passing == 0
+    }
+
+    /// A gap dual-fit should target: a **skip** whose brackets are exhausted (no single placement passes)
+    /// yet **both shoulders recover at their own lag** — the residual that a per-seam fit + length
+    /// reconciliation could rescue, where today's boundary search cannot. Distinct from a gap that already
+    /// patches (≥1 bracket passes) — dual-fit must NOT run on those.
+    pub fn dualfit_candidate(&self) -> bool {
+        self.outcome_tier.as_deref() == Some("skip")
+            && self.bracket_exhausted()
+            && self.both_sides_recoverable()
     }
 
     /// Largest seam-offset magnitude (ms) seen on either side — recoverability needs this within the
@@ -180,6 +506,12 @@ pub struct CorpusReport {
 
 const DEFAULT_DRIFT_EPS_MS: f64 = 1.0;
 const DEFAULT_TAIL_SECS: f64 = 30.0;
+/// A uniqueness margin below this flags a same-source verdict as **periodicity-suspect** (a competing
+/// lag peak nearly as tall). Heuristic; calibrate against the corpus.
+const LOW_UNIQUENESS_MARGIN: f64 = 0.30;
+/// Below this `|seam step|` (ms) the gap is a **clean constant-offset** dropout (one shift aligns both
+/// seams); above it the A↔B timeline steps at the gap. Heuristic; calibrate against the corpus.
+const CLEAN_STEP_MS: f64 = 2.0;
 
 /// Aggregate every A/B-pair `corpus.json` found under `roots` (each root is scanned for its own
 /// `corpus.json` and for immediate subdirs that have one). `drift_eps_ms` splits constant vs drift;
@@ -299,6 +631,36 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
     let frac_lag_post_ms = post.map(|s| s.frac_lag_ms);
     let duration_secs = gap.geometry.as_ref().and_then(|g| g.duration_secs);
     let has_lag = lag.is_some();
+    let seam = gap.seam_probe.as_ref().and_then(worst_seam_side);
+
+    // Uniqueness margin: peak_r − second_peak_r per seam; the worst (min) over pre/post is the gap's.
+    let margin = |s: &LagEntry| s.second_peak_r.map(|sp| s.peak_r - sp);
+    let worst = |a: Option<f64>, b: Option<f64>| match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    let uniqueness_margin = worst(pre.and_then(margin), post.and_then(margin));
+    // Robust uniqueness (post-rescan): worst (min) of pre/post peak_z and prominence.
+    let uniqueness_z = worst(pre.and_then(|s| s.peak_z), post.and_then(|s| s.peak_z));
+    let uniqueness_prom = worst(pre.and_then(|s| s.prominence), post.and_then(|s| s.prominence));
+
+    // First-class splice / donor / wide-envelope when present (post-rescan).
+    let splice = gap.splice.as_ref();
+    let peak_r_pre = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|s| s.peak_r));
+    let peak_r_post = splice.map(|s| s.post_peak_r).or_else(|| post.map(|s| s.peak_r));
+    let splice_step_ms = splice.map(|s| s.step_ms);
+    let uniqueness_z = splice
+        .map(|s| {
+            match (s.pre_peak_z, s.post_peak_z) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => uniqueness_z,
+            }
+        })
+        .unwrap_or(uniqueness_z);
 
     let is_timing = verdict.as_deref() == Some("timing_offset");
     let skew = match (is_timing, frac_lag_pre_ms, frac_lag_post_ms) {
@@ -322,6 +684,7 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         b_id: source.b_source.id.clone(),
         index: gap.index,
         duration_secs,
+        a_start_secs: gap.geometry.as_ref().and_then(|g| g.a_refined_start_secs),
         plan_kind: gap.outcome.as_ref().and_then(|o| o.plan_kind.clone()),
         kind,
         verdict,
@@ -329,9 +692,88 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         skip_reason: gap.outcome.as_ref().and_then(|o| o.skip_reason.clone()),
         frac_lag_pre_ms,
         frac_lag_post_ms,
-        peak_r_pre: pre.map(|s| s.peak_r),
-        peak_r_post: post.map(|s| s.peak_r),
+        peak_r_pre,
+        peak_r_post,
+        uniqueness_margin,
+        uniqueness_z,
+        uniqueness_prom,
+        splice_step_ms,
+        donor_continuous: gap.donor_interior.as_ref().map(|d| d.continuous),
+        donor_rms_db: gap.donor_interior.as_ref().map(|d| d.rms_db),
+        wide_env_pre_lag_ms: gap.wide_envelope.as_ref().and_then(|w| w.pre.map(|p| p.peak_lag_ms)),
+        wide_env_post_lag_ms: gap.wide_envelope.as_ref().and_then(|w| w.post.map(|p| p.peak_lag_ms)),
+        // Worst (least-cancelling) side: max of the two headrooms. `None` if any dB was null (non-finite).
+        residual_headroom_db: gap.residual.as_ref().and_then(|r| {
+            match (r.chosen_pre_db, r.floor_pre_db, r.chosen_post_db, r.floor_post_db) {
+                (Some(cp), Some(fp), Some(cq), Some(fq)) => Some((cp - fp).max(cq - fq)),
+                _ => None,
+            }
+        }),
+        residual_informative: gap.residual.as_ref().map(|r| r.informative),
+        structure_min: gap.structure.as_ref().and_then(pair_min),
+        seam_min: gap.seams.as_ref().and_then(pair_min),
+        best_bracket_seam: gap
+            .brackets
+            .iter()
+            .filter_map(|b| match (b.seam_pre, b.seam_post) {
+                (Some(a), Some(c)) => Some(a.min(c)),
+                _ => None,
+            })
+            .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v)))),
+        brackets_total: gap.brackets.len(),
+        brackets_passing: gap.brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
+        // Failure stage of the bracket with the highest min-seam (the closest to passing).
+        closest_failure_stage: gap
+            .brackets
+            .iter()
+            .filter(|b| b.failure_stage.is_some())
+            .max_by(|x, y| {
+                let mn = |b: &Bracket| match (b.seam_pre, b.seam_post) {
+                    (Some(a), Some(c)) => a.min(c),
+                    _ => f64::NEG_INFINITY,
+                };
+                mn(x).partial_cmp(&mn(y)).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .and_then(|b| b.failure_stage.clone()),
+        seam_recovered_r: seam.map(|p| p.recovered_r),
+        seam_bandlimited_r: seam.map(|p| p.bandlimited_r),
+        seam_spectrum_r: seam.map(|p| p.spectrum_r),
+        seam_envelope_r: seam.map(|p| p.envelope_r),
+        seam_snr_db: seam.map(|p| p.snr_db),
+        seam_diag: seam.map(seam_diag),
         skew,
+    }
+}
+
+/// The worst (most-blocking) side of a seam probe: the present side with the lower `waveform_r`.
+fn worst_seam_side(p: &SeamProbeFp) -> Option<SeamProbe> {
+    match (p.pre, p.post) {
+        (Some(a), Some(b)) => Some(if a.waveform_r <= b.waveform_r { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// Classify a dead waveform seam from the probe — the measurement that was missing. Simplest-fix-first:
+/// quiet → a sub-bin shift recovers the raw waveform (R3) → a cross-codec-robust metric agrees (R2/R4)
+/// → none.
+fn seam_diag(p: SeamProbe) -> SeamDiag {
+    if p.snr_db < SEAM_QUIET_SNR_DB {
+        SeamDiag::Quiet
+    } else if p.recovered_r >= SEAM_RECOVER_R {
+        SeamDiag::Misaligned
+    } else if p.bandlimited_r.max(p.spectrum_r) >= SEAM_ROBUST_R {
+        SeamDiag::CrossCodec
+    } else {
+        SeamDiag::Unresolved
+    }
+}
+
+fn pair_min(p: &PairScore) -> Option<f64> {
+    match (p.baseline_pre, p.baseline_post) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        _ => None,
     }
 }
 
@@ -354,6 +796,48 @@ fn stats(mut v: Vec<f64>) -> Option<(f64, f64, f64)> {
     let max = v[v.len() - 1];
     let med = v[v.len() / 2];
     Some((min, med, max))
+}
+
+/// Least-squares line `y = slope·x + b`; returns `(slope, residual_std)`. `None` for < 2 points or no
+/// x-spread. Used to test the offset for **clip drift** (a real drift is a consistent slope vs gap time
+/// with small residual; a per-gap-local offset has a large residual around any line).
+fn linfit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let n = pts.len();
+    if n < 2 {
+        return None;
+    }
+    let nf = n as f64;
+    let (sx, sy) = pts.iter().fold((0.0, 0.0), |(ax, ay), &(x, y)| (ax + x, ay + y));
+    let (mx, my) = (sx / nf, sy / nf);
+    let (mut sxx, mut sxy) = (0.0, 0.0);
+    for &(x, y) in pts {
+        sxx += (x - mx) * (x - mx);
+        sxy += (x - mx) * (y - my);
+    }
+    if sxx <= f64::EPSILON {
+        return None;
+    }
+    let slope = sxy / sxx;
+    let b = my - slope * mx;
+    let resid = (pts.iter().map(|&(x, y)| (y - (slope * x + b)).powi(2)).sum::<f64>() / nf).sqrt();
+    Some((slope, resid))
+}
+
+/// RMS of each value folded into `[−q/2, q/2]` — small ⇒ the values cluster near multiples of `q` (a
+/// dropped/duplicated buffer or video frame leaves the step quantized to a block size).
+fn quantization_residual(values: &[f64], q: f64) -> f64 {
+    if values.is_empty() || q <= 0.0 {
+        return f64::INFINITY;
+    }
+    let folded: f64 = values
+        .iter()
+        .map(|&v| {
+            let r = v.rem_euclid(q);
+            let r = if r > q / 2.0 { r - q } else { r };
+            r * r
+        })
+        .sum();
+    (folded / values.len() as f64).sqrt()
 }
 
 impl CorpusReport {
@@ -411,6 +895,53 @@ impl CorpusReport {
         let _ = writeln!(s, "── among matched ({m}) ──");
         let _ = writeln!(s, "  verdict: {}", vstr.join(" · "));
 
+        // Uniqueness — how trustworthy the same-source verdicts are (low margin ⇒ a competing lag peak
+        // nearly as tall ⇒ possible periodic false positive). Guards the "all same-source" headline.
+        let margins: Vec<f64> = matched.iter().filter_map(|r| r.uniqueness_margin).collect();
+        if margins.is_empty() {
+            let _ = writeln!(
+                s,
+                "  uniqueness: (no second_peak_r — re-fingerprint with the current binary to populate)"
+            );
+        } else if let Some((mn, md, _)) = stats(margins.clone()) {
+            let suspect = margins.iter().filter(|&&v| v < LOW_UNIQUENESS_MARGIN).count();
+            let _ = writeln!(
+                s,
+                "  uniqueness: {suspect}/{} periodicity-suspect (margin < {:.2}); margin min {mn:.2} / median {md:.2}",
+                margins.len(),
+                LOW_UNIQUENESS_MARGIN
+            );
+        }
+
+        // Residual — the strong same-source confirm. Cross-checks the lag verdict: does B actually
+        // cancel A to the noise floor (informative & headroom ≤ 0)?
+        let with_resid: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.residual_headroom_db.is_some())
+            .collect();
+        if with_resid.is_empty() {
+            let _ = writeln!(
+                s,
+                "  residual: (no residual probe — re-fingerprint with the current binary to populate)"
+            );
+        } else {
+            let confirmed = with_resid
+                .iter()
+                .filter(|r| {
+                    r.residual_informative == Some(true)
+                        && r.residual_headroom_db.is_some_and(|h| h <= 0.0)
+                })
+                .count();
+            let headrooms: Vec<f64> = with_resid.iter().filter_map(|r| r.residual_headroom_db).collect();
+            if let Some((mn, md, mx)) = stats(headrooms) {
+                let _ = writeln!(
+                    s,
+                    "  residual: {confirmed}/{} same-source-confirmed (informative & headroom ≤ 0); headroom dB min {mn:.1} / median {md:.1} / max {mx:.1}",
+                    with_resid.len()
+                );
+            }
+        }
+
         // Outcome among matched.
         let mpatched = matched.iter().filter(|r| r.patched()).count();
         let mskipped = matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).count();
@@ -465,6 +996,29 @@ impl CorpusReport {
             .count();
         let _ = writeln!(s, "    (contrast) decorrelated AND skipped = {decorr_skipped}");
 
+        // Registration decomposition (decision seam): offset (where in B — a shiftable clip-drift
+        // residual) vs step (the pre↔post discontinuity). `step ≈ 0` ⇒ clean constant offset; large
+        // `step` ⇒ the A↔B timeline steps at the gap (an edit/length divergence, not shift- or
+        // warp-recoverable). NOTE: a large step alone does not prove real divergence vs a spurious lag
+        // lock — `uniqueness_margin` decides that (needs the current binary's `second_peak_r`).
+        let steps_abs: Vec<f64> = matched.iter().filter_map(|r| r.seam_step_ms().map(f64::abs)).collect();
+        if !steps_abs.is_empty() {
+            let clean = steps_abs.iter().filter(|&&v| v < CLEAN_STEP_MS).count();
+            let _ = writeln!(
+                s,
+                "  registration: {clean}/{} clean (|step| < {:.0} ms, ≈ constant offset); {} stepped",
+                steps_abs.len(),
+                CLEAN_STEP_MS,
+                steps_abs.len() - clean
+            );
+            if let Some((mn, md, mx)) = stats(matched.iter().filter_map(|r| r.seam_mid_ms().map(f64::abs)).collect()) {
+                let _ = writeln!(s, "    |offset| ms (shiftable): min {mn:.1} / median {md:.1} / max {mx:.1}");
+            }
+            if let Some((mn, md, mx)) = stats(steps_abs.clone()) {
+                let _ = writeln!(s, "    |step| ms (divergence) : min {mn:.1} / median {md:.1} / max {mx:.1}");
+            }
+        }
+
         // Per-pair breakdown (matched / skipped-matched).
         let _ = writeln!(s, "per pair (matched / skipped-matched):");
         let mut by_pair: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
@@ -481,18 +1035,443 @@ impl CorpusReport {
         s
     }
 
+    /// **Mechanism checks** — is the pre↔post step *clip drift* or a *local discontinuity* (dropped
+    /// buffer / frame)? Two tests: (1) is the offset clip drift (a consistent slope vs gap time per
+    /// file)? (2) does the step cluster near a sample-block / video-frame size (the buffer-drop tell)?
+    pub fn mechanism_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(s, "=== mechanism: is the step clip drift, or a local discontinuity? ===");
+
+        // (1) Offset trend per pair — clip drift ⇒ a consistent slope with small residual.
+        let _ = writeln!(s, "offset (mid) vs gap time, per pair  [drift ⇒ residual ≪ offset-spread]:");
+        let mut by_pair: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+        for r in self.matched() {
+            if let (Some(t), Some(mid)) = (r.a_start_secs, r.seam_mid_ms()) {
+                by_pair.entry(r.pair.as_str()).or_default().push((t, mid));
+            }
+        }
+        for (pair, pts) in &by_pair {
+            let spread = stats(pts.iter().map(|&(_, y)| y).collect())
+                .map(|(mn, _, mx)| mx - mn)
+                .unwrap_or(0.0);
+            let xspan = {
+                let xs: Vec<f64> = pts.iter().map(|&(x, _)| x).collect();
+                stats(xs).map(|(mn, _, mx)| mx - mn).unwrap_or(0.0)
+            };
+            match linfit(pts) {
+                // Drift only if the line's rise over the file (|slope|·span) explains most of the
+                // offset spread. A ~0 slope (offset scattered, no time trend) is *not* drift. Fewer
+                // than 4 gaps can't tell a line from scatter — don't render a verdict.
+                Some((slope, resid)) => {
+                    let explained = slope.abs() * xspan;
+                    let verdict = if pts.len() < 4 {
+                        "too few to judge"
+                    } else if explained > 0.5 * spread && spread > 4.0 {
+                        "drift-like"
+                    } else {
+                        "local (not drift)"
+                    };
+                    let _ = writeln!(
+                        s,
+                        "  {pair:<10} {} gaps: slope {slope:+.3} ms/s → {explained:.1} ms over file, residual {resid:.1} ms, spread {spread:.1} ms  → {verdict}",
+                        pts.len()
+                    );
+                }
+                None => {
+                    let _ = writeln!(s, "  {pair:<10} (too few gaps)");
+                }
+            }
+        }
+
+        // (2) Step quantization — a dropped/duplicated buffer or frame leaves |step| near a block size.
+        let steps: Vec<f64> = self
+            .matched()
+            .iter()
+            .filter_map(|r| r.seam_step_ms().map(f64::abs))
+            .filter(|&v| v > CLEAN_STEP_MS)
+            .collect();
+        let _ = writeln!(
+            s,
+            "step quantization over {} stepped gaps  [ratio = residual / chance (q/√12); ≪ 1 ⇒ quantized]:",
+            steps.len()
+        );
+        let candidates: [(&str, f64); 7] = [
+            ("512 smp", 512.0 / 48.0),
+            ("1024 smp", 1024.0 / 48.0),
+            ("2048 smp", 2048.0 / 48.0),
+            ("20ms/50fps", 20.0),
+            ("33.4ms/30fps", 1001.0 / 30.0),
+            ("40ms/25fps", 40.0),
+            ("41.7ms/24fps", 1001.0 / 24.0),
+        ];
+        // A small *residual* is meaningless on its own (a tiny q always fits). Compare to the chance
+        // level for uniform values, `q/√12`: a real drop event sits well below it (ratio ≪ 1).
+        let mut best: Option<(&str, f64)> = None;
+        for (label, q) in candidates {
+            let resid = quantization_residual(&steps, q);
+            let ratio = resid / (q / 12.0_f64.sqrt());
+            let _ = writeln!(s, "    {label:<13} (q={q:5.1} ms): residual {resid:4.1} ms  ({ratio:.2}× chance)");
+            if best.is_none_or(|(_, br)| ratio < br) {
+                best = Some((label, ratio));
+            }
+        }
+        match best {
+            Some((label, ratio)) if ratio < 0.6 => {
+                let _ = writeln!(s, "  → quantized to {label} ({ratio:.2}× chance) — supports a discrete drop event");
+            }
+            Some((_, ratio)) => {
+                let _ = writeln!(s, "  → no quantization (best {ratio:.2}× chance ≈ random) — steps are continuous, NOT a clean block-drop (or measurements are periodicity-corrupted; needs uniqueness)");
+            }
+            None => {}
+        }
+        s
+    }
+
+    /// **Trustworthy funnel** — does *any* clean recoverable timing offset survive once we demand the
+    /// match be unique (not periodicity-suspect)? Filters matched gaps by `uniqueness_margin`, then
+    /// residual-confirmed same-source, then clean step, and lists the high-uniqueness survivors so they
+    /// can be eyeballed. If nothing clean survives, the timing-offset rescue is settled no-go.
+    pub fn trustworthy_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let matched = self.matched();
+        let unique: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.uniqueness_margin.is_some_and(|m| m >= LOW_UNIQUENESS_MARGIN))
+            .collect();
+        let confirmed: Vec<&&&GapRow> = unique
+            .iter()
+            .filter(|r| {
+                r.residual_informative == Some(true)
+                    && r.residual_headroom_db.is_some_and(|h| h <= 0.0)
+            })
+            .collect();
+        let clean: usize = confirmed
+            .iter()
+            .filter(|r| r.seam_step_ms().is_some_and(|st| st.abs() < CLEAN_STEP_MS))
+            .count();
+
+        let _ = writeln!(s, "=== trustworthy funnel (is any clean recoverable offset left?) ===");
+        let _ = writeln!(
+            s,
+            "  matched {} → unique (margin ≥ {:.2}) {} → +residual-confirmed {} → +clean step (<{:.0} ms) {}",
+            matched.len(),
+            LOW_UNIQUENESS_MARGIN,
+            unique.len(),
+            confirmed.len(),
+            CLEAN_STEP_MS,
+            clean
+        );
+        if unique.is_empty() {
+            let _ = writeln!(s, "  → no unique-peak gaps: every match is periodicity-suspect. Rescue NO-GO.");
+            return s;
+        }
+        let _ = writeln!(s, "  high-uniqueness survivors (pair idx | offset step uniq | residual | outcome):");
+        for r in &unique {
+            let _ = writeln!(
+                s,
+                "    {:<12} g{:<3} | off {:>7.1} step {:>7.1} uniq {:.2} | resid {:>5.1} dB {} | {}",
+                r.pair,
+                r.index,
+                r.seam_mid_ms().unwrap_or(f64::NAN),
+                r.seam_step_ms().unwrap_or(f64::NAN),
+                r.uniqueness_margin.unwrap_or(f64::NAN),
+                r.residual_headroom_db.unwrap_or(f64::NAN),
+                if r.residual_informative == Some(true) { "inf" } else { "—" },
+                if r.patched() { "patched" } else { "skip" },
+            );
+        }
+        s
+    }
+
+    /// **Gate decision** — what actually drives patch vs skip (as opposed to the lag overlay, which is
+    /// orthogonal to it). Compares the gate's own scores — **structure** (envelope placement) vs
+    /// **seam** (sample-level waveform Pearson) — between patched and skipped gaps, and tallies the
+    /// `failure_stage` of the closest bracket on skips. The diagnostic test of "placed by envelope but
+    /// rejected by the waveform seam": skipped gaps with structure OK yet seam below the floor.
+    pub fn gate_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let matched = self.matched();
+        let patched: Vec<&&GapRow> = matched.iter().filter(|r| r.patched()).collect();
+        let skipped: Vec<&&GapRow> =
+            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        let _ = writeln!(s, "=== gate decision: structure (placement) vs seam (waveform) ===");
+
+        let group = |label: &str, g: &[&&GapRow], out: &mut String| {
+            let st = stats(g.iter().filter_map(|r| r.structure_min).collect());
+            let sm = stats(g.iter().filter_map(|r| r.seam_min).collect());
+            let bb = stats(g.iter().filter_map(|r| r.best_bracket_seam).collect());
+            let f = |o: Option<(f64, f64, f64)>| {
+                o.map(|(mn, md, mx)| format!("min {mn:.2} / med {md:.2} / max {mx:.2}"))
+                    .unwrap_or_else(|| "—".into())
+            };
+            let _ = writeln!(out, "  {label} ({}):", g.len());
+            let _ = writeln!(out, "    structure (envelope) min : {}", f(st));
+            let _ = writeln!(out, "    seam (waveform) @throat  : {}", f(sm));
+            let _ = writeln!(out, "    best bracket seam        : {}", f(bb));
+        };
+        group("patched", &patched, &mut s);
+        group("skipped", &skipped, &mut s);
+
+        // Skip reasons (closest bracket's failure stage).
+        let mut stages: BTreeMap<&str, usize> = BTreeMap::new();
+        for r in &skipped {
+            *stages.entry(r.closest_failure_stage.as_deref().unwrap_or("(none)")).or_default() += 1;
+        }
+        let _ = writeln!(s, "  skipped failure stages (closest bracket): {stages:?}");
+
+        // The hypothesis test: structure passed (≥ 0.5) but waveform seam below the High floor (0.35).
+        let placed_but_rejected = skipped
+            .iter()
+            .filter(|r| r.structure_min.is_some_and(|v| v >= 0.5) && r.seam_min.is_some_and(|v| v < 0.35))
+            .count();
+        let _ = writeln!(
+            s,
+            "  → skipped with structure ≥ 0.5 but waveform seam < 0.35 (placed, waveform-rejected): {}/{}",
+            placed_but_rejected,
+            skipped.len()
+        );
+        s
+    }
+
+    /// **Seam diagnosis** — the missing measurement. For skipped gaps (dead waveform seam), classify
+    /// *why* from the seam probe: `misaligned` (recovers under fine lag → finer alignment), `cross-
+    /// encoding` (envelope matches, waveform won't align → encoding-robust metric), `quiet`, or
+    /// `unresolved`. This is the data that decides the fix.
+    pub fn seam_probe_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(s, "=== seam diagnosis: why is the waveform seam dead? ===");
+        let _ = writeln!(
+            s,
+            "  (NOTE: recov/cross-codec here use the ±25 ms seam_probe — see the silence-splice view for the ±200 ms truth)"
+        );
+        let matched = self.matched();
+        let skipped: Vec<&&GapRow> =
+            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        if skipped.iter().all(|r| r.seam_diag.is_none()) {
+            let _ = writeln!(s, "  (no seam probe — re-fingerprint with the current binary to populate)");
+            return s;
+        }
+        let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+        for r in &skipped {
+            if let Some(d) = r.seam_diag {
+                *tally.entry(d.as_str()).or_default() += 1;
+            }
+        }
+        let _ = writeln!(s, "  skipped seam diagnosis: {tally:?}");
+
+        // The cross-codec hypothesis (plan §3): robust (R2 or R4) ≥ 0.5 while waveform seam < 0.35.
+        let with_diag = skipped.iter().filter(|r| r.seam_diag.is_some()).count();
+        let robust_high = skipped
+            .iter()
+            .filter(|r| {
+                r.seam_min.is_some_and(|w| w < 0.35)
+                    && r.seam_bandlimited_r.unwrap_or(0.0).max(r.seam_spectrum_r.unwrap_or(0.0))
+                        >= SEAM_ROBUST_R
+            })
+            .count();
+        let _ = writeln!(
+            s,
+            "  hypothesis (robust ≥ {:.2} while waveform < 0.35): {robust_high}/{with_diag}",
+            SEAM_ROBUST_R
+        );
+
+        for r in &skipped {
+            if let Some(d) = r.seam_diag {
+                let _ = writeln!(
+                    s,
+                    "    {:<12} g{:<3} | wav {:.2} R2 {:.2} R4 {:.2} env {:.2} recov {:.2} snr {:>5.1} → {}",
+                    r.pair,
+                    r.index,
+                    r.seam_min.unwrap_or(f64::NAN),
+                    r.seam_bandlimited_r.unwrap_or(f64::NAN),
+                    r.seam_spectrum_r.unwrap_or(f64::NAN),
+                    r.seam_envelope_r.unwrap_or(f64::NAN),
+                    r.seam_recovered_r.unwrap_or(f64::NAN),
+                    r.seam_snr_db.unwrap_or(f64::NAN),
+                    d.as_str()
+                );
+            }
+        }
+        s
+    }
+
+    /// **Silence-splice view** — the authoritative seam read, from the ±200 ms per-side `baseline_lag`
+    /// peaks (the ±25 ms `seam_probe.recovered_r` underlying `seam_probe_text` mislabels any step > 25 ms
+    /// as "cross-codec"). Classifies every matched gap: `splice` (both shoulders clean & unique at their
+    /// own lag, separated by a step — addressable by independent fit + length reconciliation),
+    /// `alias-suspect` (a thin uniqueness margin), or `one-sided-dead` (a shoulder aligns at no lag — the
+    /// only genuine cross-encoding candidate). Lists the skipped gaps with both per-side peaks + the step.
+    pub fn splice_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(
+            s,
+            "=== silence-splice view (±200 ms baseline per-side; supersedes the ±25 ms recov diagnosis) ==="
+        );
+        let matched = self.matched();
+
+        // Tally over all matched gaps (the mechanism is shared patch/skip).
+        let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut classified = 0usize;
+        for r in &matched {
+            if let Some(d) = r.splice_diag() {
+                *tally.entry(d.as_str()).or_default() += 1;
+                classified += 1;
+            }
+        }
+        if classified == 0 {
+            let _ = writeln!(s, "  (no per-side baseline_lag peaks — nothing to classify)");
+            return s;
+        }
+        let tstr: Vec<String> = tally.iter().map(|(k, c)| format!("{k} {c}")).collect();
+        let _ = writeln!(s, "  among matched ({classified}): {}", tstr.join(" · "));
+        let recoverable = matched.iter().filter(|r| r.both_sides_recoverable()).count();
+        let _ = writeln!(
+            s,
+            "  both-sides-recoverable (peak_r ≥ {:.2} each AND uniqueness ≥ {:.2} or peak_z ≥ {:.0}/prom ≥ {:.2}): {}/{}",
+            SPLICE_MIN_PEAK_R, LOW_UNIQUENESS_MARGIN, SPLICE_MIN_PEAK_Z, SPLICE_MIN_PROMINENCE, recoverable, classified
+        );
+
+        // The skipped gaps in detail — these are the repair targets.
+        let skipped: Vec<&&GapRow> =
+            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        if !skipped.is_empty() {
+            let _ = writeln!(s, "  skipped gaps (pre peak@lag | post peak@lag | step | uniq → class):");
+            for r in &skipped {
+                let cls = r.splice_diag().map(|d| d.as_str()).unwrap_or("—");
+                let z = r.uniqueness_z.map(|v| format!("z {v:.1}")).unwrap_or_else(|| "z —".into());
+                let _ = writeln!(
+                    s,
+                    "    {:<12} g{:<3} | pre {:.3}@{:>7.1} | post {:.3}@{:>7.1} | step {:>7.1} | uniq {:.2} {} → {}",
+                    r.pair,
+                    r.index,
+                    r.peak_r_pre.unwrap_or(f64::NAN),
+                    r.frac_lag_pre_ms.unwrap_or(f64::NAN),
+                    r.peak_r_post.unwrap_or(f64::NAN),
+                    r.frac_lag_post_ms.unwrap_or(f64::NAN),
+                    r.seam_step_ms().unwrap_or(f64::NAN),
+                    r.uniqueness_margin.unwrap_or(f64::NAN),
+                    z,
+                    cls,
+                );
+            }
+        }
+
+        // One-sided-dead anywhere is the signal that would revive a cross-encoding validator — call it out.
+        let dead: Vec<&&GapRow> =
+            matched.iter().filter(|r| r.splice_diag() == Some(SpliceDiag::OneSidedDead)).collect();
+        let _ = writeln!(
+            s,
+            "  one-sided-dead (a shoulder aligns at NO lag — would revive cross-encoding): {}",
+            dead.len()
+        );
+        for r in &dead {
+            let _ = writeln!(
+                s,
+                "    {:<12} g{:<3} | pre {:.3} | post {:.3} | {}",
+                r.pair,
+                r.index,
+                r.peak_r_pre.unwrap_or(f64::NAN),
+                r.peak_r_post.unwrap_or(f64::NAN),
+                if r.patched() { "patched" } else { "skip" },
+            );
+        }
+        s
+    }
+
+    /// **Dual-fit scope (review C1/S4)** — proves patch/skip is *bracket-search success*, not step
+    /// magnitude, and narrows the dual-fit target to bracket-exhausted-yet-recoverable skips. Answerable
+    /// from `brackets[]` + `baseline_lag` on the *current* corpora (no re-scan needed).
+    pub fn dualfit_scope_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let matched = self.matched();
+        let patched: Vec<&&GapRow> = matched.iter().filter(|r| r.patched()).collect();
+        let skipped: Vec<&&GapRow> =
+            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        let _ = writeln!(s, "=== dual-fit scope: patch/skip is bracket success, NOT step magnitude (C1) ===");
+
+        // Bracket-pass vs outcome (they should coincide).
+        let patched_with_pass = patched.iter().filter(|r| r.brackets_passing > 0).count();
+        let skipped_exhausted = skipped.iter().filter(|r| r.bracket_exhausted()).count();
+        let _ = writeln!(
+            s,
+            "  patched {} ({} have ≥1 passing bracket) · skipped {} ({} bracket-exhausted, 0 passing)",
+            patched.len(), patched_with_pass, skipped.len(), skipped_exhausted
+        );
+
+        // Step does NOT separate patch from skip — show the overlapping ranges.
+        let step_abs = |g: &[&&GapRow]| stats(g.iter().filter_map(|r| r.seam_step_ms().map(f64::abs)).collect());
+        if let (Some((pn, pm, px)), Some((sn, sm, sx))) = (step_abs(&patched), step_abs(&skipped)) {
+            let _ = writeln!(s, "  |step| ms  patched: {pn:.1}/{pm:.1}/{px:.1}  ·  skipped: {sn:.1}/{sm:.1}/{sx:.1}  (overlap ⇒ step is not the discriminator)");
+        }
+        let bb = |g: &[&&GapRow]| stats(g.iter().filter_map(|r| r.best_bracket_seam).collect());
+        if let Some((_, pmed, _)) = bb(&patched) {
+            let smax = bb(&skipped).map(|(_, _, mx)| mx).unwrap_or(f64::NAN);
+            let _ = writeln!(s, "  best-bracket seam  patched median {pmed:.2}  ·  skipped max {smax:.2}  (the real separator)");
+        }
+
+        // Dual-fit candidates = bracket-exhausted skips that are both-sides-recoverable.
+        let cand = skipped.iter().filter(|r| r.dualfit_candidate()).count();
+        let _ = writeln!(
+            s,
+            "  dual-fit candidates (skip + bracket-exhausted + both-sides-recoverable): {cand}/{}",
+            skipped.len()
+        );
+        let _ = writeln!(s, "  skipped gaps (step | brackets pass/total | best-seam | recoverable → candidate?):");
+        for r in &skipped {
+            let _ = writeln!(
+                s,
+                "    {:<12} g{:<3} | step {:>7.1} | {:>2}/{:<2} | best {:.2} | {} → {}",
+                r.pair,
+                r.index,
+                r.seam_step_ms().unwrap_or(f64::NAN),
+                r.brackets_passing,
+                r.brackets_total,
+                r.best_bracket_seam.unwrap_or(f64::NAN),
+                if r.both_sides_recoverable() { "recoverable" } else { "not-recov  " },
+                if r.dualfit_candidate() { "DUAL-FIT" } else { "—" },
+            );
+        }
+        let _ = writeln!(s, "  → dual-fit targets the bracket-exhausted recoverable skips, NOT high-step patches (e.g. 5·g3 patches with a +72 ms step).");
+        s
+    }
+
+    /// Provenance legend — what each surfaced measurement actually is (representation · window ·
+    /// placement), so the numbers are never read without their definition.
+    pub fn legend_text(&self) -> String {
+        "=== measurement provenance ===\n\
+         structure (envelope) : bucketed 50 ms-bin envelope correlation · ~3 s context each side · at the structure/envelope placement\n\
+         seam (waveform)      : sample-level Pearson · ~250 ms seam border · at the throat placement · scored at lag 0\n\
+         baseline_lag         : waveform correlation sweep · 1 s border · ±200 ms search · at the throat · mono\n\
+         splice               : first-class step + per-side peak_r / peak_z from baseline_lag (post − pre)\n\
+         wide_envelope        : 100 ms-bin RMS envelope · 2 s window · ±400 ms search · segment-identity confirmer\n\
+         offset/step          : (pre+post)/2 and post−pre of baseline_lag (or splice.step_ms), ms\n\
+         residual headroom    : sample-level least-squares cancellation (dB vs floor) · ~250 ms seam · at the throat\n\
+         uniqueness           : peak_z + prominence at 1 s window (≥12 / ≥0.45); legacy margin = peak_r − 2nd peak\n\
+         donor_interior       : B RMS / continuity over the gap-mapped span (bridges the hole?)\n\
+         seam probe           : at the throat seam — wav (Pearson@0) · R2 · R4 · env (10 ms-bin) · recov (±25 ms) · snr (energy-weighted downmix)\n"
+            .to_string()
+    }
+
     /// One CSV row per gap for drill-down.
     pub fn csv(&self) -> String {
         use std::fmt::Write;
         let mut s = String::from(
             "pair,a_id,b_id,index,duration_secs,plan_kind,kind,verdict,outcome_tier,patched,\
-frac_lag_pre_ms,frac_lag_post_ms,drift_ms,peak_r_pre,peak_r_post,skew\n",
+frac_lag_pre_ms,frac_lag_post_ms,seam_mid_ms,seam_step_ms,drift_ms,peak_r_pre,peak_r_post,\
+uniqueness_margin,residual_headroom_db,residual_informative,skew\n",
         );
         let opt = |v: Option<f64>| v.map(|x| format!("{x:.4}")).unwrap_or_default();
+        let optb = |v: Option<bool>| v.map(|x| x.to_string()).unwrap_or_default();
         for r in &self.rows {
             let _ = writeln!(
                 s,
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:?}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:?}",
                 r.pair,
                 r.a_id,
                 r.b_id,
@@ -505,9 +1484,14 @@ frac_lag_pre_ms,frac_lag_post_ms,drift_ms,peak_r_pre,peak_r_post,skew\n",
                 r.patched(),
                 opt(r.frac_lag_pre_ms),
                 opt(r.frac_lag_post_ms),
+                opt(r.seam_mid_ms()),
+                opt(r.seam_step_ms()),
                 opt(r.drift_ms()),
                 opt(r.peak_r_pre),
                 opt(r.peak_r_post),
+                opt(r.uniqueness_margin),
+                opt(r.residual_headroom_db),
+                optb(r.residual_informative),
                 r.skew,
             );
         }
@@ -553,8 +1537,11 @@ mod tests {
             "silence":{{"collar_rms_peak_ratio":0.1,"collar_above_relative_floor":true,"silence_peak_fraction":0.01}},
             "contour":{{"has_anchor_seam_contour":true,"pre_flatness":0,"post_flatness":0}},
             "anchors":{{"pre":[],"post":[]}},
-            "lag":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
-                    "post_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"peak_lag_samples":-50,"frac_lag_samples":-50,"frac_lag_ms":{post_ms},"verdict":"{verdict}"}}]}},
+            "lag":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
+                    "post_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-50,"frac_lag_samples":-50,"frac_lag_ms":{post_ms},"verdict":"{verdict}"}}]}},
+            "baseline_lag":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
+                    "post_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-50,"frac_lag_samples":-50,"frac_lag_ms":{post_ms},"verdict":"{verdict}"}}]}},
+            "residual":{{"chosen_pre_db":-42.0,"chosen_post_db":-41.0,"floor_pre_db":-40.0,"floor_post_db":-39.0,"informative":true}},
             "outcome":{{"plan_kind":"fillable","tier":"{tier}","seam_shape":""}}}}"#
         )
     }
@@ -619,12 +1606,65 @@ mod tests {
         assert_eq!(addr.iter().filter(|r| r.skew == SkewClass::Drift).count(), 1, "−16/−8 is drift");
         assert_eq!(addr.iter().filter(|r| r.skew == SkewClass::Constant).count(), 1, "−5/−5.2 is constant");
 
+        // Uniqueness margin = peak_r − second_peak_r = 0.95 − 0.20 = 0.75 on the lag-bearing gaps.
+        assert!(
+            matched.iter().all(|r| r.uniqueness_margin.is_some_and(|mgn| (mgn - 0.75).abs() < 1e-6)),
+            "matched gaps carry a 0.75 uniqueness margin"
+        );
+        // Residual headroom = worst of (−42−(−40), −41−(−39)) = −2 dB; informative ⇒ same-source.
+        assert!(
+            matched.iter().all(|r| {
+                r.residual_headroom_db.is_some_and(|h| (h - (-2.0)).abs() < 1e-6)
+                    && r.residual_informative == Some(true)
+            }),
+            "matched gaps carry a −2 dB informative residual headroom"
+        );
+
         // Plan kind surfaced; summary + CSV render and carry the new columns.
         assert!(report.rows.iter().all(|r| r.plan_kind.as_deref() == Some("fillable")));
+        // Registration decomposition: the −16/−8 drift gap → step +8, mid −12.
+        let drift_gap = matched
+            .iter()
+            .find(|r| r.frac_lag_pre_ms == Some(-16.0))
+            .expect("the −16/−8 gap");
+        assert!(drift_gap.seam_step_ms().is_some_and(|v| (v - 8.0).abs() < 1e-6));
+        assert!(drift_gap.seam_mid_ms().is_some_and(|v| (v - (-12.0)).abs() < 1e-6));
+
+        // Silence-splice view: both lag-bearing skips have peak_r 0.95 ≥ 0.85 and margin 0.75 ≥ 0.30 ⇒
+        // `splice` (both-sides-recoverable). None are one-sided-dead.
+        assert!(
+            addr.iter().all(|r| r.splice_diag() == Some(SpliceDiag::Splice) && r.both_sides_recoverable()),
+            "clean high-peak unique skips classify as recoverable splices"
+        );
+        let splice = report.splice_text();
+        assert!(splice.contains("both-sides-recoverable"));
+        assert!(splice.contains("one-sided-dead (a shoulder aligns at NO lag"));
+
         let summary = report.summary_text();
         assert!(summary.contains("plan_kind: fillable"));
         assert!(summary.contains("gap kind:"));
-        assert!(report.csv().lines().next().unwrap().contains("plan_kind,kind,"));
+        assert!(summary.contains("uniqueness:"));
+        assert!(summary.contains("residual:"));
+        assert!(summary.contains("registration:"));
+        let header = report.csv().lines().next().unwrap().to_string();
+        assert!(header.contains("seam_mid_ms,seam_step_ms"));
+        assert!(header.contains("uniqueness_margin") && header.contains("residual_headroom_db"));
         assert_eq!(report.csv().lines().count(), 7); // header + 6 gaps
+    }
+
+    #[test]
+    fn splice_diag_uses_peak_z_when_present() {
+        let root = tempfile::tempdir().unwrap();
+        let gap_json = format!(
+            r#"{{"index":0,"tier":"full","sample_rate":48000,"channels":2,
+            "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
+            "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}}],
+                    "post_anchor":[{{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-5.0,"verdict":"timing_offset"}}]}},
+            "outcome":{{"tier":"skip"}}}}"#
+        );
+        write_corpus(&root.path().join("1"), "aaaa", "bbbb", &format!("[{gap_json}]"));
+        let row = &analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows[0];
+        assert_eq!(row.splice_diag(), Some(SpliceDiag::AliasSuspect));
+        assert!(!row.both_sides_recoverable());
     }
 }
