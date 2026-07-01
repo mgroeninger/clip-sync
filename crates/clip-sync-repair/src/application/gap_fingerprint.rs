@@ -476,8 +476,18 @@ pub struct LagSummary {
     /// Parabolic-interpolated (possibly fractional) lag of the peak.
     pub frac_lag_samples: f64,
     pub frac_lag_ms: f64,
+    /// **Search-exhausted guard:** the integer peak sits at (or within [`LAG_EDGE_TOL_MS`] of) the edge of
+    /// the searched lag range, so the true optimum may lie *beyond* `±max_lag`. `frac_lag_ms` / `peak_r`
+    /// are then a lower bound clipped by the window, not the real registration — GIGO for `splice.step_ms`
+    /// (ledger A5/C6). `None` for fingerprints written before this field. Widen the sweep to clear it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub edge_pinned: Option<bool>,
     pub verdict: LagVerdict,
 }
+
+/// A lag peak within this many ms of the searched boundary is treated as edge-pinned (search-exhausted):
+/// the parabolic vertex can't be trusted and a larger lag was never scored. See [`LagSummary::edge_pinned`].
+const LAG_EDGE_TOL_MS: f64 = 2.0;
 
 /// Search knobs for a per-shoulder lag correlation sweep (`lag_side_sweep` / [`lag_pair`]).
 #[derive(Debug, Clone, Copy)]
@@ -591,6 +601,12 @@ pub struct SpliceSummary {
     pub pre_peak_z: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_peak_z: Option<f64>,
+    /// **`step_ms` reliability flag:** true when *either* shoulder's `baseline_lag` peak was edge-pinned
+    /// (search-exhausted, [`LagSummary::edge_pinned`]). The step is `post_lag − pre_lag`, so a shoulder
+    /// whose peak was clipped at the ±`max_lag` boundary makes `step_ms` GIGO (ledger A5/C6). `None` when
+    /// neither shoulder carries the flag (older fingerprints).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub edge_pinned: Option<bool>,
 }
 
 /// **Dual-fit viability** — the offline repair simulation promoted into the scan (ledger C3/C7; supersedes
@@ -744,6 +760,13 @@ pub fn summarize_lag_curve(
     let n = curve.len() as f64;
     let mean = curve.iter().map(|(_, r)| *r).sum::<f64>() / n.max(1.0);
     let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / n.max(1.0)).sqrt();
+    // Edge-pin: the peak lands at (or within tol of) the boundary of the *searched* lags. Read the
+    // boundary from the curve itself (`lag_correlation_curve` masks high-side lags where the window runs
+    // past B), so this is the true searched extent, not the nominal `±max_lag`.
+    let tol = ((LAG_EDGE_TOL_MS / 1000.0) * rate).round() as i64;
+    let lo_lag = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag);
+    let hi_lag = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag);
+    let edge_pinned = (peak_lag - lo_lag) <= tol || (hi_lag - peak_lag) <= tol;
     Some(LagSummary {
         window_ms,
         max_lag_ms,
@@ -757,6 +780,7 @@ pub fn summarize_lag_curve(
         peak_lag_samples: peak_lag,
         frac_lag_samples: frac_lag,
         frac_lag_ms: frac_lag * 1000.0 / rate,
+        edge_pinned: Some(edge_pinned),
         verdict: classify_lag(lag0_r, frac_r, peak_lag),
     })
 }
@@ -1569,12 +1593,19 @@ fn mono_lag_side<'a>(lag: &'a LagFingerprint, pre: bool) -> Option<&'a LagSummar
 pub fn splice_summary_from_lag(lag: &LagFingerprint) -> Option<SpliceSummary> {
     let pre = mono_lag_side(lag, true)?;
     let post = mono_lag_side(lag, false)?;
+    // `step` spans both shoulders, so either shoulder being search-exhausted taints it. `None` only when
+    // neither side recorded the flag (pre-edge-pin fingerprints).
+    let edge_pinned = match (pre.edge_pinned, post.edge_pinned) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(false) || b.unwrap_or(false)),
+    };
     Some(SpliceSummary {
         step_ms: post.frac_lag_ms - pre.frac_lag_ms,
         pre_peak_r: pre.peak_r,
         post_peak_r: post.peak_r,
         pre_peak_z: pre.peak_z,
         post_peak_z: post.peak_z,
+        edge_pinned,
     })
 }
 
@@ -2829,6 +2860,7 @@ mod tests {
                 peak_lag_samples: -500,
                 frac_lag_samples: -500.0,
                 frac_lag_ms: -10.5,
+                edge_pinned: Some(false),
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![LagSummary {
@@ -2844,6 +2876,7 @@ mod tests {
                 peak_lag_samples: -300,
                 frac_lag_samples: -300.0,
                 frac_lag_ms: -6.2,
+                edge_pinned: Some(false),
                 verdict: LagVerdict::TimingOffset,
             }],
         };
@@ -2853,6 +2886,42 @@ mod tests {
         assert!((s.post_peak_r - 0.96).abs() < 1e-6);
         assert_eq!(s.pre_peak_z, Some(16.0));
         assert_eq!(s.post_peak_z, Some(14.0));
+        // Neither shoulder search-exhausted → step is trustworthy.
+        assert_eq!(s.edge_pinned, Some(false));
+
+        // One edge-pinned shoulder taints the step (either side ⇒ true).
+        let mut pinned = lag.clone();
+        pinned.post_anchor[0].edge_pinned = Some(true);
+        assert_eq!(
+            splice_summary_from_lag(&pinned).expect("splice").edge_pinned,
+            Some(true),
+        );
+
+        // No shoulder carries the flag (old fingerprint) → unknown, not a false negative.
+        let mut legacy = lag.clone();
+        legacy.pre_anchor[0].edge_pinned = None;
+        legacy.post_anchor[0].edge_pinned = None;
+        assert_eq!(
+            splice_summary_from_lag(&legacy).expect("splice").edge_pinned,
+            None,
+        );
+    }
+
+    #[test]
+    fn edge_pinned_flags_boundary_peak() {
+        // A curve whose maximum sits at the top boundary lag is search-exhausted (true optimum ≥ edge).
+        let sr = 48_000u32;
+        let curve: Vec<(i64, f64)> = (-4800..=4800).map(|l| (l, l as f64 / 4800.0)).collect();
+        let s = summarize_lag_curve(&curve, sr, 1000, 100, LagChannel::Mono).expect("summary");
+        assert_eq!(s.peak_lag_samples, 4800, "peak at the boundary");
+        assert_eq!(s.edge_pinned, Some(true), "boundary peak is edge-pinned");
+
+        // A curve peaking in the interior is not edge-pinned.
+        let interior: Vec<(i64, f64)> =
+            (-4800..=4800).map(|l| (l, -((l as f64) / 4800.0).powi(2))).collect();
+        let s2 = summarize_lag_curve(&interior, sr, 1000, 100, LagChannel::Mono).expect("summary");
+        assert_eq!(s2.peak_lag_samples, 0, "peak in the interior");
+        assert_eq!(s2.edge_pinned, Some(false), "interior peak not edge-pinned");
     }
 
     #[test]
@@ -3027,6 +3096,7 @@ mod tests {
                     peak_lag_samples: -778,
                     frac_lag_samples: -778.0,
                     frac_lag_ms: -16.2,
+                    edge_pinned: Some(false),
                     verdict: LagVerdict::TimingOffset,
                 }],
                 post_anchor: vec![],
@@ -3192,6 +3262,7 @@ mod tests {
                 post_peak_r: 0.96,
                 pre_peak_z: Some(15.0),
                 post_peak_z: Some(14.0),
+                edge_pinned: Some(false),
             }),
             wide_envelope: Some(WideEnvelopeFingerprint {
                 pre: Some(EnvPeak {

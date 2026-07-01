@@ -45,7 +45,16 @@ with `--wav` currently runs both and decodes A/B twice — fine, but not free.)*
 | `anchors` | always | pre/post candidates `{ time, source, prominence, rms_db }` |
 | `brackets` | full | feasible brackets `{ span, move, structure_*, seam_*, failure_stage }` |
 | `structure` / `seams` | B present | baseline scores; seams carry per-channel + selected channels |
-| `lag` | full, B present | per pre/post anchor lag fingerprint (see below) |
+| `lag` | full, B present | **diagnostic** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat (see below) |
+| `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
+| `splice` | full, B present | first-class registration step derived from `baseline_lag` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
+| `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
+| `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
+| `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
+| `wide_envelope` | full, B present | 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
+| `seam_probe` | full, B present | **diagnostic** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not gated on |
+| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
+| `b_levels` | full, B present | symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
 
 ## Lag fingerprint
@@ -61,6 +70,66 @@ parabolic-interpolated (fractional) peak, and a verdict:
 
 This is what distinguishes a sub-sample/timing offset (recoverable) from genuine A/B decorrelation
 (the seam gate is right to refuse) — see [seam-scoring.md](seam-scoring.md) §3–4.
+
+## Registration & dual-fit measurements
+
+The `lag` field above sits at the **diagnostic** placement (best-energy bracket / structure throat) and
+can wander on quiet gaps. The **decision** registration lives in `baseline_lag`, and the dual-fit repair
+predicate is built from it. **Read each field at the placement it defines — never compare across
+placements.**
+
+### `baseline_lag` — decision registration at `b_mapped`
+
+Each shoulder is swept **mono** over ±600 ms centered on the geometry **`b_mapped`** nominal, and the post
+shoulder is registered **sequentially** (its search is centered on `S + D_A + round(L_pre)`, not the naive
+`S + D_A`) so `L_pre` doesn't stack into the post lag. Per shoulder, `summarize_lag_curve` records:
+
+- `peak_r` / `frac_lag_ms` — best correlation and its (fractional) lag.
+- **`peak_z`** — the peak's z-score over the whole lag curve. The periodicity-robust uniqueness metric
+  (the primary addressability gate; unique ≈ ≥12 at the 1 s window). Deflates on periodic/leveled content
+  where a single-rival `prominence` would not.
+- `prominence` / `second_peak_r` / `top2_spacing_ms` — single-rival margin and the spacing to it (a
+  recurring spacing *is* the content's period). `prominence` is a low-floor tiebreaker, not primary.
+- **`edge_pinned`** — the integer peak sits within ~2 ms of the searched boundary (read from the curve
+  extremes, so high-side masking counts). The optimum may lie **beyond** ±600 ms, so `frac_lag_ms` /
+  `peak_r` are a window-clipped lower bound → `step_ms` is unreliable. Widen the sweep to clear it.
+
+### `splice` — the registration step
+
+Derived from `baseline_lag` mono: `step_ms = post_frac_lag − pre_frac_lag` (the length discontinuity the
+repair reconciles), plus per-side `peak_r`/`peak_z` and a combined **`edge_pinned`** (true if *either*
+shoulder was search-exhausted ⇒ `step_ms` is GIGO). A nonzero step is the normal signature of **both**
+patched and skipped gaps; what makes a gap skip is bracket-search exhaustion, not the step.
+
+### `donor_interior` / `donor_interior_nominal` — is there anything to fill?
+
+B occupancy over the span it would fill. `donor_interior` uses the **aligned** bridge (shoulders at their
+own lags); `donor_interior_nominal` uses the **nominal** program-time span with **no lag adjustment**, so it
+is registration-independent — the read used to classify a gap as **program-quiet** (B silent at the same
+program time ⇒ nothing to fill, not a dropout; ledger D11). Both carry `rms_db`, `silence_fraction`,
+`longest_silence_ms`, and `continuous` (no internal sub-floor run longer than 150 ms ⇒ B bridges the hole).
+
+### `splice_dualfit` — would a length-reconciled fill pass the gate?
+
+The offline dual-fit simulation computed on the scan's own decode. Each shoulder is placed at its own
+`baseline_lag`; the pre/post seams are scored at lag 0 against the **unchanged** gate thresholds:
+
+- `pre_seam_r` / `post_seam_r` and **`gate_pass`** — do both clear `min_fill_correlation` and
+  `fill_absolute_floor`?
+- `gap_frames` / `bridge_frames` / `trim_frames` (`bridge − gap`, = the step in frames; the interior
+  trim/pad amount).
+- **`post_seam_global_r`** — the post seam scored at the *pre* offset (step forced to 0). If it also passes,
+  a single constant shift suffices and the step is a registration artifact; if only the own-lag post passes,
+  the step is real.
+- `pre_seam_prom` / `post_seam_prom` — per-seam placement-peak prominence (±30 ms); low ⇒ periodic/alias, so
+  a PASS is not a trustworthy registration.
+
+### Diagnostic-only fields
+
+`wide_envelope` (100 ms-bin envelope lag peak at `b_mapped`, a cross-scale confirmer of `baseline_lag`),
+`seam_probe` (encoding-robust R2/R4/spectrum/env/recovered metrics, retained from the archived cross-codec
+plan), and `b_levels` (symmetric B `LevelProfile`) are **not gated on** — they explain decisions and validate
+hypotheses. See the analyzer's `legend_text()` for the authoritative placement/window of every field.
 
 ## Source identity & the corpus library
 

@@ -113,6 +113,10 @@ struct Splice {
     pre_peak_z: Option<f64>,
     #[serde(default)]
     post_peak_z: Option<f64>,
+    /// Either shoulder's `baseline_lag` peak was search-exhausted (clipped at ±max_lag) ⇒ `step_ms` is
+    /// GIGO (ledger A5/C6). `None` for fingerprints predating the edge-pin flag.
+    #[serde(default)]
+    edge_pinned: Option<bool>,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -385,6 +389,9 @@ pub struct GapRow {
     /// Region bucket (tail / no-lag / matched) — the honest denominator selector.
     pub kind: GapKind,
     /// Lag verdict (`timing_offset` / `decorrelated` / `ambiguous`), or `None` if no lag fingerprint.
+    /// **One-sided (pre-preferred):** this is the pre shoulder's verdict (or post's when pre is absent), so
+    /// it can disagree with the post shoulder. It labels the gap only — for classification prefer the
+    /// two-sided `splice_diag()` / `seam_step_ms()` / `skew` (C-harness-2).
     pub verdict: Option<String>,
     /// Gate outcome tier (`skip`, or a patch tier). `None` if the gap carries no outcome.
     pub outcome_tier: Option<String>,
@@ -407,6 +414,13 @@ pub struct GapRow {
     pub uniqueness_prom: Option<f64>,
     /// First-class splice step (`post_lag − pre_lag`) when the fingerprint carries `splice`.
     pub splice_step_ms: Option<f64>,
+    /// **`splice_step_ms` is search-exhausted** — a shoulder's `baseline_lag` peak was clipped at ±max_lag,
+    /// so the step (and dual-fit per-shoulder placement) is GIGO (ledger A5/C6). `None` predates the flag.
+    pub splice_edge_pinned: Option<bool>,
+    /// Registration came from the **legacy diagnostic `lag`** (pre-A2 fingerprint), not the decision-seam
+    /// `baseline_lag` — a *different* placement (structure throat vs `b_mapped`). Any `true` in a run means
+    /// the corpus mixes pre-/post-A2 schemas and the lag reads aren't comparable (C-harness-3).
+    pub registration_from_legacy_lag: bool,
     /// Donor B bridges the gap interior without a sub-floor hole (from `donor_interior.continuous`).
     pub donor_continuous: Option<bool>,
     /// Donor-interior RMS (dBFS) over the gap-mapped B span.
@@ -550,14 +564,40 @@ impl GapRow {
         self.brackets_total > 0 && self.brackets_passing == 0
     }
 
+    /// The measured step (and its per-shoulder placement) is **search-exhausted** — a `baseline_lag` peak
+    /// was clipped at ±max_lag, so `splice_step_ms` and dual-fit shoulder lags are GIGO (ledger A5/C6).
+    /// `false` when the flag is absent (older fingerprint) or explicitly clear; widen the sweep to resolve.
+    pub fn step_edge_pinned(&self) -> bool {
+        self.splice_edge_pinned == Some(true)
+    }
+
     /// A gap dual-fit should target: a **skip** whose brackets are exhausted (no single placement passes)
     /// yet **both shoulders recover at their own lag** — the residual that a per-seam fit + length
     /// reconciliation could rescue, where today's boundary search cannot. Distinct from a gap that already
-    /// patches (≥1 bracket passes) — dual-fit must NOT run on those.
+    /// patches (≥1 bracket passes) — dual-fit must NOT run on those. An **edge-pinned** step is excluded:
+    /// its per-shoulder placement is clipped at the search boundary, so the dual-fit lags can't be trusted
+    /// until the sweep is widened (ledger A5/C6 — the GIGO guard). A **program-quiet** gap (D11 — B silent
+    /// at the same program time) is excluded too: there is nothing to fill, so it is not a repair target.
     pub fn dualfit_candidate(&self) -> bool {
         self.outcome_tier.as_deref() == Some("skip")
             && self.bracket_exhausted()
             && self.both_sides_recoverable()
+            && !self.step_edge_pinned()
+            && self.program_quiet() != Some(true)
+    }
+
+    /// D11 — a **skip** that is program-quiet (B silent at the same program time). Correctly skipped and
+    /// **not a fill miss**: it leaves the addressable-dropout denominator (there is nothing to fill), rather
+    /// than counting against the dual-fit / repair rate. `false` when occupancy wasn't captured.
+    pub fn program_quiet_skip(&self) -> bool {
+        self.outcome_tier.as_deref() == Some("skip") && self.program_quiet() == Some(true)
+    }
+
+    /// D11 classifier — is this matched gap an **addressable dropout** (a real hole to fill), as opposed to a
+    /// program-quiet passage (quiet in both masters)? A program-quiet gap is *not* addressable; when
+    /// occupancy is uncaptured (`None`) the gap stays addressable (backward-compatible — no silent drops).
+    pub fn addressable_dropout(&self) -> bool {
+        self.kind == GapKind::Matched && self.program_quiet() != Some(true)
     }
 
     /// D11 — is this "gap" a **program-quiet** passage (quiet in *both* masters) rather than a fillable
@@ -730,6 +770,11 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             .find(|e| e.channel == Some(LagChannelTag::Mono))
             .or_else(|| v.first())
     }
+    // Registration prefers the decision-seam `baseline_lag` (b_mapped, ledger A2); the diagnostic
+    // best-bracket `lag` is only a **legacy fallback** for pre-A2 fingerprints and sits at a *different*
+    // placement (structure throat). Flag when a row falls back so a run mixing pre-/post-A2 corpora is
+    // visible instead of silently conflating placements (C-harness-3).
+    let registration_from_legacy_lag = gap.baseline_lag.is_none() && gap.lag.is_some();
     let lag = gap.baseline_lag.as_ref().or(gap.lag.as_ref());
     let pre = lag.and_then(|l| mono_entry(&l.pre_anchor));
     let post = lag.and_then(|l| mono_entry(&l.post_anchor));
@@ -749,8 +794,14 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         (None, None) => None,
     };
     let uniqueness_margin = worst(pre.and_then(margin), post.and_then(margin));
-    // Robust uniqueness (post-rescan): worst (min) of pre/post peak_z and prominence.
-    let uniqueness_z = worst(pre.and_then(|s| s.peak_z), post.and_then(|s| s.peak_z));
+    // **Robust uniqueness is a both-shoulders test** (C-harness-1): a splice is only trustworthy if *both*
+    // seams stand out, so take the min over pre/post only when BOTH sides carry the metric. Falling back to
+    // a single present side (the old `worst()`) over-states uniqueness for a gap missing a shoulder z.
+    let both = |a: Option<f64>, b: Option<f64>| match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        _ => None,
+    };
+    let base_uniqueness_z = both(pre.and_then(|s| s.peak_z), post.and_then(|s| s.peak_z));
     let uniqueness_prom = worst(pre.and_then(|s| s.prominence), post.and_then(|s| s.prominence));
 
     // First-class splice / donor / wide-envelope when present (post-rescan).
@@ -758,19 +809,20 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
     let peak_r_pre = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|s| s.peak_r));
     let peak_r_post = splice.map(|s| s.post_peak_r).or_else(|| post.map(|s| s.peak_r));
     let splice_step_ms = splice.map(|s| s.step_ms);
-    let uniqueness_z = splice
-        .map(|s| {
-            match (s.pre_peak_z, s.post_peak_z) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => uniqueness_z,
-            }
-        })
-        .unwrap_or(uniqueness_z);
+    let splice_edge_pinned = splice.and_then(|s| s.edge_pinned);
+    // Prefer the splice's per-shoulder z (same `baseline_lag` source), but stay two-sided: fall back to the
+    // lag-entry both-sided z only when the splice carries neither shoulder.
+    let uniqueness_z = match splice {
+        Some(s) => both(s.pre_peak_z, s.post_peak_z).or(base_uniqueness_z),
+        None => base_uniqueness_z,
+    };
 
-    let is_timing = verdict.as_deref() == Some("timing_offset");
-    let skew = match (is_timing, frac_lag_pre_ms, frac_lag_post_ms) {
+    // **Skew is a two-sided classification** (C-harness-2): constant-vs-drift needs *both* shoulders, and
+    // both must read `timing_offset`. The headline `verdict` is pre-preferred (one-sided) and only labels
+    // the gap; don't let it drive skew when the shoulders disagree or one is missing.
+    let both_timing = pre.is_some_and(|s| s.verdict == "timing_offset")
+        && post.is_some_and(|s| s.verdict == "timing_offset");
+    let skew = match (both_timing, frac_lag_pre_ms, frac_lag_post_ms) {
         (true, Some(a), Some(b)) if (a - b).abs() <= eps => SkewClass::Constant,
         (true, Some(_), Some(_)) => SkewClass::Drift,
         _ => SkewClass::NotApplicable,
@@ -805,6 +857,8 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         uniqueness_z,
         uniqueness_prom,
         splice_step_ms,
+        splice_edge_pinned,
+        registration_from_legacy_lag,
         donor_continuous: gap.donor_interior.as_ref().map(|d| d.continuous),
         donor_rms_db: gap.donor_interior.as_ref().map(|d| d.rms_db),
         wide_env_pre_lag_ms: gap.wide_envelope.as_ref().and_then(|w| w.pre.map(|p| p.peak_lag_ms)),
@@ -991,6 +1045,17 @@ impl CorpusReport {
             self.tail_secs,
             self.drift_eps_ms
         );
+
+        // C-harness-3: warn loudly when the corpus mixes pre-/post-A2 schemas — the legacy `lag` fallback
+        // sits at a different placement than `baseline_lag`, so the two aren't comparable in one run.
+        let legacy = self.count(|r| r.registration_from_legacy_lag);
+        if legacy > 0 {
+            let _ = writeln!(
+                s,
+                "  ⚠ registration schema mix: {legacy}/{n} row(s) fell back to the legacy diagnostic `lag` \
+                 (pre-A2, structure-throat placement) — do NOT compare their lags with `baseline_lag` rows."
+            );
+        }
 
         // Plan kind (vocabulary validation — today the fingerprint only emits `fillable`).
         let mut plan: BTreeMap<String, usize> = BTreeMap::new();
@@ -1462,6 +1527,19 @@ impl CorpusReport {
             "  both-sides-recoverable (peak_r ≥ {:.2} each AND uniqueness ≥ {:.2} or peak_z ≥ {:.0}/prom ≥ {:.2}): {}/{}",
             SPLICE_MIN_PEAK_R, LOW_UNIQUENESS_MARGIN, SPLICE_MIN_PEAK_Z, SPLICE_MIN_PROMINENCE, recoverable, classified
         );
+        // Search-exhausted steps: a shoulder peak was clipped at ±max_lag, so `step` is GIGO and the gap is
+        // excluded from `dualfit_candidate` (ledger A5/C6). A nonzero count here means widen the lag sweep.
+        let edge_pinned = matched.iter().filter(|r| r.step_edge_pinned()).count();
+        let edge_pinned_known = matched.iter().filter(|r| r.splice_edge_pinned.is_some()).count();
+        if edge_pinned_known == 0 {
+            let _ = writeln!(s, "  edge-pinned steps: — (pre-flag fingerprint; re-scan to populate)");
+        } else {
+            let _ = writeln!(
+                s,
+                "  edge-pinned steps (search-exhausted ⇒ step GIGO, excluded from dual-fit): {}/{}",
+                edge_pinned, edge_pinned_known
+            );
+        }
 
         // The skipped gaps in detail — these are the repair targets.
         let skipped: Vec<&&GapRow> =
@@ -1469,7 +1547,12 @@ impl CorpusReport {
         if !skipped.is_empty() {
             let _ = writeln!(s, "  skipped gaps (pre peak@lag | post peak@lag | step | uniq → class):");
             for r in &skipped {
-                let cls = r.splice_diag().map(|d| d.as_str()).unwrap_or("—");
+                let base_cls = r.splice_diag().map(|d| d.as_str()).unwrap_or("—");
+                let cls = if r.step_edge_pinned() {
+                    format!("{base_cls} [edge-pinned]")
+                } else {
+                    base_cls.to_string()
+                };
                 let z = r.uniqueness_z.map(|v| format!("z {v:.1}")).unwrap_or_else(|| "z —".into());
                 let _ = writeln!(
                     s,
@@ -1696,15 +1779,27 @@ impl CorpusReport {
             let _ = writeln!(s, "  best-bracket seam  patched median {pmed:.2}  ·  skipped max {smax:.2}  (the real separator)");
         }
 
-        // Dual-fit candidates = bracket-exhausted skips that are both-sides-recoverable.
-        let cand = skipped.iter().filter(|r| r.dualfit_candidate()).count();
+        // D11: program-quiet skips (B silent at the same program time) leave the addressable denominator —
+        // there is nothing to fill, so they are not dual-fit misses. Report the rate over addressable skips.
+        let program_quiet: Vec<&&GapRow> = skipped.iter().filter(|r| r.program_quiet_skip()).copied().collect();
+        let addressable: Vec<&&GapRow> =
+            skipped.iter().filter(|r| !r.program_quiet_skip()).copied().collect();
+        let cand = addressable.iter().filter(|r| r.dualfit_candidate()).count();
         let _ = writeln!(
             s,
-            "  dual-fit candidates (skip + bracket-exhausted + both-sides-recoverable): {cand}/{}",
-            skipped.len()
+            "  dual-fit candidates (skip + bracket-exhausted + both-sides-recoverable): {cand}/{} addressable skips ({} program-quiet dropped, D11)",
+            addressable.len(),
+            program_quiet.len(),
         );
         let _ = writeln!(s, "  skipped gaps (step | brackets pass/total | best-seam | recoverable → candidate?):");
         for r in &skipped {
+            let verdict = if r.program_quiet_skip() {
+                "program-quiet".to_string()
+            } else if r.dualfit_candidate() {
+                "DUAL-FIT".to_string()
+            } else {
+                "—".to_string()
+            };
             let _ = writeln!(
                 s,
                 "    {:<12} g{:<3} | step {:>7.1} | {:>2}/{:<2} | best {:.2} | {} → {}",
@@ -1715,7 +1810,7 @@ impl CorpusReport {
                 r.brackets_total,
                 r.best_bracket_seam.unwrap_or(f64::NAN),
                 if r.both_sides_recoverable() { "recoverable" } else { "not-recov  " },
-                if r.dualfit_candidate() { "DUAL-FIT" } else { "—" },
+                verdict,
             );
         }
         let _ = writeln!(s, "  → dual-fit targets the bracket-exhausted recoverable skips, NOT high-step patches (e.g. 5·g3 patches with a +72 ms step).");
@@ -1953,5 +2048,85 @@ mod tests {
         let row = &analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows[0];
         assert_eq!(row.splice_diag(), Some(SpliceDiag::AliasSuspect));
         assert!(!row.both_sides_recoverable());
+    }
+
+    #[test]
+    fn program_quiet_skip_leaves_addressable_denominator() {
+        // Two skips with the identical dual-fit *shape* (bracket-exhausted, both shoulders recoverable, not
+        // edge-pinned); the only difference is donor occupancy at the nominal program time. D11: the one
+        // where B is also silent is program-quiet — nothing to fill — and must drop out of the repair set.
+        let gap = |index: usize, nominal_silence: f64| {
+            format!(
+                r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
+                "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
+                "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
+                        "post_anchor":[{{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-8.0,"verdict":"timing_offset"}}]}},
+                "splice":{{"step_ms":8.0,"pre_peak_r":0.95,"post_peak_r":0.95,"pre_peak_z":16.0,"post_peak_z":15.0,"edge_pinned":false}},
+                "donor_interior_nominal":{{"rms_db":-80.0,"silence_fraction":{nominal_silence},"continuous":false}},
+                "brackets":[{{"failure_stage":"waveform_floor"}}],
+                "outcome":{{"tier":"skip"}}}}"#
+            )
+        };
+        let root = tempfile::tempdir().unwrap();
+        write_corpus(
+            &root.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!("[{},{}]", gap(0, 0.95), gap(1, 0.02)),
+        );
+        let rows = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows;
+        let (quiet, dropout) = (&rows[0], &rows[1]);
+
+        // Same shape — both would be dual-fit candidates on the pre-D11 predicate.
+        assert!(quiet.bracket_exhausted() && quiet.both_sides_recoverable());
+        assert!(dropout.bracket_exhausted() && dropout.both_sides_recoverable());
+
+        // D11 classification: B-silent ⇒ program-quiet, out of the addressable set and not a repair target.
+        assert!(quiet.program_quiet_skip(), "B silent at program time ⇒ program-quiet");
+        assert!(!quiet.addressable_dropout());
+        assert!(!quiet.dualfit_candidate(), "program-quiet must not be a dual-fit target");
+
+        // The real dropout (B occupied) keeps its place in the denominator and stays a candidate.
+        assert!(!dropout.program_quiet_skip());
+        assert!(dropout.addressable_dropout());
+        assert!(dropout.dualfit_candidate(), "occupied-donor dropout is a candidate");
+    }
+
+    #[test]
+    fn analyzer_hygiene_two_sided_metrics_and_legacy_flag() {
+        let root = tempfile::tempdir().unwrap();
+
+        // g0: shoulders DISAGREE (pre timing_offset, post decorrelated). C-harness-2: skew must be
+        // NotApplicable (not Drift) — the one-sided verdict must not drive it. C-harness-1: only the pre
+        // shoulder carries `peak_z`, so the two-sided robust uniqueness is `None`, not the pre value.
+        let disagree = r#"{"index":0,"tier":"full","sample_rate":48000,"channels":2,
+            "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
+            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
+                    "post_anchor":[{"peak_r":0.40,"frac_lag_ms":-8.0,"verdict":"decorrelated"}]},
+            "outcome":{"tier":"skip"}}"#;
+
+        // g1: pre-A2 fingerprint — only the diagnostic `lag` block, no `baseline_lag`. C-harness-3: the
+        // legacy fallback must be flagged and the summary must warn about the schema mix.
+        let legacy = r#"{"index":1,"tier":"full","sample_rate":48000,"channels":2,
+            "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
+            "lag":{"pre_anchor":[{"peak_r":0.95,"frac_lag_ms":-10.0,"verdict":"timing_offset"}],
+                    "post_anchor":[{"peak_r":0.95,"frac_lag_ms":-9.5,"verdict":"timing_offset"}]},
+            "outcome":{"tier":"skip"}}"#;
+
+        write_corpus(&root.path().join("1"), "aaaa", "bbbb", &format!("[{disagree},{legacy}]"));
+        let report = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0);
+        let (g0, g1) = (&report.rows[0], &report.rows[1]);
+
+        // C-harness-2 + C-harness-1.
+        assert_eq!(g0.skew, SkewClass::NotApplicable, "disagreeing shoulders are not a timing skew");
+        assert_eq!(g0.uniqueness_z, None, "robust uniqueness needs both shoulders' peak_z");
+
+        // C-harness-3.
+        assert!(!g0.registration_from_legacy_lag, "g0 has baseline_lag");
+        assert!(g1.registration_from_legacy_lag, "g1 fell back to legacy `lag`");
+        assert!(
+            report.summary_text().contains("registration schema mix"),
+            "mixed-schema corpus must warn"
+        );
     }
 }
