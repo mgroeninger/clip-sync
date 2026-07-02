@@ -50,6 +50,7 @@ try {
 
     function Invoke-RepairLibUnits {
         Invoke-CargoTest @('-p', 'clip-sync-repair', '--lib')
+        Invoke-CargoTest @('-p', 'clip-sync-repair-fixtures', '--lib')
     }
 
     function Invoke-RepairPrRepair {

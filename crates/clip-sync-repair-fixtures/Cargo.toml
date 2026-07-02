@@ -1,0 +1,18 @@
+[package]
+name = "clip-sync-repair-fixtures"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Synthetic repair fixtures and oracle helpers for tier tests (not linked into production repair)"
+
+[lib]
+name = "clip_sync_repair_fixtures"
+path = "src/lib.rs"
+
+[dependencies]
+clip-sync = { path = "../clip-sync" }
+clip-sync-repair = { path = "../clip-sync-repair" }
+hound = "3"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+toml = "0.8"

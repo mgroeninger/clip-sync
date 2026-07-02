@@ -29,13 +29,15 @@ const LENGTH_MISMATCH_PENALTY: f64 = 0.12;
 const NOMINAL_BIAS_PER_BIN: f64 = 0.02;
 
 /// Precomputed active/silent bins for an entire B haystack.
-pub(crate) struct ActivityTimeline {
+#[doc(hidden)]
+pub struct ActivityTimeline {
     bins: Vec<bool>,
     bin_frames: usize,
 }
 
 impl ActivityTimeline {
-    pub(crate) fn build(
+    #[doc(hidden)]
+    pub fn build(
         samples: &[f32],
         channels: usize,
         total_frames: usize,
@@ -289,7 +291,8 @@ pub(crate) fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize
 ///
 /// `max_fill_align_adjustment_secs` controls B waveform placement elsewhere; using that
 /// value here caused multi-second exhaustive loops per fit candidate.
-pub(crate) fn structure_fine_polish_frames(bin_frames: usize) -> usize {
+#[doc(hidden)]
+pub fn structure_fine_polish_frames(bin_frames: usize) -> usize {
     bin_frames.clamp(1, 128)
 }
 
@@ -486,7 +489,8 @@ pub(crate) fn prefer_end(candidate: usize, current: usize, nominal: usize) -> bo
     prefer_start(candidate, current, nominal)
 }
 
-pub(crate) fn score_pre_match(
+#[doc(hidden)]
+pub fn score_pre_match(
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
     fill_start: usize,
@@ -502,7 +506,8 @@ pub(crate) fn score_pre_match(
     bin_similarity(&signature.pre_bins, b_bins)
 }
 
-pub(crate) fn score_post_match(
+#[doc(hidden)]
+pub fn score_post_match(
     signature: &GapContextSignature,
     timeline: &ActivityTimeline,
     fill_end: usize,

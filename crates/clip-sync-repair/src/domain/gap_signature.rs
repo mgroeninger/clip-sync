@@ -273,16 +273,4 @@ mod tests {
         let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Bool);
         assert!(sig.has_anchor_seam_contour());
     }
-
-    #[test]
-    fn speech_peaks_bool_signature_has_anchor_contour() {
-        use crate::test_support::energy_signature_fixtures::build_speech_peaks_offset_from_throat;
-
-        let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
-        let sig = fixture.signature(GapSignatureMode::Bool);
-        assert!(
-            sig.has_anchor_seam_contour(),
-            "speech peaks fixture should expose bool activity contour for anchor auto"
-        );
-    }
 }

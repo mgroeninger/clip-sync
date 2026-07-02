@@ -10,8 +10,8 @@
 //! `tests/gap_corpus/fingerprints/g003_timing_offset.json`.
 
 use clip_sync_repair::application::gap_fingerprint::{GateOutcome, LagFingerprint, LagVerdict};
-use clip_sync_repair::test_support::energy_signature_fixtures::build_w5_timing_offset_seam;
-use clip_sync_repair::test_support::w5_timing_offset_diag::w5_timing_offset_seam_lag;
+use clip_sync_repair_fixtures::energy_signature_fixtures::build_w5_timing_offset_seam;
+use clip_sync_repair_fixtures::w5_timing_offset_diag::w5_timing_offset_seam_lag;
 use serde::Deserialize;
 
 const SR: u32 = 48_000;

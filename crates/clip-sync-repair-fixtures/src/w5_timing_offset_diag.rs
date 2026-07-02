@@ -9,10 +9,10 @@
 //! `peak ≥ 0.5` floor. Shared by the Phase B self-validation test and the `diag_w5_timing_offset`
 //! binary so both characterize the fixture against the same discriminator.
 
-use crate::application::gap_fingerprint::{
+use clip_sync_repair::application::gap_fingerprint::{
     lag_correlation_curve, summarize_lag_curve, LagChannel, LagSummary, LagVerdict,
 };
-use crate::test_support::energy_signature_fixtures::{
+use crate::energy_signature_fixtures::{
     build_w5_timing_offset_seam, EnergySignatureFixture,
 };
 

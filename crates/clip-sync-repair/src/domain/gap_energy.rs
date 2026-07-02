@@ -149,13 +149,15 @@ pub fn build_gap_energy_signature(
 }
 
 /// Precomputed energy bins for an entire B haystack.
-pub(crate) struct EnergyTimeline {
+#[doc(hidden)]
+pub struct EnergyTimeline {
     bins: Vec<f32>,
     bin_frames: usize,
 }
 
 impl EnergyTimeline {
-    pub(crate) fn build(
+    #[doc(hidden)]
+    pub fn build(
         samples: &[f32],
         channels: usize,
         total_frames: usize,
@@ -187,7 +189,8 @@ impl EnergyTimeline {
     }
 }
 
-pub(crate) fn score_pre_energy_match(
+#[doc(hidden)]
+pub fn score_pre_energy_match(
     signature: &GapEnergySignature,
     timeline: &EnergyTimeline,
     fill_start: usize,
@@ -205,7 +208,8 @@ pub(crate) fn score_pre_energy_match(
     energy_similarity(&signature.pre_energy, &observed)
 }
 
-pub(crate) fn score_post_energy_match(
+#[doc(hidden)]
+pub fn score_post_energy_match(
     signature: &GapEnergySignature,
     timeline: &EnergyTimeline,
     fill_end: usize,

@@ -15,11 +15,11 @@ use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::GapSignatureMode;
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_production, build_f1_production_at, build_f2_production, build_f4_decoy_production,
     structure_slide_secs,
 };
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
     production_repair_config, production_weight_sweep_config,
 };

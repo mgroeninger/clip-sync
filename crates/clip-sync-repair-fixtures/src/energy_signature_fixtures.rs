@@ -1,12 +1,12 @@
 //! Synthetic timelines for energy vs bool structure acceptance (plan F1–F3).
 
-use crate::domain::gap_energy::{build_gap_energy_signature, score_pre_energy_match, EnergyTimeline};
-use crate::domain::gap_fill_fit::{
+use clip_sync_repair::domain::gap_energy::{build_gap_energy_signature, score_pre_energy_match, EnergyTimeline};
+use clip_sync_repair::domain::gap_fill_fit::{
     match_gap_fill_unified_in_b, UnifiedFillMatch, UnifiedFitWeights, WaveformSeamContext,
 };
-use crate::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
-use crate::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
-use crate::domain::policies::{
+use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
+use clip_sync_repair::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
+use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
     interleaved_to_mono, is_silent_frame, refine_gap_frames, FillAlignment, GapBorderSpec,
     RefinedGapFrames, SeamPlacement, SeamTemplates,
@@ -88,7 +88,7 @@ impl EnergySignatureFixture {
     }
 
     pub fn energy_post_at(&self, fill_end: usize) -> f64 {
-        use crate::domain::gap_energy::score_post_energy_match;
+        use clip_sync_repair::domain::gap_energy::score_post_energy_match;
         let sig = build_gap_energy_signature(
             &self.a_samples,
             self.channels,
@@ -135,7 +135,7 @@ impl EnergySignatureFixture {
     }
 
     pub fn bool_post_at(&self, fill_end: usize) -> f64 {
-        use crate::domain::gap_structure::score_post_match;
+        use clip_sync_repair::domain::gap_structure::score_post_match;
         let sig = build_gap_signature(
             &self.a_samples,
             self.channels,
@@ -203,7 +203,7 @@ impl EnergySignatureFixture {
             repeat_penalty_weight: 0.0,
         };
         match_gap_fill_unified_in_b(
-            &crate::domain::gap_fill_fit::UnifiedFillSearchInput {
+            &clip_sync_repair::domain::gap_fill_fit::UnifiedFillSearchInput {
                 signature: &signature,
                 b_samples: &self.b_samples,
                 channels: self.channels,
@@ -2078,8 +2078,8 @@ mod production_spec_tests {
     #[test]
     fn speech_peaks_fixture_unified_match_finds_truth() {
         use super::build_speech_peaks_offset_from_throat;
-        use crate::domain::GapSignatureMode;
-        use crate::test_support::energy_signature_fixtures::structure_heavy_weights;
+        use clip_sync_repair::domain::GapSignatureMode;
+        use crate::energy_signature_fixtures::structure_heavy_weights;
 
         let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
         let (_, _, b0, b1, _) = gap_report_times(&fixture);

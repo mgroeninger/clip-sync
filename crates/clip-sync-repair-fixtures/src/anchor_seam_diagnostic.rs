@@ -1,12 +1,12 @@
 //! Per-gap anchor seam candidate / bracket dumps for diagnostic tests.
 
-use crate::domain::gap_anchor_seam::{
+use clip_sync_repair::domain::gap_anchor_seam::{
     anchor_bracket_both_matchable, list_anchor_candidates_a, list_feasible_anchor_brackets,
     matchability_at_anchor, AnchorMatchabilityParams, AnchorSeamParams, AnchorSeamSide,
     AnchorSource, DEFAULT_ANCHOR_MATCH_MIN_PEARSON, DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
     DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
 };
-use crate::domain::policies::{self, refine_gap_frames, RefinedGapFrames, SeamTemplates};
+use clip_sync_repair::domain::policies::{self, refine_gap_frames, RefinedGapFrames, SeamTemplates};
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
 
@@ -117,7 +117,7 @@ pub fn print_anchor_seam_diagnostic(fixture: &EnergySignatureFixture, label: &st
             pre_window: pre_w,
             post_window: post_w,
         };
-        let pre_m = matchability_at_anchor(&crate::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
+        let pre_m = matchability_at_anchor(&clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
             templates: &templates,
             placement,
             side: AnchorSeamSide::Pre,
@@ -127,7 +127,7 @@ pub fn print_anchor_seam_diagnostic(fixture: &EnergySignatureFixture, label: &st
             correlator: Some(&correlator),
             max_lag_frames: max_lag,
         });
-        let post_m = matchability_at_anchor(&crate::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
+        let post_m = matchability_at_anchor(&clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
             templates: &templates,
             placement,
             side: AnchorSeamSide::Post,

@@ -39,6 +39,7 @@ rustfft = "6.4"
 
 [dev-dependencies]
 clip-sync = { path = "../clip-sync", features = ["test-utils"] }
+clip-sync-repair-fixtures = { path = "../clip-sync-repair-fixtures" }
 clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
 
 [[test]]
@@ -174,9 +175,4 @@ required-features = ["diagnostic-tests"]
 [[test]]
 name = "diag_splice_timescale"
 path = "tests/diag_splice_timescale.rs"
-required-features = ["diagnostic-tests"]
-
-[[test]]
-name = "diag_splice_dualfit"
-path = "tests/diag_splice_dualfit.rs"
 required-features = ["diagnostic-tests"]

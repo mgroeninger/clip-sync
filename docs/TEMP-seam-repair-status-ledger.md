@@ -175,7 +175,7 @@ authoritative map. Key traps:
 | Cross-codec validator-swap (R2/R4 loosen the gate) | Refuted — measurement artifact; plan archived (R2/R4 kept as diagnostics) |
 | Clip drift / time-warp | Refuted — offset slope ≈ 0 vs gap time |
 | "Skip was right" (uniqueness/residual funnel) | Superseded — wrong timescale (250 ms) + wrong residual test |
-| **`diag_splice_dualfit` sim (offline gate simulation)** | **Retired — decode unreliable.** Its independent ffmpeg `-ss` decode disagrees with the scan's decode at the *same* 1 s window (2026-07-01, pair-1 gaps 9/11/19/21): the sim locks both shoulders to a common offset (step ≈ 0) while the scan's `baseline_lag` reports a unique, prominent step (+260…+316 ms, `second_peak_r ≤ 0.17`). A ~75 ms→+302 ms per-gap offset that accurate seeking (`-ss` after `-i`) did **not** remove confirms the sim's decode — not the scan's — is the outlier. The repair runs on the scan/harness decode, so the sim's per-shoulder/global-shift verdicts are moot. **Replaced by scan-native `splice_dualfit`** (computed on the scan's PCM; C3/C7). Delete `crates/clip-sync-repair/tests/diag_splice_dualfit.rs` once the in-scan metric is validated on one pair. |
+| **`diag_splice_dualfit` sim (offline gate simulation)** | **Deleted** (was retired — decode unreliable). Replaced by scan-native `splice_dualfit` (C3/C7). |
 
 ---
 

@@ -11,7 +11,7 @@ that relates to **where** tests run (CI tiers — see [development.md](developme
 4. **F*** fixture IDs are geometry, not acceptance tier.
 
 **Harness vs acceptance IDs:** SD/SP/EC/RG name *what* a row proves; harness code is split —
-fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs in `tests/*_catalog/`,
+fixtures in `clip-sync-repair-fixtures`, runners in `clip-sync-repair-harness`, catalogs in `tests/*_catalog/`,
 `#[test]` in tier binaries. See [development.md](development.md) and [archive/test-tier-plan.md](archive/test-tier-plan.md#harness-organization-fixtures-runners-catalogs).
 
 ---
@@ -22,7 +22,7 @@ fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs
 |--------|------|---------|--------------|
 | **GK** | Gap kind | Operator/report classification (maps to `plan_kind`) | [gap-repair-guide.md](gap-repair-guide.md) Layer 1 |
 | **CS** | Content shape | Acoustic/editorial seam hint | [gap-repair-guide.md](gap-repair-guide.md) Layer 2 |
-| **F** | Fixture geometry | Synthetic scenario layout (F1, F1-long, F4-decoy, …) | `test_support/`, guide § Corpus fixtures |
+| **F** | Fixture geometry | Synthetic scenario layout (F1, F1-long, F4-decoy, …) | `clip-sync-repair-fixtures/`, guide § Corpus fixtures |
 | **SD** | Signature domain | Structure-match oracle on short in-memory fixtures | `tests/oracle_energy.rs` (integration, oracle label) |
 | **SP** | Signature patch | Domain + haystack + full `PatchAudio` on 8 s fixtures | `tests/integration_energy_patch.rs` (SP01–SP03), `tests/patch_audio_integration.rs` (SP04), `tests/validate_patch_audio.rs` (SP05) |
 | **EC** | Energy corpus | Production-geometry signature acceptance | `tests/oracle_energy.rs` (domain), `tests/integration_energy_smoke.rs` (scan/e2e), `tests/integration_energy_patch.rs` (SP01–SP03 patch), `tests/validate_residual_gate.rs` (EC-6 patch, validation), `tests/diag_energy_matrix.rs` (matrix, diagnostic) |
@@ -34,7 +34,7 @@ fixtures in `src/test_support/`, runners in `clip-sync-repair-harness`, catalogs
 
 | Layer | Path | Holds |
 |-------|------|-------|
-| Fixtures | `clip-sync-repair/src/test_support/` | F* builders, production helpers — no `#[test]` |
+| Fixtures | `crates/clip-sync-repair-fixtures/` | F* builders, production helpers — no `#[test]` |
 | Runners | `clip-sync-repair-harness` (dev-dep of repair) | Shared pipeline drivers (floor oracle, residual gate, seam residual, energy matrix) |
 | Catalogs | `tests/residual_gate_catalog/`, `tests/floor_oracle/`, `tests/gap_corpus/` | `matrix.toml`, manifests, baselines — not binaries |
 | Tests | `tests/<tier>_*.rs` | Thin `#[test]` asserting SD/SP/EC/RG rows |

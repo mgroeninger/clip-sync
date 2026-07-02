@@ -16,10 +16,10 @@ use clip_sync_repair::domain::{
     ResidualGateMode,
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_production_at, build_f4_decoy_production, EnergySignatureFixture,
 };
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
 };
 

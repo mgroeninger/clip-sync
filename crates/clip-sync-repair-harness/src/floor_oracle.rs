@@ -7,7 +7,7 @@ use clip_sync::testing::corpus_sources::{
     find_source, load_sources, prepare_source_master_wav, source_cache_path, source_ready,
 };
 use clip_sync::testing::ffmpeg_util::{self, delay_wav, ffmpeg_available};
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     gap_anchor_secs, ProductionScenarioSpec,
 };
 use hound::{WavReader, WavWriter};

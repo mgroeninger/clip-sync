@@ -14,27 +14,27 @@ use std::time::Instant;
 
 use clip_sync::MultiChannelPcm;
 
-use crate::application::patch_region::{
+use clip_sync_repair::application::gate_oracle::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
     oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateConfig,
     SeamGateFailure, SeamGateParams,
 };
-use crate::domain::gap_anchor_seam::{
+use clip_sync_repair::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorBracket, AnchorSeamMode,
     AnchorSeamParams,
 };
-use crate::domain::policies::RefinedGapFrames;
-use crate::domain::FillConfidence;
-use crate::infrastructure::config::RepairConfig;
-use crate::test_support::energy_signature_fixtures::{
+use clip_sync_repair::domain::policies::RefinedGapFrames;
+use clip_sync_repair::domain::FillConfidence;
+use clip_sync_repair::infrastructure::config::RepairConfig;
+use crate::energy_signature_fixtures::{
     build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift, gap_report_times,
     EnergySignatureFixture,
 };
-use crate::test_support::energy_signature_production::{
+use crate::energy_signature_production::{
     gap_report_from_energy_fixture, oracle_baseline_throat_pearson_opt,
     oracle_nominal_throat_pearson, patch_request_from_repair, production_geometry_params,
 };
-use crate::test_support::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
+use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 
 /// Pearson High floor (`min_fill_correlation`) for the A6 oracle.
 const HIGH_FLOOR: f64 = 0.35;
@@ -95,7 +95,7 @@ pub fn build_w5_cell(cell: &W5AnchorRescueCell) -> (EnergySignatureFixture, Repa
         cell.fill_border_search_secs,
         cell.effective_b_shift_secs(),
     );
-    let repair = crate::test_support::energy_signature_production::w5_anchor_rescue_repair(
+    let repair = crate::energy_signature_production::w5_anchor_rescue_repair(
         AnchorSeamMode::Auto,
         cell.fill_border_search_secs,
     );
@@ -318,7 +318,7 @@ fn context_from_fixture(
     let request = patch_request_from_repair(report, repair);
 
     let ch = fixture.channels.max(1);
-    let cfg = SeamGateConfig::from_repair(
+    let cfg = clip_sync_repair::application::gate_oracle::seam_gate_config_from_repair(
         &request,
         fixture.sample_rate,
         fixture.channels,

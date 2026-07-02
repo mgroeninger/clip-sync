@@ -19,12 +19,12 @@ use clip_sync_repair::domain::{
 };
 use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_c3_speech_boundary_asymmetric_post, build_f4_decoy_production,
     build_speech_peaks_offset_from_throat, build_w5_noise_collar_anchor_rescue,
     build_w5_symmetric_weak_throat_anchor_rescue, EnergySignatureFixture,
 };
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, oracle_nominal_throat_pearson, patch_request_from_repair,
     production_fit_weights_config, w5_anchor_rescue_repair,
 };

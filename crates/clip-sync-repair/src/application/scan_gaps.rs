@@ -90,8 +90,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         self.scan_after_alignment(request, alignment)
     }
 
-    /// Gap scan after alignment — unit-testable without the align sub-flow.
-    pub(crate) fn scan_after_alignment(
+    /// Gap scan after alignment — used by fixture corpus builders (not the public scan API).
+    #[doc(hidden)]
+    pub fn scan_after_alignment(
         &self,
         request: ScanGapsRequest,
         alignment: AlignmentResult,

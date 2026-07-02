@@ -8,10 +8,10 @@
 //! Run: `cargo test -p clip-sync-repair --test integration_energy_patch`
 
 use clip_sync_repair::domain::GapSignatureMode;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration, structure_heavy_weights, structure_slide_secs,
 };
-use clip_sync_repair::test_support::energy_signature_production::gap_report_from_energy_fixture;
+use clip_sync_repair_fixtures::energy_signature_production::gap_report_from_energy_fixture;
 use clip_sync_repair_harness::patch_audio::{
     assert_domain_energy_finds_truth, assert_energy_integration_patch, energy_sig_patch_options,
 };

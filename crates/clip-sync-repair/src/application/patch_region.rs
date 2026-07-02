@@ -68,7 +68,8 @@ pub(crate) struct SeamGateOutcome {
 /// and the frame counts that derive from run-level `secs × sample_rate` (no per-gap dependence).
 /// The three `*_secs` fields feed [`derive_seam_gate_geometry`]'s per-gap frame math.
 #[derive(Clone, Copy)]
-pub(crate) struct SeamGateConfig {
+#[doc(hidden)]
+pub struct SeamGateConfig {
     pub channels: usize,
     pub sample_rate: u32,
     pub context_frames: usize,
@@ -121,7 +122,8 @@ pub(crate) struct SeamGateConfig {
 /// two `gap_frames`-derived frame counts `seam_gate_frames`/`border_frames`). See
 /// [`derive_seam_gate_geometry`].
 #[derive(Clone, Copy)]
-pub(crate) struct SeamGateGeometry<'a> {
+#[doc(hidden)]
+pub struct SeamGateGeometry<'a> {
     pub a_pcm: &'a MultiChannelPcm,
     pub b_samples: &'a [f32],
     pub b_extract_start_secs: f64,
@@ -132,7 +134,8 @@ pub(crate) struct SeamGateGeometry<'a> {
     pub anchor_search_prior: Option<AnchorSearchPrior>,
 }
 
-pub(crate) struct SeamGateParams<'a> {
+#[doc(hidden)]
+pub struct SeamGateParams<'a> {
     pub cfg: &'a SeamGateConfig,
     pub geom: SeamGateGeometry<'a>,
 }
@@ -141,7 +144,8 @@ pub(crate) struct SeamGateParams<'a> {
 /// `seam_gate_frames`/`border_frames` from `gap_frames` so the oracle and production share one
 /// path (see docs/TEMP-w5-anchor-rescue-diag-plan.md Phase 0).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_seam_gate_geometry<'a>(
+#[doc(hidden)]
+pub fn derive_seam_gate_geometry<'a>(
     cfg: &SeamGateConfig,
     a_pcm: &'a MultiChannelPcm,
     b_samples: &'a [f32],
@@ -178,7 +182,8 @@ pub(crate) fn derive_seam_gate_geometry<'a>(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SeamGateFailure {
+#[doc(hidden)]
+pub enum SeamGateFailure {
     StructureAlignmentFailed,
     StructureBelowThreshold {
         pre: f64,
@@ -286,7 +291,8 @@ impl FitJointCandidate {
 }
 
 /// Reused B haystack mono, channels, and structure timelines for joint-grid candidates.
-pub(crate) struct FitHaystackCache {
+#[doc(hidden)]
+pub struct FitHaystackCache {
     b_mono: Vec<f64>,
     b_ch: Vec<Vec<f64>>,
     bool_timeline: gap_structure::ActivityTimeline,
@@ -1263,7 +1269,8 @@ fn log_residual_channel_breakdown(
 
 /// Oracle-only: build the unified haystack cache once for a cell, then reuse across candidates
 /// (the cache depends only on `params`, not the candidate `refined`). W5 discovery, Phase 1.
-pub(crate) fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
+#[doc(hidden)]
+pub fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
     FitHaystackCache::build(params)
 }
 
@@ -1271,7 +1278,8 @@ pub(crate) fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystack
 /// [`evaluate_seam_gate_fit_candidate`] production uses against a pre-built `cache`, returning gate
 /// Pearson `(pre, post)` + confidence + ranking score, or the gate failure. See
 /// docs/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
-pub(crate) fn oracle_score_fit_candidate(
+#[doc(hidden)]
+pub fn oracle_score_fit_candidate(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     refined: RefinedGapFrames,
@@ -1290,7 +1298,8 @@ pub(crate) fn oracle_score_fit_candidate(
 
 /// Production-faithful joint-pool outcome for one oracle cell (W5 discovery, Phase 2). `patched`
 /// is false when the whole gate skipped (E5). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.2.
-pub(crate) struct OracleJointOutcome {
+#[doc(hidden)]
+pub struct OracleJointOutcome {
     pub patched: bool,
     pub anchor_seam_used: bool,
     pub anchor_move_frames: usize,
@@ -1298,7 +1307,8 @@ pub(crate) struct OracleJointOutcome {
 
 /// Oracle-only: run the **full** fit-joint routing (E1–E7) on oracle-built `params` and report which
 /// candidate won the pool — exactly what `PatchAudio` would decide, without decoding. Phase 2.
-pub(crate) fn oracle_evaluate_fit_joint(
+#[doc(hidden)]
+pub fn oracle_evaluate_fit_joint(
     params: &SeamGateParams<'_>,
     baseline: RefinedGapFrames,
 ) -> OracleJointOutcome {
@@ -1318,7 +1328,8 @@ pub(crate) fn oracle_evaluate_fit_joint(
 
 /// Oracle-only: would auto-mode anchor search run for this cell? Mirrors the gate inside
 /// `AudioFitSource::anchor_brackets` (baseline contour + score floor). Phase 2 CSV column.
-pub(crate) fn oracle_anchor_seam_would_run(
+#[doc(hidden)]
+pub fn oracle_anchor_seam_would_run(
     params: &SeamGateParams<'_>,
     baseline: RefinedGapFrames,
     baseline_pre: f64,

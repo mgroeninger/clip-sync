@@ -7,14 +7,14 @@ use clip_sync::{
     SymphoniaMediaReader, TimelineOverlap,
 };
 
-use crate::test_support::NoOpProgressReporter;
+use crate::NoOpProgressReporter;
 
-use crate::application::ports::Aligner;
-use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
-use crate::application::PatchAudioRequest;
-use crate::domain::{GapReport, GapSignatureMode};
-use crate::infrastructure::config::RepairConfig;
-use crate::test_support::energy_signature_fixtures::{
+use clip_sync_repair::application::ports::Aligner;
+use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
+use clip_sync_repair::application::PatchAudioRequest;
+use clip_sync_repair::domain::{GapReport, GapSignatureMode};
+use clip_sync_repair::infrastructure::config::RepairConfig;
+use crate::energy_signature_fixtures::{
     gap_report_times, write_fixture_wavs, EnergySignatureFixture,
 };
 
@@ -42,21 +42,21 @@ pub fn gap_report_from_energy_fixture(
     temp: &Path,
     fixture: &EnergySignatureFixture,
 ) -> GapReport {
-    use crate::domain::gap::Gap;
+    use clip_sync_repair::domain::gap::Gap;
 
     let (path_a, path_b) = write_fixture_wavs(temp, fixture);
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     GapReport {
         video_a: path_a,
         video_b: path_b,
-        track_compatibility: Some(crate::domain::TrackCompatibility {
+        track_compatibility: Some(clip_sync_repair::domain::TrackCompatibility {
             a_channels: fixture.channels as u16,
             b_channels: fixture.channels as u16,
             a_sample_rate: fixture.sample_rate,
             b_sample_rate: fixture.sample_rate,
             channels_match: true,
             rate_match: true,
-            verdict: crate::domain::CompatibilityVerdict::Compatible,
+            verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
         }),
         alignment: oracle_injected_alignment(total_secs),
         gaps: vec![Gap {
@@ -86,8 +86,8 @@ pub fn gap_report_from_floor_oracle(
     gap_start_frame: usize,
     gap_end_frame: usize,
 ) -> GapReport {
-    use crate::domain::gap::Gap;
-    use crate::domain::policies::refine_gap_frames;
+    use clip_sync_repair::domain::gap::Gap;
+    use clip_sync_repair::domain::policies::refine_gap_frames;
 
     const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
     let max_refine_frames =
@@ -109,14 +109,14 @@ pub fn gap_report_from_floor_oracle(
     GapReport {
         video_a: path_a.to_path_buf(),
         video_b: path_b.to_path_buf(),
-        track_compatibility: Some(crate::domain::TrackCompatibility {
+        track_compatibility: Some(clip_sync_repair::domain::TrackCompatibility {
             a_channels: 1,
             b_channels: 1,
             a_sample_rate: sample_rate,
             b_sample_rate: sample_rate,
             channels_match: true,
             rate_match: true,
-            verdict: crate::domain::CompatibilityVerdict::Compatible,
+            verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
         }),
         alignment: oracle_injected_alignment(total_secs),
         gaps: vec![Gap {
@@ -346,9 +346,9 @@ pub fn patch_request_from_repair(report: GapReport, repair: &RepairConfig) -> Pa
 }
 
 /// Patch geometry params mirroring [`production_repair_config`] for haystack diagnostics.
-pub fn production_geometry_params(repair: &RepairConfig) -> crate::test_support::patch_geometry_preview::PatchGeometryParams {
-    use crate::domain::FillMode;
-    use crate::test_support::patch_geometry_preview::PatchGeometryParams;
+pub fn production_geometry_params(repair: &RepairConfig) -> crate::patch_geometry_preview::PatchGeometryParams {
+    use clip_sync_repair::domain::FillMode;
+    use crate::patch_geometry_preview::PatchGeometryParams;
 
     PatchGeometryParams {
         fill_border_search_secs: repair.fill_border_search_secs,
@@ -370,12 +370,12 @@ pub fn oracle_nominal_throat_pearson(
     fixture: &EnergySignatureFixture,
     repair: &RepairConfig,
 ) -> (f64, f64) {
-    use crate::domain::gap_fill_fit::WaveformSeamContext;
-    use crate::domain::policies::{
+    use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
+    use clip_sync_repair::domain::policies::{
         border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
         interleaved_to_channels, interleaved_to_mono, GapBorderSpec, SeamPlacement, SeamTemplates,
     };
-    use crate::test_support::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
+    use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     let alignment = oracle_injected_alignment(total_secs);
@@ -457,9 +457,9 @@ pub fn oracle_baseline_throat_pearson_opt(
     fixture: &EnergySignatureFixture,
     repair: &RepairConfig,
 ) -> Option<(f64, f64)> {
-    use crate::domain::gap_fill_fit::UnifiedFitWeights;
-    use crate::test_support::energy_signature_fixtures::gap_report_times;
-    use crate::test_support::patch_geometry_preview::preview_patch_geometry;
+    use clip_sync_repair::domain::gap_fill_fit::UnifiedFitWeights;
+    use crate::energy_signature_fixtures::gap_report_times;
+    use crate::patch_geometry_preview::preview_patch_geometry;
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     let alignment = oracle_injected_alignment(total_secs);
@@ -491,15 +491,15 @@ pub fn oracle_baseline_throat_pearson_opt(
 
 /// Repair knobs for the W5 anchor-rescue oracle (A6).
 pub fn w5_anchor_rescue_repair(
-    anchor_seam_mode: crate::domain::AnchorSeamMode,
+    anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode,
     fill_border_search_secs: f64,
 ) -> RepairConfig {
     let mut repair = production_fit_weights_config(GapSignatureMode::Energy, 3.0);
-    repair.fill_mode = crate::domain::FillMode::Fit;
-    repair.fit_boundary_search = crate::domain::FitBoundarySearch::BaselineOnly;
+    repair.fill_mode = clip_sync_repair::domain::FillMode::Fit;
+    repair.fit_boundary_search = clip_sync_repair::domain::FitBoundarySearch::BaselineOnly;
     repair.gap_signature_mode = GapSignatureMode::Energy;
     repair.anchor_seam_mode = anchor_seam_mode;
-    repair.residual_gate = crate::domain::ResidualGateMode::Off;
+    repair.residual_gate = clip_sync_repair::domain::ResidualGateMode::Off;
     repair.min_fill_correlation = 0.35;
     repair.fill_marginal_margin = 0.10;
     repair.strong_structure_trust = 0.90;

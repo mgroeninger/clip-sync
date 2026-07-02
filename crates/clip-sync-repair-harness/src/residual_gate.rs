@@ -13,7 +13,7 @@ use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
 use clip_sync_repair::domain::policies::SeamResidualVerdict;
 use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_floor_oracle, patch_request_from_repair, production_repair_config,
 };
 

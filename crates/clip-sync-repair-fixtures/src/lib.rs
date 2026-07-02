@@ -1,8 +1,11 @@
-//! Hidden test helpers (integration + acceptance tests).
+//! Synthetic fixtures and oracle helpers for clip-sync-repair tier tests.
+//!
+//! Consumed by `clip-sync-repair-harness` and repair `tests/` binaries — not part of the
+//! production repair library.
 
 use clip_sync::ProgressReporter;
 
-/// No-op progress sink for scan/patch helpers (avoids `clip-sync/test-utils` in lib builds).
+/// No-op progress sink for scan/patch helpers.
 pub struct NoOpProgressReporter;
 
 impl ProgressReporter for NoOpProgressReporter {

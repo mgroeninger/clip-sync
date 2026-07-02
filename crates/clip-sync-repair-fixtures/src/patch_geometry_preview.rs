@@ -2,16 +2,16 @@
 
 use clip_sync::AlignmentResult;
 
-use crate::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode};
-use crate::domain::gap_fill_fit::{match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights};
-use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
-use crate::domain::gap_structure::{self, StructureMatchParams};
-use crate::domain::repair_profile::gap_extension_slack_secs;
-use crate::domain::policies::{
+use clip_sync_repair::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode};
+use clip_sync_repair::domain::gap_fill_fit::{match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights};
+use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignatureMode};
+use clip_sync_repair::domain::gap_structure::{self, StructureMatchParams};
+use clip_sync_repair::domain::repair_profile::gap_extension_slack_secs;
+use clip_sync_repair::domain::policies::{
     self, border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
     interleaved_to_mono, GapBorderSpec, RefinedGapFrames, SeamTemplates,
 };
-use crate::domain::gap_fill_fit::WaveformSeamContext;
+use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
 
@@ -28,7 +28,7 @@ pub struct PatchGeometryParams {
     pub gap_end_extend_max_ms: u64,
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
-    pub fit_boundary_search: crate::domain::FitBoundarySearch,
+    pub fit_boundary_search: clip_sync_repair::domain::FitBoundarySearch,
     pub fill_offset_mode: FillOffsetMode,
     pub fill_mode_fit: bool,
     pub gap_signature_bin_ms: u32,
@@ -75,7 +75,7 @@ impl PatchGeometryPreview {
         fixture: &EnergySignatureFixture,
         mode: GapSignatureMode,
         weights: UnifiedFitWeights,
-    ) -> Option<crate::domain::gap_fill_fit::UnifiedFillMatch> {
+    ) -> Option<clip_sync_repair::domain::gap_fill_fit::UnifiedFillMatch> {
         let haystack = slice_b_interleaved(
             &fixture.b_samples,
             fixture.channels,
@@ -88,7 +88,7 @@ impl PatchGeometryPreview {
         }
 
         let ch = fixture.channels.max(1);
-        let gap_frames = self.refined.gap_frames();
+        let gap_frames = refined_gap_frames(&self.refined);
         let border_frames = self.patch_structure_params.bin_frames * 3;
         let border_spec = GapBorderSpec {
             gap_start_frame: self.refined.start_frame,
@@ -174,7 +174,7 @@ impl PatchGeometryPreview {
                 self.refined.start_frame,
                 self.refined.end_frame,
                 self.fixture_gap_frames,
-                self.refined.gap_frames(),
+                refined_gap_frames(&self.refined),
             ),
             format!(
                 "B mapped: [{:.6}..{:.6}] haystack [{:.6}..{:.6}] ({} frames)",
@@ -219,10 +219,8 @@ impl PatchGeometryPreview {
     }
 }
 
-impl RefinedGapFrames {
-    fn gap_frames(&self) -> usize {
-        self.end_frame.saturating_sub(self.start_frame)
-    }
+fn refined_gap_frames(refined: &RefinedGapFrames) -> usize {
+    refined.end_frame.saturating_sub(refined.start_frame)
 }
 
 /// Recompute patch-path geometry without running `PatchAudio`.
@@ -275,11 +273,11 @@ pub fn preview_patch_geometry(
     let margin_secs = params.fill_align_margin_secs;
     let border_search_secs = params.fill_border_search_secs;
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = gap_extension_slack_secs(crate::domain::RepairPatchConfigView {
+    let extend_slack_secs = gap_extension_slack_secs(clip_sync_repair::domain::RepairPatchConfigView {
         fill_mode: if params.fill_mode_fit {
-            crate::domain::FillMode::Fit
+            clip_sync_repair::domain::FillMode::Fit
         } else {
-            crate::domain::FillMode::Gate
+            clip_sync_repair::domain::FillMode::Gate
         },
         fit_boundary_search: params.fit_boundary_search,
         gap_end_extend_on_post_seam_fail: params.gap_end_extend_on_post_seam_fail,
@@ -290,7 +288,7 @@ pub fn preview_patch_geometry(
         fill_anchor_search_prior_weight: 0.0,
         fill_anchor_retry_marginal: false,
         fill_offset_mode: params.fill_offset_mode,
-        anchor_seam_mode: crate::domain::AnchorSeamMode::Off,
+        anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode::Off,
     });
     let b_extract_start_secs = (refined_b_start_secs
         - params.gap_signature_context_secs
@@ -308,7 +306,7 @@ pub fn preview_patch_geometry(
 
     let search_radius_frames = (border_search_secs * rate as f64).round() as usize;
     let fill_length_slack_frames = (params.fill_length_slack_secs * rate as f64).round() as usize;
-    let gap_frames = refined.gap_frames();
+    let gap_frames = refined_gap_frames(&refined);
     let patch_structure_params = StructureMatchParams {
         gap_frames,
         bin_frames: bin_frames.max(1),

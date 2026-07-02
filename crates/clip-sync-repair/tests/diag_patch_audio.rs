@@ -7,10 +7,10 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_patch_audio -- --nocapture`
 
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration,
 };
-use clip_sync_repair::test_support::energy_signature_production::gap_report_from_energy_fixture;
+use clip_sync_repair_fixtures::energy_signature_production::gap_report_from_energy_fixture;
 use clip_sync_repair::domain::GapSignatureMode;
 use clip_sync_repair_harness::patch_audio::{energy_sig_patch_diagnostic, energy_sig_patch_options};
 

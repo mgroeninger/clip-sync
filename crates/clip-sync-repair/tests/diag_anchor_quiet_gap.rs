@@ -32,11 +32,11 @@ use clip_sync_repair::domain::policies::{
     border_templates_for_gap, fill_seam_correlations, GapBorderSpec, RefinedGapFrames,
     SeamPlacement, SeamTemplates,
 };
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     EnergySignatureFixture, ProductionScenarioSpec,
 };
-use clip_sync_repair::test_support::energy_signature_production::w5_anchor_rescue_repair;
-use clip_sync_repair::test_support::w5_anchor_rescue_diag::{score_w5_fixture, W5JointWinner};
+use clip_sync_repair_fixtures::energy_signature_production::w5_anchor_rescue_repair;
+use clip_sync_repair_fixtures::w5_anchor_rescue_diag::{score_w5_fixture, W5JointWinner};
 
 const RATE: usize = 48_000;
 

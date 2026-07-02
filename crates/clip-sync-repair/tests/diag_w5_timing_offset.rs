@@ -15,10 +15,10 @@
 //! `cargo test -p clip-sync-repair --release --features diagnostic-tests --test diag_w5_timing_offset -- --nocapture`
 
 use clip_sync_repair::domain::gap_anchor_seam::AnchorSeamMode;
-use clip_sync_repair::test_support::energy_signature_fixtures::build_w5_timing_offset_seam;
-use clip_sync_repair::test_support::energy_signature_production::w5_anchor_rescue_repair;
-use clip_sync_repair::test_support::w5_anchor_rescue_diag::{score_w5_fixture, W5JointWinner};
-use clip_sync_repair::test_support::w5_timing_offset_diag::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::build_w5_timing_offset_seam;
+use clip_sync_repair_fixtures::energy_signature_production::w5_anchor_rescue_repair;
+use clip_sync_repair_fixtures::w5_anchor_rescue_diag::{score_w5_fixture, W5JointWinner};
+use clip_sync_repair_fixtures::w5_timing_offset_diag::{
     w5_timing_offset_csv, w5_timing_offset_grid_default, W5TimingOffsetCell, COLLAR_SECS,
     PEAK_OFFSET_SECS, SR,
 };

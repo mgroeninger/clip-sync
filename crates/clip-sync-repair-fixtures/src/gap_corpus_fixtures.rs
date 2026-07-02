@@ -5,14 +5,14 @@ use tempfile::TempDir;
 
 use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader, TimelineOverlap};
 
-use crate::test_support::energy_signature_fixtures::{
+use crate::energy_signature_fixtures::{
     build_speech_peaks_offset_from_throat, write_pcm_wav,
 };
-use crate::test_support::NoOpProgressReporter;
+use crate::NoOpProgressReporter;
 
-use crate::application::ports::Aligner;
-use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
-use crate::domain::gap::Gap;
+use clip_sync_repair::application::ports::Aligner;
+use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
+use clip_sync_repair::domain::gap::Gap;
 
 const DEFAULT_SAMPLE_RATE: u32 = 11_025;
 const DEFAULT_TOTAL_SECS: u32 = 30;
@@ -830,9 +830,9 @@ fn patch_corpus_alignment(duration_secs: f64) -> AlignmentResult {
 }
 
 fn patch_audio_request_from_defaults(
-    report: crate::domain::GapReport,
-) -> crate::application::PatchAudioRequest {
-    use crate::infrastructure::config::RepairConfig;
+    report: clip_sync_repair::domain::GapReport,
+) -> clip_sync_repair::application::PatchAudioRequest {
+    use clip_sync_repair::infrastructure::config::RepairConfig;
 
     let repair = RepairConfig::default();
     patch_audio_request_from_repair(report, &repair)
@@ -840,18 +840,18 @@ fn patch_audio_request_from_defaults(
 
 /// Production-default repair knobs (see `RepairConfig::default`).
 fn patch_audio_request_from_repair(
-    report: crate::domain::GapReport,
-    repair: &crate::infrastructure::config::RepairConfig,
-) -> crate::application::PatchAudioRequest {
+    report: clip_sync_repair::domain::GapReport,
+    repair: &clip_sync_repair::infrastructure::config::RepairConfig,
+) -> clip_sync_repair::application::PatchAudioRequest {
     repair.patch_settings().into_request(report)
 }
 
 /// Fit patch config for committed corpus timing: still `fill_mode = fit`, but without the
 /// joint boundary grid and with a smaller B haystack so debug CI stays fast.
 fn patch_audio_request_for_corpus_timing(
-    report: crate::domain::GapReport,
-) -> crate::application::PatchAudioRequest {
-    let repair = crate::infrastructure::config::RepairConfig {
+    report: clip_sync_repair::domain::GapReport,
+) -> clip_sync_repair::application::PatchAudioRequest {
+    let repair = clip_sync_repair::infrastructure::config::RepairConfig {
         fill_border_search_secs: 5.0,
         gap_end_extend_on_post_seam_fail: false,
         gap_start_extend_on_pre_seam_fail: false,
@@ -876,7 +876,7 @@ impl Aligner for NeverCalledAligner {
 
 /// Run scan-after-alignment expectations for every non-ignored manifest case in `tier`.
 pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
-    use crate::application::ScanGaps;
+    use clip_sync_repair::application::ScanGaps;
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
@@ -924,7 +924,7 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
 
 /// Patch wall-time budget guard for committed/generated corpus rows (fit mode, no full grid).
 pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
-    use crate::application::{PatchAudio, PatchAudioResult};
+    use clip_sync_repair::application::{PatchAudio, PatchAudioResult};
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
@@ -983,7 +983,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
         );
 
         let patch_request = patch_audio_request_for_corpus_timing(report);
-        let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let crossfade_ms = clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
         let started = std::time::Instant::now();
         let result: PatchAudioResult = patch
             .execute(patch_request, crossfade_ms)
@@ -1011,7 +1011,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
 
 /// Production-default fit patch smoke on committed/generated corpus rows (manual perf).
 pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
-    use crate::application::PatchAudio;
+    use clip_sync_repair::application::PatchAudio;
 
     let manifest = load_manifest();
     let media_reader = SymphoniaMediaReader;
@@ -1041,7 +1041,7 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
 
         let started = std::time::Instant::now();
         let patch_request = patch_audio_request_from_defaults(report);
-        let crossfade_ms = crate::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let crossfade_ms = clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
         let result = patch
             .execute(patch_request, crossfade_ms)
             .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
@@ -1060,16 +1060,16 @@ const W5_CORPUS_CASE_ID: &str = "generated_w5_speech_peaks_anchor";
 
 /// W5 production corpus: speech peaks offset from silent throat — scan, domain anchors, default auto patch.
 pub fn run_gap_corpus_w5_anchor_seam_case() {
-    use crate::application::PatchAudio;
-    use crate::domain::gap_anchor_seam::{
+    use clip_sync_repair::application::PatchAudio;
+    use clip_sync_repair::domain::gap_anchor_seam::{
         list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
         AnchorSource,
     };
-    use crate::domain::patch_result::GapPatchStatus;
-    use crate::domain::policies::refine_gap_frames;
-    use crate::domain::{FillMode, GapSignatureMode, ResidualGateMode};
-    use crate::infrastructure::config::RepairConfig;
-    use crate::test_support::energy_signature_production::{
+    use clip_sync_repair::domain::patch_result::GapPatchStatus;
+    use clip_sync_repair::domain::policies::refine_gap_frames;
+    use clip_sync_repair::domain::{FillMode, GapSignatureMode, ResidualGateMode};
+    use clip_sync_repair::infrastructure::config::RepairConfig;
+    use crate::energy_signature_production::{
         gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
     };
 

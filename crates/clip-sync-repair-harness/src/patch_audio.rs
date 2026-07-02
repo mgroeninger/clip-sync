@@ -11,10 +11,10 @@ use clip_sync_repair::domain::{
     AnchorSeamMode, CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
     GapPatchStatus, GapSignatureMode, RepairProfile, TrackCompatibility,
 };
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     gap_report_times, structure_heavy_weights, structure_slide_secs, EnergySignatureFixture,
 };
-use clip_sync_repair::test_support::patch_geometry_preview::{
+use clip_sync_repair_fixtures::patch_geometry_preview::{
     preview_patch_geometry, PatchGeometryParams,
 };
 use hound::{SampleFormat, WavSpec, WavWriter};

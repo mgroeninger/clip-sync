@@ -12,7 +12,7 @@ use clip_sync_repair::domain::gap_fill_fit::{
 };
 use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
 use clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_production, build_f4_decoy_production, channel_noise, overwrite_channels,
 };
 use clip_sync_repair_harness::seam_residual::{

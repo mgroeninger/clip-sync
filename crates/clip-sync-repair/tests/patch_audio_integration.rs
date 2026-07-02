@@ -28,7 +28,7 @@ use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f3_drone_integration, structure_heavy_weights,
 };
 use clip_sync_repair_harness::patch_audio::{

@@ -6,8 +6,8 @@ use clip_sync::SymphoniaMediaReader;
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::{GapPatchStatus, GapSignatureMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::EnergySignatureFixture;
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::EnergySignatureFixture;
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_matrix_contexts,
     production_repair_config, scan_gaps_for_fixture,
 };

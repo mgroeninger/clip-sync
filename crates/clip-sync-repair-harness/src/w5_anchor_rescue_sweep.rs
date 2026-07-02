@@ -4,14 +4,14 @@
 //! locate the E3 (anchor-rescue) pocket — where an anchor bracket reaches Pearson High and wins the
 //! production joint pool. Coarse grid first, then refine only where neighbours change regime.
 //!
-//! Per-cell scoring is the diagnostic `evaluate_w5_cell` (lib `test_support`); this module owns only
+//! Per-cell scoring is the diagnostic `evaluate_w5_cell` (`clip-sync-repair-fixtures`); this module owns only
 //! grid generation, boundary refinement, and CSV I/O.
 
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
-use clip_sync_repair::test_support::w5_anchor_rescue_diag::{
+use clip_sync_repair_fixtures::w5_anchor_rescue_diag::{
     classify_w5_cell, evaluate_w5_cell, W5AnchorRescueCell, W5AnchorRescueRegime, W5CellEvaluation,
     W5JointWinner,
 };

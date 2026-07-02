@@ -9,9 +9,9 @@
 //! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_w5_anchor_rescue -- --nocapture`
 
 use clip_sync_repair::domain::gap_anchor_seam::AnchorSeamMode;
-use clip_sync_repair::test_support::energy_signature_fixtures::build_w5_noise_collar_anchor_rescue;
-use clip_sync_repair::test_support::energy_signature_production::w5_anchor_rescue_repair;
-use clip_sync_repair::test_support::w5_anchor_rescue_diag::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::build_w5_noise_collar_anchor_rescue;
+use clip_sync_repair_fixtures::energy_signature_production::w5_anchor_rescue_repair;
+use clip_sync_repair_fixtures::w5_anchor_rescue_diag::{
     score_w5_anchor_rescue_cell, score_w5_fixture, W5AnchorRescueCell, W5AnchorRescueCellScores,
     W5FixtureScores,
 };

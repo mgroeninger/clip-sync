@@ -18,11 +18,11 @@ use clip_sync_repair::domain::{
     ResidualGateMode, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
 };
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     gap_anchor_secs, overwrite_channels, structure_slide_secs, EnergySignatureFixture,
     ProductionScenarioSpec,
 };
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair, production_repair_config,
 };
 use clip_sync_repair_harness::seam_residual::{broadband_master, lcg};

@@ -9,20 +9,20 @@
 //! Run: `cargo test -p clip-sync-repair --test oracle_energy`
 //! Ignored: `.\scripts\test-tier.ps1 -Tier oracle`
 
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
     build_f2_production, build_f3_drone, build_f3_drone_production, build_f3_silence,
     build_f4_decoy_production, structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN,
     MODE_SCORE_EPS,
 };
 
-use clip_sync_repair::test_support::energy_signature_production::{
+use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_energy_fixture, patch_request_from_repair,
     production_geometry_params, production_repair_config, scan_gaps_for_fixture,
 };
-use clip_sync_repair::test_support::energy_signature_fixtures::gap_report_times;
-use clip_sync_repair::test_support::patch_geometry_preview::preview_patch_geometry;
-use clip_sync_repair::test_support::energy_signature_fixtures::structure_slide_secs;
+use clip_sync_repair_fixtures::energy_signature_fixtures::gap_report_times;
+use clip_sync_repair_fixtures::patch_geometry_preview::preview_patch_geometry;
+use clip_sync_repair_fixtures::energy_signature_fixtures::structure_slide_secs;
 use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync_repair::application::PatchAudio;

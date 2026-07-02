@@ -6,8 +6,8 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_anchor_seam -- --nocapture`
 
-use clip_sync_repair::test_support::anchor_seam_diagnostic::print_anchor_seam_diagnostic;
-use clip_sync_repair::test_support::energy_signature_fixtures::{
+use clip_sync_repair_fixtures::anchor_seam_diagnostic::print_anchor_seam_diagnostic;
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_c3_speech_boundary_asymmetric_post, build_speech_peaks_offset_from_throat,
 };
 
