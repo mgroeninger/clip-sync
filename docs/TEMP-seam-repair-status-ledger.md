@@ -272,7 +272,13 @@ seam viability went through **two capture fixes** as ground-truth checks exposed
    sound) still dropped — a *larger* divergence (7·g3: gross 1 s pre −319 ms, seam +18 ms) beyond ±100 ms.
    ⇒ **Re-anchor fix (`2622c7a`): seam search now on NOMINAL `b_mapped` ±600 ms** (`SEAM_LOCAL_SEARCH_MS`),
    + `pre/post_seam_z` alias guard. Unit-tested, binary built.
-**Provisional / not frozen:** the golden baseline + the "7 targets" count are **pre-reanchor** (see
-`golden/README.md`). **Next:** nominal-reanchor **rescan pending** (poll armed) → scrutinize new passers via
-`seam_z`/wide-env → re-run the `b_levels` cross-check → **P2 orthogonality gate** → **freeze golden baseline**
-→ perf-redesign (D12) → **wire §4 repair (A3)**.
+3. **Step-real recalibration** (`b099b83`) — the old `post@pre < 0.35` floor mis-flagged 7·g4 (post@pre 0.393,
+   post_own 0.96); `step_is_real()` now requires `post_own − post@pre ≥ 0.15` (materially improves). +7·g4.
+**RESOLVED / FROZEN (2026-07-02):** nominal-reanchor rescan done → **9 A3 targets** (1·g3,1·g5,1·g22,2·g1,2·g2,
+5·g6,7·g2,7·g3,7·g4), all seam_z 9.3–21.9, donor-continuous, step materially real. **Golden baseline frozen**
+(`golden/re-anchor-dual-fit-on-nominal.golden.json`); all §4.0 gates met: P2 clean, `b_levels` cross-check
+clean (eliminated B-loud gaps all donor-BROKEN w/ multi-sec interior silence, or start-of-file g0). **P2
+findings:** `gate_pass` is now **degenerate** (31/32 pass — ±600 ms over-permissive) and `donor-aligned ≡
+donor-nominal` on this corpus — the target set rests on donor-occupancy ∧ step-real, not seam viability (a
+**D8 caveat**: a decoy regime needs a real alias gate — `seam_z`/wide-env). **Next:** perf-redesign (D12) →
+**wire §4 repair (A3)** on the 9-gap scope.
