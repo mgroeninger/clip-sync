@@ -47,8 +47,9 @@ The claims that actually gate a working repair. Everything else is supporting.
 
 **Sequencing consequence:** the 2026-07-01 rescan validated registration (A2/C1/C2/C4), but predates the
 scan-native **`splice_dualfit`** field (added 2026-07-01, after the rescan) — so C3/C7 need one more re-scan.
-**`diag_splice_dualfit` sim retired** (E-tombstone: decode ≠ scan). **Next:** re-scan one pair → read the
-`dual-fit viability` section (C3/C7) → full re-scan → calibrate thresholds (A5/C6) → wire §4 repair (A3).
+**`diag_splice_dualfit` sim retired** (E-tombstone: decode ≠ scan). **Next:** the `seam-local-fix` rescan is
+running (2026-07-01) → re-derive C3 / the `dualfit_target()` set (expect +2·g1, +1·g22) → build the A3 repair
+(§4, seam-local placement) → redesign/tune the production path (D12) → optimize the fingerprint scan last.
 
 ---
 
@@ -71,17 +72,24 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
    `skip` ∧ bracket-exhausted ∧ `splice_dualfit.gate_pass` ∧ `post_seam_global_r < 0.35` (step is real, not a
    constant-offset artifact) ∧ `donor_interior.continuous` ∧ ¬program-quiet. **Do not** run on gaps that
    already patch (≥1 bracket passes) or on `dualfit_candidate()` alone — uniqueness does not predict 250 ms
-   seam viability (A3). Measured scope on the edge-pin/D11 rescan: **1·g3, 2·g2, 7·g2**.
-2. **Fit each seam independently** — read per-side lags `L_pre`, `L_post` from `baseline_lag` mono at
-   **`b_mapped`** (sequential post centering: post search on `S + D_A + round(L_pre)`, not naive `S + D_A`).
-   Align B shoulders: `b_pre = b_mapped_start + round(L_pre)`, `b_post = b_mapped_end + round(L_post_gross)`.
+   seam viability (A3). Measured scope on the edge-pin/D11 rescan: **1·g3, 2·g2, 7·g2** — **provisional /
+   undercount** (pre-seam-local-fix `splice_dualfit`); the `seam-local-fix` rescan is expected to add at
+   least **2·g1, 1·g22**.
+2. **Fit each seam at its SEAM-LOCAL lag** — use `baseline_lag` mono at **`b_mapped`** (sequential post
+   centering: post search on `S + D_A + round(L_pre)`) only for the **gross** placement, then **refine each
+   shoulder within ±`SEAM_LOCAL_REFINE_MS` (100 ms)** by maximizing that shoulder's own 250 ms seam — exactly
+   what `splice_dualfit_at`/`seam_local_peak` do at capture. **Do NOT place at the raw 1 s `baseline_lag`
+   peak:** it can diverge from the seam-local lag when a shoulder has sub-window structure, and scoring the
+   seam there reads a live seam as dead (the 2026-07-01 fix — `2·g1` pre: 1 s lag −24 ms → seam −0.008, but
+   seam-local +4.4 ms → 0.982). `b_pre`/`b_post` are the seam-local-refined shoulder frames.
 3. **Reconcile the step** — extract the B bridge `[b_pre .. b_post]`; `trim_frames = bridge_frames − gap_frames`
    (= the step in samples; C7 tautological). Trim or pad `|trim_frames|` at the **lowest-RMS interior sample**
    of the fill region (smallest audible splice). Interior edit only — shoulders stay at their own lags.
-4. **Validate with the unchanged gate** — score pre/post seams @ lag 0 against B at the lag-aligned positions,
-   using `fill_seam_search_secs` (default 250 ms) and the existing `min_fill_correlation` / `fill_absolute_floor`
-   thresholds. A bad length edit must fail exactly as a bad shift does today — **strict gate, no loosening**.
-   This is the property `splice_dualfit` already measures at capture time.
+4. **Validate with the unchanged gate** — score pre/post seams against B at the **seam-local-refined**
+   placements (step 2), using `fill_seam_search_secs` (default 250 ms) and the existing `min_fill_correlation`
+   / `fill_absolute_floor` thresholds. A bad length edit must fail exactly as a bad shift does today —
+   **strict gate, no loosening**. This is the property the (seam-local-fixed) `splice_dualfit` measures at
+   capture time, so `splice_dualfit.gate_pass` predicts this validation.
 5. **Reject** to skip (as today) if post-reconciliation validation fails, the step was edge-pinned (GIGO), or
    donor continuity is false. Gate-pass alone is not sufficient — donor-BROKEN gaps (e.g. 1·g19: seams 0.998
    but B interior silent) must stay skipped (D11).

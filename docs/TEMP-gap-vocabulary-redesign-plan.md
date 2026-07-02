@@ -4,13 +4,13 @@
 > [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md). This doc is the *detail* for the
 > vocabulary redesign; the ledger is the authoritative proven/open/important index.
 
-Status: **DRAFT — direction validated; P0 + P1 capture DONE; P2 clustering BLOCKED on registration placement.**
-Full 6-pair corpus analyzed (19 matched, 6 skipped). The **registration axis** is confirmed: per-side
-lag-resolved Pearson at each shoulder's *own* best lag plus the **step** between them — not the single throat
-Pearson@0 (which conflated misalignment, silence-splice, and a ±25 ms-window artifact into one "dead seam").
-**Patch vs skip** is **bracket-search success**, not step magnitude. **But clustering the corpus into named
-types (P2) must wait until quiet-gap registration is corrected (ledger A1/A2 — `structure_start_frame`
-wanders on quiet gaps), or the coordinates it clusters on are wrong.** Mechanism + repair:
+Status: **DRAFT — direction validated; P0 + P1 capture DONE; axis structure settled (§2/§2a); P2 clustering
+UNBLOCKED (registration placement fixed — A2 + seam-local), pending the `seam-local-fix` rescan.**
+Full 6-pair corpus analyzed (19 matched, 6 skipped). The **registration axis** is confirmed and has since
+split into **gross** (1 s `baseline_lag`) vs **seam-local** (the fill placement) — see §2a. **Patch vs skip**
+is **bracket-search success**, not step magnitude. The blocker on P2 (quiet-gap registration wander, ledger
+A1/A2) is **resolved**; P2 is now the **orthogonality gate** for the perf §4 harness — run it on the fresh
+scan to confirm the axes are independent/populated before freezing them. Mechanism + repair:
 [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (historical:
 [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
 Bracket-vs-step + proof index:
@@ -67,22 +67,55 @@ cross-codec validator-swap ([archive/TEMP-cross-codec-seam-impl-plan.md](archive
 > donor content at the seam(s). Its "type" is the region it occupies; the patch decision (patch / skip /
 > which correction) is a **function over the coordinates** — not a threshold on one conflated scalar.
 
-The axes, measured (or derivable) from the fingerprint:
+The axes, measured (or derivable) from the fingerprint. **Role** = **D**ecision (a gate branches on it) ·
+**R**epair (builds the fix) · **X** (diagnostic — describes, does not gate); mirrors the perf audit's
+measurement→gate labels. **Placement** is part of the axis — the same field at a different placement is a
+different measurement (the load-bearing discipline; see the two ⚑ rows):
 
-| Axis | Question | Fingerprint field(s) | Values |
-|------|----------|----------------------|--------|
-| **Role / geometry** | Interior gap vs length-mismatch tail | `geometry.duration_secs` | interior · tail (P6) |
-| **A-seam presence** | A has content at the edge, or silence walk-off? | `silence.collar_above_relative_floor`, `collar_rms_peak_ratio`, `levels` | content · silence |
-| **B donor presence** | B has energetic content in the hole? | `donor_interior` (`continuous`, `rms_db`, `silence_fraction`); lag present as fallback | bridges · hole · none |
-| **Shared source** | B's seam content is the *same master* as A? | `baseline_lag.peak_r`, `splice.pre/post_peak_r`; `one-sided-dead` | same · different · ambiguous |
-| **Registration** | If same source, how aligned at the throat? | `baseline_lag` → **offset** `seam_mid_ms` `(pre+post)/2` + **step** `seam_step_ms` `post−pre` | offset (shiftable scatter) · **stepped** (usual: `\|step\| > 2 ms` on 18/19 matched; *not* clip drift) |
-| **Bracket search** | Did anchor/grid search find a lag-0 placement? | `brackets[]` pass/fail; analyzer `brackets_passing`, `bracket_exhausted()` | rescued (≥1 pass) · exhausted (0 pass) |
-| **Envelope agreement** | Placement confidence, independent of waveform | `structure.baseline_pre/post` | strong · weak |
+| Axis | Question | Field(s) · **placement** | Role | Values |
+|------|----------|--------------------------|------|--------|
+| **Geometry** | Interior gap vs length-mismatch tail | `geometry.duration_secs` | D | interior · tail (P6) |
+| **A-seam presence** | A has content at the edge, or silence walk-off? | `silence.*`, `levels` · A | D | content · silence |
+| **Donor — nominal** ⚑ | Is B silent at the *same program time* (quiet-in-both)? | `donor_interior_nominal` · **nominal `b_mapped`** (no lag) | D (gate, D11) | occupied · **program-quiet** |
+| **Donor — aligned** ⚑ | Does B *bridge* the hole at the registered placement? | `donor_interior.continuous`/`rms_db` · **aligned bridge** | R (gate) | bridges · **BROKEN** (interior silent) |
+| **Bracket search** | Did anchor/grid search find a lag-0 placement? | `brackets_passing`, `bracket_exhausted()` | D | rescued (≥1 pass → patch) · exhausted (0 → dual-fit candidate) |
+| **Registration — gross** ⚑ | Offset + step over the 1 s window | `baseline_lag` → offset `(pre+post)/2` + **step** `post−pre`; `edge_pinned` validity | R + diag | offset · **stepped** (`\|step\|>2 ms` usual; *not* drift) |
+| **Registration — seam-local** ⚑ | The lag the *fill* actually uses at each 250 ms seam | `splice_dualfit`/`seam_local_peak` · **seam-local (±`SEAM_LOCAL_REFINE_MS`)** | R (placement) | agrees with gross · **diverges** (sub-window edit — the `2·g1` case) |
+| **Seam viability** | Would a length-reconciled fill pass the *unchanged* gate? | `splice_dualfit.gate_pass`, `post_seam_global_r` · seam-local | **D (the repair gate)** | pass · fail; step real · spurious |
+| **Shared source** | B's seam content is the *same master* as A? | `baseline_lag.peak_r`; `one-sided-dead` | (constant here) | **same** (all pairs) · different/ambiguous *(untested — D2/D8)* |
+| **Uniqueness** | Periodicity/alias guard on the registration | `peak_z`, `prominence` · gross 1 s | **X** (diagnostic — demoted) | unique · alias-suspect |
+| **Envelope agreement** | Macro placement confidence, independent of waveform | `structure.baseline_*`; `wide_envelope` | D (structure) / X (wide-env) | strong · weak |
 
 The legacy Pearson tier ≈ a nonlinear AND of *(A-presence) × (shared-source) × (registration-at-lag-0) ×
 (bracket-found)*. It is a *projection* of this space; recovering the axes un-conflates the W-buckets.
 
 **W5 reinterpretation:** "same-master, lag-0 / bracket validation failed" — not "weak content."
+
+### 2a. How the axes shifted as the ledger was worked (structure proven; values provisional)
+
+The original seven axes above refined in five ways as claims were proven — the **structure is now stable**
+(safe to build the harness + decisions on), while several **values/thresholds remain provisional** (SUPP/OPEN,
+tuned post-rescan). The `#`-marked shifts are what the perf §4 harness keys on:
+
+1. **Registration split into two scales** ⚑ — gross (1 s `baseline_lag`, classification/uniqueness) vs
+   **seam-local** (250 ms, the fill placement). `2·g1` proved they diverge; conflating them was a real
+   false-negative bug (ledger A3 correction). *New axis row.*
+2. **Donor presence split into two placements + promoted to a gate** ⚑ — nominal (registration-independent →
+   program-quiet, D11) vs aligned (bridges/BROKEN). `1·g19` proved donor-BROKEN must *gate*, not just
+   describe. *Was one descriptive row; now two decision rows.*
+3. **Shared source collapsed to a constant** — all same-master (one-sided-dead is a placement artifact,
+   B2/C1). `different`/`ambiguous` untested; the real gap is **decoy safety (D8)**, not a live axis.
+4. **Uniqueness (`peak_z`) demoted decision → diagnostic** — it stays primary for the *descriptive*
+   `splice_diag`, but does **not** predict seam viability (A3), so the repair gates on
+   `gate_pass ∧ donor`, not uniqueness.
+5. **Registration skew/drift refuted** (B8) — only offset + step survive; drift is a tombstone.
+   **Bracket-search** (B1) held up as the patch/skip spine.
+
+**Validation status:** the *structure* (axes, orthogonality-in-principle, the D/R/X partition, the placement
+discipline) is proven in the ledger. The *values* (which gaps are targets, seam-local width, donor/step/quiet
+thresholds) are provisional and re-derived by the `seam-local-fix` rescan. **P2 (below) is the orthogonality
+check** — cluster the fresh corpus on these axes and confirm they are independent, populated, and
+non-redundant before freezing them (perf §4.0 gates the harness golden record on this).
 
 ---
 
@@ -96,7 +129,7 @@ Candidate further axes. Keep only if **physically independent**, **robustly meas
 | **Channel scope / per-channel consistency** | Partial-channel dropout vs full (5.1 center-dominant) | **Yes** — `seams.per_channel`, `selected_channels`; surface in analyzer (TODO) |
 | **Donor displacement** | How far fill slid from nominal B map; far slide = decoy risk | **Partly** — derive from `geometry`; compute slide (TODO) |
 | **Seam level / SNR** | Measurability + audibility stakes at the seam | **Yes** — `seam_probe.snr_db` on **energy-weighted downmix** (not straight mono `/N` on 5.1) |
-| **Match uniqueness / periodicity** | Guards registration/step from periodic false peaks | **Yes (capture DONE)** — `LagSummary.peak_z`, `prominence`, `top2_spacing_ms` at **1 s** window (§3.6a); retire 250 ms `second_peak_r` as primary |
+| **Match uniqueness / periodicity** | Guards registration/step from periodic false peaks | **Yes (capture DONE)** — `LagSummary.peak_z`, `prominence`, `top2_spacing_ms` at **1 s** window (§3.6a); retire 250 ms `second_peak_r` as primary. **Now diagnostic, not a repair gate (§2a.4)** — does not predict seam viability; the repair gates on `gate_pass ∧ donor`. |
 | **Residual cancellation** | Strong same-master test on *identical* encodings | **Yes (capture DONE)** — `GapFingerprint.residual`; **wrong discriminator for cross-encoded pairs** (expected `informative=false`) — diagnostic only here |
 | **Wide-envelope concordance** | Segment identity at macro scale; peak lag vs fine lag | **Yes (capture DONE)** — `wide_envelope` (100 ms bin); cross-scale agreement check |
 
@@ -163,10 +196,14 @@ Repair routing for bracket-exhausted skips → [TEMP-seam-repair-status-ledger.m
 
 **Remaining:** re-scan to populate new fields; harness projection + threshold calibration.
 
-### P2 — Cluster the corpus; let the data name the types
+### P2 — Cluster the corpus; let the data name the types (+ **orthogonality gate for perf §4**)
 
 Group gaps by axis coordinates; report cells that occur (frequency + exemplars). **Do not impose a
-taxonomy** — read it off the data.
+taxonomy** — read it off the data. **Dual purpose now:** P2 also **validates the axis structure** before the
+perf §4 harness freezes its golden record — confirm the D/R axes (§2/§2a) are (a) **independent** (no two
+always co-vary → collapse them), (b) **populated** (a cell that never occurs isn't an axis), (c)
+**non-redundant**. Run on the `seam-local-fix` rescan; adjust axes the data refutes *before* the golden
+baseline is pinned (perf §4.0 prerequisite).
 
 **Expected cells (to confirm/refine on rescan):**
 - `tail` · `no-lag` (no matchable B bracket)

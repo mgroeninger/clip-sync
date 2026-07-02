@@ -166,13 +166,110 @@ Every fingerprint field, what produces it, its cost, which gate consumes it, and
    "FFT lag sweep" block; move it here when this step is started.)*
 5. Split production dual-fit path (decision + repair only) from the diagnostic fingerprint dump.
 
+> **Sequencing — optimize the fingerprint scan LAST (2026-07-01 decision).** The diagnostic scan and the
+> production path **share code** (the scan's oracle wraps the production gate; the lag sweep is shared with
+> `baseline_lag`). Optimizing the scan *before* the production path is built and split (step 5) tunes code
+> that the redesign then restructures — pure rework. The scan's cost (~1.7 h/pair) is a **dev/calibration
+> cost, not a product cost**, so it is the lowest-priority optimization. Order: **build the A3 repair →
+> redesign/tune the production path (steps 1–5, the split falls out here) → then port the FFT lag sweep and
+> hoist shared subexpressions into the now-stable diagnostic scan.** The FFT sweep (step 4) is likewise
+> deferred past calibration so a stable naive baseline exists to write the `fft ≈ naive` equivalence test
+> against.
+
 ---
 
-## §4 — Validation (prescriptive; TO DECIDE)
+## §4 — Validation: the decision-invariance harness
 
-*Skeleton.*
+Every perf step is behavior-preserving, so the harness's job is narrow and strong: **prove a refactor did
+not change any repair decision or repair parameter** on the corpus (dirs 1–7), while *allowing* the drift
+perf actually needs (FFT ≈ naive at ~1e-10; diagnostics recomputed differently or skipped). The harness
+structure **is the gap vocabulary** — it snapshots the decision/repair (D/R) axes, not the whole
+fingerprint, so a failure is meaningful ("`donor-nominal` silence changed on 2·g7") rather than "some JSON
+field differs." See [TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) §2 for the
+axes and [status ledger](TEMP-seam-repair-status-ledger.md) §1.2-map for the D/R/X labels.
 
-- **Behavior-preserving regression harness:** the re-assembled pipeline must emit the **identical fix-list
-  and repair-params** as the current one on the corpus (dirs 1–7). Perf work must not change decisions.
-- Per-step: assert the affected measurement/decision is bit-or-ε-identical to the pre-refactor baseline.
-- Track wall-clock per phase to confirm the wins land where the cost model predicts (§1.3).
+### §4.0 Prerequisites (do NOT capture the golden baseline before these)
+
+The harness is a **characterization** harness — it pins whatever the pipeline currently emits. So the
+pipeline must first be in a state we are willing to call *the correct baseline*. Two gates:
+
+1. **Golden baseline captured post-scan.** Capture only **after** the `seam-local-fix` scan completes and
+   **validates** the fix (`2·g1`/`1·g22` recover as targets; `splice_dualfit.pre_seam_r` for `2·g1` ≈ 0.98,
+   not −0.008) **and** donor-continuity as a gate is confirmed (A4/C5). Capturing now would pin pre-fix
+   numbers we already expect to change (regression-testing a moving target). Until then, §4 defines the
+   **schema**, not the values.
+2. **P2 orthogonality gate.** Before freezing the golden-record schema, run vocab **P2** (cluster the fresh
+   corpus on the D/R axes — now unblocked, registration placement is fixed). Confirm the axes are
+   **independent** (no two always co-vary), **populated** (cells that never occur aren't axes), and
+   **non-redundant**. Collapse/rename any axis the data refutes *before* the schema is frozen — otherwise the
+   harness locks in a mis-factored structure.
+
+### §4.1 Golden record — capture the D/R axes, each tagged with its placement
+
+Per gap, snapshot **only** the decision/repair-bearing coordinates, each stamped with the **placement** it is
+measured at (placement is part of the key — the two bugs we hit were placement conflations, so a refactor
+must not silently move a measurement across placements):
+
+| Field(s) | Placement | Tier (see §4.2) |
+|----------|-----------|-----------------|
+| `outcome.tier`, `dualfit_target()`, `program_quiet_skip()`, `bracket_exhausted()` | derived | **1 — exact** |
+| `splice_dualfit.gate_pass`; `donor_interior.continuous`; `donor_interior_nominal.continuous`; `edge_pinned` | seam-local / aligned / nominal | **1 — exact** |
+| `brackets_total`, `brackets_passing` | gate throat | **1 — exact (ints)** |
+| `baseline_lag` pre/post `peak_r`, `frac_lag_ms`; `splice.step_ms` | **gross** `b_mapped` (1 s) | **2 — ε** |
+| `splice_dualfit` `pre/post_seam_r`, `post_seam_global_r`, `trim_frames` | **seam-local** (250 ms ±`SEAM_LOCAL_REFINE_MS`) | **2 — ε** |
+| `donor_interior_nominal.silence_fraction` | **nominal** `b_mapped` span | **2 — ε** |
+| `donor_interior.silence_fraction`, `rms_db` | **aligned** bridge span | **2 — ε** |
+| `residual` chosen/floor dB | gate throat | **2 — ε** |
+| `levels.gap_floor_db`, `noise_floor_db`; `structure_min` | gate throat / A | **2 — ε** |
+| `peak_z`, `prominence` | gross `b_mapped` (1 s) | **2 — ε** (feed the descriptive classifier; the FFT step's equivalence test pins these specifically) |
+| `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `fp.lag` | (various) | **3 — ignore / presence-only** (X — not on the fix-list or repair-params) |
+
+**Fix-list** = gaps where `dualfit_target()` ∨ patched. **Repair-params** = per-shoulder seam-local lags →
+`b_pre`/`b_post`, `trim_frames`, donor span. Both are functions of Tier-1/2 fields only.
+
+### §4.2 Two-tier assertion (the FFT is what forces this)
+
+- **Tier 1 — derived verdicts + booleans + integer counts: bit-exact.** A perf refactor must **never flip a
+  decision.** `tier`, `gate_pass`, `dualfit_target`, `program_quiet`, `bracket_exhausted`, `continuous`,
+  `edge_pinned`, bracket counts — identical, no tolerance.
+- **Tier 2 — continuous D/R inputs: within ε.** Pick ε so a real regression trips but f64-FFT / reassociation
+  noise (~1e-10 relative) does not. This tolerance is *exactly what lets the FFT lag sweep (step 4) land* —
+  it moves `baseline_lag`/`peak_z` at 1e-10 but must not move a Tier-1 verdict. (Layered guarantee:
+  continuous inputs may drift within ε; the booleans they derive must not flip. If an ε drift *does* flip a
+  verdict, the gap sits on a threshold — flag it, don't widen ε.)
+- **Tier 3 — diagnostics (X): not asserted** (or presence-only). They may be recomputed differently, skipped
+  behind the lazy-diagnostics flag (step 2), or dropped entirely without failing the harness.
+
+### §4.3 Placement-provenance guard
+
+Because the golden record keys on `(field, placement, value)`, the harness fails if a refactor changes the
+**placement** a field is measured at — even if the value looks plausible. This directly guards the planned
+"share one border extract at the throat" hoist (step 1) from dragging a **seam-local** score onto the
+**gross/throat** placement (the exact class of bug behind `2·g1`).
+
+### §4.4 Footgun characterization tests (pin the post-fix behavior — values TBD post-scan)
+
+Lock in the two fixes so no refactor silently reverts them. Concrete expected values get pinned once the scan
+confirms them (§4.0); the *assertions* are defined now:
+
+- **Seam-local placement** — a gap whose gross and seam-local lags diverge (`2·g1`) keeps `pre_seam_r` at its
+  seam-local peak (~0.98), **not** the gross-placed dead value (−0.008); `gate_pass` = true.
+- **Donor placement split** — a large-step gap that is silent at the **nominal** span but occupied at the
+  **aligned** span classifies `program_quiet` (nominal wins) — guards D11's registration-independence.
+- **Donor gate necessity** — a gap with `gate_pass` = true but `donor_interior` BROKEN (`1·g19`: seams 0.998,
+  interior silent) yields `dualfit_target()` = false.
+- **Edge-pin validity** — an edge-pinned shoulder flags its step GIGO and is excluded (0/55 today, so this is
+  a guard against a future regression, not a live case).
+
+### §4.5 Per-axis localization + wall-clock
+
+- Diff **per axis**, not per gap-blob: the orthogonal axes let a failure name the responsible axis + placement.
+- Track **wall-clock per phase** to confirm wins land where the cost model predicts (§1.3) — a step that
+  passes the invariance harness but doesn't move the predicted phase cost is suspect.
+
+### §4.6 What the harness deliberately does NOT cover
+
+- **Decoy / wrong-placement safety (D8)** — the corpus has no genuine negatives; the harness proves
+  *invariance*, not *correctness of the fill*. D8 (audible/decoy validation) is separate, post-A3.
+- **The `different`/`ambiguous` shared-source regime** — untested; not a live axis (shared-source collapsed
+  to a constant on this corpus, B2/C1).
