@@ -49,7 +49,7 @@ Ordered as data flows. "Rejects" = what this gate filters out.
 | G4 | **Residual** | `patch_region.rs` (`finalize_fit_outcome_residual`) | Same-source confirm for a *marginal* seam | least-squares cancellation @ throat vs floor | `O(seam)`, **at selection only** | veto marginal; rescue marginal |
 | R | **Bracket ranking** | `patch_region.rs` (`fit_candidate_ranking_score`) | Which *passing* bracket wins | `min(pre,post)`, `boundary_move` | scalar | — (selection, not reject) |
 | **G5** | **Program-quiet** *(new, D11 — not yet a gate)* | `gap_fingerprint.rs` (`donor_interior_nominal`) | Is this a real dropout, or quiet in both masters? | nominal-span B `silence_fraction`; A `gap_floor` vs `noise_floor` | `O(N)` | B-silent → non-dropout (don't fill, don't count as miss) |
-| **G6** | **Dual-fit detect** *(future, A3)* | `gap_fingerprint.rs` (`splice_dualfit`) | Should dual-fit rescue this skip? | `bracket_exhausted` (B1) ∧ both-sides-recoverable `peak_z` (B3) ∧ donor-continuous (C5) ∧ `splice_dualfit.gate_pass` (C3) | lag sweep + donor + dualfit seam | non-recoverable skips |
+| **G6** | **Dual-fit detect** *(A3, = `dualfit_target()`)* | prod dual-fit path (port from `gap_fingerprint.rs`) | Should dual-fit rescue this skip? | `skip` ∧ `bracket_exhausted` (B1) ∧ `splice_dualfit.gate_pass` ∧ **step-real** (`post_own − post@pre ≥ 0.15`) ∧ `donor_interior.continuous` ∧ ¬program-quiet (`donor_interior_nominal`). **NOT** uniqueness/`peak_z` — retired (mispredicts seam viability; ledger A3). | nominal-anchored ±600 ms seam search (`seam_local_peak`) + donor | donor-BROKEN / program-quiet / step-spurious skips |
 
 ### §1.2 Measurement → gate map (decision / repair / diagnostic)
 
@@ -164,7 +164,9 @@ Every fingerprint field, what produces it, its cost, which gate consumes it, and
 4. **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on
    `fft_curve ≈ naive_curve` test. *(Absorbs ledger D5 — the full spec lives in the ledger's
    "FFT lag sweep" block; move it here when this step is started.)*
-5. Split production dual-fit path (decision + repair only) from the diagnostic fingerprint dump.
+5. Split production dual-fit path (decision + repair only) from the diagnostic fingerprint dump. **This is
+   A3 — built FIRST, not last** (it *creates* the production dual-fit path; steps 1–4 then optimize the whole
+   pipeline including it). Full build plan in **§5**.
 
 > **Sequencing — optimize the fingerprint scan LAST (2026-07-01 decision).** The diagnostic scan and the
 > production path **share code** (the scan's oracle wraps the production gate; the lag sweep is shared with
@@ -273,3 +275,62 @@ confirms them (§4.0); the *assertions* are defined now:
   *invariance*, not *correctness of the fill*. D8 (audible/decoy validation) is separate, post-A3.
 - **The `different`/`ambiguous` shared-source regime** — untested; not a live axis (shared-source collapsed
   to a constant on this corpus, B2/C1).
+
+---
+
+## §5 — A3 production build plan (= §3 step 5, built FIRST)
+
+Wire the dual-fit repair into **production `PatchAudio`**, flag-gated, as a fallback for gaps the existing
+gate skips. Viability is proven (9 targets, golden baseline frozen); this section is the **production wiring**.
+Algorithm = ledger **§4 wire-spec**; scope predicate = `dualfit_target()` (= `G6`). Build lean per §1.5/§2:
+the production path carries only the **D/R** set for the survivors, never the diagnostic **X-set**.
+
+### §5.1 Where it plugs in
+- **Entry:** `application/patch_audio.rs::prepare_region_patch`. Today: build gate params → `evaluate_seam_gate`
+  → on success build `RegionPatch` (fill), on `SeamGateFailure` → `skipped_patch(reason)` → `splice_into_a`
+  writes nothing. **Change:** when the gate skips **and** the gap is bracket-exhausted **and** the dual-fit
+  flag is on, fall through to a **dual-fit branch** instead of returning the skip. Everything else unchanged
+  (D6: flag off ⇒ byte-identical — the §4 harness enforces this).
+- **Shared primitive:** extract `seam_local_peak` (nominal-anchored ±600 ms seam search) from
+  `application/gap_fingerprint.rs` to a shared home (e.g. `domain/`) so production and the diagnostic scan
+  call the **same** function (no second implementation to drift — the bug class we just fixed twice).
+
+### §5.2 The dual-fit branch (per gap, only reached on a bracket-exhausted skip)
+1. **Detect (`G6` = `dualfit_target`)** — on the already-decoded A/B window:
+   - per-shoulder seam-local lag via `seam_local_peak` at nominal `b_mapped` → `pre_lag`/`post_lag`;
+   - score the two 250 ms seams (reuse `policies::fill_splice_seam_correlations_interleaved`) → `gate_pass`
+     (`min ≥ min_fill_correlation ∧ ≥ fill_absolute_floor`);
+   - `post@pre` (post seam at the pre lag) → **step-real** (`post_own − post@pre ≥ 0.15`);
+   - `donor_interior` (aligned) `.continuous` **and** `donor_interior_nominal` `.silence_fraction < 0.5`.
+   - All hold ⇒ dual-fit target; else return the skip as today. *(D/R measurements only — no `seam_probe`,
+     `wide_envelope`, `b_levels`; those stay in the scan.)*
+2. **Fit + reconcile (§4 steps 2–3)** — `b_pre = b_mapped_start + pre_lag`, `b_post = b_mapped_start +
+   gap_frames + post_lag`; bridge `= B[b_pre..b_post]`; `trim = bridge − gap`. **New primitive
+   `trim_at_lowest_energy_interior`**: find the min-RMS interior frame of the bridge and trim/pad `|trim|`
+   there with a short crossfade — the smallest audible splice. *(Existing `fit_fill_to_gap_frames` /
+   `pick_fill_length_anchor` trim only at head/tail; this is the one genuinely new audio op.)*
+3. **Validate with the UNCHANGED gate (§4 step 4)** — score the assembled fill's pre/post seams with
+   `fill_splice_seam_correlations_interleaved` + `classify_fill_waveform_confidence` at the existing floors.
+   Accept iff `min(pre,post) ≥ floors`; else skip. **No loosening** — the fix earns the current validator.
+4. **Splice** — wrap into `RegionPatch { b_samples, gain, a_start_frame, a_end_frame, crossfade }`; existing
+   `splice_into_a` crossfades it into A. Unchanged.
+
+### §5.3 Reuse vs. new
+- **Reuse (production, unchanged):** `fill_splice_seam_correlations_interleaved`, `classify_fill_waveform_
+  confidence` + floors, border templates, the decode window from `prepare_region_patch`, `splice_into_a`.
+- **New:** the dual-fit branch in `prepare_region_patch`; `trim_at_lowest_energy_interior`; the `G6`/
+  `dualfit_target` detect logic in production (port the predicate; do **not** re-derive uniqueness).
+- **Move (share):** `seam_local_peak` → shared module.
+
+### §5.4 Validation (before this ships)
+- **§4 golden-baseline harness (regression guard):** with the flag **off**, the 23 existing patches are
+  byte-identical (D6); with it **on**, production's dual-fit target set must equal the frozen **9**
+  (`golden/re-anchor-dual-fit-on-nominal.golden.json`). This is A3's correctness cross-check.
+- **D7 (the real test):** run on the media, **listen** to the 9 fills — gate-pass is necessary, not
+  sufficient; the interior trim point must sound clean. First bad fill = the first labeled negative (→ D8).
+
+### §5.5 Open decisions
+- **Detect wiring:** (a) self-contained — production recomputes detection on-demand *(recommended)*; vs
+  (b) scan-fed — read targets from a prior fingerprint. The *repair* is production either way.
+- **Interior trim crossfade length** — audibility knob (D7); start with the existing `crossfade_secs`.
+- **Flag surface** — `FillMode::DualFit` vs a `--dual-fit` bool on the request. Keep off by default until D7.
