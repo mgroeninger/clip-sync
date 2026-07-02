@@ -588,8 +588,8 @@ impl GapRow {
 
     /// **The A3 repair-scope predicate** — the gaps a dual-fit repair should actually run on, measured
     /// directly rather than proxied by uniqueness. A gap is a target when the scan-native `splice_dualfit`
-    /// shows: the seams **pass** the unchanged gate (`dualfit_pass`); the **step is real** (`post_seam_global_r`
-    /// below the spurious floor — a constant shift alone would NOT fix it); the **donor bridges** the hole
+    /// shows: the seams **pass** the unchanged gate (`dualfit_pass`); the **step is real** ([`step_is_real`] —
+    /// the step materially improves the post seam vs a constant offset); the **donor bridges** the hole
     /// (`donor_continuous`); and it is **not program-quiet** (there is content to fill). This supersedes
     /// `dualfit_candidate` (uniqueness), which mispredicts placement seam viability — edge-pin/D11 rescan:
     /// the two overlap in only 2/7 (ledger A3). `None` fields ⇒ not a target (can't confirm).
@@ -600,9 +600,20 @@ impl GapRow {
         self.outcome_tier.as_deref() == Some("skip")
             && self.bracket_exhausted()
             && self.dualfit_pass == Some(true)
-            && self.dualfit_post_global_r.is_some_and(|g| g < DUALFIT_STEP_SPURIOUS_R)
+            && self.step_is_real()
             && self.donor_continuous == Some(true)
             && self.program_quiet() != Some(true)
+    }
+
+    /// The registration **step is real** (necessary), not a constant-offset artifact: placing the post seam
+    /// at its own lag beats placing it at the pre lag (step = 0) by ≥ [`DUALFIT_STEP_REAL_MARGIN`]. `false`
+    /// when either seam is unmeasured. Replaces the old `post@pre < 0.35` floor, which mis-flagged gaps whose
+    /// constant offset merely cleared the gate floor (7·g4).
+    pub fn step_is_real(&self) -> bool {
+        match (self.dualfit_post_r, self.dualfit_post_global_r) {
+            (Some(own), Some(at_pre)) => own - at_pre >= DUALFIT_STEP_REAL_MARGIN,
+            _ => false,
+        }
     }
 
     /// D11 — a **skip** that is program-quiet (B silent at the same program time). Correctly skipped and
@@ -653,12 +664,14 @@ impl GapRow {
 /// 0.5 sits in a wide empty gap (any value in ~[0.1, 0.8] separates the same set). Keep 0.5.
 const PROGRAM_QUIET_SILENCE_FRAC: f64 = 0.5;
 
-/// The dual-fit **step-spurious** floor: if the post seam scored at the *pre* offset (`post_seam_global_r`,
-/// step forced to 0) reaches this, a single constant shift already fixes the gap — so the reported step is a
-/// registration artifact, not a real splice, and the gap is **not** a dual-fit target. Set to the gate's
-/// `min_fill_correlation` (0.35). **Calibrated (edge-pin/D11 rescan):** the 6 real-step passes read
-/// `post@pre-off ≤ 0.284`; the one spurious pass (1·g21) reads 0.759 — a clean gap around 0.35. Keep.
-const DUALFIT_STEP_SPURIOUS_R: f64 = 0.35;
+/// The dual-fit **step-real margin**: the step is *necessary* (a real splice, not a registration artifact)
+/// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at
+/// least this much — i.e. the step **materially improves** the seam. The earlier `post@pre < 0.35` floor was
+/// wrong: it flagged the step spurious whenever the constant offset merely *cleared* the gate floor, dropping
+/// gaps where the step still helps a lot (7·g4: `post@pre 0.393` barely over 0.35, but `post_own 0.96` — the
+/// step adds 0.57; operator-confirmed real drop). A true artifact reads `post_own ≈ post@pre` (Δ ≈ 0).
+/// Calibrate at ledger A5/C6.
+const DUALFIT_STEP_REAL_MARGIN: f64 = 0.15;
 
 /// Full aggregation across every pair dir found.
 #[derive(Debug, Clone, Default)]
@@ -1720,10 +1733,10 @@ impl CorpusReport {
             skip_pass,
             skips.len()
         );
-        // Validators: is the step necessary (post fails at the pre offset), and is the seam unique (prom)?
+        // Validators: is the step necessary (materially improves post vs a constant offset), unique (prom)?
         let step_spurious = skips
             .iter()
-            .filter(|r| r.dualfit_pass == Some(true) && r.dualfit_post_global_r.is_some_and(|g| g >= DUALFIT_STEP_SPURIOUS_R))
+            .filter(|r| r.dualfit_pass == Some(true) && !r.step_is_real())
             .count();
         let _ = writeln!(
             s,
@@ -1756,11 +1769,11 @@ impl CorpusReport {
                     Some(false) => "BROKEN",
                     None => "—",
                 };
-                let verdict = match (r.dualfit_pass, r.dualfit_post_global_r) {
-                    (Some(true), Some(g)) if g >= DUALFIT_STEP_SPURIOUS_R => "PASS (step spurious)",
-                    (Some(true), _) => "PASS (step real)",
-                    (Some(false), _) => "fail",
-                    (None, _) => "—",
+                let verdict = match r.dualfit_pass {
+                    Some(true) if r.step_is_real() => "PASS (step real)",
+                    Some(true) => "PASS (step spurious)",
+                    Some(false) => "fail",
+                    None => "—",
                 };
                 let _ = writeln!(
                     s,
@@ -2287,8 +2300,9 @@ mod tests {
 
     #[test]
     fn dualfit_target_scopes_on_gate_pass_and_donor_not_uniqueness() {
-        // The A3 predicate: gate_pass ∧ step-real (post_global < 0.35) ∧ donor-continuous ∧ ¬program-quiet.
-        // Each non-target row flips exactly one condition, holding the others at pass.
+        // The A3 predicate: gate_pass ∧ step-real (post_own − post@pre ≥ margin) ∧ donor-continuous ∧
+        // ¬program-quiet. Each non-target row flips exactly one condition, holding the others at pass.
+        // (post_seam_r = 0.95, so step-spurious needs post_global ≳ 0.80 to make Δ < 0.15.)
         let gap = |index: usize, gate_pass: bool, post_global: f64, cont: bool, nominal_sil: f64| {
             format!(
                 r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
@@ -2321,7 +2335,7 @@ mod tests {
             &format!(
                 "[{},{},{},{},{},{patched}]",
                 gap(0, true, 0.05, true, 0.02),   // clean target
-                gap(1, true, 0.80, true, 0.02),   // step spurious (constant shift also fixes) → not a target
+                gap(1, true, 0.90, true, 0.02),   // step spurious: post@pre 0.90 vs post_own 0.95 (Δ 0.05) → not a target
                 gap(2, true, 0.05, false, 0.02),  // donor BROKEN (nothing to bridge) → not a target
                 gap(3, true, 0.05, true, 0.95),   // program-quiet (nothing to fill) → not a target
                 gap(4, false, 0.05, true, 0.02),  // gate FAIL → not a target
