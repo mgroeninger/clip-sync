@@ -4,7 +4,8 @@ use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 
 use clip_sync::testing::fakes::FakeProgressReporter;
-use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader};
+use clip_sync::{ClipLabel, ClipMatch, SymphoniaMediaReader};
+use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
@@ -129,8 +130,8 @@ pub fn write_stereo_sine_with_gap(
     writer.finalize().expect("finalize wav");
 }
 
-fn make_alignment(offset: f64) -> AlignmentResult {
-    AlignmentResult {
+fn make_alignment(offset: f64) -> clip_sync_repair::domain::ScanAlignment {
+    scan_alignment_from_result(&clip_sync::AlignmentResult {
         clips: vec![ClipMatch {
             label: ClipLabel::Start,
             window_start_secs: 0.0,
@@ -156,7 +157,7 @@ fn make_alignment(offset: f64) -> AlignmentResult {
         alignment_mode_used: None,
         query_localization: None,
         end_clip_anchor: None,
-    }
+    })
 }
 
 pub fn stereo_identical_compat(sample_rate: u32) -> TrackCompatibility {

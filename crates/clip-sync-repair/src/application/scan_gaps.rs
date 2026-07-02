@@ -6,6 +6,9 @@ use clip_sync::{
     MediaError, MediaReader, MediaSession, MediaSource, ProgressReporter,
 };
 
+use crate::application::align_bridge::{
+    audio_timeline_skew_from_clip_sync, scan_alignment_from_result,
+};
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
 use crate::domain::cross_check::{
@@ -39,6 +42,21 @@ pub struct ScanGapsRequest {
     pub gap_offset_tolerance_secs: f64,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
+}
+
+/// Gap scan product: domain report plus the full aligner DTO for CLI/JSON output.
+#[derive(Debug, Clone)]
+pub struct ScanGapsOutcome {
+    pub report: GapReport,
+    pub alignment_detail: AlignmentResult,
+}
+
+impl std::ops::Deref for ScanGapsOutcome {
+    type Target = GapReport;
+
+    fn deref(&self) -> &Self::Target {
+        &self.report
+    }
 }
 
 /// One-line stderr summary after gap detection (thresholds + count).
@@ -77,7 +95,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         }
     }
 
-    pub fn execute(&self, request: ScanGapsRequest) -> Result<GapReport, RepairError> {
+    pub fn execute(&self, request: ScanGapsRequest) -> Result<ScanGapsOutcome, RepairError> {
         let alignment = self.aligner.align(
             AlignVideosRequest {
                 video_a: request.video_a.clone(),
@@ -96,8 +114,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         &self,
         request: ScanGapsRequest,
         alignment: AlignmentResult,
-    ) -> Result<GapReport, RepairError> {
-        // Step 2: open video A media session and select its best audio track.
+    ) -> Result<ScanGapsOutcome, RepairError> {
+        let alignment_detail = alignment;
+        let scan_alignment = scan_alignment_from_result(&alignment_detail);
         let source_a = MediaSource::new(request.video_a.clone());
         let mut session_a = self.media_reader.open(&source_a).map_err(RepairError::Media)?;
         let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
@@ -110,7 +129,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Step 3: best-effort open of video B for track compatibility + energy probing.
         // A missing or undecodable B never fails the scan — A's gaps are still reported, just
         // marked unfillable with no compatibility. Energy probing additionally requires an offset.
-        let offset_secs = alignment.recommended_offset_secs;
+        let offset_secs = alignment_detail.recommended_offset_secs;
         let mut b_session = self.open_best_track(&request.video_b, &track_a);
         let track_compatibility = b_session
             .as_ref()
@@ -217,11 +236,19 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Use co-occurring quiet on both timelines; exclude A-only dropouts (b_has_energy).
         let a_intervals = mutual_silence_intervals_from_gaps(&gaps);
         let gap_offset_agreement = if request.scan_both {
-            alignment.recommended_offset_secs.and_then(|offset| {
+            alignment_detail.recommended_offset_secs.and_then(|offset| {
                 check_gap_offset_agreement_in_overlap(
                     &a_intervals,
                     &b_intervals,
-                    alignment.start_overlap.as_ref(),
+                    alignment_detail.start_overlap.as_ref().map(|ov| {
+                        crate::domain::align::TimelineOverlap {
+                            video_a_start_secs: ov.video_a_start_secs,
+                            video_a_end_secs: ov.video_a_end_secs,
+                            video_b_start_secs: ov.video_b_start_secs,
+                            video_b_end_secs: ov.video_b_end_secs,
+                            shared_length_secs: ov.shared_length_secs,
+                        }
+                    }).as_ref(),
                     offset,
                     request.gap_offset_tolerance_secs,
                 )
@@ -237,20 +264,23 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             video_a: request.video_a,
             video_b: request.video_b,
             track_compatibility,
-            alignment,
+            alignment: scan_alignment,
             gaps,
             gap_offset_agreement,
             decode_chunk_secs: request.decode_chunk_secs,
             scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
             silence_peak_fraction: request.silence_peak_fraction,
             limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
-            audio_timeline_skew,
+            audio_timeline_skew: audio_timeline_skew.map(audio_timeline_skew_from_clip_sync),
         };
         if let Some(line) = format_scan_fillable_followup(&report) {
             progress.phase(&line);
         }
 
-        Ok(report)
+        Ok(ScanGapsOutcome {
+            report,
+            alignment_detail,
+        })
     }
 
     /// Sequential sample-bucket silence scan on a session's native timeline.
@@ -870,7 +900,7 @@ mod tests {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
             track_compatibility: None,
-            alignment: aligned_result(Some(0.0)),
+            alignment: scan_alignment_from_result(&aligned_result(Some(0.0))),
             gaps: vec![
                 Gap {
                     video_a_start_secs: 0.0,
@@ -945,6 +975,7 @@ mod tests {
 
         let agreement = report
             .gap_offset_agreement
+            .as_ref()
             .expect("agreement should be present when both timelines have silence");
         assert!(agreement.agrees, "colocated silence should agree");
         assert!(agreement.delta_secs < 0.001, "delta should be ~0");

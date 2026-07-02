@@ -6,7 +6,7 @@
 //! dead waveform seam is a *validator mismatch* (robust-high while Pearson-low) rather than wrong
 //! content. See `docs/TEMP-cross-codec-seam-impl-plan.md` §4.
 
-use clip_sync::normalized_correlation;
+use crate::domain::metrics::normalized_correlation;
 use rustfft::{num_complex::Complex, FftPlanner};
 
 /// Default low-pass cutoff (Hz) for R2 — keeps the low-frequency waveform codecs preserve.

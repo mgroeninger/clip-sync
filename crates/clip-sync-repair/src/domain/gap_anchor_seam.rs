@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use clip_sync::PcmCorrelator;
+use crate::domain::ports::PcmCorrelator;
 use crate::domain::gap_energy::energy_bins;
 use crate::domain::gap_structure::{activity_bins, StructureMatchParams};
 use crate::domain::policies::{is_silent_frame, RefinedGapFrames};
@@ -552,7 +552,7 @@ pub struct MatchabilityAtAnchorArgs<'a> {
     pub pre_window: usize,
     pub post_window: usize,
     pub params: &'a AnchorMatchabilityParams,
-    pub correlator: Option<&'a clip_sync::FftCorrelator>,
+    pub correlator: Option<&'a dyn PcmCorrelator>,
     pub max_lag_frames: i32,
 }
 
@@ -609,7 +609,7 @@ pub fn anchor_bracket_both_matchable(
     pre_window: usize,
     post_window: usize,
     params: &AnchorMatchabilityParams,
-    correlator: Option<&clip_sync::FftCorrelator>,
+    correlator: Option<&dyn PcmCorrelator>,
     max_lag_frames: i32,
 ) -> bool {
     let pre = matchability_at_anchor(&MatchabilityAtAnchorArgs {
@@ -637,7 +637,7 @@ pub fn anchor_bracket_both_matchable(
 
 /// Local GCC-PHAT peak at an anchor window (Tier 2).
 pub fn local_anchor_xcorr_peak(
-    correlator: &clip_sync::FftCorrelator,
+    correlator: &dyn PcmCorrelator,
     templates: &crate::domain::policies::SeamTemplates<'_>,
     placement: crate::domain::policies::SeamPlacement,
     side: AnchorSeamSide,
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn local_anchor_xcorr_peak_finds_lag_alignment() {
-        let correlator = clip_sync::FftCorrelator;
+        let correlator = crate::infrastructure::correlation::FftCorrelator::new();
         let lag = 50;
         let w = 256;
         let (a_pre, a_post, b_mono, placement) = xcorr_rescue_templates(w, lag);
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn xcorr_rescues_ambiguous_pearson_pre_anchor() {
-        let correlator = clip_sync::FftCorrelator;
+        let correlator = crate::infrastructure::correlation::FftCorrelator::new();
         let lag = 50;
         let w = 256;
         let (a_pre, a_post, b_mono, placement) = xcorr_rescue_templates(w, lag);
@@ -1073,7 +1073,7 @@ mod tests {
 
     #[test]
     fn xcorr_not_run_when_pearson_deep_fail() {
-        let correlator = clip_sync::FftCorrelator;
+        let correlator = crate::infrastructure::correlation::FftCorrelator::new();
         let w = 256;
         let a_pre = test_tone(w, 440.0, 8_000.0);
         let a_post = a_pre.clone();

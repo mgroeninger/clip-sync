@@ -1,4 +1,5 @@
 pub mod error;
+pub mod align_bridge;
 pub mod fit_routing;
 #[doc(hidden)]
 pub mod gate_oracle;
@@ -6,6 +7,7 @@ pub mod gap_fingerprint;
 pub mod mux_bitrate;
 pub mod patch_audio;
 pub mod patch_region;
+pub mod pcm_bridge;
 pub mod ports;
 pub mod repair_videos;
 pub mod run_repair;

@@ -903,7 +903,8 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
         let alignment = no_op_alignment();
         let report = scan
             .scan_after_alignment(request, alignment)
-            .unwrap_or_else(|e| panic!("case {} failed: {e}", case.id));
+            .unwrap_or_else(|e| panic!("case {} failed: {e}", case.id))
+            .report;
 
         assert_gap_expectations(
             &case.id,
@@ -965,7 +966,8 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
         let alignment = patch_corpus_alignment(duration_secs);
         let report = scan
             .scan_after_alignment(scan_request, alignment)
-            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
+            .report;
 
         assert_gap_expectations(
             &case.id,
@@ -1037,7 +1039,8 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
             build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
         let report = scan
             .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
-            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+            .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
+            .report;
 
         let started = std::time::Instant::now();
         let patch_request = patch_audio_request_from_defaults(report);
@@ -1129,7 +1132,8 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
     let scan_request = build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
     let report = scan_gaps
         .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
-        .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id));
+        .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
+        .report;
 
     assert_gap_expectations(
         &case.id,

@@ -1,6 +1,6 @@
 //! Repair-run warnings and thresholds for timeline / duration sanity checks.
 
-use clip_sync::AudioTimelineSkew;
+use crate::domain::AudioTimelineSkew;
 
 /// Symmetric overlap on A is expected to start near 0:00 on a normal recording.
 pub const OVERLAP_START_WARN_SECS: f64 = 1.0;

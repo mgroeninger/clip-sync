@@ -1,6 +1,6 @@
 //! Mirror per-gap geometry from `application/patch_audio.rs` for fixture diagnostics.
 
-use clip_sync::AlignmentResult;
+use clip_sync_repair::domain::align::ScanAlignment;
 
 use clip_sync_repair::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode};
 use clip_sync_repair::domain::gap_fill_fit::{match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights};
@@ -226,7 +226,7 @@ fn refined_gap_frames(refined: &RefinedGapFrames) -> usize {
 /// Recompute patch-path geometry without running `PatchAudio`.
 pub fn preview_patch_geometry(
     fixture: &EnergySignatureFixture,
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     a_start_secs: f64,
     a_end_secs: f64,
     b_start_secs: f64,

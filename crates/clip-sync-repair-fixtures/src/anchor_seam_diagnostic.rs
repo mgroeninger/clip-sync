@@ -82,7 +82,7 @@ pub fn print_anchor_seam_diagnostic(fixture: &EnergySignatureFixture, label: &st
         min_xcorr_peak: DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
         xcorr_ambiguous_band: DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
     };
-    let correlator = clip_sync::FftCorrelator;
+    let correlator = clip_sync_repair::infrastructure::correlation::FftCorrelator::new();
     let max_lag = 200;
 
     for bracket in &brackets {

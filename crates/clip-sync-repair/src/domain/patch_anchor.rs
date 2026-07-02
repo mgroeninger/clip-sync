@@ -1,6 +1,6 @@
 //! Empirical offset anchors from successful gap patches.
 
-use clip_sync::{AlignmentResult, ClipLabel};
+use crate::domain::align::{ClipRole, ScanAlignment};
 use serde::Serialize;
 
 use crate::domain::fill_offset::clip_anchor_points;
@@ -118,7 +118,7 @@ fn anchor_eligible(
 
 /// Interpolate offset at `gap_time_on_a_secs` from patch + clip anchors.
 pub fn interpolate_anchored_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> Option<f64> {
@@ -130,7 +130,7 @@ pub fn interpolate_anchored_offset_secs(
 }
 
 fn weighted_anchor_points(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     patch_anchors: &PatchAnchorTable,
 ) -> Vec<(f64, f64, f64)> {
     let mut points = Vec::new();
@@ -224,7 +224,7 @@ enum AnchorPointSource {
 /// Verbose line: which anchors produced the pass-2 offset (`-v` stderr).
 pub fn format_anchored_offset_verbose_line(
     gap_offset_secs: f64,
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> String {
@@ -254,7 +254,7 @@ pub fn format_patch_anchor_table_summary(table: &PatchAnchorTable) -> String {
 }
 
 fn anchor_bracket_sources(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
     patch_anchors: &PatchAnchorTable,
 ) -> (AnchorPointSource, AnchorPointSource) {
@@ -281,14 +281,14 @@ fn anchor_bracket_sources(
 }
 
 fn tagged_anchor_points(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     patch_anchors: &PatchAnchorTable,
 ) -> Vec<(f64, AnchorPointSource)> {
     let mut points = Vec::new();
-    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabel::Start) {
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipRole::Start) {
         points.push((anchor, AnchorPointSource::StartClip));
     }
-    if let Some((anchor, _)) = clip_endpoint(alignment, ClipLabel::End) {
+    if let Some((anchor, _)) = clip_endpoint(alignment, ClipRole::End) {
         points.push((anchor, AnchorPointSource::EndClip));
     }
     for anchor in &patch_anchors.anchors {
@@ -302,11 +302,11 @@ fn tagged_anchor_points(
     points
 }
 
-fn clip_endpoint(alignment: &AlignmentResult, label: ClipLabel) -> Option<(f64, f64)> {
+fn clip_endpoint(alignment: &ScanAlignment, role: ClipRole) -> Option<(f64, f64)> {
     let clip = alignment
         .clips
         .iter()
-        .find(|clip| clip.label == label && clip.aligned)?;
+        .find(|clip| clip.role == role && clip.aligned)?;
     let offset = clip.offset_secs?;
     let anchor = (clip.window_start_secs + clip.window_end_secs) / 2.0;
     Some((anchor, offset))
@@ -343,71 +343,21 @@ pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
+    use crate::domain::align::{test_empty_alignment, test_two_clip_alignment};
 
     use super::*;
 
-    fn patch_only_alignment() -> AlignmentResult {
-        AlignmentResult {
-            clips: vec![],
-            start_aligned: false,
-            end_aligned: None,
-            recommended_offset_secs: Some(0.0),
-            offsets_consistent: true,
-            offset_drift_secs: None,
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-            offset_ambiguous_mod_secs: None,
-            alignment_mode_used: None,
-            query_localization: None,
-            end_clip_anchor: None,
-        }
+    fn patch_only_alignment() -> ScanAlignment {
+        test_empty_alignment(0.0)
     }
 
-    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> AlignmentResult {
-        AlignmentResult {
-            clips: vec![
-                ClipMatch {
-                    label: ClipLabel::Start,
-                    window_start_secs: 0.0,
-                    window_end_secs: 50.0,
-                    aligned: true,
-                    offset_secs: Some(start_offset),
-                    confidence: 0.95,
-                    video_a_decode_skips: 0,
-                    video_b_decode_skips: 0,
-                    repetition: None,
-                    video_b_window_start_secs: None,
-                    video_b_window_end_secs: None,
-                },
-                ClipMatch {
-                    label: ClipLabel::End,
-                    window_start_secs: 50.0,
-                    window_end_secs: 100.0,
-                    aligned: true,
-                    offset_secs: Some(end_offset),
-                    confidence: 0.95,
-                    video_a_decode_skips: 0,
-                    video_b_decode_skips: 0,
-                    repetition: None,
-                    video_b_window_start_secs: None,
-                    video_b_window_end_secs: None,
-                },
-            ],
-            start_aligned: true,
-            end_aligned: Some(true),
-            recommended_offset_secs: Some(start_offset),
-            offsets_consistent: false,
-            offset_drift_secs: Some(end_offset - start_offset),
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-            offset_ambiguous_mod_secs: None,
-            alignment_mode_used: None,
-            query_localization: None,
-            end_clip_anchor: None,
-        }
+    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> ScanAlignment {
+        let mut alignment = test_two_clip_alignment(start_offset, end_offset);
+        alignment.clips[0].window_end_secs = 50.0;
+        alignment.clips[1].window_start_secs = 50.0;
+        alignment.clips[1].window_end_secs = 100.0;
+        alignment.recommended_offset_secs = Some(start_offset);
+        alignment
     }
 
     fn candidate(gap_index: usize, a_mid: f64, base: f64, slide: f64) -> PatchAnchorCandidate {

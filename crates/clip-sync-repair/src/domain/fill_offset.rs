@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use clip_sync::{AlignmentResult, ClipLabel};
+use crate::domain::align::{ClipRole, ScanAlignment};
 
 use crate::domain::patch_anchor::{interpolate_anchored_offset_secs, PatchAnchorTable};
 
@@ -50,7 +50,7 @@ const MIN_DRIFT_FOR_INTERPOLATION_SECS: f64 = 0.05;
 
 /// Offset (seconds) to add to A's timeline to reach B: `b_secs = a_secs + offset`.
 pub fn fill_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     mode: FillOffsetMode,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
@@ -59,7 +59,7 @@ pub fn fill_offset_secs(
 
 /// Resolve per-gap B offset, optionally using patch anchors from a prior pass.
 pub fn resolve_gap_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     mode: FillOffsetMode,
     gap_time_on_a_secs: f64,
     patch_anchors: Option<&PatchAnchorTable>,
@@ -79,7 +79,7 @@ pub fn resolve_gap_offset_secs(
 }
 
 fn clip_only_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
     interpolated_offset_secs(alignment, gap_time_on_a_secs)
@@ -87,7 +87,7 @@ fn clip_only_offset_secs(
 }
 
 fn anchored_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
     patch_anchors: Option<&PatchAnchorTable>,
 ) -> Option<f64> {
@@ -101,23 +101,23 @@ fn anchored_offset_secs(
 }
 
 /// Clip start/end anchors for piecewise offset curves (`(a_mid_secs, offset_secs)`).
-pub(crate) fn clip_anchor_points(alignment: &AlignmentResult) -> Vec<(f64, f64)> {
+pub(crate) fn clip_anchor_points(alignment: &ScanAlignment) -> Vec<(f64, f64)> {
     let mut points = Vec::new();
-    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipLabel::Start) {
+    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipRole::Start) {
         points.push((anchor, offset));
     }
-    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipLabel::End) {
+    if let Some((offset, anchor)) = clip_offset_and_anchor(alignment, ClipRole::End) {
         points.push((anchor, offset));
     }
     points
 }
 
 pub(crate) fn interpolated_offset_secs(
-    alignment: &AlignmentResult,
+    alignment: &ScanAlignment,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
-    let (start_offset, start_anchor) = clip_offset_and_anchor(alignment, ClipLabel::Start)?;
-    let (end_offset, end_anchor) = clip_offset_and_anchor(alignment, ClipLabel::End)?;
+    let (start_offset, start_anchor) = clip_offset_and_anchor(alignment, ClipRole::Start)?;
+    let (end_offset, end_anchor) = clip_offset_and_anchor(alignment, ClipRole::End)?;
 
     let drift = end_offset - start_offset;
     if drift.abs() < MIN_DRIFT_FOR_INTERPOLATION_SECS {
@@ -135,13 +135,13 @@ pub(crate) fn interpolated_offset_secs(
 }
 
 fn clip_offset_and_anchor(
-    alignment: &AlignmentResult,
-    label: ClipLabel,
+    alignment: &ScanAlignment,
+    label: ClipRole,
 ) -> Option<(f64, f64)> {
     let clip = alignment
         .clips
         .iter()
-        .find(|clip| clip.label == label && clip.aligned)?;
+        .find(|clip| clip.role == label && clip.aligned)?;
     let offset = clip.offset_secs?;
     let anchor = (clip.window_start_secs + clip.window_end_secs) / 2.0;
     Some((offset, anchor))
@@ -149,60 +149,14 @@ fn clip_offset_and_anchor(
 
 #[cfg(test)]
 mod tests {
-    use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
-
+    use crate::domain::align::{test_empty_alignment, test_two_clip_alignment, ClipRole};
     use crate::domain::patch_anchor::{PatchAnchorCandidate, PatchAnchorPolicy, PatchAnchorTable};
 
     use super::*;
 
-    fn two_clip_alignment(start_offset: f64, end_offset: f64) -> AlignmentResult {
-        AlignmentResult {
-            clips: vec![
-                ClipMatch {
-                    label: ClipLabel::Start,
-                    window_start_secs: 0.0,
-                    window_end_secs: 900.0,
-                    aligned: true,
-                    offset_secs: Some(start_offset),
-                    confidence: 0.95,
-                    video_a_decode_skips: 0,
-                    video_b_decode_skips: 0,
-                    repetition: None,
-                    video_b_window_start_secs: None,
-                    video_b_window_end_secs: None,
-                },
-                ClipMatch {
-                    label: ClipLabel::End,
-                    window_start_secs: 6647.0,
-                    window_end_secs: 7547.0,
-                    aligned: true,
-                    offset_secs: Some(end_offset),
-                    confidence: 0.95,
-                    video_a_decode_skips: 0,
-                    video_b_decode_skips: 0,
-                    repetition: None,
-                    video_b_window_start_secs: None,
-                    video_b_window_end_secs: None,
-                },
-            ],
-            start_aligned: true,
-            end_aligned: Some(true),
-            recommended_offset_secs: Some((start_offset + end_offset) / 2.0),
-            offsets_consistent: false,
-            offset_drift_secs: Some(end_offset - start_offset),
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-            offset_ambiguous_mod_secs: None,
-            alignment_mode_used: None,
-            query_localization: None,
-            end_clip_anchor: None,
-        }
-    }
-
     #[test]
     fn recommended_mode_uses_headline_offset() {
-        let alignment = two_clip_alignment(-7.326, -6.674);
+        let alignment = test_two_clip_alignment(-7.326, -6.674);
         let offset = fill_offset_secs(
             &alignment,
             FillOffsetMode::Recommended,
@@ -214,7 +168,7 @@ mod tests {
 
     #[test]
     fn interpolated_offset_at_start_anchor_matches_start_clip() {
-        let alignment = two_clip_alignment(-7.326, -6.674);
+        let alignment = test_two_clip_alignment(-7.326, -6.674);
         let start_anchor = 450.0;
         let offset = fill_offset_secs(
             &alignment,
@@ -227,7 +181,7 @@ mod tests {
 
     #[test]
     fn interpolated_offset_at_mid_timeline() {
-        let alignment = two_clip_alignment(-7.326, -6.674);
+        let alignment = test_two_clip_alignment(-7.326, -6.674);
         let start_anchor = 450.0;
         let end_anchor = 7097.0;
         let mid = (start_anchor + end_anchor) / 2.0;
@@ -238,8 +192,8 @@ mod tests {
 
     #[test]
     fn interpolated_falls_back_when_only_start_clip() {
-        let mut alignment = two_clip_alignment(-3.0, -2.0);
-        alignment.clips.retain(|c| c.label == ClipLabel::Start);
+        let mut alignment = test_two_clip_alignment(-3.0, -2.0);
+        alignment.clips.retain(|c| c.role == ClipRole::Start);
         alignment.recommended_offset_secs = Some(-3.0);
         let offset = fill_offset_secs(&alignment, FillOffsetMode::Interpolated, 100.0).unwrap();
         assert!((offset - (-3.0)).abs() < f64::EPSILON);
@@ -247,7 +201,7 @@ mod tests {
 
     #[test]
     fn anchored_retry_first_pass_matches_clip_only() {
-        let alignment = two_clip_alignment(0.0, 1.0);
+        let alignment = test_two_clip_alignment(0.0, 1.0);
         let clip = resolve_gap_offset_secs(
             &alignment,
             FillOffsetMode::AnchoredRetry,
@@ -262,21 +216,7 @@ mod tests {
 
     #[test]
     fn anchored_uses_patch_table() {
-        let alignment = AlignmentResult {
-            clips: vec![],
-            start_aligned: false,
-            end_aligned: None,
-            recommended_offset_secs: Some(0.0),
-            offsets_consistent: true,
-            offset_drift_secs: None,
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-            offset_ambiguous_mod_secs: None,
-            alignment_mode_used: None,
-            query_localization: None,
-            end_clip_anchor: None,
-        };
+        let alignment = test_empty_alignment(0.0);
         let policy = PatchAnchorPolicy {
             min_correlation: 0.35,
             exclude_structure_trusted: true,

@@ -1,4 +1,5 @@
-use clip_sync::{normalized_correlation, MultiChannelPcm};
+use crate::domain::metrics::normalized_correlation;
+use crate::domain::pcm::InterleavedSamples;
 
 /// A contiguous silent region on a media timeline (seconds).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,13 +50,13 @@ impl SilenceRunScanner {
     ///
     /// Silence requires every channel in a block to pass [`is_silent_interleaved`] (ffmpeg
     /// `silencedetect` default: all channels quiet simultaneously).
-    pub fn feed(&mut self, pcm: &MultiChannelPcm, timeline_start_secs: f64) {
-        if self.block_secs <= 0.0 || pcm.samples.is_empty() {
+    pub fn feed<P: InterleavedSamples>(&mut self, pcm: &P, timeline_start_secs: f64) {
+        if self.block_secs <= 0.0 || pcm.samples().is_empty() {
             return;
         }
 
-        let channels = pcm.channels.max(1) as usize;
-        let rate = pcm.sample_rate;
+        let channels = pcm.channels().max(1) as usize;
+        let rate = pcm.sample_rate();
         let block_frames = (self.block_secs * f64::from(rate))
             .round()
             .max(1.0) as usize;
@@ -69,7 +70,7 @@ impl SilenceRunScanner {
             let block_end_secs = timeline_start_secs + end_frames as f64 / f64::from(rate);
             let block_start = offset_frames * channels;
             let block_end = end_frames * channels;
-            let block = &pcm.samples[block_start..block_end];
+            let block = &pcm.samples()[block_start..block_end];
 
             if is_silent_interleaved(
                 block,
@@ -2261,17 +2262,13 @@ pub fn apply_seam_crossfade(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clip_sync::MultiChannelPcm;
+    use crate::domain::pcm::InterleavedPcm;
 
-    fn mono_pcm(rate: u32, samples: Vec<f32>) -> MultiChannelPcm {
-        MultiChannelPcm {
+    fn mono_pcm(rate: u32, samples: Vec<f32>) -> InterleavedPcm {
+        InterleavedPcm {
             sample_rate: rate,
             channels: 1,
             samples,
-            decode_error_skips: 0,
-            decoded_frame_count: None,
-            compressed_bytes: None,
-            source_bit_depth: None,
         }
     }
 

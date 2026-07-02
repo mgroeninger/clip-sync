@@ -254,6 +254,7 @@ fn print_repair_outcome(
 
     print_repair_output(
         &outcome.report,
+        &outcome.alignment_detail,
         patch_summary,
         outcome
             .patch_result

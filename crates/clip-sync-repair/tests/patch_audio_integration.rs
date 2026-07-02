@@ -16,6 +16,7 @@ use clip_sync::MultiChannelPcm;
 use clip_sync::{
     AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
 };
+use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
 use clip_sync_repair::domain::{
     FillMode, FillOffsetMode, GapSignatureMode, FitBoundarySearch, RepairProfile,
@@ -583,7 +584,7 @@ fn make_report_with_alignment(
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
-        alignment,
+        alignment: scan_alignment_from_result(&alignment),
         gaps,
         gap_offset_agreement: None,
         decode_chunk_secs: 60,
@@ -599,7 +600,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
-        alignment: make_alignment(0.0),
+        alignment: scan_alignment_from_result(&make_alignment(0.0)),
         gaps: vec![default_gap()],
         gap_offset_agreement: None,
         decode_chunk_secs: 60,
@@ -990,7 +991,7 @@ fn scan_then_patch_fills_detected_gap() {
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
     let aligner = SymphoniaAligner;
-    let report = ScanGaps::new(&media_reader, &progress, &aligner)
+    let outcome = ScanGaps::new(&media_reader, &progress, &aligner)
         .execute(ScanGapsRequest {
             video_a: path_a.clone(),
             video_b: path_b.clone(),
@@ -1016,11 +1017,11 @@ fn scan_then_patch_fills_detected_gap() {
         .expect("scan should succeed");
 
     assert!(
-        report.fillable_count() >= 1,
+        outcome.fillable_count() >= 1,
         "scan should detect a fillable gap"
     );
 
-    let patch_request = patch_request(report, false, 5.0, 0.35);
+    let patch_request = patch_request(outcome.report.clone(), false, 5.0, 0.35);
     let result = PatchAudio::new(&media_reader, &progress)
         .execute(patch_request, 10)
         .expect("patch should succeed");

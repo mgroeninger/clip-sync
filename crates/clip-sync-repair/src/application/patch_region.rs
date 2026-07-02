@@ -808,13 +808,14 @@ fn anchor_bracket_both_matchable_at_gate(
     post_window: usize,
     params: &SeamGateParams<'_>,
 ) -> bool {
-    static ANCHOR_XCORR: clip_sync::FftCorrelator = clip_sync::FftCorrelator;
+    static ANCHOR_XCORR: crate::infrastructure::correlation::FftCorrelator =
+        crate::infrastructure::correlation::FftCorrelator::new();
     let max_lag = params
         .cfg
         .residual_max_lag_frames
         .clamp(0, i32::MAX as i64) as i32;
     let correlator = if max_lag > 0 {
-        Some(&ANCHOR_XCORR)
+        Some(&ANCHOR_XCORR as &dyn crate::domain::ports::PcmCorrelator)
     } else {
         None
     };

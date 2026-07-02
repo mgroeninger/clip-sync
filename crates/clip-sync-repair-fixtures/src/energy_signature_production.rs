@@ -9,6 +9,7 @@ use clip_sync::{
 
 use crate::NoOpProgressReporter;
 
+use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::application::ports::Aligner;
 use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::application::PatchAudioRequest;
@@ -58,7 +59,7 @@ pub fn gap_report_from_energy_fixture(
             rate_match: true,
             verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
         }),
-        alignment: oracle_injected_alignment(total_secs),
+        alignment: scan_alignment_from_result(&oracle_injected_alignment(total_secs)),
         gaps: vec![Gap {
             video_a_start_secs: a_start,
             video_a_end_secs: a_end,
@@ -118,7 +119,7 @@ pub fn gap_report_from_floor_oracle(
             rate_match: true,
             verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
         }),
-        alignment: oracle_injected_alignment(total_secs),
+        alignment: scan_alignment_from_result(&oracle_injected_alignment(total_secs)),
         gaps: vec![Gap {
             video_a_start_secs: a_start,
             video_a_end_secs: a_end,
@@ -336,7 +337,8 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
     let scan = ScanGaps::new(&media_reader, &progress, &NeverCalledAligner);
     let mut report = scan
         .scan_after_alignment(request, zero_offset_alignment(total_secs))
-        .expect("scan energy fixture WAV");
+        .expect("scan energy fixture WAV")
+        .report;
     inject_oracle_alignment(&mut report, total_secs);
     report
 }
@@ -378,7 +380,7 @@ pub fn oracle_nominal_throat_pearson(
     use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
-    let alignment = oracle_injected_alignment(total_secs);
+    let alignment = scan_alignment_from_result(&oracle_injected_alignment(total_secs));
     let preview = preview_patch_geometry(
         fixture,
         &alignment,
@@ -462,7 +464,7 @@ pub fn oracle_baseline_throat_pearson_opt(
     use crate::patch_geometry_preview::preview_patch_geometry;
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
-    let alignment = oracle_injected_alignment(total_secs);
+    let alignment = scan_alignment_from_result(&oracle_injected_alignment(total_secs));
     let preview = preview_patch_geometry(
         fixture,
         &alignment,
@@ -516,7 +518,7 @@ pub fn w5_anchor_rescue_repair(
 
 /// Replace scan alignment with I1-style oracle injection (start + end clips, zero drift).
 pub fn inject_oracle_alignment(report: &mut GapReport, total_secs: f64) {
-    report.alignment = oracle_injected_alignment(total_secs);
+    report.alignment = scan_alignment_from_result(&oracle_injected_alignment(total_secs));
 }
 
 /// After scan, remap B gap bounds using fixture nominal refine (matches [`gap_report_times`] B leg).

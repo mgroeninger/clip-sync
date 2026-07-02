@@ -38,6 +38,7 @@ pub struct RepairRunInput {
 
 pub struct RepairRunOutcome {
     pub report: GapReport,
+    pub alignment_detail: clip_sync::AlignmentResult,
     pub patch_result: Result<Option<PatchAudioResult>, RepairError>,
 }
 
@@ -74,7 +75,9 @@ where
     PW: PatchedAudioWriter,
     MM: MediaMuxer,
 {
-    let report = ScanGaps::new(media_reader, progress, aligner).execute(input.scan)?;
+    let scan = ScanGaps::new(media_reader, progress, aligner).execute(input.scan)?;
+    let report = scan.report;
+    let alignment_detail = scan.alignment_detail;
 
     let patch_result = match input.write {
         Some(pending) => into_write_request(pending, report.clone())
@@ -87,6 +90,7 @@ where
 
     Ok(RepairRunOutcome {
         report,
+        alignment_detail,
         patch_result,
     })
 }
@@ -104,7 +108,9 @@ where
     A: Aligner,
     PW: PatchedAudioWriter,
 {
-    let report = ScanGaps::new(media_reader, progress, aligner).execute(input.scan)?;
+    let scan = ScanGaps::new(media_reader, progress, aligner).execute(input.scan)?;
+    let report = scan.report;
+    let alignment_detail = scan.alignment_detail;
 
     let patch_result = match input.write {
         Some(pending) => into_write_request(pending, report.clone()).and_then(|write_request| {
@@ -116,6 +122,7 @@ where
 
     Ok(RepairRunOutcome {
         report,
+        alignment_detail,
         patch_result,
     })
 }

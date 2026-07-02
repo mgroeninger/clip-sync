@@ -1,4 +1,4 @@
-use clip_sync::TimelineOverlap;
+use crate::domain::align::TimelineOverlap;
 
 use crate::domain::gap::{Gap, GapOffsetAgreement};
 use crate::domain::gap::interval_fully_within_window;
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn cross_check_excludes_intervals_outside_overlap() {
-        use clip_sync::TimelineOverlap;
+        use crate::domain::align::TimelineOverlap;
 
         // True offset −10.956: A [100,101] ↔ B [89.044, 90.044] on native clocks.
         let overlap = TimelineOverlap {
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn cross_check_returns_none_when_overlap_filters_all_intervals_on_one_side() {
-        use clip_sync::TimelineOverlap;
+        use crate::domain::align::TimelineOverlap;
 
         let overlap = TimelineOverlap {
             video_a_start_secs: 10.0,

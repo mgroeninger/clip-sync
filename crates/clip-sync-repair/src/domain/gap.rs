@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use clip_sync::AlignmentResult;
+use crate::domain::{AudioTimelineSkew, ScanAlignment};
 
 use crate::domain::track_match::TrackCompatibility;
 
@@ -61,7 +61,7 @@ pub struct GapReport {
     /// Audio track comparison (channels/rate). `None` when B could not be opened or has no
     /// decodable track — the scan still reports A's gaps.
     pub track_compatibility: Option<TrackCompatibility>,
-    pub alignment: AlignmentResult,
+    pub alignment: ScanAlignment,
     pub gaps: Vec<Gap>,
     /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
@@ -73,7 +73,7 @@ pub struct GapReport {
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
     /// Maximum |PTS − sample-clock| observed during gap scan on video A, when measurable.
-    pub audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
+    pub audio_timeline_skew: Option<AudioTimelineSkew>,
 }
 
 impl GapReport {
@@ -110,7 +110,7 @@ impl GapReport {
     /// conservatively excluded rather than partially filled. Returns `false` (not outside) in
     /// symmetric mode or when no overlap was computed — the gate only applies to query mode.
     pub fn gap_outside_reference_coverage(&self, gap: &Gap) -> bool {
-        if self.alignment.query_localization.is_none() {
+        if !self.alignment.query_reference_mode {
             return false;
         }
         let Some(overlap) = &self.alignment.start_overlap else {

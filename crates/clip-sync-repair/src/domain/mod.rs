@@ -1,4 +1,5 @@
 pub mod cross_check;
+pub mod align;
 pub mod diagnostics;
 pub mod fill_mode;
 pub mod fill_offset;
@@ -11,13 +12,20 @@ pub mod gap_energy;
 pub mod gap_signature;
 pub mod gap_tags;
 pub mod gap_structure;
+pub mod metrics;
 pub mod patch_anchor;
 pub mod patch_result;
+pub mod pcm;
 pub mod policies;
+pub mod ports;
 pub mod repair_profile;
 pub mod residual_gate;
 pub mod seam_robust;
 pub mod track_match;
+
+pub use align::{
+    AlignedClip, AudioTimelineSkew, ClipRole, ScanAlignment, TimelineOverlap,
+};
 
 pub use fill_mode::FillMode;
 pub use fill_offset::{AnchoredRetryPass, FillOffsetMode, fill_offset_secs, resolve_gap_offset_secs};

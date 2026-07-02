@@ -250,7 +250,7 @@ fn repair_auto_no_clip_count_mismatch_error() {
     let temp = tempfile::tempdir().expect("tempdir");
     let (path_a, path_b) = write_query_fixture(temp.path());
 
-    let report = ScanGaps::new(
+    let outcome = ScanGaps::new(
         &SymphoniaMediaReader,
         &FakeProgressReporter,
         &SymphoniaAligner,
@@ -259,12 +259,12 @@ fn repair_auto_no_clip_count_mismatch_error() {
     .expect("long A + short B should complete under Auto query mode");
 
     assert_eq!(
-        report.alignment.alignment_mode_used,
+        outcome.alignment_detail.alignment_mode_used,
         Some(AlignmentModeUsed::QueryReference)
     );
-    assert!(report.alignment.query_localization.is_some());
-    let loc = report
-        .alignment
+    assert!(outcome.alignment_detail.query_localization.is_some());
+    let loc = outcome
+        .alignment_detail
         .query_localization
         .as_ref()
         .expect("localization");
@@ -285,13 +285,14 @@ fn repair_query_gap_inside_region_fillable() {
     let temp = tempfile::tempdir().expect("tempdir");
     let (path_a, path_b) = write_query_fixture(temp.path());
 
-    let report = ScanGaps::new(
+    let outcome = ScanGaps::new(
         &SymphoniaMediaReader,
         &FakeProgressReporter,
         &SymphoniaAligner,
     )
     .execute(scan_request(path_a.clone(), path_b.clone()))
     .expect("scan");
+    let report = &*outcome;
 
     let inside_gap = report
         .gaps
@@ -327,7 +328,7 @@ fn repair_query_gap_inside_region_fillable() {
         "inside gap should be in fill plan"
     );
 
-    let result = patch_inside_gap(report);
+    let result = patch_inside_gap(outcome.report.clone());
     let patched = result
         .summary
         .gaps
@@ -346,16 +347,17 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
     let temp = tempfile::tempdir().expect("tempdir");
     let (path_a, path_b) = write_b_longer_query_fixture(temp.path());
 
-    let report = ScanGaps::new(
+    let outcome = ScanGaps::new(
         &SymphoniaMediaReader,
         &FakeProgressReporter,
         &SymphoniaAligner,
     )
     .execute(scan_request(path_a.clone(), path_b.clone()))
     .expect("short A + long B should complete under Auto query mode");
+    let report = &*outcome;
 
     assert_eq!(
-        report.alignment.alignment_mode_used,
+        outcome.alignment_detail.alignment_mode_used,
         Some(AlignmentModeUsed::QueryReference)
     );
     let offset = report
@@ -370,8 +372,8 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
         (offset - f64::from(QUERY_ANCHOR_SECS)).abs() < 2.0,
         "offset {offset} expected ~{QUERY_ANCHOR_SECS}"
     );
-    let loc = report
-        .alignment
+    let loc = outcome
+        .alignment_detail
         .query_localization
         .as_ref()
         .expect("localization");
@@ -396,7 +398,7 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
     let gap_a_start = inside_gap.video_a_start_secs;
     let gap_a_end = inside_gap.video_a_end_secs;
     let gap_b_start = inside_gap.video_b_start_secs;
-    let result = patch_inside_gap(report);
+    let result = patch_inside_gap(outcome.report.clone());
     let patched = result
         .summary
         .gaps
