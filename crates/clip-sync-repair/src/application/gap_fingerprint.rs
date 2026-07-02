@@ -641,6 +641,13 @@ pub struct SpliceDualfit {
 /// ± lag sweep (ms) used to gauge each dual-fit seam's peak uniqueness (the periodicity/alias guard).
 const DUALFIT_SEAM_UNIQ_LAG_MS: f64 = 30.0;
 
+/// Half-width (ms) of the per-shoulder **seam-local** lag search in [`splice_dualfit_at`]. The fill places
+/// each shoulder at the lag that maximizes its own seam, which can differ from the 1 s-window `baseline_lag`
+/// peak when a shoulder carries sub-window structure (an edit within the 1 s). Refining within this window
+/// around the baseline placement recovers those seams — without it, `splice_dualfit` false-negatives a live
+/// seam scored at the wrong (1 s-window) lag. Calibrate at ledger A5/C6.
+const SEAM_LOCAL_REFINE_MS: f64 = 100.0;
+
 /// Prominence of a seam's placement peak over its tallest rival within ±`max_lag`. `b_ctx` must be laid
 /// out so lag 0 aligns `a_win` at the placement (`b_ctx[max_lag .. max_lag + a_win.len()]`). Low prominence
 /// ⇒ the seam matches at many lags (periodic) ⇒ the dual-fit placement is not a unique registration.
@@ -1488,6 +1495,28 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
     SeamProbeFingerprint { pre, post }
 }
 
+/// Best `(peak correlation, lag in frames)` of one seam over a ±`refine`-frame search around `anchor_start`
+/// (the baseline-aligned start of the seam's B window). `lag 0` aligns `a_seam` at `anchor_start`; the peak
+/// lag is how far the *fill* would shift this shoulder to make the seam clean. `refine` auto-clamps to the
+/// available B context (0 ⇒ a plain lag-0 score, matching the pre-refinement behavior at file edges).
+fn seam_local_peak(
+    a_seam: &[f64],
+    b_mono: &[f64],
+    anchor_start: usize,
+    refine: usize,
+    sample_rate: u32,
+) -> Option<(f64, i64)> {
+    let n = a_seam.len();
+    if n < 8 || anchor_start + n > b_mono.len() {
+        return None;
+    }
+    let refine = refine.min(anchor_start).min(b_mono.len() - (anchor_start + n));
+    let b_ctx = &b_mono[anchor_start - refine..anchor_start + n + refine];
+    let curve = lag_correlation_curve(a_seam, b_ctx, refine as i64);
+    let s = summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)?;
+    Some((finite_corr(s.peak_r), s.peak_lag_samples))
+}
+
 /// Inputs for [`splice_dualfit_at`] — the A/B PCM plus the already-aligned bridge shoulders.
 struct SpliceDualfitInput<'a> {
     a_samples: &'a [f32],
@@ -1532,24 +1561,32 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
 
     let w_pre = window.min(a_pre.len());
-    let pre_seam_r = (w_pre >= 8 && b_pre_aligned >= w_pre).then(|| {
-        normalized_correlation(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_aligned - w_pre..b_pre_aligned])
-    })?;
     let w_post = window.min(a_post.len());
-    let post_seam_r = (w_post >= 8 && b_post_aligned + w_post <= b_mono.len()).then(|| {
-        normalized_correlation(&a_post[..w_post], &b_mono[b_post_aligned..b_post_aligned + w_post])
-    })?;
+    let refine = (((SEAM_LOCAL_REFINE_MS / 1000.0) * rate).round() as usize).max(1);
+
+    // Seam-local viability: the fill places each shoulder at the lag that maximizes ITS own seam, so search
+    // ±`refine` around the baseline-aligned shoulder and take the peak. Scoring at the fixed 1 s-window
+    // `baseline_lag` (the old behavior) reads a live seam as dead whenever a shoulder's seam-local lag
+    // diverges from its 1 s peak (sub-window structure) — the `splice_dualfit` false-negative fixed here.
+    let pre_start = b_pre_aligned.checked_sub(w_pre)?;
+    let (pre_seam_r, pre_lag) =
+        seam_local_peak(&a_pre[a_pre.len() - w_pre..], b_mono, pre_start, refine, sample_rate)?;
+    let (post_seam_r, post_lag) =
+        seam_local_peak(&a_post[..w_post], b_mono, b_post_aligned, refine, sample_rate)?;
 
     let pre_seam_r = finite_corr(pre_seam_r);
     let post_seam_r = finite_corr(post_seam_r);
-    let bridge_frames = b_post_aligned as i64 - b_pre_aligned as i64;
+    // The seam-local shoulder placements (baseline ± the per-seam refinement) define the bridge + step.
+    let b_pre_seam = (b_pre_aligned as i64 + pre_lag).max(0) as usize;
+    let b_post_seam = (b_post_aligned as i64 + post_lag).max(0) as usize;
+    let bridge_frames = b_post_seam as i64 - b_pre_seam as i64;
     let smin = pre_seam_r.min(post_seam_r);
     let gate_pass =
         smin >= f64::from(cfg.min_fill_correlation) && smin >= f64::from(cfg.fill_absolute_floor);
 
-    // Validator 1 — is the step necessary? Post seam at the pre offset (step forced 0): `b_pre_aligned`
-    // shifted forward by the gap length keeps the pre shoulder's lag on the post side.
-    let b_post_global = b_pre_aligned + gap_frames;
+    // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
+    // if the post seam also clears there, one constant shift fixes both ⇒ registration artifact, not a splice.
+    let b_post_global = b_pre_seam + gap_frames;
     let post_seam_global_r = (w_post >= 8 && b_post_global + w_post <= b_mono.len())
         .then(|| finite_corr(normalized_correlation(&a_post[..w_post], &b_mono[b_post_global..b_post_global + w_post])))
         .unwrap_or(f64::NAN);
@@ -1558,11 +1595,11 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     // best rival within ±30 ms.
     let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
     let mlu = ml.max(0) as usize;
-    let pre_seam_prom = (w_pre >= 8 && b_pre_aligned >= w_pre + mlu && b_pre_aligned + mlu <= b_mono.len())
-        .then(|| seam_prominence(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_aligned - w_pre - mlu..b_pre_aligned + mlu], ml, sample_rate))
+    let pre_seam_prom = (w_pre >= 8 && b_pre_seam >= w_pre + mlu && b_pre_seam + mlu <= b_mono.len())
+        .then(|| seam_prominence(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_seam - w_pre - mlu..b_pre_seam + mlu], ml, sample_rate))
         .flatten();
-    let post_seam_prom = (w_post >= 8 && b_post_aligned >= mlu && b_post_aligned + w_post + mlu <= b_mono.len())
-        .then(|| seam_prominence(&a_post[..w_post], &b_mono[b_post_aligned - mlu..b_post_aligned + w_post + mlu], ml, sample_rate))
+    let post_seam_prom = (w_post >= 8 && b_post_seam >= mlu && b_post_seam + w_post + mlu <= b_mono.len())
+        .then(|| seam_prominence(&a_post[..w_post], &b_mono[b_post_seam - mlu..b_post_seam + w_post + mlu], ml, sample_rate))
         .flatten();
 
     Some(SpliceDualfit {
@@ -2905,6 +2942,35 @@ mod tests {
             splice_summary_from_lag(&legacy).expect("splice").edge_pinned,
             None,
         );
+    }
+
+    #[test]
+    fn seam_local_peak_recovers_offset_seam() {
+        // The seam's true match sits at a nonzero lag (sub-window structure): a plain lag-0 score would miss
+        // it, but the ±refine search recovers both the correlation and the lag (the splice_dualfit fix).
+        let sr = 48_000u32;
+        let n = 2000usize;
+        // Broadband (noise-like) content so a 37-sample shift genuinely decorrelates — a smooth tone would
+        // still correlate at lag 0 and wouldn't exercise the search.
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut rng = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let a: Vec<f64> = (0..n).map(|_| rng()).collect();
+        let (anchor_start, true_lag, refine) = (600usize, 37i64, 200usize);
+        let total = anchor_start + n + refine + 400;
+        let mut b: Vec<f64> = (0..total).map(|_| rng() * 0.001).collect();
+        let start = (anchor_start as i64 + true_lag) as usize;
+        b[start..start + n].copy_from_slice(&a);
+
+        let (r, lag) = seam_local_peak(&a, &b, anchor_start, refine, sr).expect("peak");
+        assert!(r > 0.99, "seam recovers at its offset: r={r}");
+        assert_eq!(lag, true_lag, "finds the seam-local lag, not lag 0");
+
+        // At lag 0 (the pre-fix behavior) the same seam is essentially dead — confirms the divergence bites.
+        let lag0 = normalized_correlation(&a, &b[anchor_start..anchor_start + n]);
+        assert!(lag0 < 0.5, "lag-0 score misses the offset seam: {lag0}");
     }
 
     #[test]

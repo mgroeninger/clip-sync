@@ -11,7 +11,8 @@ Pearson@0 (which conflated misalignment, silence-splice, and a ±25 ms-window ar
 **Patch vs skip** is **bracket-search success**, not step magnitude. **But clustering the corpus into named
 types (P2) must wait until quiet-gap registration is corrected (ledger A1/A2 — `structure_start_frame`
 wanders on quiet gaps), or the coordinates it clusters on are wrong.** Mechanism + repair:
-[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md).
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (historical:
+[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
 Bracket-vs-step + proof index:
 [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (B1, B11; C3, C7).
 
@@ -20,7 +21,7 @@ Reading: [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary (the taxonomy 
 [seam-scoring.md](seam-scoring.md) §3–4,
 [archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md) (the class that
 exposed the defect). Siblings:
-[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) (mechanism + repair — unbuilt),
+[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) (mechanism history — archived),
 [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (proven/open index),
 [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) (superseded —
 validator-swap refuted; R2/R4 retained as diagnostics),
@@ -128,7 +129,8 @@ Deliberately *excluded* as non-axes (they re-project the above): the raw `min(pr
 
 **This is a descriptive re-vocabulary.** The gate still decides on Pearson; this work describes gaps
 better than the gate currently acts on them. Wiring coordinates into decisions/tags is P4 (deferred).
-Repair routing for bracket-exhausted skips → [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md).
+Repair routing for bracket-exhausted skips → [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4
+(historical detail: [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
 
 ---
 
@@ -268,12 +270,12 @@ matched gap; they differ by a **step**. Skips share this signature with patches 
 
 **Repair direction (unbuilt):** independent per-seam fit + length reconciliation at gap interior;
 validate with **unchanged** waveform gate — see
-[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md). Scope: **bracket-exhausted** skips
-only (not high-step patches like 5·g3 where 18/25 brackets already pass).
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (wire spec; A3 unbuilt). Scope: **bracket-exhausted** skips
+only (not high-step patches like 5·g3 where 18/25 brackets already pass). Historical mechanism detail:
+[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md).
 
-**Proof sequencing:** P3 from fingerprints now; P1/P2/C3/C7 via **`diag_splice_dualfit`** (§4.1 — scaffold
-built, not yet run on `b_mapped` rescan) before §4 repair — see
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7).
+**Proof sequencing:** P3 from fingerprints now; C3/C7 via scan-native **`splice_dualfit`** (proven) before §4
+repair — see [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7, §4).
 
 ### 7f. Superseded hypotheses (tombstone)
 
@@ -292,7 +294,7 @@ built, not yet run on `b_mapped` rescan) before §4 repair — see
 |-----|----------|
 | [gap-repair-guide.md](gap-repair-guide.md) | The Pearson-rooted vocabulary being revised |
 | [gap-fingerprint.md](gap-fingerprint.md) | Measurements (lag, levels, donor_interior, splice, …) |
-| [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) | Mechanism + repair (unbuilt); §4.1 `diag_splice_dualfit` |
+| [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) | Mechanism history (archived); wire spec → ledger §4 |
 | [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) | Proven/open index; bracket-vs-step; proof sequencing |
 | [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) | Superseded validator-swap |
 | [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) | Archived warp path |

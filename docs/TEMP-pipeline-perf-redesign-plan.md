@@ -8,8 +8,8 @@ a **list of gaps to fix** and the **repair-params to fix them**, with everything
 **Relationship to other docs.** The [status ledger](TEMP-seam-repair-status-ledger.md) is the index (one row
 per claim); this is the detail doc for the *perf/pipeline* workstream (D12). It **absorbs** the ledger's
 scattered perf notes (D5 FFT, "Perf (before a long rescan)", the "Pipeline (detect → repair)" order) — those
-now point here. The [dualfit plan](TEMP-seam-splice-dualfit-plan.md) owns the repair *algorithm*; this owns
-the pipeline *assembly*.
+now point here. The [ledger §4 wire spec](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-unbuilt)
+owns the repair *algorithm*; this owns the pipeline *assembly*.
 
 **Hard wall.** §1 is **descriptive** ("what the pipeline does today") and stays factually true regardless of
 plan revisions. §2–§4 are **prescriptive** ("what it should become"). Keep them separate so the audit can

@@ -1,5 +1,5 @@
 //! **Offline timescale / uniqueness / downmix experiment** for the seam-splice repair direction
-//! (`docs/TEMP-seam-splice-dualfit-plan.md` §3.6). The assembly point where every candidate schema
+//! (`docs/archive/TEMP-seam-splice-dualfit-plan.md` §3.6). The assembly point where every candidate schema
 //! metric is validated on the *source media* before it is frozen into the capture binary.
 //!
 //! Tier: **diagnostic** (`diagnostic-tests`) — and it shells out to **ffmpeg** (must be on PATH). It does

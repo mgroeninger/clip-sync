@@ -1,10 +1,10 @@
 # W5 timing-offset — production detection + drift-resample rescue (DRAFT)
 
 Status: **ARCHIVED / SHELVED — this approach is the wrong one (2026-06-29); the gaps are still fillable.**
-Superseded by [TEMP-seam-splice-dualfit-plan.md](../TEMP-seam-splice-dualfit-plan.md): the real mechanism
+Superseded by [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) (archived): the real mechanism
 is a **silence-splice** (un-stretched shoulders separated by a step between the two per-side lags),
-repaired by fitting each seam independently + reconciling the step with a length edit validated by the
-**existing** gate — not a per-seam warp. The
+repaired by independent per-seam fit + length reconciliation validated by the **existing** gate — wire spec:
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §4. The
 per-seam *detect-and-warp* model is dead: (i) the steps aren't clock skew (not drift, not block-quantized),
 and (ii) the local lag/uniqueness/residual probes are **mis-calibrated for cross-encoding, periodic,
 same-master** content — they can't confirm what is, by **operator ground truth, the same soundtrack in

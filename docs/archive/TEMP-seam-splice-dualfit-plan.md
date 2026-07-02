@@ -1,22 +1,24 @@
 # Seam-splice / dual-seam independent fit — findings + plan (DRAFT)
 
-> **Status & next-steps live in the ledger:** [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md).
-> This doc is the *detail* for the mechanism + repair; the ledger is the authoritative index of what is
-> proven / open / important. Do not add a competing next-steps list here — update the ledger.
+Status: **ARCHIVED — capture + viability proof done; §4 production repair unbuilt (A3).** Do not update this
+doc for status or next steps. **Live index:** [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md)
+(claim rows + **§4 wire spec** for A3). **Schema:** [gap-fingerprint.md](../gap-fingerprint.md) § Registration &
+dual-fit. **Retained in code:** `baseline_lag`/`splice`/`donor_interior`/`splice_dualfit` capture,
+`dualfit_target()` analyzer predicate, `diag_splice_timescale` (§3.6 experiments). **`diag_splice_dualfit` sim
+deleted** — replaced by scan-native `splice_dualfit` (ledger E-tombstone). _Original status below._
 
-Status: **DRAFT — `b_mapped` capture (A2) DONE; `diag_splice_dualfit` scaffold DONE; §4 repair unbuilt (A3).**
-The *per-seam warp* and *cross-codec validator* directions are **refuted** (B2). **Next:** rescan primary
-cohort → re-classify skips → **run `diag_splice_dualfit`** on bracket-exhausted gaps (C3/C7).
+_Original status:_ **DRAFT — `b_mapped` capture (A2) DONE; `diag_splice_dualfit` scaffold DONE; §4 repair unbuilt (A3).**
+The *per-seam warp* and *cross-codec validator* directions are **refuted** (B2).
 
-Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
+Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md)
 (per-seam detect-and-warp — archived, dead) and
-[TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) (R2/R4 validator-swap —
+[TEMP-cross-codec-seam-impl-plan.md](TEMP-cross-codec-seam-impl-plan.md) (R2/R4 validator-swap —
 **archived**; its `domain/seam_robust.rs` + R2/R4 fingerprint fields are retained as **diagnostics**).
 Confirms and concretizes the **registration/step axis** of
-[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md).
+[TEMP-gap-vocabulary-redesign-plan.md](../TEMP-gap-vocabulary-redesign-plan.md).
 
-Reading: [seam-scoring.md](seam-scoring.md), [gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint,
-[gap-fill-modes.md](gap-fill-modes.md).
+Reading: [seam-scoring.md](../seam-scoring.md), [gap-fingerprint.md](../gap-fingerprint.md) § Lag fingerprint,
+[gap-fill-modes.md](../gap-fill-modes.md).
 
 ---
 
@@ -411,7 +413,7 @@ primary cohort's bracket-exhausted skips.
 ## 5. Status / next
 
 **Next-steps are maintained in one place — the ledger's critical path:**
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §A. This doc no longer keeps a
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §A. This doc no longer keeps a
 separate checklist (that fragmentation is how the outward-anchor idea kept getting dropped).
 
 Done here (detail): analyzer `splice_text`/`SpliceDiag`/`both_sides_recoverable`/`dualfit_scope_text`; full

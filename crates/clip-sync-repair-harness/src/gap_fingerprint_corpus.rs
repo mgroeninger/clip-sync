@@ -331,7 +331,7 @@ impl SeamDiag {
 /// Silence-splice classification from the **±600 ms** per-side `baseline_lag` peaks, sequentially
 /// centered (ledger A2: post search is centered on `S + D_A + round(L_pre)`,
 /// not the naive `S + D_A`), not the ±25 ms `seam_probe.recovered_r`, which mislabels any step > 25 ms as
-/// "cross-codec". See `docs/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
+/// "cross-codec". See `docs/archive/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
 /// addressable silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpliceDiag {
@@ -586,6 +586,25 @@ impl GapRow {
             && self.program_quiet() != Some(true)
     }
 
+    /// **The A3 repair-scope predicate** — the gaps a dual-fit repair should actually run on, measured
+    /// directly rather than proxied by uniqueness. A gap is a target when the scan-native `splice_dualfit`
+    /// shows: the seams **pass** the unchanged gate (`dualfit_pass`); the **step is real** (`post_seam_global_r`
+    /// below the spurious floor — a constant shift alone would NOT fix it); the **donor bridges** the hole
+    /// (`donor_continuous`); and it is **not program-quiet** (there is content to fill). This supersedes
+    /// `dualfit_candidate` (uniqueness), which mispredicts placement seam viability — edge-pin/D11 rescan:
+    /// the two overlap in only 2/7 (ledger A3). `None` fields ⇒ not a target (can't confirm).
+    ///
+    /// Only a **bracket-exhausted skip** qualifies: dual-fit must NOT run on gaps that already patch (a
+    /// passing bracket exists) — B1/B11.
+    pub fn dualfit_target(&self) -> bool {
+        self.outcome_tier.as_deref() == Some("skip")
+            && self.bracket_exhausted()
+            && self.dualfit_pass == Some(true)
+            && self.dualfit_post_global_r.is_some_and(|g| g < DUALFIT_STEP_SPURIOUS_R)
+            && self.donor_continuous == Some(true)
+            && self.program_quiet() != Some(true)
+    }
+
     /// D11 — a **skip** that is program-quiet (B silent at the same program time). Correctly skipped and
     /// **not a fill miss**: it leaves the addressable-dropout denominator (there is nothing to fill), rather
     /// than counting against the dual-fit / repair rate. `false` when occupancy wasn't captured.
@@ -630,7 +649,16 @@ impl GapRow {
 
 /// D11 — B is at least this silent over the nominal-span (fraction of sub-floor bins) ⇒ program-quiet, not
 /// a fillable dropout. Real dropouts read ~0 (B occupied); program-quiet passages ~0.9–1.0 (B silent too).
+/// **Calibrated (edge-pin/D11 rescan, 2026-07-01):** bimodal — dropouts ≈0, program-quiet cluster ≥0.83, so
+/// 0.5 sits in a wide empty gap (any value in ~[0.1, 0.8] separates the same set). Keep 0.5.
 const PROGRAM_QUIET_SILENCE_FRAC: f64 = 0.5;
+
+/// The dual-fit **step-spurious** floor: if the post seam scored at the *pre* offset (`post_seam_global_r`,
+/// step forced to 0) reaches this, a single constant shift already fixes the gap — so the reported step is a
+/// registration artifact, not a real splice, and the gap is **not** a dual-fit target. Set to the gate's
+/// `min_fill_correlation` (0.35). **Calibrated (edge-pin/D11 rescan):** the 6 real-step passes read
+/// `post@pre-off ≤ 0.284`; the one spurious pass (1·g21) reads 0.759 — a clean gap around 0.35. Keep.
+const DUALFIT_STEP_SPURIOUS_R: f64 = 0.35;
 
 /// Full aggregation across every pair dir found.
 #[derive(Debug, Clone, Default)]
@@ -1695,13 +1723,25 @@ impl CorpusReport {
         // Validators: is the step necessary (post fails at the pre offset), and is the seam unique (prom)?
         let step_spurious = skips
             .iter()
-            .filter(|r| r.dualfit_pass == Some(true) && r.dualfit_post_global_r.is_some_and(|g| g >= 0.35))
+            .filter(|r| r.dualfit_pass == Some(true) && r.dualfit_post_global_r.is_some_and(|g| g >= DUALFIT_STEP_SPURIOUS_R))
             .count();
         let _ = writeln!(
             s,
             "  validators — of the {skip_pass} dual-fit passes: {} also pass a single global shift (step SPURIOUS ⇒ registration miss, not a splice); {} need the step (real splice)",
             step_spurious,
             skip_pass.saturating_sub(step_spurious)
+        );
+        // The A3 scope: gate_pass ∧ step-real ∧ donor-continuous ∧ ¬program-quiet (dualfit_target).
+        let targets: Vec<String> = matched
+            .iter()
+            .filter(|r| r.dualfit_target())
+            .map(|r| format!("{}·g{}", r.pair, r.index))
+            .collect();
+        let _ = writeln!(
+            s,
+            "  ⇒ A3 repair targets (gate_pass ∧ step-real ∧ donor-continuous ∧ ¬program-quiet): {} — {}",
+            targets.len(),
+            if targets.is_empty() { "(none)".into() } else { targets.join(", ") }
         );
         if !skips.is_empty() {
             let _ = writeln!(
@@ -1717,7 +1757,7 @@ impl CorpusReport {
                     None => "—",
                 };
                 let verdict = match (r.dualfit_pass, r.dualfit_post_global_r) {
-                    (Some(true), Some(g)) if g >= 0.35 => "PASS (step spurious)",
+                    (Some(true), Some(g)) if g >= DUALFIT_STEP_SPURIOUS_R => "PASS (step spurious)",
                     (Some(true), _) => "PASS (step real)",
                     (Some(false), _) => "fail",
                     (None, _) => "—",
@@ -2128,5 +2168,56 @@ mod tests {
             report.summary_text().contains("registration schema mix"),
             "mixed-schema corpus must warn"
         );
+    }
+
+    #[test]
+    fn dualfit_target_scopes_on_gate_pass_and_donor_not_uniqueness() {
+        // The A3 predicate: gate_pass ∧ step-real (post_global < 0.35) ∧ donor-continuous ∧ ¬program-quiet.
+        // Each non-target row flips exactly one condition, holding the others at pass.
+        let gap = |index: usize, gate_pass: bool, post_global: f64, cont: bool, nominal_sil: f64| {
+            format!(
+                r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
+                "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
+                "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
+                        "post_anchor":[{{"peak_r":0.95,"frac_lag_ms":-8.0,"verdict":"timing_offset"}}]}},
+                "donor_interior":{{"rms_db":-40.0,"silence_fraction":0.02,"continuous":{cont}}},
+                "donor_interior_nominal":{{"rms_db":-40.0,"silence_fraction":{nominal_sil},"continuous":{cont}}},
+                "splice_dualfit":{{"pre_seam_r":0.99,"post_seam_r":0.95,"trim_frames":10,"gate_pass":{gate_pass},"post_seam_global_r":{post_global}}},
+                "brackets":[{{"failure_stage":"waveform_floor"}}],
+                "outcome":{{"tier":"skip"}}}}"#
+            )
+        };
+        // A gap that satisfies every dual-fit condition but ALREADY PATCHES (a passing bracket) must be
+        // excluded — dual-fit never runs on patched gaps (B1/B11).
+        let patched = r#"{"index":5,"tier":"full","sample_rate":48000,"channels":2,
+            "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
+            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
+                    "post_anchor":[{"peak_r":0.95,"frac_lag_ms":-8.0,"verdict":"timing_offset"}]},
+            "donor_interior":{"rms_db":-40.0,"silence_fraction":0.02,"continuous":true},
+            "donor_interior_nominal":{"rms_db":-40.0,"silence_fraction":0.02,"continuous":true},
+            "splice_dualfit":{"pre_seam_r":0.99,"post_seam_r":0.95,"trim_frames":10,"gate_pass":true,"post_seam_global_r":0.05},
+            "brackets":[{"seam_pre":0.9,"seam_post":0.9}],
+            "outcome":{"tier":"full"}}"#;
+        let root = tempfile::tempdir().unwrap();
+        write_corpus(
+            &root.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!(
+                "[{},{},{},{},{},{patched}]",
+                gap(0, true, 0.05, true, 0.02),   // clean target
+                gap(1, true, 0.80, true, 0.02),   // step spurious (constant shift also fixes) → not a target
+                gap(2, true, 0.05, false, 0.02),  // donor BROKEN (nothing to bridge) → not a target
+                gap(3, true, 0.05, true, 0.95),   // program-quiet (nothing to fill) → not a target
+                gap(4, false, 0.05, true, 0.02),  // gate FAIL → not a target
+            ),
+        );
+        let rows = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows;
+        assert!(rows[0].dualfit_target(), "gate_pass + real step + continuous donor + occupied");
+        assert!(!rows[1].dualfit_target(), "spurious step excluded");
+        assert!(!rows[2].dualfit_target(), "broken donor excluded");
+        assert!(!rows[3].dualfit_target(), "program-quiet excluded");
+        assert!(!rows[4].dualfit_target(), "gate fail excluded");
+        assert!(!rows[5].dualfit_target(), "already-patched gap excluded (bracket-exhausted skips only)");
     }
 }
