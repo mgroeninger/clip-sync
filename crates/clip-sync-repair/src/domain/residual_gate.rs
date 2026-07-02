@@ -3,7 +3,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 /// How the residual/floor headroom gate composes with Pearson waveform tiers (fit mode only).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResidualGateMode {
     /// No residual measurement for gating; zero behavior change unless `measure_residual` or debug.
@@ -61,5 +61,26 @@ mod tests {
     #[test]
     fn default_residual_gate_is_veto() {
         assert_eq!(ResidualGateMode::default(), ResidualGateMode::Veto);
+    }
+
+    #[test]
+    fn residual_gate_from_str() {
+        assert_eq!(
+            ResidualGateMode::from_str("off").unwrap(),
+            ResidualGateMode::Off
+        );
+        assert_eq!(
+            ResidualGateMode::from_str("veto").unwrap(),
+            ResidualGateMode::Veto
+        );
+        assert_eq!(
+            ResidualGateMode::from_str("veto_rescue").unwrap(),
+            ResidualGateMode::VetoRescue
+        );
+        assert_eq!(
+            ResidualGateMode::from_str(" VETO ").unwrap(),
+            ResidualGateMode::Veto
+        );
+        assert!(ResidualGateMode::from_str("nope").is_err());
     }
 }

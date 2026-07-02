@@ -185,6 +185,7 @@ pub struct Args {
     #[arg(long, value_parser = clap::value_parser!(FillMode), value_name = "MODE")]
     pub fill_mode: Option<FillMode>,
 
+    /// Residual/floor headroom gate (fit mode only): `off`, `veto`, or `veto_rescue` [default: veto].
     #[arg(long, value_parser = clap::value_parser!(crate::domain::ResidualGateMode), value_name = "MODE")]
     pub residual_gate: Option<crate::domain::ResidualGateMode>,
 
