@@ -75,13 +75,15 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
    seam viability (A3). Measured scope on the edge-pin/D11 rescan: **1·g3, 2·g2, 7·g2** — **provisional /
    undercount** (pre-seam-local-fix `splice_dualfit`); the `seam-local-fix` rescan is expected to add at
    least **2·g1, 1·g22**.
-2. **Fit each seam at its SEAM-LOCAL lag** — use `baseline_lag` mono at **`b_mapped`** (sequential post
-   centering: post search on `S + D_A + round(L_pre)`) only for the **gross** placement, then **refine each
-   shoulder within ±`SEAM_LOCAL_REFINE_MS` (100 ms)** by maximizing that shoulder's own 250 ms seam — exactly
-   what `splice_dualfit_at`/`seam_local_peak` do at capture. **Do NOT place at the raw 1 s `baseline_lag`
-   peak:** it can diverge from the seam-local lag when a shoulder has sub-window structure, and scoring the
-   seam there reads a live seam as dead (the 2026-07-01 fix — `2·g1` pre: 1 s lag −24 ms → seam −0.008, but
-   seam-local +4.4 ms → 0.982). `b_pre`/`b_post` are the seam-local-refined shoulder frames.
+2. **Fit each seam at its SEAM-LOCAL lag, re-anchored on NOMINAL `b_mapped`** — search each shoulder
+   ±`SEAM_LOCAL_SEARCH_MS` (600 ms, the `baseline_lag` range) around the nominal geometry anchor (pre butts at
+   `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak; the seam **defines its own
+   placement**. **Do NOT anchor on the gross 1 s `baseline_lag`:** it can lock onto distant content and clip a
+   live seam — `2·g1` (gross pre −24 ms, seam +4.4 ms → 0.982) and especially `7·g3` (gross pre **−319 ms**,
+   seam **+18 ms** → the ±100 ms gross-anchored window missed it entirely). `b_pre`/`b_post` are the
+   nominal-anchored seam peaks; `splice_dualfit.pre/post_seam_z` (whole-curve z-score) is the alias guard
+   against the wide search locking onto a far periodic rival — **not** the ±30 ms prominence (which over-flags
+   correct-but-periodic content, `5·g6`).
 3. **Reconcile the step** — extract the B bridge `[b_pre .. b_post]`; `trim_frames = bridge_frames − gap_frames`
    (= the step in samples; C7 tautological). Trim or pad `|trim_frames|` at the **lowest-RMS interior sample**
    of the fill region (smallest audible splice). Interior edit only — shoulders stay at their own lags.
