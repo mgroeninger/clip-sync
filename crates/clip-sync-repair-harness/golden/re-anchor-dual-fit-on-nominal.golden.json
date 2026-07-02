@@ -2,17 +2,19 @@
   "schema": "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/*continuous/edge_pinned/brackets_*) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_* continuous) assert WITHIN ε. Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = measurement placement.",
   "gap_count": 62,
   "dualfit_targets": [
-    "seam-local-fix/1·g3",
-    "seam-local-fix/1·g5",
-    "seam-local-fix/1·g22",
-    "seam-local-fix/2·g1",
-    "seam-local-fix/2·g2",
-    "seam-local-fix/5·g6",
-    "seam-local-fix/7·g2"
+    "re-anchor-dual-fit-on-nominal/1·g3",
+    "re-anchor-dual-fit-on-nominal/1·g5",
+    "re-anchor-dual-fit-on-nominal/1·g22",
+    "re-anchor-dual-fit-on-nominal/2·g1",
+    "re-anchor-dual-fit-on-nominal/2·g2",
+    "re-anchor-dual-fit-on-nominal/5·g6",
+    "re-anchor-dual-fit-on-nominal/7·g2",
+    "re-anchor-dual-fit-on-nominal/7·g3",
+    "re-anchor-dual-fit-on-nominal/7·g4"
   ],
   "gaps": [
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -47,7 +49,7 @@
       "b_noise_floor_db": -44.89791
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 1,
       "tier": "patch",
       "patched": true,
@@ -82,7 +84,7 @@
       "b_noise_floor_db": -80.55672
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 2,
       "tier": "patch",
       "patched": true,
@@ -117,7 +119,7 @@
       "b_noise_floor_db": -80.17036
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 3,
       "tier": "skip",
       "patched": false,
@@ -152,14 +154,14 @@
       "b_noise_floor_db": -54.24593
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 4,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -173,9 +175,9 @@
       "gross_uniqueness_z": 3.5543916822571697,
       "gross_uniqueness_prom": 0.0005969683447452634,
       "seamlocal_pre_seam_r": 0.9422272685820208,
-      "seamlocal_post_seam_r": 0.10666896757242483,
+      "seamlocal_post_seam_r": 0.9266471141482991,
       "seamlocal_post_global_r": 0.8642113474924664,
-      "seamlocal_seam_prom": 0.003792801235356011,
+      "seamlocal_seam_prom": 0.24562149358233076,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.9714285714285714,
       "aligned_donor_rms_db": -84.75426483154297,
@@ -187,7 +189,7 @@
       "b_noise_floor_db": -67.1293
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 5,
       "tier": "skip",
       "patched": false,
@@ -222,7 +224,7 @@
       "b_noise_floor_db": -57.68002
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 6,
       "tier": "patch",
       "patched": true,
@@ -257,7 +259,7 @@
       "b_noise_floor_db": -53.51866
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 7,
       "tier": "skip",
       "patched": false,
@@ -292,7 +294,7 @@
       "b_noise_floor_db": -83.90855
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 8,
       "tier": "patch",
       "patched": true,
@@ -327,7 +329,7 @@
       "b_noise_floor_db": -74.29307
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 9,
       "tier": "skip",
       "patched": false,
@@ -362,7 +364,7 @@
       "b_noise_floor_db": -73.84251
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 10,
       "tier": "skip",
       "patched": false,
@@ -397,7 +399,7 @@
       "b_noise_floor_db": -72.88856
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 11,
       "tier": "skip",
       "patched": false,
@@ -432,7 +434,7 @@
       "b_noise_floor_db": -72.575516
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 12,
       "tier": "skip",
       "patched": false,
@@ -467,14 +469,14 @@
       "b_noise_floor_db": -61.986855
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 13,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -487,10 +489,10 @@
       "gross_step_ms": 531.1093243564912,
       "gross_uniqueness_z": 6.411137791439333,
       "gross_uniqueness_prom": 0.0025822010409949567,
-      "seamlocal_pre_seam_r": 0.07608580229444593,
-      "seamlocal_post_seam_r": 0.0676089722878753,
-      "seamlocal_post_global_r": 0.013253880674455952,
-      "seamlocal_seam_prom": 0.002685603116041435,
+      "seamlocal_pre_seam_r": 0.9668152700707574,
+      "seamlocal_post_seam_r": 0.9702960554754584,
+      "seamlocal_post_global_r": 0.8847351301386237,
+      "seamlocal_seam_prom": 0.5741697240025989,
       "nominal_donor_silence": 0.9722222222222222,
       "aligned_donor_silence": 0.7659574468085106,
       "aligned_donor_rms_db": -84.05696105957031,
@@ -502,14 +504,14 @@
       "b_noise_floor_db": -80.66766
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 14,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -523,9 +525,9 @@
       "gross_uniqueness_z": 12.61229064029176,
       "gross_uniqueness_prom": 0.04106336240107211,
       "seamlocal_pre_seam_r": 0.9937036201908396,
-      "seamlocal_post_seam_r": 0.0948057004423744,
+      "seamlocal_post_seam_r": 0.90229705160301,
       "seamlocal_post_global_r": -0.05236177064346072,
-      "seamlocal_seam_prom": 0.0005525773556400715,
+      "seamlocal_seam_prom": 0.3347000742322367,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.9387755102040816,
       "aligned_donor_rms_db": -79.12416076660156,
@@ -537,14 +539,14 @@
       "b_noise_floor_db": -85.71953
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 15,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -557,9 +559,9 @@
       "gross_step_ms": 302.28039811907166,
       "gross_uniqueness_z": 26.09788489696528,
       "gross_uniqueness_prom": 0.44435864874214737,
-      "seamlocal_pre_seam_r": 0.20968093714287728,
-      "seamlocal_post_seam_r": 0.3051349905098282,
-      "seamlocal_post_global_r": 0.026920598880218048,
+      "seamlocal_pre_seam_r": 0.967617607126396,
+      "seamlocal_post_seam_r": 0.9851763105268164,
+      "seamlocal_post_global_r": 0.014521497425294608,
       "seamlocal_seam_prom": 0.14136225722238605,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.8611111111111112,
@@ -572,14 +574,14 @@
       "b_noise_floor_db": -82.01217
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 16,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -593,9 +595,9 @@
       "gross_uniqueness_z": 5.231964300869872,
       "gross_uniqueness_prom": 0.0010588372995458672,
       "seamlocal_pre_seam_r": 0.9200926345533104,
-      "seamlocal_post_seam_r": 0.07477355033397672,
+      "seamlocal_post_seam_r": 0.9394549498481134,
       "seamlocal_post_global_r": 0.9394549498481134,
-      "seamlocal_seam_prom": 0.00960025684845886,
+      "seamlocal_seam_prom": 0.6788334853946562,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 1.0,
       "aligned_donor_rms_db": -87.17521667480469,
@@ -607,14 +609,14 @@
       "b_noise_floor_db": -82.522446
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 17,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -628,9 +630,9 @@
       "gross_uniqueness_z": 6.5878837180754815,
       "gross_uniqueness_prom": 0.00564383651278344,
       "seamlocal_pre_seam_r": 0.9812774685726412,
-      "seamlocal_post_seam_r": 0.07786001309694618,
+      "seamlocal_post_seam_r": 0.9435560371706324,
       "seamlocal_post_global_r": 0.01170802770119148,
-      "seamlocal_seam_prom": 0.001885317482893653,
+      "seamlocal_seam_prom": 0.5315095352716153,
       "nominal_donor_silence": 0.96,
       "aligned_donor_silence": 0.9473684210526316,
       "aligned_donor_rms_db": -87.18811798095703,
@@ -642,7 +644,7 @@
       "b_noise_floor_db": -81.13629
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 18,
       "tier": "skip",
       "patched": false,
@@ -677,7 +679,7 @@
       "b_noise_floor_db": -77.74762
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 19,
       "tier": "skip",
       "patched": false,
@@ -712,7 +714,7 @@
       "b_noise_floor_db": -62.7126
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 20,
       "tier": "patch",
       "patched": true,
@@ -747,7 +749,7 @@
       "b_noise_floor_db": -39.777477
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 21,
       "tier": "skip",
       "patched": false,
@@ -782,7 +784,7 @@
       "b_noise_floor_db": -73.623184
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 22,
       "tier": "skip",
       "patched": false,
@@ -817,7 +819,7 @@
       "b_noise_floor_db": -61.209797
     },
     {
-      "pair": "seam-local-fix/1",
+      "pair": "re-anchor-dual-fit-on-nominal/1",
       "index": 23,
       "tier": "patch",
       "patched": true,
@@ -852,7 +854,7 @@
       "b_noise_floor_db": -52.87302
     },
     {
-      "pair": "seam-local-fix/2",
+      "pair": "re-anchor-dual-fit-on-nominal/2",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -887,7 +889,7 @@
       "b_noise_floor_db": -43.22457
     },
     {
-      "pair": "seam-local-fix/2",
+      "pair": "re-anchor-dual-fit-on-nominal/2",
       "index": 1,
       "tier": "skip",
       "patched": false,
@@ -922,7 +924,7 @@
       "b_noise_floor_db": -46.80797
     },
     {
-      "pair": "seam-local-fix/2",
+      "pair": "re-anchor-dual-fit-on-nominal/2",
       "index": 2,
       "tier": "skip",
       "patched": false,
@@ -957,7 +959,7 @@
       "b_noise_floor_db": -47.978436
     },
     {
-      "pair": "seam-local-fix/2",
+      "pair": "re-anchor-dual-fit-on-nominal/2",
       "index": 3,
       "tier": "patch",
       "patched": true,
@@ -992,7 +994,7 @@
       "b_noise_floor_db": -50.428577
     },
     {
-      "pair": "seam-local-fix/3",
+      "pair": "re-anchor-dual-fit-on-nominal/3",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -1027,14 +1029,14 @@
       "b_noise_floor_db": -42.483276
     },
     {
-      "pair": "seam-local-fix/3",
+      "pair": "re-anchor-dual-fit-on-nominal/3",
       "index": 1,
       "tier": "patch",
       "patched": true,
       "dualfit_target": false,
       "program_quiet_skip": false,
       "bracket_exhausted": false,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1048,9 +1050,9 @@
       "gross_uniqueness_z": 4.563879241649113,
       "gross_uniqueness_prom": 0.25229806417220557,
       "seamlocal_pre_seam_r": 0.8727943379179465,
-      "seamlocal_post_seam_r": 0.07490788860790722,
+      "seamlocal_post_seam_r": 0.687402307661531,
       "seamlocal_post_global_r": 0.5870824135057586,
-      "seamlocal_seam_prom": 0.00004988185116118482,
+      "seamlocal_seam_prom": 0.10753363247865132,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 1.0,
       "aligned_donor_rms_db": -82.7119140625,
@@ -1062,7 +1064,7 @@
       "b_noise_floor_db": -67.477295
     },
     {
-      "pair": "seam-local-fix/3",
+      "pair": "re-anchor-dual-fit-on-nominal/3",
       "index": 2,
       "tier": "patch",
       "patched": true,
@@ -1097,7 +1099,7 @@
       "b_noise_floor_db": -45.45536
     },
     {
-      "pair": "seam-local-fix/3",
+      "pair": "re-anchor-dual-fit-on-nominal/3",
       "index": 3,
       "tier": "patch",
       "patched": true,
@@ -1132,7 +1134,7 @@
       "b_noise_floor_db": -45.849792
     },
     {
-      "pair": "seam-local-fix/4",
+      "pair": "re-anchor-dual-fit-on-nominal/4",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -1167,7 +1169,7 @@
       "b_noise_floor_db": -43.294983
     },
     {
-      "pair": "seam-local-fix/4",
+      "pair": "re-anchor-dual-fit-on-nominal/4",
       "index": 1,
       "tier": "patch",
       "patched": true,
@@ -1202,7 +1204,7 @@
       "b_noise_floor_db": -71.282455
     },
     {
-      "pair": "seam-local-fix/4",
+      "pair": "re-anchor-dual-fit-on-nominal/4",
       "index": 2,
       "tier": "patch",
       "patched": true,
@@ -1237,7 +1239,7 @@
       "b_noise_floor_db": -42.73654
     },
     {
-      "pair": "seam-local-fix/4",
+      "pair": "re-anchor-dual-fit-on-nominal/4",
       "index": 3,
       "tier": "patch",
       "patched": true,
@@ -1272,7 +1274,7 @@
       "b_noise_floor_db": -48.018272
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -1307,7 +1309,7 @@
       "b_noise_floor_db": -45.07124
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 1,
       "tier": "patch",
       "patched": true,
@@ -1342,7 +1344,7 @@
       "b_noise_floor_db": -52.99473
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 2,
       "tier": "patch",
       "patched": true,
@@ -1377,7 +1379,7 @@
       "b_noise_floor_db": -54.134186
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 3,
       "tier": "patch",
       "patched": true,
@@ -1412,7 +1414,7 @@
       "b_noise_floor_db": -25.726652
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 4,
       "tier": "patch",
       "patched": true,
@@ -1447,7 +1449,7 @@
       "b_noise_floor_db": -25.466377
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 5,
       "tier": "patch",
       "patched": true,
@@ -1482,7 +1484,7 @@
       "b_noise_floor_db": -42.970306
     },
     {
-      "pair": "seam-local-fix/5",
+      "pair": "re-anchor-dual-fit-on-nominal/5",
       "index": 6,
       "tier": "skip",
       "patched": false,
@@ -1517,7 +1519,7 @@
       "b_noise_floor_db": -52.443146
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -1552,7 +1554,7 @@
       "b_noise_floor_db": -40.157402
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 1,
       "tier": "skip",
       "patched": false,
@@ -1587,14 +1589,14 @@
       "b_noise_floor_db": -74.80249
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 2,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": false,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1607,10 +1609,10 @@
       "gross_step_ms": 322.47086648518405,
       "gross_uniqueness_z": 10.854110758023957,
       "gross_uniqueness_prom": 0.3856602147421432,
-      "seamlocal_pre_seam_r": 0.08857919076272205,
+      "seamlocal_pre_seam_r": 0.9698234859877772,
       "seamlocal_post_seam_r": 0.9930504581951918,
-      "seamlocal_post_global_r": 0.019831426837509,
-      "seamlocal_seam_prom": 0.0036424407023591537,
+      "seamlocal_post_global_r": 0.8166384263388246,
+      "seamlocal_seam_prom": 0.785393122585536,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.9537037037037036,
       "aligned_donor_rms_db": -70.5692367553711,
@@ -1622,7 +1624,7 @@
       "b_noise_floor_db": -78.84203
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 3,
       "tier": "skip",
       "patched": false,
@@ -1657,7 +1659,7 @@
       "b_noise_floor_db": -80.61711
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 4,
       "tier": "patch",
       "patched": true,
@@ -1692,7 +1694,7 @@
       "b_noise_floor_db": -54.13286
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 5,
       "tier": "patch",
       "patched": true,
@@ -1727,14 +1729,14 @@
       "b_noise_floor_db": -45.347153
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 6,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1748,9 +1750,9 @@
       "gross_uniqueness_z": 18.61245752507531,
       "gross_uniqueness_prom": 0.4154372283051989,
       "seamlocal_pre_seam_r": 0.999070692755263,
-      "seamlocal_post_seam_r": 0.07003237769465237,
+      "seamlocal_post_seam_r": 0.9291308922019462,
       "seamlocal_post_global_r": 0.006816233489349997,
-      "seamlocal_seam_prom": 0.003690554073972632,
+      "seamlocal_seam_prom": 0.22563881603808045,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.9523809523809524,
       "aligned_donor_rms_db": -78.82193756103516,
@@ -1762,14 +1764,14 @@
       "b_noise_floor_db": -58.925304
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 7,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1782,9 +1784,9 @@
       "gross_step_ms": -2.69570082382792,
       "gross_uniqueness_z": 5.640078228386877,
       "gross_uniqueness_prom": 0.01146650992034344,
-      "seamlocal_pre_seam_r": 0.16511971489343194,
+      "seamlocal_pre_seam_r": 0.989937325694104,
       "seamlocal_post_seam_r": 0.999735362042118,
-      "seamlocal_post_global_r": 0.09476636941036393,
+      "seamlocal_post_global_r": -0.19149021663051297,
       "seamlocal_seam_prom": 0.08631561453344205,
       "nominal_donor_silence": 0.9333333333333332,
       "aligned_donor_silence": 1.0,
@@ -1797,7 +1799,7 @@
       "b_noise_floor_db": -69.9771
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 8,
       "tier": "skip",
       "patched": false,
@@ -1832,14 +1834,14 @@
       "b_noise_floor_db": -80.28489
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 9,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1852,10 +1854,10 @@
       "gross_step_ms": 419.3393034035395,
       "gross_uniqueness_z": 12.550563536165267,
       "gross_uniqueness_prom": 0.10574069591536628,
-      "seamlocal_pre_seam_r": 0.16686993777912823,
+      "seamlocal_pre_seam_r": 0.989429208793,
       "seamlocal_post_seam_r": 0.998950433805765,
-      "seamlocal_post_global_r": -0.06778599446912148,
-      "seamlocal_seam_prom": 0.0020036855362918493,
+      "seamlocal_post_global_r": 0.012518973376820435,
+      "seamlocal_seam_prom": 0.1292532852001651,
       "nominal_donor_silence": 0.8275862068965517,
       "aligned_donor_silence": 0.8918918918918919,
       "aligned_donor_rms_db": -77.43900299072266,
@@ -1867,14 +1869,14 @@
       "b_noise_floor_db": -80.023636
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 10,
       "tier": "skip",
       "patched": false,
       "dualfit_target": false,
       "program_quiet_skip": true,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -1888,9 +1890,9 @@
       "gross_uniqueness_z": 5.688163355784897,
       "gross_uniqueness_prom": 0.03954375478568584,
       "seamlocal_pre_seam_r": 0.986449792782335,
-      "seamlocal_post_seam_r": 0.12960001476910327,
+      "seamlocal_post_seam_r": 0.9910013548835224,
       "seamlocal_post_global_r": 0.05194124529865156,
-      "seamlocal_seam_prom": 0.0004169064143172696,
+      "seamlocal_seam_prom": 0.6807936433335098,
       "nominal_donor_silence": 1.0,
       "aligned_donor_silence": 0.945945945945946,
       "aligned_donor_rms_db": -78.74075317382812,
@@ -1902,7 +1904,7 @@
       "b_noise_floor_db": -79.061646
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 11,
       "tier": "skip",
       "patched": false,
@@ -1937,7 +1939,7 @@
       "b_noise_floor_db": -71.6022
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 12,
       "tier": "patch",
       "patched": true,
@@ -1972,7 +1974,7 @@
       "b_noise_floor_db": -41.756664
     },
     {
-      "pair": "seam-local-fix/6",
+      "pair": "re-anchor-dual-fit-on-nominal/6",
       "index": 13,
       "tier": "patch",
       "patched": true,
@@ -2007,7 +2009,7 @@
       "b_noise_floor_db": -50.190144
     },
     {
-      "pair": "seam-local-fix/7",
+      "pair": "re-anchor-dual-fit-on-nominal/7",
       "index": 0,
       "tier": "skip",
       "patched": false,
@@ -2042,14 +2044,14 @@
       "b_noise_floor_db": -42.383327
     },
     {
-      "pair": "seam-local-fix/7",
+      "pair": "re-anchor-dual-fit-on-nominal/7",
       "index": 1,
       "tier": "patch",
       "patched": true,
       "dualfit_target": false,
       "program_quiet_skip": false,
       "bracket_exhausted": false,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": false,
       "nominal_donor_continuous": false,
@@ -2062,9 +2064,9 @@
       "gross_step_ms": 588.1525144431151,
       "gross_uniqueness_z": 3.181222949576817,
       "gross_uniqueness_prom": 0.008594642459738955,
-      "seamlocal_pre_seam_r": 0.30195870298653404,
+      "seamlocal_pre_seam_r": 0.9967912854572116,
       "seamlocal_post_seam_r": 0.9863464335868636,
-      "seamlocal_post_global_r": 0.13193437551791315,
+      "seamlocal_post_global_r": 0.9782999364919376,
       "seamlocal_seam_prom": 0.020110657671525978,
       "nominal_donor_silence": 0.9824561403508772,
       "aligned_donor_silence": 0.8235294117647058,
@@ -2077,7 +2079,7 @@
       "b_noise_floor_db": -61.023273
     },
     {
-      "pair": "seam-local-fix/7",
+      "pair": "re-anchor-dual-fit-on-nominal/7",
       "index": 2,
       "tier": "skip",
       "patched": false,
@@ -2112,14 +2114,14 @@
       "b_noise_floor_db": -69.06396
     },
     {
-      "pair": "seam-local-fix/7",
+      "pair": "re-anchor-dual-fit-on-nominal/7",
       "index": 3,
       "tier": "skip",
       "patched": false,
-      "dualfit_target": false,
+      "dualfit_target": true,
       "program_quiet_skip": false,
       "bracket_exhausted": true,
-      "gate_pass": false,
+      "gate_pass": true,
       "step_edge_pinned": false,
       "aligned_donor_continuous": true,
       "nominal_donor_continuous": true,
@@ -2132,10 +2134,10 @@
       "gross_step_ms": 343.5338773276587,
       "gross_uniqueness_z": 11.05023089977276,
       "gross_uniqueness_prom": 0.2231997560869472,
-      "seamlocal_pre_seam_r": 0.1960466624725561,
+      "seamlocal_pre_seam_r": 0.94149625111573,
       "seamlocal_post_seam_r": 0.9977270066363346,
-      "seamlocal_post_global_r": -0.05125260661172932,
-      "seamlocal_seam_prom": 0.013383354962621883,
+      "seamlocal_post_global_r": -0.07303795237298459,
+      "seamlocal_seam_prom": 0.2928949708305375,
       "nominal_donor_silence": 0.0,
       "aligned_donor_silence": 0.0,
       "aligned_donor_rms_db": -57.324798583984375,
@@ -2147,11 +2149,11 @@
       "b_noise_floor_db": -63.140644
     },
     {
-      "pair": "seam-local-fix/7",
+      "pair": "re-anchor-dual-fit-on-nominal/7",
       "index": 4,
       "tier": "skip",
       "patched": false,
-      "dualfit_target": false,
+      "dualfit_target": true,
       "program_quiet_skip": false,
       "bracket_exhausted": true,
       "gate_pass": true,
