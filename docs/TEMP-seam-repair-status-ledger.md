@@ -264,12 +264,15 @@ seam-local lag diverges — ground-truth confirms **2·g1 (11:50)** and **1·g22
 0.982 / 0.997 at their seam-local lags). `splice_dualfit_at` now does a ±100 ms per-shoulder seam search;
 **a rescan will re-derive the real set (> 3).** One-sided-dead collapsed to 8/55 (B2/C1) — not a rescue path.
 
-**One-line status:** registration **closed and validated** (A2/B2/B13/C1/C2/C4 PROVEN); **dual-fit
-viability PROVEN in-scan (C3): ≥7/39 skips pass the gate** (a pre-fix undercount). **Open finding
-(2026-07-01):** `splice_dualfit` scored each seam at the 1 s-window `baseline_lag`, false-negativing seams
-whose seam-local lag diverges — ground-truth caught **2·g1 (11:50)** and **1·g22** as fixable targets it
-wrongly failed. **FIX landed (unbuilt→built, capture):** `splice_dualfit_at` now does a ±100 ms per-shoulder
-seam-local search (`SEAM_LOCAL_REFINE_MS`), unit-tested; **needs a rescan to re-derive C3 / the A3 target set
-(> 3).** `dualfit_target()` + A5/C6 light calibration done; edge-pinned 0/55 (C4 reconfirmed). **Next:**
-**rescan with the seam-local fix** → re-derive targets (+2·g1/1·g22 expected) → perf-redesign (D12 §2–§4) →
-**wire §4 repair (A3)**.
+**One-line status (2026-07-02):** registration **closed and validated** (A2/B2/B13/C1/C2/C4 PROVEN). Dual-fit
+seam viability went through **two capture fixes** as ground-truth checks exposed them:
+1. **Seam-local fix (±100 ms, gross-anchored)** — rescan #1 validated it: 2·g1/1·g22 flipped, **7 targets**
+   (1·g3,1·g5,1·g22,2·g1,2·g2,5·g6,7·g2), C3 7/39→20/39. Golden baseline captured (`golden/`).
+2. **`b_levels`-vs-elimination cross-check** then caught **7·g3/7·g4** (operator-confirmed real drops, valid B
+   sound) still dropped — a *larger* divergence (7·g3: gross 1 s pre −319 ms, seam +18 ms) beyond ±100 ms.
+   ⇒ **Re-anchor fix (`2622c7a`): seam search now on NOMINAL `b_mapped` ±600 ms** (`SEAM_LOCAL_SEARCH_MS`),
+   + `pre/post_seam_z` alias guard. Unit-tested, binary built.
+**Provisional / not frozen:** the golden baseline + the "7 targets" count are **pre-reanchor** (see
+`golden/README.md`). **Next:** nominal-reanchor **rescan pending** (poll armed) → scrutinize new passers via
+`seam_z`/wide-env → re-run the `b_levels` cross-check → **P2 orthogonality gate** → **freeze golden baseline**
+→ perf-redesign (D12) → **wire §4 repair (A3)**.
