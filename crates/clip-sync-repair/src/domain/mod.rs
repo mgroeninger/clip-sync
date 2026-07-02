@@ -20,6 +20,7 @@ pub mod policies;
 pub mod ports;
 pub mod repair_profile;
 pub mod residual_gate;
+pub mod seam_local;
 pub mod seam_robust;
 pub mod track_match;
 

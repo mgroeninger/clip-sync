@@ -155,6 +155,10 @@ pub struct PatchAudioRequest {
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
     pub measure_residual: bool,
+    /// **A3 dual-fit repair** (flag-gated). When on, a gap the seam gate *skips* (bracket-exhausted) gets a
+    /// fallback attempt: independent per-shoulder fit + interior-trim fill, validated by the unchanged gate
+    /// (§5.2). Off by default ⇒ existing bracket-search path byte-identical (D6). Set directly on the request.
+    pub dual_fit: bool,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,
@@ -274,6 +278,7 @@ impl PatchRequestSettings {
             anchor_seam_xcorr_ambiguous_band: self.anchor_seam_xcorr_ambiguous_band,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
+            dual_fit: false, // TODO(A3 §5.2): source from a --dual-fit CLI flag when the branch lands.
             residual_gate: self.residual_gate,
             residual_floor_ok_db: self.residual_floor_ok_db,
             residual_headroom_margin_db: self.residual_headroom_margin_db,
@@ -1371,6 +1376,30 @@ fn seam_failure_outcome(
     (None, outcome, tag_ctx)
 }
 
+/// Flag-gated **A3 dual-fit fallback** at the seam-gate skip. With `--dual-fit` off (default) this is
+/// exactly [`seam_failure_outcome`] — the existing skip, **byte-identical** (D6). With it on, a
+/// bracket-exhausted skip first gets a dual-fit attempt (§5.2 wire-spec: independent per-shoulder fit →
+/// interior trim → unchanged-gate validation); if that declines, the skip stands.
+///
+/// **Stub — the §5.2 branch is not built yet:** it currently always falls through to the skip, even when
+/// the flag is on. This establishes the hook so the §4 harness can confirm byte-identical behavior before
+/// the repair logic lands.
+fn skip_or_dual_fit(
+    progress: &dyn ProgressReporter,
+    request: &PatchAudioRequest,
+    region: &FillRegion,
+    fail: SeamGateFailure,
+    min_structure_match_score: f32,
+    tag_ctx: GapTagsPatchContext,
+) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
+    if request.dual_fit {
+        // TODO(A3 §5.2): try_dual_fit_repair(...) -> Option<RegionPatch> on the already-decoded A/B window
+        // (detect = dualfit_target ⇒ per-shoulder seam_local_peak → interior trim → unchanged gate). On
+        // Some, return the Patched outcome instead of the skip below.
+    }
+    seam_failure_outcome(progress, request, region, fail, min_structure_match_score, tag_ctx)
+}
+
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -1646,7 +1675,7 @@ fn prepare_region_patch(
                     ) {
                         Ok(outcome) => outcome,
                         Err(retry_fail) => {
-                            return seam_failure_outcome(
+                            return skip_or_dual_fit(
                                 progress,
                                 request,
                                 region,
@@ -1658,7 +1687,7 @@ fn prepare_region_patch(
                     }
                 }
                 other => {
-                    return seam_failure_outcome(
+                    return skip_or_dual_fit(
                         progress,
                         request,
                         region,

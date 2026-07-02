@@ -300,6 +300,7 @@ pub fn patch_request_with_options(
         profile: options.profile,
         fit_boundary_search: options.fit_boundary_search,
         measure_residual: false,
+        dual_fit: false,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
         residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
         residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,

@@ -701,33 +701,10 @@ pub struct GateOutcome {
 // Lag-correlation probe
 // ---------------------------------------------------------------------------------------------
 
-/// Normalized (mean-centered, variance-normalized) Pearson between `a` and a same-length slice of
-/// `b_ctx`, for every integer `lag` in `[-max_lag, max_lag]`. Lag 0 aligns `a` with
-/// `b_ctx[max_lag .. max_lag + a.len()]`; `b_ctx` must therefore span `a.len() + 2*max_lag` samples
-/// (shorter contexts simply yield a truncated curve). Returns `(lag, r)` pairs.
-///
-/// This is exactly the seam's [`clip_sync::normalized_correlation`] (lag-0 Pearson) swept over
-/// integer shifts: it answers "is there a lag at which A and B agree?", which a single lag-0 seam
-/// score cannot.
-pub fn lag_correlation_curve(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<(i64, f64)> {
-    let n = a.len();
-    if n == 0 || max_lag < 0 {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity((2 * max_lag + 1) as usize);
-    for lag in -max_lag..=max_lag {
-        let base = max_lag + lag;
-        if base < 0 {
-            continue;
-        }
-        let base = base as usize;
-        if base + n > b_ctx.len() {
-            continue;
-        }
-        out.push((lag, normalized_correlation(a, &b_ctx[base..base + n])));
-    }
-    out
-}
+/// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
+/// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
+/// existing call sites / tests keep their paths.
+pub use crate::domain::seam_local::{lag_correlation_curve, seam_local_peak};
 
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.
@@ -1503,29 +1480,6 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
     SeamProbeFingerprint { pre, post }
 }
 
-/// Best `(peak correlation, lag in frames)` of one seam over a ±`refine`-frame search around `anchor_start`
-/// (the baseline-aligned start of the seam's B window). `lag 0` aligns `a_seam` at `anchor_start`; the peak
-/// lag is how far the *fill* would shift this shoulder to make the seam clean. `max_lag` auto-clamps to the
-/// available B context (0 ⇒ a plain lag-0 score). Returns `(peak_r, peak_lag, peak_z)`; `peak_z` (whole-curve
-/// z-score) is the alias guard — a wide search locking onto a far periodic rival reads low.
-fn seam_local_peak(
-    a_seam: &[f64],
-    b_mono: &[f64],
-    anchor_start: usize,
-    max_lag: usize,
-    sample_rate: u32,
-) -> Option<(f64, i64, Option<f64>)> {
-    let n = a_seam.len();
-    if n < 8 || anchor_start + n > b_mono.len() {
-        return None;
-    }
-    let max_lag = max_lag.min(anchor_start).min(b_mono.len() - (anchor_start + n));
-    let b_ctx = &b_mono[anchor_start - max_lag..anchor_start + n + max_lag];
-    let curve = lag_correlation_curve(a_seam, b_ctx, max_lag as i64);
-    let s = summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)?;
-    Some((finite_corr(s.peak_r), s.peak_lag_samples, s.peak_z))
-}
-
 /// Inputs for [`splice_dualfit_at`] — the A/B PCM plus the **nominal** `b_mapped` gap-start frame. The seam
 /// search re-anchors on nominal (not the gross `baseline_lag`), so it needs only the geometry anchor; the
 /// pre shoulder butts at `b_mapped_start`, the post at `b_mapped_start + gap_frames`.
@@ -1581,9 +1535,9 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     let b_post_nominal = b_mapped_start + gap_frames;
     let pre_start = b_pre_nominal.checked_sub(w_pre)?;
     let (pre_seam_r, pre_lag, pre_seam_z) =
-        seam_local_peak(&a_pre[a_pre.len() - w_pre..], b_mono, pre_start, max_lag, sample_rate)?;
+        seam_local_peak(&a_pre[a_pre.len() - w_pre..], b_mono, pre_start, max_lag)?;
     let (post_seam_r, post_lag, post_seam_z) =
-        seam_local_peak(&a_post[..w_post], b_mono, b_post_nominal, max_lag, sample_rate)?;
+        seam_local_peak(&a_post[..w_post], b_mono, b_post_nominal, max_lag)?;
 
     let pre_seam_r = finite_corr(pre_seam_r);
     let post_seam_r = finite_corr(post_seam_r);
@@ -2953,36 +2907,6 @@ mod tests {
             splice_summary_from_lag(&legacy).expect("splice").edge_pinned,
             None,
         );
-    }
-
-    #[test]
-    fn seam_local_peak_recovers_offset_seam() {
-        // The seam's true match sits at a nonzero lag (sub-window structure): a plain lag-0 score would miss
-        // it, but the ±refine search recovers both the correlation and the lag (the splice_dualfit fix).
-        let sr = 48_000u32;
-        let n = 2000usize;
-        // Broadband (noise-like) content so a 37-sample shift genuinely decorrelates — a smooth tone would
-        // still correlate at lag 0 and wouldn't exercise the search.
-        let mut seed = 0x1234_5678_9abc_def0u64;
-        let mut rng = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
-        };
-        let a: Vec<f64> = (0..n).map(|_| rng()).collect();
-        let (anchor_start, true_lag, max_lag) = (600usize, 37i64, 200usize);
-        let total = anchor_start + n + max_lag + 400;
-        let mut b: Vec<f64> = (0..total).map(|_| rng() * 0.001).collect();
-        let start = (anchor_start as i64 + true_lag) as usize;
-        b[start..start + n].copy_from_slice(&a);
-
-        let (r, lag, peak_z) = seam_local_peak(&a, &b, anchor_start, max_lag, sr).expect("peak");
-        assert!(r > 0.99, "seam recovers at its offset: r={r}");
-        assert_eq!(lag, true_lag, "finds the seam-local lag, not lag 0");
-        assert!(peak_z.is_some_and(|z| z > 5.0), "unique peak has a high z-score: {peak_z:?}");
-
-        // At lag 0 (the pre-fix behavior) the same seam is essentially dead — confirms the divergence bites.
-        let lag0 = normalized_correlation(&a, &b[anchor_start..anchor_start + n]);
-        assert!(lag0 < 0.5, "lag-0 score misses the offset seam: {lag0}");
     }
 
     #[test]
