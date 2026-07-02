@@ -74,4 +74,12 @@ fn diag_fingerprint_corpus() {
             Err(e) => eprintln!("failed to write {}: {e}", path.display()),
         }
     }
+
+    // Perf §4 golden baseline: `GAP_FP_GOLDEN=<path>` writes the decision-invariance snapshot.
+    if let Ok(path) = std::env::var("GAP_FP_GOLDEN") {
+        match std::fs::write(&path, report.golden_json()) {
+            Ok(()) => eprintln!("wrote golden baseline to {path}"),
+            Err(e) => eprintln!("failed to write golden baseline {path}: {e}"),
+        }
+    }
 }
