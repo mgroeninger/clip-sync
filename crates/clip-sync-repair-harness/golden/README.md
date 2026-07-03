@@ -34,5 +34,9 @@ GAP_FP_GOLDEN=crates/clip-sync-repair-harness/golden/<corpus>.golden.json \
   cargo test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_corpus -- --nocapture
 ```
 
+For analyzer depth (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`), pass
+`--fingerprint-diagnostics` when running `clip-sync-repair --gap-fingerprints`. Default fingerprint
+dumps emit decision/repair (D/R) fields only (D12 §3 step 2).
+
 Prior `seam-local-fix.golden.json` (±100 ms gross-anchored, 7 targets) was superseded
 and removed.

@@ -1704,7 +1704,16 @@ fn classify_bracket_stage(
 }
 
 /// Build a fingerprint for one gap from decoded windows.
-pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailTier) -> GapFingerprint {
+///
+/// When `skip_baseline_placement` is true (the pre-gate summary pass before
+/// [`characterize_gaps_with_gate`]), the expensive unified `place_on_b` search is omitted — the gate
+/// overlay supplies authoritative seams and brackets (D12 §3 step 1).
+pub fn build_gap_fingerprint(
+    index: usize,
+    inputs: &GapInputs<'_>,
+    tier: DetailTier,
+    skip_baseline_placement: bool,
+) -> GapFingerprint {
     let cfg = &inputs.config;
     let ch = inputs.channels.max(1);
     let rate = f64::from(inputs.sample_rate).max(1.0);
@@ -1844,28 +1853,30 @@ pub fn build_gap_fingerprint(index: usize, inputs: &GapInputs<'_>, tier: DetailT
             )
         };
 
-        if let Some(base) = place_on_b(&PlaceOnBInput {
-            a_samples: inputs.a_samples,
-            channels: ch,
-            refined,
-            b_haystack,
-            b_mono: &b_mono,
-            b_ch: &b_ch,
-            nominal_fill_start: b_mapped_start(refined.start_frame),
-            context_frames,
-            bin_frames,
-            search_radius_frames,
-            cfg,
-        }) {
-            structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
-            seams = Some(SeamScores {
-                baseline_pre: base.seam_pre,
-                baseline_post: base.seam_post,
-                selected_channels: base.selected_channels,
-                per_channel: base.per_channel,
-                mono_pre: base.mono_pre,
-                mono_post: base.mono_post,
-            });
+        if !skip_baseline_placement {
+            if let Some(base) = place_on_b(&PlaceOnBInput {
+                a_samples: inputs.a_samples,
+                channels: ch,
+                refined,
+                b_haystack,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+                nominal_fill_start: b_mapped_start(refined.start_frame),
+                context_frames,
+                bin_frames,
+                search_radius_frames,
+                cfg,
+            }) {
+                structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
+                seams = Some(SeamScores {
+                    baseline_pre: base.seam_pre,
+                    baseline_post: base.seam_post,
+                    selected_channels: base.selected_channels,
+                    per_channel: base.per_channel,
+                    mono_pre: base.mono_pre,
+                    mono_post: base.mono_post,
+                });
+            }
         }
 
         if tier == DetailTier::Full {
@@ -2035,15 +2046,17 @@ fn anchor_params_from_gate(
 
 /// Characterize the gaps in `select` (empty ⇒ **all** gaps) at **full** authoritative detail (the bin
 /// path). Each gap gets its per-bracket `failure_stage` + seam, `b_mapped` registration metrics, outcome,
-/// and diagnostic lag from the production gate (`oracle_*`) — **N + 1** unified searches per gap (N
-/// brackets via `oracle_score_fit_candidate`, plus optional `place_on_b` for the best-energy diagnostic
-/// `lag` field). Only the selected gaps are built; unselected gaps are never characterized.
+/// and (when `include_diagnostics`) Tier-3 fields (`seam_probe`, `wide_envelope`, diagnostic `lag`,
+/// `b_levels`) from the production gate (`oracle_*`) — **N + 1** unified searches per gap when diagnostics
+/// are on (N brackets via `oracle_score_fit_candidate`, plus optional `place_on_b` for diagnostic `lag`).
+/// Only the selected gaps are built; unselected gaps are never characterized.
 pub(crate) fn characterize_gaps_with_gate(
     report: &crate::domain::GapReport,
     a_pcm: &clip_sync::MultiChannelPcm,
     b_samples_full: &[f32],
     request: &crate::application::PatchAudioRequest,
     select: &[usize],
+    include_diagnostics: bool,
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::application::patch_region::{
@@ -2166,7 +2179,10 @@ pub(crate) fn characterize_gaps_with_gate(
                 seam_post,
                 failure_stage: stage,
             });
-            if br.pre.source == AnchorSource::EnergyPeak && br.post.source == AnchorSource::EnergyPeak {
+            if include_diagnostics
+                && br.pre.source == AnchorSource::EnergyPeak
+                && br.post.source == AnchorSource::EnergyPeak
+            {
                 let smin = match (seam_pre, seam_post) {
                     (Some(a), Some(b)) => a.min(b),
                     _ => f64::NEG_INFINITY,
@@ -2227,18 +2243,22 @@ pub(crate) fn characterize_gaps_with_gate(
             .as_ref()
             .and_then(|l| mono_lag_side(l, false))
             .map(|s| s.frac_lag_samples.round() as i64);
-        fp.seam_probe = Some(seam_probe_at_placement(&SeamProbeAtPlacementInput {
-            a_samples: &a_pcm.samples,
-            channels: ch,
-            refined,
-            b_mono: &b_mono,
-            start_frame: b_mapped_start,
-            post_shift_frames: pre_shift_frames,
-            bin_frames,
-            cfg: &cfg,
-            sample_rate,
-            gap_floor_db: f64::from(fp.levels.gap_floor_db),
-        }));
+        fp.seam_probe = if include_diagnostics {
+            Some(seam_probe_at_placement(&SeamProbeAtPlacementInput {
+                a_samples: &a_pcm.samples,
+                channels: ch,
+                refined,
+                b_mono: &b_mono,
+                start_frame: b_mapped_start,
+                post_shift_frames: pre_shift_frames,
+                bin_frames,
+                cfg: &cfg,
+                sample_rate,
+                gap_floor_db: f64::from(fp.levels.gap_floor_db),
+            }))
+        } else {
+            None
+        };
         {
             let b_pre_aligned = (b_mapped_start as i64 + pre_shift_frames).max(0) as usize;
             // Fall back to the naive A-length span when the post lag search found no peak, rather than
@@ -2253,17 +2273,19 @@ pub(crate) fn characterize_gaps_with_gate(
             let b_gap_end = b_mapped_start + gap_frames;
             fp.donor_interior_nominal =
                 donor_interior_at(&b_mono, b_mapped_start, b_gap_end, f64::from(fp.levels.gap_floor_db), sample_rate);
-            fp.b_levels = Some(level_profile(
-                |f, end| mono_slice_rms(&b_mono, f, end),
-                LevelProfileSpan {
-                    gap_start: b_mapped_start,
-                    gap_end: b_gap_end,
-                    context_start: b_mapped_start.saturating_sub(context_frames),
-                    context_end: (b_gap_end + context_frames).min(b_mono.len()),
-                },
-                bin_frames,
-                cfg.gap_signature_bin_ms as u32,
-            ));
+            if include_diagnostics {
+                fp.b_levels = Some(level_profile(
+                    |f, end| mono_slice_rms(&b_mono, f, end),
+                    LevelProfileSpan {
+                        gap_start: b_mapped_start,
+                        gap_end: b_gap_end,
+                        context_start: b_mapped_start.saturating_sub(context_frames),
+                        context_end: (b_gap_end + context_frames).min(b_mono.len()),
+                    },
+                    bin_frames,
+                    cfg.gap_signature_bin_ms as u32,
+                ));
+            }
             // Dual-fit viability: the seam search re-anchors on nominal `b_mapped` (not the gross lag), so it
             // runs regardless of whether the gross post lag resolved — each seam finds its own placement.
             fp.splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
@@ -2276,16 +2298,20 @@ pub(crate) fn characterize_gaps_with_gate(
                 sample_rate,
             });
         }
-        fp.wide_envelope = Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
-            a_samples: &a_pcm.samples,
-            channels: ch,
-            refined,
-            b_mono: &b_mono,
-            start_frame: b_mapped_start,
-            post_shift_frames: pre_shift_frames,
-            cfg: &cfg,
-            sample_rate,
-        }));
+        fp.wide_envelope = if include_diagnostics {
+            Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
+                a_samples: &a_pcm.samples,
+                channels: ch,
+                refined,
+                b_mono: &b_mono,
+                start_frame: b_mapped_start,
+                post_shift_frames: pre_shift_frames,
+                cfg: &cfg,
+                sample_rate,
+            }))
+        } else {
+            None
+        };
         if let Some(ref bl) = fp.baseline_lag {
             fp.splice = splice_summary_from_lag(bl);
         }
@@ -2301,32 +2327,34 @@ pub(crate) fn characterize_gaps_with_gate(
             });
         }
 
-        // Diagnostic lag: one placement search at the best (highest-seam) speech bracket.
-        if let Some((_, refined_b)) = best_energy {
-            if let Some(p) = place_on_b(&PlaceOnBInput {
-                a_samples: &a_pcm.samples,
-                channels: ch,
-                refined: refined_b,
-                b_haystack: b_slice,
-                b_mono: &b_mono,
-                b_ch: &b_ch,
-                nominal_fill_start: b_mapped_bracket(refined_b),
-                context_frames,
-                bin_frames,
-                search_radius_frames,
-                cfg: &cfg,
-            }) {
-                fp.lag = Some(lag_at_placement(&LagAtPlacementInput {
+        // Diagnostic lag (Tier-3): one placement search at the best (highest-seam) speech bracket.
+        if include_diagnostics {
+            if let Some((_, refined_b)) = best_energy {
+                if let Some(p) = place_on_b(&PlaceOnBInput {
                     a_samples: &a_pcm.samples,
                     channels: ch,
                     refined: refined_b,
+                    b_haystack: b_slice,
                     b_mono: &b_mono,
                     b_ch: &b_ch,
-                    selected: p.selected_channels.first().copied(),
-                    start_frame: p.start_frame,
+                    nominal_fill_start: b_mapped_bracket(refined_b),
+                    context_frames,
+                    bin_frames,
+                    search_radius_frames,
                     cfg: &cfg,
-                    sample_rate,
-                }));
+                }) {
+                    fp.lag = Some(lag_at_placement(&LagAtPlacementInput {
+                        a_samples: &a_pcm.samples,
+                        channels: ch,
+                        refined: refined_b,
+                        b_mono: &b_mono,
+                        b_ch: &b_ch,
+                        selected: p.selected_channels.first().copied(),
+                        start_frame: p.start_frame,
+                        cfg: &cfg,
+                        sample_rate,
+                    }));
+                }
             }
         }
     }
@@ -2397,7 +2425,7 @@ pub fn characterize_gaps(
                 gap_offset_secs,
                 config: *cfg,
             };
-            build_gap_fingerprint(i, &inputs, DetailTier::Summary)
+            build_gap_fingerprint(i, &inputs, DetailTier::Summary, true)
         })
         .collect();
 
@@ -2936,7 +2964,7 @@ mod tests {
             gap_offset_secs: 0.0,
             config,
         };
-        let fp = build_gap_fingerprint(0, &inputs, DetailTier::Full);
+        let fp = build_gap_fingerprint(0, &inputs, DetailTier::Full, false);
 
         assert!((fp.geometry.duration_secs - 1.5).abs() < 0.05, "duration {}", fp.geometry.duration_secs);
         assert!(

@@ -124,9 +124,17 @@ try {
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--features', 'validation-tests',
+            '--test', 'golden_baseline_invariance',
             '--test', 'validate_floor_oracle',
             '--test', 'validate_residual_gate',
             '--test', 'validate_patch_audio'
+        )
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--features', 'validation-tests',
+            '--test', 'golden_baseline_invariance',
+            'golden_baseline_corpus_invariance',
+            '--', '--ignored'
         )
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',

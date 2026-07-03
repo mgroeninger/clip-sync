@@ -1933,120 +1933,15 @@ uniqueness_margin,residual_headroom_db,residual_informative,skew\n",
         s
     }
 
-    /// **Golden baseline for the perf §4 decision-invariance harness.** Emits, per matched gap, the D/R
-    /// axis coordinates (each field prefixed by its *placement*) plus the derived verdicts, as stable JSON.
-    /// A perf refactor must reproduce **Tier-1** fields (verdicts / booleans / integer counts) **bit-exact**
-    /// and **Tier-2** continuous inputs **within ε**; **Tier-3** diagnostics are omitted (may drift freely).
-    /// Reuses the analyzer's own predicate methods (`dualfit_target()` etc.) so the baseline can never drift
-    /// from the decision logic it certifies.
-    pub fn golden_json(&self) -> String {
-        let gaps: Vec<GoldenRecord> = self
-            .matched()
-            .iter()
-            .map(|r| GoldenRecord {
-                pair: r.pair.clone(),
-                index: r.index,
-                // Tier 1 — exact
-                tier: r.outcome_tier.clone(),
-                patched: r.patched(),
-                dualfit_target: r.dualfit_target(),
-                program_quiet_skip: r.program_quiet_skip(),
-                bracket_exhausted: r.bracket_exhausted(),
-                gate_pass: r.dualfit_pass,
-                step_edge_pinned: r.step_edge_pinned(),
-                aligned_donor_continuous: r.donor_continuous,
-                nominal_donor_continuous: r.donor_nominal_cont,
-                brackets_total: r.brackets_total,
-                brackets_passing: r.brackets_passing,
-                // Tier 2 — ε (prefix = placement)
-                gross_frac_lag_pre_ms: r.frac_lag_pre_ms,
-                gross_frac_lag_post_ms: r.frac_lag_post_ms,
-                gross_peak_r_pre: r.peak_r_pre,
-                gross_peak_r_post: r.peak_r_post,
-                gross_step_ms: r.seam_step_ms(),
-                gross_uniqueness_z: r.uniqueness_z,
-                gross_uniqueness_prom: r.uniqueness_prom,
-                seamlocal_pre_seam_r: r.dualfit_pre_r,
-                seamlocal_post_seam_r: r.dualfit_post_r,
-                seamlocal_post_global_r: r.dualfit_post_global_r,
-                seamlocal_seam_prom: r.dualfit_seam_prom,
-                nominal_donor_silence: r.donor_nominal_silence,
-                aligned_donor_silence: r.donor_aligned_silence,
-                aligned_donor_rms_db: r.donor_rms_db,
-                throat_residual_headroom_db: r.residual_headroom_db,
-                throat_structure_min: r.structure_min,
-                a_gap_floor_db: r.a_gap_floor_db,
-                a_noise_floor_db: r.a_noise_floor_db,
-                b_gap_floor_db: r.b_gap_floor_db,
-                b_noise_floor_db: r.b_noise_floor_db,
-            })
-            .collect();
-        let baseline = GoldenBaseline {
-            schema: "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/\
-                     *continuous/edge_pinned/brackets_*) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/\
-                     nominal_*/aligned_*/throat_* continuous) assert WITHIN ε. Tier-3 diagnostics \
-                     (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = measurement placement.",
-            gap_count: gaps.len(),
-            dualfit_targets: gaps
-                .iter()
-                .filter(|g| g.dualfit_target)
-                .map(|g| format!("{}·g{}", g.pair, g.index))
-                .collect(),
-            gaps,
-        };
-        serde_json::to_string_pretty(&baseline).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+    /// **Golden baseline for the perf §4 decision-invariance harness.** See [`crate::golden_baseline`].
+    pub fn golden_baseline(&self) -> crate::golden_baseline::GoldenBaseline {
+        crate::golden_baseline::baseline_from_report(self)
     }
-}
 
-/// Top-level golden-baseline document (see [`CorpusReport::golden_json`]).
-#[derive(serde::Serialize)]
-struct GoldenBaseline {
-    schema: &'static str,
-    gap_count: usize,
-    /// The fix-list additions — the gaps dual-fit would newly patch (perf §4.1 repair-params anchor).
-    dualfit_targets: Vec<String>,
-    gaps: Vec<GoldenRecord>,
-}
-
-/// One gap's decision/repair (D/R) coordinates. Nulls emitted for absent fields so every record has the
-/// same shape (clean diffs). Tier-3 diagnostics are intentionally excluded.
-#[derive(serde::Serialize)]
-struct GoldenRecord {
-    pair: String,
-    index: usize,
-    // --- Tier 1: bit-exact (derived verdicts, booleans, integer counts) ---
-    tier: Option<String>,
-    patched: bool,
-    dualfit_target: bool,
-    program_quiet_skip: bool,
-    bracket_exhausted: bool,
-    gate_pass: Option<bool>,
-    step_edge_pinned: bool,
-    aligned_donor_continuous: Option<bool>,
-    nominal_donor_continuous: Option<bool>,
-    brackets_total: usize,
-    brackets_passing: usize,
-    // --- Tier 2: within-ε (continuous D/R inputs; prefix = placement) ---
-    gross_frac_lag_pre_ms: Option<f64>,
-    gross_frac_lag_post_ms: Option<f64>,
-    gross_peak_r_pre: Option<f64>,
-    gross_peak_r_post: Option<f64>,
-    gross_step_ms: Option<f64>,
-    gross_uniqueness_z: Option<f64>,
-    gross_uniqueness_prom: Option<f64>,
-    seamlocal_pre_seam_r: Option<f64>,
-    seamlocal_post_seam_r: Option<f64>,
-    seamlocal_post_global_r: Option<f64>,
-    seamlocal_seam_prom: Option<f64>,
-    nominal_donor_silence: Option<f64>,
-    aligned_donor_silence: Option<f64>,
-    aligned_donor_rms_db: Option<f64>,
-    throat_residual_headroom_db: Option<f64>,
-    throat_structure_min: Option<f64>,
-    a_gap_floor_db: Option<f64>,
-    a_noise_floor_db: Option<f64>,
-    b_gap_floor_db: Option<f64>,
-    b_noise_floor_db: Option<f64>,
+    /// JSON serialization of [`Self::golden_baseline`].
+    pub fn golden_json(&self) -> String {
+        crate::golden_baseline::golden_json(self)
+    }
 }
 
 /// Convenience: env knob for the constant/drift split (`GAP_FP_DRIFT_EPS_MS`, default 1.0 ms).

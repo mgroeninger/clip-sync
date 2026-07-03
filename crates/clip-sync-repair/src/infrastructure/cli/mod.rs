@@ -43,6 +43,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.dual_fit {
         config.repair.dual_fit = true;
     }
+    if args.fingerprint_diagnostics {
+        config.repair.fingerprint_diagnostics = true;
+    }
     if let Some(wav_path) = &args.wav {
         config.repair.output.wav_path = Some(wav_path.clone());
         config.repair.dry_run = false;

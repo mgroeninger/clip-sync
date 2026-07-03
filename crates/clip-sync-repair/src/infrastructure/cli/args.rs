@@ -35,6 +35,12 @@ pub struct Args {
     #[arg(long, value_name = "IDX")]
     pub fingerprint_gap: Vec<usize>,
 
+    /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,
+    /// `wide_envelope`, diagnostic `lag`, `b_levels`). Slower; needed for analyzer seam-probe reports
+    /// [default: off — decision/repair fields only].
+    #[arg(long)]
+    pub fingerprint_diagnostics: bool,
+
     /// Output format.
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,

@@ -120,6 +120,10 @@ pub struct RepairConfig {
     /// interior trim, validated by the unchanged gate). Off by default.
     #[serde(default)]
     pub dual_fit: bool,
+    /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`).
+    /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
+    #[serde(default)]
+    pub fingerprint_diagnostics: bool,
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
@@ -441,6 +445,7 @@ impl Default for RepairConfig {
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
             dual_fit: false,
+            fingerprint_diagnostics: false,
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),

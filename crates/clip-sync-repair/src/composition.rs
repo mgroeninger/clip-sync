@@ -99,6 +99,7 @@ fn dump_gap_fingerprints(
         &decoded.b_samples_full,
         &request,
         &args.fingerprint_gap,
+        config.repair.fingerprint_diagnostics,
         progress,
     );
     // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).

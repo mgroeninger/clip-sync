@@ -133,6 +133,11 @@ path = "tests/validate_patch_audio.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "golden_baseline_invariance"
+path = "tests/golden_baseline_invariance.rs"
+required-features = ["validation-tests"]
+
+[[test]]
 name = "diag_energy_matrix"
 path = "tests/diag_energy_matrix.rs"
 required-features = ["diagnostic-tests"]
