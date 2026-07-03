@@ -178,6 +178,62 @@ mod tests {
     }
 
     #[test]
+    fn declines_donor_broken_bridge() {
+        // Real-corpus class (14/62 gaps in the re-anchor-dual-fit-on-nominal golden set, e.g. pair
+        // 1·g4/g7/g9…/g21 and pair 6·g1/g3/g6…g11): both shoulders re-fit at their seam-local lag with
+        // high correlation (~0.9-1.0) and the step is genuinely real (a rigid single-lag map decorrelates
+        // the post seam), yet the ALIGNED bridge between the seam-local placements has its own internal
+        // silent run ≥ DONOR_CONTINUITY_MS — B doesn't actually carry content across the whole span, so
+        // there's nothing coherent to splice in. Distinct from `declines_program_quiet_donor` (fully
+        // silent nominal donor): here the seams and most of the bridge are loud, only the middle is dead.
+        let sr = 48_000u32;
+        let ch = 1;
+        let w = 1200usize; // 25 ms seam window
+        let gap = 4000usize;
+        let step = 24_000i64; // 500 ms step -> a long aligned bridge with room for an internal hole
+
+        let mut seed = 0x0BAD_C0DE_1234_5678u64;
+        let mut rng = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let bn = 80_000usize;
+        let mut b_mono: Vec<f64> = (0..bn).map(|_| rng()).collect();
+
+        let b_mapped_start = 20_000usize;
+        // Punch a 200 ms hole well inside the aligned bridge (b_mapped_start .. b_mapped_start+gap+step),
+        // clear of both seam-local search windows so pre/post correlation is untouched.
+        let hole_start = b_mapped_start + 10_000;
+        let hole_len = (0.2 * sr as f64) as usize; // 200 ms > DONOR_CONTINUITY_MS (150 ms)
+        for v in b_mono[hole_start..hole_start + hole_len].iter_mut() {
+            *v = 0.0;
+        }
+        let b_samples = mono_to_interleaved(&b_mono, ch);
+
+        let a_pre_mono: Vec<f64> = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+        let post_src = b_mapped_start + gap + step as usize;
+        let a_post_mono: Vec<f64> = b_mono[post_src..post_src + w].to_vec();
+
+        let p = DualFitParams {
+            channels: ch,
+            sample_rate: sr,
+            gap_frames: gap,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sr as f64) as usize,
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+            step_real_margin: 0.15,
+            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
+            a_gap_floor_db: -60.0,
+        };
+
+        assert!(
+            try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p).is_none(),
+            "internally-broken donor bridge is declined despite high seam correlation and a real step"
+        );
+    }
+
+    #[test]
     fn declines_program_quiet_donor() {
         // Same geometry but B is SILENT in the gap interior (program-quiet) → nothing to fill → decline.
         let sr = 48_000u32;

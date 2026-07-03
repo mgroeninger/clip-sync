@@ -160,11 +160,9 @@ pub struct GeneratedCasePaths {
 
 pub fn corpus_root() -> PathBuf {
     if let Ok(root) = std::env::var("CLIP_SYNC_WORKSPACE_ROOT") {
-        return PathBuf::from(root)
-            .join("tests/gap_corpus");
+        return PathBuf::from(root).join("crates/clip-sync-repair/tests/gap_corpus");
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/gap_corpus")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../clip-sync-repair/tests/gap_corpus")
 }
 
 pub fn load_manifest() -> GapCorpusManifest {

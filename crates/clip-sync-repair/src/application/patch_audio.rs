@@ -1448,11 +1448,21 @@ struct DualFitRepairInput<'a> {
     a_start_frame: usize,
     a_end_frame: usize,
     crossfade_secs: f64,
+    // §5.2 step 3: re-validate the assembled fill with the SAME gate scoring the success path uses,
+    // instead of trusting the pre-trim seam-local scores as the reported confidence.
+    a_samples: &'a [f32],
+    a_pre_border: Vec<f64>,
+    a_post_border: Vec<f64>,
+    a_pre_ch: Vec<Vec<f64>>,
+    a_post_ch: Vec<Vec<f64>>,
+    pre_gate_frames: usize,
+    post_gate_frames: usize,
+    seam_cf: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn build_dual_fit_input<'a>(
-    a_samples: &[f32],
+    a_samples: &'a [f32],
     b_samples: &'a [f32],
     channels: usize,
     sample_rate: u32,
@@ -1464,6 +1474,12 @@ fn build_dual_fit_input<'a>(
     min_fill_correlation: f32,
     fill_absolute_floor: f32,
     crossfade_secs: f64,
+    border_frames: usize,
+    border_standoff_frames: usize,
+    silence_peak_fraction: f32,
+    absolute_silence_rms: f32,
+    seam_gate_frames: usize,
+    total_a_frames: usize,
 ) -> Option<DualFitRepairInput<'a>> {
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
@@ -1487,6 +1503,32 @@ fn build_dual_fit_input<'a>(
         .collect();
     let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
     let a_gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
+
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames,
+        border_standoff_frames,
+        silence_peak_fraction,
+        absolute_rms_floor: absolute_silence_rms,
+    };
+    let (a_pre_border, a_post_border) =
+        policies::border_templates_for_gap(a_samples, channels, &border_spec);
+    let (a_pre_ch, a_post_ch) =
+        policies::border_templates_per_channel_for_gap(a_samples, channels, &border_spec);
+    let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
+    let post_gate_frames = if a_post_border.is_empty() {
+        0
+    } else {
+        seam_gate_frames.min(a_post_border.len()).max(1)
+    };
+    let seam_cf = policies::effective_seam_crossfade_frames(
+        (crossfade_secs * sample_rate as f64) as usize,
+        refined.start_frame,
+        refined.end_frame,
+        total_a_frames,
+    );
+
     Some(DualFitRepairInput {
         params: crate::domain::dual_fit::DualFitParams {
             channels: ch,
@@ -1508,14 +1550,33 @@ fn build_dual_fit_input<'a>(
         a_start_frame: refined.start_frame,
         a_end_frame: refined.end_frame,
         crossfade_secs,
+        a_samples,
+        a_pre_border,
+        a_post_border,
+        a_pre_ch,
+        a_post_ch,
+        pre_gate_frames,
+        post_gate_frames,
+        seam_cf,
     })
 }
 
 /// Flag-gated **A3 dual-fit fallback** at the seam-gate skip. With `--dual-fit` off (default) this is exactly
 /// [`seam_failure_outcome`] — the existing skip, **byte-identical** (D6). With it on, a bracket-exhausted
 /// skip gets a dual-fit attempt (§5.2: per-shoulder seam-local fit → interior trim → `dualfit_target`); on
-/// success it returns a `Patched` fill instead of the skip. *(The returned fill's seams already cleared the
-/// gate floors at seam-local placement; a per-channel re-validation is a follow-up refinement — §5.4.)*
+/// success it returns a `Patched` fill instead of the skip.
+///
+/// **`StructureAlignmentFailed` is excluded** — that variant means structure search never scored a single
+/// candidate bracket, so there is nothing "exhausted" (§5.2 step 1 / doc `G6` requires `bracket_exhausted`,
+/// i.e. brackets were scored and all failed). Dual-fit only ever attempts a rescue on a *scored-but-failed*
+/// skip.
+///
+/// The assembled/trimmed fill is re-validated with the **unchanged** production gate (§5.2 step 3): the
+/// pre-trim seam-local scores from `try_dual_fit` only prove the *shoulders* are viable, not the spliced
+/// result, so we re-score `r.fill` against the real A border templates with
+/// `fill_splice_seam_correlations_interleaved` and classify it with the same
+/// `classify_fill_waveform_confidence` every other fill path uses. No loosening: a fill that doesn't clear
+/// the floors here falls back to the skip.
 fn skip_or_dual_fit(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
@@ -1525,7 +1586,7 @@ fn skip_or_dual_fit(
     tag_ctx: GapTagsPatchContext,
     dual_fit: Option<&DualFitRepairInput<'_>>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
-    if request.dual_fit {
+    if request.dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed) {
         if let Some(df) = dual_fit {
             if let Some(r) = crate::domain::dual_fit::try_dual_fit(
                 &df.a_pre_mono,
@@ -1535,36 +1596,77 @@ fn skip_or_dual_fit(
                 df.b_mapped_start,
                 &df.params,
             ) {
-                tracing::debug!(
-                    a_start = df.a_start_frame,
-                    pre = r.pre_seam_r,
-                    post = r.post_seam_r,
-                    trim = r.trim_frames,
-                    "dual-fit rescued a bracket-exhausted skip"
+                let borders = policies::BorderSeamTemplates {
+                    a_pre: &df.a_pre_border,
+                    a_post: &df.a_post_border,
+                    a_pre_ch: &df.a_pre_ch,
+                    a_post_ch: &df.a_post_ch,
+                    pre_window: df.pre_gate_frames,
+                    post_window: df.post_gate_frames,
+                };
+                let seam_ctx = policies::SpliceSeamContext {
+                    seam_cf: df.seam_cf,
+                    gap_start_frame: df.a_start_frame,
+                    gap_end_frame: df.a_end_frame,
+                    a_samples: df.a_samples,
+                    channels: df.params.channels,
+                };
+                let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
+                    &r.fill,
+                    df.params.channels,
+                    &borders,
+                    seam_ctx,
                 );
-                let patch = RegionPatch {
-                    b_samples: r.fill,
-                    gain: 1.0,
-                    a_start_frame: df.a_start_frame,
-                    a_end_frame: df.a_end_frame,
-                    crossfade_secs: df.crossfade_secs,
-                };
-                let outcome = RegionPatchOutcome::Patched {
-                    pre_correlation: r.pre_seam_r,
-                    post_correlation: r.post_seam_r,
-                    align_adjustment_secs: 0.0,
-                    waveform_adjustment_secs: 0.0,
-                    structure_trusted: false,
-                    confidence: FillConfidence::High,
-                    gap_start_adjust_frames: 0,
-                    gap_end_adjust_frames: 0,
-                    fit_used_boundary_grid: false,
-                    fit_boundary_grid_cells: None,
-                    residual: None,
-                    anchor_seam_used: false,
-                    anchor_bracket_move_frames: 0,
-                };
-                return (Some(patch), outcome, tag_ctx);
+                match classify_fill_waveform_confidence(
+                    splice_pre,
+                    splice_post,
+                    request.min_fill_correlation,
+                    request.fill_marginal_margin,
+                    request.fill_absolute_floor,
+                ) {
+                    Ok(confidence) => {
+                        tracing::debug!(
+                            a_start = df.a_start_frame,
+                            pre = splice_pre,
+                            post = splice_post,
+                            trim = r.trim_frames,
+                            ?confidence,
+                            "dual-fit rescued a bracket-exhausted skip"
+                        );
+                        let patch = RegionPatch {
+                            b_samples: r.fill,
+                            gain: 1.0,
+                            a_start_frame: df.a_start_frame,
+                            a_end_frame: df.a_end_frame,
+                            crossfade_secs: df.crossfade_secs,
+                        };
+                        let outcome = RegionPatchOutcome::Patched {
+                            pre_correlation: splice_pre,
+                            post_correlation: splice_post,
+                            align_adjustment_secs: 0.0,
+                            waveform_adjustment_secs: 0.0,
+                            structure_trusted: false,
+                            confidence,
+                            gap_start_adjust_frames: 0,
+                            gap_end_adjust_frames: 0,
+                            fit_used_boundary_grid: false,
+                            fit_boundary_grid_cells: None,
+                            residual: None,
+                            anchor_seam_used: false,
+                            anchor_bracket_move_frames: 0,
+                        };
+                        return (Some(patch), outcome, tag_ctx);
+                    }
+                    Err(min_score) => {
+                        tracing::debug!(
+                            a_start = df.a_start_frame,
+                            pre = splice_pre,
+                            post = splice_post,
+                            min_score,
+                            "dual-fit candidate failed re-validation at the assembled seam; falling back to skip"
+                        );
+                    }
+                }
             }
         }
     }
@@ -1868,6 +1970,12 @@ fn prepare_region_patch(
                 min_fill_correlation,
                 request.fill_absolute_floor,
                 region.crossfade_secs,
+                border_frames,
+                border_standoff_frames,
+                silence_peak_fraction,
+                absolute_silence_rms,
+                seam_gate_frames,
+                a_pcm.frames(),
             )
         })
         .flatten();

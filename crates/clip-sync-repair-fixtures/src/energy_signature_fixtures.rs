@@ -347,6 +347,28 @@ fn fill_ramp_gap(
     }
 }
 
+/// G5 (D11): nominal `b_mapped` must not read as program-quiet. F1 shifts the true donor so the
+/// nominal span can be mostly silent; add low-level occupant energy without changing true_fill.
+fn ensure_nominal_b_occupied(
+    b: &mut [f32],
+    channels: usize,
+    nominal_start: usize,
+    nominal_end: usize,
+    occupant_amp: f32,
+) {
+    let ch = channels.max(1);
+    let threshold = occupant_amp * 0.25;
+    let end_frame = nominal_end.min(b.len() / ch);
+    for frame in nominal_start..end_frame {
+        for c in 0..ch {
+            let idx = frame * ch + c;
+            if b[idx].abs() < threshold {
+                b[idx] = occupant_amp;
+            }
+        }
+    }
+}
+
 /// **F1** — ramp into gap on A; B shifted so bool pattern aliases at nominal map.
 pub fn build_f1() -> EnergySignatureFixture {
     let channels = 1usize;
@@ -384,6 +406,13 @@ pub fn build_f1() -> EnergySignatureFixture {
         150,
         post_amp,
         12,
+    );
+    ensure_nominal_b_occupied(
+        &mut b,
+        channels,
+        gap_start,
+        gap_end,
+        post_amp * 0.15,
     );
 
     let structure_params = StructureMatchParams {
@@ -647,6 +676,13 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
             ramp_delay: shift_frames,
             post_rise_frames: scaled_usize(12, scale).max(1),
         },
+    );
+    ensure_nominal_b_occupied(
+        &mut b,
+        ch,
+        gap_start,
+        gap_end,
+        post_amp * 0.15,
     );
 
     let structure_params = StructureMatchParams {
@@ -1066,6 +1102,13 @@ fn build_f1_with_spec(
     if b_guard > 0 {
         write_frame(&mut b, ch, b_guard - 1, post_amp / 2.0);
     }
+    ensure_nominal_b_occupied(
+        &mut b,
+        ch,
+        silence_start,
+        gap_end,
+        post_amp * 0.15,
+    );
 
     let search_radius = if spec.integration_legacy_search {
         (gap_frames * 2).max(shift_frames * 2)
@@ -1735,6 +1778,16 @@ pub fn build_speech_peaks_offset_from_throat(
     // B matches A outside the hole; gap region retains same-master speech for fill extraction.
     b.copy_from_slice(&a);
     fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
+    // G5: edge refine can peel into the silent peak-offset collars where B still matches A.
+    // Low occupant on B only — A throat stays silent; donor reads occupied across refined span.
+    let max_refine = secs_to_frames(PATCH_GAP_EDGE_REFINE_SECS, sample_rate);
+    ensure_nominal_b_occupied(
+        &mut b,
+        ch,
+        gap_start.saturating_sub(max_refine),
+        (gap_end + max_refine).min(total_frames),
+        0.45 * 0.15,
+    );
 
     let structure_params =
         spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
@@ -2078,6 +2131,7 @@ mod production_spec_tests {
     #[test]
     fn speech_peaks_fixture_unified_match_finds_truth() {
         use super::build_speech_peaks_offset_from_throat;
+        use clip_sync_repair::domain::donor::program_quiet_at_nominal;
         use clip_sync_repair::domain::GapSignatureMode;
         use crate::energy_signature_fixtures::structure_heavy_weights;
 
@@ -2086,6 +2140,19 @@ mod production_spec_tests {
         assert!(
             (b1 - b0) > 0.5,
             "B fill window should span the nominal gap, got {b0}..{b1}"
+        );
+        let refined = patch_refine_gap_frames(
+            &fixture.a_samples,
+            fixture.channels,
+            fixture.sample_rate,
+            fixture.gap_start,
+            fixture.gap_end,
+        );
+        let b_mono: Vec<f64> = fixture.b_samples.iter().map(|&x| x as f64).collect();
+        let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+        assert!(
+            !program_quiet_at_nominal(&b_mono, refined.start_frame, gap_frames, -120.0, 48_000),
+            "speech-peaks B must be occupied at nominal (G5)"
         );
         let matched = fixture
             .unified_match(GapSignatureMode::Energy, structure_heavy_weights())
