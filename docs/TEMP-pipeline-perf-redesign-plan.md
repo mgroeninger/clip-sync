@@ -9,13 +9,14 @@ a **list of gaps to fix** and the **repair-params to fix them**, with everything
 per claim); this is the detail doc for the *perf/pipeline* workstream (D12). It **absorbs** the ledger's
 scattered perf notes (D5 FFT, "Perf (before a long rescan)", the "Pipeline (detect → repair)" order) — those
 now point here. The [ledger §4 wire spec](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-unbuilt)
-owns the repair *algorithm*; this owns the pipeline *assembly*.
+owns the dual-fit *algorithm*; this owns the pipeline *assembly*. (A3 is **shipped** — see §2.4.)
 
 **Hard wall.** §1 is **descriptive** ("what the pipeline does today") and stays factually true regardless of
 plan revisions. §2–§4 are **prescriptive** ("what it should become"). Keep them separate so the audit can
 graduate to a permanent `docs/pipeline-architecture.md` later if useful.
 
-**Status:** §1 audit populated from code (2026-07-01, audit v1). §2–§4 scaffolded, not yet decided.
+**Status:** §1 audit populated from code (2026-07-01, audit v1). **§2 updated to match code (2026-07-03).** §4
+harness built; A3 + G5 production landed. §3 migration status tracked in §2.4.
 
 ---
 
@@ -48,8 +49,8 @@ Ordered as data flows. "Rejects" = what this gate filters out.
 | G3 | **Waveform seam** | `patch_region.rs` (`classify_fill_waveform_confidence`) | Do the seams match at sample level? | pre/post Pearson @ placement vs `min_fill_correlation` / `fill_marginal_margin` / `fill_absolute_floor` | `O(seam)` | dead seam → `waveform_below_threshold` |
 | G4 | **Residual** | `patch_region.rs` (`finalize_fit_outcome_residual`) | Same-source confirm for a *marginal* seam | least-squares cancellation @ throat vs floor | `O(seam)`, **at selection only** | veto marginal; rescue marginal |
 | R | **Bracket ranking** | `patch_region.rs` (`fit_candidate_ranking_score`) | Which *passing* bracket wins | `min(pre,post)`, `boundary_move` | scalar | — (selection, not reject) |
-| **G5** | **Program-quiet** *(new, D11 — not yet a gate)* | `gap_fingerprint.rs` (`donor_interior_nominal`) | Is this a real dropout, or quiet in both masters? | nominal-span B `silence_fraction`; A `gap_floor` vs `noise_floor` | `O(N)` | B-silent → non-dropout (don't fill, don't count as miss) |
-| **G6** | **Dual-fit detect** *(A3, = `dualfit_target()`)* | prod dual-fit path (port from `gap_fingerprint.rs`) | Should dual-fit rescue this skip? | `skip` ∧ `bracket_exhausted` (B1) ∧ `splice_dualfit.gate_pass` ∧ **step-real** (`post_own − post@pre ≥ 0.15`) ∧ `donor_interior.continuous` ∧ ¬program-quiet (`donor_interior_nominal`). **NOT** uniqueness/`peak_z` — retired (mispredicts seam viability; ledger A3). | nominal-anchored ±600 ms seam search (`seam_local_peak`) + donor | donor-BROKEN / program-quiet / step-spurious skips |
+| **G5** | **Program-quiet** *(D11 — **production gate**, 2026-07-03)* | `patch_audio.rs` (`program_quiet_skip` → `domain/donor.rs`); analyzer `program_quiet()` | Is this a real dropout, or quiet in both masters? | nominal-span B `silence_fraction` @ `b_mapped` in the B extract window; A `gap_floor_db` from refined gap | `O(N)` | B-silent → `ProgramQuiet` skip (pass 1 only; **anchored-retry pass 2 exempt**) |
+| **G6** | **Dual-fit rescue** *(A3 — **shipped** `--dual-fit`)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `--dual-fit` → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | donor-BROKEN / program-quiet / spurious-step skips |
 
 ### §1.2 Measurement → gate map (decision / repair / diagnostic)
 
@@ -139,44 +140,156 @@ Every fingerprint field, what produces it, its cost, which gate consumes it, and
 
 ---
 
-## §2 — Target architecture (prescriptive; TO DECIDE)
+## §2 — Target architecture (current code + remaining work)
 
-*Skeleton — fill after §1 open items resolve.*
+**Updated 2026-07-03** from `scan_gaps.rs`, `gap_fill.rs`, `patch_audio.rs`, `patch_region.rs`,
+`gap_fingerprint.rs`, and `composition.rs`. §2.1–§2.2 are **descriptive** (what runs today). §2.3 is the
+data-flow DAG. §2.4 tracks §3 migration status.
 
-- **Two-pass:** cheap **detect** pass emits the fix-list; expensive **repair** pass runs only for survivors.
-- **Cheap-first short-circuit ordering:** G0 → G0b (drop tails) → **G5 drop program-quiet** (`O(N)`) →
-  G1/G2 structure → G3/G4 seam/residual (expensive, survivors only). Order gates by *selectivity ÷ cost*.
-- **Compute-once-share:** one decode/side · one binned-RMS/side · one border extract/gap · one lag curve/shoulder.
-- **Lazy diagnostics:** X-labeled measurements behind a flag or only for near-threshold/ambiguous gaps.
-- **FFT lag sweep** (§3) at its sequenced point.
+### §2.1 Gate-order tables (current code)
 
-*(Target gate ordering table + data-flow DAG go here.)*
+There are **three pipeline stages** — scan (pair-level), fill-plan (report-level), and per-gap work
+(repair or fingerprint). G0/G0b/G0c run at scan/plan time; G5–G6 run only after A/B decode and B-window
+extract for a gap.
+
+#### A. Scan + fill plan (`ScanGaps` → `build_gap_fill_plan`)
+
+| Order | Gate | Where | What happens | Notes |
+|-------|------|-------|--------------|-------|
+| 1 | **G0** Silence-run detect | `scan_gaps.rs` | Block-RMS on A → gap list | `O(N)` decode + RMS |
+| 2 | **G0c** B cross-check | `scan_gaps.rs` (`scan_both`, default **on**) | B silence map; `b_has_energy`; `gap_offset_agreement` | Metadata on each `Gap` |
+| 3 | **G0b** Fillable coverage | `gap_fill.rs` (`build_gap_fill_plan`) | Skip gaps outside alignment coverage when `limit_fill_to_mapped_region` | Before decode; also `Gap::is_fillable()` (needs B mapping + `b_has_energy`) |
+
+`PatchAudio::execute` decodes A+B **once** (`decode_ab`) only if the fill plan has regions.
+
+#### B. Production repair — per gap (`prepare_region_patch`)
+
+| Order | Step / gate | Where | What happens | Notes |
+|-------|-------------|-------|--------------|-------|
+| 1 | Geometry | `patch_audio.rs` | `refine_gap_frames` on A; compute `b_extract_*`; zero-length → skip | Not a reject gate |
+| 2 | B extract | `patch_audio.rs` | `slice_b_segment` | `BExtractFailed` if window empty |
+| 3 | **G5** Program-quiet | `patch_audio.rs` → `domain/donor.rs` | `program_quiet_at_nominal` on B slice @ `b_mapped_start` | **Before** `evaluate_seam_gate`. Skipped on **anchored-retry pass 2** |
+| 4 | **G1–G4 + R** Seam gate | `patch_region.rs` (`evaluate_seam_gate`) | Per-bracket structure search (G1/G2) → waveform (G3) → residual at selection (G4) → rank (R) | Dominant per-gap cost |
+| 5a | Fill | `patch_audio.rs` | `fit_fill_to_gap_frames` / gate outcome → `RegionPatch` | On gate **Ok** |
+| 5b | **G6** Dual-fit fallback | `skip_or_dual_fit` → `domain/dual_fit.rs` | On gate **Err** (except `StructureAlignmentFailed`) when `--dual-fit`: `try_dual_fit` → re-validate fill with unchanged gate floors | `dual_fit` defaults **off** (D6) |
+| 6 | Anchored retry (opt) | `patch_audio.rs` | Pass 2 re-runs failed gaps with anchor table; G5 **not** re-checked | `FillOffsetMode::AnchoredRetry` only |
+
+**G5 placement constraint:** needs the B extract window and `b_mapped_start` (refined A start + gap offset
+minus extract origin). It cannot run at scan time — only after decode + slice.
+
+**G6 production vs analyzer scope:** `skip_or_dual_fit` fires on any scored gate failure except
+`StructureAlignmentFailed` (no bracket scored). The analyzer's `dualfit_target()` additionally requires
+`bracket_exhausted` and records `splice_dualfit.gate_pass` (degenerate on the re-anchor corpus — ledger P2).
+Production `try_dual_fit` re-checks seam floors, step-real, donor, and program-quiet directly.
+
+#### C. Diagnostic fingerprint — per selected gap (`characterize_gaps_with_gate`)
+
+| Order | Work | Where | Always / flag-gated | Label |
+|-------|------|-------|---------------------|-------|
+| 0 | Decode A+B | `decode_ab` (shared with repair) | Always | — |
+| 1 | Summary pass | `characterize_gaps` → `build_gap_fingerprint(..., skip_baseline_placement: true)` | Always | `levels`/`silence`/`contour`/`signature`/`anchors` → mostly **X** (gate recomputes structure/anchors) |
+| 2 | Gate overlay | `oracle_score_fit_candidate` × N brackets | Always | **D** — same oracle as production |
+| 3 | Registration + donor | `baseline_lag`, `donor_interior`, `donor_interior_nominal`, `splice_dualfit` | Always | **D/R** |
+| 4 | Diagnostic X-set | `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag` (+ extra `place_on_b`) | `--fingerprint-diagnostics` only (`RepairConfig.fingerprint_diagnostics`, default **off**) | **X** |
+
+Fingerprint dump (`composition.rs::dump_gap_fingerprints`) does **not** re-decode after repair — it
+decodes once, characterizes, writes corpus. Repair decode reuse is already shared; post-repair re-decode
+(§1.4) is **not** current behavior.
+
+### §2.2 Design principles — landed vs still open
+
+| Principle | Target | Current (2026-07-03) |
+|-----------|--------|----------------------|
+| **Cheap-first** | G0 → G0b → G5 → G1–G4 | **Production:** G0/G0b at scan/plan; G5 after B slice, **before** seam gate ✓. **Scan:** no G5 early reject. |
+| **Two outputs** | Fix-list + repair-params | Production emits patch/skip per gap; fingerprint JSON for calibration. |
+| **Lazy diagnostics** | X-set behind flag | **Partial** — X fields gated; per-bracket oracle + lag + `splice_dualfit` still always on in scan. |
+| **Compute-once-share** | One decode · binned-RMS · border extract · lag curve | Decode shared ✓; `skip_baseline_placement` dedup ✓; binned-RMS hoist · border hoisting · FFT lag **open**. |
+| **Shared primitives** | No scan/prod drift | `domain/seam_local.rs`, `domain/donor.rs`, `domain/dual_fit.rs` ✓ |
+| **FFT lag sweep** | §3 step 4 | Still naive `lag_correlation_curve` in `seam_local.rs` |
+
+**Remaining perf targets** (in priority order after A3/G5): hoist binned-RMS + border extract (§3.1) → FFT lag
+with `fft ≈ naive` test (§3.4) → gate per-bracket oracle behind diagnostics or shared gate cache → optional
+scan-time G5 (would need nominal B occupancy without full patch window).
+
+### §2.3 Data-flow DAG
+
+```mermaid
+flowchart TB
+  subgraph scan ["A. Scan + plan (pair-level)"]
+    align[Aligner]
+    G0[G0 silence detect on A]
+    G0c[G0c B scan + b_has_energy]
+    plan[build_gap_fill_plan]
+    G0b[G0b coverage + is_fillable]
+    align --> G0 --> G0c --> plan --> G0b
+  end
+
+  subgraph decode ["B. Decode once"]
+    dec[decode_ab A + B]
+  end
+
+  subgraph prod ["C. Production per gap (prepare_region_patch)"]
+    refine[refine_gap_frames + b_extract window]
+    slice[slice_b_segment]
+    G5[G5 program_quiet_skip]
+    gate[G1-G4 evaluate_seam_gate + R]
+    fill[fit to RegionPatch]
+    G6[G6 skip_or_dual_fit / try_dual_fit]
+    refine --> slice --> G5 --> gate
+    gate -->|Ok| fill
+    gate -->|Err| G6
+    G6 -->|Some| fill
+    G6 -->|None| skip[skipped_patch]
+  end
+
+  subgraph fp ["D. Diagnostic fingerprint (optional dump)"]
+    sum[Summary: levels/signature/anchors\nskip_baseline_placement]
+    oracle[N × oracle_score_fit_candidate]
+    dr[baseline_lag + donor + splice_dualfit]
+    xdiag[seam_probe / wide_env / b_levels / lag\nfingerprint_diagnostics only]
+    sum --> oracle --> dr --> xdiag
+  end
+
+  G0b -->|regions| dec
+  dec --> prod
+  dec --> fp
+  fill --> splice[splice_into_a]
+```
+
+Solid arrows = always on the path. `G6` and `fingerprint_diagnostics` branches are flag-gated (`--dual-fit`,
+`--fingerprint-diagnostics`, both default off).
+
+### §2.4 Migration status (§3 steps)
+
+| Step | Work | Status | Evidence / notes |
+|------|------|--------|------------------|
+| **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). |
+| **2** | Gate diagnostics (X-set) behind a flag | **Done** | `RepairConfig.fingerprint_diagnostics` + `--fingerprint-diagnostics`; gates `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag`. Per-bracket oracle **not** gated. |
+| **3** | Cheap early-reject (G0b, G5 before structure/lag) | **Partial** | G0b at fill-plan ✓. **G5 in production** before seam gate ✓. G5 **not** in scan; fingerprint lag sweep still runs on all characterized gaps. |
+| **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Not started** | `lag_correlation_curve` still naive O(n·L) in `domain/seam_local.rs`. |
+| **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
+| **§4** | Decision-invariance harness | **Done** | `golden_baseline.rs`, `golden_baseline_invariance.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`. |
+
+> **Sequencing (updated 2026-07-03):** A3 (step 5) and G5 production are landed. **Next:** finish step 1
+> hoists → step 4 FFT (with harness Tier-2 ε) → optimize diagnostic scan last (~1.7 h/pair calibration cost,
+> not product cost). Do not reorder gates or drop D/R measurements until the §4 harness passes.
 
 ---
 
-## §3 — Migration steps (prescriptive; TO DECIDE)
+## §3 — Migration steps
 
-*Skeleton. Each step behavior-preserving, landed behind the §4 regression harness.*
+Each step behavior-preserving; land behind the §4 regression harness. **Status column → §2.4.**
 
-1. Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`).
-2. Gate diagnostics (X-set) behind a flag.
-3. Insert cheap early-reject gates (G0b tails, G5 program-quiet) *before* the structure search / lag sweep.
-4. **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on
-   `fft_curve ≈ naive_curve` test. *(Absorbs ledger D5 — the full spec lives in the ledger's
-   "FFT lag sweep" block; move it here when this step is started.)*
-5. Split production dual-fit path (decision + repair only) from the diagnostic fingerprint dump. **This is
-   A3 — built FIRST, not last** (it *creates* the production dual-fit path; steps 1–4 then optimize the whole
-   pipeline including it). Full build plan in **§5**.
+| # | Step | Status |
+|---|------|--------|
+| 1 | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** |
+| 2 | Gate diagnostics (X-set) behind `--fingerprint-diagnostics` | **Done** |
+| 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial** |
+| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test. *(Full spec: ledger "FFT lag sweep" block.)* | **Not started** |
+| 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 
-> **Sequencing — optimize the fingerprint scan LAST (2026-07-01 decision).** The diagnostic scan and the
-> production path **share code** (the scan's oracle wraps the production gate; the lag sweep is shared with
-> `baseline_lag`). Optimizing the scan *before* the production path is built and split (step 5) tunes code
-> that the redesign then restructures — pure rework. The scan's cost (~1.7 h/pair) is a **dev/calibration
-> cost, not a product cost**, so it is the lowest-priority optimization. Order: **build the A3 repair →
-> redesign/tune the production path (steps 1–5, the split falls out here) → then port the FFT lag sweep and
-> hoist shared subexpressions into the now-stable diagnostic scan.** The FFT sweep (step 4) is likewise
-> deferred past calibration so a stable naive baseline exists to write the `fft ≈ naive` equivalence test
-> against.
+Steps 1 and 4 are the remaining perf work on a stable baseline. Step 5 historical note: built **before**
+scan optimization (2026-07-01 sequencing decision) — complete.
 
 ---
 
@@ -190,21 +303,14 @@ fingerprint, so a failure is meaningful ("`donor-nominal` silence changed on 2·
 field differs." See [TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) §2 for the
 axes and [status ledger](TEMP-seam-repair-status-ledger.md) §1.2-map for the D/R/X labels.
 
-### §4.0 Prerequisites (do NOT capture the golden baseline before these)
+### §4.0 Prerequisites
 
-The harness is a **characterization** harness — it pins whatever the pipeline currently emits. So the
-pipeline must first be in a state we are willing to call *the correct baseline*. Two gates:
+The harness is a **characterization** harness — it pins whatever the pipeline currently emits.
 
-1. **Golden baseline captured post-scan.** Capture only **after** the `seam-local-fix` scan completes and
-   **validates** the fix (`2·g1`/`1·g22` recover as targets; `splice_dualfit.pre_seam_r` for `2·g1` ≈ 0.98,
-   not −0.008) **and** donor-continuity as a gate is confirmed (A4/C5). Capturing now would pin pre-fix
-   numbers we already expect to change (regression-testing a moving target). Until then, §4 defines the
-   **schema**, not the values.
-2. **P2 orthogonality gate.** Before freezing the golden-record schema, run vocab **P2** (cluster the fresh
-   corpus on the D/R axes — now unblocked, registration placement is fixed). Confirm the axes are
-   **independent** (no two always co-vary), **populated** (cells that never occur aren't axes), and
-   **non-redundant**. Collapse/rename any axis the data refutes *before* the schema is frozen — otherwise the
-   harness locks in a mis-factored structure.
+1. **Golden baseline — FROZEN (2026-07-02).** `golden/re-anchor-dual-fit-on-nominal.golden.json`; P2 and
+   `b_levels` cross-checks passed. §4.1–§4.5 define the schema and assertion tiers.
+2. **P2 orthogonality gate — done.** Axes validated on the re-anchor rescan; `gate_pass` degeneracy documented
+   in ledger P2 (discrimination = step-real ∧ donor-occupancy on this corpus).
 
 ### §4.1 Golden record — capture the D/R axes, each tagged with its placement
 
