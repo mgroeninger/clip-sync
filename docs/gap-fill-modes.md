@@ -18,6 +18,8 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
 | Editorial anchor seam? | **`anchor_seam_mode = auto|force`** (`--anchor-seam-mode`): search speech peaks / bool onsets when throat Pearson is weak. **Fit only**; orthogonal to patch anchors. See [Editorial anchor seam](#editorial-anchor-seam). |
 | Residual gate? | Default **`residual_gate = veto`** (fit only): anti-echo headroom veto after Pearson tiering; `veto_rescue` opt-in for broadband dead-zone rescue. See [Residual / floor gate](#residual--floor-gate). |
+| Dual-fit rescue? | Default **`dual_fit = true`**: when bracket search exhausts without a passing lag-0 placement (or other scored gate skip except structure alignment failed), try per-shoulder fit + interior trim, re-validated by the unchanged gate. Opt out with **`--no-dual-fit`**. See [Dual-fit rescue](#dual-fit-rescue-g6). |
+| Program-quiet skip? | Always on (**G5**): when B is silent at the nominal mapped span (both masters quiet at program time), skip with `program-quiet` — not a repair failure. See [Program-quiet skip](#program-quiet-skip-g5). |
 
 ---
 
@@ -32,6 +34,9 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 ```text
 1. Offset map on A → B (fill_offset_mode; see pipeline.md §3)
 2. Refine A gap edges; slice B haystack from full decoded B
+3. Program-quiet check (G5): B silent at nominal span → skip (not a gate failure)
+4. Bracket routing (G1–G4 + R) — see below
+5. On gate skip (except structure alignment failed): dual-fit rescue (G6, default on) → re-validate → patch or skip
 ```
 
 #### Bracket routing (`evaluate_seam_gate_fit_joint`)
@@ -56,6 +61,7 @@ baseline throat
   → E5 if baseline_only and still undecided
   → boundary grid (full_grid only) → E6 / E7
   → extract B fill → queue splice (PatchAudio splice pass)
+  → on scored gate skip (not structure alignment failed): dual-fit rescue (G6) if enabled
 ```
 
 - **Anchor before grid.** Anchor search does not require `--full`.
@@ -124,6 +130,8 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
+| `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **No effect** (fit only) |
+| Program-quiet (G5) | **Always on** — skip before seam gate when B silent at nominal span; exempt on anchored-retry pass 2 | Same |
 
 **Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`.
 
@@ -154,6 +162,61 @@ When waveform check **fails**:
 2. Else try shifting **gap start** earlier (pre-seam extension).
 
 Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibility rules (see [cli-output.md](cli-output.md) § Boundary extension retries).
+
+---
+
+## Program-quiet skip (G5)
+
+After B is sliced for a fillable gap, the patch path checks whether B is **program-quiet** at the nominal
+mapped span: both masters are silent at program time, so there is nothing coherent to splice in. This is
+**not** a Pearson or structure failure — it is an intentional skip before `evaluate_seam_gate`.
+
+| Signal | Meaning |
+|--------|---------|
+| A silent (gap in scan) | Dropout on the damaged master |
+| B silent at nominal `b_mapped_start` span | Reference has no program at that time |
+| Outcome | `skipped: program-quiet in both masters (B silent at nominal span; nothing to fill)` |
+
+**Anchored-retry pass 2** does not re-run G5 (pass 2 retries gaps that failed for alignment reasons, not
+program-quiet).
+
+Common on long-form pairs where A has silence but B was edited or padded differently. Do not lower
+correlation floors — the gap is correctly unfillable. Tune scan only if A should not have been flagged
+(P7).
+
+JSON skip reason: `"program_quiet"`. Tags: `patch_tier=not_applicable`, `seam_shape=not_applicable`.
+
+---
+
+## Dual-fit rescue (G6)
+
+When bracket search (baseline → anchor → grid) returns a **scored gate failure** other than
+`StructureAlignmentFailed`, dual-fit (default **on**) attempts a distinct repair path:
+
+```text
+seam-local peaks on A pre/post shoulders (±600 ms)
+  → independent per-shoulder lag on B
+  → interior trim to reconcile length
+  → donor continuity + step-real checks
+  → re-validate assembled fill with unchanged gate floors (Pearson + residual)
+  → patch or fall through to skip
+```
+
+Dual-fit does **not** run when structure alignment failed (no bracket scored). It also declines
+donor-broken bridges (internal silent run in the donor interior) and fully program-quiet donors.
+
+| Control | Default | Opt out |
+|---------|---------|---------|
+| TOML | `dual_fit = true` | `dual_fit = false` |
+| CLI | *(none — on by default)* | `--no-dual-fit` |
+| Force on | `--dual-fit` | — |
+
+Rescued gaps report like other patches (`patched (pre→post)`, tier/confidence from re-validated seams).
+Typical rescue profile: bracket-exhausted silence splices where both shoulders align at their own lag but
+lag-0 bracket search failed (see [gap-repair-guide.md](gap-repair-guide.md) § W7).
+
+For calibration / regression against the pre-A3 bracket path, use `--no-dual-fit` (D6 byte-identical to
+legacy skips on bracket-exhausted gaps).
 
 ---
 
@@ -492,6 +555,7 @@ Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracke
 | `anchor_seam_min_match_pearson` | `0.12` | — | Per-anchor B matchability Pearson |
 | `anchor_seam_min_xcorr_peak` | `0.5` | — | Tier-2 xcorr rescue floor |
 | `anchor_seam_xcorr_ambiguous_band` | `0.15` | — | Pearson band that may trigger xcorr |
+| `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 

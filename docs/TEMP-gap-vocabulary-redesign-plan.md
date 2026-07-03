@@ -1,8 +1,8 @@
 # Gap vocabulary redesign — measurement-first grouping (DRAFT)
 
 > **Status & next-steps for the whole effort live in the ledger:**
-> [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md). This doc is the *detail* for the
-> vocabulary redesign; the ledger is the authoritative proven/open/important index.
+> [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (§F production rollout, D12 perf).
+> This doc is the *detail* for the vocabulary redesign.
 
 Status: **DRAFT — direction validated; P0 + P1 capture DONE; axis structure settled (§2/§2a); P2 clustering
 DONE (2026-07-02)** on the nominal-reanchor rescan (`gap-files/re-anchor-dual-fit-on-nominal`; cluster table
@@ -319,7 +319,7 @@ matched gap; they differ by a **step**. Skips share this signature with patches 
 
 **Repair direction (unbuilt):** independent per-seam fit + length reconciliation at gap interior;
 validate with **unchanged** waveform gate — see
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (wire spec; A3 unbuilt). Scope: **bracket-exhausted** skips
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (wire spec; A3 **shipped**). Scope: **bracket-exhausted** skips
 only (not high-step patches like 5·g3 where 18/25 brackets already pass). Historical mechanism detail:
 [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md).
 

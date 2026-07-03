@@ -8,7 +8,7 @@ a **list of gaps to fix** and the **repair-params to fix them**, with everything
 **Relationship to other docs.** The [status ledger](TEMP-seam-repair-status-ledger.md) is the index (one row
 per claim); this is the detail doc for the *perf/pipeline* workstream (D12). It **absorbs** the ledger's
 scattered perf notes (D5 FFT, "Perf (before a long rescan)", the "Pipeline (detect → repair)" order) — those
-now point here. The [ledger §4 wire spec](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-unbuilt)
+now point here. The [ledger §4 wire spec](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-shipped)
 owns the dual-fit *algorithm*; this owns the pipeline *assembly*. (A3 is **shipped** — see §2.4.)
 
 **Hard wall.** §1 is **descriptive** ("what the pipeline does today") and stays factually true regardless of
@@ -50,7 +50,7 @@ Ordered as data flows. "Rejects" = what this gate filters out.
 | G4 | **Residual** | `patch_region.rs` (`finalize_fit_outcome_residual`) | Same-source confirm for a *marginal* seam | least-squares cancellation @ throat vs floor | `O(seam)`, **at selection only** | veto marginal; rescue marginal |
 | R | **Bracket ranking** | `patch_region.rs` (`fit_candidate_ranking_score`) | Which *passing* bracket wins | `min(pre,post)`, `boundary_move` | scalar | — (selection, not reject) |
 | **G5** | **Program-quiet** *(D11 — **production gate**, 2026-07-03)* | `patch_audio.rs` (`program_quiet_skip` → `domain/donor.rs`); analyzer `program_quiet()` | Is this a real dropout, or quiet in both masters? | nominal-span B `silence_fraction` @ `b_mapped` in the B extract window; A `gap_floor_db` from refined gap | `O(N)` | B-silent → `ProgramQuiet` skip (pass 1 only; **anchored-retry pass 2 exempt**) |
-| **G6** | **Dual-fit rescue** *(A3 — **shipped** `--dual-fit`)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `--dual-fit` → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | donor-BROKEN / program-quiet / spurious-step skips |
+| **G6** | **Dual-fit rescue** *(A3 — **shipped**, default **on**)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `dual_fit` (default true) → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | donor-BROKEN / program-quiet / spurious-step skips |
 
 ### §1.2 Measurement → gate map (decision / repair / diagnostic)
 
@@ -171,7 +171,7 @@ extract for a gap.
 | 3 | **G5** Program-quiet | `patch_audio.rs` → `domain/donor.rs` | `program_quiet_at_nominal` on B slice @ `b_mapped_start` | **Before** `evaluate_seam_gate`. Skipped on **anchored-retry pass 2** |
 | 4 | **G1–G4 + R** Seam gate | `patch_region.rs` (`evaluate_seam_gate`) | Per-bracket structure search (G1/G2) → waveform (G3) → residual at selection (G4) → rank (R) | Dominant per-gap cost |
 | 5a | Fill | `patch_audio.rs` | `fit_fill_to_gap_frames` / gate outcome → `RegionPatch` | On gate **Ok** |
-| 5b | **G6** Dual-fit fallback | `skip_or_dual_fit` → `domain/dual_fit.rs` | On gate **Err** (except `StructureAlignmentFailed`) when `--dual-fit`: `try_dual_fit` → re-validate fill with unchanged gate floors | `dual_fit` defaults **off** (D6) |
+| 5b | **G6** Dual-fit fallback | `skip_or_dual_fit` → `domain/dual_fit.rs` | On gate **Err** (except `StructureAlignmentFailed`) when `dual_fit` enabled (default **on**): `try_dual_fit` → re-validate fill with unchanged gate floors | `--no-dual-fit` to disable (D6 regression path) |
 | 6 | Anchored retry (opt) | `patch_audio.rs` | Pass 2 re-runs failed gaps with anchor table; G5 **not** re-checked | `FillOffsetMode::AnchoredRetry` only |
 
 **G5 placement constraint:** needs the B extract window and `b_mapped_start` (refined A start + gap offset
@@ -335,6 +335,27 @@ must not silently move a measurement across placements):
 **Fix-list** = gaps where `dualfit_target()` ∨ patched. **Repair-params** = per-shoulder seam-local lags →
 `b_pre`/`b_post`, `trim_frames`, donor span. Both are functions of Tier-1/2 fields only.
 
+### §4.1a Gap-class categorization (from the golden corpus, 2026-07-03)
+
+Grouping all 62 golden gaps (`golden/re-anchor-dual-fit-on-nominal.golden.json`) by the §4.1 D/R axes gives
+six distinct causal classes — this is the licensing-safe substitute for the real media (the corpus JSON is
+derived numeric/boolean measurements only, no audio) and is what the synthetic fixtures below replicate:
+
+| Class | Axes | Real examples | Synthetic coverage |
+|-------|------|----------------|---------------------|
+| 1. No-bracket-at-all skip | `brackets_total=0`, `bracket_exhausted=False`, `gate_pass=null` | 1·g0, 3·g0, 4·g0, 6·g0, 7·g0 | Guarded by the `StructureAlignmentFailed` precondition (bug #2, `skip_or_dual_fit`) |
+| 2. Zero-bracket quiet/partial-donor skip | `brackets_total=0`, `program_quiet_skip=True`, `nominal_donor_silence` 0.5–1.0 | 2·g0, 6·g2 | Same precondition guard (`bracket_exhausted=False`) |
+| 3. Stepped-splice dual-fit rescue | `bracket_exhausted=True`, seams 0.9–1.0 at own lag, `post_global` low (real step), `aligned_donor_continuous=True`, `dualfit_target=True` | the golden 9: 1·g3/g5/g22, 2·g1/g2, 5·g6, 7·g2/g3/g4 | `dual_fit.rs::recovers_a_stepped_silence_splice` |
+| 4. Donor-broken bridge decline | `bracket_exhausted=True`, seams score as well as class 3, real step, but `aligned_donor_continuous=False` (internal silent run ≥150 ms) | 14/62 gaps: 1·g4/g7/g9-19/g21, 6·g1/g3/g6-g11 (matches §4.4's `1·g19` footgun) | `dual_fit.rs::declines_donor_broken_bridge` (added 2026-07-03) |
+| 5. Fully-silent/dead donor | seams score 0.97–0.99 but `nominal_donor_silence=1.0` (bridge 100% dead) | 6·g2 | `dual_fit.rs::declines_program_quiet_donor` (fully-silent variant; less extreme than class 4) |
+| 6. Normal Fit-mode patch (negative control) | `tier=patch`, `brackets_passing>0` | e.g. 1·g1/g2/g6/g8/g20/g23 | Existing `energy_signature_fixtures.rs` F1–F4 / patch-path tests; dual-fit code path never engages |
+
+Classes 1–2 are collapsed by the same precondition (`bracket_exhausted`) in code, but are kept distinct here
+because they arrive at that precondition via different upstream reasons (no structure placement at all vs. an
+early program-quiet read) — useful if the precondition is ever split. Class 4 was the largest bucket with
+**zero** test coverage before 2026-07-03 despite being explicitly anticipated in §4.4's "Donor gate necessity"
+footgun.
+
 ### §4.2 Two-tier assertion (the FFT is what forces this)
 
 - **Tier 1 — derived verdicts + booleans + integer counts: bit-exact.** A perf refactor must **never flip a
@@ -365,7 +386,12 @@ confirms them (§4.0); the *assertions* are defined now:
 - **Donor placement split** — a large-step gap that is silent at the **nominal** span but occupied at the
   **aligned** span classifies `program_quiet` (nominal wins) — guards D11's registration-independence.
 - **Donor gate necessity** — a gap with `gate_pass` = true but `donor_interior` BROKEN (`1·g19`: seams 0.998,
-  interior silent) yields `dualfit_target()` = false.
+  interior silent) yields `dualfit_target()` = false. **LANDED (2026-07-03)** — synthetic regression test
+  `dual_fit.rs::declines_donor_broken_bridge`: both seams re-fit at ~0.9–1.0 with a genuine 500 ms step (rules
+  out step-not-real as the decline reason), but a 200 ms silent hole punched into the middle of the aligned
+  bridge (clear of both seam windows) makes `donor_interior_at` read `continuous=false`, and `try_dual_fit`
+  declines. This is class 4 in §4.1a — the largest real-corpus decline bucket (14/62 gaps) and previously
+  the only one of the four §4.4 footguns with zero test coverage anywhere in the codebase.
 - **Edge-pin validity** — an edge-pinned shoulder flags its step GIGO and is excluded (0/55 today, so this is
   a guard against a future regression, not a live case).
 

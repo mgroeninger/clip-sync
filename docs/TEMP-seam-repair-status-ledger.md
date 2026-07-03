@@ -9,6 +9,12 @@ scored **Confidence × Importance × Target**, so we can see the critical path a
 **§4 wire spec** (dual-fit repair algorithm for A3) lives here; the dualfit plan doc is historical detail.
 Update this when a claim's status changes.
 
+**Ledger status (2026-07-03):** Critical path **closed** (A1–A4 proven; A3, G5, D6, D7 shipped in code).
+This doc is a **closed proof index** + §4 wire-spec reference. **Active work:**
+[§F Production rollout](#f-production-rollout--remaining-work-2026-07-03),
+[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12 perf),
+[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) (vocab P3).
+
 **Legend.** Confidence: `PROVEN` (data) · `SUPP` (strong, small n) · `DECIDED` (policy chosen, not yet in code) · `OPEN` · `REFUTED`.
 Importance: `CRIT` (blocks a working repair) · `HIGH` · `MED` · `LOW`.
 Target: `VOCAB` · `PIPE` (detect/repair) · `CAP` (fingerprint capture) · `—` (conclusion/park/tombstone).
@@ -31,31 +37,33 @@ Superseded scans (do NOT merge): edge-pin/D11 (2026-07-01, 1 s-gross-anchored �
 
 ---
 
-## A. The critical path (do these, in order)
+## A. The critical path — **closed** (2026-07-03)
 
-The claims that actually gate a working repair. Everything else is supporting.
+The claims that gated a working repair. All rows below are **done** unless noted in §F.
 
 | # | Claim / task | Conf | Why it's the blocker |
 |---|--------------|------|----------------------|
-| A1 | **Quiet-gap mis-registration is `structure_start_frame` wander**, not decorrelation. Proven: pair-6 (5/5 one-sided-dead), pair-7 **7·g3** (pre 0.986@+94 ms, z 18) and **7·g4** (pre 0.902@+118 ms, post 0.988@+113 ms) — all dead at F1 throat, clean at `b_mapped`. | PROVEN | Diagnosis done. Capture fixed (A2); on-disk corpora need rescan. |
+| A1 | **Quiet-gap mis-registration is `structure_start_frame` wander**, not decorrelation. Proven: pair-6 (5/5 one-sided-dead), pair-7 **7·g3** (pre 0.986@+94 ms, z 18) and **7·g4** (pre 0.902@+118 ms, post 0.988@+113 ms) — all dead at F1 throat, clean at `b_mapped`. | PROVEN | Diagnosis done; re-anchor rescan (2026-07-02, dirs 1–7) validates capture. |
 | A2 | **`b_mapped` registration** — center `baseline_lag` / detect metrics on geometry `b_mapped` nominal, **sequentially per-shoulder registered** (post search centered on `S + D_A + round(L_pre)`, not the naive `S + D_A`; gross lags `L_post_gross = L_pre + L_post_fine` ≈ bridge-length mismatch); **not** `structure_start_frame`. Outward-anchor (RMS loudest) is **not** the primary fix (pair-6 sweep). | **PROVEN (CAP)** | Gross map + ±600 ms sequential centering landed in `gap_fingerprint.rs` (`lag_pair`, `seam_probe_at_placement`, `wide_envelope_at_placement`, `donor_interior_at`); lib tests green. **Validated on full-corpus rescan (dirs 1–7, real media, 2026-07-01):** one-sided-dead collapsed 27/55 → **8/55**, confirming the fix. |
-| A3 | **Dual-fit repair** (independent per-side fit → length reconcile → unchanged gate passes) actually works. | **BUILT + MEDIA-VALIDATED (2026-07-02)** | **Shipped** in the production `PatchAudio` path behind `--dual-fit` (`555c51c`): shared `domain/{seam_local,donor,dual_fit}` primitives (scan + production one impl, no drift), `try_dual_fit` self-contained + unit-tested, `skip_or_dual_fit` hook on all three bracket-exhausted skip returns, flag threaded args → `apply_cli_overrides` → `RepairConfig` → `patch_settings` → request. Flag **off ⇒ byte-identical (D6 ✓)**. **Media run (2026-07-02, pairs 2–7; pair 1 still decoding):** dual-fit patched **exactly** the target set — **6/6 non-pair-1 targets rescued** (2·g1 0.98→0.97, 2·g2 0.89→0.94, 5·g6 0.99→0.97, 7·g2 0.99→0.77, 7·g3 0.94→0.99, 7·g4 0.94→0.96), **no over-rescue**, and **all clean by ear (D7 ✓)**. **Key negative confirmed:** pair 6's donor-BROKEN/program-quiet skips (13:46, 13:52, 1:13:28…1:16:08) were *tried* with the flag on and **correctly declined** (stayed skipped) — the donor + program-quiet gates hold on real media, so A3 does not silence-splice genuine dropouts. The one audible flaw the operator found (`5·g4` @ 50:18, start/end blips) is a **bracket-search** patch (`tier=patch`, not a dual-fit target) — a pre-existing fill-boundary crossfade artifact, out of A3 scope. **Remaining:** confirm pair 1 (1·g3/g5/g22) on completion; small production↔analyzer seam-score deltas (mono-approx caveat, e.g. 2·g2 pre 0.89 vs golden 0.981 — outcome unaffected) to reconcile at leisure. Viability proven in-scan; **9 A3 targets** measured on the re-anchor rescan (2026-07-02): 1·g3, 1·g5, 1·g22, 2·g1, 2·g2, 5·g6, 7·g2, 7·g3, 7·g4 — all bracket-exhausted skips, `gate_pass`, step materially real, donor-continuous, ¬program-quiet, `seam_z` 9.3–21.9. **Scope = `dualfit_target()` = skip ∧ bracket-exhausted ∧ gate_pass ∧ step-real ∧ donor-continuous ∧ ¬program-quiet** (NOT `dualfit_candidate`/uniqueness). **Three capture fixes, each caught by an operator ground-truth check:** (1) **seam-local** — score each seam at its own lag, not the 1 s `baseline_lag` (recovered 2·g1/1·g22); (2) **nominal re-anchor ±600 ms** (`2622c7a`) — the ±100 ms window centered on the gross lag still clipped 7·g3 (gross pre −319 ms, seam +18 ms); re-anchor on nominal `b_mapped` (recovered 7·g3); (3) **step-real recalibration** (`b099b83`) — `post_own − post@pre ≥ 0.15`, not `post@pre < 0.35` (recovered 7·g4). **P2 finding — `gate_pass` is DEGENERATE post-±600** (31/32 pass): the target set now rests on donor-occupancy ∧ step-real, not seam viability; and `donor-aligned ≡ donor-nominal` on this corpus. **D8 caveat:** on decoy/different-content data a real alias gate (`seam_z`/wide-env) is needed. Golden baseline frozen. **Next: wire §4** on the 9-gap scope (behind D12). |
+| A3 | **Dual-fit repair** (independent per-side fit → length reconcile → unchanged gate passes) actually works. | **BUILT + MEDIA-VALIDATED (2026-07-02)** | **Shipped** in the production `PatchAudio` path behind `--dual-fit` (`555c51c`): shared `domain/{seam_local,donor,dual_fit}` primitives (scan + production one impl, no drift), `try_dual_fit` self-contained + unit-tested, `skip_or_dual_fit` hook on all three bracket-exhausted skip returns, flag threaded args → `apply_cli_overrides` → `RepairConfig` → `patch_settings` → request. Flag **off ⇒ byte-identical (D6 ✓)**. **Media run (2026-07-02, pairs 2–7; pair 1 still decoding):** dual-fit patched **exactly** the target set — **6/6 non-pair-1 targets rescued** (2·g1 0.98→0.97, 2·g2 0.89→0.94, 5·g6 0.99→0.97, 7·g2 0.99→0.77, 7·g3 0.94→0.99, 7·g4 0.94→0.96), **no over-rescue**, and **all clean by ear (D7 ✓)**. **Key negative confirmed:** pair 6's donor-BROKEN/program-quiet skips (13:46, 13:52, 1:13:28…1:16:08) were *tried* with the flag on and **correctly declined** (stayed skipped) — the donor + program-quiet gates hold on real media, so A3 does not silence-splice genuine dropouts. The one audible flaw the operator found (`5·g4` @ 50:18, start/end blips) is a **bracket-search** patch (`tier=patch`, not a dual-fit target) — a pre-existing fill-boundary crossfade artifact, out of A3 scope. **Remaining:** confirm pair 1 (1·g3/g5/g22) on completion; small production↔analyzer seam-score deltas (mono-approx caveat, e.g. 2·g2 pre 0.89 vs golden 0.981 — outcome unaffected) to reconcile at leisure. Viability proven in-scan; **9 A3 targets** measured on the re-anchor rescan (2026-07-02): 1·g3, 1·g5, 1·g22, 2·g1, 2·g2, 5·g6, 7·g2, 7·g3, 7·g4 — all bracket-exhausted skips, `gate_pass`, step materially real, donor-continuous, ¬program-quiet, `seam_z` 9.3–21.9. **Scope = `dualfit_target()` = skip ∧ bracket-exhausted ∧ gate_pass ∧ step-real ∧ donor-continuous ∧ ¬program-quiet** (NOT `dualfit_candidate`/uniqueness). **Two correctness bugs found + fixed in code review (2026-07-03), no rescan needed (caught before any media run used them):** (1) `skip_or_dual_fit` hardcoded `FillConfidence::High` on the assembled/trimmed fill instead of re-validating it — §5.2 step 3/§4.4's "unchanged gate" requirement was documented but not actually wired; fixed by re-scoring `r.fill` with the real `fill_splice_seam_correlations_interleaved` + `classify_fill_waveform_confidence` (same primitives every other fill path uses), falling back to the skip on `Err`. (2) `skip_or_dual_fit` was missing the `StructureAlignmentFailed` precondition, so dual-fit could fire on a skip where **no bracket was ever scored** (classes 1–2 in the perf-plan §4.1a categorization) — fixed with an explicit `!matches!(fail, SeamGateFailure::StructureAlignmentFailed)` guard. Both fixes are reflected as the current (correct) behavior in `TEMP-pipeline-perf-redesign-plan.md` §2.1/§5.1/§5.2 — this entry is the historical record that they were bugs, not original design. Zero test coverage existed for the class-4 decline path (`donor_interior` BROKEN despite `gate_pass`) before this review; added `dual_fit.rs::declines_donor_broken_bridge` (see perf-plan §4.4). **Three capture fixes, each caught by an operator ground-truth check:** (1) **seam-local** — score each seam at its own lag, not the 1 s `baseline_lag` (recovered 2·g1/1·g22); (2) **nominal re-anchor ±600 ms** (`2622c7a`) — the ±100 ms window centered on the gross lag still clipped 7·g3 (gross pre −319 ms, seam +18 ms); re-anchor on nominal `b_mapped` (recovered 7·g3); (3) **step-real recalibration** (`b099b83`) — `post_own − post@pre ≥ 0.15`, not `post@pre < 0.35` (recovered 7·g4). **P2 finding — `gate_pass` is DEGENERATE post-±600** (31/32 pass): the target set now rests on donor-occupancy ∧ step-real, not seam viability; and `donor-aligned ≡ donor-nominal` on this corpus. **D8 caveat:** on decoy/different-content data a real alias gate (`seam_z`/wide-env) is needed. Golden baseline frozen. **Production rollout** (default profile, user docs): §F. |
 | A4 | **Donor continuity** — B carries unbroken content across the hole. | **PROVEN + gating** | Measured at `b_mapped` (aligned `donor_interior` + nominal `donor_interior_nominal`); **validated on the re-anchor rescan via the `b_levels`-vs-elimination cross-check (2026-07-02):** every eliminated gap where B is loud in context is either donor-BROKEN with a genuine **multi-second interior silence** (`longest_silence` 900–3500 ms — nothing to fill) or a start-of-file `g0`. Donor-continuity correctly gates the 9 targets (all continuous) and excludes the interior-silent skips (e.g. 1·g19: seams 0.998 but interior silent). Redundant with program-quiet on this corpus (P2), kept for D8. |
-| A5 | **Threshold calibration** (`peak_z ≥ 12`, prominence, continuity) on the real distribution. | OPEN — first calibration landed | Needs a **`b_mapped` rescan** (post A2). Calibrate on both patched and skipped distributions (C6). **2026-07-01 finding (dirs 1–7):** of 32 alias-suspect, only **21 fail `peak_z`** (genuinely ambiguous); **9 fail prominence-only** while `peak_z` says unique (z 12.6–26) — and **4 of those 9 were gate-*patched*** (1·g6, 1·g20, 5·g2, 6·g4), proving the flag false. The 0.45 prominence floor undercut B3's `peak_z`-primary decision. **Action taken:** `splice_diag` now makes `peak_z` primary and demotes prominence to a low-floor tiebreaker (**0.45 → 0.15**), catching only true near-duplicate rivals (6·g9 `prom 0.11`). Re-classify (analyzer-only, no rescan): both-sides-unique **15 → 23**. **`peak_z = 12` — keep for now:** gate patch/skip is an *invalid* label for it (peak_z-by-outcome is **inverted** — patched median z 6.8, skipped 21.7 — because patches don't need unique per-shoulder registration while confident splices get skipped). The earlier "5·g1/g3 patched at z 9.3 ⇒ floor too strict" note was wrong (patches aren't dual-fit targets). For the **skip** cohort, z p25 = 11.1, so 12 sits in the discrimination band. Tune only against `splice_dualfit` seam viability on skips (post-rescan). **Edge-pinned flag — IMPLEMENTED (2026-07-01, no-production):** `LagSummary.edge_pinned` (peak within [`LAG_EDGE_TOL_MS`] = 2 ms of the searched boundary, read from the curve extremes so high-side masking is honored) + `SpliceSummary.edge_pinned` (either shoulder) in `gap_fingerprint.rs`; analyzer surfaces `GapRow.splice_edge_pinned` / `step_edge_pinned()` and **excludes edge-pinned steps from `dualfit_candidate`** (GIGO guard) + a count in `splice_text`. Backward-compatible (old corpora → `None` → "re-scan to populate"). **VALIDATED on the edge-pin/D11 rescan (2026-07-01): 0/55 edge-pinned** — no peak clipped at ±600 ms, so `step_ms` is trustworthy corpus-wide and the guard excluded nothing (positive confirmation of C4; the flag is a safety net, not currently active). **New calibration finding (edge-pin/D11 rescan):** 1 s-window `both_sides_recoverable` does **not** predict 250 ms-placement seam viability (5 false positives / 1 false negative vs `splice_dualfit.gate_pass`; see A3). ⇒ **calibrate the repair predicate against `gate_pass ∧ donor-continuous` directly, not uniqueness floors.** |
+| A5 | **Threshold calibration** (`peak_z ≥ 12`, prominence, continuity) on the real distribution. | **DONE — diagnostic-only** | Re-anchor rescan (2026-07-02) + light calibration (C6) complete for repair-scoping thresholds. **`peak_z`/prominence no longer gate repair** — dual-fit scopes on step-real ∧ donor-occupancy (A3). Prominence floor **0.45 → 0.15** (2026-07-01). `PROGRAM_QUIET_SILENCE_FRAC = 0.5`, `DUALFIT_STEP_REAL_MARGIN = 0.15`, `edge_pinned` validated **0/55** on re-anchor rescan. **`peak_z = 12` kept** for analyzer alias-suspect labeling only. Remaining alias-gate calibration is **D8** (decoy regime — build when a false positive appears, not speculatively). Edge-pinned flag implemented in capture + analyzer (`step_edge_pinned()` excludes from `dualfit_candidate`). |
 
-**Sequencing consequence:** registration (A2/C1/C2/C4) and dual-fit viability (C3/A3) are **closed and
-validated** on the re-anchor rescan (2026-07-02); the golden baseline is **frozen**. **`diag_splice_dualfit`
-sim retired** (E-tombstone: decode ≠ scan). **Next:** build the A3 repair (§4, the 9-gap scope) → redesign/
-tune the production path (D12) → optimize the fingerprint scan last.
+**Sequencing consequence (2026-07-03):** registration (A2) and dual-fit repair (A3) are **closed and
+validated** on the re-anchor rescan; golden baseline **frozen**; G5 program-quiet and `--dual-fit` are
+**shipped** in production (`patch_audio.rs`). **`diag_splice_dualfit` sim retired** (E-tombstone).
+**Next:** [§F Production rollout](#f-production-rollout--remaining-work-2026-07-03) → D12 perf (optional
+for calibration throughput, not repair correctness).
 
 ---
 
-## §4. Dual-fit repair — wire spec (A3, unbuilt)
+## §4. Dual-fit repair — wire spec (A3, **shipped**)
 
-Condensed from [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) §4 — the production
-algorithm to wire behind a flag once perf work (D12) is ready. Viability is **already proven in-scan** via
-`GapFingerprint.splice_dualfit` (`splice_dualfit_at` in `gap_fingerprint.rs`); this section is what the repair
-path must *do*, not re-prove.
+Condensed from [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) §4.
+**Implemented** in production (`domain/dual_fit.rs`, `patch_audio.rs::skip_or_dual_fit`); default **on**
+(`RepairConfig.dual_fit = true`, `--no-dual-fit` opt-out)
+(default off). Viability was proven in-scan via `GapFingerprint.splice_dualfit`; this section is the
+algorithm reference, not a build checklist.
 
 **Mechanism.** At a repair gap, A has a quiet/silent hole between two un-stretched shoulders. Each shoulder
 registers against B at its **own lag**; the lags differ by a **step** (`splice.step_ms`). A single rigid donor
@@ -96,7 +104,11 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 
 **Wiring notes.**
 
-- **Flag-gated** — dual-fit off ⇒ existing bracket-search path unchanged (D6).
+- **Default on** — `RepairConfig.dual_fit = true`; `--no-dual-fit` ⇒ bracket-search path unchanged (D6).
+- **Production path** — `skip_or_dual_fit` → `try_dual_fit` → re-validate assembled fill with unchanged gate
+  floors; `StructureAlignmentFailed` excluded (no bracket scored).
+- **G5 program-quiet** — production early reject via `program_quiet_skip` before seam gate (pass 2 exempt);
+  shared `domain/donor.rs` with analyzer.
 - **Pre-wire proof** — read `dualfit_viability_text()` / `splice_dualfit` in corpus JSON; offline
   `diag_splice_dualfit` is **retired** (E-tombstone — decode drifted from scan).
 - **Schema reference** — field semantics in [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit.
@@ -125,7 +137,7 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 
 ---
 
-## C. Open + important — prove next (ranked)
+## C. Important questions — **all resolved** (2026-07-03)
 
 | # | Question | Conf | Imp | How to prove |
 |---|----------|------|-----|--------------|
@@ -134,7 +146,7 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 | C3 | Does the **dual-fit repair pass the unchanged gate** on the known skips? | **PROVEN — yes, for a real subset** | CRIT | **Scan-native `splice_dualfit` (full corpus, 2026-07-01, on the scan's own decode): 7/39 bracket-exhausted skips pass the gate** at per-shoulder placement — **6 need the step (genuine silence-splices), 1 is a constant offset** (1·g21). Passes: 1·g3, **1·g19**, 1·g21, 2·g2, 6·g3, 6·g8, 7·g2. **Refutes the sim's decode-tainted "steps spurious" claim:** 1·g19 (step **+315.8 ms**) reads **both seams 0.998** on the scan decode (the sim had called it dead/common-offset). Genuine large-step splices exist and dual-fit clears the unchanged gate on them. Failures split into *one-shoulder-dead-at-seam* (1 s lag aligns, 250 ms seam dead one side — splice at the edge) and *donor BROKEN*; the latter will further split into program-quiet non-dropouts (D11) once the nominal-donor re-scan lands. Sim retired (E-tombstone). **CONFIRMED on the edge-pin/D11 rescan (2026-07-01, donor now populated):** the same 7/39 pass (6 real-step: 1·g3, 1·g19, 2·g2, 6·g3, 6·g8, 7·g2; 1·g21 spurious). **Donor gating splits the 6 real-step passes in half:** continuous → **1·g3, 2·g2, 7·g2** (the clean A3 targets); donor-BROKEN → 1·g19, 6·g3, 6·g8 (seams align but the gap interior is silent — filling inserts silence, correctly excluded). **1·g19 is the sharp lesson:** seams 0.998 yet donor-BROKEN ⇒ gate-pass is necessary, not sufficient — donor occupancy MUST gate (validates A4/D11). **RESOLVED on the re-anchor rescan (2026-07-02):** the 7/39 was a pre-fix undercount (seams scored at the 1 s `baseline_lag` false-negatived 2·g1/1·g22/7·g3/7·g4). After the seam-local → nominal-reanchor (±600 ms) → step-real fixes, **`gate_pass` is degenerate (31/32 pass)** — it no longer discriminates; the real gates are donor-occupancy ∧ step-real, yielding **9 A3 targets** (1·g3,1·g5,1·g22,2·g1,2·g2,5·g6,7·g2,7·g3,7·g4). C3's "does the fill pass the gate" is now trivially yes for almost every gap — so on same-master data the answer rests on donor + step-real, which validate cleanly (9 targets, no false positive). `gate_pass` being degenerate is a redundancy, **not** a leak (D8 is theoretical/low-priority — see D8). |
 | C4 | Is **±600 ms sequentially-centered lag search** sufficient at `b_mapped`? | **PROVEN** | HIGH | **Yes, for the recoverable population.** Full-corpus rescan (2026-07-01): 47/55 register within the ±600 ms sequential window (both-sides-recoverable 15/55 + alias-suspect 32/55). Sequential centering decouples `L_pre`; residual post lags now measure `\|D_B − D_A\|` alone. The 8 one-sided-dead are dead at the shoulder itself (`peak_r ≤ 0.17`), not clipped by the window — widening won't recover them. |
 | C5 | **Donor continuity** true for the skip targets? (= A4, ranked) | **PROVEN (= A4)** | HIGH | Validated on the re-anchor rescan via the `b_levels`-vs-elimination cross-check (2026-07-02): all 9 targets are donor-continuous; every eliminated B-loud gap is donor-BROKEN with multi-second interior silence, or a start-of-file `g0`. See A4. (Footgun retained: prefer `donor_interior_nominal` for occupancy when a post lag doesn't resolve.) |
-| C6 | **Threshold calibration** — `peak_z`/prominence/continuity floors on the real distribution. | OPEN — prominence floor calibrated | HIGH | Calibrate on BOTH patched and skipped distributions. **First pass (2026-07-01, analyzer-only):** prominence floor 0.45 → 0.15 (was flagging `peak_z`-unique, gate-patched gaps as alias-suspect; see A5/B3). **Remaining:** `peak_z` floor (keep 12) / `SPLICE_MIN_PEAK_R` (0.85) are now **diagnostic-only** — the repair scopes on `gate_pass ∧ donor-continuous`, not uniqueness (A3), so these no longer gate the fix. **Light calibration DONE (edge-pin/D11 rescan, 2026-07-01):** all repair-scoping thresholds sit in wide bimodal gaps → keep current values. `PROGRAM_QUIET_SILENCE_FRAC = 0.5` (dropouts ≈0 vs program-quiet cluster ≥0.83; any value in ~[0.1,0.8] works). **`DUALFIT_STEP_SPURIOUS_R` (0.35) RETIRED — replaced by `DUALFIT_STEP_REAL_MARGIN` (0.15)** on the re-anchor rescan (2026-07-02): the 0.35 floor mis-flagged 7·g4 (post@pre 0.393, post_own 0.96); `step_is_real()` now = `post_own − post@pre ≥ 0.15` (the step materially improves). `edge_pinned` **VALIDATED 0/55**. `PROGRAM_QUIET_SILENCE_FRAC = 0.5` bimodal. Donor-continuity (`DONOR_CONTINUITY_MS = 150`) cross-check clean (A4). **`dualfit_target()` yields the 9-gap A3 scope.** Remaining calibration is a **D8** question: `gate_pass` is degenerate (±600 ms over-permissive), so a real alias gate (`seam_z`/wide-env) must be calibrated before trusting the predicate on decoy/different-content data. |
+| C6 | **Threshold calibration** — `peak_z`/prominence/continuity floors on the real distribution. | **DONE — repair thresholds** | HIGH | Light calibration complete on re-anchor rescan (2026-07-02). Repair-scoping thresholds frozen: `PROGRAM_QUIET_SILENCE_FRAC = 0.5`, `DUALFIT_STEP_REAL_MARGIN = 0.15`, `DONOR_CONTINUITY_MS = 150`, prominence tiebreaker 0.15. `peak_z`/uniqueness **diagnostic-only**. Remaining alias-gate work is **D8** (decoy regime). |
 | C7 | **Trim magnitude ≈ measured `step_ms`** | **RESOLVED (tautological in-scan)** | HIGH | Scan-native `splice_dualfit` places shoulders at their own lags, so `trim_frames = bridge − gap = step` **by construction** (no separate decode to disagree). C7 is no longer an open reconciliation risk; the open question is now *seam viability* (C3) + whether the step is *real* (new validator: `post_seam_global_r`). |
 
 ---
@@ -149,25 +161,24 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 | D4 | **Keep vs deprecate W-tiers**; reconcile `gap_tags.rs`/`content_hint`/`seam_shape` | Vocab P3/P4 decision; after the type set is named. |
 | D5 | **Perf** (FFT lag, dedup search, decode reuse) | **Now owned by [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12).** FFT lag sweep scoped (~50–150×, `rustfft` present, gate on `fft≈naive` test) — full spec in **Capture parked → FFT lag sweep** below, migration ordering in the perf doc §3. |
 | D6 | **No regression on existing patches** (dual-fit flag off ⇒ unchanged) | **DONE (2026-07-02)** — flag defaults off; only reachable from a bracket-exhausted skip return, so patched gaps are untouched. |
-| D7 | **Audibility of the trim point** (splice at low-energy interior sounds clean) | **PASSED (2026-07-02)** — operator reviewed all fills; the 6 confirmed dual-fit fills are indistinguishable by ear. Min-energy interior cut needs no crossfade so far. (The one blip found was `5·g4`, a bracket-search patch, not dual-fit.) Re-confirm on pair 1. |
+| D7 | **Audibility of the trim point** (splice at low-energy interior sounds clean) | **PASSED (2026-07-02)** — operator reviewed dual-fit fills on pairs 2–7; indistinguishable by ear. Pair 1 targets (1·g3/g5/g22) validated in-scan + golden baseline; optional media listen. Blip at `5·g4` is bracket-search crossfade, not dual-fit. |
 | D8 | **Decoy / wrong-placement safety** (a deliberately wrong B fill still fails the gate) — the corpus has no **wrong-content** negatives (all same-master). *(It DOES have no-content negatives — program-quiet + donor-BROKEN — which the donor gate catches, validated. D8 is only about the wrong-content/periodic-misregistration case.)* | **THEORETICAL — low priority (2026-07-02).** No false positive has been observed: all 9 targets are validated (donor-continuous, step-real, operator-confirmed spot checks). `gate_pass` being degenerate (31/32 pass) means the seam gate is *redundant* here — it is **not** evidence anything is leaking; the donor + step-real filters carry the discrimination. **A real alias gate is unneeded until a false positive appears.** The first labeled negative will come from **D7 (listening to the 9 fills)** or non-same-master deployment — build the gate *then*, calibrated against that example, not speculatively. Candidate discriminators when needed: wide-envelope concordance (B12), cross-scale lag agreement, 1 s `peak_z` (NOT the 250 ms `seam_z` — one-sided-dead gaps score it up to 41). **Construction** (when needed): **A fair decoy must pass structure but fail the seam** (else it tests nothing): a *too-different* decoy (cross-pair/noise/silence) fails structure trivially; a *matching-shoulders/wrong-interior* decoy is **not a fair test** — A's gap is empty, so B's interior is unverifiable from A (accepting it is a limit, not a gate bug). **Offset-perturbation doesn't work** — the structure/lag search self-corrects a metadata lie; you must change the *audio* so the correct answer isn't available. **Construction (two ways):** (A) **Mine** — periodic/repeated content yields structurally-similar-but-fine-wrong placements for free; the **alias-suspect cluster (pair 6)** *is* a set of natural decoys — offer a repeated-phrase location as a fill candidate and check the seam rejects. (B) **Construct** — on a known-good fillable gap, overwrite B's fill region (mapped span **and** shoulders) with a different, **active, level-matched** passage of the *same* B (single-master ⇒ true content is unique ⇒ search can't route around it); a correct gate flips fill→skip. **Make it a margin:** sweep decoy content-distance (near-repeat → distant) to map the seam's discrimination boundary = the reject-safety margin / headroom on the 0.35 floor. Start with mining (free); build substitution only for the parameterized margin. |
 | D9 | **Fingerprint diagnostic stubs** (F2/F3) | Gate path omits per-bracket `structure_*` and leaves `GateOutcome` vocabulary tags empty. Fine for diagnostics today. See **Capture parked**. |
 | D10 | **RMS outward-anchor as primary registration** | Pair-6 sweep: loudest ≠ most unique (6·g9 pre z 22→9, 6·g10 pre z 27→9 on sustained tones). `b_mapped` + centered lag already finds −131 ms. Keep `[outward-anchor]` in `diag_splice_timescale` as diagnostic only; if revived, select by **`peak_z` distinctiveness**, not RMS. |
-| D12 | **Pipeline performance redesign** — the detect→gate→fingerprint path grew for *exploration*, never reviewed for throughput. | **Own doc: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md).** §1 audit done (2026-07-01): gate inventory, measurement→gate map labeling each field **decision/repair/diagnostic**, cost hierarchy, overlaps. Key finding — two paths (lean production `PatchAudio` vs diagnostic `characterize_gaps_with_gate` that runs *every* measurement per gap); the diagnostic-only set (`seam_probe`, `wide_envelope`, diag `lag`, `b_levels`) is computed unconditionally and belongs behind a flag. Absorbs D5 + the "Perf" capture-parked block. §2–§4 (target/migration/validation) scaffolded, not decided. |
-| D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** (classify, don't count as fill misses) | **2026-07-01 finding (pair 6, archived corpus).** The gaps split cleanly by B-side occupancy: *real dropouts* (g4/g5/g12/g13 — A deep-silent `gap_floor −83…−99`, **B occupied** `silence 0%`, continuous, small step) **patch**; the *skip cluster* (g1/g2/g3/g6/g8/g9/g10/g11 — A quiet-at-noise-floor `gap_floor ≈ −77`, **B also silent** `silence 89–100%`, discontinuous, large step +50…+419) is **program-quiet present in both masters** → nothing to fill → correctly skipped. **Not a repair failure.** `donor_interior.silence_fraction`/`continuous` already carries the signal. **Classifier IMPLEMENTED (2026-07-01, no-production):** analyzer `program_quiet_skip()` / `addressable_dropout()` (registration-independent `donor_interior_nominal.silence_fraction ≥ PROGRAM_QUIET_SILENCE_FRAC = 0.5`); `dualfit_candidate` now **excludes** program-quiet, and `dualfit_scope_text` drops them from the addressable-skip denominator (tags rows `program-quiet`). Live b-levels rescan (partial): **24 skips reclassified out**, incl. *recoverable* ones (1·g9 step 262 ms, 1·g10/g11/g12) that the pre-D11 predicate would have mis-targeted — the exact value D11 predicted. Threshold `0.5` is a const, calibrate at C6. Caveat: "B silent" has two readings — genuine program-quiet vs aliased registration landing on a silent B spot (large step + low `peak_z` is the alias signature) — same skip outcome either way; `splice_dualfit` on rescan disambiguates. Refutes my earlier "high gap floor = occupied busy ambience" — B is *silent*, so it's quiet-in-both, not occupied-in-both. |
+| D12 | **Pipeline performance redesign** (D12) | **Active — not blocking repair.** Own doc: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md). §1 audit done; §2 updated (2026-07-03); §4 harness built. Remaining: step 1 hoists (partial), step 4 FFT lag. X-diagnostics gated (`--fingerprint-diagnostics`); per-bracket oracle still always on in scan. |
+| D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** | **DONE — analyzer + production (2026-07-03).** Analyzer: `program_quiet_skip()` / `addressable_dropout()`. **Production:** G5 `program_quiet_skip` in `patch_audio.rs` before seam gate (`GapPatchSkipReason::ProgramQuiet`); shared `domain/donor.rs`. Threshold `PROGRAM_QUIET_SILENCE_FRAC = 0.5` (C6). 24 skips reclassified on D11 rescan. |
 
 ---
 
 ## Capture parked (fingerprint layer hygiene)
 
-Parked **CAP** items — not on the critical path until a **`b_mapped` rescan** is worth running.
+Parked **CAP** items — hygiene only; not on the production rollout path (§F).
 
-**Next CAP change (A2):** done — decision metrics register at **`b_mapped` nominal**; `residual` stays at gate
-throat. Re-scan when ready.
+**A2 capture:** done — decision metrics at **`b_mapped` nominal**; re-anchor rescan validates.
 
-**F1 (mostly done).** Registration metrics no longer use `oracle_throat_structure_frame`. **Remnant:** top-level `fp.structure` still comes from the summary pass's `place_on_b` and is not refreshed in the gate
-overlay; corpus `structure_min` stats may disagree with the oracle throat. `fp.seams.baseline_*` is updated
-from the zero-move oracle bracket.
+**F1 (mostly done).** `skip_baseline_placement` dedup landed (D12 step 1 partial). **Remnant:** top-level
+`fp.structure` from summary pass may disagree with oracle throat; `fp.seams.baseline_*` updated from
+zero-move bracket in gate overlay.
 
 | # | Item | Status | When to fix |
 |---|------|--------|-------------|
@@ -177,14 +188,12 @@ from the zero-move oracle bracket.
 | C-harness | `uniqueness_z` single-sided (slightly optimistic) | **DONE (2026-07-01)** | Two-sided `both()` — `uniqueness_z` is `min(pre,post)` only when BOTH shoulders carry `peak_z`, else `None` (no fabricating a both-sides value from one). |
 | C-harness-2 | **`verdict` / `skew` use one side** — `gap_row` took `pre.or(post)` for the headline verdict and constant-vs-drift skew | **DONE (2026-07-01)** | `skew` now requires **both** shoulders present and both `timing_offset` (else `NotApplicable`); `verdict` doc marks it one-sided/pre-preferred and points classification at the two-sided `splice_diag()` / `seam_step_ms()`. |
 | C-harness-3 | **Legacy `gap.lag` fallback** — analyzer uses `baseline_lag.or(gap.lag)` | **DONE (2026-07-01)** | Rows that fall back are flagged (`registration_from_legacy_lag`) and `summary_text` warns loudly on any pre-/post-A2 schema mix (different placement — not comparable). Fallback retained for pre-A2 corpora. |
-| B-level | **Symmetric B-side level** — capture is asymmetric: full `LevelProfile` on A (speech_peak/noise_floor/contour) but only `donor_interior` (RMS/silence/continuity) on B. | OPEN (D11) | **Validation instrument, not a required production cost.** Use a full B `LevelProfile` to *confirm* the donor-silent ⇒ program-quiet hypothesis (is B quiet relative to its own noise floor, at the correct registration?). **Cheap — does NOT double gap-exam cost:** B is already decoded (for the lag sweep/donor); a level profile is an `O(N)` RMS-bin pass, negligible next to the lag-correlation sweep (the dominant cost). **Production test likely needs neither the sweep nor the full profile:** a **B RMS/silence check at the *nominal* geometry `b_mapped` span (no lag adjustment)** is registration-independent (dodges the alias confound), `O(N)`, and directly answers "is B quiet at the same program time" — pair with A `gap_floor` vs A `noise_floor`. Symmetric profile = calibrate/validate; ship the cheap nominal-span silence test. |
+| B-level | **Symmetric B-side level** | **DONE — validation role** | Full B `LevelProfile` behind `--fingerprint-diagnostics`. Production G5 uses cheap nominal-span `donor_interior_nominal` (shipped). |
 
-**Perf (before a long rescan).** Dominant cost is still N × oracle bracket scoring (required). Avoidable
-overhead today: (1) summary `characterize_gaps` still runs one `place_on_b` before the gate overlay; (2)
-diagnostic `fp.lag` at the best-energy bracket adds another `place_on_b` + `lag_at_placement`; (3)
-`dump_gap_fingerprints` re-decodes A/B after repair. Likely wins when rescans matter: drop summary
-`place_on_b` when gate follows; share one border extract at the throat for lag + probe + wide-envelope;
-reuse repair decode; **FFT lag sweep** (below).
+**Perf (2026-07-03).** Dominant scan cost: N × oracle bracket scoring (always on). Partial wins landed:
+`skip_baseline_placement` (summary dedup); X-set behind `--fingerprint-diagnostics`. **Still open (D12):**
+binned-RMS hoist, border extract sharing, FFT lag sweep (~50–150×). Fingerprint dump shares `decode_ab` with
+repair — it does **not** re-decode after repair. Details: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.4.
 
 **FFT lag sweep (`lag_correlation_curve`) — the biggest single win (~50–150×).** `lag_correlation_curve`
 (`gap_fingerprint.rs`) is naive `O(n·L)`: one 1 s Pearson (`n ≈ 48k`) at every integer lag over ±600 ms
@@ -206,9 +215,8 @@ speeding the sweep speeds them too.
   `peak_z`/`prominence`/`frac_lag` specifically).
 - **Keep a naive fallback for small curves:** the same fn runs the ±25 ms seam probe and 100 ms-bin envelope
   (tiny `L`) where FFT overhead loses — auto-select by `n·L`.
-- **Sequencing:** land it *after* the dual-fit rescan + A5/C6 threshold calibration — behavior-preserving,
-  but you want a stable naive baseline to write the equivalence test against, not to change the engine
-  under a metric mid-calibration. Est. ~1 day incl. tests.
+- **Sequencing:** prerequisites met (golden frozen, naive baseline stable). Land behind §4 harness Tier-2 ε.
+  Est. ~1 day incl. tests. Tracking: D12 §3 step 4.
 
 **Do not optimize first:** `donor_interior` RMS; parallel per-gap loops before deduping search and aligning
 placement.
@@ -223,7 +231,7 @@ authoritative map. Key traps:
 | **Mixed lag widths** | by design | `baseline_lag` ±600 ms (classification); `seam_probe` pre ±25 ms / post ±600 ms; `wide_envelope` pre ±400 ms / post ±600 ms. Prefer **`splice_diag` / `splice_text`** over `seam_diag` / `seam_probe_text` for skip triage. |
 | **`fp.lag` vs `baseline_lag`** | by design | Diagnostic `fp.lag` sits at the structure throat; decision registration is at **`b_mapped`**. Never compare interchangeably (F1). |
 | **`oracle_throat_structure_frame` vs `b_mapped`** | by design | Gate throat is for bracket/seam scoring; `baseline_lag` / `splice` / `donor_interior` register at **`b_mapped`**. |
-| **Edge-pinned peaks** | IMPLEMENTED (needs rescan) | Flag lands: `LagSummary`/`SpliceSummary.edge_pinned` (peak within 2 ms of the searched boundary); analyzer `step_edge_pinned()` excludes it from `dualfit_candidate` and `splice_text` counts it. `splice.step_ms` is now labeled GIGO when set. Coarse post placement only if the rescan shows systematic edge-pins (C4: not needed for recoverable population). |
+| **Edge-pinned peaks** | VALIDATED 0/55 (re-anchor rescan) | Safety net only; `step_edge_pinned()` excludes from `dualfit_candidate`. |
 | **`lag0_r` when gross-shifted** | OPEN, low | `LagVerdict` / `lag0_r` can be wrong when the gross-shifted curve omits lag 0 — `splice_diag` unaffected. |
 | **`dualfit_candidate` (uniqueness) is retired for scoping** | resolved (re-anchor rescan) | The uniqueness-vs-`gate_pass` divergence was a **`splice_dualfit` placement bug**, not a uniqueness failure: 2·g1/1·g22 (seam-local fix) and 7·g3 (nominal re-anchor) and 7·g4 (step-real) were all false-negatives, now recovered. Final scope = **`dualfit_target()` = gate_pass ∧ step-real ∧ donor-continuous ∧ ¬program-quiet** on the re-anchored `splice_dualfit` → **9 targets**. Post-±600, `gate_pass` itself is degenerate (P2) — the load-bearing gates are step-real ∧ donor-occupancy. `dualfit_candidate`/uniqueness (`peak_z`) is diagnostic only. |
 
@@ -241,42 +249,34 @@ authoritative map. Key traps:
 
 ---
 
-## Re-orientation — how the proven ideas fold into vocabulary and pipeline
+## Re-orientation — closed proof summary (2026-07-03)
 
-**Vocabulary (descriptive; `gap-vocabulary-redesign` P2/P3).** Re-root on the axes (B1, B8, B2, B13): a gap is
-`{geometry, A-presence, donor-presence, shared-source, registration(offset+step), bracket-search,
-envelope}`. Name types from a **`b_mapped` rescan** (post A2). W5 → "same-master, lag-0/bracket validation failed."
+**Vocabulary (descriptive).** Axes settled in [TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md)
+§2 (P2 clustering done). **Next:** P3 named types + legacy W-tier mapping (D4) — not blocking repair.
 
-**Pipeline (detect → repair; ledger §4).** Order:
-1. **Rescan primary cohort** with `b_mapped` capture (dirs 1–6 or full set).
-2. **Re-classify skips** via `diag_fingerprint_corpus` — bracket-exhausted set may shrink.
-3. **Detect** = **`dualfit_target()`** (ledger §4 step 1) — not `dualfit_candidate()` / uniqueness.
-4. **Repair proof** = scan-native **`splice_dualfit`** already answers C3/C7; wire §4 behind flag (A3).
-5. **Calibrate** thresholds (A5/C6) — light calibration done; uniqueness floors are diagnostic only.
+**Dual-fit addressable set (FINAL — re-anchor rescan):** **9 targets** — 1·g3, 1·g5, 1·g22, 2·g1, 2·g2,
+5·g6, 7·g2, 7·g3, 7·g4. Effective gates on this corpus: **step-real ∧ donor-occupancy ∧ ¬program-quiet**
+(`gate_pass` degenerate post-±600 — ledger P2). Golden baseline frozen.
 
-**Dual-fit addressable set (FINAL — re-anchor rescan, 2026-07-02):** **9 targets — 1·g3, 1·g5, 1·g22, 2·g1,
-2·g2, 5·g6, 7·g2, 7·g3, 7·g4** (`dualfit_target()`; golden baseline frozen). Reached through three fixes, each
-exposed by an operator ground-truth check: seam-local scoring (recovered 2·g1/1·g22), nominal re-anchor ±600 ms
-(recovered 7·g3, gross-vs-seam divergence 337 ms), step-real margin 0.15 (recovered 7·g4). Post-±600
-`gate_pass` is degenerate (31/32 pass); the effective gates are **step-real ∧ donor-occupancy**. One-sided-dead
-collapsed to 8/55 (B2/C1) — not a separate rescue path. The earlier 3- and 7-target counts were pre-fix
-undercounts (superseded).
+**Repair algorithm:** §4 below; **implemented** (dual-fit default on). **G5 program-quiet** always on in
+production (not flag-gated).
 
-**One-line status (2026-07-02):** registration **closed and validated** (A2/B2/B13/C1/C2/C4 PROVEN). Dual-fit
-seam viability went through **two capture fixes** as ground-truth checks exposed them:
-1. **Seam-local fix (±100 ms, gross-anchored)** — rescan #1 validated it: 2·g1/1·g22 flipped, **7 targets**
-   (1·g3,1·g5,1·g22,2·g1,2·g2,5·g6,7·g2), C3 7/39→20/39. Golden baseline captured (`golden/`).
-2. **`b_levels`-vs-elimination cross-check** then caught **7·g3/7·g4** (operator-confirmed real drops, valid B
-   sound) still dropped — a *larger* divergence (7·g3: gross 1 s pre −319 ms, seam +18 ms) beyond ±100 ms.
-   ⇒ **Re-anchor fix (`2622c7a`): seam search now on NOMINAL `b_mapped` ±600 ms** (`SEAM_LOCAL_SEARCH_MS`),
-   + `pre/post_seam_z` alias guard. Unit-tested, binary built.
-3. **Step-real recalibration** (`b099b83`) — the old `post@pre < 0.35` floor mis-flagged 7·g4 (post@pre 0.393,
-   post_own 0.96); `step_is_real()` now requires `post_own − post@pre ≥ 0.15` (materially improves). +7·g4.
-**RESOLVED / FROZEN (2026-07-02):** nominal-reanchor rescan done → **9 A3 targets** (1·g3,1·g5,1·g22,2·g1,2·g2,
-5·g6,7·g2,7·g3,7·g4), all seam_z 9.3–21.9, donor-continuous, step materially real. **Golden baseline frozen**
-(`golden/re-anchor-dual-fit-on-nominal.golden.json`); all §4.0 gates met: P2 clean, `b_levels` cross-check
-clean (eliminated B-loud gaps all donor-BROKEN w/ multi-sec interior silence, or start-of-file g0). **P2
-findings:** `gate_pass` is now **degenerate** (31/32 pass — ±600 ms over-permissive) and `donor-aligned ≡
-donor-nominal` on this corpus — the target set rests on donor-occupancy ∧ step-real, not seam viability (a
-**D8 caveat**: a decoy regime needs a real alias gate — `seam_z`/wide-env). **Next:** perf-redesign (D12) →
-**wire §4 repair (A3)** on the 9-gap scope.
+---
+
+## F. Production rollout — remaining work (2026-07-03)
+
+What is left to call clip-sync-repair **production-complete** for same-master gap fill (not calibration
+throughput). Ordered by impact.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| **F1** | **Enable dual-fit in default repair profile** | **DONE (2026-07-03)** | `RepairConfig.dual_fit = true` by default; `--no-dual-fit` opt-out. Media-validated on pairs 2–7; golden covers all 9 targets. |
+| **F2** | **Operator docs** | **DONE (2026-07-03)** | [gap-repair-guide.md](gap-repair-guide.md) and [gap-fill-modes.md](gap-fill-modes.md) document dual-fit rescue (G6), G5 `ProgramQuiet` skip, W7/P8, and `--no-dual-fit`. |
+| **F3** | **CLI / JSON surfacing** | **PARTIAL** | Skip reason `ProgramQuiet` documented in [cli-output.md](cli-output.md) and [json-output.md](json-output.md). Dual-fit patched gaps report tier/confidence like other fills. |
+| **F4** | **Bracket-search fill quality** | **OPEN — separate track** | `5·g4` boundary blips (crossfade at fill edge) — pre-existing bracket path, not A3. Worth a focused pass if operators hit audible seams on *patched* (non-dual-fit) gaps. |
+| **F5** | **D12 perf** | **OPEN — not blocking correctness** | Hoists + FFT lag ([TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.4). Improves fingerprint calibration turnaround (~1.7 h/pair), not end-user repair output. |
+| **F6** | **D8 decoy / alias gate** | **PARKED** | Build only when a false positive appears (non-same-master or mined decoy). No observed leak on the 9-target corpus. |
+| **F7** | **Vocab P3** | **OPEN — descriptive** | Named gap types in analyzer/reporting (D4). Does not change repair decisions. |
+
+**Suggested order:** F3 (output polish) → F4 if user reports audible bracket patches → F5 when rescan
+throughput matters.
