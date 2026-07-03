@@ -815,6 +815,69 @@ pub fn fit_fill_to_gap_frames(samples: &[f32], channels: usize, target_frames: u
     out
 }
 
+/// Frames guarding each end of a dual-fit bridge from the interior trim/pad point (keep the shoulder seams
+/// intact — the length edit must land strictly in the interior, not at a seam).
+pub const DUALFIT_INTERIOR_EDGE_GUARD_FRAMES: usize = 64;
+
+/// Start frame of the `window`-frame interior span with the lowest mean-square energy, kept ≥ `edge_guard`
+/// frames from each end. The least-audible place to cut or hold.
+fn lowest_energy_interior_start(fill: &[f32], channels: usize, window: usize, edge_guard: usize) -> usize {
+    let ch = channels.max(1);
+    let n = fill.len() / ch;
+    let window = window.max(1);
+    if n <= window + 2 * edge_guard {
+        return edge_guard.min(n.saturating_sub(window));
+    }
+    let ms = |f: usize| -> f64 {
+        let s = &fill[f * ch..(f + window) * ch];
+        s.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / (s.len().max(1) as f64)
+    };
+    let (lo, hi) = (edge_guard, n - window - edge_guard);
+    let mut best = lo;
+    let mut best_ms = ms(lo);
+    for f in (lo + 1)..=hi {
+        let m = ms(f);
+        if m < best_ms {
+            best_ms = m;
+            best = f;
+        }
+    }
+    best
+}
+
+/// Reconcile a dual-fit **bridge** — B's content between the two seam-local-placed shoulders (length
+/// = `gap ± step`) — to exactly `gap_frames`, editing **only the interior** at its **lowest-energy point**
+/// (the least-audible splice). The shoulders keep their own lags (A3 §4); this is the interior length edit.
+/// `bridge − gap > 0` ⇒ trim those interior frames; `< 0` ⇒ pad by holding the quietest interior frame.
+/// *(A crossfade across the interior join is a D7 audibility refinement — the cut is already at min energy.)*
+pub fn trim_at_lowest_energy_interior(bridge: &[f32], channels: usize, gap_frames: usize) -> Vec<f32> {
+    let ch = channels.max(1);
+    let b_frames = bridge.len() / ch;
+    if b_frames == gap_frames || gap_frames == 0 || b_frames == 0 {
+        return fit_fill_to_gap_frames(bridge, ch, gap_frames);
+    }
+    let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
+    if b_frames > gap_frames {
+        let trim = b_frames - gap_frames;
+        let cut = lowest_energy_interior_start(bridge, ch, trim, guard);
+        let mut out = Vec::with_capacity(gap_frames * ch);
+        out.extend_from_slice(&bridge[..cut * ch]);
+        out.extend_from_slice(&bridge[(cut + trim) * ch..]);
+        out
+    } else {
+        let pad = gap_frames - b_frames;
+        let at = lowest_energy_interior_start(bridge, ch, 1, guard).min(b_frames - 1);
+        let mut out = Vec::with_capacity(gap_frames * ch);
+        out.extend_from_slice(&bridge[..(at + 1) * ch]);
+        let held = &bridge[at * ch..(at + 1) * ch];
+        for _ in 0..pad {
+            out.extend_from_slice(held);
+        }
+        out.extend_from_slice(&bridge[(at + 1) * ch..]);
+        out
+    }
+}
+
 fn placement_repeat_post(
     fill_interleaved: &[f32],
     channels: usize,
@@ -1129,6 +1192,28 @@ mod tests {
     use crate::domain::policies::{
         SeamFloorSource, SeamResidualVerdict,
     };
+
+    #[test]
+    fn interior_trim_cuts_in_the_quiet_valley() {
+        // 1000 frames, loud everywhere except a quiet valley [400,600). Trimming 100 frames to reach 900
+        // must remove only quiet frames — the loud energy is fully preserved, and the cut lands in the valley.
+        let bridge: Vec<f32> = (0..1000)
+            .map(|i| if (400..600).contains(&i) { 0.001 } else { 0.5 })
+            .collect();
+        let out = trim_at_lowest_energy_interior(&bridge, 1, 900);
+        assert_eq!(out.len(), 900, "trimmed to gap length");
+        let loud = |v: &[f32]| v.iter().filter(|&&x| x > 0.4).count();
+        assert_eq!(loud(&bridge), loud(&out), "trim removed only quiet frames");
+    }
+
+    #[test]
+    fn interior_trim_pad_and_equal_lengths() {
+        let ch = 2;
+        let bridge = vec![0.1f32; 500 * ch]; // 500 frames
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 500).len(), 500 * ch, "equal");
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 450).len(), 450 * ch, "trim");
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 600).len(), 600 * ch, "pad");
+    }
 
     fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {
         let floor_db = if informative { -40.0 } else { -5.0 };
