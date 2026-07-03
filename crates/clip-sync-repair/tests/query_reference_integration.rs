@@ -239,6 +239,7 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 anchor_seam_min_xcorr_peak: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
                 anchor_seam_xcorr_ambiguous_band:
                     clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
+                dual_fit: false,
             },
             10,
         )

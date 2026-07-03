@@ -166,7 +166,7 @@ mod tests {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
-            program_quiet_frac: 0.5,
+            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db: -60.0,
         };
 
@@ -208,7 +208,7 @@ mod tests {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
-            program_quiet_frac: 0.5,
+            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db: -60.0,
         };
         assert!(

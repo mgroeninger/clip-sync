@@ -159,6 +159,7 @@ pub fn format_skip_reason(status: &GapPatchStatus) -> String {
             GapPatchSkipReason::ResidualHeadroomExceeded { headroom_db, .. } => {
                 format!("residual_headroom_exceeded(headroom={headroom_db:.1})")
             }
+            GapPatchSkipReason::ProgramQuiet => "program_quiet".into(),
         },
         GapPatchStatus::Patched { confidence, .. } => format!("patched({confidence:?})"),
         GapPatchStatus::NotPlanned { reason } => format!("not_planned({reason:?})"),

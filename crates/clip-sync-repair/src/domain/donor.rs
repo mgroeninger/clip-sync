@@ -9,6 +9,9 @@ const SILENCE_FLOOR_DB: f32 = -120.0;
 const DONOR_BIN_MS: f64 = 50.0;
 /// A donor with no internal sub-floor run longer than this is treated as continuous (bridges the gap).
 pub const DONOR_CONTINUITY_MS: f64 = 150.0;
+/// B `silence_fraction` at the **nominal** `b_mapped` span at/above this ⇒ program-quiet (D11/G5) — quiet in
+/// both masters, nothing to fill. Calibrated on the re-anchor corpus (bimodal cluster ≥0.83 vs dropouts ≈0).
+pub const PROGRAM_QUIET_SILENCE_FRAC: f64 = 0.5;
 
 fn to_db(rms: f32) -> f32 {
     if rms <= 1e-9 {
@@ -70,6 +73,21 @@ pub fn donor_interior_at(
     })
 }
 
+/// Registration-independent **program-quiet** check (G5/D11): is B mostly silent at the nominal geometry
+/// `b_mapped` span (no per-shoulder lag), measured against A's gap floor? Quiet in both masters ⇒ nothing
+/// to fill — skip before the expensive seam gate.
+pub fn program_quiet_at_nominal(
+    b_mono: &[f64],
+    b_mapped_start: usize,
+    gap_frames: usize,
+    gap_floor_db: f64,
+    sample_rate: u32,
+) -> bool {
+    let end = b_mapped_start.saturating_add(gap_frames);
+    donor_interior_at(b_mono, b_mapped_start, end, gap_floor_db, sample_rate)
+        .is_some_and(|d| d.silence_fraction >= PROGRAM_QUIET_SILENCE_FRAC)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +115,16 @@ mod tests {
 
         // Empty / over-range spans guarded.
         assert!(donor_interior_at(&tone, 10, 0, floor_db, sr).is_none());
+    }
+
+    #[test]
+    fn program_quiet_at_nominal_detects_silent_b_span() {
+        let sr = 48_000u32;
+        let n = sr as usize / 2;
+        let silent: Vec<f64> = vec![0.0; n];
+        let floor_db = -60.0;
+        assert!(program_quiet_at_nominal(&silent, 0, n, floor_db, sr));
+        let tone: Vec<f64> = (0..n).map(|i| 0.3 * (i as f64 * 0.05).sin()).collect();
+        assert!(!program_quiet_at_nominal(&tone, 0, n, floor_db, sr));
     }
 }

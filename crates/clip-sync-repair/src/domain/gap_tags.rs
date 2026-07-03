@@ -412,6 +412,7 @@ pub fn derive_gap_tags_from_patch_outcome(
                 };
                 (tier, seam)
             }
+            GapPatchSkipReason::ProgramQuiet => (PatchTier::NotApplicable, SeamShape::NotApplicable),
             _ => (PatchTier::NotApplicable, SeamShape::NotApplicable),
         },
     };

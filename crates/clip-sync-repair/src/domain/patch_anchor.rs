@@ -338,6 +338,7 @@ pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
         reason,
         GapPatchSkipReason::BoundaryAlignmentFailed
             | GapPatchSkipReason::CorrelationBelowThreshold { .. }
+            | GapPatchSkipReason::ProgramQuiet
     )
 }
 

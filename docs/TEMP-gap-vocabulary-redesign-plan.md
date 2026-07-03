@@ -5,16 +5,16 @@
 > vocabulary redesign; the ledger is the authoritative proven/open/important index.
 
 Status: **DRAFT — direction validated; P0 + P1 capture DONE; axis structure settled (§2/§2a); P2 clustering
-UNBLOCKED (registration placement fixed — A2 + seam-local), pending the `seam-local-fix` rescan.**
-Full 6-pair corpus analyzed (19 matched, 6 skipped). The **registration axis** is confirmed and has since
-split into **gross** (1 s `baseline_lag`) vs **seam-local** (the fill placement) — see §2a. **Patch vs skip**
-is **bracket-search success**, not step magnitude. The blocker on P2 (quiet-gap registration wander, ledger
-A1/A2) is **resolved**; P2 is now the **orthogonality gate** for the perf §4 harness — run it on the fresh
-scan to confirm the axes are independent/populated before freezing them. Mechanism + repair:
+DONE (2026-07-02)** on the nominal-reanchor rescan (`gap-files/re-anchor-dual-fit-on-nominal`; cluster table
+§7g). Golden baseline frozen; orthogonality gate passed (two axes degenerate on this corpus — noted, not
+blocking). **Next: P3** — draft axis coordinates → named types + legacy W-tier mapping. Mechanism + repair:
 [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (historical:
 [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
 Bracket-vs-step + proof index:
 [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (B1, B11; C3, C7).
+
+§7a–7e preserve the **historical 6-pair snapshot** (19 matched) that motivated the redesign; **§7g** is the
+authoritative P2 cluster table on the current 7-pair / 62-matched corpus.
 
 Reading: [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary (the taxonomy this revises),
 [gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint,
@@ -196,23 +196,31 @@ Repair routing for bracket-exhausted skips → [TEMP-seam-repair-status-ledger.m
 
 **Remaining:** re-scan to populate new fields; harness projection + threshold calibration.
 
-### P2 — Cluster the corpus; let the data name the types (+ **orthogonality gate for perf §4**)
+### P2 — Cluster the corpus; let the data name the types (+ **orthogonality gate for perf §4**) — **DONE (2026-07-02)**
 
 Group gaps by axis coordinates; report cells that occur (frequency + exemplars). **Do not impose a
-taxonomy** — read it off the data. **Dual purpose now:** P2 also **validates the axis structure** before the
+taxonomy** — read it off the data. **Dual purpose:** P2 also **validates the axis structure** before the
 perf §4 harness freezes its golden record — confirm the D/R axes (§2/§2a) are (a) **independent** (no two
 always co-vary → collapse them), (b) **populated** (a cell that never occurs isn't an axis), (c)
-**non-redundant**. Run on the `seam-local-fix` rescan; adjust axes the data refutes *before* the golden
-baseline is pinned (perf §4.0 prerequisite).
+**non-redundant**.
 
-**Expected cells (to confirm/refine on rescan):**
-- `tail` · `no-lag` (no matchable B bracket)
-- `patched-bracket-rescued` (≥1 bracket passes — includes high-step gaps like 5·g3 +72 ms)
-- `skip-bracket-exhausted` (0 brackets pass; structure often ≥ 0.5)
-- `silence-splice` (both shoulders recoverable at ±200 ms `baseline_lag`)
-- `alias-suspect` (thin uniqueness at *old* 250 ms metric; may clear at 1 s `peak_z`)
+**Run corpus:** `gap-files/re-anchor-dual-fit-on-nominal` (nominal-reanchor `splice_dualfit`, commits
+`2622c7a` + `b099b83`). Reproduce: `GAP_FP_DIRS=gap-files/re-anchor-dual-fit-on-nominal GAP_FP_CSV=1 cargo
+test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_corpus -- --nocapture` →
+`target/gap_fingerprint_corpus.csv`. Golden snapshot:
+`crates/clip-sync-repair-harness/golden/re-anchor-dual-fit-on-nominal.golden.json`.
 
-Cluster on **bracket_passing × step × structure × splice_diag** — not skew/drift types.
+**Results:** cluster table + orthogonality verdict in **§7g**. Golden baseline frozen; perf §4.0 gates met
+([`golden/README.md`](../crates/clip-sync-repair-harness/golden/README.md)).
+
+Cluster on **bracket_passing × donor × outcome** (primary); **step is not a cluster divider** (confirmed).
+Expected cells from the pre-rescan hypothesis (refined in §7g):
+
+- `tail` · `no-lag` — 7 tail · 0 no-lag on this corpus
+- `patched-bracket-rescued` — 23/62 matched (includes high-step gaps like 5·g3 +73 ms)
+- `skip-bracket-exhausted` — 32/39 skipped matched
+- `silence-splice` — both shoulders recoverable at ±600 ms on all matched gaps with measured registration
+- `alias-suspect` — 24/55 at old 250 ms metric; demoted to diagnostic (§2a.4)
 
 ### P3 — Draft the redesigned vocabulary
 
@@ -232,7 +240,8 @@ plan §4 — **not** cross-codec validator tiers.
 
 - **P0:** ✓ `baseline_lag` on full corpus; offset/step decomposition; drift framing rejected.
 - **P1:** re-scan populates `donor_interior`, `peak_z`, `wide_envelope`, `splice`; harness columns live.
-- **P2:** stable cluster table including **bracket-exhausted** (6/19 matched); step is not a cluster divider.
+- **P2:** ✓ cluster table on re-anchor rescan (§7g): 62 matched · 32 bracket-exhausted · step not a divider;
+  orthogonality gate passed (two axes degenerate on this corpus — §7g.2).
 - **P3:** each old W/C/P ID maps to new types; W5 mislabel documented.
 - **Regression:** g003 (pair 1 idx 3) — same-master / stepped; may be alias-suspect at 250 ms margin but
   unique at 1 s (§3.6a); do not require old `uniqueness_margin ≥ 0.30`.
@@ -242,7 +251,7 @@ plan §4 — **not** cross-codec validator tiers.
 ## 6. Open questions
 
 1. **Axis thresholds.** Calibrate `peak_z` / `prominence` on rescan distribution. `|step| < 2 ms` ("clean")
-   is rare (1/19) — do not treat as the default registration bucket.
+   is rare (**6/62** matched on re-anchor rescan) — do not treat as the default registration bucket.
 2. **Registration sub-split.** Keep **offset** vs **step**; drop offset-vs-**skew** (drift refuted). Mechanism
    sub-frame, open (quantization test ≈ 0.84× chance).
 3. **Keep or deprecate W-tiers?** Keep as *derived* operator readout; stop treating as the type (decide in P3).
@@ -253,7 +262,10 @@ plan §4 — **not** cross-codec validator tiers.
 
 ---
 
-## 7. Corpus findings (6 pairs, `diag_fingerprint_corpus`)
+## 7. Corpus findings
+
+§7a–7e: **historical 6-pair snapshot** (`diag_fingerprint_corpus`, 19 matched) — preserved for the narrative
+that exposed the W5 mislabel. **§7g:** authoritative **P2 cluster table** on the current re-anchor rescan.
 
 ### 7a. Overview
 
@@ -313,6 +325,77 @@ only (not high-step patches like 5·g3 where 18/25 brackets already pass). Histo
 
 **Proof sequencing:** P3 from fingerprints now; C3/C7 via scan-native **`splice_dualfit`** (proven) before §4
 repair — see [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7, §4).
+
+### 7g. P2 cluster table — re-anchor rescan (7 pairs, 2026-07-02)
+
+**Corpus:** `gap-files/re-anchor-dual-fit-on-nominal` · nominal-reanchor `splice_dualfit` + corrected
+`step_is_real` · golden baseline frozen
+(`crates/clip-sync-repair-harness/golden/re-anchor-dual-fit-on-nominal.golden.json`).
+
+**Overview (69 gaps total; matched denominator = 62):**
+
+| Bucket | Count | Notes |
+|--------|------:|-------|
+| Matched (analysis denominator) | 62 | All carry matchable B seam content |
+| Tail (P6) | 7 | Length-mismatch tails; excluded from matched table |
+| No-lag | 0 | — |
+| Patched | 23 | 37% of matched |
+| Skipped | 39 | 63% of matched |
+| Bracket-exhausted (0 passing) | 32 | 82% of skipped matched |
+| Program-quiet skips (D11) | 24 | Correctly unfillable — drop from addressable denominator |
+| Dual-fit targets (`dualfit_target()`) | 9 | Bracket-exhausted · donor-continuous · gate_pass · step-real · ¬program-quiet |
+
+`plan_kind` always `fillable`. Among matched with registration: **100% `timing_offset`** at gross placement
+(decorrelated gaps are start-of-file / no-bracket `g0` rows).
+
+#### 7g.1 Primary cells — bracket search × donor × outcome
+
+Read types off the data; do **not** treat step magnitude as a primary divider (patched vs skipped `|step|`
+ranges overlap: patched 0.0–588 ms median 29 ms · skipped 0.3–598 ms median 80 ms).
+
+| n | Bracket search | Donor (nominal + aligned) | Outcome | Exemplars |
+|--:|----------------|---------------------------|---------|-----------|
+| 16 | **bracket-rescued** (≥1 pass) | donor-continuous | **patch** | 1·g6, 1·g20, 2·g3, 3·g2, 5·g3 (+72 ms step), … |
+| 7 | **bracket-rescued** | donor-BROKEN (interior silent) | **patch** | 1·g1, 1·g2, 1·g8, 1·g23, … |
+| 9 | **bracket-exhausted** | donor-continuous | **skip** → **dual-fit target** | 1·g3, 1·g5, 1·g22, 2·g1, 2·g2, 5·g6, 7·g2, 7·g3, 7·g4 |
+| 1 | **bracket-exhausted** | donor-continuous | **skip** (gate unmeasured) | 5·g0 |
+| 22 | **bracket-exhausted** | **program-quiet** | **skip** (nothing to fill) | 1·g4, 1·g7, 1·g9, 1·g10, 1·g19, 6·g6, … |
+| 2 | **no-brackets** (`g0`) | donor-continuous | skip | 1·g0, 3·g0 |
+| 3 | **no-brackets** (`g0`) | donor-BROKEN | skip | 4·g0, 6·g0, 7·g0 |
+| 2 | **no-brackets** (`g0`) | program-quiet | skip | 2·g0, 6·g2 |
+
+**Patch vs skip separator:** bracket search success, not step. Among skipped matched with brackets:
+best-bracket seam **max 0.26**; among patched: best-bracket seam **median 0.51**. Structure placement is
+not the failure mode — **27/39** skipped have `structure_min ≥ 0.5` but fail `waveform_floor` at the throat.
+
+#### 7g.2 Orthogonality gate (perf §4.0 prerequisite)
+
+Run on golden D/R coordinates; verdict **PASS** (2026-07-02) — cells are interpretable; golden baseline
+frozen. Two axes **degenerate on this same-master corpus** (noted, not blocking):
+
+| Axis pair | Verdict | Evidence |
+|-----------|---------|----------|
+| **`gate_pass`** vs bracket-exhausted repair scope | **Degenerate gate** | 31/32 bracket-exhausted gaps pass `gate_pass` (1 unmeasured: 5·g0); 54/55 bracketed gaps with `splice_dualfit` pass. ±600 ms seam search is over-permissive — target set rests on **donor-occupancy ∧ step-real**, not seam viability (D8 caveat). |
+| **Donor-aligned** vs **donor-nominal** | **Redundant on corpus** | `aligned_donor_continuous ≡ nominal_donor_continuous` on **62/62** matched. Kept as D8 safety net for decoy regimes. |
+| **Step** vs patch/skip | **Not independent** (expected) | `\|step\|` ranges overlap between patched and skipped — step describes registration, not outcome. |
+| **Shared source** | **Constant** | All same-master; `different`/`ambiguous` untested (D2/D8). |
+| **Bracket search** × **donor** × **outcome** | **Populated + discriminating** | Primary cells in §7g.1 cover all 62 matched gaps; dual-fit targets occupy one clean sub-cell (9 gaps). |
+
+**Load-bearing axes confirmed:** geometry (matched vs tail) · bracket search · donor (continuous / BROKEN /
+program-quiet) · registration (offset + step — descriptive, not outcome) · seam-local viability (degenerate
+as a *gate* here, still descriptive).
+
+#### 7g.3 Expected-cell checklist (P2 hypothesis → rescan)
+
+| Pre-rescan cell | Rescan result |
+|-----------------|---------------|
+| `tail` · `no-lag` | 7 tail · 0 no-lag |
+| `patched-bracket-rescued` | 23/62 matched |
+| `skip-bracket-exhausted` | 32/39 skipped matched |
+| `silence-splice` (recoverable shoulders) | All matched gaps with measured registration recover at ±600 ms |
+| `alias-suspect` @ 250 ms | 24/55 — diagnostic only (§2a.4); does not predict patch/skip |
+
+**P3 input:** name the §7g.1 cells; map legacy W5 → "same-master, bracket-exhausted" (not "weak").
 
 ### 7f. Superseded hypotheses (tombstone)
 

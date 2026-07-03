@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use clip_sync_repair::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
 use serde::Deserialize;
 
 // ── minimal schema projection ───────────────────────────────────────────────────
@@ -658,11 +659,9 @@ impl GapRow {
     }
 }
 
-/// D11 — B is at least this silent over the nominal-span (fraction of sub-floor bins) ⇒ program-quiet, not
-/// a fillable dropout. Real dropouts read ~0 (B occupied); program-quiet passages ~0.9–1.0 (B silent too).
-/// **Calibrated (edge-pin/D11 rescan, 2026-07-01):** bimodal — dropouts ≈0, program-quiet cluster ≥0.83, so
-/// 0.5 sits in a wide empty gap (any value in ~[0.1, 0.8] separates the same set). Keep 0.5.
-const PROGRAM_QUIET_SILENCE_FRAC: f64 = 0.5;
+/// D11 — B is at least [`PROGRAM_QUIET_SILENCE_FRAC`] silent over the nominal-span ⇒ program-quiet, not a
+/// fillable dropout. Real dropouts read ~0 (B occupied); program-quiet passages ~0.9–1.0 (B silent too).
+/// **Calibrated (edge-pin/D11 rescan, 2026-07-01):** bimodal — dropouts ≈0, program-quiet cluster ≥0.83.
 
 /// The dual-fit **step-real margin**: the step is *necessary* (a real splice, not a registration artifact)
 /// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at

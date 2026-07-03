@@ -97,6 +97,7 @@ pub fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
         GapPatchSkipReason::BoundaryAlignmentFailed => "boundary_alignment_failed".into(),
         GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range".into(),
         GapPatchSkipReason::ZeroLengthGap => "zero_length_gap".into(),
+        GapPatchSkipReason::ProgramQuiet => "program_quiet".into(),
     }
 }
 

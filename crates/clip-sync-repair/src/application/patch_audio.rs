@@ -1378,6 +1378,64 @@ fn seam_failure_outcome(
     (None, outcome, tag_ctx)
 }
 
+/// A-side gap-interior RMS floor (dB) — approximation of the fingerprint `levels.gap_floor_db`.
+fn a_gap_floor_db(a_samples: &[f32], channels: usize, gap_start: usize, gap_end: usize) -> f64 {
+    let ch = channels.max(1);
+    let lo = gap_start.min(gap_end);
+    let hi = gap_start.max(gap_end);
+    if lo >= hi {
+        return -120.0;
+    }
+    let sum_sq: f64 = (lo..hi)
+        .map(|f| {
+            let base = f * ch;
+            let m = a_samples[base..base + ch].iter().map(|&x| x as f64).sum::<f64>() / ch as f64;
+            m * m
+        })
+        .sum();
+    let rms = (sum_sq / (hi - lo) as f64).sqrt();
+    if rms <= 1e-9 {
+        -120.0
+    } else {
+        20.0 * rms.log10()
+    }
+}
+
+fn b_mapped_start_frame(
+    refined_b_start_secs: f64,
+    b_extract_start_secs: f64,
+    sample_rate: u32,
+) -> usize {
+    (((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as i64).max(0) as usize
+}
+
+/// G5 (D11): cheap program-quiet reject — B silent at nominal `b_mapped` before the seam gate.
+fn program_quiet_skip(
+    a_samples: &[f32],
+    b_samples: &[f32],
+    channels: usize,
+    sample_rate: u32,
+    refined: RefinedGapFrames,
+    refined_b_start_secs: f64,
+    b_extract_start_secs: f64,
+    gap_frames: usize,
+) -> bool {
+    let ch = channels.max(1);
+    let b_mono: Vec<f64> = b_samples
+        .chunks(ch)
+        .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
+        .collect();
+    let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
+    let gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
+    crate::domain::donor::program_quiet_at_nominal(
+        &b_mono,
+        b_mapped_start,
+        gap_frames,
+        gap_floor_db,
+        sample_rate,
+    )
+}
+
 /// Everything the A3 dual-fit algorithm needs, built once from the decoded window — only when `--dual-fit`
 /// is on (so the off path pays nothing). `None` when the gap is too near a window edge for the seam borders.
 struct DualFitRepairInput<'a> {
@@ -1427,14 +1485,8 @@ fn build_dual_fit_input<'a>(
         .chunks(ch)
         .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
         .collect();
-    let b_mapped_start = (((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round()
-        as i64)
-        .max(0) as usize;
-    // A gap-interior floor (approximation of the analyzer's level-profile gap_floor — reconcile against the
-    // golden baseline on the media run; used only as the donor silence threshold).
-    let a_gap = mono(refined.start_frame, refined.end_frame);
-    let a_rms = (a_gap.iter().map(|v| v * v).sum::<f64>() / a_gap.len().max(1) as f64).sqrt();
-    let a_gap_floor_db = if a_rms <= 1e-9 { -120.0 } else { 20.0 * a_rms.log10() };
+    let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
+    let a_gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
     Some(DualFitRepairInput {
         params: crate::domain::dual_fit::DualFitParams {
             channels: ch,
@@ -1445,7 +1497,7 @@ fn build_dual_fit_input<'a>(
             min_fill_correlation: min_fill_correlation as f64,
             fill_absolute_floor: fill_absolute_floor as f64,
             step_real_margin: 0.15,
-            program_quiet_frac: 0.5,
+            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db,
         },
         a_pre_mono,
@@ -1738,6 +1790,32 @@ fn prepare_region_patch(
             );
         }
     };
+
+    if anchored_retry_pass != AnchoredRetryPass::Second
+        && program_quiet_skip(
+        &a_pcm.samples,
+        b_samples,
+        channels,
+        sample_rate,
+        refined,
+        refined_b_start_secs,
+        b_extract_start_secs,
+        gap_frames,
+    ) {
+        let reason = GapPatchSkipReason::ProgramQuiet;
+        log_skip_gap_fill(
+            progress,
+            &request.report.gaps,
+            region.a_start_secs,
+            region.a_end_secs,
+            &reason,
+        );
+        return (
+            None,
+            skipped_patch(reason),
+            tag_ctx,
+        );
+    }
 
     let border_frames = border_frames_from_secs(normalize_window_secs, sample_rate)
         .min(correlate_frames);

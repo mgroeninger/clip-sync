@@ -118,6 +118,8 @@ pub enum GapPatchSkipReason {
         floor_post_db: f64,
         margin_db: f64,
     },
+    /// B is silent at the nominal program-time span (D11/G5) — quiet in both masters, nothing to fill.
+    ProgramQuiet,
 }
 
 /// Human-readable skip reason for stdout gap tables and verbose stderr (`-v`).
@@ -138,6 +140,9 @@ pub fn format_gap_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
         ),
         GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned B segment out of range".into(),
         GapPatchSkipReason::ZeroLengthGap => "zero-length gap".into(),
+        GapPatchSkipReason::ProgramQuiet => {
+            "program-quiet in both masters (B silent at nominal span; nothing to fill)".into()
+        }
         GapPatchSkipReason::ResidualHeadroomExceeded {
             pre_correlation,
             post_correlation,
@@ -158,6 +163,7 @@ pub fn format_gap_patch_skip_warn_reason(reason: &GapPatchSkipReason) -> String 
     match reason {
         GapPatchSkipReason::BExtractFailed => "B audio slice out of range".into(),
         GapPatchSkipReason::BoundaryAlignmentFailed => "structure alignment failed".into(),
+        GapPatchSkipReason::ProgramQuiet => "program-quiet (nothing to fill)".into(),
         GapPatchSkipReason::CorrelationBelowThreshold {
             pre_correlation,
             post_correlation,
