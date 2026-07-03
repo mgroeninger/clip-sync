@@ -54,6 +54,8 @@ pub struct PatchTestOptions {
     pub gap_signature_mode: GapSignatureMode,
     pub profile: RepairProfile,
     pub fit_boundary_search: FitBoundarySearch,
+    /// Match production default (`RepairConfig.dual_fit`).
+    pub dual_fit: bool,
 }
 
 impl Default for PatchTestOptions {
@@ -88,6 +90,7 @@ impl Default for PatchTestOptions {
             gap_signature_mode: GapSignatureMode::Auto,
             profile: RepairProfile::Default,
             fit_boundary_search: FitBoundarySearch::BaselineOnly,
+            dual_fit: clip_sync_repair::infrastructure::config::RepairConfig::default().dual_fit,
         }
     }
 }
@@ -300,7 +303,7 @@ pub fn patch_request_with_options(
         profile: options.profile,
         fit_boundary_search: options.fit_boundary_search,
         measure_residual: false,
-        dual_fit: false,
+        dual_fit: options.dual_fit,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
         residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
         residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -322,7 +325,8 @@ pub fn run_fit_production_defaults_smoke() {
     let path_a = temp.path().join("a.wav");
     let path_b = temp.path().join("b.wav");
     write_stereo_sine_with_gap(&path_a, SINE_SAMPLE_RATE, 10, 3, 6, 440.0, 16_000.0);
-    write_stereo_sine_with_gap(&path_b, SINE_SAMPLE_RATE, 10, 3, 6, 440.0, 16_000.0);
+    // B is continuous — donor audio at the nominal span (A-only gap; G5 must not skip).
+    write_stereo_sine_with_gap(&path_b, SINE_SAMPLE_RATE, 10, 0, 0, 440.0, 16_000.0);
 
     let report = make_report(
         path_a,

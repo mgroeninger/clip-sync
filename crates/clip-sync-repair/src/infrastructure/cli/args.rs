@@ -95,10 +95,15 @@ pub struct Args {
     #[arg(long)]
     pub no_normalize: bool,
 
-    /// Enable the A3 dual-fit repair fallback: for a gap the seam gate skips (bracket-exhausted), attempt an
-    /// independent per-shoulder fit + interior-trim fill, validated by the unchanged gate [default: off].
-    #[arg(long)]
+    /// Enable dual-fit repair fallback: when the seam gate would skip (except structure alignment failed),
+    /// attempt independent per-shoulder fit + interior-trim fill, validated by the unchanged gate
+    /// [default: on].
+    #[arg(long, overrides_with = "no_dual_fit")]
     pub dual_fit: bool,
+
+    /// Disable dual-fit repair fallback (bracket-exhausted gaps skip without per-shoulder rescue).
+    #[arg(long, overrides_with = "dual_fit")]
+    pub no_dual_fit: bool,
 
     /// Stricter seam checks: always run the waveform Pearson gate (never skip it when
     /// structure scores are high), disable partial-structure threshold soften, and require

@@ -117,8 +117,8 @@ pub struct RepairConfig {
     #[serde(default = "default_true")]
     pub normalize_fill: bool,
     /// **A3 dual-fit repair** — fallback fill for bracket-exhausted skips (independent per-shoulder fit +
-    /// interior trim, validated by the unchanged gate). Off by default.
-    #[serde(default)]
+    /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
+    #[serde(default = "default_true")]
     pub dual_fit: bool,
     /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`).
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
@@ -444,7 +444,7 @@ impl Default for RepairConfig {
             partial_structure_waveform_soften: default_partial_structure_waveform_soften(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
-            dual_fit: false,
+            dual_fit: true,
             fingerprint_diagnostics: false,
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
