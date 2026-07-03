@@ -116,6 +116,10 @@ pub struct RepairConfig {
     /// Normalize fill segment loudness to match A's border.
     #[serde(default = "default_true")]
     pub normalize_fill: bool,
+    /// **A3 dual-fit repair** — fallback fill for bracket-exhausted skips (independent per-shoulder fit +
+    /// interior trim, validated by the unchanged gate). Off by default.
+    #[serde(default)]
+    pub dual_fit: bool,
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
@@ -436,6 +440,7 @@ impl Default for RepairConfig {
             partial_structure_waveform_soften: default_partial_structure_waveform_soften(),
             crossfade_ms: default_crossfade_ms(),
             normalize_fill: default_true(),
+            dual_fit: false,
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),
@@ -546,6 +551,7 @@ impl RepairConfig {
     pub fn patch_settings(&self) -> PatchRequestSettings {
         PatchRequestSettings {
             normalize_fill: self.normalize_fill,
+            dual_fit: self.dual_fit,
             normalize_window_secs: self.normalize_window_secs,
             max_fill_gain_db: self.max_fill_gain_db,
             min_fill_correlation: self.min_fill_correlation,

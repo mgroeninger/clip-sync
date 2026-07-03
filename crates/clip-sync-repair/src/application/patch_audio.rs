@@ -169,6 +169,8 @@ pub struct PatchAudioRequest {
 #[derive(Clone)]
 pub struct PatchRequestSettings {
     pub normalize_fill: bool,
+    /// A3 dual-fit repair fallback for bracket-exhausted skips (off by default).
+    pub dual_fit: bool,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
     pub min_fill_correlation: f32,
@@ -278,7 +280,7 @@ impl PatchRequestSettings {
             anchor_seam_xcorr_ambiguous_band: self.anchor_seam_xcorr_ambiguous_band,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
-            dual_fit: false, // TODO(A3 §5.2): source from a --dual-fit CLI flag when the branch lands.
+            dual_fit: self.dual_fit,
             residual_gate: self.residual_gate,
             residual_floor_ok_db: self.residual_floor_ok_db,
             residual_headroom_margin_db: self.residual_headroom_margin_db,
@@ -1376,14 +1378,92 @@ fn seam_failure_outcome(
     (None, outcome, tag_ctx)
 }
 
-/// Flag-gated **A3 dual-fit fallback** at the seam-gate skip. With `--dual-fit` off (default) this is
-/// exactly [`seam_failure_outcome`] — the existing skip, **byte-identical** (D6). With it on, a
-/// bracket-exhausted skip first gets a dual-fit attempt (§5.2 wire-spec: independent per-shoulder fit →
-/// interior trim → unchanged-gate validation); if that declines, the skip stands.
-///
-/// **Stub — the §5.2 branch is not built yet:** it currently always falls through to the skip, even when
-/// the flag is on. This establishes the hook so the §4 harness can confirm byte-identical behavior before
-/// the repair logic lands.
+/// Everything the A3 dual-fit algorithm needs, built once from the decoded window — only when `--dual-fit`
+/// is on (so the off path pays nothing). `None` when the gap is too near a window edge for the seam borders.
+struct DualFitRepairInput<'a> {
+    params: crate::domain::dual_fit::DualFitParams,
+    a_pre_mono: Vec<f64>,
+    a_post_mono: Vec<f64>,
+    b_mono: Vec<f64>,
+    b_samples: &'a [f32],
+    b_mapped_start: usize,
+    a_start_frame: usize,
+    a_end_frame: usize,
+    crossfade_secs: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_dual_fit_input<'a>(
+    a_samples: &[f32],
+    b_samples: &'a [f32],
+    channels: usize,
+    sample_rate: u32,
+    refined: RefinedGapFrames,
+    refined_b_start_secs: f64,
+    b_extract_start_secs: f64,
+    gap_frames: usize,
+    fill_seam_search_secs: f64,
+    min_fill_correlation: f32,
+    fill_absolute_floor: f32,
+    crossfade_secs: f64,
+) -> Option<DualFitRepairInput<'a>> {
+    let ch = channels.max(1);
+    let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
+    let a_frames = a_samples.len() / ch;
+    if refined.start_frame < w || refined.end_frame + w > a_frames || gap_frames == 0 {
+        return None;
+    }
+    let mono = |lo: usize, hi: usize| -> Vec<f64> {
+        (lo..hi)
+            .map(|f| {
+                let base = f * ch;
+                a_samples[base..base + ch].iter().map(|&x| x as f64).sum::<f64>() / ch as f64
+            })
+            .collect()
+    };
+    let a_pre_mono = mono(refined.start_frame - w, refined.start_frame);
+    let a_post_mono = mono(refined.end_frame, refined.end_frame + w);
+    let b_mono: Vec<f64> = b_samples
+        .chunks(ch)
+        .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
+        .collect();
+    let b_mapped_start = (((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round()
+        as i64)
+        .max(0) as usize;
+    // A gap-interior floor (approximation of the analyzer's level-profile gap_floor — reconcile against the
+    // golden baseline on the media run; used only as the donor silence threshold).
+    let a_gap = mono(refined.start_frame, refined.end_frame);
+    let a_rms = (a_gap.iter().map(|v| v * v).sum::<f64>() / a_gap.len().max(1) as f64).sqrt();
+    let a_gap_floor_db = if a_rms <= 1e-9 { -120.0 } else { 20.0 * a_rms.log10() };
+    Some(DualFitRepairInput {
+        params: crate::domain::dual_fit::DualFitParams {
+            channels: ch,
+            sample_rate,
+            gap_frames,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sample_rate as f64) as usize,
+            min_fill_correlation: min_fill_correlation as f64,
+            fill_absolute_floor: fill_absolute_floor as f64,
+            step_real_margin: 0.15,
+            program_quiet_frac: 0.5,
+            a_gap_floor_db,
+        },
+        a_pre_mono,
+        a_post_mono,
+        b_mono,
+        b_samples,
+        b_mapped_start,
+        a_start_frame: refined.start_frame,
+        a_end_frame: refined.end_frame,
+        crossfade_secs,
+    })
+}
+
+/// Flag-gated **A3 dual-fit fallback** at the seam-gate skip. With `--dual-fit` off (default) this is exactly
+/// [`seam_failure_outcome`] — the existing skip, **byte-identical** (D6). With it on, a bracket-exhausted
+/// skip gets a dual-fit attempt (§5.2: per-shoulder seam-local fit → interior trim → `dualfit_target`); on
+/// success it returns a `Patched` fill instead of the skip. *(The returned fill's seams already cleared the
+/// gate floors at seam-local placement; a per-channel re-validation is a follow-up refinement — §5.4.)*
 fn skip_or_dual_fit(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
@@ -1391,11 +1471,50 @@ fn skip_or_dual_fit(
     fail: SeamGateFailure,
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
+    dual_fit: Option<&DualFitRepairInput<'_>>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
     if request.dual_fit {
-        // TODO(A3 §5.2): try_dual_fit_repair(...) -> Option<RegionPatch> on the already-decoded A/B window
-        // (detect = dualfit_target ⇒ per-shoulder seam_local_peak → interior trim → unchanged gate). On
-        // Some, return the Patched outcome instead of the skip below.
+        if let Some(df) = dual_fit {
+            if let Some(r) = crate::domain::dual_fit::try_dual_fit(
+                &df.a_pre_mono,
+                &df.a_post_mono,
+                &df.b_mono,
+                df.b_samples,
+                df.b_mapped_start,
+                &df.params,
+            ) {
+                tracing::debug!(
+                    a_start = df.a_start_frame,
+                    pre = r.pre_seam_r,
+                    post = r.post_seam_r,
+                    trim = r.trim_frames,
+                    "dual-fit rescued a bracket-exhausted skip"
+                );
+                let patch = RegionPatch {
+                    b_samples: r.fill,
+                    gain: 1.0,
+                    a_start_frame: df.a_start_frame,
+                    a_end_frame: df.a_end_frame,
+                    crossfade_secs: df.crossfade_secs,
+                };
+                let outcome = RegionPatchOutcome::Patched {
+                    pre_correlation: r.pre_seam_r,
+                    post_correlation: r.post_seam_r,
+                    align_adjustment_secs: 0.0,
+                    waveform_adjustment_secs: 0.0,
+                    structure_trusted: false,
+                    confidence: FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
+                    fit_used_boundary_grid: false,
+                    fit_boundary_grid_cells: None,
+                    residual: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
+                };
+                return (Some(patch), outcome, tag_ctx);
+            }
+        }
     }
     seam_failure_outcome(progress, request, region, fail, min_structure_match_score, tag_ctx)
 }
@@ -1653,6 +1772,28 @@ fn prepare_region_patch(
     );
     let seam_params = SeamGateParams { cfg: &cfg, geom };
 
+    // A3: build the dual-fit fallback input once (only when `--dual-fit` is on), before the gate can mutate
+    // `refined` via boundary-extension retry — dual-fit works on the base gap geometry.
+    let dual_fit_input = request
+        .dual_fit
+        .then(|| {
+            build_dual_fit_input(
+                &a_pcm.samples,
+                &b_samples,
+                channels,
+                sample_rate,
+                refined,
+                refined_b_start_secs,
+                b_extract_start_secs,
+                gap_frames,
+                fill_seam_search_secs,
+                min_fill_correlation,
+                request.fill_absolute_floor,
+                region.crossfade_secs,
+            )
+        })
+        .flatten();
+
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
         Ok(outcome) => outcome,
         Err(fail)
@@ -1682,6 +1823,7 @@ fn prepare_region_patch(
                                 retry_fail,
                                 min_structure_match_score,
                                 tag_ctx,
+                                dual_fit_input.as_ref(),
                             );
                         }
                     }
@@ -1694,18 +1836,20 @@ fn prepare_region_patch(
                         other,
                         min_structure_match_score,
                         tag_ctx,
+                        dual_fit_input.as_ref(),
                     );
                 }
             }
         }
         Err(other) => {
-            return seam_failure_outcome(
+            return skip_or_dual_fit(
                 progress,
                 request,
                 region,
                 other,
                 min_structure_match_score,
                 tag_ctx,
+                dual_fit_input.as_ref(),
             );
         }
     };
