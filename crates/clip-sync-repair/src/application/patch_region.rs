@@ -203,6 +203,9 @@ pub enum SeamGateFailure {
     },
 }
 
+/// Score one seam bracket → Pearson outcome + ranking, or a gate failure.
+type SeamGateScore = Result<(SeamGateOutcome, f64), SeamGateFailure>;
+
 pub(crate) fn evaluate_seam_gate(
     refined: RefinedGapFrames,
     params: &SeamGateParams<'_>,
@@ -357,7 +360,7 @@ trait FitCandidateSource {
         &mut self,
         refined: RefinedGapFrames,
         anchor_seam_bracket: bool,
-    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure>;
+    ) -> SeamGateScore;
     /// Editorial anchor brackets to try (empty = gate closed / mode off / none feasible).
     fn anchor_brackets(&mut self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket>;
     /// Apply the residual/floor verdict at selection (identity when residual is off; may `Err` on veto).
@@ -379,7 +382,7 @@ impl FitCandidateSource for AudioFitSource<'_> {
         &mut self,
         refined: RefinedGapFrames,
         anchor_seam_bracket: bool,
-    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+    ) -> SeamGateScore {
         evaluate_seam_gate_fit_candidate(
             refined,
             self.baseline,
@@ -1567,7 +1570,7 @@ fn evaluate_seam_gate_fit_candidate(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     anchor_seam_bracket: bool,
-) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+) -> SeamGateScore {
     let GateStructureAlign {
         a_pre_border,
         a_post_border,
@@ -2362,11 +2365,11 @@ mod tests {
         pre: f64,
         post: f64,
         ranking: f64,
-    ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+    ) -> SeamGateScore {
         Ok((scripted_outcome(refined, confidence, pre, post), ranking))
     }
 
-    fn waveform_skip(pre: f64, post: f64) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+    fn waveform_skip(pre: f64, post: f64) -> SeamGateScore {
         Err(waveform_below_threshold(pre, post, 0.12))
     }
 
@@ -2388,10 +2391,15 @@ mod tests {
         }
     }
 
+    struct ScriptedScoreEntry {
+        refined: RefinedGapFrames,
+        result: SeamGateScore,
+    }
+
     /// Scripted [`FitCandidateSource`] (plan §9): a `refined → result` table, scripted anchor
     /// brackets, and call counters — drives the real precedence loop with no audio.
     struct ScriptedFitSource {
-        scores: Vec<(RefinedGapFrames, Result<(SeamGateOutcome, f64), SeamGateFailure>)>,
+        scores: Vec<ScriptedScoreEntry>,
         brackets: Vec<AnchorBracket>,
         /// Candidates whose residual probe vetoes at selection (drives the fall-through path).
         finalize_vetoes: Vec<RefinedGapFrames>,
@@ -2409,12 +2417,8 @@ mod tests {
                 anchor_calls: 0,
             }
         }
-        fn score_at(
-            mut self,
-            refined: RefinedGapFrames,
-            result: Result<(SeamGateOutcome, f64), SeamGateFailure>,
-        ) -> Self {
-            self.scores.push((refined, result));
+        fn score_at(mut self, refined: RefinedGapFrames, result: SeamGateScore) -> Self {
+            self.scores.push(ScriptedScoreEntry { refined, result });
             self
         }
         fn brackets(mut self, brackets: Vec<AnchorBracket>) -> Self {
@@ -2433,12 +2437,12 @@ mod tests {
             &mut self,
             refined: RefinedGapFrames,
             _anchor_seam_bracket: bool,
-        ) -> Result<(SeamGateOutcome, f64), SeamGateFailure> {
+        ) -> SeamGateScore {
             self.score_calls += 1;
             self.scores
                 .iter()
-                .find(|(r, _)| *r == refined)
-                .map(|(_, res)| res.clone())
+                .find(|entry| entry.refined == refined)
+                .map(|entry| entry.result.clone())
                 .unwrap_or(Err(SeamGateFailure::StructureAlignmentFailed))
         }
         fn anchor_brackets(&mut self, _pre: f64, _post: f64) -> Vec<AnchorBracket> {
