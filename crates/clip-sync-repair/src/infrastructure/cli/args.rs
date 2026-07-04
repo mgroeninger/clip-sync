@@ -460,6 +460,10 @@ mod tests {
             "[default: info]",
             "[default: enabled]",
             "[default: disabled]",
+            "gap-fingerprints",
+            "fingerprint-diagnostics",
+            "no-dual-fit",
+            "[default: on]",
         ] {
             assert!(
                 help.contains(needle),

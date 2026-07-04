@@ -13,7 +13,10 @@ use crate::application::run_repair::{PendingRepairWrite, RepairRunInput, RepairR
 use crate::domain::GapReport;
 use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
-use crate::infrastructure::cli::{self, args::Args, exit_code::exit_code_for, output::print_repair_output, validate_repair_profile_flags};
+use crate::infrastructure::cli::{
+    self, args::Args, exit_code::exit_code_for, output::print_repair_output,
+    validate_fingerprint_flags, validate_repair_profile_flags,
+};
 use crate::infrastructure::config::RepairAppConfig;
 use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
 
@@ -46,6 +49,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     let mut config = crate::infrastructure::config::load_repair_app_config(args.config.as_deref())
         .map_err(RepairError::Align)?;
     validate_repair_profile_flags(&args).map_err(RepairError::Config)?;
+    validate_fingerprint_flags(&args).map_err(RepairError::Config)?;
     cli::apply_cli_overrides(&mut config, &args);
     validate_config(&config)?;
 

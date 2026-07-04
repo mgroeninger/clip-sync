@@ -252,14 +252,15 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `residual_band` | string | when residual measured | `cancels` \| `correlates_only` \| `no_floor` |
 | `anchor_seam_used` | bool | when true | Editorial anchor bracket won (not scan-throat placement) |
 | `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from scan-refined baseline |
+| `dual_fit_used` | bool | when true | A3 dual-fit (G6) rescued this gap after the bracket search exhausted, not ordinary bracket-search fitting |
 
 ### GapPatchStatus
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "waveform_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool}}`
 
-Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `anchor_bracket_move_frames` are omitted when false / 0 (baseline-throat placement). Full per-side detail is in `GapPatchOutcome.residual`.
+Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `anchor_bracket_move_frames` are omitted when false / 0 (baseline-throat placement). `dual_fit_used` is omitted when false (ordinary bracket-search fit); when `true`, this gap was rescued by the A3 dual-fit path (G6) after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. Full per-side detail is in `GapPatchOutcome.residual`.
 
 `structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`

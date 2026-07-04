@@ -271,6 +271,9 @@ pub struct GapTags {
     /// Frames the winning anchor bracket moved from scan-refined baseline; omitted when 0.
     #[serde(default, skip_serializing_if = "is_zero_frames")]
     pub anchor_bracket_move_frames: usize,
+    /// Rescued by the A3 dual-fit path (G6), not ordinary bracket-search fitting.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dual_fit_used: bool,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -283,6 +286,7 @@ pub struct GapTagsPatchContext {
     pub anchor_seam_used: bool,
     pub anchor_bracket_move_frames: usize,
     pub anchor_trusted: bool,
+    pub dual_fit_used: bool,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
 }
@@ -431,6 +435,7 @@ pub fn derive_gap_tags_from_patch_outcome(
         } else {
             0
         },
+        dual_fit_used: ctx.dual_fit_used,
     }
 }
 
@@ -458,6 +463,7 @@ pub fn derive_gap_tags_from_status(
                 residual_band: None,
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
+                dual_fit_used: false,
             }
         }
         GapPatchStatus::Patched {
@@ -466,6 +472,7 @@ pub fn derive_gap_tags_from_status(
             confidence,
             anchor_seam_used,
             anchor_bracket_move_frames,
+            dual_fit_used,
             ..
         } => derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -481,6 +488,7 @@ pub fn derive_gap_tags_from_status(
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 anchor_trusted: false,
+                dual_fit_used: *dual_fit_used,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -495,6 +503,7 @@ pub fn derive_gap_tags_from_status(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
+                dual_fit_used: false,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -595,6 +604,9 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
             ));
         }
     }
+    if tags.dual_fit_used {
+        parts.push("dual_fit=true".to_string());
+    }
     format!("           gap tags: {}", parts.join(" "))
 }
 
@@ -612,6 +624,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
+            dual_fit_used: false,
             residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }
@@ -791,10 +804,34 @@ mod tests {
             headroom_db: None,
             anchor_seam_used: true,
             anchor_bracket_move_frames: 900,
+            dual_fit_used: false,
         };
         let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
         assert!(tags.anchor_seam_used);
         assert_eq!(tags.anchor_bracket_move_frames, 900);
+    }
+
+    #[test]
+    fn derive_from_status_carries_dual_fit_marker() {
+        let status = GapPatchStatus::Patched {
+            pre_correlation: 0.94,
+            post_correlation: 0.96,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            residual_db: None,
+            floor_db: None,
+            headroom_db: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            dual_fit_used: true,
+        };
+        let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
+        assert!(tags.dual_fit_used);
+        assert!(format_gap_tags_verbose_line(&tags).contains("dual_fit=true"));
     }
 
     #[test]

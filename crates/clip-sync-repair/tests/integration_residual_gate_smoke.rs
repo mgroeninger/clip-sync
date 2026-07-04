@@ -53,6 +53,7 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             headroom_db: None,
             anchor_seam_used: *anchor_seam_used,
             anchor_bracket_move_frames: *anchor_bracket_move_frames,
+            dual_fit_used: false,
         },
         other => other.clone(),
     }

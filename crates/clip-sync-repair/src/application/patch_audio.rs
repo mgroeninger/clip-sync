@@ -574,6 +574,7 @@ enum RegionPatchOutcome {
         residual: Option<policies::SeamResidualVerdict>,
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
+        dual_fit_used: bool,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -1205,6 +1206,7 @@ fn outcomes_in_report_order(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
+                dual_fit_used,
                 ..
             } => {
                 if let Some(verdict) = residual {
@@ -1226,6 +1228,7 @@ fn outcomes_in_report_order(
                     headroom_db,
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                    dual_fit_used: *dual_fit_used,
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -1280,11 +1283,13 @@ fn region_outcome_gap_tags(
     if let RegionPatchOutcome::Patched {
         anchor_seam_used,
         anchor_bracket_move_frames,
+        dual_fit_used,
         ..
     } = outcome
     {
         tag_ctx.anchor_seam_used = *anchor_seam_used;
         tag_ctx.anchor_bracket_move_frames = *anchor_bracket_move_frames;
+        tag_ctx.dual_fit_used = *dual_fit_used;
     }
     tag_ctx.residual = match outcome {
         RegionPatchOutcome::Patched { residual, .. } | RegionPatchOutcome::Skipped { residual, .. } => {
@@ -1627,6 +1632,7 @@ fn skip_or_dual_fit(
                             residual: None,
                             anchor_seam_used: false,
                             anchor_bracket_move_frames: 0,
+                            dual_fit_used: true,
                         };
                         return (Some(patch), outcome, tag_ctx);
                     }
@@ -1803,6 +1809,7 @@ fn prepare_region_patch(
         anchor_seam_used: false,
         anchor_bracket_move_frames: 0,
         anchor_trusted: false,
+        dual_fit_used: false,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };
@@ -2237,6 +2244,7 @@ fn prepare_region_patch(
             residual: residual_verdict,
             anchor_seam_used,
             anchor_bracket_move_frames,
+            dual_fit_used: false,
         },
         tag_ctx,
     )
@@ -2504,6 +2512,7 @@ mod tests {
             residual_band: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
         }
     }
 
@@ -2527,6 +2536,7 @@ mod tests {
                     residual: None,
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
+                    dual_fit_used: false,
                 },
                 dummy_region_tags(),
             ),
@@ -2547,6 +2557,7 @@ mod tests {
                     residual: None,
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
+                    dual_fit_used: false,
                 },
                 dummy_region_tags(),
             ),
@@ -2585,6 +2596,7 @@ mod tests {
             residual: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
         };
         let high = RegionPatchOutcome::Patched {
             pre_correlation: 0.5,
@@ -2600,6 +2612,7 @@ mod tests {
             residual: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
         };
         assert!(should_apply_anchored_retry_outcome(&skip, &high));
         assert!(should_apply_anchored_retry_outcome(&marginal, &high));

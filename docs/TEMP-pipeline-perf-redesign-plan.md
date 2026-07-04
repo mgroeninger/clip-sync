@@ -15,8 +15,9 @@ owns the dual-fit *algorithm*; this owns the pipeline *assembly*. (A3 is **shipp
 plan revisions. §2–§4 are **prescriptive** ("what it should become"). Keep them separate so the audit can
 graduate to a permanent `docs/pipeline-architecture.md` later if useful.
 
-**Status:** §1 audit populated from code (2026-07-01, audit v1). **§2 updated to match code (2026-07-03).** §4
-harness built; A3 + G5 production landed. §3 migration status tracked in §2.4.
+**Status:** §1 audit populated from code (2026-07-01, audit v1). **§2 updated to match code (2026-07-03).**
+§4 harness **built** (golden + footguns); **§4.7 CI / live-path gaps audited (2026-07-03).** A3 + G5
+production landed. §3 migration status tracked in §2.4.
 
 ---
 
@@ -266,11 +267,12 @@ Solid arrows = always on the path. `G6` and `fingerprint_diagnostics` branches a
 | **3** | Cheap early-reject (G0b at plan) | **Partial** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Not started** | `lag_correlation_curve` still naive O(n·L) in `domain/seam_local.rs`. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
-| **§4** | Decision-invariance harness | **Done** | `golden_baseline.rs`, `golden_baseline_invariance.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`. |
+| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **CI subset + live-path / production guards still open** — see §4.7. |
 
-> **Sequencing (updated 2026-07-03):** A3 (step 5) and G5 production are landed. **Next:** finish step 1
-> hoists → step 4 FFT (with harness Tier-2 ε) → optimize diagnostic scan last (~1.7 h/pair calibration cost,
-> not product cost). Do not reorder gates or drop D/R measurements until the §4 harness passes.
+> **Sequencing (updated 2026-07-03):** A3 (step 5) and G5 production are landed. **Next:** land §4.7 Tier-A
+> tests (before hoists) → finish step 1 hoists → step 4 FFT (with B1 `fft ≈ naive` + harness Tier-2 ε) →
+> optimize diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder gates or
+> drop D/R measurements until the §4 harness passes (full workflow: §4.7 C1).
 
 ---
 
@@ -283,7 +285,7 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 1 | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** |
 | 2 | Gate diagnostics (X-set) behind `--fingerprint-diagnostics` | **Done** |
 | 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial** |
-| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test. *(Full spec: ledger "FFT lag sweep" block.)* | **Not started** |
+| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Not started** |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 
 Steps 1 and 4 are the remaining perf work on a stable baseline. Step 5 historical note: built **before**
@@ -306,9 +308,12 @@ axes and [status ledger](TEMP-seam-repair-status-ledger.md) §1.2-map for the D/
 The harness is a **characterization** harness — it pins whatever the pipeline currently emits.
 
 1. **Golden baseline — FROZEN (2026-07-02).** `golden/re-anchor-dual-fit-on-nominal.golden.json`; P2 and
-   `b_levels` cross-checks passed. §4.1–§4.5 define the schema and assertion tiers.
+   `b_levels` cross-checks passed. §4.1–§4.7 define the schema, assertion tiers, and test backlog.
 2. **P2 orthogonality gate — done.** Axes validated on the re-anchor rescan; `gate_pass` degeneracy documented
    in ledger P2 (discrimination = step-real ∧ donor-occupancy on this corpus).
+3. **Test coverage audit — done (2026-07-03).** §4.7 records what the harness catches today, what it does
+   not, and the backlog to land before hoists / FFT. The harness **design** is sound; **execution** is partial
+   (validation tier + manual corpus; not default CI).
 
 ### §4.1 Golden record — capture the D/R axes, each tagged with its placement
 
@@ -341,8 +346,8 @@ derived numeric/boolean measurements only, no audio) and is what the synthetic f
 
 | Class | Axes | Real examples | Synthetic coverage |
 |-------|------|----------------|---------------------|
-| 1. No-bracket-at-all skip | `brackets_total=0`, `bracket_exhausted=False`, `gate_pass=null` | 1·g0, 3·g0, 4·g0, 6·g0, 7·g0 | Guarded by the `StructureAlignmentFailed` precondition (bug #2, `skip_or_dual_fit`) |
-| 2. Zero-bracket quiet/partial-donor skip | `brackets_total=0`, `program_quiet_skip=True`, `nominal_donor_silence` 0.5–1.0 | 2·g0, 6·g2 | Same precondition guard (`bracket_exhausted=False`) |
+| 1. No-bracket-at-all skip | `brackets_total=0`, `bracket_exhausted=False`, `gate_pass=null` | 1·g0, 3·g0, 4·g0, 6·g0, 7·g0 | **Precondition only** — `skip_or_dual_fit` excludes `StructureAlignmentFailed` (bug #2 fix, 2026-07-03); **no unit test yet** (§4.7 A2) |
+| 2. Zero-bracket quiet/partial-donor skip | `brackets_total=0`, `program_quiet_skip=True`, `nominal_donor_silence` 0.5–1.0 | 2·g0, 6·g2 | Same precondition as class 1; **no unit test yet** (§4.7 A2) |
 | 3. Stepped-splice dual-fit rescue | `bracket_exhausted=True`, seams 0.9–1.0 at own lag, `post_global` low (real step), `aligned_donor_continuous=True`, `dualfit_target=True` | the golden 9: 1·g3/g5/g22, 2·g1/g2, 5·g6, 7·g2/g3/g4 | `dual_fit.rs::recovers_a_stepped_silence_splice` |
 | 4. Donor-broken bridge decline | `bracket_exhausted=True`, seams score as well as class 3, real step, but `aligned_donor_continuous=False` (internal silent run ≥150 ms) | 14/62 gaps: 1·g4/g7/g9-19/g21, 6·g1/g3/g6-g11 (matches §4.4's `1·g19` footgun) | `dual_fit.rs::declines_donor_broken_bridge` (added 2026-07-03) |
 | 5. Fully-silent/dead donor | seams score 0.97–0.99 but `nominal_donor_silence=1.0` (bridge 100% dead) | 6·g2 | `dual_fit.rs::declines_program_quiet_donor` (fully-silent variant; less extreme than class 4) |
@@ -383,6 +388,8 @@ confirms them (§4.0); the *assertions* are defined now:
   seam-local peak (~0.98), **not** the gross-placed dead value (−0.008); `gate_pass` = true.
 - **Donor placement split** — a large-step gap that is silent at the **nominal** span but occupied at the
   **aligned** span classifies `program_quiet` (nominal wins) — guards D11's registration-independence.
+  **Partial:** harness JSON test `program_quiet_skip_leaves_addressable_denominator` (analyzer predicates on
+  synthetic `corpus.json`); **not** a live `characterize_gaps_with_gate` path (§4.7 B2).
 - **Donor gate necessity** — a gap with `gate_pass` = true but `donor_interior` BROKEN (`1·g19`: seams 0.998,
   interior silent) yields `dualfit_target()` = false. **LANDED (2026-07-03)** — synthetic regression test
   `dual_fit.rs::declines_donor_broken_bridge`: both seams re-fit at ~0.9–1.0 with a genuine 500 ms step (rules
@@ -391,13 +398,14 @@ confirms them (§4.0); the *assertions* are defined now:
   declines. This is class 4 in §4.1a — the largest real-corpus decline bucket (14/62 gaps) and previously
   the only one of the four §4.4 footguns with zero test coverage anywhere in the codebase.
 - **Edge-pin validity** — an edge-pinned shoulder flags its step GIGO and is excluded (0/55 today, so this is
-  a guard against a future regression, not a live case).
+  a guard against a future regression, not a live case). **No test** (§4.7 Tier D).
 
 ### §4.5 Per-axis localization + wall-clock
 
 - Diff **per axis**, not per gap-blob: the orthogonal axes let a failure name the responsible axis + placement.
 - Track **wall-clock per phase** to confirm wins land where the cost model predicts (§1.3) — a step that
-  passes the invariance harness but doesn't move the predicted phase cost is suspect.
+  passes the invariance harness but doesn't move the predicted phase cost is suspect. **Not automated**
+  (§4.7 Tier D); manual benchmark when validating a perf PR.
 
 ### §4.6 What the harness deliberately does NOT cover
 
@@ -405,6 +413,73 @@ confirms them (§4.0); the *assertions* are defined now:
   *invariance*, not *correctness of the fill*. D8 (audible/decoy validation) is separate, post-A3.
 - **The `different`/`ambiguous` shared-source regime** — untested; not a live axis (shared-source collapsed
   to a constant on this corpus, B2/C1).
+- **Production `PatchAudio` outcomes** — the golden harness is analyzer-scoped (`analyze_dirs` on
+  `corpus.json` → D/R predicates). It does not run `prepare_region_patch` / `skip_or_dual_fit` on media.
+  D6 byte-identical `--no-dual-fit` and dual-fit rescue on the 9 targets are **not** golden-locked in CI
+  (§4.7 C2).
+- **Live fingerprint recompute** — `golden_baseline_corpus_invariance` reads committed `corpus.json`; it
+  does not call `characterize_gaps_with_gate`. Computation drift is caught only after a **rescan** + diff
+  (§4.7 C1). `gap-files/re-anchor-dual-fit-on-nominal` is not in the repo.
+
+### §4.7 Test coverage — landed, gaps, and backlog (2026-07-03)
+
+Audit of whether F5/D12 refactors (hoists, FFT lag, shared subexpressions) would trip tests if they changed
+decisions or repair params. **Track all open items here** — do not spin a separate TEMP doc; the ledger D12
+row points to this section.
+
+#### What exists today
+
+| Layer | Test / artifact | Tier | Runs in CI (`pr-repair`)? | What it catches |
+|-------|-----------------|------|---------------------------|-----------------|
+| Golden footguns | `golden_baseline_footguns` (`tests/golden_baseline_invariance.rs`) | validation | **No** (`validation-tests` feature) | Frozen JSON satisfies §4.4 pins: `2·g1`, `1·g19`, 9 targets |
+| Full invariance | `golden_baseline_corpus_invariance` (same; `#[ignore]`) | validation | **No** (needs local `gap-files`) | Tier-1 exact + Tier-2 ε diff vs golden after rescan |
+| Diff machinery | `golden_baseline::diff_catches_tier1_flip` | unit (harness lib) | **No** | Diff helper works |
+| Dual-fit synthetic | `dual_fit.rs::{recovers_a_stepped_silence_splice, declines_donor_broken_bridge, declines_program_quiet_donor}` | unit | **Yes** (`--lib`) | Classes 3–5 on production `try_dual_fit` |
+| Bracket path | `energy_signature_fixtures` F1–F4, `integration_energy_patch`, etc. | integration | **Yes** (subset on PR) | Class 6 — dual-fit never engages |
+| Lag primitives | `gap_fingerprint.rs` `lag_curve_*`, `lag_pair_sequential_decouples_*`; `seam_local.rs` `seam_local_peak_recovers_offset_seam` | unit | **Yes** (`--lib`) | Lag math, seam-local search, A2 sequential post — not end-to-end D/R |
+| Analyzer predicates | `gap_fingerprint_corpus.rs` tests (`program_quiet_skip_*`, `splice_diag_*`, …) | unit (harness lib) | **No** | Predicate logic the golden diff depends on |
+| FFT equivalence | *(planned §3 step 4)* | — | **No** | Not started |
+
+**CI default:** `.github/workflows/ci.yml` runs `test-tier.ps1 -Tier pr` — **none** of the golden harness
+runs on PR. A hoist or FFT change can land with green CI and still regress decisions unless someone runs
+`-Tier validation` locally with the corpus (§4.7 C1).
+
+**Invariance test semantics:** `analyze_dirs` parses **static** `corpus.json` and applies `gap_row` /
+`dualfit_target()` etc. It does **not** re-decode media or call `characterize_gaps_with_gate`. To catch
+**computation** changes: re-run `--gap-fingerprints` on dirs 1–7, then run invariance against the frozen
+golden.
+
+#### Backlog — ranked by risk ÷ effort
+
+Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before calling F5 done.
+
+| ID | Item | Blocks | Status | Where / how |
+|----|------|--------|--------|-------------|
+| **A1** | Promote `golden_baseline_footguns` to `pr-repair` | hoists | **OPEN** | Drop `validation-tests` gate for footguns only, or thin `golden_baseline_smoke.rs`; wire `Invoke-RepairPrRepair` in `test-tier.ps1` |
+| **A2** | Unit test: `skip_or_dual_fit` excludes `StructureAlignmentFailed` | hoists, classes 1–2 | **OPEN** | `patch_audio.rs` test module — gate returns `StructureAlignmentFailed` ⇒ dual-fit does not run; same skip as `--no-dual-fit` |
+| **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **OPEN** | One line in `Invoke-RepairPrRepair` |
+| **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **OPEN** | `domain/seam_local.rs` — full ±600 ms sweep **and** small ±25 ms probe; per-lag ε ~1e-10; same edge mask / `curve.len()`; pin `peak_z` / `prominence` / `frac_lag_ms` via `summarize_lag_curve` |
+| **B2** | Live re-characterization smoke (≥1 gap) | hoists | **OPEN** | Committed small WAV or synthetic → `characterize_gaps_with_gate` → assert Tier-1 fields; closes static-JSON-only gap |
+| **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
+| **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
+| **C3** | `fingerprint_diagnostics` flag smoke | step 2 regression | **OPEN** | Flag off ⇒ X fields absent; flag on ⇒ `seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels` present |
+| **D1** | Edge-pin footgun synthetic | low | **OPEN** | 0/55 on corpus; defer |
+| **D2** | Wall-clock per phase (§4.5) | perf validation | **OPEN** | Manual benchmark script, not unit test |
+| **D3** | Production golden for all 9 dual-fit targets | high value, high cost | **OPEN** | Needs real media or large fixtures; defer until B2 proves pattern |
+| **D4** | Nightly CI with corpus fetch | infra | **OPEN** | Defer; C1 script sufficient for now |
+
+**Minimum viable package** (if scope is tight): **A1 + A2 + B1** — CI pins frozen decision surface, production
+wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win.
+
+#### Sequencing vs migration steps
+
+```text
+Before hoists (step 1):  A1 → A3 → A2
+Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)
+After first hoist PR:    B2
+Before calling F5 done:  C1 (+ run validation tier locally)
+Optional polish:         C2, C3
+```
 
 ---
 
@@ -420,7 +495,7 @@ the production path carries only the **D/R** set for the survivors, never the di
   → on success build `RegionPatch` (fill), on `SeamGateFailure` → `skipped_patch(reason)` → `splice_into_a`
   writes nothing. **Change:** when the gate skips **and** the gap is bracket-exhausted **and** the dual-fit
   flag is on, fall through to a **dual-fit branch** instead of returning the skip. Everything else unchanged
-  (D6: flag off ⇒ byte-identical — the §4 harness enforces this).
+  (D6: flag off ⇒ byte-identical — **not yet automated**; §4.7 C2).
 - **Shared primitive:** extract `seam_local_peak` (nominal-anchored ±600 ms seam search) from
   `application/gap_fingerprint.rs` to a shared home (e.g. `domain/`) so production and the diagnostic scan
   call the **same** function (no second implementation to drift — the bug class we just fixed twice).
@@ -453,9 +528,10 @@ the production path carries only the **D/R** set for the survivors, never the di
 - **Move (share):** `seam_local_peak` → shared module.
 
 ### §5.4 Validation (before this ships)
-- **§4 golden-baseline harness (regression guard):** with the flag **off**, the 23 existing patches are
-  byte-identical (D6); with it **on**, production's dual-fit target set must equal the frozen **9**
-  (`golden/re-anchor-dual-fit-on-nominal.golden.json`). This is A3's correctness cross-check.
+- **§4 golden-baseline harness (regression guard):** analyzer-scoped — frozen **9** dual-fit targets and
+  Tier-1/2 D/R axes on the re-anchor corpus (`golden/re-anchor-dual-fit-on-nominal.golden.json`). With dual-fit
+  **on**, production target set must match the golden (validated in-scan + media D7). With it **off**, the 23
+  existing patches should be byte-identical (D6) — **manual / not yet in CI** (§4.7 C2).
 - **D7 (the real test):** run on the media, **listen** to the 9 fills — gate-pass is necessary, not
   sufficient; the interior trim point must sound clean. First bad fill = the first labeled negative (→ D8).
 

@@ -225,6 +225,20 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// `--fingerprint-gap` and `--fingerprint-diagnostics` only apply when dumping a corpus.
+pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
+    if args.gap_fingerprints.is_some() {
+        return Ok(());
+    }
+    if !args.fingerprint_gap.is_empty() {
+        return Err("--fingerprint-gap requires --gap-fingerprints DIR".into());
+    }
+    if args.fingerprint_diagnostics {
+        return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod cli_override_tests {
     use super::*;
@@ -438,5 +452,67 @@ mod cli_override_tests {
                 && err.to_string().contains("full"),
             "unexpected clap error: {err}"
         );
+    }
+
+    #[test]
+    fn fingerprint_gap_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fingerprint-gap",
+            "3",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[test]
+    fn fingerprint_diagnostics_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fingerprint-diagnostics",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[test]
+    fn fingerprint_flags_ok_with_dump_dir() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--fingerprint-gap",
+            "3",
+            "--fingerprint-diagnostics",
+        ]);
+        validate_fingerprint_flags(&args).expect("valid fingerprint flag combo");
+    }
+
+    #[test]
+    fn no_dual_fit_cli_overrides_config() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--no-dual-fit",
+        ]);
+        let mut config = RepairAppConfig::default();
+        assert!(config.repair.dual_fit);
+        apply_cli_overrides(&mut config, &args);
+        assert!(!config.repair.dual_fit);
     }
 }

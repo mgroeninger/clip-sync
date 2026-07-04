@@ -207,7 +207,10 @@ donor-broken bridges (internal silent run in the donor interior) and fully progr
 | CLI | *(none — on by default)* | `--no-dual-fit` |
 | Force on | `--dual-fit` | — |
 
-Rescued gaps report like other patches (`patched (pre→post)`, tier/confidence from re-validated seams).
+Rescued gaps report tier/confidence from the re-validated seams like other patches, but are marked distinct
+from ordinary bracket-search fits: status shows `patched (dual-fit pre→post)` (or `! patched (dual-fit …)`
+when marginal), and `dual_fit_used: true` appears on `status.patched` and `tags` in JSON (verbose `gap tags:`
+adds `dual_fit=true`). See [cli-output.md](cli-output.md) § Gap patch gate and skip reasons.
 Typical rescue profile: bracket-exhausted silence splices where both shoulders align at their own lag but
 lag-0 bracket search failed (see [gap-repair-guide.md](gap-repair-guide.md) § W7).
 

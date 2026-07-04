@@ -305,6 +305,7 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
 - Structure trust is not used (`structure_trusted` is always false).
 - **Anchor seam (`anchor_seam_mode = auto|force`):** when editorial anchors rescue a gap, status shows `patched (anchor pre→post)` (or `! patched (anchor …)` when marginal). Tags may include `patch_tier=anchor_trusted` when throat Pearson is below `min_fill_correlation` but structure at anchors is strong. See [gap-repair-guide.md](gap-repair-guide.md) § Editorial anchor seam.
 - **Anchor metadata (JSON + `-v`):** `anchor_seam_used` and `anchor_bracket_move_frames` on patched gaps (`status.patched` and `tags`; omitted when false/0). Verbose `gap tags:` adds `anchor_seam=true` and `anchor_move_frames=N` when anchor search won.
+- **Dual-fit metadata (JSON + `-v`):** when G6 rescue (step 5 above) wins, status shows `patched (dual-fit pre→post)` (or `! patched (dual-fit …)` when marginal). `dual_fit_used` appears on `status.patched` and `tags` (omitted when false). Verbose `gap tags:` adds `dual_fit=true` when the rescue path won. See [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
 - CLI flags **`--no-structure-trust`** and **`--no-short-gap-one-strong-seam`** have **no effect** (gate-only).
 
 **Structure trust vs waveform gate (`fill_mode = gate` only)**
@@ -367,6 +368,21 @@ editorial bracket, `-v` appends `anchor_seam=true` and optionally `anchor_move_f
 JSON mirrors the same fields on `status.patched` and `tags` — see [json-output.md](json-output.md)
 § `GapTags` / `GapPatchStatus`. When `anchor_seam_mode = off` (non-default), `-v` may emit
 `repair note: anchor_seam_mode=off: editorial anchor search inactive; use --anchor-seam-mode auto|force`.
+
+**Dual-fit rescue (G6, default on):** when bracket search exhausts without a passing placement (or
+another scored gate skip, except structure alignment failed), production may run per-shoulder fit +
+interior trim and re-validate with the unchanged gate. Opt out with `--no-dual-fit` (D6 bracket-only
+regression). Dual-fit patched gaps use the same human/JSON patched rows as bracket fills
+(`patched (pre→post)`, `confidence`, etc.) — there is no separate “dual-fit” tier in the report.
+Details: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
+
+**Gap-fingerprint dump (`--gap-fingerprints`):** after a normal repair run (align → scan → patch plan →
+patch when write mode), optionally writes a licensing-safe corpus under `DIR`. stderr phase:
+`characterizing gaps for fingerprinting`. Default output is decision/repair (D/R) axes only; add
+`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-gap N` (repeatable) limits full
+per-bracket detail to selected indices; other gaps get summary rows in `corpus.json`. Ignored when
+`--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` without
+`--gap-fingerprints` are rejected at startup. Schema: [gap-fingerprint.md](gap-fingerprint.md).
 
 ---
 

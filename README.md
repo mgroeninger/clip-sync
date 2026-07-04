@@ -174,6 +174,11 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
+| `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
+| `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |
+| `--gap-fingerprints <DIR>` | — | After repair, write licensing-safe gap-fingerprint corpus (`corpus.json`, per-gap JSON, `manifest.json`) |
+| `--fingerprint-gap <IDX>` | — | Repeatable; full characterization for listed gaps only (**requires** `--gap-fingerprints`) |
+| `--fingerprint-diagnostics` | off | Include Tier-3 fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`); **requires** `--gap-fingerprints` |
 | `--no-structure-trust` | — | Stricter seams (gate only): always run waveform Pearson; no structure skip/soften; both seams required |
 | `--min-fill-correlation <N>` | `0.35` | Waveform seam floor (`min(pre, post)` in fit; gate threshold when waveform runs) |
 | `--max-fill-align-adjust-secs <SECS>` | `0.5` | Legacy structure polish window; **fit** B slide uses `--fill-border-search-secs` |
@@ -182,7 +187,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--gap-signature-context-secs <SECS>` | `3` | A audio on each side of the gap used for structure signatures |
 | `--fill-length-slack-secs <SECS>` | `5` | How far B fill end may differ from A gap length when locating post-border |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
-| `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended` or `interpolated` (drift between start/end clips) |
+| `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended`, `interpolated` (drift), or `anchored-retry` (two-pass anchor retry) |
 | `--fill-mode <MODE>` | `fit` | `fit` (unified search + tiering) or `gate` (legacy Pearson gate). See [docs/gap-fill-modes.md](docs/gap-fill-modes.md) |
 | `--fill-fit-structure-weight <N>` | `0.35` | Fit only: unified scorer structure term |
 | `--fill-fit-waveform-weight <N>` | `0.65` | Fit only: unified scorer waveform term |
@@ -211,7 +216,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 
 Report-only mode exits `0` when analysis completes (default `dry_run = true` in config). No files are written unless `--wav` or `--mux` is set, or config sets `dry_run = false` with output paths.
 
-**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--fill-mode`, `--min-fill-correlation`, `--fill-border-search-secs`, `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`) can be set on the CLI or in `[repair]` in a config file. Flags marked **gate only** in the table above (`--no-structure-trust`, `--no-short-gap-one-strong-seam`) apply only with `--fill-mode gate`. Other patch settings (structure bin width, seam search window, normalization window, etc.) are config-only — see the example below.
+**Scan and patch tuning:** gap detection flags (`--scan-block-ms`, `--silence-hold-ms`, `--absolute-silence-rms`) and patch seam flags (`--fill-mode`, `--min-fill-correlation`, `--fill-border-search-secs`, `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs`, `--border-standoff-secs`, `--fill-offset`, `--gap-end-extend-*`, `--no-gap-start-extend`, `--no-dual-fit`) can be set on the CLI or in `[repair]` in a config file. Flags marked **gate only** in the table above (`--no-structure-trust`, `--no-short-gap-one-strong-seam`) apply only with `--fill-mode gate`. **Fingerprint calibration:** `--gap-fingerprints` runs after the normal repair path; `--fingerprint-gap` and `--fingerprint-diagnostics` require it. With `--mux`, fingerprint output is skipped (warning on stderr). Other patch settings (structure bin width, seam search window, normalization window, etc.) are config-only — see the example below.
 
 **Timeline / duration warnings and mux preflight** (overlap start, PTS vs sample-clock skew, PCM vs container length, mux duration gate) are documented in [docs/cli-output.md](docs/cli-output.md#timeline--duration-warnings).
 
@@ -546,6 +551,8 @@ gap_start_extend_on_pre_seam_fail = true
 gap_end_extend_max_ms = 500
 gap_end_extend_step_ms = 20
 short_gap_one_strong_seam_fallback = true   # gate only
+dual_fit = true                             # G6; --no-dual-fit to disable
+fingerprint_diagnostics = false             # true only meaningful with --gap-fingerprints
 # Editorial anchor seam (fit only; default off):
 # anchor_seam_mode = "auto"                 # off | auto | force (default: auto)
 # max_anchor_bracket_secs = 5.0
