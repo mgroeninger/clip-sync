@@ -3,6 +3,7 @@
 Operational guide for `clip-sync-repair`: what kinds of gaps exist, how they appear in the report, and which profiles and flags are worth trying. This is the **operator-decision lens** on **phase 4 (per-gap patch)** of the [repair pipeline](pipeline.md).
 
 **Normative reference** (flag matrix, pipelines, config defaults): [gap-fill-modes.md](gap-fill-modes.md).  
+**Gap types (descriptive, cell-first):** [gap-vocabulary.md](gap-vocabulary.md) — bracket patch, silence-splice, program-quiet, …; this guide's W-tiers are derived readouts from that model.  
 **Report layout and skip strings**: [cli-output.md](cli-output.md) § Repair gap outcomes.  
 **JSON fields**: [json-output.md](json-output.md).
 
@@ -216,7 +217,9 @@ Verbose: `fit path: baseline only` vs `fit path: boundary grid`.
 
 ## Vocabulary
 
-Canonical **tag names** for gaps. Use these when writing run notes, scripts, or future tool output — they are **orthogonal** (several tags per gap), not a single “gap type” enum.
+Canonical **tag names** for gaps (orthogonal facts from scan/patch/seam scores). For **gap types** —
+which cell a gap occupies (bracket patch, silence-splice, program-quiet, …) — see
+[gap-vocabulary.md](gap-vocabulary.md). This section documents the tags the CLI still emits today.
 
 ### Fact vs hint
 

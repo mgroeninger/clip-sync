@@ -15,7 +15,7 @@ Supersedes: [TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-
 [TEMP-cross-codec-seam-impl-plan.md](TEMP-cross-codec-seam-impl-plan.md) (R2/R4 validator-swap —
 **archived**; its `domain/seam_robust.rs` + R2/R4 fingerprint fields are retained as **diagnostics**).
 Confirms and concretizes the **registration/step axis** of
-[TEMP-gap-vocabulary-redesign-plan.md](../TEMP-gap-vocabulary-redesign-plan.md).
+[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md).
 
 Reading: [seam-scoring.md](../seam-scoring.md), [gap-fingerprint.md](../gap-fingerprint.md) § Lag fingerprint,
 [gap-fill-modes.md](../gap-fill-modes.md).

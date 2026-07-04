@@ -298,7 +298,7 @@ not change any repair decision or repair parameter** on the corpus (dirs 1–7),
 perf actually needs (FFT ≈ naive at ~1e-10; diagnostics recomputed differently or skipped). The harness
 structure **is the gap vocabulary** — it snapshots the decision/repair (D/R) axes, not the whole
 fingerprint, so a failure is meaningful ("`donor-nominal` silence changed on 2·g7") rather than "some JSON
-field differs." See [TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) §2 for the
+field differs." See [TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md) §2 for the
 axes and [status ledger](TEMP-seam-repair-status-ledger.md) §1.2-map for the D/R/X labels.
 
 ### §4.0 Prerequisites

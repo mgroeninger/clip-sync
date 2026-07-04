@@ -11,7 +11,7 @@ same-master** content — they can't confirm what is, by **operator ground truth
 every pair**. So "no clean offset survives the trustworthiness filter" reflects *local-measurement*
 failure, not unfillability. The earlier redirect — trust the global clip alignment + a cross-codec-robust
 seam validator — lives in
-[TEMP-gap-vocabulary-redesign-plan.md](../TEMP-gap-vocabulary-redesign-plan.md) §7d and
+[TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md) §7d and
 [TEMP-cross-codec-seam-impl-plan.md](../TEMP-cross-codec-seam-impl-plan.md) (itself now largely superseded;
 see the dual-fit plan). **Do not implement this plan's
 warp/per-seam-detect;** keep the synthetic g003 fixture + detection primitives as regression assets.

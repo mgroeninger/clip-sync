@@ -1,31 +1,34 @@
-# Gap vocabulary redesign — measurement-first grouping (DRAFT)
+# Gap vocabulary redesign — measurement-first grouping (ARCHIVED)
 
-> **Status & next-steps for the whole effort live in the ledger:**
-> [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (§F production rollout, D12 perf).
-> This doc is the *detail* for the vocabulary redesign.
+> **ARCHIVED (2026-07-03) — P0–P3 done; P4 parked, not scheduled.** Do not update this doc for status or
+> next steps. **Live vocabulary:** [gap-vocabulary.md](../gap-vocabulary.md) (P3 output — named cells +
+> legacy W-tier appendix). **Live index:** [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md)
+> (§F production rollout; P4 tracked as a parked item, §D). This doc is retained for the axis-derivation
+> narrative and the full P2 corpus tables (§7) — the reasoning, not the current state.
 
-Status: **DRAFT — direction validated; P0 + P1 capture DONE; axis structure settled (§2/§2a); P2 clustering
-DONE (2026-07-02)** on the nominal-reanchor rescan (`gap-files/re-anchor-dual-fit-on-nominal`; cluster table
+Status: **P0–P3 DONE.** P0 + P1 capture done; axis structure settled (§2/§2a); P2 clustering done
+(2026-07-02) on the nominal-reanchor rescan (`gap-files/re-anchor-dual-fit-on-nominal`; cluster table
 §7g). Golden baseline frozen; orthogonality gate passed (two axes degenerate on this corpus — noted, not
-blocking). **Next: P3** — draft axis coordinates → named types + legacy W-tier mapping. Mechanism + repair:
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (historical:
-[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
+blocking). **P3 published (2026-07-03):** [gap-vocabulary.md](../gap-vocabulary.md) — named cells + legacy
+W-tier appendix. **Remaining: P4** (wire coordinates into decisions/tags — deferred, see §4). Mechanism + repair:
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §4 (historical:
+[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md)).
 Bracket-vs-step + proof index:
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (B1, B11; C3, C7).
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) (B1, B11; C3, C7).
 
-§7a–7e preserve the **historical 6-pair snapshot** (19 matched) that motivated the redesign; **§7g** is the
+§7a–7e preserve the **historical 6-pair snapshot** (19 matched) that motivated the redesign; **§7f** tombstones; **§7g** is the
 authoritative P2 cluster table on the current 7-pair / 62-matched corpus.
 
-Reading: [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary (the taxonomy this revises),
-[gap-fingerprint.md](gap-fingerprint.md) § Lag fingerprint,
-[seam-scoring.md](seam-scoring.md) §3–4,
-[archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md) (the class that
+Reading: [gap-repair-guide.md](../gap-repair-guide.md) § Vocabulary (the taxonomy this revises),
+[gap-fingerprint.md](../gap-fingerprint.md) § Lag fingerprint,
+[seam-scoring.md](../seam-scoring.md) §3–4,
+[TEMP-w5-timing-offset-diag-plan.md](TEMP-w5-timing-offset-diag-plan.md) (the class that
 exposed the defect). Siblings:
-[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) (mechanism history — archived),
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (proven/open index),
-[archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) (superseded —
+[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) (mechanism history — archived),
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) (proven/open index),
+[TEMP-cross-codec-seam-impl-plan.md](TEMP-cross-codec-seam-impl-plan.md) (superseded —
 validator-swap refuted; R2/R4 retained as diagnostics),
-[archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) (archived warp path).
+[TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md) (archived warp path).
 
 ---
 
@@ -56,8 +59,8 @@ the independent physical axes of the A↔B seam relationship**, and let the Pear
 readout*, not the primitive.
 
 **Superseded repair directions (do not revive):** per-seam warp
-([archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)),
-cross-codec validator-swap ([archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md)).
+([TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md)),
+cross-codec validator-swap ([TEMP-cross-codec-seam-impl-plan.md](TEMP-cross-codec-seam-impl-plan.md)).
 
 ---
 
@@ -113,9 +116,8 @@ tuned post-rescan). The `#`-marked shifts are what the perf §4 harness keys on:
 
 **Validation status:** the *structure* (axes, orthogonality-in-principle, the D/R/X partition, the placement
 discipline) is proven in the ledger. The *values* (which gaps are targets, seam-local width, donor/step/quiet
-thresholds) are provisional and re-derived by the `seam-local-fix` rescan. **P2 (below) is the orthogonality
-check** — cluster the fresh corpus on these axes and confirm they are independent, populated, and
-non-redundant before freezing them (perf §4.0 gates the harness golden record on this).
+thresholds) are provisional and re-derived by the `seam-local-fix` rescan. **P2 orthogonality gate
+passed** (2026-07-02) — cluster table §7g; golden baseline frozen (perf §4.0).
 
 ---
 
@@ -133,8 +135,8 @@ Candidate further axes. Keep only if **physically independent**, **robustly meas
 | **Residual cancellation** | Strong same-master test on *identical* encodings | **Yes (capture DONE)** — `GapFingerprint.residual`; **wrong discriminator for cross-encoded pairs** (expected `informative=false`) — diagnostic only here |
 | **Wide-envelope concordance** | Segment identity at macro scale; peak lag vs fine lag | **Yes (capture DONE)** — `wide_envelope` (100 ms bin); cross-scale agreement check |
 
-**Re-scan pending:** committed `gap-files/` scans predate several fields (`donor_interior`, `splice`,
-`peak_z` @ 1 s, `wide_envelope`). Capture schema is complete in code; one re-scan populates them.
+**Re-scan:** nominal-reanchor corpus (`gap-files/re-anchor-dual-fit-on-nominal`, 2026-07-02) populates
+`donor_interior`, `splice`, `peak_z` @ 1 s, `wide_envelope`, and golden D/R fields.
 
 **Registration measurement for quiet gaps — outward-anchor (operator idea; see dualfit §3.7).** For a gap
 inside a *long quiet section*, no window *centered* on the seam (250 ms edge **or** 1–2 s wide-envelope) has
@@ -156,14 +158,13 @@ Deliberately *excluded* as non-axes (they re-project the above): the raw `min(pr
 |----------|------------------------|
 | Decision-placement lag (P0) + axis surfacing (P1) | Changing the gate's patch/skip *decision* (still Pearson-driven) |
 | Surfacing per-gap **axis coordinates** in fingerprint + analyzer | Cross-codec validator-swap (archived) |
-| **Clustering** the real corpus; naming the types that actually occur | Removing/renaming live `gap_tags.rs` vocabulary |
-| A redesigned **vocabulary doc** (axes + observed types) | §4 dual-fit repair implementation |
+| **Clustering** + named types — **[gap-vocabulary.md](../gap-vocabulary.md)** (P3 done) | Removing/renaming live `gap_tags.rs` vocabulary (P4) |
 | | Rewriting `gap-repair-guide.md` Layers 1–5 wholesale |
 
 **This is a descriptive re-vocabulary.** The gate still decides on Pearson; this work describes gaps
 better than the gate currently acts on them. Wiring coordinates into decisions/tags is P4 (deferred).
-Repair routing for bracket-exhausted skips → [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4
-(historical detail: [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)).
+Repair routing for bracket-exhausted skips → [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §4
+(historical detail: [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md)).
 
 ---
 
@@ -211,7 +212,7 @@ test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_cor
 `crates/clip-sync-repair-harness/golden/re-anchor-dual-fit-on-nominal.golden.json`.
 
 **Results:** cluster table + orthogonality verdict in **§7g**. Golden baseline frozen; perf §4.0 gates met
-([`golden/README.md`](../crates/clip-sync-repair-harness/golden/README.md)).
+([`golden/README.md`](../../crates/clip-sync-repair-harness/golden/README.md)).
 
 Cluster on **bracket_passing × donor × outcome** (primary); **step is not a cluster divider** (confirmed).
 Expected cells from the pre-rescan hypothesis (refined in §7g):
@@ -222,12 +223,12 @@ Expected cells from the pre-rescan hypothesis (refined in §7g):
 - `silence-splice` — both shoulders recoverable at ±600 ms on all matched gaps with measured registration
 - `alias-suspect` — 24/55 at old 250 ms metric; demoted to diagnostic (§2a.4)
 
-### P3 — Draft the redesigned vocabulary
+### P3 — Draft the redesigned vocabulary — **DONE (2026-07-03)**
 
-Write **axis coordinates → named type**, with:
-- observed types from P2;
-- mapping from old guide IDs (W5 = "same-master, lag-0/bracket validation failed", not "weak");
-- legacy Pearson tier as *derived* readout.
+Published as [gap-vocabulary.md](../gap-vocabulary.md): five named cells (bracket patch, silence-splice,
+program-quiet, no-placement, tail) from the §7g.1 cluster table, each with its old W-tier
+correspondence inline + a compact legacy-appendix table. Confirms the W5 mislabel: `symmetric_weak`
+conflates silence-splice (rescuable) and program-quiet (permanently unfillable) on one Pearson score.
 
 ### P4 — Wire coordinates into decisions/tags (DEFERRED)
 
@@ -242,7 +243,7 @@ plan §4 — **not** cross-codec validator tiers.
 - **P1:** re-scan populates `donor_interior`, `peak_z`, `wide_envelope`, `splice`; harness columns live.
 - **P2:** ✓ cluster table on re-anchor rescan (§7g): 62 matched · 32 bracket-exhausted · step not a divider;
   orthogonality gate passed (two axes degenerate on this corpus — §7g.2).
-- **P3:** each old W/C/P ID maps to new types; W5 mislabel documented.
+- **P3:** ✓ [gap-vocabulary.md](../gap-vocabulary.md) — five named cells + legacy W-tier appendix; W5 mislabel documented. C/GK guide IDs deferred (content-shape hints, not gap cells).
 - **Regression:** g003 (pair 1 idx 3) — same-master / stepped; may be alias-suspect at 250 ms margin but
   unique at 1 s (§3.6a); do not require old `uniqueness_margin ≥ 0.30`.
 
@@ -254,7 +255,7 @@ plan §4 — **not** cross-codec validator tiers.
    is rare (**6/62** matched on re-anchor rescan) — do not treat as the default registration bucket.
 2. **Registration sub-split.** Keep **offset** vs **step**; drop offset-vs-**skew** (drift refuted). Mechanism
    sub-frame, open (quantization test ≈ 0.84× chance).
-3. **Keep or deprecate W-tiers?** Keep as *derived* operator readout; stop treating as the type (decide in P3).
+3. **Keep or deprecate W-tiers?** **Decided (P3):** keep as *derived* operator readout in `-v`/JSON ([gap-vocabulary.md](../gap-vocabulary.md) § Derived readouts); gap **type** is the cell, not the W-tier. P4 may wire axis facts into `gap_tags.rs` (D4).
 4. **Existing tags.** `donor_relation`, `content_hint`, `seam_shape` — reconcile, don't duplicate (§2b).
 5. **Decorrelated absent.** This corpus is all same-master; `different`/`ambiguous` source regions untested.
 6. **Bracket search vs dual-fit.** When brackets pass (5·g3), today's path suffices. Dual-fit targets
@@ -265,7 +266,7 @@ plan §4 — **not** cross-codec validator tiers.
 ## 7. Corpus findings
 
 §7a–7e: **historical 6-pair snapshot** (`diag_fingerprint_corpus`, 19 matched) — preserved for the narrative
-that exposed the W5 mislabel. **§7g:** authoritative **P2 cluster table** on the current re-anchor rescan.
+that exposed the W5 mislabel. **§7f:** tombstone. **§7g:** authoritative **P2 cluster table** on the current re-anchor rescan.
 
 ### 7a. Overview
 
@@ -317,14 +318,23 @@ Per-side `baseline_lag` over ±200 ms: both shoulders recover at own lag (`peak_
 matched gap; they differ by a **step**. Skips share this signature with patches — they skipped because
 **no bracket** achieves lag-0 Pearson on both sides simultaneously, not because content differs.
 
-**Repair direction (unbuilt):** independent per-seam fit + length reconciliation at gap interior;
+**Repair (shipped):** independent per-seam fit + length reconciliation at gap interior;
 validate with **unchanged** waveform gate — see
-[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4 (wire spec; A3 **shipped**). Scope: **bracket-exhausted** skips
+[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §4 (A3 **shipped**; default `dual_fit` on). Scope: **bracket-exhausted** skips
 only (not high-step patches like 5·g3 where 18/25 brackets already pass). Historical mechanism detail:
-[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md).
+[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md).
 
-**Proof sequencing:** P3 from fingerprints now; C3/C7 via scan-native **`splice_dualfit`** (proven) before §4
-repair — see [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) (C3, C7, §4).
+**Proof sequencing:** P3 published; C3/C7 via scan-native **`splice_dualfit`** (proven) before §4
+repair — see [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) (C3, C7, §4).
+
+### 7f. Superseded hypotheses (tombstone)
+
+| Hypothesis | Verdict |
+|------------|---------|
+| Clip drift / time-warp rescue | Refuted — step is local, not monotone vs gap time |
+| §7c "skip was right" via uniqueness funnel | Superseded — wrong timescale + wrong residual test |
+| Cross-codec validator-swap (§7d redirect) | Refuted — measurement artifact; plan archived |
+| Per-seam warp | Archived |
 
 ### 7g. P2 cluster table — re-anchor rescan (7 pairs, 2026-07-02)
 
@@ -395,16 +405,7 @@ as a *gate* here, still descriptive).
 | `silence-splice` (recoverable shoulders) | All matched gaps with measured registration recover at ±600 ms |
 | `alias-suspect` @ 250 ms | 24/55 — diagnostic only (§2a.4); does not predict patch/skip |
 
-**P3 input:** name the §7g.1 cells; map legacy W5 → "same-master, bracket-exhausted" (not "weak").
-
-### 7f. Superseded hypotheses (tombstone)
-
-| Hypothesis | Verdict |
-|------------|---------|
-| Clip drift / time-warp rescue | Refuted — step is local, not monotone vs gap time |
-| §7c "skip was right" via uniqueness funnel | Superseded — wrong timescale + wrong residual test |
-| Cross-codec validator-swap (§7d redirect) | Refuted — measurement artifact; plan archived |
-| Per-seam warp | Archived |
+**P3 output (published):** [gap-vocabulary.md](../gap-vocabulary.md) — five named cells + legacy W-tier appendix; W5 → silence-splice / program-quiet (not "weak").
 
 ---
 
@@ -412,10 +413,11 @@ as a *gate* here, still descriptive).
 
 | Doc | Contents |
 |-----|----------|
-| [gap-repair-guide.md](gap-repair-guide.md) | The Pearson-rooted vocabulary being revised |
-| [gap-fingerprint.md](gap-fingerprint.md) | Measurements (lag, levels, donor_interior, splice, …) |
-| [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) | Mechanism history (archived); wire spec → ledger §4 |
-| [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) | Proven/open index; bracket-vs-step; proof sequencing |
-| [archive/TEMP-cross-codec-seam-impl-plan.md](archive/TEMP-cross-codec-seam-impl-plan.md) | Superseded validator-swap |
-| [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md) | Archived warp path |
-| [archive/TEMP-w5-timing-offset-diag-plan.md](archive/TEMP-w5-timing-offset-diag-plan.md) | The class that exposed the conflation |
+| [gap-vocabulary.md](../gap-vocabulary.md) | **P3** — named gap cells + legacy W-tier appendix |
+| [gap-repair-guide.md](../gap-repair-guide.md) | The Pearson-rooted vocabulary being revised |
+| [gap-fingerprint.md](../gap-fingerprint.md) | Measurements (lag, levels, donor_interior, splice, …) |
+| [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) | Mechanism history (archived); wire spec → ledger §4 |
+| [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) | Proven/open index; bracket-vs-step; proof sequencing |
+| [TEMP-cross-codec-seam-impl-plan.md](TEMP-cross-codec-seam-impl-plan.md) | Superseded validator-swap |
+| [TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md) | Archived warp path |
+| [TEMP-w5-timing-offset-diag-plan.md](TEMP-w5-timing-offset-diag-plan.md) | The class that exposed the conflation |
