@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn selection_max_by_picks_highest_ranking_then_larger_move() {
-        let pool = vec![
+        let pool = [
             cand(FillConfidence::High, 10, 0.40),
             cand(FillConfidence::High, 5, 0.55), // highest rank
         ];
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(best.ranking_score, 0.55);
 
         // Tie on ranking_score → max_by keeps the LARGER boundary_move.
-        let tied = vec![cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
+        let tied = [cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
         assert_eq!(
             tied.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().boundary_move,
             7
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn best_high_via_filter_max_by_ignores_marginal() {
         // The driver's E3 selection: filter High, then max_by selection_cmp.
-        let pool = vec![
+        let pool = [
             cand(FillConfidence::Marginal, 0, 0.95), // higher rank but Marginal
             cand(FillConfidence::High, 10, 0.40),
             cand(FillConfidence::High, 5, 0.55),
@@ -161,7 +161,7 @@ mod tests {
             .max_by(|a, b| selection_cmp(a, b));
         assert_eq!(best.unwrap().ranking_score, 0.55);
 
-        let all_marginal = vec![cand(FillConfidence::Marginal, 0, 0.3)];
+        let all_marginal = [cand(FillConfidence::Marginal, 0, 0.3)];
         assert!(all_marginal
             .iter()
             .filter(|c| terminates_high(c.confidence))
@@ -172,12 +172,10 @@ mod tests {
     #[test]
     fn winner_sort_is_ranking_desc_then_smaller_move() {
         // The driver walks this order applying residual; a vetoed top candidate falls through.
-        let mut pool = vec![
-            cand(FillConfidence::High, 0, 0.40),
+        let mut pool = [cand(FillConfidence::High, 0, 0.40),
             cand(FillConfidence::High, 20, 0.51),
-            cand(FillConfidence::Marginal, 0, 0.30),
-        ];
-        pool.sort_by(|a, b| winner_cmp(a, b));
+            cand(FillConfidence::Marginal, 0, 0.30)];
+        pool.sort_by(winner_cmp);
         let order: Vec<f64> = pool.iter().map(|c| c.ranking_score).collect();
         assert_eq!(order, vec![0.51, 0.40, 0.30]);
     }
@@ -185,14 +183,14 @@ mod tests {
     #[test]
     fn selection_and_winner_tie_break_in_opposite_directions() {
         // The asymmetry is load-bearing and must survive the extraction:
-        let mut pool = vec![cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
+        let mut pool = [cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
         // selection (E3) keeps the LARGER move:
         assert_eq!(
             pool.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().boundary_move,
             7
         );
         // winner (E5/E7) puts the SMALLER move first:
-        pool.sort_by(|a, b| winner_cmp(a, b));
+        pool.sort_by(winner_cmp);
         assert_eq!(pool[0].boundary_move, 3);
     }
 
@@ -274,8 +272,8 @@ mod tests {
     #[test]
     fn selection_and_winner_cmp_are_total_orders_including_nan() {
         let corpus = law_corpus();
-        assert_total_order(&corpus, |a, b| selection_cmp(a, b), "selection_cmp");
-        assert_total_order(&corpus, |a, b| winner_cmp(a, b), "winner_cmp");
+        assert_total_order(&corpus, selection_cmp, "selection_cmp");
+        assert_total_order(&corpus, winner_cmp, "winner_cmp");
     }
 
     #[test]
@@ -291,7 +289,7 @@ mod tests {
             "NaN must not win selection (max_by)"
         );
         let mut winner = pool.clone();
-        winner.sort_by(|a, b| winner_cmp(a, b));
+        winner.sort_by(winner_cmp);
         assert_eq!(
             winner[0].ranking_score, 0.5,
             "NaN must not be the winner (sort_by first)"

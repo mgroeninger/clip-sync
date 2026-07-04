@@ -1830,7 +1830,7 @@ mod tests {
 
     #[test]
     fn human_output_includes_repair_timeline_warnings() {
-        use clip_sync::AudioTimelineSkew;
+        
         use crate::domain::align::TimelineOverlap as DomainOverlap;
 
         let mut report = minimal_report();

@@ -504,7 +504,7 @@ pub fn score_placement_multichannel(
     let floor_params = |window: usize| SeamFloorParams {
         a_samples: &fixture.a_samples,
         channels: ch,
-        b_mono: &b_mono,
+        b_mono,
         window,
         standoff_frames: setup.border_spec.border_standoff_frames,
         a_to_b_delta: delta_true,
@@ -534,10 +534,10 @@ pub fn score_placement_multichannel(
         (Vec::new(), Vec::new(), verdict)
     } else {
         let pre = seam_chosen_and_floor_multichannel(
-            &floor_params(pre_window), &b_ch, &selected, SeamSide::Pre, gap_start, gap_end, chosen_delta,
+            &floor_params(pre_window), b_ch, &selected, SeamSide::Pre, gap_start, gap_end, chosen_delta,
         );
         let post = seam_chosen_and_floor_multichannel(
-            &floor_params(post_window), &b_ch, &selected, SeamSide::Post, gap_start, gap_end, chosen_delta,
+            &floor_params(post_window), b_ch, &selected, SeamSide::Post, gap_start, gap_end, chosen_delta,
         );
         let verdict = SeamResidualVerdict::from_channel_residuals(
             &pre, &post, DEFAULT_RESIDUAL_FLOOR_OK_DB, placement_slide, max_lag,

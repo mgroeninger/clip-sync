@@ -7,6 +7,12 @@ use crate::domain::ports::PcmCorrelator;
 /// Production GCC-PHAT correlator (wraps `clip_sync::FftCorrelator`).
 pub struct FftCorrelator(pub clip_sync::FftCorrelator);
 
+impl Default for FftCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FftCorrelator {
     pub const fn new() -> Self {
         Self(clip_sync::FftCorrelator)

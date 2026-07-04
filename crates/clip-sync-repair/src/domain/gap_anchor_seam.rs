@@ -996,8 +996,8 @@ mod tests {
         let templates = crate::domain::policies::SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: std::slice::from_ref(&b_mono),
         };
@@ -1026,8 +1026,8 @@ mod tests {
         let templates = crate::domain::policies::SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: std::slice::from_ref(&b_mono),
         };
@@ -1089,8 +1089,8 @@ mod tests {
         let templates = crate::domain::policies::SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,
-            a_pre_ch: &[a_pre.clone()],
-            a_post_ch: &[a_post.clone()],
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
             b_mono: &b_mono,
             b_ch: std::slice::from_ref(&b_mono),
         };

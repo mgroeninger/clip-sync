@@ -321,7 +321,7 @@ fn repair_query_gap_inside_region_fillable() {
         report.alignment.start_overlap
     );
 
-    let plan = build_gap_fill_plan(&report, 10);
+    let plan = build_gap_fill_plan(report, 10);
     assert!(
         plan.regions
             .iter()

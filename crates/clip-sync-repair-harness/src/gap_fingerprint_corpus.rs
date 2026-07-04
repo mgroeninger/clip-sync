@@ -659,10 +659,6 @@ impl GapRow {
     }
 }
 
-/// D11 — B is at least [`PROGRAM_QUIET_SILENCE_FRAC`] silent over the nominal-span ⇒ program-quiet, not a
-/// fillable dropout. Real dropouts read ~0 (B occupied); program-quiet passages ~0.9–1.0 (B silent too).
-/// **Calibrated (edge-pin/D11 rescan, 2026-07-01):** bimodal — dropouts ≈0, program-quiet cluster ≥0.83.
-
 /// The dual-fit **step-real margin**: the step is *necessary* (a real splice, not a registration artifact)
 /// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at
 /// least this much — i.e. the step **materially improves** the seam. The earlier `post@pre < 0.35` floor was
@@ -2099,13 +2095,11 @@ mod tests {
     #[test]
     fn splice_diag_uses_peak_z_when_present() {
         let root = tempfile::tempdir().unwrap();
-        let gap_json = format!(
-            r#"{{"index":0,"tier":"full","sample_rate":48000,"channels":2,
-            "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
-            "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}}],
-                    "post_anchor":[{{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-5.0,"verdict":"timing_offset"}}]}},
-            "outcome":{{"tier":"skip"}}}}"#
-        );
+        let gap_json = r#"{"index":0,"tier":"full","sample_rate":48000,"channels":2,
+            "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
+            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}],
+                    "post_anchor":[{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-5.0,"verdict":"timing_offset"}]},
+            "outcome":{"tier":"skip"}}"#.to_string();
         write_corpus(&root.path().join("1"), "aaaa", "bbbb", &format!("[{gap_json}]"));
         let row = &analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows[0];
         assert_eq!(row.splice_diag(), Some(SpliceDiag::AliasSuspect));

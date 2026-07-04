@@ -86,10 +86,11 @@ pub fn try_dual_fit(
 
     // step-real: post seam at the PRE lag (step forced 0) must be materially worse than at its own lag.
     let b_post_global = b_pre_seam + p.gap_frames;
-    let post_global = (b_post_global + w <= b_mono.len())
-        .then(|| normalized_correlation(a_post, &b_mono[b_post_global..b_post_global + w]))
-        .unwrap_or(f64::NAN);
-    if !(post_r - post_global >= p.step_real_margin) {
+    let post_global = if b_post_global + w <= b_mono.len() { normalized_correlation(a_post, &b_mono[b_post_global..b_post_global + w]) } else { f64::NAN };
+    if post_r
+        .partial_cmp(&(post_global + p.step_real_margin))
+        .is_none_or(|ord| ord == std::cmp::Ordering::Less)
+    {
         return None;
     }
 
@@ -126,7 +127,7 @@ mod tests {
     use super::*;
 
     fn mono_to_interleaved(m: &[f64], ch: usize) -> Vec<f32> {
-        m.iter().flat_map(|&x| std::iter::repeat(x as f32).take(ch)).collect()
+        m.iter().flat_map(|&x| std::iter::repeat_n(x as f32, ch)).collect()
     }
 
     #[test]

@@ -1505,9 +1505,7 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
     // if the post seam also clears there, one constant shift fixes both ⇒ registration artifact, not a splice.
     let b_post_global = b_pre_seam + gap_frames;
-    let post_seam_global_r = (w_post >= 8 && b_post_global + w_post <= b_mono.len())
-        .then(|| finite_corr(normalized_correlation(&a_post[..w_post], &b_mono[b_post_global..b_post_global + w_post])))
-        .unwrap_or(f64::NAN);
+    let post_seam_global_r = if w_post >= 8 && b_post_global + w_post <= b_mono.len() { finite_corr(normalized_correlation(&a_post[..w_post], &b_mono[b_post_global..b_post_global + w_post])) } else { f64::NAN };
 
     // Validator 2 — is each seam a unique (non-periodic) match? Prominence of the placement peak over its
     // best rival within ±30 ms.
@@ -1541,7 +1539,7 @@ const WIDE_ENV_WINDOW_SECS: f64 = 2.0;
 const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
 
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
-fn mono_lag_side<'a>(lag: &'a LagFingerprint, pre: bool) -> Option<&'a LagSummary> {
+fn mono_lag_side(lag: &LagFingerprint, pre: bool) -> Option<&LagSummary> {
     let entries = if pre { &lag.pre_anchor } else { &lag.post_anchor };
     entries.iter().find(|s| s.channel == LagChannel::Mono)
 }
@@ -2512,7 +2510,7 @@ pub(crate) fn write_corpus_dir(
     dir: &std::path::Path,
 ) -> std::io::Result<usize> {
     let to_io =
-        |e: serde_json::Error| std::io::Error::new(std::io::ErrorKind::Other, e);
+        |e: serde_json::Error| std::io::Error::other(e);
     std::fs::create_dir_all(dir)?;
     // Combined corpus (all gaps) for quick inspection / scripting.
     let combined = std::fs::File::create(dir.join("corpus.json"))?;
@@ -2558,8 +2556,7 @@ mod tests {
 
     /// splitmix64 finalizer → deterministic noise in [-1, 1).
     fn noise(seed: u64, i: usize) -> f64 {
-        let mut z = (((seed << 32) | (i as u64 & 0xffff_ffff)).wrapping_add(0x9E37_79B9_7F4A_7C15))
-            as u64;
+        let mut z = ((seed << 32) | (i as u64 & 0xffff_ffff)).wrapping_add(0x9E37_79B9_7F4A_7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^= z >> 31;
@@ -2642,7 +2639,7 @@ mod tests {
         let unique: Vec<(i64, f64)> = (-5..=5).map(|l| (l, 1.0 - 0.1 * (l as f64).abs())).collect();
         let s = summarize_lag_curve(&unique, 48_000, 10, 1, LagChannel::Mono).expect("summary");
         assert!(
-            s.second_peak_r.map_or(true, |r| r < s.peak_r - 0.3),
+            s.second_peak_r.is_none_or(|r| r < s.peak_r - 0.3),
             "a unique peak should have no strong rival: {:?}",
             s.second_peak_r
         );
@@ -2906,17 +2903,17 @@ mod tests {
 
     fn write_speech(buf: &mut [f32], start: usize, end: usize, freq: f64, amp: f32) {
         let n = (end - start) as f64;
-        for f in start..end {
+        for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {
             let t = (f - start) as f64;
             let env = 0.5 - 0.5 * (std::f64::consts::TAU * t / n).cos();
             let s = (std::f64::consts::TAU * freq * t / 48_000.0).sin();
-            buf[f] = (env * s) as f32 * amp;
+            *slot = (env * s) as f32 * amp;
         }
     }
 
     fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
-        for f in start..end {
-            buf[f] = noise(seed, f) as f32 * amp;
+        for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {
+            *slot = noise(seed, f) as f32 * amp;
         }
     }
 

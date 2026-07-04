@@ -1920,7 +1920,7 @@ fn prepare_region_patch(
         .then(|| {
             build_dual_fit_input(
                 &a_pcm.samples,
-                &b_samples,
+                b_samples,
                 channels,
                 sample_rate,
                 refined,
