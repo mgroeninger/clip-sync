@@ -133,6 +133,10 @@ path = "tests/validate_patch_audio.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "golden_baseline_smoke"
+path = "tests/golden_baseline_smoke.rs"
+
+[[test]]
 name = "golden_baseline_invariance"
 path = "tests/golden_baseline_invariance.rs"
 required-features = ["validation-tests"]

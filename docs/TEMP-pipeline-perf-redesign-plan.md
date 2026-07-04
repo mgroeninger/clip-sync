@@ -9,15 +9,16 @@ a **list of gaps to fix** and the **repair-params to fix them**, with everything
 per claim); this is the detail doc for the *perf/pipeline* workstream (D12). It **absorbs** the ledger's
 scattered perf notes (D5 FFT, "Perf (before a long rescan)", the "Pipeline (detect → repair)" order) — those
 now point here. The [ledger §4 wire spec](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-shipped)
-owns the dual-fit *algorithm*; this owns the pipeline *assembly*. (A3 is **shipped** — see §2.4.)
+owns the dual-fit *algorithm*; this owns the pipeline *assembly*. Gap **classification** (cells, axes,
+placement): [gap-vocabulary.md](gap-vocabulary.md). (A3 is **shipped** — see §2.4.)
 
 **Hard wall.** §1 is **descriptive** ("what the pipeline does today") and stays factually true regardless of
 plan revisions. §2–§4 are **prescriptive** ("what it should become"). Keep them separate so the audit can
 graduate to a permanent `docs/pipeline-architecture.md` later if useful.
 
 **Status:** §1 audit populated from code (2026-07-01, audit v1). **§2 updated to match code (2026-07-03).**
-§4 harness **built** (golden + footguns); **§4.7 CI / live-path gaps audited (2026-07-03).** A3 + G5
-production landed. §3 migration status tracked in §2.4.
+§4 harness **built** (golden + footguns); **§4.7 CI / live-path gaps audited (2026-07-03), Tier A (A1–A3)
+landed same day.** A3 + G5 production landed. §3 migration status tracked in §2.4.
 
 ---
 
@@ -43,15 +44,15 @@ Ordered as data flows. "Rejects" = what this gate filters out.
 | # | Gate | Where | Decides | Minimum decision inputs | Cost class | Rejects |
 |---|------|-------|---------|-------------------------|-----------|---------|
 | G0 | **Silence-run detect** | `scan_gaps.rs` (`ScanGaps`) | Is there a gap? | A block-RMS vs `silence_peak_fraction`/`absolute_silence_rms`; `silence_hold_blocks`; `min_gap_secs` | `O(N)` decode + RMS | non-silent regions |
-| G0b | **Fillable coverage** | `scan_gaps.rs` (`limit_fill_to_mapped_region`) | Is the gap inside mapped clip coverage? | gap time vs alignment coverage | scalar | out-of-coverage (tails / P6) |
-| G0c | **B cross-check** (opt) | `scan_gaps.rs` (`scan_both`, `cross_check`) | Does B agree / have energy there? | B silence scan; `gap_offset_agreement`; `b_has_energy_in_range` | `O(N)` (B decode) | offset-disagreeing / B-empty |
-| G1 | **Structure align** | `patch_region.rs` (`gate_structure_align`) | Is there *a* B placement? | A border templates + gap signature (energy/bool) + B haystack; unified search over `search_radius` | `O(N·radius)` **per bracket** | no placement → `StructureAlignmentFailed` |
+| G0b | **Fillable coverage** | `scan_gaps.rs` (`limit_fill_to_mapped_region`) | Is the gap inside mapped clip coverage? | gap time vs alignment coverage | scalar | out-of-coverage → **Tail** / unfillable (P6) |
+| G0c | **B cross-check** (opt) | `scan_gaps.rs` (`scan_both`, `cross_check`) | Does B agree / have energy there? | B silence scan; `gap_offset_agreement`; `b_has_energy_in_range` | `O(N)` (B decode) | offset-disagreeing / B-empty; plan-time `!b_has_energy` → unfillable (**Program-quiet** at scan) |
+| G1 | **Structure align** | `patch_region.rs` (`gate_structure_align`) | Is there *a* B placement? | A border templates + gap signature (energy/bool) + B haystack; unified search over `search_radius` | `O(N·radius)` **per bracket** | no placement → **No-placement** (`StructureAlignmentFailed`) |
 | G2 | **Structure threshold** | `patch_region.rs` (`structure_passes_gate`) | Is the envelope match strong enough? | `structure_pre/post` ≥ `min_structure_match_score` (short-gap mean adj.) | scalar (from G1) | weak envelope → `StructureBelowThreshold` |
 | G3 | **Waveform seam** | `patch_region.rs` (`classify_fill_waveform_confidence`) | Do the seams match at sample level? | pre/post Pearson @ placement vs `min_fill_correlation` / `fill_marginal_margin` / `fill_absolute_floor` | `O(seam)` | dead seam → `waveform_below_threshold` |
 | G4 | **Residual** | `patch_region.rs` (`finalize_fit_outcome_residual`) | Same-source confirm for a *marginal* seam | least-squares cancellation @ throat vs floor | `O(seam)`, **at selection only** | veto marginal; rescue marginal |
 | R | **Bracket ranking** | `patch_region.rs` (`fit_candidate_ranking_score`) | Which *passing* bracket wins | `min(pre,post)`, `boundary_move` | scalar | — (selection, not reject) |
-| **G5** | **Program-quiet label** *(D11 — **analyzer / dual-fit only**, not production pre-gate)* | `domain/donor.rs` (`program_quiet_at_nominal`); fingerprint `donor_interior_nominal`; `try_dual_fit` decline | Is B nominal span mostly silent? | nominal-span B `silence_fraction` @ `b_mapped` | `O(N)` | Plan: `!b_has_energy` → unfillable. Patch: seam gate decides; dual-fit declines program-quiet donors |
-| **G6** | **Dual-fit rescue** *(A3 — **shipped**, default **on**)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `dual_fit` (default true) → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | donor-BROKEN / program-quiet / spurious-step skips |
+| **G5** | **Program-quiet label** *(D11 — **analyzer / dual-fit only**, not production pre-gate)* | `domain/donor.rs` (`program_quiet_at_nominal`); fingerprint `donor_interior_nominal`; `try_dual_fit` decline | Is B nominal span mostly silent? | nominal-span B `silence_fraction` @ `b_mapped` | `O(N)` | → **Program-quiet** cell (Donor — nominal). Plan: `!b_has_energy` → unfillable. Patch: seam gate decides; dual-fit declines program-quiet donors |
+| **G6** | **Dual-fit rescue** *(A3 — **shipped**, default **on**)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `dual_fit` (default true) → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | declines → stay skipped; success → **Silence-splice** rescued (post-rescue patch tier, not a new cell — [gap-vocabulary.md](gap-vocabulary.md) W7) |
 
 ### §1.2 Measurement → gate map (decision / repair / diagnostic)
 
@@ -117,12 +118,16 @@ Every fingerprint field, what produces it, its cost, which gate consumes it, and
 
 ### §1.5 The two outputs, mapped to the audit
 
-- **Fix-list (detect):** produced by G0→G0b→(G5)→G1→G2→G3→G4, plus (future) G6 for dual-fit skips.
-  Needs: silence runs, coverage, nominal-donor, structure placement, seam, residual.
+- **Fix-list (detect):** gaps that should receive repair work — patched **Bracket patch** (G1–G4 pass)
+  plus rescuable **Silence-splice** (`dualfit_target()` / G6). Produced by G0→G0b→G1→G2→G3→G4, plus G6
+  for bracket-exhausted skips. Needs: silence runs, coverage, nominal-donor, structure placement, seam,
+  residual. **Tail**, **No-placement**, and **Program-quiet** gaps never enter the fix-list.
 - **Repair-params (fix, survivors only):** placement `start_frame` (from G1); for dual-fit — `baseline_lag`
   per-shoulder, `splice.step`, trim (`splice_dualfit.trim_frames`), donor span.
 - **Everything labeled X** (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`) is **not** on either
   output path — it exists to *explain* decisions, and belongs behind a diagnostics flag.
+
+Cell definitions and corpus counts: [gap-vocabulary.md](gap-vocabulary.md).
 
 > **Audit open items:**
 > - **(a) RESOLVED (2026-07-01)** — selected-channel lag sweep is **diagnostic-only**. `baseline_lag`
@@ -136,7 +141,9 @@ Every fingerprint field, what produces it, its cost, which gate consumes it, and
 >   fingerprint dependency.
 > - **(c) RESOLVED (2026-07-01)** — G0c cross-check is **on by default**: `scan_both: default_true()`
 >   (`config.rs:420`).
-> - **(d) PENDING** — measure per-gate reject rates on the corpus for the §2 ordering. Needs the fresh scan
+> - **(d) PENDING** — measure per-gate reject rates on the corpus for the §2 ordering; report by
+>   [gap-vocabulary.md](gap-vocabulary.md) **cell** where possible (e.g. bracket-exhausted skips split into
+>   program-quiet vs donor-aligned decline vs silence-splice targets). Needs the fresh scan
 >   (`donor_interior_nominal` for G5's rate); not code-confirmable.
 
 ---
@@ -255,8 +262,8 @@ flowchart TB
   fill --> splice[splice_into_a]
 ```
 
-Solid arrows = always on the path. `G6` and `fingerprint_diagnostics` branches are flag-gated (`--dual-fit`,
-`--fingerprint-diagnostics`, both default off).
+Solid arrows = always on the path. `G6` is default **on** (`--no-dual-fit` to disable). `fingerprint_diagnostics`
+is default **off** (`--fingerprint-diagnostics` to enable Tier-3 X-set).
 
 ### §2.4 Migration status (§3 steps)
 
@@ -267,12 +274,12 @@ Solid arrows = always on the path. `G6` and `fingerprint_diagnostics` branches a
 | **3** | Cheap early-reject (G0b at plan) | **Partial** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Not started** | `lag_correlation_curve` still naive O(n·L) in `domain/seam_local.rs`. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
-| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **CI subset + live-path / production guards still open** — see §4.7. |
+| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** Live-path / production guards (B2, C1, C2) still open — see §4.7. |
 
-> **Sequencing (updated 2026-07-03):** A3 (step 5) and G5 production are landed. **Next:** land §4.7 Tier-A
-> tests (before hoists) → finish step 1 hoists → step 4 FFT (with B1 `fft ≈ naive` + harness Tier-2 ε) →
-> optimize diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder gates or
-> drop D/R measurements until the §4 harness passes (full workflow: §4.7 C1).
+> **Sequencing (updated 2026-07-03):** A3 (step 5), G5 production, and §4.7 **Tier A (A1–A3)** are landed.
+> **Next:** B1 (`fft_curve ≈ naive_curve` equivalence) → step 1 hoists (behind the now-CI-pinned harness) →
+> step 4 FFT → optimize diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder
+> gates or drop D/R measurements until the §4 harness passes (full workflow: §4.7 C1).
 
 ---
 
@@ -298,10 +305,12 @@ scan optimization (2026-07-01 sequencing decision) — complete.
 Every perf step is behavior-preserving, so the harness's job is narrow and strong: **prove a refactor did
 not change any repair decision or repair parameter** on the corpus (dirs 1–7), while *allowing* the drift
 perf actually needs (FFT ≈ naive at ~1e-10; diagnostics recomputed differently or skipped). The harness
-structure **is the gap vocabulary** — it snapshots the decision/repair (D/R) axes, not the whole
-fingerprint, so a failure is meaningful ("`donor-nominal` silence changed on 2·g7") rather than "some JSON
-field differs." See [TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md) §2 for the
-axes and [status ledger](TEMP-seam-repair-status-ledger.md) §1.2-map for the D/R/X labels.
+snapshots the **axis coordinates** from [gap-vocabulary.md](gap-vocabulary.md) (D/R fields tagged with
+**placement**), not whole fingerprint blobs and not W-tier readouts — so a failure is meaningful
+("`donor-nominal` silence changed on 2·g7") rather than "some JSON field differs." **Cells** (Bracket patch,
+Silence-splice, Program-quiet, …) are *derived* from those coordinates; the golden JSON stores the axes,
+not a single cell enum. Axis derivation background: [archive/TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md) §2;
+D/R/X label map: [status ledger](TEMP-seam-repair-status-ledger.md).
 
 ### §4.0 Prerequisites
 
@@ -332,32 +341,39 @@ must not silently move a measurement across placements):
 | `donor_interior.silence_fraction`, `rms_db` | **aligned** bridge span | **2 — ε** |
 | `residual` chosen/floor dB | gate throat | **2 — ε** |
 | `levels.gap_floor_db`, `noise_floor_db`; `structure_min` | gate throat / A | **2 — ε** |
-| `peak_z`, `prominence` | gross `b_mapped` (1 s) | **2 — ε** (feed the descriptive classifier; the FFT step's equivalence test pins these specifically) |
+| `peak_z`, `prominence` | gross `b_mapped` (1 s) | **2 — ε** — [derived readouts](gap-vocabulary.md) (diagnostic projections, not decision primitives; FFT step pins these for regression) |
 | `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `fp.lag` | (various) | **3 — ignore / presence-only** (X — not on the fix-list or repair-params) |
 
-**Fix-list** = gaps where `dualfit_target()` ∨ patched. **Repair-params** = per-shoulder seam-local lags →
-`b_pre`/`b_post`, `trim_frames`, donor span. Both are functions of Tier-1/2 fields only.
+**Fix-list** = gaps where `dualfit_target()` ∨ patched (= **Silence-splice** targets ∪ patched **Bracket
+patch**). **Repair-params** = per-shoulder seam-local lags → `b_pre`/`b_post`, `trim_frames`, donor span.
+Both are functions of Tier-1/2 fields only.
 
 ### §4.1a Gap-class categorization (from the golden corpus, 2026-07-03)
 
 Grouping all 62 golden gaps (`golden/re-anchor-dual-fit-on-nominal.golden.json`) by the §4.1 D/R axes gives
-six distinct causal classes — this is the licensing-safe substitute for the real media (the corpus JSON is
-derived numeric/boolean measurements only, no audio) and is what the synthetic fixtures below replicate:
+six harness **causal classes** — mapped to [gap-vocabulary.md](gap-vocabulary.md) **cells** below. This is
+the licensing-safe substitute for the real media (the corpus JSON is derived numeric/boolean measurements
+only, no audio) and is what the synthetic fixtures replicate:
 
-| Class | Axes | Real examples | Synthetic coverage |
-|-------|------|----------------|---------------------|
-| 1. No-bracket-at-all skip | `brackets_total=0`, `bracket_exhausted=False`, `gate_pass=null` | 1·g0, 3·g0, 4·g0, 6·g0, 7·g0 | **Precondition only** — `skip_or_dual_fit` excludes `StructureAlignmentFailed` (bug #2 fix, 2026-07-03); **no unit test yet** (§4.7 A2) |
-| 2. Zero-bracket quiet/partial-donor skip | `brackets_total=0`, `program_quiet_skip=True`, `nominal_donor_silence` 0.5–1.0 | 2·g0, 6·g2 | Same precondition as class 1; **no unit test yet** (§4.7 A2) |
-| 3. Stepped-splice dual-fit rescue | `bracket_exhausted=True`, seams 0.9–1.0 at own lag, `post_global` low (real step), `aligned_donor_continuous=True`, `dualfit_target=True` | the golden 9: 1·g3/g5/g22, 2·g1/g2, 5·g6, 7·g2/g3/g4 | `dual_fit.rs::recovers_a_stepped_silence_splice` |
-| 4. Donor-broken bridge decline | `bracket_exhausted=True`, seams score as well as class 3, real step, but `aligned_donor_continuous=False` (internal silent run ≥150 ms) | 14/62 gaps: 1·g4/g7/g9-19/g21, 6·g1/g3/g6-g11 (matches §4.4's `1·g19` footgun) | `dual_fit.rs::declines_donor_broken_bridge` (added 2026-07-03) |
-| 5. Fully-silent/dead donor | seams score 0.97–0.99 but `nominal_donor_silence=1.0` (bridge 100% dead) | 6·g2 | `dual_fit.rs::declines_program_quiet_donor` (fully-silent variant; less extreme than class 4) |
-| 6. Normal Fit-mode patch (negative control) | `tier=patch`, `brackets_passing>0` | e.g. 1·g1/g2/g6/g8/g20/g23 | Existing `energy_signature_fixtures.rs` F1–F4 / patch-path tests; dual-fit code path never engages |
+| Class | [Vocab cell](gap-vocabulary.md) | Axes | Real examples | Synthetic coverage |
+|-------|----------------------------------|------|---------------|---------------------|
+| 1 | **No-placement** | `brackets_total=0`, `bracket_exhausted=False`, `gate_pass=null` | 1·g0, 3·g0, 4·g0, 6·g0, 7·g0 | **Precondition only** — `skip_or_dual_fit` excludes `StructureAlignmentFailed` (bug #2 fix, 2026-07-03); **no unit test yet** (§4.7 A2) |
+| 2 | **Program-quiet** (early / no bracket scored) | `brackets_total=0`, `program_quiet_skip=True`, `nominal_donor_silence` 0.5–1.0 | 2·g0, 6·g2 | Same precondition as class 1; **no unit test yet** (§4.7 A2) |
+| 3 | **Silence-splice** (dual-fit addressable) | `bracket_exhausted=True`, seams 0.9–1.0 at own lag, `post_global` low (real step), `aligned_donor_continuous=True`, `dualfit_target=True` | the golden 9: 1·g3/g5/g22, 2·g1/g2, 5·g6, 7·g2/g3/g4 | `dual_fit.rs::recovers_a_stepped_silence_splice` |
+| 4 | *(not a cell — silence-splice **candidate** declined on **Donor — aligned**)* | `bracket_exhausted=True`, seams score as well as class 3, real step, but `aligned_donor_continuous=False` (internal silent run ≥150 ms) | 14/62 gaps: 1·g4/g7/g9-19/g21, 6·g1/g3/g6-g11 (matches §4.4's `1·g19` footgun) | `dual_fit.rs::declines_donor_broken_bridge` (added 2026-07-03) |
+| 5 | **Program-quiet** (extreme — fully dead nominal donor) | seams score 0.97–0.99 but `nominal_donor_silence=1.0` (bridge 100% dead) | 6·g2 | `dual_fit.rs::declines_program_quiet_donor` (fully-silent variant; less extreme than class 4) |
+| 6 | **Bracket patch** (negative control) | `tier=patch`, `brackets_passing>0` | e.g. 1·g1/g2/g6/g8/g20/g23 | Existing `energy_signature_fixtures.rs` F1–F4 / patch-path tests; dual-fit code path never engages |
+
+**Vocab edge case not in this table:** **Bracket-exhausted, gate unmeasured** (`5·g0` — donor continuous but
+`splice_dualfit` absent; not in the nine silence-splice targets). **Tail** gaps (n=7) are filtered at G0b
+before the matched denominator — see [gap-vocabulary.md](gap-vocabulary.md).
 
 Classes 1–2 are collapsed by the same precondition (`bracket_exhausted`) in code, but are kept distinct here
 because they arrive at that precondition via different upstream reasons (no structure placement at all vs. an
-early program-quiet read) — useful if the precondition is ever split. Class 4 was the largest bucket with
+early program-quiet read) — useful if the precondition is ever split. Class 4 is the largest bucket with
 **zero** test coverage before 2026-07-03 despite being explicitly anticipated in §4.4's "Donor gate necessity"
-footgun.
+footgun — vocab's key lesson: **`1·g19` looks like silence-splice at the seams** (0.998) but is
+**Program-quiet / donor-dead** on Donor — aligned, not a separate cell.
 
 ### §4.2 Two-tier assertion (the FFT is what forces this)
 
@@ -384,14 +400,16 @@ Because the golden record keys on `(field, placement, value)`, the harness fails
 Lock in the two fixes so no refactor silently reverts them. Concrete expected values get pinned once the scan
 confirms them (§4.0); the *assertions* are defined now:
 
-- **Seam-local placement** — a gap whose gross and seam-local lags diverge (`2·g1`) keeps `pre_seam_r` at its
-  seam-local peak (~0.98), **not** the gross-placed dead value (−0.008); `gate_pass` = true.
+- **Seam-local placement** — a **Silence-splice** gap whose gross and seam-local lags diverge (`2·g1`) keeps
+  `pre_seam_r` at its seam-local peak (~0.98), **not** the gross-placed dead value (−0.008); `gate_pass` = true.
 - **Donor placement split** — a large-step gap that is silent at the **nominal** span but occupied at the
-  **aligned** span classifies `program_quiet` (nominal wins) — guards D11's registration-independence.
+  **aligned** span classifies **Program-quiet** (nominal wins) — guards D11's registration-independence and
+  the W5 vs silence-splice distinction ([gap-vocabulary.md](gap-vocabulary.md)).
   **Partial:** harness JSON test `program_quiet_skip_leaves_addressable_denominator` (analyzer predicates on
   synthetic `corpus.json`); **not** a live `characterize_gaps_with_gate` path (§4.7 B2).
-- **Donor gate necessity** — a gap with `gate_pass` = true but `donor_interior` BROKEN (`1·g19`: seams 0.998,
-  interior silent) yields `dualfit_target()` = false. **LANDED (2026-07-03)** — synthetic regression test
+- **Donor gate necessity** — a gap with `gate_pass` = true but Donor — aligned BROKEN (`1·g19`: seams 0.998,
+  interior silent) yields `dualfit_target()` = false — looks like **Silence-splice** at seams, stays skipped as
+  **Program-quiet**/donor-dead, not a vocab cell of its own. **LANDED (2026-07-03)** — synthetic regression test
   `dual_fit.rs::declines_donor_broken_bridge`: both seams re-fit at ~0.9–1.0 with a genuine 500 ms step (rules
   out step-not-real as the decline reason), but a 200 ms silent hole punched into the middle of the aligned
   bridge (clear of both seam windows) makes `donor_interior_at` read `continuous=false`, and `try_dual_fit`
@@ -431,7 +449,7 @@ row points to this section.
 
 | Layer | Test / artifact | Tier | Runs in CI (`pr-repair`)? | What it catches |
 |-------|-----------------|------|---------------------------|-----------------|
-| Golden footguns | `golden_baseline_footguns` (`tests/golden_baseline_invariance.rs`) | validation | **No** (`validation-tests` feature) | Frozen JSON satisfies §4.4 pins: `2·g1`, `1·g19`, 9 targets |
+| Golden footguns | `golden_baseline_footguns` (`tests/golden_baseline_smoke.rs`) | pr-repair | **Yes** (2026-07-03 — A1) | Frozen JSON satisfies §4.4 pins: `2·g1`, `1·g19`, 9 targets |
 | Full invariance | `golden_baseline_corpus_invariance` (same; `#[ignore]`) | validation | **No** (needs local `gap-files`) | Tier-1 exact + Tier-2 ε diff vs golden after rescan |
 | Diff machinery | `golden_baseline::diff_catches_tier1_flip` | unit (harness lib) | **No** | Diff helper works |
 | Dual-fit synthetic | `dual_fit.rs::{recovers_a_stepped_silence_splice, declines_donor_broken_bridge, declines_program_quiet_donor}` | unit | **Yes** (`--lib`) | Classes 3–5 on production `try_dual_fit` |
@@ -440,9 +458,13 @@ row points to this section.
 | Analyzer predicates | `gap_fingerprint_corpus.rs` tests (`program_quiet_skip_*`, `splice_diag_*`, …) | unit (harness lib) | **No** | Predicate logic the golden diff depends on |
 | FFT equivalence | *(planned §3 step 4)* | — | **No** | Not started |
 
-**CI default:** `.github/workflows/ci.yml` runs `test-tier.ps1 -Tier pr` — **none** of the golden harness
-runs on PR. A hoist or FFT change can land with green CI and still regress decisions unless someone runs
-`-Tier validation` locally with the corpus (§4.7 C1).
+**CI default (updated 2026-07-03 — A1/A3):** `.github/workflows/ci.yml` runs `test-tier.ps1 -Tier pr`, which
+now includes `golden_baseline_footguns` (via `golden_baseline_smoke`) and `clip-sync-repair-harness --lib`.
+This pins Tier-1 footguns on the frozen JSON and the analyzer-predicate/diff-machinery unit tests on every PR.
+Still **not** covered by default CI: `golden_baseline_corpus_invariance` (the live rescan-vs-golden diff — needs
+local `gap-files`, §4.7 C1) and any live `characterize_gaps_with_gate` / production `PatchAudio` path (§4.7 B2,
+C2). A hoist or FFT change can still land with green CI and regress *computation* (not the frozen decision
+surface) unless someone runs `-Tier validation` locally with the corpus.
 
 **Invariance test semantics:** `analyze_dirs` parses **static** `corpus.json` and applies `gap_row` /
 `dualfit_target()` etc. It does **not** re-decode media or call `characterize_gaps_with_gate`. To catch
@@ -455,9 +477,9 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 
 | ID | Item | Blocks | Status | Where / how |
 |----|------|--------|--------|-------------|
-| **A1** | Promote `golden_baseline_footguns` to `pr-repair` | hoists | **OPEN** | Drop `validation-tests` gate for footguns only, or thin `golden_baseline_smoke.rs`; wire `Invoke-RepairPrRepair` in `test-tier.ps1` |
-| **A2** | Unit test: `skip_or_dual_fit` excludes `StructureAlignmentFailed` | hoists, classes 1–2 | **OPEN** | `patch_audio.rs` test module — gate returns `StructureAlignmentFailed` ⇒ dual-fit does not run; same skip as `--no-dual-fit` |
-| **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **OPEN** | One line in `Invoke-RepairPrRepair` |
+| **A1** | Promote `golden_baseline_footguns` to `pr-repair` | hoists | **DONE (2026-07-03)** | Split into `tests/golden_baseline_smoke.rs` (no `validation-tests` gate); wired into `Invoke-RepairPrRepair` in `test-tier.ps1` |
+| **A2** | Unit test: `skip_or_dual_fit` excludes `StructureAlignmentFailed` | hoists, classes 1–2 | **DONE (2026-07-03)** | Extracted pure predicate `dual_fit_eligible` in `patch_audio.rs`; unit test `dual_fit_eligible_excludes_structure_alignment_failed` pins `StructureAlignmentFailed` never qualifies, regardless of `--dual-fit` |
+| **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **DONE (2026-07-03)** | `Invoke-RepairPrRepair` now runs `cargo test -p clip-sync-repair-harness --lib` |
 | **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **OPEN** | `domain/seam_local.rs` — full ±600 ms sweep **and** small ±25 ms probe; per-lag ε ~1e-10; same edge mask / `curve.len()`; pin `peak_z` / `prominence` / `frac_lag_ms` via `summarize_lag_curve` |
 | **B2** | Live re-characterization smoke (≥1 gap) | hoists | **OPEN** | Committed small WAV or synthetic → `characterize_gaps_with_gate` → assert Tier-1 fields; closes static-JSON-only gap |
 | **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
@@ -469,13 +491,14 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **D4** | Nightly CI with corpus fetch | infra | **OPEN** | Defer; C1 script sufficient for now |
 
 **Minimum viable package** (if scope is tight): **A1 + A2 + B1** — CI pins frozen decision surface, production
-wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win.
+wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win. **A1 + A2 landed
+2026-07-03**; **B1 is next** before either step 1 hoists or step 4 FFT should be attempted.
 
 #### Sequencing vs migration steps
 
 ```text
-Before hoists (step 1):  A1 → A3 → A2
-Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)
+Before hoists (step 1):  A1 → A3 → A2   [DONE 2026-07-03]
+Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [NEXT]
 After first hoist PR:    B2
 Before calling F5 done:  C1 (+ run validation tier locally)
 Optional polish:         C2, C3
@@ -539,4 +562,4 @@ the production path carries only the **D/R** set for the survivors, never the di
 - **Detect wiring:** (a) self-contained — production recomputes detection on-demand *(recommended)*; vs
   (b) scan-fed — read targets from a prior fingerprint. The *repair* is production either way.
 - **Interior trim crossfade length** — audibility knob (D7); start with the existing `crossfade_secs`.
-- **Flag surface** — `FillMode::DualFit` vs a `--dual-fit` bool on the request. Keep off by default until D7.
+- **Flag surface** — `RepairConfig.dual_fit` / `--no-dual-fit` on the request (default **on**, F1).

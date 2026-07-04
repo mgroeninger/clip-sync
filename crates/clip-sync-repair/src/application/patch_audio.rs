@@ -1555,6 +1555,13 @@ fn build_dual_fit_input<'a>(
 /// `fill_splice_seam_correlations_interleaved` and classify it with the same
 /// `classify_fill_waveform_confidence` every other fill path uses. No loosening: a fill that doesn't clear
 /// the floors here falls back to the skip.
+/// `StructureAlignmentFailed` never qualifies for dual-fit rescue (see doc comment on
+/// [`skip_or_dual_fit`]) — pulled out as a pure predicate so the exclusion is unit-testable
+/// without constructing a full [`DualFitRepairInput`]/[`PatchAudioRequest`].
+fn dual_fit_eligible(request_dual_fit: bool, fail: SeamGateFailure) -> bool {
+    request_dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed)
+}
+
 fn skip_or_dual_fit(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
@@ -1564,7 +1571,7 @@ fn skip_or_dual_fit(
     tag_ctx: GapTagsPatchContext,
     dual_fit: Option<&DualFitRepairInput<'_>>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
-    if request.dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed) {
+    if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(df) = dual_fit {
             if let Some(r) = crate::domain::dual_fit::try_dual_fit(
                 &df.a_pre_mono,
@@ -2491,9 +2498,9 @@ fn splice_into_a(
 #[cfg(test)]
 mod tests {
     use super::{
-        anchored_retry_gap_indices, format_gap_fill_plan_lines, format_gap_fill_result_line,
-        should_apply_anchored_retry_outcome, skipped_patch, GapFillPlanLog, GapFillResultLog,
-        RegionPatchOutcome,
+        anchored_retry_gap_indices, dual_fit_eligible, format_gap_fill_plan_lines,
+        format_gap_fill_result_line, should_apply_anchored_retry_outcome, skipped_patch,
+        GapFillPlanLog, GapFillResultLog, RegionPatchOutcome, SeamGateFailure,
     };
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
@@ -2514,6 +2521,21 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
         }
+    }
+
+    #[test]
+    fn dual_fit_eligible_excludes_structure_alignment_failed() {
+        // A2: `StructureAlignmentFailed` means structure search never scored a bracket, so there is
+        // nothing "exhausted" for dual-fit to rescue — it must fall through to the ordinary skip
+        // regardless of whether `--dual-fit` is on.
+        assert!(!dual_fit_eligible(true, SeamGateFailure::StructureAlignmentFailed));
+        assert!(!dual_fit_eligible(false, SeamGateFailure::StructureAlignmentFailed));
+
+        // Other seam-gate failure variants are scored-but-failed skips, so they DO qualify when
+        // `--dual-fit` is on, and never qualify when it's off.
+        let scored_but_failed = SeamGateFailure::StructureBelowThreshold { pre: 0.1, post: 0.1 };
+        assert!(dual_fit_eligible(true, scored_but_failed));
+        assert!(!dual_fit_eligible(false, scored_but_failed));
     }
 
     #[test]

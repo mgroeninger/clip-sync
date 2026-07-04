@@ -67,7 +67,8 @@ try {
             '--test', 'integration_energy_smoke',
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
-            '--test', 'wav_bit_depth_integration'
+            '--test', 'wav_bit_depth_integration',
+            '--test', 'golden_baseline_smoke'
         )
 
         if (Test-FfmpegOnPath) {
@@ -79,6 +80,8 @@ try {
         } else {
             Write-Host '>> skip cli_mux_integration (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
+
+        Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
     }
 
     function Invoke-RepairPrRepairExtended {

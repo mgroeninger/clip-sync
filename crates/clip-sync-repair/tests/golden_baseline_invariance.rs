@@ -7,15 +7,16 @@
 //! # or ad hoc:
 //! cargo test -p clip-sync-repair --features validation-tests --test golden_baseline_invariance
 //! ```
+//!
+//! The corpus-free footgun smoke test lives in `golden_baseline_smoke.rs` (§4.7 A1) so it can run
+//! in `pr-repair` without the `validation-tests` feature.
 
 use std::path::{Path, PathBuf};
 
 use clip_sync_repair_harness::gap_fingerprint_corpus::{
     analyze_dirs, drift_eps_from_env, tail_secs_from_env,
 };
-use clip_sync_repair_harness::golden_baseline::{
-    assert_footguns, diff_baselines, parse_golden_baseline, TIER2_ABS_EPS,
-};
+use clip_sync_repair_harness::golden_baseline::{diff_baselines, parse_golden_baseline, TIER2_ABS_EPS};
 
 const GOLDEN_JSON: &str = include_str!(
     "../../clip-sync-repair-harness/golden/re-anchor-dual-fit-on-nominal.golden.json"
@@ -54,15 +55,6 @@ fn corpus_dirs() -> Option<Vec<PathBuf>> {
         return Some(vec![default]);
     }
     None
-}
-
-/// §4.4 footguns on the checked-in golden — always runs (no corpus required).
-#[test]
-fn golden_baseline_footguns() {
-    let baseline = parse_golden_baseline(GOLDEN_JSON).expect("parse frozen golden JSON");
-    assert_footguns(&baseline).expect("§4.4 footgun assertions on frozen baseline");
-    assert_eq!(baseline.gap_count, 62, "frozen baseline gap_count");
-    assert_eq!(baseline.dualfit_targets.len(), 9, "frozen dual-fit target count");
 }
 
 /// Round-trip: re-analyze corpus.json dirs and diff against the frozen golden snapshot.
