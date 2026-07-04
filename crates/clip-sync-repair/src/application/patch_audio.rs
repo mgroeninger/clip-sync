@@ -1517,7 +1517,6 @@ fn build_dual_fit_input<'a>(
             min_fill_correlation: min_fill_correlation as f64,
             fill_absolute_floor: fill_absolute_floor as f64,
             step_real_margin: 0.15,
-            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db,
         },
         a_pre_mono,

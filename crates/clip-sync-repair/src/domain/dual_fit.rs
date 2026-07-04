@@ -8,13 +8,14 @@
 
 use clip_sync::normalized_correlation;
 
-use crate::domain::donor::donor_interior_at;
+use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
 use crate::domain::seam_local::seam_local_peak;
 
 /// The `dualfit_target()` thresholds + geometry the repair needs (all frame counts / correlations, no config
 /// object — mirrors the analyzer's constants: `min_fill_correlation`/`fill_absolute_floor` from the gate,
-/// `DUALFIT_STEP_REAL_MARGIN` 0.15, `PROGRAM_QUIET_SILENCE_FRAC` 0.5, `SEAM_LOCAL_SEARCH_MS` 600 ms).
+/// `DUALFIT_STEP_REAL_MARGIN` 0.15, `SEAM_LOCAL_SEARCH_MS` 600 ms). Program-quiet uses
+/// [`crate::domain::donor::program_quiet_at_nominal`] directly, so its threshold isn't a field here.
 #[derive(Debug, Clone, Copy)]
 pub struct DualFitParams {
     pub channels: usize,
@@ -27,7 +28,6 @@ pub struct DualFitParams {
     pub min_fill_correlation: f64,
     pub fill_absolute_floor: f64,
     pub step_real_margin: f64,
-    pub program_quiet_frac: f64,
     pub a_gap_floor_db: f64,
 }
 
@@ -99,9 +99,7 @@ pub fn try_dual_fit(
     if !aligned.continuous {
         return None;
     }
-    let nominal =
-        donor_interior_at(b_mono, b_mapped_start, b_post_nominal, p.a_gap_floor_db, p.sample_rate)?;
-    if nominal.silence_fraction >= p.program_quiet_frac {
+    if program_quiet_at_nominal(b_mono, b_mapped_start, p.gap_frames, p.a_gap_floor_db, p.sample_rate) {
         return None;
     }
 
@@ -167,7 +165,6 @@ mod tests {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
-            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db: -60.0,
         };
 
@@ -224,7 +221,6 @@ mod tests {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
-            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db: -60.0,
         };
 
@@ -265,7 +261,6 @@ mod tests {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
-            program_quiet_frac: crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
             a_gap_floor_db: -60.0,
         };
         assert!(
