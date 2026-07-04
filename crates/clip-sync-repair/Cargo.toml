@@ -118,6 +118,11 @@ path = "tests/validate_floor_oracle.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "validate_dual_fit_oracle"
+path = "tests/validate_dual_fit_oracle.rs"
+required-features = ["validation-tests"]
+
+[[test]]
 name = "calibrate_anchor_prominence"
 path = "tests/calibrate_anchor_prominence.rs"
 required-features = ["validation-tests"]

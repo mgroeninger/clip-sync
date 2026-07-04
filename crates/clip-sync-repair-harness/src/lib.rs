@@ -2,6 +2,7 @@
 //! Not linked into the product library; dev-dep of clip-sync-repair tests only.
 
 pub mod anchor_prominence;
+pub mod dual_fit_oracle;
 pub mod energy_matrix;
 pub mod floor_oracle;
 pub mod gap_fingerprint_corpus;

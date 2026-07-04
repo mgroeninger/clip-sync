@@ -29,6 +29,9 @@ pub struct FloorOracleRun {
     /// Seam Pearson at the decided placement (`NaN` if the gap never reached the seam tier).
     pub seam_pre: f64,
     pub seam_post: f64,
+    /// `true` iff this fill was rescued by the A3 dual-fit path (G6) after the ordinary bracket
+    /// search exhausted — mirrors `GapPatchStatus::Patched.dual_fit_used`.
+    pub dual_fit_used: bool,
 }
 
 /// Calibration profile — structure isolation, relaxed Pearson (`min_fill 0`).
@@ -157,6 +160,10 @@ pub fn run_built_floor_oracle_cfg(
         _ => None,
     };
     let (seam_pre, seam_post) = seam_pre_post(&gap.status);
+    let dual_fit_used = matches!(
+        &gap.status,
+        GapPatchStatus::Patched { dual_fit_used: true, .. }
+    );
 
     FloorOracleRun {
         status,
@@ -167,6 +174,7 @@ pub fn run_built_floor_oracle_cfg(
         confidence,
         seam_pre,
         seam_post,
+        dual_fit_used,
     }
 }
 

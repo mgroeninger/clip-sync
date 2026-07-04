@@ -623,7 +623,7 @@ Repair exit codes are documented in [docs/error-mapping.md](docs/error-mapping.m
 
 ## Development
 
-See **[docs/development.md](docs/development.md)** for Cargo features per crate, CI vs full test matrix, ignored/slow tiers, and fixture regeneration.
+See **[docs/test-tiers.md](docs/test-tiers.md)** for how to run each test tier; **[docs/development.md](docs/development.md)** for Cargo features, binary matrix, and fixture regeneration.
 
 Quick start:
 
@@ -673,7 +673,8 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 
 - [docs/gap-repair-guide.md](docs/gap-repair-guide.md) — **gap types**, waveform tiers, and repair recommendations
 - [docs/gap-fill-modes.md](docs/gap-fill-modes.md) — **`fit` vs `gate`**, flag matrix, extension semantics, performance recipes
-- [docs/development.md](docs/development.md) — features, build, full test suite
+- [docs/test-tiers.md](docs/test-tiers.md) — how to run test tiers (`test-tier.ps1`)
+- [docs/development.md](docs/development.md) — features, build, integration binary matrix
 - [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes, timeline/duration warnings, mux failures
 - [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy

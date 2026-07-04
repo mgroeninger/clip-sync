@@ -1,0 +1,33 @@
+version = 1
+
+# A3 dual-fit real-media validation (B2). Sources: tests/corpus/sources.toml +
+# scripts/fetch_corpus_sources.ps1. Run: cargo test -p clip-sync-repair --features
+# validation-tests --test validate_dual_fit_oracle -- --nocapture
+#
+# Each case builds a jump-cut on an open-licensed master: B is the untouched master; A silences
+# the nominal gap span and resumes `step_ms` further along the master's own timeline — so the
+# pre-shoulder aligns with B at lag 0 but the post-shoulder needs a `step_ms` correction. No single
+# rigid placement satisfies both seams, so the ordinary bracket search exhausts and G6 dual-fit
+# must rescue it. `step_ms` must stay comfortably under the 600 ms seam-local search radius.
+
+[defaults]
+total_secs = 60
+sample_rate = 48000
+gap_duration_secs = 1.0
+gap_signature_context_secs = 3.0
+bitrate = "128k"
+gap_interior_edge_secs = 0.05
+gap_interior_peak_max = 500
+
+[[case]]
+id = "cc_speech_dual_fit_jump_cut_wav"
+source_id = "wikimedia_martin_amis_interview_1990"
+step_ms = 480.0
+format = "wav"
+
+[[case]]
+id = "cc_speech_dual_fit_jump_cut_aac"
+source_id = "wikimedia_martin_amis_interview_1990"
+step_ms = 480.0
+format = "mp4_aac"
+bitrate = "128k"

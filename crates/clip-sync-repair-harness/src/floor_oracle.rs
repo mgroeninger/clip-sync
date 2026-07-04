@@ -232,7 +232,7 @@ pub fn require_case_sources(case: &FloorOracleCase) {
     );
 }
 
-fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
+pub(crate) fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
     (secs * sample_rate as f64).round().max(0.0) as usize
 }
 
@@ -295,7 +295,7 @@ pub fn decode_to_mono_wav_at(
     ffmpeg_util::decode_to_mono_wav(input, output, sample_rate, max_duration_secs)
 }
 
-fn output_path(dir: &Path, stem: &str, format: FloorOracleFormat) -> PathBuf {
+pub(crate) fn output_path(dir: &Path, stem: &str, format: FloorOracleFormat) -> PathBuf {
     let ext = match format {
         FloorOracleFormat::Wav => "wav",
         FloorOracleFormat::Mp3 => "mp3",
@@ -305,7 +305,7 @@ fn output_path(dir: &Path, stem: &str, format: FloorOracleFormat) -> PathBuf {
     dir.join(format!("{stem}.{ext}"))
 }
 
-fn encode_with_format(input_wav: &Path, output: &Path, format: FloorOracleFormat, bitrate: &str) -> bool {
+pub(crate) fn encode_with_format(input_wav: &Path, output: &Path, format: FloorOracleFormat, bitrate: &str) -> bool {
     if !ffmpeg_available() {
         return false;
     }
