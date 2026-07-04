@@ -49,7 +49,7 @@ Ordered as data flows. "Rejects" = what this gate filters out.
 | G3 | **Waveform seam** | `patch_region.rs` (`classify_fill_waveform_confidence`) | Do the seams match at sample level? | pre/post Pearson @ placement vs `min_fill_correlation` / `fill_marginal_margin` / `fill_absolute_floor` | `O(seam)` | dead seam → `waveform_below_threshold` |
 | G4 | **Residual** | `patch_region.rs` (`finalize_fit_outcome_residual`) | Same-source confirm for a *marginal* seam | least-squares cancellation @ throat vs floor | `O(seam)`, **at selection only** | veto marginal; rescue marginal |
 | R | **Bracket ranking** | `patch_region.rs` (`fit_candidate_ranking_score`) | Which *passing* bracket wins | `min(pre,post)`, `boundary_move` | scalar | — (selection, not reject) |
-| **G5** | **Program-quiet** *(D11 — **production gate**, 2026-07-03)* | `patch_audio.rs` (`program_quiet_skip` → `domain/donor.rs`); analyzer `program_quiet()` | Is this a real dropout, or quiet in both masters? | nominal-span B `silence_fraction` @ `b_mapped` in the B extract window; A `gap_floor_db` from refined gap | `O(N)` | B-silent → `ProgramQuiet` skip (pass 1 only; **anchored-retry pass 2 exempt**) |
+| **G5** | **Program-quiet label** *(D11 — **analyzer / dual-fit only**, not production pre-gate)* | `domain/donor.rs` (`program_quiet_at_nominal`); fingerprint `donor_interior_nominal`; `try_dual_fit` decline | Is B nominal span mostly silent? | nominal-span B `silence_fraction` @ `b_mapped` | `O(N)` | Plan: `!b_has_energy` → unfillable. Patch: seam gate decides; dual-fit declines program-quiet donors |
 | **G6** | **Dual-fit rescue** *(A3 — **shipped**, default **on**)* | `patch_audio.rs` (`skip_or_dual_fit` → `domain/dual_fit.rs::try_dual_fit`) | Rescue a bracket-exhausted skip? | **Production:** gate skip (not `StructureAlignmentFailed`) ∧ `dual_fit` (default true) → seam-local peaks + step-real + donor + ¬program-quiet + re-validate fill. **Analyzer scope** (`dualfit_target()`): additionally requires `bracket_exhausted` ∧ `splice_dualfit.gate_pass` (degenerate post-±600 — see ledger P2). **NOT** uniqueness/`peak_z`. | `seam_local_peak` ±600 ms + interior trim | donor-BROKEN / program-quiet / spurious-step skips |
 
 ### §1.2 Measurement → gate map (decision / repair / diagnostic)
@@ -168,14 +168,13 @@ extract for a gap.
 |-------|-------------|-------|--------------|-------|
 | 1 | Geometry | `patch_audio.rs` | `refine_gap_frames` on A; compute `b_extract_*`; zero-length → skip | Not a reject gate |
 | 2 | B extract | `patch_audio.rs` | `slice_b_segment` | `BExtractFailed` if window empty |
-| 3 | **G5** Program-quiet | `patch_audio.rs` → `domain/donor.rs` | `program_quiet_at_nominal` on B slice @ `b_mapped_start` | **Before** `evaluate_seam_gate`. Skipped on **anchored-retry pass 2** |
-| 4 | **G1–G4 + R** Seam gate | `patch_region.rs` (`evaluate_seam_gate`) | Per-bracket structure search (G1/G2) → waveform (G3) → residual at selection (G4) → rank (R) | Dominant per-gap cost |
-| 5a | Fill | `patch_audio.rs` | `fit_fill_to_gap_frames` / gate outcome → `RegionPatch` | On gate **Ok** |
-| 5b | **G6** Dual-fit fallback | `skip_or_dual_fit` → `domain/dual_fit.rs` | On gate **Err** (except `StructureAlignmentFailed`) when `dual_fit` enabled (default **on**): `try_dual_fit` → re-validate fill with unchanged gate floors | `--no-dual-fit` to disable (D6 regression path) |
-| 6 | Anchored retry (opt) | `patch_audio.rs` | Pass 2 re-runs failed gaps with anchor table; G5 **not** re-checked | `FillOffsetMode::AnchoredRetry` only |
+| 3 | **G1–G4 + R** Seam gate | `patch_region.rs` (`evaluate_seam_gate`) | Per-bracket structure search (G1/G2) → waveform (G3) → residual at selection (G4) → rank (R) | Dominant per-gap cost |
+| 4a | Fill | `patch_audio.rs` | `fit_fill_to_gap_frames` / gate outcome → `RegionPatch` | On gate **Ok** |
+| 4b | **G6** Dual-fit fallback | `skip_or_dual_fit` → `domain/dual_fit.rs` | On gate **Err** (except `StructureAlignmentFailed`) when `dual_fit` enabled (default **on**): `try_dual_fit` → re-validate fill with unchanged gate floors | `--no-dual-fit` to disable (D6 regression path); **G5** program-quiet check runs inside dual-fit decline only |
+| 5 | Anchored retry (opt) | `patch_audio.rs` | Pass 2 re-runs failed gaps with anchor table | `FillOffsetMode::AnchoredRetry` only |
 
-**G5 placement constraint:** needs the B extract window and `b_mapped_start` (refined A start + gap offset
-minus extract origin). It cannot run at scan time — only after decode + slice.
+**G5 (D11):** `program_quiet_at_nominal` is an **analyzer / dual-fit label**, not a production pre-gate skip.
+Plan-time `b_has_energy = false` covers shared pauses; fillable gaps always reach the seam gate.
 
 **G6 production vs analyzer scope:** `skip_or_dual_fit` fires on any scored gate failure except
 `StructureAlignmentFailed` (no bracket scored). The analyzer's `dualfit_target()` additionally requires
@@ -200,7 +199,7 @@ decodes once, characterizes, writes corpus. Repair decode reuse is already share
 
 | Principle | Target | Current (2026-07-03) |
 |-----------|--------|----------------------|
-| **Cheap-first** | G0 → G0b → G5 → G1–G4 | **Production:** G0/G0b at scan/plan; G5 after B slice, **before** seam gate ✓. **Scan:** no G5 early reject. |
+| **Cheap-first** | G0 → G0b → G1–G4 | **Production:** G0/G0b at scan/plan; fillable gaps reach seam gate. **G5 (D11)** analyzer label + dual-fit decline only. |
 | **Two outputs** | Fix-list + repair-params | Production emits patch/skip per gap; fingerprint JSON for calibration. |
 | **Lazy diagnostics** | X-set behind flag | **Partial** — X fields gated; per-bracket oracle + lag + `splice_dualfit` still always on in scan. |
 | **Compute-once-share** | One decode · binned-RMS · border extract · lag curve | Decode shared ✓; `skip_baseline_placement` dedup ✓; binned-RMS hoist · border hoisting · FFT lag **open**. |
@@ -231,11 +230,10 @@ flowchart TB
   subgraph prod ["C. Production per gap (prepare_region_patch)"]
     refine[refine_gap_frames + b_extract window]
     slice[slice_b_segment]
-    G5[G5 program_quiet_skip]
     gate[G1-G4 evaluate_seam_gate + R]
     fill[fit to RegionPatch]
     G6[G6 skip_or_dual_fit / try_dual_fit]
-    refine --> slice --> G5 --> gate
+    refine --> slice --> gate
     gate -->|Ok| fill
     gate -->|Err| G6
     G6 -->|Some| fill
@@ -265,7 +263,7 @@ Solid arrows = always on the path. `G6` and `fingerprint_diagnostics` branches a
 |------|------|--------|------------------|
 | **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). |
 | **2** | Gate diagnostics (X-set) behind a flag | **Done** | `RepairConfig.fingerprint_diagnostics` + `--fingerprint-diagnostics`; gates `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag`. Per-bracket oracle **not** gated. |
-| **3** | Cheap early-reject (G0b, G5 before structure/lag) | **Partial** | G0b at fill-plan ✓. **G5 in production** before seam gate ✓. G5 **not** in scan; fingerprint lag sweep still runs on all characterized gaps. |
+| **3** | Cheap early-reject (G0b at plan) | **Partial** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Not started** | `lag_correlation_curve` still naive O(n·L) in `domain/seam_local.rs`. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
 | **§4** | Decision-invariance harness | **Done** | `golden_baseline.rs`, `golden_baseline_invariance.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`. |

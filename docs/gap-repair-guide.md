@@ -25,8 +25,8 @@ Every gap passes through three layers. The “type” depends on where it stops.
 
 ```text
 Scan (silence on A)
-  → Fill plan (fillable?)
-    → Patch (program-quiet? → structure + waveform placement → dual-fit rescue?)
+  → Fill plan (fillable? — `b_has_energy`, coverage, tracks)
+    → Patch (structure + waveform placement → dual-fit rescue?)
       → Patched / skipped / not planned
 ```
 
@@ -34,7 +34,6 @@ Scan (silence on A)
 |-------|----------|-------------------|
 | **Scan** | Is A silent for ≥ `min_gap_ms` (default 1 s)? | Omitted if too short |
 | **Plan** | Is B mapped and energetic? Tracks OK? In query coverage? | `unfillable`, `not planned: …` |
-| **Patch — G5** | Is B silent at nominal mapped span (both masters quiet)? | `skipped: program-quiet …` |
 | **Patch — bracket** | Structure finds B bracket? Waveform tier OK? | `patched`, `skipped: …` |
 | **Patch — G6** | Dual-fit rescue (default on) after scored gate skip? | May upgrade skip → `patched` |
 
@@ -54,11 +53,10 @@ These gaps never enter structure match, or are excluded before patch.
 | **P5** | **Fillable** | Silent on A, B has energy in map | **~1–30 s** common | Enters patch (`repairable` in scan-only runs) |
 | **P6** | **Fillable** long / tail | Same as P5 but spans file end or very long silence | **30 s – minutes** | Often patch **skip** (structure) |
 | **P7** | **Audible hole, not scanned** | Dropout remains audible but re-encode or bed noise prevents silence detection | ~1 s | **Absent from report** — tune scan or fix source |
-| **P8** | **Program-quiet** (patch-time) | A in gap table, B mapped, but B is silent at nominal program span | any fillable | `skipped: program-quiet in both masters …` |
 
 **P7** matters when a second run on a repaired/muxed file finds fewer gaps than expected: the tool only repairs what the scanner classifies as silence.
 
-**P8** is not a correlation or structure failure — both masters are quiet at program time, so there is nothing to fill. Common when A has padding silence B does not share. Do not use `--full` or lower floors; fix alignment or accept the skip.
+**Program-quiet at plan time:** when B is also silent at the mapped span (`b_has_energy = false`, **P2**), the gap is **unfillable** — both masters quiet, nothing to copy. The fingerprint analyzer may additionally label skipped gaps as program-quiet for metrics (`donor_interior_nominal`); that label does **not** short-circuit the patch path.
 
 ---
 
@@ -155,11 +153,7 @@ CLI: `--anchor-seam-mode auto|force|off`. TOML: `anchor_seam_mode = "auto"` (def
 
 Anchor seam does **not** require `--full`; it runs under `baseline_only` when triggered. Tier-2 xcorr (ambiguous Pearson) reuses `residual_lag_secs` for max lag. Residual veto still applies (F4 decoy must skip).
 
-### Dual-fit rescue (W7) and program-quiet (P8)
-
-**Program-quiet (G5, P8)** runs after B is sliced, **before** bracket search. When B is silent at the
-nominal mapped span, the gap skips immediately — not because seams scored weak, but because both masters
-are quiet at program time.
+### Dual-fit rescue (W7)
 
 **Dual-fit (G6, W7)** runs when bracket search returns a **scored skip** other than structure alignment
 failed. Default **`dual_fit = true`**. The rescue path:
@@ -175,12 +169,12 @@ donor-broken bridges and program-quiet donors — those remain skips.
 
 | Situation | Action |
 |-----------|--------|
-| Gap skips with `program-quiet` | Expected (P8). Do not tune Pearson floors. |
+| Gap `unfillable` / `b_has_energy = false` | Expected shared pause (P2). Not a patch failure. |
 | Gap skips `boundary correlation below threshold` after `--full` | May be W7 candidate already attempted; listen. If still skip, donor may be broken or one-shoulder-dead. |
 | Reproduce pre-A3 bracket-only behavior | `--no-dual-fit` |
 | Force dual-fit on when disabled in TOML | `--dual-fit` |
 
-Details: [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet skip / Dual-fit rescue.
+Details: [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet (D11) / Dual-fit rescue.
 
 ---
 
@@ -388,7 +382,6 @@ domain=energy_finds_truth tags=plan_kind=fillable patch_tier=structure_fail patc
 | W5 | `patch_tier=dead_zone`, `seam_shape=symmetric_weak` — or `patch_tier=anchor_trusted` when anchor seam rescues |
 | W6 | `patch_tier=structure_fail` |
 | W7 | Was `patch_tier=dead_zone` or correlation skip; may become `patch_tier=high` after dual-fit (default on) |
-| P8 | `patch_skip_reason=program_quiet`, `patch_tier=not_applicable` |
 
 Tags are computed at patch time for fillable regions (preserving `fit_path` and `signature_mode`). Plan-only gaps derive tags from `status` only.
 
@@ -417,7 +410,7 @@ Map **shape + outcome** to the next run. Start from **original** video A unless 
 | Symmetric weak (energy) | W5 | `default`, `-v` (anchor `auto` on by default) | `--full`; tune scan if hole not in report (P7) | Expecting bool-style `post=1.0` fix; anchor rescue needs salient contour in flanking context (default ±3 s from each gap edge, not inside the hole) — [gap-fill-modes.md](gap-fill-modes.md#signature-context-and-contour-geometry) |
 | Long tail / huge gap | P6 + C5 + W6 | Expect skip | Manual edit; do not run `--full` on multi-minute gaps | `--full` on 200 s+ gaps (hours) |
 | Bracket-exhausted silence splice | W7 | Default run (`dual_fit` on) | `--full` if throat weak but not bracket-exhausted; `--no-dual-fit` only for regression | Lowering floors without listening |
-| Program-quiet (both masters silent) | P8 | Accept skip | Fix alignment / source; not a threshold problem | `--full`, `--min-fill-correlation` |
+| Shared pause (both masters quiet) | P2 | `unfillable` at plan — expected | Fix alignment / source if misclassified | `--full`, `--min-fill-correlation` |
 | Pre-overlap on A | P1 | Ignore | — | Patching |
 | Clip drift on long form | P5 (many) | `fill_offset=interpolated` if drift ≥ ~0.05 s | `anchored-retry` after some High patches | `interpolated` when drift tiny |
 | Offset map wrong near gap edge | P5, high slide in verbose | `anchored-retry` | Pass 2 after easy gaps patch High | — |
@@ -434,7 +427,6 @@ In gap table?
   yes → not planned / unfillable?
           yes → P1–P4 (fix input or alignment)
           no  → patch result:
-                  program-quiet              → P8 (expected skip)
                   structure alignment failed → P6 / C5 / W6
                   skipped correlation:
                     min(pre,post) < 0.12     → hard skip (or W7 if dual-fit rescues)

@@ -19,7 +19,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | Editorial anchor seam? | **`anchor_seam_mode = auto|force`** (`--anchor-seam-mode`): search speech peaks / bool onsets when throat Pearson is weak. **Fit only**; orthogonal to patch anchors. See [Editorial anchor seam](#editorial-anchor-seam). |
 | Residual gate? | Default **`residual_gate = veto`** (fit only): anti-echo headroom veto after Pearson tiering; `veto_rescue` opt-in for broadband dead-zone rescue. See [Residual / floor gate](#residual--floor-gate). |
 | Dual-fit rescue? | Default **`dual_fit = true`**: when bracket search exhausts without a passing lag-0 placement (or other scored gate skip except structure alignment failed), try per-shoulder fit + interior trim, re-validated by the unchanged gate. Opt out with **`--no-dual-fit`**. See [Dual-fit rescue](#dual-fit-rescue-g6). |
-| Program-quiet skip? | Always on (**G5**): when B is silent at the nominal mapped span (both masters quiet at program time), skip with `program-quiet` — not a repair failure. See [Program-quiet skip](#program-quiet-skip-g5). |
+| Program-quiet (D11)? | **Plan-time** (`b_has_energy = false` → `unfillable`) and **fingerprint/analyzer** label (`donor_interior_nominal`). Not a production pre-gate skip — nominal-hole silence alone cannot distinguish true program-quiet from patchable quiet-content pauses. See [Program-quiet (D11)](#program-quiet-d11). |
 
 ---
 
@@ -34,9 +34,8 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 ```text
 1. Offset map on A → B (fill_offset_mode; see pipeline.md §3)
 2. Refine A gap edges; slice B haystack from full decoded B
-3. Program-quiet check (G5): B silent at nominal span → skip (not a gate failure)
-4. Bracket routing (G1–G4 + R) — see below
-5. On gate skip (except structure alignment failed): dual-fit rescue (G6, default on) → re-validate → patch or skip
+3. Bracket routing (G1–G4 + R) — see below
+4. On gate skip (except structure alignment failed): dual-fit rescue (G6, default on) → re-validate → patch or skip
 ```
 
 #### Bracket routing (`evaluate_seam_gate_fit_joint`)
@@ -131,7 +130,6 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
 | `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **No effect** (fit only) |
-| Program-quiet (G5) | **Always on** — skip before seam gate when B silent at nominal span; exempt on anchored-retry pass 2 | Same |
 
 **Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`.
 
@@ -165,26 +163,24 @@ Gate retries use the same `gap_end_extend_*` ms limits but **different** eligibi
 
 ---
 
-## Program-quiet skip (G5)
+## Program-quiet (D11)
 
-After B is sliced for a fillable gap, the patch path checks whether B is **program-quiet** at the nominal
-mapped span: both masters are silent at program time, so there is nothing coherent to splice in. This is
-**not** a Pearson or structure failure — it is an intentional skip before `evaluate_seam_gate`.
+**Program-quiet** means both masters are quiet at the same program time — there is nothing to fill. This is
+**not** the same as “B’s nominal hole interior is silent,” which can also describe a **shared content pause**
+that structure/energy matching should still patch.
 
-| Signal | Meaning |
-|--------|---------|
-| A silent (gap in scan) | Dropout on the damaged master |
-| B silent at nominal `b_mapped_start` span | Reference has no program at that time |
-| Outcome | `skipped: program-quiet in both masters (B silent at nominal span; nothing to fill)` |
+| Layer | How it is detected | Outcome |
+|-------|-------------------|---------|
+| **Scan / plan** | `b_has_energy = false` on the mapped B span | `unfillable` — gap never enters patch |
+| **Fingerprint / `--gap-fingerprints`** | `donor_interior_nominal.silence_fraction ≥ 0.5` | Analyzer label `program_quiet_skip` — metrics only, not a patch router |
+| **Dual-fit (G6)** | Same nominal occupancy check inside `try_dual_fit` | Declines fully program-quiet donors after bracket search already failed |
+| **Production patch** | Seam gate (+ dual-fit) decides skip/patch | No pre-gate short-circuit on nominal silence |
 
-**Anchored-retry pass 2** does not re-run G5 (pass 2 retries gaps that failed for alignment reasons, not
-program-quiet).
+Common on long-form pairs where A has tail padding silence B does not share — usually caught at scan as
+`unfillable`. Do not lower Pearson floors for analyzer-tagged program-quiet gaps; tune scan if A should not
+have been flagged (P7).
 
-Common on long-form pairs where A has silence but B was edited or padded differently. Do not lower
-correlation floors — the gap is correctly unfillable. Tune scan only if A should not have been flagged
-(P7).
-
-JSON skip reason: `"program_quiet"`. Tags: `patch_tier=not_applicable`, `seam_shape=not_applicable`.
+See [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements and [gap-scan.md](gap-scan.md) § Mapping to B and fillability.
 
 ---
 

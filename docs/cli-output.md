@@ -289,11 +289,10 @@ Normative detail for patch outcomes; user-facing summary in [README.md](../READM
 
 1. Map gap on A to B (`fill_offset_mode`: `recommended` or `interpolated` drift).
 2. Refine gap edges on A; slice B haystack.
-3. **Program-quiet (G5):** if B is silent at nominal mapped span → skip (`program-quiet`).
-4. **Structure-match** dropout pattern on B (`min_structure_match_score`) — always runs.
-5. **Waveform placement** (`fill_mode`, default `fit`): joint A-boundary search + unified B placement, or (`gate`) score once at structure winner — see below.
-6. On scored gate failure (except structure alignment failed): **dual-fit rescue (G6, default on)** — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
-7. On waveform failure under **`gate`**, retry with gap-end extension then gap-start extension (when enabled). Under **`fit`**, boundary search is proactive (step 5).
+3. **Structure-match** dropout pattern on B (`min_structure_match_score`) — always runs.
+4. **Waveform placement** (`fill_mode`, default `fit`): joint A-boundary search + unified B placement, or (`gate`) score once at structure winner — see below.
+5. On scored gate failure (except structure alignment failed): **dual-fit rescue (G6, default on)** — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
+6. On waveform failure under **`gate`**, retry with gap-end extension then gap-start extension (when enabled). Under **`fit`**, boundary search is proactive (step 4).
 
 **`fill_mode = fit` (default)**
 
@@ -345,7 +344,7 @@ Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two i
 | `skipped: boundary correlation below threshold (pre=… post=… min=…)` | Waveform floor failed after retries (`fit` or `gate`). `min` is the floor checked (`fill_absolute_floor` or structure min), not `min_fill_correlation`. When anchor/grid/extension scored higher, adds `best pre=… post=… @ baseline\|anchor\|grid\|extension`. |
 | `skipped: boundary alignment failed` | Structure bracket failed on B |
 | `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
-| `skipped: program-quiet in both masters (B silent at nominal span; nothing to fill)` | **G5** — B silent at nominal mapped span; not a Pearson failure |
+| `skipped: program-quiet in both masters (B silent at nominal span; nothing to fill)` | **Reserved** — `GapPatchSkipReason::ProgramQuiet`; not emitted by production patch (D11 is analyzer/plan-time). Shared pauses → `unfillable`; gate skips use correlation/structure reasons. |
 | `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |
 
 **stderr (default):** `tracing::warn` — `gap N/M (range): …` when a fill is skipped mid-run. **`--verbose`:** indented `skipped: …` via `phase_verbose` (same text as stdout status column); no `tracing::warn` for per-gap skips. `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).

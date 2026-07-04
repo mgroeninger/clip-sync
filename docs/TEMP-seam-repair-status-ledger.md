@@ -107,8 +107,8 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 - **Default on** — `RepairConfig.dual_fit = true`; `--no-dual-fit` ⇒ bracket-search path unchanged (D6).
 - **Production path** — `skip_or_dual_fit` → `try_dual_fit` → re-validate assembled fill with unchanged gate
   floors; `StructureAlignmentFailed` excluded (no bracket scored).
-- **G5 program-quiet** — production early reject via `program_quiet_skip` before seam gate (pass 2 exempt);
-  shared `domain/donor.rs` with analyzer.
+- **G5 program-quiet (D11)** — analyzer label via `donor_interior_nominal` / `program_quiet()`; dual-fit
+  declines program-quiet donors inside `try_dual_fit`. **Not** a production pre-gate skip (2026-07-03).
 - **Pre-wire proof** — read `dualfit_viability_text()` / `splice_dualfit` in corpus JSON; offline
   `diag_splice_dualfit` is **retired** (E-tombstone — decode drifted from scan).
 - **Schema reference** — field semantics in [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit.
@@ -166,7 +166,7 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 | D9 | **Fingerprint diagnostic stubs** (F2/F3) | Gate path omits per-bracket `structure_*` and leaves `GateOutcome` vocabulary tags empty. Fine for diagnostics today. See **Capture parked**. |
 | D10 | **RMS outward-anchor as primary registration** | Pair-6 sweep: loudest ≠ most unique (6·g9 pre z 22→9, 6·g10 pre z 27→9 on sustained tones). `b_mapped` + centered lag already finds −131 ms. Keep `[outward-anchor]` in `diag_splice_timescale` as diagnostic only; if revived, select by **`peak_z` distinctiveness**, not RMS. |
 | D12 | **Pipeline performance redesign** (D12) | **Active — not blocking repair.** Own doc: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md). §1 audit done; §2 updated (2026-07-03); §4 harness built. Remaining: step 1 hoists (partial), step 4 FFT lag. X-diagnostics gated (`--fingerprint-diagnostics`); per-bracket oracle still always on in scan. |
-| D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** | **DONE — analyzer + production (2026-07-03).** Analyzer: `program_quiet_skip()` / `addressable_dropout()`. **Production:** G5 `program_quiet_skip` in `patch_audio.rs` before seam gate (`GapPatchSkipReason::ProgramQuiet`); shared `domain/donor.rs`. Threshold `PROGRAM_QUIET_SILENCE_FRAC = 0.5` (C6). 24 skips reclassified on D11 rescan. |
+| D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** | **DONE — analyzer (2026-07-03); production pre-gate removed (2026-07-03).** Analyzer: `program_quiet_skip()` / `addressable_dropout()` via `donor_interior_nominal`. Plan-time: `b_has_energy = false` → unfillable. Dual-fit declines program-quiet donors. Production patch no longer short-circuits on nominal silence alone (F2/I3 regression fix). Threshold `PROGRAM_QUIET_SILENCE_FRAC = 0.5` (C6). |
 
 ---
 

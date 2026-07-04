@@ -73,9 +73,12 @@ pub fn donor_interior_at(
     })
 }
 
-/// Registration-independent **program-quiet** check (G5/D11): is B mostly silent at the nominal geometry
-/// `b_mapped` span (no per-shoulder lag), measured against A's gap floor? Quiet in both masters ⇒ nothing
-/// to fill — skip before the expensive seam gate.
+/// Registration-independent **program-quiet** label (D11): is B mostly silent at the nominal geometry
+/// `b_mapped` span (no per-shoulder lag), measured against A's gap floor?
+///
+/// Used by the gap-fingerprint analyzer (`donor_interior_nominal`), dual-fit donor decline, and corpus
+/// metrics — **not** as a production pre-gate skip (nominal-hole silence alone cannot distinguish true
+/// program-quiet from patchable quiet-content pauses).
 pub fn program_quiet_at_nominal(
     b_mono: &[f64],
     b_mapped_start: usize,
