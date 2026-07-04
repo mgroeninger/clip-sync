@@ -292,7 +292,7 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 1 | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** |
 | 2 | Gate diagnostics (X-set) behind `--fingerprint-diagnostics` | **Done** |
 | 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial** |
-| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Not started** |
+| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **B1 gate done (2026-07-04); wiring into a caller not started** |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 
 Steps 1 and 4 are the remaining perf work on a stable baseline. Step 5 historical note: built **before**
@@ -480,7 +480,7 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **A1** | Promote `golden_baseline_footguns` to `pr-repair` | hoists | **DONE (2026-07-03)** | Split into `tests/golden_baseline_smoke.rs` (no `validation-tests` gate); wired into `Invoke-RepairPrRepair` in `test-tier.ps1` |
 | **A2** | Unit test: `skip_or_dual_fit` excludes `StructureAlignmentFailed` | hoists, classes 1–2 | **DONE (2026-07-03)** | Extracted pure predicate `dual_fit_eligible` in `patch_audio.rs`; unit test `dual_fit_eligible_excludes_structure_alignment_failed` pins `StructureAlignmentFailed` never qualifies, regardless of `--dual-fit` |
 | **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **DONE (2026-07-03)** | `Invoke-RepairPrRepair` now runs `cargo test -p clip-sync-repair-harness --lib` |
-| **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **OPEN** | `domain/seam_local.rs` — full ±600 ms sweep **and** small ±25 ms probe; per-lag ε ~1e-10; same edge mask / `curve.len()`; pin `peak_z` / `prominence` / `frac_lag_ms` via `summarize_lag_curve` |
+| **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **DONE (2026-07-04)** | `lag_correlation_curve_fft` added in `domain/seam_local.rs` (FFT numerator via `rustfft` conjugate-multiply + prefix-sum Pearson denominator — not a full FFT-Pearson primitive that existed before). 4 tests: scaled-down full-sweep, small-probe, ragged-edge-mask, and derived-readout (`peak_z`/`prominence`/`frac_lag_ms` via `summarize_lag_curve`) equivalence, ε=1e-8. **Not yet wired into any caller** — that's step 4; this only gates the swap. |
 | **B2** | Live re-characterization smoke (≥1 gap) | hoists | **OPEN** | Committed small WAV or synthetic → `characterize_gaps_with_gate` → assert Tier-1 fields; closes static-JSON-only gap |
 | **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
 | **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
@@ -491,14 +491,15 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **D4** | Nightly CI with corpus fetch | infra | **OPEN** | Defer; C1 script sufficient for now |
 
 **Minimum viable package** (if scope is tight): **A1 + A2 + B1** — CI pins frozen decision surface, production
-wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win. **A1 + A2 landed
-2026-07-03**; **B1 is next** before either step 1 hoists or step 4 FFT should be attempted.
+wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win. **All three landed
+(A1/A2 2026-07-03, B1 2026-07-04).** Step 4 (wire `lag_correlation_curve_fft` into a real caller, behind
+auto-select by `n·L`) and step 1 hoists are both unblocked now.
 
 #### Sequencing vs migration steps
 
 ```text
 Before hoists (step 1):  A1 → A3 → A2   [DONE 2026-07-03]
-Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [NEXT]
+Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [DONE 2026-07-04]
 After first hoist PR:    B2
 Before calling F5 done:  C1 (+ run validation tier locally)
 Optional polish:         C2, C3
