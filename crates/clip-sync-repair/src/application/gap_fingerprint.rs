@@ -657,7 +657,7 @@ pub struct GateOutcome {
 /// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
 /// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
 /// existing call sites / tests keep their paths.
-pub use crate::domain::seam_local::{lag_correlation_curve, seam_local_peak};
+pub use crate::domain::seam_local::{lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak};
 
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.
@@ -1112,7 +1112,7 @@ fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagS
     } else {
         &side.a_border[..w]
     };
-    let curve = lag_correlation_curve(a_win, &side.b_signal[lo..hi], params.max_lag);
+    let curve = lag_correlation_curve_auto(a_win, &side.b_signal[lo..hi], params.max_lag);
     if side.gross_lag_shift == 0 {
         summarize_lag_curve(&curve, params.sample_rate, params.win_ms(), params.max_lag_ms(), params.channel)
     } else {
@@ -2985,6 +2985,115 @@ mod tests {
             "a speech-anchored bracket should score a strong seam where the throat cannot"
         );
         assert!(fp.lag.is_some(), "lag computed at the best speech bracket");
+    }
+
+    /// **C3 — `fingerprint_diagnostics` gates the X-set:** off, the diagnostic-only fields
+    /// (`seam_probe`, `wide_envelope`, `b_levels`) are absent; on, they're populated. Closes
+    /// perf-plan `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C3** — the flag
+    /// exists (`RepairConfig.fingerprint_diagnostics`, `characterize_gaps_with_gate`'s
+    /// `include_diagnostics`) but had no regression test pinning what it actually gates.
+    #[test]
+    fn characterize_gaps_with_gate_include_diagnostics_toggles_x_set() {
+        use crate::application::PatchAudioRequest;
+        use crate::domain::gap::Gap;
+        use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let ch = 1usize;
+        let secs = |s: f64| (s * f64::from(rate)) as usize;
+        let total = secs(5.0);
+        let (sp1, n1, gap, n2, sp2) = (
+            (secs(0.50), secs(0.85)),
+            (secs(0.85), secs(1.85)),
+            (secs(1.85), secs(3.35)),
+            (secs(3.35), secs(4.35)),
+            (secs(4.35), secs(4.70)),
+        );
+        let mut a = vec![0f32; total];
+        let mut b = vec![0f32; total];
+        write_speech(&mut a, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut b, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut a, sp2.0, sp2.1, 440.0, 0.079);
+        write_speech(&mut b, sp2.0, sp2.1, 440.0, 0.079);
+        write_noise(&mut a, n1.0, n1.1, 1, 0.0056);
+        write_noise(&mut b, n1.0, n1.1, 11, 0.0056);
+        write_noise(&mut a, n2.0, n2.1, 3, 0.0056);
+        write_noise(&mut b, n2.0, n2.1, 13, 0.0056);
+        write_noise(&mut b, gap.0, gap.1, 5, 0.0056);
+
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: ch as u16,
+            samples: a,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: gap.0 as f64 / f64::from(rate),
+                video_a_end_secs: gap.1 as f64 / f64::from(rate),
+                video_b_start_secs: Some(gap.0 as f64 / f64::from(rate)),
+                video_b_end_secs: Some(gap.1 as f64 / f64::from(rate)),
+                b_has_energy: true,
+            }],
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            scan_block_ms: 20,
+            silence_peak_fraction: 0.05,
+            limit_fill_to_mapped_region: false,
+            audio_timeline_skew: None,
+        };
+
+        let repair = RepairConfig {
+            gap_signature_mode: GapSignatureMode::Energy,
+            gap_signature_context_secs: 1.5,
+            // The 5 s synthetic fixture is far smaller than the production defaults assume; every
+            // search radius (border slide, anchor bracket span) must stay inside the fixture's own
+            // timeline or the unified fit search's O(radius * window) slide becomes a multi-minute
+            // brute force over a handful of anchor-bracket combinations.
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_length_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            border_standoff_secs: 0.0,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            ..RepairConfig::default()
+        };
+        let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
+        let progress = NoOpProgressReporter;
+
+        let off = characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], false, &progress);
+        let on = characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], true, &progress);
+
+        let fp_off = off.gaps.first().expect("one gap (off)");
+        assert!(fp_off.seam_probe.is_none(), "diagnostics off: seam_probe must be absent");
+        assert!(fp_off.wide_envelope.is_none(), "diagnostics off: wide_envelope must be absent");
+        assert!(fp_off.b_levels.is_none(), "diagnostics off: b_levels must be absent");
+
+        let fp_on = on.gaps.first().expect("one gap (on)");
+        assert!(fp_on.seam_probe.is_some(), "diagnostics on: seam_probe must be populated");
+        assert!(fp_on.wide_envelope.is_some(), "diagnostics on: wide_envelope must be populated");
+        assert!(fp_on.b_levels.is_some(), "diagnostics on: b_levels must be populated");
     }
 
     #[test]

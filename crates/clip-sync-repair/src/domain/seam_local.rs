@@ -107,6 +107,26 @@ pub fn lag_correlation_curve_fft(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<
     out
 }
 
+/// Cost crossover (in `n · (2·max_lag+1)` ops) for [`lag_correlation_curve_auto`]. Set well above the
+/// small-probe regime (±30 ms seam-uniqueness / ±100 ms envelope bins, cost ~1e4) and well below the
+/// production seam-local / baseline sweep regime (±600 ms over a 250 ms–1 s window, cost ~1e8–1e9), so the
+/// boundary never sits near a real call site — perf-plan §3 step 4.
+const FFT_CROSSOVER_OPS: u64 = 1_000_000;
+
+/// Auto-select between [`lag_correlation_curve`] and [`lag_correlation_curve_fft`] by estimated naive cost
+/// (`n · (2·max_lag+1)`). Equivalence is pinned by `fft_curve_matches_naive_*` below (ε = 1e-8), so callers
+/// on the sweep side of the crossover get the FFT path for free; small probes stay on the naive path where
+/// FFT setup (`FftPlanner`, zero-padding) would dominate.
+pub fn lag_correlation_curve_auto(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<(i64, f64)> {
+    let n = a.len() as u64;
+    let width = (2 * max_lag.max(0) + 1) as u64;
+    if n.saturating_mul(width) > FFT_CROSSOVER_OPS {
+        lag_correlation_curve_fft(a, b_ctx, max_lag)
+    } else {
+        lag_correlation_curve(a, b_ctx, max_lag)
+    }
+}
+
 /// Best `(peak_r, peak_lag_frames, peak_z)` of one seam over a ±`max_lag` search around `anchor_start` (the
 /// start of the seam's B window; `lag 0` aligns `a_seam` at `anchor_start`). `max_lag` auto-clamps to the
 /// available B context (0 ⇒ a plain lag-0 score). `peak_z` = the peak's whole-curve z-score (the
@@ -126,7 +146,7 @@ pub fn seam_local_peak(
     }
     let max_lag = max_lag.min(anchor_start).min(b_mono.len() - (anchor_start + n));
     let b_ctx = &b_mono[anchor_start - max_lag..anchor_start + n + max_lag];
-    let curve = lag_correlation_curve(a_seam, b_ctx, max_lag as i64);
+    let curve = lag_correlation_curve_auto(a_seam, b_ctx, max_lag as i64);
     let &(peak_lag, peak_r) = curve
         .iter()
         .max_by(|(_, x), (_, y)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
@@ -253,6 +273,35 @@ mod tests {
         // Only 900 samples of context instead of the full 500 + 800 = 1300 the unclipped sweep would want.
         let b_ctx = noise(0x3333_4444, 900, 0.5);
         assert_curves_equivalent(&a, &b_ctx, max_lag, "ragged_edges");
+    }
+
+    #[test]
+    fn auto_picks_naive_for_small_probe_and_fft_for_full_sweep() {
+        // Small probe (±30 ms seam-uniqueness class): auto must stay naive — verified indirectly by
+        // checking it reproduces the naive curve exactly (no FFT round-trip noise at all).
+        let n = 200usize;
+        let max_lag = 30i64;
+        let a = noise(0x1357_9bdf, n, 1.0);
+        let total = n + 2 * max_lag as usize;
+        let b_ctx = noise(0x2468, total, 0.001);
+        let naive = lag_correlation_curve(&a, &b_ctx, max_lag);
+        let auto = lag_correlation_curve_auto(&a, &b_ctx, max_lag);
+        assert_eq!(naive, auto, "small probe: auto must take the naive path bit-for-bit");
+
+        // Full sweep (production seam-local / baseline-lag class): auto must match naive within the FFT
+        // epsilon (it took the FFT path), not bit-for-bit.
+        let n = 2000usize;
+        let max_lag = 2400i64;
+        let a = noise(0xA5A5_1234, n, 1.0);
+        let total = n + 2 * max_lag as usize + 37;
+        let mut b_ctx = noise(0x99, total, 0.001);
+        let true_lag = 900i64;
+        let start = (max_lag + true_lag) as usize;
+        b_ctx[start..start + n].copy_from_slice(&a);
+        assert_curves_equivalent(&a, &b_ctx, max_lag, "auto_full_sweep_vs_naive");
+        let auto = lag_correlation_curve_auto(&a, &b_ctx, max_lag);
+        let fft = lag_correlation_curve_fft(&a, &b_ctx, max_lag);
+        assert_eq!(auto, fft, "full sweep: auto must take the fft path bit-for-bit (same fn)");
     }
 
     #[test]

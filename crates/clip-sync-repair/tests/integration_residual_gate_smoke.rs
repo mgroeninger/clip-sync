@@ -281,3 +281,39 @@ fn off_no_regression_baseline() {
         run_off_regression_arm(&f4, &temp, &repair, label);
     }
 }
+
+/// **C2 — `--no-dual-fit` is a no-op when the ordinary bracket search already decides:** F1/F4
+/// patch outright (`dual_fit` never engages — no skip to fall through from); the forced-Pearson-skip
+/// arm does reach the G6 branch but has no real step between shoulders, so `try_dual_fit` declines
+/// and the outcome is unchanged either way. `dual_fit = true` vs `false` must produce identical
+/// gating and PCM in all three cases. Closes perf-plan `docs/TEMP-pipeline-perf-redesign-plan.md`
+/// §4.7 backlog item **C2**.
+#[test]
+fn dual_fit_flag_is_noop_when_bracket_search_already_decides() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let f1 = build_f1_production_at(16_000, 1, 32.0, 3.0);
+    let f4 = build_f4_decoy_production(16_000, 1, 32.0, 3.0);
+
+    let mut dual_fit_on = production_fit_off();
+    dual_fit_on.dual_fit = true;
+    let mut dual_fit_off = production_fit_off();
+    dual_fit_off.dual_fit = false;
+
+    for (label, fixture) in [("f1 production_fit", &f1), ("f4_decoy production_fit", &f4)] {
+        let on = run_fixture_patch(fixture, &temp, &dual_fit_on, false);
+        let off = run_fixture_patch(fixture, &temp, &dual_fit_off, false);
+        assert_patch_gating_equivalent(&on, &off, &format!("{label}: dual_fit on vs off"));
+    }
+
+    // Forced Pearson skip (`min_fill_correlation = 1.0`) DOES qualify for the G6 branch (it's a
+    // scored gate failure, not `StructureAlignmentFailed`) — but F1 has a single true bracket, no
+    // real step between shoulders, so `try_dual_fit`'s step-real check declines and the gap stays
+    // skipped either way. This asserts that decline, not that G6 never runs.
+    let mut forced_on = with_forced_pearson_skip(production_fit_off());
+    forced_on.dual_fit = true;
+    let mut forced_off = with_forced_pearson_skip(production_fit_off());
+    forced_off.dual_fit = false;
+    let on = run_fixture_patch(&f1, &temp, &forced_on, false);
+    let off = run_fixture_patch(&f1, &temp, &forced_off, false);
+    assert_patch_gating_equivalent(&on, &off, "f1 forced Pearson skip: dual_fit on vs off");
+}

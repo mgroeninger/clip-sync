@@ -272,14 +272,14 @@ is default **off** (`--fingerprint-diagnostics` to enable Tier-3 X-set).
 | **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). |
 | **2** | Gate diagnostics (X-set) behind a flag | **Done** | `RepairConfig.fingerprint_diagnostics` + `--fingerprint-diagnostics`; gates `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag`. Per-bracket oracle **not** gated. |
 | **3** | Cheap early-reject (G0b at plan) | **Partial** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03). |
-| **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Not started** | `lag_correlation_curve` still naive O(n·L) in `domain/seam_local.rs`. |
+| **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Done (2026-07-04)** | `lag_correlation_curve_fft` (B1) wired behind cost-crossover `lag_correlation_curve_auto` in `domain/seam_local.rs`; `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep` (the `baseline_lag` ±600 ms / ~1 s-window sweep, the dominant diagnostic-scan cost per §1.3) both switched from naive to auto. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
-| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** Live-path / production guards (B2, C1, C2) still open — see §4.7. |
+| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). C1, C2 still open — see §4.7. |
 
-> **Sequencing (updated 2026-07-03):** A3 (step 5), G5 production, and §4.7 **Tier A (A1–A3)** are landed.
-> **Next:** B1 (`fft_curve ≈ naive_curve` equivalence) → step 1 hoists (behind the now-CI-pinned harness) →
-> step 4 FFT → optimize diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder
-> gates or drop D/R measurements until the §4 harness passes (full workflow: §4.7 C1).
+> **Sequencing (updated 2026-07-04):** A3 (step 5), G5 production, §4.7 **Tier A (A1–A3)**, **B1**, **B2**, and
+> **step 4 FFT wiring** are landed. **Next:** step 1 hoists (behind the now-CI-pinned harness) → optimize
+> diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder gates or drop D/R
+> measurements until the §4 harness passes (full workflow: §4.7 C1).
 
 ---
 
@@ -292,10 +292,10 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 1 | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** |
 | 2 | Gate diagnostics (X-set) behind `--fingerprint-diagnostics` | **Done** |
 | 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial** |
-| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **B1 gate done (2026-07-04); wiring into a caller not started** |
+| 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Done (2026-07-04)** — `lag_correlation_curve_auto` (cost-crossover) wired into `seam_local_peak` and `lag_side_sweep` |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 
-Steps 1 and 4 are the remaining perf work on a stable baseline. Step 5 historical note: built **before**
+Step 1 is the remaining perf work on a stable baseline. Step 5 historical note: built **before**
 scan optimization (2026-07-01 sequencing decision) — complete.
 
 ---
@@ -434,7 +434,7 @@ confirms them (§4.0); the *assertions* are defined now:
 - **Production `PatchAudio` outcomes** — the golden harness is analyzer-scoped (`analyze_dirs` on
   `corpus.json` → D/R predicates). It does not run `prepare_region_patch` / `skip_or_dual_fit` on media.
   D6 byte-identical `--no-dual-fit` and dual-fit rescue on the 9 targets are **not** golden-locked in CI
-  (§4.7 C2).
+  (§4.7 C2). Live-media production wiring itself is now covered (§4.7 B2, `validate_dual_fit_oracle.rs`).
 - **Live fingerprint recompute** — `golden_baseline_corpus_invariance` reads committed `corpus.json`; it
   does not call `characterize_gaps_with_gate`. Computation drift is caught only after a **rescan** + diff
   (§4.7 C1). `gap-files/re-anchor-dual-fit-on-nominal` is not in the repo.
@@ -456,14 +456,15 @@ row points to this section.
 | Bracket path | `energy_signature_fixtures` F1–F4, `integration_energy_patch`, etc. | integration | **Yes** (subset on PR) | Class 6 — dual-fit never engages |
 | Lag primitives | `gap_fingerprint.rs` `lag_curve_*`, `lag_pair_sequential_decouples_*`; `seam_local.rs` `seam_local_peak_recovers_offset_seam` | unit | **Yes** (`--lib`) | Lag math, seam-local search, A2 sequential post — not end-to-end D/R |
 | Analyzer predicates | `gap_fingerprint_corpus.rs` tests (`program_quiet_skip_*`, `splice_diag_*`, …) | unit (harness lib) | **No** | Predicate logic the golden diff depends on |
-| FFT equivalence | *(planned §3 step 4)* | — | **No** | Not started |
+| FFT equivalence | `seam_local.rs` `fft_curve_matches_naive_*`, `auto_picks_naive_for_small_probe_and_fft_for_full_sweep` | unit | **Yes** (`--lib`) | B1 gate + auto-crossover wiring into `seam_local_peak`/`lag_side_sweep` (step 4) |
 
 **CI default (updated 2026-07-03 — A1/A3):** `.github/workflows/ci.yml` runs `test-tier.ps1 -Tier pr`, which
 now includes `golden_baseline_footguns` (via `golden_baseline_smoke`) and `clip-sync-repair-harness --lib`.
 This pins Tier-1 footguns on the frozen JSON and the analyzer-predicate/diff-machinery unit tests on every PR.
 Still **not** covered by default CI: `golden_baseline_corpus_invariance` (the live rescan-vs-golden diff — needs
-local `gap-files`, §4.7 C1) and any live `characterize_gaps_with_gate` / production `PatchAudio` path (§4.7 B2,
-C2). A hoist or FFT change can still land with green CI and regress *computation* (not the frozen decision
+local `gap-files`, §4.7 C1) and the live production `PatchAudio` path (§4.7 B2, C2) — B2 is now covered by
+`validate_dual_fit_oracle.rs`, but only under `-Tier validation` (needs `ffmpeg` + fetched corpus), not `pr-repair`.
+A hoist or FFT change can still land with green CI and regress *computation* (not the frozen decision
 surface) unless someone runs `-Tier validation` locally with the corpus.
 
 **Invariance test semantics:** `analyze_dirs` parses **static** `corpus.json` and applies `gap_row` /
@@ -480,8 +481,8 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **A1** | Promote `golden_baseline_footguns` to `pr-repair` | hoists | **DONE (2026-07-03)** | Split into `tests/golden_baseline_smoke.rs` (no `validation-tests` gate); wired into `Invoke-RepairPrRepair` in `test-tier.ps1` |
 | **A2** | Unit test: `skip_or_dual_fit` excludes `StructureAlignmentFailed` | hoists, classes 1–2 | **DONE (2026-07-03)** | Extracted pure predicate `dual_fit_eligible` in `patch_audio.rs`; unit test `dual_fit_eligible_excludes_structure_alignment_failed` pins `StructureAlignmentFailed` never qualifies, regardless of `--dual-fit` |
 | **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **DONE (2026-07-03)** | `Invoke-RepairPrRepair` now runs `cargo test -p clip-sync-repair-harness --lib` |
-| **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **DONE (2026-07-04)** | `lag_correlation_curve_fft` added in `domain/seam_local.rs` (FFT numerator via `rustfft` conjugate-multiply + prefix-sum Pearson denominator — not a full FFT-Pearson primitive that existed before). 4 tests: scaled-down full-sweep, small-probe, ragged-edge-mask, and derived-readout (`peak_z`/`prominence`/`frac_lag_ms` via `summarize_lag_curve`) equivalence, ε=1e-8. **Not yet wired into any caller** — that's step 4; this only gates the swap. |
-| **B2** | Live re-characterization smoke (≥1 gap) | hoists | **OPEN** | Committed small WAV or synthetic → `characterize_gaps_with_gate` → assert Tier-1 fields; closes static-JSON-only gap |
+| **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **DONE (2026-07-04)** | `lag_correlation_curve_fft` added in `domain/seam_local.rs` (FFT numerator via `rustfft` conjugate-multiply + prefix-sum Pearson denominator — not a full FFT-Pearson primitive that existed before). 4 tests: scaled-down full-sweep, small-probe, ragged-edge-mask, and derived-readout (`peak_z`/`prominence`/`frac_lag_ms` via `summarize_lag_curve`) equivalence, ε=1e-8. **Wired (2026-07-04)** — `lag_correlation_curve_auto` cost-crossover swap into `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep`, step 4. |
+| **B2** | Live re-characterization smoke (≥1 gap) | hoists | **DONE** | `tests/validate_dual_fit_oracle.rs` — real jump-cut media through the actual production entry point (`residual_gate::run_built_floor_oracle_cfg` → `PatchAudio::execute`), asserting `dual_fit_used`; validation tier (needs `ffmpeg` + fetched corpus), not `pr-repair` |
 | **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
 | **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
 | **C3** | `fingerprint_diagnostics` flag smoke | step 2 regression | **OPEN** | Flag off ⇒ X fields absent; flag on ⇒ `seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels` present |
@@ -492,15 +493,16 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 
 **Minimum viable package** (if scope is tight): **A1 + A2 + B1** — CI pins frozen decision surface, production
 wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost win. **All three landed
-(A1/A2 2026-07-03, B1 2026-07-04).** Step 4 (wire `lag_correlation_curve_fft` into a real caller, behind
-auto-select by `n·L`) and step 1 hoists are both unblocked now.
+(A1/A2 2026-07-03, B1 2026-07-04).** Step 4 is now also landed (`lag_correlation_curve_auto` wired into
+`seam_local_peak` and `lag_side_sweep`, 2026-07-04), as is B2 (`validate_dual_fit_oracle.rs`). Step 1 hoists
+remain the largest open item.
 
 #### Sequencing vs migration steps
 
 ```text
 Before hoists (step 1):  A1 → A3 → A2   [DONE 2026-07-03]
 Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [DONE 2026-07-04]
-After first hoist PR:    B2
+                         B2 (`validate_dual_fit_oracle.rs`)         [DONE]
 Before calling F5 done:  C1 (+ run validation tier locally)
 Optional polish:         C2, C3
 ```
