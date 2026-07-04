@@ -3,7 +3,7 @@
 Manifest-driven integration tests exercise real-world alignment scenarios: multiple containers/codecs, timing leaders, multi-track MP4, and multi-clip consistency.
 
 **Case matrix:** [corpus-matrix.md](corpus-matrix.md)  
-**Full dev guide (features, all test tiers):** [development.md](development.md)  
+**Full dev guide (features, all test tiers):** [test-tiers.md](test-tiers.md), [development.md](development.md)  
 **Fixtures & commands:** [tests/corpus/README.md](../tests/corpus/README.md)  
 **Archived plans:** [corpus implementation](archive/corpus-implementation-plan.md), [session reuse](archive/session-reuse-plan.md), [high-rate refinement](archive/high-rate-offset-refinement-plan.md)
 
@@ -24,7 +24,7 @@ cargo test -p clip-sync --features he-aac,test-utils corpus_            # + HE-A
 .\scripts\generate_corpus.ps1                                            # regenerate committed WAV fixtures
 ```
 
-Full tier machinery: [development.md](development.md), [test-tier-remainder.md](test-tier-remainder.md).
+Full tier machinery: [test-tiers.md](test-tiers.md), [development.md](development.md), [test-tier-remainder.md](test-tier-remainder.md).
 
 - **Committed tier** — 3 cases, 6 WAV files under `tests/corpus/wav/` (~3.4 MB).
 - **Generated tier** — 20 cases built at test time; ffmpeg / `he-aac` cases skip when unavailable.
@@ -253,7 +253,7 @@ Shipped with [archive/energy-corpus-plan.md](archive/energy-corpus-plan.md) (Pha
 | Integration (fast) | **integration** | SP01–SP03 in `integration_energy_patch.rs`; SP04 in `patch_audio_integration.rs` | Patch with oracle `GapReport`, structure-heavy weights |
 | Mode matrix + EC-6 patch | **validation** / **diagnostic** | `validate_residual_gate.rs` (`f4_decoy_patch_discrimination`, …); `diag_energy_matrix.rs` (`energy_signature_mode_matrix`, …) | CSV rows (fixture × mode × context); **EC-6:** energy → true pause / bool → decoy |
 
-**CI commands** (prefer [test-tier.ps1](development.md#default--ci-commands); bare `cargo test -p clip-sync-repair` runs **`--lib` only** after Phase 3):
+**CI commands** (prefer [test-tiers.md](test-tiers.md); bare `cargo test -p clip-sync-repair` runs **`--lib` only** after Phase 3):
 
 ```powershell
 # PR repair slice (integration + oracle label)

@@ -1,6 +1,6 @@
 # Test tier selector for clip-sync workspace.
 # Run from repo root: .\scripts\test-tier.ps1 -Tier pr
-# See docs/development.md and docs/test-tier-remainder.md.
+# See docs/test-tiers.md and docs/development.md.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(

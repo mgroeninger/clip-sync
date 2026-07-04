@@ -34,7 +34,8 @@ How to read and steer a run:
 
 | Doc | Covers |
 |-----|--------|
-| [development.md](development.md) | Build, features, test commands, execution tiers, `test-tier.ps1` |
+| [test-tiers.md](test-tiers.md) | **How to run test tiers** — `test-tier.ps1`, composite profiles, prerequisites |
+| [development.md](development.md) | Build, features, integration binary matrix, `#[ignore]` scheduling |
 | [archive/test-tier-plan.md](archive/test-tier-plan.md) | Tier migration history (archived 2026-06) |
 | [test-tier-remainder.md](test-tier-remainder.md) | Deferred tiers (2b, ignore follow-ups, nextest, validate crate) |
 | [corpus-validation.md](corpus-validation.md) | Test corpus tiers, acceptance, energy-signature corpus |

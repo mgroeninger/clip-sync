@@ -1,8 +1,6 @@
 # Test tier remainder (post–repair migration)
 
-> **Living reference:** [development.md](development.md) (commands, features, tier decision rule,
-> repair binary matrix, ignore scheduling). **Migration history:**
-> [archive/test-tier-plan.md](archive/test-tier-plan.md).
+> **Living reference:** [test-tiers.md](test-tiers.md) (how to run tiers), [development.md](development.md) (binary matrix, features, ignore scheduling). **Migration history:** [archive/test-tier-plan.md](archive/test-tier-plan.md).
 
 This doc tracks **open or deferred** test-infrastructure work after the repair-crate tier migration.
 

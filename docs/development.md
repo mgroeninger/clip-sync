@@ -2,7 +2,7 @@
 
 Build commands, Cargo feature flags per crate, and how to run the full test matrix (including slow and `#[ignore]` tiers).
 
-**Related:** [cli-output.md](cli-output.md) (CLI progress and human-report contract), [gap-repair-guide.md](gap-repair-guide.md) (gap types and repair recommendations), [gap-fill-modes.md](gap-fill-modes.md) (`fit` vs `gate`, flags, performance), [README.md](../README.md) § Gap patching pipeline, [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
+**Related:** [test-tiers.md](test-tiers.md) (**how to run each test tier** — start here for `test-tier.ps1`), [cli-output.md](cli-output.md) (CLI progress and human-report contract), [gap-repair-guide.md](gap-repair-guide.md) (gap types and repair recommendations), [gap-fill-modes.md](gap-fill-modes.md) (`fit` vs `gate`, flags, performance), [README.md](../README.md) § Gap patching pipeline, [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 
 ---
 
@@ -92,9 +92,11 @@ ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channel
 
 ## Test overview
 
+**Run tiers:** [test-tiers.md](test-tiers.md) — `test-tier.ps1` reference, composite profiles (PR, widest regression, pre-release), prerequisites.
+
 Tests are grouped into **execution tiers** (when CI runs them). Acceptance row IDs (SD, SP, EC,
 RG, …) describe **what** a test proves — see [test-acceptance-glossary.md](test-acceptance-glossary.md).
-Tier machinery: this doc (living reference). Migration history:
+Tier machinery: [test-tiers.md](test-tiers.md) (runner guide), this doc (living reference for features/matrix). Migration history:
 [archive/test-tier-plan.md](archive/test-tier-plan.md). Open work:
 [test-tier-remainder.md](test-tier-remainder.md).
 
@@ -192,7 +194,9 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `integration_floor_oracle_smoke` | integration | — | yes | Floor manifest load + gap-frame geometry (not full codec matrix) |
 | `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
 | `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
-| `anchor_seam_oracle` | integration | — | yes | Editorial anchor seam A1–A5b + **A6 domain** + F4 regression (`tests/anchor_seam_oracle.rs`); A6/A6b pipeline `#[ignore]` |
+| `anchor_seam_oracle` | integration | — | **no** | Editorial anchor seam A1–A5b + **A6 domain** + F4 regression; **integration** tier (+ A6 pipeline `#[ignore]` in diagnostic) |
+| `golden_baseline_smoke` | integration | — | yes | §4 golden footguns (frozen JSON pins; no corpus) |
+| `golden_baseline_invariance` | validation | `validation-tests` | no | Live corpus vs golden diff (`#[ignore]` without local `gap-files`) |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
@@ -233,39 +237,29 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 | `pr-repair-extended` | +~3–8 min (sine seam grid, skips SP rows) |
 | `unit` (repair lib, `oracle_`-label skips) | ~30–60 s |
 | `integration` (repair, integration + oracle `--test` binaries; **not** `validate_*` / `diag_*`) | ~20+ min (includes full `patch_audio`) |
+| **`pr` + `integration` + `oracle`** (widest regression, not diagnostic) | ~25–35 min — see [test-tiers.md](test-tiers.md) |
 | `validation` | minutes+; **local only** (not CI); **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
 
 ---
 
 ## Default / CI commands
 
+See **[test-tiers.md](test-tiers.md)** for the full tier catalog, composite profiles, and parameters.
+
 ```powershell
 # PR gate (same as GitHub Actions)
 .\scripts\check-repair-test-manifest.ps1   # autotests=false [[test]] guard (also in CI)
 .\scripts\test-tier.ps1 -Tier pr
 
-# Per-crate PR slices
-.\scripts\test-tier.ps1 -Tier pr-align
-.\scripts\test-tier.ps1 -Tier pr-repair   # includes oracle_energy SD rows (`#[ignore]` on slow/control rows)
-
-# Execution tiers (repair crate)
-.\scripts\test-tier.ps1 -Tier unit -Package clip-sync-repair
-.\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
-.\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair      # oracle_energy + --ignored rows
-.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair   # local only — ffmpeg + fetch_corpus_sources
-.\scripts\test-tier.ps1 -Tier diagnostic -Package clip-sync-repair -Nocapture
-
-# Extended repair (pr-repair + patch_audio sine grid; SP01–SP03 in integration_energy_patch)
+# Common local profiles (details in test-tiers.md)
 .\scripts\test-tier.ps1 -Tier pr-repair-extended
-```
-
-**Integration-only** (repair integration + oracle binaries, **no `--lib`**, **no** `validate_*` / `diag_*`):
-
-```powershell
 .\scripts\test-tier.ps1 -Tier integration -Package clip-sync-repair
+.\scripts\test-tier.ps1 -Tier oracle -Package clip-sync-repair
+.\scripts\test-tier.ps1 -Tier validation -Package workspace
+.\scripts\test-tier.ps1 -Tier diagnostic -Package workspace -Nocapture
 ```
 
-Use `-Tier validation` / `-Tier diagnostic` for feature-gated `validate_*` and `diag_*` binaries.
+Per-crate slices: `-Tier pr-align`, `-Tier pr-repair`, `-Tier unit -Package clip-sync-repair`, etc. — [test-tiers.md § Script tier reference](test-tiers.md#script-tier-reference).
 
 Do **not** use `cargo test --tests` for integration-only — Cargo still runs `--lib` with
 `--tests`. Use the script or an explicit `--test <binary>` list (see
@@ -404,7 +398,7 @@ These exercise 60 s synthetic clips; several minutes wall time.
 
 ### One-shot “everything local” script
 
-Requires ffmpeg on `PATH`. External corpus tiers are optional (set env vars or skip those lines).
+Requires ffmpeg on `PATH`. External corpus tiers are optional (set env vars or skip those lines). See [test-tiers.md § Composite profiles](test-tiers.md#composite-profiles).
 
 ```powershell
 .\scripts\test-tier.ps1 -Tier pr
