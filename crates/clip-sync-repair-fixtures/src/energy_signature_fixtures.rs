@@ -1582,6 +1582,14 @@ fn fill_noise_band_limited(
     }
 }
 
+/// Deterministic per-bin gain modulation (xorshift from `seed`, block length `bin_frames`).
+struct PerBinModulation {
+    bin_frames: usize,
+    seed: u64,
+    gmin: f32,
+    gmax: f32,
+}
+
 /// Scale each `bin_frames`-long block of `[start, end)` by a fresh deterministic gain in
 /// `[gmin, gmax]` (xorshift from `seed`). Turns statistically-uniform noise into a **non-stationary**
 /// bed: the 50 ms-bin energy profile becomes a distinctive, non-repeating contour that pins the
@@ -1594,11 +1602,14 @@ fn modulate_per_bin(
     channels: usize,
     start: usize,
     end: usize,
-    bin_frames: usize,
-    seed: u64,
-    gmin: f32,
-    gmax: f32,
+    modulation: PerBinModulation,
 ) {
+    let PerBinModulation {
+        bin_frames,
+        seed,
+        gmin,
+        gmax,
+    } = modulation;
     let ch = channels.max(1);
     let bin_frames = bin_frames.max(1);
     let end = end.min(samples.len() / ch);
@@ -1708,8 +1719,30 @@ pub fn build_w5_timing_offset_seam(
     let mut a = vec![0.0f32; total_frames * ch];
     fill_noise_band_limited(&mut a, ch, pre_bed, gap_start, 0.3, 0xC1, 48);
     fill_noise_band_limited(&mut a, ch, gap_end, post_bed_end, 0.3, 0xC2, 48);
-    modulate_per_bin(&mut a, ch, pre_bed, gap_start, bin_frames, 0xD1, 0.25, 1.0);
-    modulate_per_bin(&mut a, ch, gap_end, post_bed_end, bin_frames, 0xD2, 0.25, 1.0);
+    modulate_per_bin(
+        &mut a,
+        ch,
+        pre_bed,
+        gap_start,
+        PerBinModulation {
+            bin_frames,
+            seed: 0xD1,
+            gmin: 0.25,
+            gmax: 1.0,
+        },
+    );
+    modulate_per_bin(
+        &mut a,
+        ch,
+        gap_end,
+        post_bed_end,
+        PerBinModulation {
+            bin_frames,
+            seed: 0xD2,
+            gmin: 0.25,
+            gmax: 1.0,
+        },
+    );
     zero_frames(&mut a, ch, gap_start, gap_end);
 
     // B: the same content, time-shifted by the linear skew (lag-0 decorrelates, the lag sweep recovers),

@@ -430,10 +430,14 @@ impl FitCandidateSource for AudioFitSource<'_> {
     }
 }
 
+struct FitJointPoolState<'a> {
+    pool: &'a mut Vec<FitJointCandidate>,
+    recorded_failure: &'a mut Option<SeamGateFailure>,
+    best_waveform: &'a mut Option<SeamScoreAttempt>,
+}
+
 fn record_fit_joint_candidate_to_pool(
-    pool: &mut Vec<FitJointCandidate>,
-    recorded_failure: &mut Option<SeamGateFailure>,
-    best_waveform: &mut Option<SeamScoreAttempt>,
+    state: FitJointPoolState<'_>,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     source: &mut dyn FitCandidateSource,
@@ -443,33 +447,33 @@ fn record_fit_joint_candidate_to_pool(
     match source.score(refined, anchor_seam_bracket) {
         Ok((outcome, ranking_score)) => {
             consider_waveform_attempt(
-                best_waveform,
+                state.best_waveform,
                 outcome.report_pre,
                 outcome.report_post,
                 score_source,
             );
             let boundary_move = baseline.start_frame.abs_diff(refined.start_frame)
                 + baseline.end_frame.abs_diff(refined.end_frame);
-            pool.push(FitJointCandidate {
+            state.pool.push(FitJointCandidate {
                 outcome,
                 ranking_score,
                 boundary_move,
             });
         }
         Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min, .. }) => {
-            consider_waveform_attempt(best_waveform, pre, post, score_source);
-            if recorded_failure.is_none() {
-                *recorded_failure = Some(waveform_below_threshold(pre, post, min));
+            consider_waveform_attempt(state.best_waveform, pre, post, score_source);
+            if state.recorded_failure.is_none() {
+                *state.recorded_failure = Some(waveform_below_threshold(pre, post, min));
             }
         }
         Err(fail @ SeamGateFailure::ResidualHeadroomExceeded { .. }) => {
-            if recorded_failure.is_none() {
-                *recorded_failure = Some(fail);
+            if state.recorded_failure.is_none() {
+                *state.recorded_failure = Some(fail);
             }
         }
         Err(other) => {
-            if pool.is_empty() && recorded_failure.is_none() {
-                *recorded_failure = Some(other);
+            if state.pool.is_empty() && state.recorded_failure.is_none() {
+                *state.recorded_failure = Some(other);
             }
         }
     }
@@ -839,12 +843,6 @@ fn best_anchor_joint_candidate(pool: &[FitJointCandidate]) -> Option<&FitJointCa
     }
 }
 
-struct AnchorSeamJointSearchState<'a> {
-    pool: &'a mut Vec<FitJointCandidate>,
-    recorded_failure: &'a mut Option<SeamGateFailure>,
-    best_waveform: &'a mut Option<SeamScoreAttempt>,
-}
-
 struct AnchorSeamJointSearchCtx {
     baseline: RefinedGapFrames,
     baseline_pre: f64,
@@ -854,15 +852,10 @@ struct AnchorSeamJointSearchCtx {
 }
 
 fn try_anchor_seam_joint_search(
-    state: &mut AnchorSeamJointSearchState<'_>,
+    state: &mut FitJointPoolState<'_>,
     ctx: &AnchorSeamJointSearchCtx,
     source: &mut dyn FitCandidateSource,
 ) -> Result<Option<SeamGateOutcome>, SeamGateFailure> {
-    let AnchorSeamJointSearchState {
-        pool,
-        recorded_failure,
-        best_waveform,
-    } = state;
     let &AnchorSeamJointSearchCtx {
         baseline,
         baseline_pre,
@@ -886,19 +879,21 @@ fn try_anchor_seam_joint_search(
         // `record_fit_joint_candidate_to_pool` only pushes on a passing gate; on failure the pool
         // is unchanged. Mark only the candidate we actually appended — otherwise a failed bracket
         // would stamp `anchor_seam_used` onto the prior entry (e.g. the baseline).
-        let pool_len_before = pool.len();
+        let pool_len_before = state.pool.len();
         record_fit_joint_candidate_to_pool(
-            pool,
-            recorded_failure,
-            best_waveform,
+            FitJointPoolState {
+                pool: state.pool,
+                recorded_failure: state.recorded_failure,
+                best_waveform: state.best_waveform,
+            },
             bracket.refined,
             baseline,
             source,
             true,
             SeamScoreSource::Anchor,
         );
-        if pool.len() > pool_len_before {
-            if let Some(candidate) = pool.last_mut() {
+        if state.pool.len() > pool_len_before {
+            if let Some(candidate) = state.pool.last_mut() {
                 mark_anchor_outcome(&mut candidate.outcome, bracket.move_frames);
             }
         }
@@ -906,7 +901,7 @@ fn try_anchor_seam_joint_search(
 
     // E3: the best Pearson-High candidate, if it is an anchor bracket, terminates here (residual
     // confirmed by `try_finalize_high_joint_candidate`).
-    if let Some(candidate) = best_high_joint_candidate(pool) {
+    if let Some(candidate) = best_high_joint_candidate(state.pool) {
         if candidate.outcome.anchor_seam_used {
             let candidate = candidate.clone();
             if let Some(outcome) =
@@ -918,7 +913,7 @@ fn try_anchor_seam_joint_search(
     }
 
     // E4: under baseline-only, an anchor bracket that ranks best overall is accepted without the grid.
-    if let Some(candidate) = best_anchor_joint_candidate(pool) {
+    if let Some(candidate) = best_anchor_joint_candidate(state.pool) {
         if accepts_baseline_without_boundary_grid(
             fit_boundary_search,
             candidate.outcome.confidence,
@@ -983,9 +978,11 @@ fn evaluate_seam_gate_fit_joint_core(
     let mut best_waveform: Option<SeamScoreAttempt> = None;
 
     record_fit_joint_candidate_to_pool(
-        &mut pool,
-        &mut recorded_failure,
-        &mut best_waveform,
+        FitJointPoolState {
+            pool: &mut pool,
+            recorded_failure: &mut recorded_failure,
+            best_waveform: &mut best_waveform,
+        },
         baseline,
         baseline,
         source,
@@ -1029,7 +1026,7 @@ fn evaluate_seam_gate_fit_joint_core(
     let (baseline_pre, baseline_post) = baseline_seam_scores(pool.first(), &recorded_failure);
 
     if let Some(outcome) = try_anchor_seam_joint_search(
-        &mut AnchorSeamJointSearchState {
+        &mut FitJointPoolState {
             pool: &mut pool,
             recorded_failure: &mut recorded_failure,
             best_waveform: &mut best_waveform,
@@ -1070,9 +1067,11 @@ fn evaluate_seam_gate_fit_joint_core(
                 && (try_start != baseline.start_frame || try_end != baseline.end_frame)
             {
                 record_fit_joint_candidate_to_pool(
-                    &mut pool,
-                    &mut recorded_failure,
-                    &mut best_waveform,
+                    FitJointPoolState {
+                        pool: &mut pool,
+                        recorded_failure: &mut recorded_failure,
+                        best_waveform: &mut best_waveform,
+                    },
                     RefinedGapFrames {
                         start_frame: try_start,
                         end_frame: try_end,
