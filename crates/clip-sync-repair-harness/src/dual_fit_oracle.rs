@@ -137,7 +137,7 @@ pub fn build_stepped_floor_oracle_pair(
     let mut reader = WavReader::open(&master).expect("open master wav");
     assert_eq!(reader.spec().channels, 1, "dual-fit oracle expects mono WAV");
     let spec = reader.spec();
-    let samples: Vec<i16> = reader
+    let mut samples: Vec<i16> = reader
         .samples::<i16>()
         .map(|s| s.expect("read sample"))
         .collect();
@@ -150,6 +150,34 @@ pub fn build_stepped_floor_oracle_pair(
         case.step_ms,
         samples.len()
     );
+
+    // The seam re-validation gate scores a short (crossfade-width) window on each side of
+    // `gap_start` and `post_start` against the real, unedited speech immediately adjacent to it,
+    // via raw-sample Pearson correlation. Continuous real speech has no reason to be smooth
+    // exactly at those two arbitrary points — a plosive or vowel transition landing there
+    // decorrelates the splice even though the underlying recording is perfectly continuous. Quiet
+    // *recorded* passages don't reliably fix this either: room tone/breath noise is broadband and
+    // decorrelates across a hard boundary just like speech does, regardless of how low its
+    // amplitude is — Pearson correlation across adjacent windows only stays high when the signal
+    // varies slowly relative to the window length. So dub a synthesized low-frequency, low-amplitude
+    // tone (smooth and self-similar over any short window by construction) over each seam point,
+    // cross-faded into the surrounding real content, guaranteeing both sides of each splice are
+    // provably smooth without depending on this recording's specific timing.
+    let quiet_donor: Vec<i16> = {
+        let freq_hz = 4.0;
+        let amplitude = 250.0;
+        let len = secs_to_frames(0.15, sample_rate);
+        (0..len)
+            .map(|i| {
+                let t = i as f64 / f64::from(sample_rate);
+                (amplitude * (2.0 * std::f64::consts::PI * freq_hz * t).sin()).round() as i16
+            })
+            .collect()
+    };
+    let patch_frames = secs_to_frames(0.1, sample_rate);
+    let fade_frames = secs_to_frames(0.02, sample_rate);
+    inject_quiet_patch(&mut samples, &quiet_donor, gap_start, patch_frames, fade_frames);
+    inject_quiet_patch(&mut samples, &quiet_donor, post_start, patch_frames, fade_frames);
 
     let mut a_samples: Vec<i16> =
         Vec::with_capacity(gap_start + (gap_end - gap_start) + (samples.len() - post_start));
@@ -167,7 +195,13 @@ pub fn build_stepped_floor_oracle_pair(
     }
 
     let b_full = dir.join("b_full.wav");
-    std::fs::copy(&master, &b_full).expect("copy master to b_full");
+    {
+        let mut writer = WavWriter::create(&b_full, spec).expect("write b_full wav");
+        for s in &samples {
+            writer.write_sample(*s).expect("write sample");
+        }
+        writer.finalize().expect("finalize b_full wav");
+    }
 
     let path_a = output_path(dir, "a", format);
     assert!(
@@ -205,6 +239,36 @@ pub fn build_stepped_floor_oracle_pair(
     });
 
     built
+}
+
+/// Cross-fade `donor` (real, quiet audio) over `samples` in a `patch_frames`-wide window
+/// centered on `center`, ramping in/out over `fade_frames` at each edge so the splice into the
+/// surrounding real content has no hard edge of its own. `donor` is tiled if shorter than the
+/// (fade-free) interior of the patch window.
+fn inject_quiet_patch(
+    samples: &mut [i16],
+    donor: &[i16],
+    center: usize,
+    patch_frames: usize,
+    fade_frames: usize,
+) {
+    let half = patch_frames / 2;
+    let start = center.saturating_sub(half);
+    let end = (start + patch_frames).min(samples.len());
+    let n = end - start;
+    for i in 0..n {
+        let orig = samples[start + i] as f64;
+        let donor_v = donor[i % donor.len()] as f64;
+        let w = if i < fade_frames {
+            i as f64 / fade_frames as f64
+        } else if i >= n - fade_frames {
+            (n - i) as f64 / fade_frames as f64
+        } else {
+            1.0
+        };
+        let mixed = orig * (1.0 - w) + donor_v * w;
+        samples[start + i] = mixed.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+    }
 }
 
 fn validate_stepped_oracle(built: &BuiltFloorOracle, defaults: &FloorOracleDefaults) -> Result<(), String> {

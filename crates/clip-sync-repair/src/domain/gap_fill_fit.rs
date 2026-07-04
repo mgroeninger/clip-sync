@@ -815,8 +815,12 @@ pub fn fit_fill_to_gap_frames(samples: &[f32], channels: usize, target_frames: u
     out
 }
 
-/// Frames guarding each end of a dual-fit bridge from the interior trim/pad point (keep the shoulder seams
-/// intact — the length edit must land strictly in the interior, not at a seam).
+/// Fallback frames guarding each end of a dual-fit bridge from the interior trim/pad point when no
+/// caller-supplied guard is available. Production call sites must instead pass the border
+/// re-validation window length (`seam_window_frames`) as the guard — a fixed small guard only keeps
+/// the length edit off the shoulder seams, but the post-trim fill is re-scored by
+/// `fill_splice_seam_correlations_interleaved` over a much larger window at each end, and a cut
+/// inside that window corrupts the very edge the re-validation gate checks.
 pub const DUALFIT_INTERIOR_EDGE_GUARD_FRAMES: usize = 64;
 
 /// Start frame of the `window`-frame interior span with the lowest mean-square energy, kept ≥ `edge_guard`
@@ -850,13 +854,22 @@ fn lowest_energy_interior_start(fill: &[f32], channels: usize, window: usize, ed
 /// (the least-audible splice). The shoulders keep their own lags (A3 §4); this is the interior length edit.
 /// `bridge − gap > 0` ⇒ trim those interior frames; `< 0` ⇒ pad by holding the quietest interior frame.
 /// *(A crossfade across the interior join is a D7 audibility refinement — the cut is already at min energy.)*
-pub fn trim_at_lowest_energy_interior(bridge: &[f32], channels: usize, gap_frames: usize) -> Vec<f32> {
+///
+/// `edge_guard_frames` must be at least the border re-validation window length
+/// (`seam_window_frames`) so the cut can never land inside either border-scoring window of the
+/// resulting fill — otherwise the length edit corrupts the very edge the re-validation gate checks.
+pub fn trim_at_lowest_energy_interior(
+    bridge: &[f32],
+    channels: usize,
+    gap_frames: usize,
+    edge_guard_frames: usize,
+) -> Vec<f32> {
     let ch = channels.max(1);
     let b_frames = bridge.len() / ch;
     if b_frames == gap_frames || gap_frames == 0 || b_frames == 0 {
         return fit_fill_to_gap_frames(bridge, ch, gap_frames);
     }
-    let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
+    let guard = edge_guard_frames;
     if b_frames > gap_frames {
         let trim = b_frames - gap_frames;
         let cut = lowest_energy_interior_start(bridge, ch, trim, guard);
@@ -1200,7 +1213,7 @@ mod tests {
         let bridge: Vec<f32> = (0..1000)
             .map(|i| if (400..600).contains(&i) { 0.001 } else { 0.5 })
             .collect();
-        let out = trim_at_lowest_energy_interior(&bridge, 1, 900);
+        let out = trim_at_lowest_energy_interior(&bridge, 1, 900, DUALFIT_INTERIOR_EDGE_GUARD_FRAMES);
         assert_eq!(out.len(), 900, "trimmed to gap length");
         let loud = |v: &[f32]| v.iter().filter(|&&x| x > 0.4).count();
         assert_eq!(loud(&bridge), loud(&out), "trim removed only quiet frames");
@@ -1210,9 +1223,10 @@ mod tests {
     fn interior_trim_pad_and_equal_lengths() {
         let ch = 2;
         let bridge = vec![0.1f32; 500 * ch]; // 500 frames
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 500).len(), 500 * ch, "equal");
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 450).len(), 450 * ch, "trim");
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 600).len(), 600 * ch, "pad");
+        let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 500, guard).len(), 500 * ch, "equal");
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 450, guard).len(), 450 * ch, "trim");
+        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 600, guard).len(), 600 * ch, "pad");
     }
 
     fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {
