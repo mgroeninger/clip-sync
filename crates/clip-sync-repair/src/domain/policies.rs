@@ -823,6 +823,15 @@ pub struct SpliceSeamContext<'a> {
     pub gap_end_frame: usize,
     pub a_samples: &'a [f32],
     pub channels: usize,
+    /// True for an ordinary (single rigid-lag) splice, where the fill genuinely sits at
+    /// `gap_start_frame`/`gap_end_frame` with no lag correction — so the crossfade-window scoring
+    /// below (checking the literal blended overlap against A's raw neighboring samples) is valid.
+    /// False for a **dual-fit** fill, whose pre/post shoulders were independently matched at their
+    /// own seam-local lags (that's the entire point of dual-fit: no single lag satisfies both
+    /// seams) — comparing the fill's head/tail against raw A at lag 0 there is a category error,
+    /// so scoring falls back to the border-window template dual-fit's own seam-local search
+    /// already validated against.
+    pub single_lag_alignment: bool,
 }
 
 fn mono_timeline_frames_f64(
@@ -871,7 +880,7 @@ fn score_splice_pre_seam(
     if pre_window == 0 || fill_mono.is_empty() {
         return 0.0;
     }
-    if ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
         let w = pre_window
             .min(ctx.seam_cf)
             .min(ctx.gap_start_frame)
@@ -917,7 +926,7 @@ fn score_splice_post_seam(
     }
     let len = fill_mono.len();
     let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
-    if ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
         let w = post_window
             .min(ctx.seam_cf)
             .min(total_frames.saturating_sub(ctx.gap_end_frame))
@@ -1080,7 +1089,7 @@ fn score_splice_pre_seam_channel(
     if pre_window == 0 || fill_mono.is_empty() {
         return 0.0;
     }
-    if ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
         let w = pre_window
             .min(ctx.seam_cf)
             .min(ctx.gap_start_frame)
@@ -1114,7 +1123,7 @@ fn score_splice_post_seam_channel(
     }
     let len = fill_mono.len();
     let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
-    if ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
         let w = post_window
             .min(ctx.seam_cf)
             .min(total_frames.saturating_sub(ctx.gap_end_frame))
@@ -2481,6 +2490,7 @@ mod tests {
             gap_end_frame: gap_end,
             a_samples: &a_samples,
             channels: 1,
+            single_lag_alignment: true,
         };
 
         let (pre_cf, post_cf) = fill_splice_seam_correlations(
@@ -2503,12 +2513,89 @@ mod tests {
                 gap_end_frame: gap_end,
                 a_samples: &a_samples,
                 channels: 1,
+                single_lag_alignment: true,
             },
         );
 
         assert!(pre_cf > pre_no_cf + 0.5, "pre should score bleed tail on A timeline");
         assert!(post_cf > post_no_cf + 0.5, "post should score fade head on A timeline");
         assert!(pre_cf > 0.9 && post_cf > 0.9);
+    }
+
+    /// A **dual-fit** fill's shoulders are independently matched at their own seam-local lag — the
+    /// fill is NOT expected to sit at lag 0 against A's raw neighboring samples the way an ordinary
+    /// rigid-lag splice fill is. Regression for the 2026-07-03 (`7a26a17`) / 2026-07-05 production
+    /// bug: with `single_lag_alignment: true`, the crossfade-window branch compares the fill's own
+    /// head/tail against raw A at the literal gap boundary and collapses to a strongly NEGATIVE
+    /// correlation even though the fill matches the border template (what `try_dual_fit`'s own
+    /// seam-local search validated) almost perfectly. `single_lag_alignment: false` must bypass that
+    /// branch and score the border template instead.
+    #[test]
+    fn splice_seam_correlation_ignores_crossfade_lag0_window_when_not_single_lag_aligned() {
+        let pre_window = 4usize;
+        let post_window = 4usize;
+        let cf = 2usize;
+        let gap_start = 10usize;
+        let gap_end = 14usize;
+        let total = 20usize;
+
+        // Raw A around the gap boundary: a short spike-then-drop right at the edge, unrelated to
+        // the fill's own trend — this is what a genuine per-shoulder lag looks like: the fill's
+        // content was matched further along B, not against A's literal immediate neighbor.
+        let mut a_samples = vec![0.0f32; total];
+        a_samples[gap_start - 2] = 100.0 / 32767.0;
+        a_samples[gap_start - 1] = 0.0;
+        a_samples[gap_end] = 0.0;
+        a_samples[gap_end + 1] = 100.0 / 32767.0;
+
+        // The fill's own head/tail ramp — matches the border templates (what seam-local search
+        // validated) almost perfectly, but is monotonically opposite the raw A spike-then-drop above.
+        let fill = vec![10.0, 20.0, 30.0, 40.0, 0.0, 0.0, 0.0, 0.0, 40.0, 30.0, 20.0, 10.0];
+        let a_pre = vec![1.0, 2.0, 3.0, 4.0];
+        let a_post = vec![4.0, 3.0, 2.0, 1.0];
+
+        let dual_fit_ctx = SpliceSeamContext {
+            seam_cf: cf,
+            gap_start_frame: gap_start,
+            gap_end_frame: gap_end,
+            a_samples: &a_samples,
+            channels: 1,
+            single_lag_alignment: false,
+        };
+        let (pre_border, post_border) = fill_splice_seam_correlations(
+            &fill,
+            &a_pre,
+            &a_post,
+            pre_window,
+            post_window,
+            dual_fit_ctx,
+        );
+        assert!(
+            pre_border > 0.9 && post_border > 0.9,
+            "dual-fit fill must be scored against the border template it was actually matched to: pre={pre_border} post={post_border}"
+        );
+
+        let single_lag_ctx = SpliceSeamContext {
+            seam_cf: cf,
+            gap_start_frame: gap_start,
+            gap_end_frame: gap_end,
+            a_samples: &a_samples,
+            channels: 1,
+            single_lag_alignment: true,
+        };
+        let (pre_lag0, post_lag0) = fill_splice_seam_correlations(
+            &fill,
+            &a_pre,
+            &a_post,
+            pre_window,
+            post_window,
+            single_lag_ctx,
+        );
+        assert!(
+            pre_lag0 < 0.0 && post_lag0 < 0.0,
+            "sanity check: the lag-0 crossfade window must actually diverge from the border score \
+             for this fixture (pre={pre_lag0} post={post_lag0}) — otherwise this test isn't exercising the bug"
+        );
     }
 
     #[test]

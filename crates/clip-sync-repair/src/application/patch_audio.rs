@@ -1429,12 +1429,6 @@ struct DualFitRepairInput<'a> {
     // §5.2 step 3: re-validate the assembled fill with the SAME gate scoring the success path uses,
     // instead of trusting the pre-trim seam-local scores as the reported confidence.
     a_samples: &'a [f32],
-    a_pre_border: Vec<f64>,
-    a_post_border: Vec<f64>,
-    a_pre_ch: Vec<Vec<f64>>,
-    a_post_ch: Vec<Vec<f64>>,
-    pre_gate_frames: usize,
-    post_gate_frames: usize,
     seam_cf: usize,
 }
 
@@ -1452,11 +1446,6 @@ fn build_dual_fit_input<'a>(
     min_fill_correlation: f32,
     fill_absolute_floor: f32,
     crossfade_secs: f64,
-    border_frames: usize,
-    border_standoff_frames: usize,
-    silence_peak_fraction: f32,
-    absolute_silence_rms: f32,
-    seam_gate_frames: usize,
     total_a_frames: usize,
 ) -> Option<DualFitRepairInput<'a>> {
     let ch = channels.max(1);
@@ -1482,24 +1471,6 @@ fn build_dual_fit_input<'a>(
     let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
     let a_gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
 
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames,
-        border_standoff_frames,
-        silence_peak_fraction,
-        absolute_rms_floor: absolute_silence_rms,
-    };
-    let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(a_samples, channels, &border_spec);
-    let (a_pre_ch, a_post_ch) =
-        policies::border_templates_per_channel_for_gap(a_samples, channels, &border_spec);
-    let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
-    let post_gate_frames = if a_post_border.is_empty() {
-        0
-    } else {
-        seam_gate_frames.min(a_post_border.len()).max(1)
-    };
     let seam_cf = policies::effective_seam_crossfade_frames(
         (crossfade_secs * sample_rate as f64) as usize,
         refined.start_frame,
@@ -1528,12 +1499,6 @@ fn build_dual_fit_input<'a>(
         a_end_frame: refined.end_frame,
         crossfade_secs,
         a_samples,
-        a_pre_border,
-        a_post_border,
-        a_pre_ch,
-        a_post_ch,
-        pre_gate_frames,
-        post_gate_frames,
         seam_cf,
     })
 }
@@ -1580,13 +1545,18 @@ fn skip_or_dual_fit(
                 df.b_mapped_start,
                 &df.params,
             ) {
+                // Re-validate against the SAME window `try_dual_fit`'s own seam-local search matched
+                // against (`a_pre_mono`/`a_post_mono`, immediately adjacent to the gap) — not the
+                // standoff'd/silence-skipped `a_pre_border`/`a_post_border` built for the ordinary
+                // rigid-splice path, which sits ~`border_standoff_secs` further out and is generally
+                // uncorrelated with the near-gap window dual-fit actually matched.
                 let borders = policies::BorderSeamTemplates {
-                    a_pre: &df.a_pre_border,
-                    a_post: &df.a_post_border,
-                    a_pre_ch: &df.a_pre_ch,
-                    a_post_ch: &df.a_post_ch,
-                    pre_window: df.pre_gate_frames,
-                    post_window: df.post_gate_frames,
+                    a_pre: &df.a_pre_mono,
+                    a_post: &df.a_post_mono,
+                    a_pre_ch: &[],
+                    a_post_ch: &[],
+                    pre_window: df.params.seam_window_frames,
+                    post_window: df.params.seam_window_frames,
                 };
                 let seam_ctx = policies::SpliceSeamContext {
                     seam_cf: df.seam_cf,
@@ -1594,6 +1564,7 @@ fn skip_or_dual_fit(
                     gap_end_frame: df.a_end_frame,
                     a_samples: df.a_samples,
                     channels: df.params.channels,
+                    single_lag_alignment: false,
                 };
                 let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
                     &r.fill,
@@ -1930,11 +1901,6 @@ fn prepare_region_patch(
                 min_fill_correlation,
                 request.fill_absolute_floor,
                 region.crossfade_secs,
-                border_frames,
-                border_standoff_frames,
-                silence_peak_fraction,
-                absolute_silence_rms,
-                seam_gate_frames,
                 a_pcm.frames(),
             )
         })
@@ -2118,6 +2084,7 @@ fn prepare_region_patch(
         gap_end_frame: refined.end_frame,
         a_samples: &a_pcm.samples,
         channels,
+        single_lag_alignment: true,
     };
     let b_fill = if request.fill_mode == FillMode::Fit {
         let borders = policies::BorderSeamTemplates {

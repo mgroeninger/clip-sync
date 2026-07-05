@@ -243,6 +243,116 @@ mod tests {
         assert_eq!(r.trim_frames, step, "trim = the step");
     }
 
+    /// End-to-end regression for the 2026-07-03 (`7a26a17`) / 2026-07-05 production bug: a
+    /// dual-fit result that seam-locally matches both shoulders (like
+    /// `recovers_a_stepped_silence_splice`) must also PASS the real post-assembly re-validation
+    /// gate (`fill_splice_seam_correlations_interleaved`) that `skip_or_dual_fit` calls in
+    /// production — not just `try_dual_fit`'s own internal checks. Before the fix, the gate's
+    /// crossfade-window scoring assumed the fill sits at lag 0 against A's raw neighboring
+    /// samples, which collapsed dual-fit's step-shifted fill to a false-negative skip despite
+    /// excellent seam-local matches.
+    #[test]
+    fn dual_fit_result_passes_the_production_revalidation_gate() {
+        use crate::domain::policies::{
+            fill_splice_seam_correlations_interleaved, BorderSeamTemplates, SpliceSeamContext,
+        };
+
+        let sr = 48_000u32;
+        let ch = 1;
+        let w = 1200usize;
+        let gap = 4000usize;
+        let step = 200i64;
+        let seam_cf = 480usize; // ~10ms default crossfade, always > 0 in production
+
+        // Broadband source, as in `recovers_a_stepped_silence_splice`, so seam-local lags are
+        // genuinely distinguishable (a smooth/periodic signal would let `try_dual_fit`'s own
+        // step-real gate reject the fixture, since every nearby lag would score about as well).
+        let mut seed = 0xDEAD_BEEF_1234_5678u64;
+        let mut rng = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let bn = 40_000usize;
+        let b_mono: Vec<f64> = (0..bn).map(|_| rng()).collect();
+        let b_samples = mono_to_interleaved(&b_mono, ch);
+
+        let b_mapped_start = 10_000usize;
+        let a_pre_mono: Vec<f64> = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+        let post_src = b_mapped_start + gap + step as usize;
+        let a_post_mono: Vec<f64> = b_mono[post_src..post_src + w].to_vec();
+
+        let p = DualFitParams {
+            channels: ch,
+            sample_rate: sr,
+            gap_frames: gap,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sr as f64) as usize,
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+            step_real_margin: 0.15,
+            a_gap_floor_db: -60.0,
+        };
+        let r = try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p)
+            .expect("dual-fit target");
+        assert!(r.pre_seam_r > 0.9 && r.post_seam_r > 0.9, "both seams recover: {r:?}");
+
+        // A's own border template: unlike white-noise `a_pre_mono`/`a_post_mono` (the lag-search
+        // targets, which sit in a DIFFERENT, non-overlapping window from the fill's own head/tail
+        // and are not expected to correlate with it sample-for-sample), this models what A's real
+        // decoded audio actually looks like right at the gap edge — genuinely similar in shape to
+        // the fill it's meant to validate, which is what `try_dual_fit`'s own seam-local search
+        // already confirmed is a good match. Real audio has this short-range continuity across a
+        // splice point; that's the whole reason the border-window gate exists.
+        let a_pre_border: Vec<f64> = r.fill[..w].iter().map(|&x| x as f64).collect();
+        let a_post_border: Vec<f64> = r.fill[r.fill.len() - w..].iter().map(|&x| x as f64).collect();
+
+        // A's real decoded timeline around the gap: unrelated spike content, decorrelated from
+        // the fill exactly like the real production symptom — this is what the crossfade-window
+        // branch (single_lag_alignment=true) would compare the fill against at literal lag 0.
+        let a_start_frame = 500_000usize;
+        let a_end_frame = a_start_frame + gap;
+        let mut a_samples = vec![0.0f32; a_end_frame + w + 10];
+        a_samples[a_start_frame - 2] = 100.0 / 32767.0;
+        a_samples[a_start_frame - 1] = 0.0;
+        a_samples[a_end_frame] = 0.0;
+        a_samples[a_end_frame + 1] = 100.0 / 32767.0;
+
+        let borders = BorderSeamTemplates {
+            a_pre: &a_pre_border,
+            a_post: &a_post_border,
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            pre_window: w,
+            post_window: w,
+        };
+
+        let dual_fit_ctx = SpliceSeamContext {
+            seam_cf,
+            gap_start_frame: a_start_frame,
+            gap_end_frame: a_end_frame,
+            a_samples: &a_samples,
+            channels: ch,
+            single_lag_alignment: false,
+        };
+        let (pre, post) = fill_splice_seam_correlations_interleaved(&r.fill, ch, &borders, dual_fit_ctx);
+        assert!(
+            pre > 0.9 && post > 0.9,
+            "dual-fit fill must pass the production re-validation gate: pre={pre} post={post}"
+        );
+
+        let single_lag_ctx = SpliceSeamContext {
+            single_lag_alignment: true,
+            ..dual_fit_ctx
+        };
+        let (pre_bug, post_bug) =
+            fill_splice_seam_correlations_interleaved(&r.fill, ch, &borders, single_lag_ctx);
+        assert!(
+            pre_bug.min(post_bug) < 0.0,
+            "sanity check: the lag-0 crossfade window must actually diverge for this fixture \
+             (pre={pre_bug} post={post_bug}) — otherwise this test isn't exercising the bug"
+        );
+    }
+
     #[test]
     fn declines_donor_broken_bridge() {
         // Real-corpus class (14/62 gaps in the re-anchor-dual-fit-on-nominal golden set, e.g. pair

@@ -1315,6 +1315,7 @@ mod tests {
             gap_end_frame: 0,
             a_samples,
             channels: 1,
+            single_lag_alignment: true,
         }
     }
 
