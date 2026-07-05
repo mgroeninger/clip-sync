@@ -65,20 +65,63 @@ pub fn try_dual_fit(
     let ch = p.channels.max(1);
     let w = p.seam_window_frames;
     if a_pre_mono.len() < w || a_post_mono.len() < w || p.gap_frames == 0 {
+        tracing::debug!(
+            a_pre_len = a_pre_mono.len(),
+            a_post_len = a_post_mono.len(),
+            w,
+            gap_frames = p.gap_frames,
+            "dual_fit: declined — shoulder shorter than seam window or empty gap"
+        );
         return None;
     }
     let a_pre = &a_pre_mono[a_pre_mono.len() - w..];
     let a_post = &a_post_mono[..w];
 
     // Fit each shoulder at its seam-local lag around the NOMINAL b_mapped.
-    let pre_start = b_mapped_start.checked_sub(w)?;
-    let (pre_r, pre_lag, _pre_z) = seam_local_peak(a_pre, b_mono, pre_start, p.max_lag_frames)?;
+    let Some(pre_start) = b_mapped_start.checked_sub(w) else {
+        tracing::debug!(b_mapped_start, w, "dual_fit: declined — pre seam window runs before B start");
+        return None;
+    };
+    let Some((pre_r, pre_lag, pre_z)) = seam_local_peak(a_pre, b_mono, pre_start, p.max_lag_frames) else {
+        tracing::debug!(
+            pre_start,
+            max_lag_frames = p.max_lag_frames,
+            b_mono_len = b_mono.len(),
+            "dual_fit: declined — pre seam-local search out of range"
+        );
+        return None;
+    };
     let b_post_nominal = b_mapped_start + p.gap_frames;
-    let (post_r, post_lag, _post_z) = seam_local_peak(a_post, b_mono, b_post_nominal, p.max_lag_frames)?;
+    let Some((post_r, post_lag, post_z)) = seam_local_peak(a_post, b_mono, b_post_nominal, p.max_lag_frames) else {
+        tracing::debug!(
+            b_post_nominal,
+            max_lag_frames = p.max_lag_frames,
+            b_mono_len = b_mono.len(),
+            "dual_fit: declined — post seam-local search out of range"
+        );
+        return None;
+    };
+    tracing::debug!(
+        pre_r,
+        pre_lag,
+        ?pre_z,
+        post_r,
+        post_lag,
+        ?post_z,
+        "dual_fit: seam-local peaks"
+    );
 
     // gate_pass.
     let smin = pre_r.min(post_r);
     if smin < p.min_fill_correlation || smin < p.fill_absolute_floor {
+        tracing::debug!(
+            smin,
+            pre_r,
+            post_r,
+            min_fill_correlation = p.min_fill_correlation,
+            fill_absolute_floor = p.fill_absolute_floor,
+            "dual_fit: declined — gate_pass (seam-local correlation below floor)"
+        );
         return None;
     }
 
@@ -86,6 +129,7 @@ pub fn try_dual_fit(
     let b_pre_seam = (b_mapped_start as i64 + pre_lag).max(0) as usize;
     let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
     if b_post_seam <= b_pre_seam {
+        tracing::debug!(b_pre_seam, b_post_seam, "dual_fit: declined — seam-local shoulders cross/collapse");
         return None;
     }
 
@@ -96,21 +140,41 @@ pub fn try_dual_fit(
         .partial_cmp(&(post_global + p.step_real_margin))
         .is_none_or(|ord| ord == std::cmp::Ordering::Less)
     {
+        tracing::debug!(
+            post_r,
+            post_global,
+            step_real_margin = p.step_real_margin,
+            "dual_fit: declined — step_real (rigid single-lag map already explains the post seam)"
+        );
         return None;
     }
 
     // Donor: aligned bridge continuous (something to fill) ∧ nominal not program-quiet (content, not silence).
-    let aligned = donor_interior_at(b_mono, b_pre_seam, b_post_seam, p.a_gap_floor_db, p.sample_rate)?;
+    let Some(aligned) = donor_interior_at(b_mono, b_pre_seam, b_post_seam, p.a_gap_floor_db, p.sample_rate) else {
+        tracing::debug!(
+            b_pre_seam,
+            b_post_seam,
+            "dual_fit: declined — donor_interior_at out of range"
+        );
+        return None;
+    };
     if !aligned.continuous {
+        tracing::debug!(
+            silence_fraction = aligned.silence_fraction,
+            longest_silence_ms = aligned.longest_silence_ms,
+            "dual_fit: declined — aligned donor bridge is not continuous"
+        );
         return None;
     }
     if program_quiet_at_nominal(b_mono, b_mapped_start, p.gap_frames, p.a_gap_floor_db, p.sample_rate) {
+        tracing::debug!("dual_fit: declined — nominal donor span is program-quiet");
         return None;
     }
 
     // Assemble: B bridge (interleaved) between the seam-local shoulders → interior-trim to the gap length.
     let b_total = b_samples.len() / ch;
     if b_post_seam > b_total {
+        tracing::debug!(b_post_seam, b_total, "dual_fit: declined — post seam runs past decoded B window");
         return None;
     }
     let bridge = &b_samples[b_pre_seam * ch..b_post_seam * ch];

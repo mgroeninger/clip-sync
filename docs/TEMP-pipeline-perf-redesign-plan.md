@@ -215,8 +215,49 @@ decodes once, characterizes, writes corpus. Repair decode reuse is already share
 | **FFT lag sweep** | §3 step 4 | Still naive `lag_correlation_curve` in `seam_local.rs` |
 
 **Remaining perf targets** (in priority order after A3/G5): hoist binned-RMS + border extract (§3.1) → FFT lag
-with `fft ≈ naive` test (§3.4) → gate per-bracket oracle behind diagnostics or shared gate cache → optional
-scan-time G5 (would need nominal B occupancy without full patch window).
+with `fft ≈ naive` test (§3.4) → gate per-bracket oracle behind diagnostics or shared gate cache. **G5-as-a-
+production-pre-gate was investigated and withdrawn — see §2.2a.**
+
+### §2.2a G5-before-seam-gate — investigated and withdrawn (2026-07-04)
+
+**The idea:** push a cheap donor-occupancy check ahead of the seam gate's per-bracket structure search (the
+dominant per-gap cost, §1.3) so gaps whose B donor is provably empty skip straight to a reject instead of
+paying for `N_brackets × O(N·radius)` first. Motivated by `try_dual_fit` already computing
+`program_quiet_at_nominal` (G5) — just too late, only after the full gate has already failed.
+
+**Why the obvious version is unsafe:** `program_quiet_at_nominal`'s own doc comment says it is deliberately
+**not** a pre-gate skip — nominal-span silence can't distinguish true program-quiet from a patchable gap whose
+real content simply sits off-nominal (registration drift), which the bracket search's `search_radius` exists
+to find. Widening the *same kind* of check (avg `silence_fraction` over the full bracket-search neighborhood,
+not just the nominal point) does not fix this — it reintroduces the identical failure at a wider radius.
+
+**Empirical test (2026-07-04):** backtested three formulations directly against the real captured fingerprint
+data at `gap-files/re-anchor-dual-fit-on-nominal/{1..7}` (69 gaps with `b_levels`, no rescan — this data
+already existed from a prior scan), using the recorded `outcome.tier` as ground truth:
+
+| Formulation | Fires | False skips (fired but `tier` was actually `patch`) |
+|---|---|---|
+| Loose — avg `silence_fraction ≥ 0.5` over the whole window | 21/69 | **3/69 (~4.3%)** |
+| Strict — the *entire* window is one uninterrupted silent run (a true exhaustion proof) | 0/69 | 0/69 |
+| Sliding-window pocket check (250/500/1000 ms), no window-length coherent pocket clears floor | 3-7/69 | **1-2/69** |
+
+Concrete counterexample: `1/…g001_full_patch.json` has `donor_interior_nominal.silence_fraction = 1.0` (B is
+**100% silent at the exact nominal span**) and still ends up `tier: patch` — the gate found real content off
+nominal, exactly the registration-drift case the docstring warns about.
+
+**Conclusion:** every formulation tested is either safe-but-useless (the strict proof never fires on real
+skips — closest approach was 82% of the window silent, never 100%, across all 46 real `skip` gaps in the
+corpus) or fires-but-unsafe (every variant that actually rejects a meaningful number of gaps also
+misclassifies 1-3 real patches). This isn't a threshold-tuning problem: RMS/floor-crossing occupancy answers
+"is there energy here," while the gate answers "does a *structurally/waveform-correlated* placement exist
+here" — those are different questions, and no window size closes that gap to zero. A wider capture (matching
+the true `border_search_secs` production search radius, which the diagnostic `b_levels` field doesn't reach)
+would only make the strict check *harder* to satisfy, not easier, since one non-silent bin anywhere breaks it
+— so a rescan would not rescue this idea.
+
+**Decision:** withdrawn. Do not re-propose an RMS/floor-based G5 pre-gate without first solving the
+underlying accuracy problem (e.g. a correlation-based prefilter, not amplitude-based) — that is a new
+accuracy-engineering effort, not a mechanical perf hoist, and the measured win doesn't currently justify it.
 
 ### §2.3 Data-flow DAG
 
@@ -271,7 +312,7 @@ is default **off** (`--fingerprint-diagnostics` to enable Tier-3 X-set).
 |------|------|--------|------------------|
 | **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). |
 | **2** | Gate diagnostics (X-set) behind a flag | **Done** | `RepairConfig.fingerprint_diagnostics` + `--fingerprint-diagnostics`; gates `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag`. Per-bracket oracle **not** gated. |
-| **3** | Cheap early-reject (G0b at plan) | **Partial** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03). |
+| **3** | Cheap early-reject (G0b at plan) | **Partial (closed on G5)** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03); **investigated as a pre-gate skip and withdrawn 2026-07-04, see §2.2a** (measured false-skip rate on real corpus data, no safe formulation found). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Done (2026-07-04)** | `lag_correlation_curve_fft` (B1) wired behind cost-crossover `lag_correlation_curve_auto` in `domain/seam_local.rs`; `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep` (the `baseline_lag` ±600 ms / ~1 s-window sweep, the dominant diagnostic-scan cost per §1.3) both switched from naive to auto. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
 | **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). C1, C2 still open — see §4.7. |
@@ -291,7 +332,7 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 |---|------|--------|
 | 1 | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** — throat-placement dedup landed (2026-07-04): `oracle_score_fit_candidate` now also returns `structure_start_frame` (already computed inside the gate, previously discarded); `characterize_gaps_with_gate`'s throat-placement read reuses it instead of a second `gate_structure_align` call via `oracle_throat_structure_frame` when the zero-move bracket scored `Ok` (falls back to the original call otherwise, so no behavior change — pinned by `golden_baseline_footguns`). Border-extract/binned-RMS hoists across `gap_fingerprint.rs`/`patch_audio.rs`/`patch_region.rs` remain open — most other call sites use genuinely different search radii (`gap_border_frame_range`'s silence-skip walk is bounded by `border_frames`, so results at different radii aren't interchangeable; can't cache-and-slice from one shared max-radius computation). |
 | 2 | Gate diagnostics (X-set) behind `--fingerprint-diagnostics` | **Done** |
-| 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial** |
+| 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial — G5-before-seam-gate withdrawn (§2.2a)** |
 | 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Done (2026-07-04)** — `lag_correlation_curve_auto` (cost-crossover) wired into `seam_local_peak` and `lag_side_sweep` |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 
