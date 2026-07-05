@@ -1,9 +1,10 @@
-# Pipeline performance redesign — audit + plan
+# Pipeline performance & assembly redesign — audit + plan
 
 **Purpose.** The detect→gate→fingerprint pipeline grew organically to *explore* gap classification; it was
-never reviewed for throughput. This doc (1) **audits** what the pipeline does today — every gate, its minimum
-inputs, cost, and overlaps — then (2) proposes a **performant re-assembly** that returns exactly two things:
-a **list of gaps to fix** and the **repair-params to fix them**, with everything else deferred.
+never reviewed for throughput or assembly. This doc (1) **audits** what the pipeline does today — every gate,
+its minimum inputs, cost, and overlaps — then (2) proposes a **performant re-assembly** with an explicit
+**characterize → execute** boundary: a typed **fix-list** (`GapRepairPlan`) and per-gap **repair-params**
+(`GapRepairSpec`), with diagnostic **X-set** deferred behind a flag.
 
 **Relationship to other docs.** The [status ledger](TEMP-seam-repair-status-ledger.md) is the index (one row
 per claim); this is the detail doc for the *perf/pipeline* workstream (D12). It **absorbs** the ledger's
@@ -18,7 +19,10 @@ graduate to a permanent `docs/pipeline-architecture.md` later if useful.
 
 **Status:** §1 audit populated from code (2026-07-01, audit v1). **§2 updated to match code (2026-07-03).**
 §4 harness **built** (golden + footguns); **§4.7 CI / live-path gaps audited (2026-07-03), Tier A (A1–A3)
-landed same day.** A3 + G5 production landed. §3 migration status tracked in §2.4.
+landed same day.** A3 + G5 production landed. §3 migration status tracked in §2.4. **§2.5 added (2026-07-05)** —
+`GapRepairSpec` wire type + characterize→execute refactor plan (next structural milestone before step 1 hoists).
+**Five production dual-fit bugs found + fixed (2026-07-05) — see §4.7 A3b–A7; A7 is the media-confirmed
+root cause of the 11:50 & 21:46 false skips, A3b/A4 were narrowing fixes that didn't move the media.**
 
 ---
 
@@ -208,11 +212,12 @@ decodes once, characterizes, writes corpus. Repair decode reuse is already share
 | Principle | Target | Current (2026-07-03) |
 |-----------|--------|----------------------|
 | **Cheap-first** | G0 → G0b → G1–G4 | **Production:** G0/G0b at scan/plan; fillable gaps reach seam gate. **G5 (D11)** analyzer label + dual-fit decline only. |
-| **Two outputs** | Fix-list + repair-params | Production emits patch/skip per gap; fingerprint JSON for calibration. |
-| **Lazy diagnostics** | X-set behind flag | **Partial** — X fields gated; per-bracket oracle + lag + `splice_dualfit` still always on in scan. |
-| **Compute-once-share** | One decode · binned-RMS · border extract · lag curve | Decode shared ✓; `skip_baseline_placement` dedup ✓; binned-RMS hoist · border hoisting · FFT lag **open**. |
+| **Two outputs** | Typed fix-list + repair-params (`GapRepairPlan` / `GapRepairSpec`) | **Open** — production interleaves gate + fill inline (`prepare_region_patch`); fingerprint JSON is a parallel re-run, not consumed by repair (§2.5). |
+| **Characterize → execute** | One D/R oracle pass per gap; executor is fill-only | **Open** — gate, dual-fit detect, and fill extraction run in one function today (§2.5). |
+| **Lazy diagnostics** | X-set behind flag | **Partial** — X fields gated; per-bracket oracle + lag + `splice_dualfit` still always on in fingerprint scan. |
+| **Compute-once-share** | One decode · binned-RMS · border extract · lag curve | Decode shared inside patch ✓; scan still re-decodes A/B; `skip_baseline_placement` dedup ✓; binned-RMS · border hoists **open** (step 1, after §2.5 step 6). |
 | **Shared primitives** | No scan/prod drift | `domain/seam_local.rs`, `domain/donor.rs`, `domain/dual_fit.rs` ✓ |
-| **FFT lag sweep** | §3 step 4 | Still naive `lag_correlation_curve` in `seam_local.rs` |
+| **FFT lag sweep** | §3 step 4 | **Done** — `lag_correlation_curve_auto` in `domain/seam_local.rs` (2026-07-04). |
 
 **Remaining perf targets** (in priority order after A3/G5): hoist binned-RMS + border extract (§3.1) → FFT lag
 with `fft ≈ naive` test (§3.4) → gate per-bracket oracle behind diagnostics or shared gate cache. **G5-as-a-
@@ -306,6 +311,262 @@ flowchart TB
 Solid arrows = always on the path. `G6` is default **on** (`--no-dual-fit` to disable). `fingerprint_diagnostics`
 is default **off** (`--fingerprint-diagnostics` to enable Tier-3 X-set).
 
+**Target DAG (post §2.5)** — production and fingerprint share one characterize oracle; executor is fill-only:
+
+```mermaid
+flowchart TB
+  subgraph scan ["A. Scan + plan (unchanged)"]
+    align[Aligner]
+    G0[G0 silence detect]
+    G0c[G0c B cross-check]
+    plan[build_gap_fill_plan]
+    G0b[G0b coverage]
+    align --> G0 --> G0c --> plan --> G0b
+  end
+
+  subgraph decode ["B. Decode once (patch path)"]
+    dec[decode_ab A + B]
+  end
+
+  subgraph char ["C. Characterize all regions (NEW)"]
+    setup[refine + b_extract + shared context]
+    gate[evaluate_seam_gate + G6 try_dual_fit]
+    spec[GapRepairSpec per gap]
+    setup --> gate --> spec
+  end
+
+  subgraph exec ["D. Execute specs (thin)"]
+    fill[extract/normalize PCM from spec]
+    patch[RegionPatch queue]
+    fill --> patch
+  end
+
+  subgraph fp ["E. Fingerprint export (optional)"]
+    proj[GapRepairSpec → GapFingerprint JSON]
+    xdiag[X-set if fingerprint_diagnostics]
+    proj --> xdiag
+  end
+
+  G0b -->|regions| dec
+  dec --> char
+  spec --> exec
+  spec --> fp
+  patch --> splice[splice_into_a]
+```
+
+### §2.5 Characterize → execute split (`GapRepairSpec`)
+
+**Problem (2026-07-05 audit).** Production and fingerprint both run the gate oracle, but **never share
+results**. `prepare_region_patch` interleaves measurement, gating, fill extraction, and dual-fit re-validation
+in one function; `--gap-fingerprints` re-decodes and re-characterizes in a parallel path. The §1.5 “two outputs”
+(fix-list + repair-params) exist only **implicitly** in `PatchSummary` / JSON — not as a typed handoff. That
+blocks: (a) golden-harnessing live characterization, (b) scan-only repair preview, (c) step 1 hoists without
+re-running the gate, and (d) [`TEMP-gap-selection-plan.md`](TEMP-gap-selection-plan.md) subset patching on a
+stable plan artifact.
+
+**Goal.** After `decode_ab`, run **one D/R characterization pass per planned region**, emit a
+`GapRepairPlan`, then a **thin executor** that only extracts/normalizes PCM and queues `RegionPatch` values.
+`GapFingerprint` / corpus JSON becomes a **projection** of specs (+ optional X-set), not a second oracle.
+
+**Non-goals (do not re-propose):**
+
+- A cheap scan-only classifier that predicts repair strategy without the gate oracle (G5-before-gate withdrawn,
+  §2.2a — registration drift breaks RMS occupancy checks).
+- Replacing [`gap-vocabulary.md`](gap-vocabulary.md) cells with a single conflated score — cells are **derived**
+  from D/R axes on the spec, same as today.
+- Merging scan decode with patch decode in step 6 — scan uses chunked mono RMS; patch needs full multichannel.
+  End-to-end single decode is a separate backlog item.
+
+#### §2.5.1 Three phases (wiring)
+
+| Phase | Scope | Entry points today | Target |
+|-------|-------|-------------------|--------|
+| **A — Scan + plan** | Pair-level | `ScanGaps`, `build_gap_fill_plan` | **Unchanged** — `GapFillPlan.regions` + `skipped` |
+| **B — Characterize** | Per planned region, after `decode_ab` | `prepare_region_patch` (gate half) + `characterize_gaps_with_gate` (oracle half) | **`characterize_region` → `GapRepairSpec`** |
+| **C — Execute** | Per spec, no re-gating | `prepare_region_patch` (fill half), `skip_or_dual_fit` re-validation | **`execute_region_spec` → `RegionPatch`** |
+
+**Sub-pass (unchanged semantics):** `FillOffsetMode::AnchoredRetry` pass 2 remains a **second characterize
+pass** over failed gaps only, using the pass-1 anchor table — not a reason to skip the B/C boundary.
+
+#### §2.5.2 Wire types (`domain/gap_repair_spec.rs` — new)
+
+New domain module; **no PCM inside the spec** — only frame indices, offsets, and enums. PCM stays in the
+decode buffer; the executor slices from it using the spec's indices.
+
+```rust
+/// One entry per `FillRegion` after characterization (fix-list + repair-params).
+pub struct GapRepairSpec {
+    /// Index into `GapReport.gaps` (stable within one scan recipe).
+    pub gap_index: usize,
+    /// Scan-time A span (seconds, from `FillRegion`).
+    pub a_start_secs: f64,
+    pub a_end_secs: f64,
+    /// Offset used for this gap (`resolve_gap_offset_secs` result).
+    pub gap_offset_secs: f64,
+    /// Refined throat on A's PCM timeline.
+    pub refined: RefinedGapFrames,          // domain/policies.rs
+    /// B haystack window within `b_samples_full` (interleaved frame indices).
+    pub b_extract: BExtractWindow,
+    pub crossfade_secs: f64,
+    /// Patch or skip + cell (derived readout for reporting).
+    pub verdict: GapRepairVerdict,
+    /// Gate/dual-fit diagnostics needed for JSON tags (not X-set).
+    pub tags_ctx: GapRepairTags,            // seam scores, anchor flags, residual summary
+}
+
+pub struct BExtractWindow {
+    pub start_frame: usize,   // into b_samples_full / channels
+    pub end_frame: usize,
+    pub b_mapped_start_frame: usize,  // nominal gap start within extract window
+}
+
+pub enum GapRepairVerdict {
+    /// Bracket search (G1–G4) passed — normal path.
+    Patch(GapRepairStrategy),
+    Skip {
+        cell: GapRepairCell,
+        reason: GapPatchSkipReason,       // domain/patch_result.rs
+        /// Last gate failure when a bracket scored (for dual-fit eligibility audit).
+        gate_failure: Option<SeamGateFailure>,   // patch_region.rs (may need pub re-export for domain)
+    },
+}
+
+/// [gap-vocabulary.md](gap-vocabulary.md) cell — **derived**, not stored as the decision primitive.
+pub enum GapRepairCell {
+    BracketPatch,
+    SilenceSplice,
+    ProgramQuiet,
+    NoPlacement,
+    PlanSkipped,  // G0b / track / not fillable — only on `GapFillPlan.skipped`, not per-region characterize
+}
+
+pub enum GapRepairStrategy {
+    Bracket {
+        alignment: FillAlignment,         // domain/policies.rs — start_frame, fill_frames, pre/post r
+        structure_start_frame: usize,
+        structure_trusted: bool,
+        anchor_seam_used: bool,
+        anchor_bracket_move_frames: usize,
+        anchor_trusted: bool,
+        confidence: FillConfidence,       // domain/gap_fill_fit.rs
+        gap_start_adjust_frames: i64,
+        gap_end_adjust_frames: i64,
+        fit_used_boundary_grid: bool,
+        fit_boundary_grid_cells: Option<u32>,
+        residual: Option<SeamResidualVerdict>,  // domain/policies.rs
+        normalize_gain: f32,              // 1.0 or computed at characterize time
+    },
+    SilenceSplice {
+        /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
+        fill: Vec<f32>,
+        pre_seam_r: f64,
+        post_seam_r: f64,
+        trim_frames: i64,
+        confidence: FillConfidence,       // from re-validation at characterize time
+    },
+}
+
+/// Fix-list for one write run.
+pub struct GapRepairPlan {
+    pub specs: Vec<GapRepairSpec>,
+    pub skipped: Vec<GapFillSkipped>,     // from build_gap_fill_plan (plan-time only)
+}
+```
+
+**Cell derivation** (pure function on spec fields — mirrors §4.1 golden predicates):
+
+| `GapRepairVerdict` | `GapRepairCell` | Source axes |
+|--------------------|-----------------|-------------|
+| `Patch(Bracket { .. })` | **Bracket patch** | G1–G4 pass |
+| `Patch(SilenceSplice { .. })` | **Silence-splice** | G6 rescue accepted at characterize |
+| `Skip` + `StructureAlignmentFailed` | **No-placement** | G1 reject |
+| `Skip` + dual-fit declined (program-quiet / donor-dead) | **Program-quiet** | G5 + G6 decline |
+| `Skip` + other gate failure | **Program-quiet** or bracket-exhausted skip | map `GapPatchSkipReason` + donor axes |
+
+Implement as `GapRepairSpec::cell(&self) -> GapRepairCell` + reuse harness helpers (`dualfit_target()`, etc.)
+from `clip-sync-repair-harness/src/golden_baseline.rs`.
+
+**Relationship to `GapFingerprint`:** the fingerprint struct remains the **licensing-safe export schema**.
+Add `GapRepairSpec::to_fingerprint_summary(&self, x: Option<FingerprintXSet>) -> GapFingerprint` — or build
+fingerprints by reading specs and attaching X fields only when `fingerprint_diagnostics` is on. Do **not** make
+production depend on the full `GapFingerprint` blob.
+
+#### §2.5.3 Function map — existing code → target roles
+
+Minimal refactor: **extract**, don't rewrite. Initial land keeps `prepare_region_patch` as a thin
+`characterize_region` + `execute_region_spec` shim so all integration tests stay green.
+
+| Target step | Responsibility | Primary functions **today** | Notes |
+|-------------|----------------|----------------------------|-------|
+| **Plan** | Coarse fix-list | `build_gap_fill_plan` | Unchanged; feeds `GapRepairPlan.skipped` |
+| **Decode** | Shared PCM | `decode_ab` (`patch_audio.rs`) | Once per `PatchAudio::execute` |
+| **Char — geometry** | Refine A throat, B window | `policies::refine_gap_frames`, `resolve_gap_offset_secs`, `slice_b_segment`, `derive_seam_gate_geometry` | Extract from `prepare_region_patch` ~L1731–1914 |
+| **Char — shared context** | Border templates, signature (future hoist) | `border_templates_for_gap`, `build_gap_signature`, `SeamGateConfig::from_repair` | Hoist in step 1 **after** step 6 boundary |
+| **Char — bracket decision** | G1–G4 + R | `evaluate_seam_gate` (`patch_region.rs`) | Same oracle; output → `GapRepairStrategy::Bracket` or gate `Err` |
+| **Char — dual-fit decision** | G6 detect + fit + validate | `dual_fit_eligible`, `build_dual_fit_input`, `try_dual_fit`, `classify_fill_waveform_confidence`, `fill_splice_seam_correlations_interleaved` | Move re-validation **into characterize**; executor trusts spec |
+| **Char — skip packaging** | Skip reason + cell | `seam_failure_outcome`, `GapPatchSkipReason` mapping | Replaces inline `skip_or_dual_fit` return path |
+| **Char — diagnostics overlay** | Per-bracket `failure_stage` (fingerprint only) | `oracle_score_fit_candidate`, `oracle_build_fit_cache`, `list_feasible_anchor_brackets` | Keep on fingerprint export path until step 8; optional cache from characterize |
+| **Char — registration/donor D/R** | Axes for golden + dual-fit | `lag_at_placement` / `baseline_lag`, `donor_interior_at`, `program_quiet_at_nominal`, `splice_dualfit_at` | Always for patch/skip decision; X fields still flag-gated |
+| **Exec — bracket fill** | Slice B PCM | `fit_fill_to_gap_frames`, `policies::compute_fill_gain` (when `normalize_fill`) | Uses `FillAlignment` from spec only |
+| **Exec — dual-fit fill** | Already in spec | `DualFitResult.fill` → `RegionPatch` | No second `try_dual_fit` |
+| **Exec — queue** | Crossfade metadata | `RegionPatch { b_samples, gain, a_start_frame, a_end_frame, crossfade_secs }` | Unchanged struct (private to `patch_audio.rs` today) |
+| **Splice** | Apply patches | `splice_into_a` | Unchanged |
+| **Anchored retry** | Pass-2 re-characterize | `run_anchored_retry_pass`, `build_patch_anchor_candidates` | Re-run **characterize** on failed specs with `AnchoredRetryPass::Second` |
+| **Fingerprint dump** | Corpus JSON | `characterize_gaps_with_gate`, `write_corpus_dir` | Step 8: call shared `characterize_region` + X projection |
+
+**New application entry points (proposed names):**
+
+```text
+application/gap_characterize.rs
+  characterize_region(...) -> GapRepairSpec
+  characterize_all_regions(plan, decoded, request) -> GapRepairPlan
+
+application/gap_execute.rs   (or methods on PatchAudio)
+  execute_region_spec(spec, a_pcm, b_samples_full, request) -> (Option<RegionPatch>, RegionPatchOutcome)
+
+patch_audio.rs::prepare_region_patch  →  characterize_region + execute_region_spec  (compat shim, then delete)
+```
+
+#### §2.5.4 Migration sub-steps (land behind §4 harness)
+
+Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute` on the gap corpus (§4.7 C2).
+
+| Sub-step | Work | Validates with |
+|----------|------|----------------|
+| **6a** | Add `domain/gap_repair_spec.rs` types + `cell()` / golden projection helpers | Unit tests on synthetic specs; harness `gap_row` parity |
+| **6b** | Extract `characterize_region` + `execute_region_spec`; `prepare_region_patch` = shim | Existing `patch_audio` unit/integration tests |
+| **6c** | `PatchAudio::execute`: characterize-all → execute-all → splice (two loops) | `validate_dual_fit_oracle.rs`, gap corpus patch timing |
+| **7** | Golden harness: diff `GapRepairSpec` projections (Tier 1/2) on live rescans | §4.7 C1 workflow + `golden_baseline_corpus_invariance` |
+| **8** | Fingerprint: `characterize_gaps_with_gate` → shared characterize + X export only | §4.7 C3; no second gate oracle in dump path |
+
+**Then** resume step 1 hoists (binned-RMS, border extract) inside `characterize_region`'s shared context.
+
+#### §2.5.5 `PatchAudio::execute` target shape
+
+```text
+1. build_gap_fill_plan(report)           // unchanged
+2. decode_ab(...)                        // unchanged
+3. FOR each region IN plan.regions:
+       specs.push(characterize_region(...))
+4. [optional] anchored_retry pass 2:
+       re-characterize failed specs with anchor table
+5. FOR each spec IN specs WHERE verdict is Patch:
+       patches.push(execute_region_spec(...))
+6. splice_into_a + PatchSummary           // unchanged
+```
+
+Scan-only mode: phases 1–2 of the **binary** unchanged. Optional future: run characterize without execute
+when a `--repair-preview` flag is added (not in scope for step 6 — document hook only).
+
+#### §2.5.6 Harness impact (§4 additions)
+
+| ID | Item | Blocks | Notes |
+|----|------|--------|-------|
+| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection test | step 6a | Every §4.1 Tier-1/2 field must round-trip through the spec type |
+| **C5** | Live characterize invariance (calls `characterize_all_regions`, not static JSON) | step 7 | Closes §4.6 “live fingerprint recompute” gap for decisions |
+
+Add C4/C5 to §4.7 backlog when implementing; C2 (byte-identical PCM) remains the executor regression gate.
+
 ### §2.4 Migration status (§3 steps)
 
 | Step | Work | Status | Evidence / notes |
@@ -315,12 +576,14 @@ is default **off** (`--fingerprint-diagnostics` to enable Tier-3 X-set).
 | **3** | Cheap early-reject (G0b at plan) | **Partial (closed on G5)** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03); **investigated as a pre-gate skip and withdrawn 2026-07-04, see §2.2a** (measured false-skip rate on real corpus data, no safe formulation found). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Done (2026-07-04)** | `lag_correlation_curve_fft` (B1) wired behind cost-crossover `lag_correlation_curve_auto` in `domain/seam_local.rs`; `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep` (the `baseline_lag` ±600 ms / ~1 s-window sweep, the dominant diagnostic-scan cost per §1.3) both switched from naive to auto. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
-| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). C1, C2 still open — see §4.7. |
+| **6** | **Characterize → execute split** (`GapRepairSpec`) | **Open** | §2.5 — types (6a), extract characterize/execute (6b), two-loop `PatchAudio` (6c), golden projection (7), fingerprint unification (8). **Blocks step 1 hoists.** |
+| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). C1, C2, **C4, C5** still open — see §4.7. |
 
-> **Sequencing (updated 2026-07-04):** A3 (step 5), G5 production, §4.7 **Tier A (A1–A3)**, **B1**, **B2**, and
-> **step 4 FFT wiring** are landed. **Next:** step 1 hoists (behind the now-CI-pinned harness) → optimize
-> diagnostic scan last (~1.7 h/pair calibration cost, not product cost). Do not reorder gates or drop D/R
-> measurements until the §4 harness passes (full workflow: §4.7 C1).
+> **Sequencing (updated 2026-07-05):** A3 (step 5), G5 production, §4.7 **Tier A (A1–A3)**, **B1**, **B2**, and
+> **step 4 FFT wiring** are landed. **Next:** **step 6** characterize→execute split (§2.5) — typed
+> `GapRepairPlan` / `GapRepairSpec`, unify prod + fingerprint oracle — **then** step 1 hoists inside
+> `characterize_region`. Do not reorder gates or drop D/R measurements until the §4 harness passes (full
+> workflow: §4.7 C1; executor byte-parity: C2).
 
 ---
 
@@ -335,9 +598,13 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial — G5-before-seam-gate withdrawn (§2.2a)** |
 | 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Done (2026-07-04)** — `lag_correlation_curve_auto` (cost-crossover) wired into `seam_local_peak` and `lag_side_sweep` |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
+| 6 | **Characterize → execute** — `GapRepairSpec` / `GapRepairPlan`; extract `characterize_region` + `execute_region_spec` from `prepare_region_patch`; two-loop `PatchAudio::execute`; fingerprint export from shared characterize (§2.5) | **Open** |
+| 7 | Golden harness on live `GapRepairSpec` projections (§4.7 C4, C5) | **Open** |
+| 8 | Step 1 hoists inside characterize shared context (border extract, binned-RMS) | **Open** — blocked on step 6 |
 
-Step 1 is the remaining perf work on a stable baseline. Step 5 historical note: built **before**
-scan optimization (2026-07-01 sequencing decision) — complete.
+Step 6 is the next structural milestone. Step 5 historical note: built **before** scan optimization
+(2026-07-01 sequencing decision) — complete. Step 1 hoists move to **step 8** so shared subexpressions have a
+single owner (`characterize_region`).
 
 ---
 
@@ -498,6 +765,9 @@ row points to this section.
 | Lag primitives | `gap_fingerprint.rs` `lag_curve_*`, `lag_pair_sequential_decouples_*`; `seam_local.rs` `seam_local_peak_recovers_offset_seam` | unit | **Yes** (`--lib`) | Lag math, seam-local search, A2 sequential post — not end-to-end D/R |
 | Analyzer predicates | `gap_fingerprint_corpus.rs` tests (`program_quiet_skip_*`, `splice_diag_*`, …) | unit (harness lib) | **No** | Predicate logic the golden diff depends on |
 | FFT equivalence | `seam_local.rs` `fft_curve_matches_naive_*`, `auto_picks_naive_for_small_probe_and_fft_for_full_sweep` | unit | **Yes** (`--lib`) | B1 gate + auto-crossover wiring into `seam_local_peak`/`lag_side_sweep` (step 4) |
+| Dual-fit attempt scoring | `patch_result.rs` `better_seam_score_attempt_prefers_the_higher_min_pearson`, `format_seam_score_source_covers_dual_fit` | unit | **Yes** (`--lib`) | A5 — dual-fit's own attempt score merges into the skip report |
+| Dual-fit residual parity | `patch_audio.rs` `measure_dual_fit_residual_verdict_attaches_a_real_verdict` | unit | **Yes** (`--lib`) | A6 — dual-fit success path measures/gates residual per-shoulder instead of bypassing `--residual-gate` |
+| Dual-fit seam scoring alignment | `policies.rs` `splice_seam_correlation_ignores_crossfade_lag0_window_when_not_single_lag_aligned`; `dual_fit.rs` `dual_fit_result_passes_the_production_revalidation_gate` | unit | **Yes** (`--lib`, once committed — currently staged) | A3b — crossfade-window scoring no longer assumes lag-0 alignment for dual-fit fills |
 
 **CI default (updated 2026-07-03 — A1/A3):** `.github/workflows/ci.yml` runs `test-tier.ps1 -Tier pr`, which
 now includes `golden_baseline_footguns` (via `golden_baseline_smoke`) and `clip-sync-repair-harness --lib`.
@@ -524,9 +794,16 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **A3** | Run `clip-sync-repair-harness --lib` in `pr-repair` | hoists | **DONE (2026-07-03)** | `Invoke-RepairPrRepair` now runs `cargo test -p clip-sync-repair-harness --lib` |
 | **B1** | `fft_curve ≈ naive_curve` equivalence | FFT step 4 | **DONE (2026-07-04)** | `lag_correlation_curve_fft` added in `domain/seam_local.rs` (FFT numerator via `rustfft` conjugate-multiply + prefix-sum Pearson denominator — not a full FFT-Pearson primitive that existed before). 4 tests: scaled-down full-sweep, small-probe, ragged-edge-mask, and derived-readout (`peak_z`/`prominence`/`frac_lag_ms` via `summarize_lag_curve`) equivalence, ε=1e-8. **Wired (2026-07-04)** — `lag_correlation_curve_auto` cost-crossover swap into `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep`, step 4. |
 | **B2** | Live re-characterization smoke (≥1 gap) | hoists | **DONE** | `tests/validate_dual_fit_oracle.rs` — real jump-cut media through the actual production entry point (`residual_gate::run_built_floor_oracle_cfg` → `PatchAudio::execute`), asserting `dual_fit_used`; validation tier (needs `ffmpeg` + fetched corpus), not `pr-repair` |
+| **A3b** | Fix: crossfade-window seam scoring assumed lag-0 alignment, false for dual-fit | production correctness | **DONE (2026-07-05, staged)** | `score_splice_pre_seam`/`score_splice_post_seam` (+ per-channel variants) in `domain/policies.rs` had a crossfade-window branch that compares the fill's own head/tail against A's **raw** neighboring samples at the literal gap boundary (lag 0) — correct for the ordinary rigid-splice path, where the fill genuinely sits at `gap_start_frame`/`gap_end_frame` with no lag correction. Dual-fit's whole premise is that its two shoulders are matched at **independent seam-local lags** (no single lag satisfies both seams), so comparing its fill against raw A at lag 0 is a category error — real cases collapsed to a strongly **negative** correlation despite the fill matching its border template (what `try_dual_fit`'s own seam-local search already validated) almost perfectly. Fixed by adding `single_lag_alignment: bool` to `SpliceSeamContext` (`true` for the ordinary path — unchanged behavior; `false` for dual-fit, which skips the lag-0 branch and scores against the border template instead). Regression tests: `policies.rs::splice_seam_correlation_ignores_crossfade_lag0_window_when_not_single_lag_aligned`, `dual_fit.rs::dual_fit_result_passes_the_production_revalidation_gate` (end-to-end: a dual-fit result that seam-locally matches both shoulders now also passes the real post-assembly re-validation gate `skip_or_dual_fit` calls in production, not just `try_dual_fit`'s own internal checks). **This is the most plausible root cause of real dual-fit-eligible gaps being incorrectly skipped** — a good dual-fit candidate could fail its own post-assembly re-validation purely from the scoring bug, independent of any true seam quality problem. Staged in git index (`gap_fill_fit.rs`, `policies.rs`, `dual_fit.rs`) alongside A4 below; not yet committed. |
+| **A4** | Fix: dual-fit re-validation gate scored the wrong border source | production correctness | **DONE (2026-07-05, staged)** | `skip_or_dual_fit`'s re-validation in `patch_audio.rs` scored `df.a_pre_border`/`a_post_border` — the silence-skipped, standoff'd window built for the ordinary rigid-splice path — instead of `df.a_pre_mono`/`a_post_mono`, the window `try_dual_fit`'s own seam-local search actually matched against. Border-source mismatch could fail an otherwise-good dual-fit fill's own re-check. Fixed to score against `a_pre_mono`/`a_post_mono`, together with `single_lag_alignment: false` (A3b) on the same call site. Landed in the same staged change as A3b — the two bugs compounded on the same re-validation call. Not yet verified against real problematic media (licensed-media partition — needs the user to re-run and confirm empirically). |
+| **A5** | Fix: dual-fit's own attempt score never reached the skip report | reporting only | **DONE (2026-07-05)** | Added `SeamScoreSource::DualFit` + `better_seam_score_attempt(a, b)` (picks the higher `min_pearson()`) in `domain/patch_result.rs`; threaded through `seam_failure_outcome` as a new `dual_fit_attempt` param and merged with the ordinary bracket search's `best_attempt`. No effect on patch/skip decisions — a previously-silent dual-fit attempt now shows up in the final report when it still lost. |
+| **A6** | Fix: dual-fit success path bypassed `--residual-gate` (hardcoded `residual: None`) | production correctness | **DONE (2026-07-05)** | New `measure_dual_fit_residual_verdict(request, df, r)` in `patch_audio.rs` measures a `SeamResidualVerdict` per dual-fit candidate using **two independent `chosen_delta` values** (`nominal_delta + pre_lag` / `nominal_delta + post_lag`, one per shoulder — the ordinary path assumes one rigid A/B placement and only needs one), reusing existing `policies::seam_chosen_and_floor` / `SeamResidualVerdict::from_parts_with_placement` primitives. `skip_or_dual_fit`'s success branch now runs this through `apply_residual_to_confidence` exactly like the ordinary path; a rejected candidate falls through to `seam_failure_outcome` with `SeamGateFailure::ResidualHeadroomExceeded` instead of silently patching. Gated by the same `measure_residual \|\| residual_gate.is_active() \|\| DEBUG` condition as the ordinary path's `want_residual_measurement`. **Could increase skip rate** by correctly rejecting dual-fit candidates the residual gate would have vetoed on the ordinary path — this is a new, correct gate, not a fix aimed at reducing skips. |
+| **A7** | Fix: dual-fit re-validation compared A's border to the fill's own head/tail (wrong B window) — **the actual root cause** | production correctness | **DONE (2026-07-05, media-confirmed)** | The real cause of the "previously-fixed gaps 11:50 & 21:46 now skipped" report, and **downstream of / distinct from A3b/A4** — which is why those made no difference on the media. After A3b/A4, `skip_or_dual_fit` still re-validated the assembled fill through `policies::fill_splice_seam_correlations_interleaved`, whose surviving border branch (`score_splice_pre_seam_border`) computes `seam_pearson(a_pre[last w], fill[..w])`. For a dual-fit bridge, `fill[..w] = b_mono[b_pre_seam..b_pre_seam+w]` — the B window on the **inside** of the pre shoulder — whereas `a_pre` matched `b_mono[b_pre_seam-w..b_pre_seam]` (the window **ending at** `b_pre_seam`, per `seam_local_peak`/`splice_dualfit_at`). Those are **adjacent, non-overlapping** B windows; for broadband audio they correlate at ~0, collapsing a perfect fill to the observed `pre≈-0.017 post≈0.021` (post symmetric, off by +w). The border scorer is correct only for the rigid single-lag splice (fill head overlaps A's pre-gap region); it has no access to the B content *outside* the bridge that dual-fit's per-shoulder match relies on. `try_dual_fit` already returns the correct assembled-seam scores (`r.pre_seam_r`/`r.post_seam_r`; interior trim leaves seams untouched, guarded clear of `seam_window_frames`), so the fix classifies confidence directly from those and drops the border-scorer re-measure (removed dead `seam_cf`/`total_a_frames` plumbing). **The passing test `dual_fit_result_passes_the_production_revalidation_gate` masked this** — it built its "A border" from `r.fill[..w]` itself (tautological ~1.0); rewritten to use A's real near-gap audio and now asserts both that the returned seam scores are strong **and** that the border-scorer path collapses on real borders. Residual gate (A6) unchanged. Media-confirmed: gaps #2 (11:50) and #3 (21:46) rescue on `F:\Video` after the fix. |
 | **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
-| **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
-| **C3** | `fingerprint_diagnostics` flag smoke | step 2 regression | **OPEN** | Flag off ⇒ X fields absent; flag on ⇒ `seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels` present |
+| **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring / step 6b | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
+| **C3** | `fingerprint_diagnostics` flag smoke | step 8 regression | **OPEN** | Flag off ⇒ X fields absent; flag on ⇒ `seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels` present |
+| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection | step 6a | **OPEN** | Unit test: synthetic specs cover all §4.1a classes; Tier-1 fields match harness predicates |
+| **C5** | Live characterize invariance (`characterize_all_regions` vs rescan) | step 7 | **OPEN** | Extends C1 — closes §4.6 static-JSON-only gap for **decisions** |
 | **D1** | Edge-pin footgun synthetic | low | **OPEN** | 0/55 on corpus; defer |
 | **D2** | Wall-clock per phase (§4.5) | perf validation | **OPEN** | Manual benchmark script, not unit test |
 | **D3** | Production golden for all 9 dual-fit targets | high value, high cost | **OPEN** | Needs real media or large fixtures; defer until B2 proves pattern |
@@ -538,14 +815,31 @@ wiring guard for the 2026-07-03 bug fix, numerical gate for the dominant cost wi
 `seam_local_peak` and `lag_side_sweep`, 2026-07-04), as is B2 (`validate_dual_fit_oracle.rs`). Step 1 hoists
 remain the largest open item.
 
+**A3b–A7 (2026-07-05):** five separate dual-fit correctness/reporting bugs found during source-level audits
+of `skip_or_dual_fit`/`try_dual_fit`. A3b–A6 were fixed first with no media access (synthetic fixtures + unit
+tests only, per the licensed-media partition); **A3b/A4 were initially credited as the likely root cause but
+did not change the media outcome** — the two target gaps (11:50, 21:46) still skipped. **A7 is the confirmed
+root cause** (media-verified on `F:\Video`): the re-validation was still comparing A's border against the
+fill's own head/tail — a B window adjacent to, not overlapping, the one each seam matched — so it scored ~0
+regardless of which border *source* (A4) or crossfade branch (A3b) was used. A3b/A4 remain valid narrowing
+fixes on the same call path; A5 is reporting-only; A6 is a new, correct residual gate that can add rejections.
+All verified with the full unit suite (340 passed, 1 ignored, 0 failed, `cargo test -p clip-sync-repair --lib`)
+and the full integration suite (`cargo test -p clip-sync-repair`, all binaries green) — no regressions.
+**A3b/A4/A7 are staged in the working tree but not yet committed** (`gap_fill_fit.rs`, `policies.rs`,
+`dual_fit.rs`, part of `patch_audio.rs`) — A5/A6 and the doc
+updates themselves are unstaged on top.
+
 #### Sequencing vs migration steps
 
 ```text
-Before hoists (step 1):  A1 → A3 → A2   [DONE 2026-07-03]
+Before hoists (step 8):  A1 → A3 → A2   [DONE 2026-07-03]
 Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [DONE 2026-07-04]
                          B2 (`validate_dual_fit_oracle.rs`)         [DONE]
-Before calling F5 done:  C1 (+ run validation tier locally)
-Optional polish:         C2, C3
+Before step 6:           C4 (spec ↔ golden projection)
+Step 6 (§2.5):           6a → 6b → 6c → 7 (C5) → 8 (fingerprint unify + C3)
+Executor regression:     C2 (byte-identical PCM, bracket path)
+Release sign-off:        C1 (+ validation tier locally)
+Optional polish:         D1–D4
 ```
 
 ---
@@ -603,7 +897,10 @@ the production path carries only the **D/R** set for the survivors, never the di
   sufficient; the interior trim point must sound clean. First bad fill = the first labeled negative (→ D8).
 
 ### §5.5 Open decisions
-- **Detect wiring:** (a) self-contained — production recomputes detection on-demand *(recommended)*; vs
-  (b) scan-fed — read targets from a prior fingerprint. The *repair* is production either way.
+
+- **Detect wiring — RESOLVED by §2.5 step 6:** production **characterizes once** per gap into `GapRepairSpec`;
+  fingerprint export projects the same spec (+ X-set). No scan-fed / second-oracle path.
 - **Interior trim crossfade length** — audibility knob (D7); start with the existing `crossfade_secs`.
 - **Flag surface** — `RepairConfig.dual_fit` / `--no-dual-fit` on the request (default **on**, F1).
+- **Scan-only repair preview** — optional `--repair-preview` to run characterize without execute; deferred until
+  step 6c lands (hook documented in §2.5.5).
