@@ -22,12 +22,11 @@ pub struct DualFitParams {
     pub sample_rate: u32,
     pub gap_frames: usize,
     /// Seam window (frames) = `fill_seam_search_secs · sr` (the 250 ms border the gate scores).
+    /// Also the interior-trim edge guard: the re-validation gate re-scores exactly this many frames
+    /// from each end of the assembled fill (`pre_gate_frames`/`post_gate_frames`, capped at this same
+    /// `fill_seam_search_secs · sr`), independent of crossfade length — so the interior length-edit
+    /// cut must stay clear of a `seam_window_frames`-wide border, not a shorter crossfade-wide one.
     pub seam_window_frames: usize,
-    /// Effective splice crossfade (frames) = `effective_seam_crossfade_frames(...)`. When `> 0`,
-    /// the re-validation gate's crossfade-aware scoring (`fill_splice_seam_correlations_interleaved`)
-    /// only reads this many frames from each end of the fill — not the full `seam_window_frames` —
-    /// so the interior trim/pad point only needs to stay this far from each end.
-    pub crossfade_frames: usize,
     /// Per-shoulder seam search half-width (frames) = `SEAM_LOCAL_SEARCH_MS · sr` (600 ms).
     pub max_lag_frames: usize,
     pub min_fill_correlation: f64,
@@ -178,12 +177,7 @@ pub fn try_dual_fit(
         return None;
     }
     let bridge = &b_samples[b_pre_seam * ch..b_post_seam * ch];
-    let edge_guard = if p.crossfade_frames > 0 {
-        p.crossfade_frames
-    } else {
-        p.seam_window_frames
-    };
-    let fill = trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, edge_guard);
+    let fill = trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, p.seam_window_frames);
     let trim_frames = (b_post_seam - b_pre_seam) as i64 - p.gap_frames as i64;
 
     Some(DualFitResult {
@@ -235,7 +229,6 @@ mod tests {
             sample_rate: sr,
             gap_frames: gap,
             seam_window_frames: w,
-            crossfade_frames: 0,
             max_lag_frames: (0.6 * sr as f64) as usize,
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
@@ -292,7 +285,6 @@ mod tests {
             sample_rate: sr,
             gap_frames: gap,
             seam_window_frames: w,
-            crossfade_frames: 0,
             max_lag_frames: (0.6 * sr as f64) as usize,
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
@@ -333,7 +325,6 @@ mod tests {
             sample_rate: sr,
             gap_frames: gap,
             seam_window_frames: w,
-            crossfade_frames: 0,
             max_lag_frames: (0.6 * sr as f64) as usize,
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,

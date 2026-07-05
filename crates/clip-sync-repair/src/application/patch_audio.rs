@@ -1513,7 +1513,6 @@ fn build_dual_fit_input<'a>(
             sample_rate,
             gap_frames,
             seam_window_frames: w,
-            crossfade_frames: seam_cf,
             max_lag_frames: (0.6 * sample_rate as f64) as usize,
             min_fill_correlation: min_fill_correlation as f64,
             fill_absolute_floor: fill_absolute_floor as f64,
