@@ -46,6 +46,7 @@ pub enum SeamScoreSource {
     Anchor,
     Grid,
     Extension,
+    DualFit,
 }
 
 /// One waveform seam score from a scored placement (baseline, anchor bracket, grid cell, or extension).
@@ -68,6 +69,20 @@ pub fn format_seam_score_source(source: SeamScoreSource) -> &'static str {
         SeamScoreSource::Anchor => "anchor",
         SeamScoreSource::Grid => "grid",
         SeamScoreSource::Extension => "extension",
+        SeamScoreSource::DualFit => "dual_fit",
+    }
+}
+
+/// Pick whichever attempt has the higher `min_pearson`, keeping `a` on ties.
+pub fn better_seam_score_attempt(
+    a: Option<SeamScoreAttempt>,
+    b: Option<SeamScoreAttempt>,
+) -> Option<SeamScoreAttempt> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.min_pearson() > a.min_pearson() { b } else { a }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -464,5 +479,49 @@ mod format_tests {
             format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BExtractFailed),
             "B audio slice out of range"
         );
+    }
+
+    /// Regression for the 2026-07 production report: when the ordinary bracket search's best
+    /// attempt fails the gate, but dual-fit's own (also-failed) re-validation scored higher, the
+    /// final skip report must surface dual-fit's attempt instead of silently dropping it — the
+    /// ordinary anchor-bracket report previously never reflected anything dual-fit tried.
+    #[test]
+    fn better_seam_score_attempt_prefers_the_higher_min_pearson() {
+        let anchor_attempt = SeamScoreAttempt {
+            pre_correlation: 0.13,
+            post_correlation: 0.09,
+            source: SeamScoreSource::Anchor,
+        };
+        let dual_fit_attempt = SeamScoreAttempt {
+            pre_correlation: 0.09,
+            post_correlation: 0.007,
+            source: SeamScoreSource::DualFit,
+        };
+        // Dual-fit's own re-validation, in this example, scored WORSE than the anchor bracket's
+        // best attempt — the anchor attempt must still win and be reported.
+        let best = better_seam_score_attempt(Some(anchor_attempt), Some(dual_fit_attempt));
+        assert_eq!(best, Some(anchor_attempt));
+
+        let stronger_dual_fit = SeamScoreAttempt {
+            pre_correlation: 0.5,
+            post_correlation: 0.4,
+            source: SeamScoreSource::DualFit,
+        };
+        let best = better_seam_score_attempt(Some(anchor_attempt), Some(stronger_dual_fit));
+        assert_eq!(best, Some(stronger_dual_fit));
+
+        // No ordinary best_attempt at all (e.g. `StructureBelowThreshold`, which hard-codes
+        // `None`) — dual-fit's attempt should still surface on its own.
+        let best = better_seam_score_attempt(None, Some(stronger_dual_fit));
+        assert_eq!(best, Some(stronger_dual_fit));
+
+        // dual-fit never ran / was ineligible — nothing to merge in, ordinary result unchanged.
+        let best = better_seam_score_attempt(Some(anchor_attempt), None);
+        assert_eq!(best, Some(anchor_attempt));
+    }
+
+    #[test]
+    fn format_seam_score_source_covers_dual_fit() {
+        assert_eq!(format_seam_score_source(SeamScoreSource::DualFit), "dual_fit");
     }
 }

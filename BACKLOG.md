@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-06-26.
+Last updated: 2026-07-05.
 
 **How this doc works**
 
@@ -17,6 +17,7 @@ Last updated: 2026-06-26.
 
 | Plan | Covers |
 |------|--------|
+| [TEMP-pipeline-perf-redesign-plan.md](docs/TEMP-pipeline-perf-redesign-plan.md) | Pipeline perf + assembly: `GapRepairSpec` characterize→execute split (§2.5), hoists, golden harness (D12) |
 | [TEMP-ac3-backend-plan.md](docs/TEMP-ac3-backend-plan.md) | AC-3 capability gate + compile-time `ac3-oxideav` vs `ac3-ffmpeg` decode backends |
 | [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
 

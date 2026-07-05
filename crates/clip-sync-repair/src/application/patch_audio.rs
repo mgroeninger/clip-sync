@@ -1323,6 +1323,7 @@ fn seam_failure_outcome(
     fail: SeamGateFailure,
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
+    dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
     let (reason, residual) = match fail {
         SeamGateFailure::StructureAlignmentFailed => {
@@ -1333,7 +1334,10 @@ fn seam_failure_outcome(
                 pre_correlation: pre,
                 post_correlation: post,
                 min_correlation: min_structure_match_score,
-                best_attempt: None,
+                best_attempt: crate::domain::patch_result::better_seam_score_attempt(
+                    None,
+                    dual_fit_attempt,
+                ),
             },
             None,
         ),
@@ -1347,7 +1351,10 @@ fn seam_failure_outcome(
                 pre_correlation: pre,
                 post_correlation: post,
                 min_correlation: min,
-                best_attempt,
+                best_attempt: crate::domain::patch_result::better_seam_score_attempt(
+                    best_attempt,
+                    dual_fit_attempt,
+                ),
             },
             None,
         ),
@@ -1426,10 +1433,12 @@ struct DualFitRepairInput<'a> {
     a_start_frame: usize,
     a_end_frame: usize,
     crossfade_secs: f64,
-    // §5.2 step 3: re-validate the assembled fill with the SAME gate scoring the success path uses,
-    // instead of trusting the pre-trim seam-local scores as the reported confidence.
+    /// A's full decoded PCM — for the post-assembly residual measurement (parity with the ordinary
+    /// path's residual gate).
     a_samples: &'a [f32],
-    seam_cf: usize,
+    /// For the post-assembly residual measurement (parity with the ordinary path's residual gate) —
+    /// the reference-window walk-out standoff, same constant the ordinary path uses.
+    border_standoff_frames: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1446,7 +1455,7 @@ fn build_dual_fit_input<'a>(
     min_fill_correlation: f32,
     fill_absolute_floor: f32,
     crossfade_secs: f64,
-    total_a_frames: usize,
+    border_standoff_frames: usize,
 ) -> Option<DualFitRepairInput<'a>> {
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
@@ -1471,13 +1480,6 @@ fn build_dual_fit_input<'a>(
     let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
     let a_gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
 
-    let seam_cf = policies::effective_seam_crossfade_frames(
-        (crossfade_secs * sample_rate as f64) as usize,
-        refined.start_frame,
-        refined.end_frame,
-        total_a_frames,
-    );
-
     Some(DualFitRepairInput {
         params: crate::domain::dual_fit::DualFitParams {
             channels: ch,
@@ -1499,7 +1501,7 @@ fn build_dual_fit_input<'a>(
         a_end_frame: refined.end_frame,
         crossfade_secs,
         a_samples,
-        seam_cf,
+        border_standoff_frames,
     })
 }
 
@@ -1526,6 +1528,65 @@ fn dual_fit_eligible(request_dual_fit: bool, fail: SeamGateFailure) -> bool {
     request_dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed)
 }
 
+/// Residual-gate parity for dual-fit (§ residual-gate bypass fix): the ordinary path measures one
+/// `SeamResidualVerdict` per gap using a single `chosen_delta`, valid because it assumes one rigid
+/// A/B placement across the whole splice. Dual-fit matches its two shoulders independently
+/// (`r.pre_lag`/`r.post_lag`), so this reuses the same low-level primitives
+/// (`policies::seam_chosen_and_floor`/`SeamResidualVerdict::from_parts_with_placement`) with two
+/// distinct `chosen_delta` values, one per shoulder, derived from `nominal_delta + {pre,post}_lag`.
+fn measure_dual_fit_residual_verdict(
+    request: &PatchAudioRequest,
+    df: &DualFitRepairInput<'_>,
+    r: &crate::domain::dual_fit::DualFitResult,
+) -> Option<policies::SeamResidualVerdict> {
+    if !(request.measure_residual
+        || request.residual_gate.is_active()
+        || tracing::enabled!(tracing::Level::DEBUG))
+    {
+        return None;
+    }
+    let nominal_delta = df.b_mapped_start as i64 - df.a_start_frame as i64;
+    let max_lag_frames =
+        crate::domain::residual_max_lag_frames(df.params.sample_rate, request.residual_lag_secs);
+    let floor_common = |window: usize| policies::SeamFloorParams {
+        a_samples: df.a_samples,
+        channels: df.params.channels,
+        b_mono: &df.b_mono,
+        window,
+        standoff_frames: df.border_standoff_frames,
+        a_to_b_delta: nominal_delta,
+        step_frames: window.max(1),
+        max_walk_frames: df.params.sample_rate as usize * 3,
+        absolute_silence_rms: request.absolute_silence_rms,
+        max_lag_frames,
+    };
+    let window = df.params.seam_window_frames;
+    let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
+        &floor_common(window),
+        policies::SeamSide::Pre,
+        df.a_start_frame,
+        df.a_end_frame,
+        nominal_delta + r.pre_lag,
+    );
+    let (chosen_post, floor_post) = policies::seam_chosen_and_floor(
+        &floor_common(window),
+        policies::SeamSide::Post,
+        df.a_start_frame,
+        df.a_end_frame,
+        nominal_delta + r.post_lag,
+    );
+    let placement_slide = r.pre_lag.abs_diff(r.post_lag);
+    Some(policies::SeamResidualVerdict::from_parts_with_placement(
+        &chosen_pre,
+        &chosen_post,
+        &floor_pre,
+        &floor_post,
+        request.residual_floor_ok_db,
+        placement_slide,
+        max_lag_frames,
+    ))
+}
+
 fn skip_or_dual_fit(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
@@ -1535,6 +1596,7 @@ fn skip_or_dual_fit(
     tag_ctx: GapTagsPatchContext,
     dual_fit: Option<&DualFitRepairInput<'_>>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
+    let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(df) = dual_fit {
             if let Some(r) = crate::domain::dual_fit::try_dual_fit(
@@ -1545,33 +1607,24 @@ fn skip_or_dual_fit(
                 df.b_mapped_start,
                 &df.params,
             ) {
-                // Re-validate against the SAME window `try_dual_fit`'s own seam-local search matched
-                // against (`a_pre_mono`/`a_post_mono`, immediately adjacent to the gap) — not the
-                // standoff'd/silence-skipped `a_pre_border`/`a_post_border` built for the ordinary
-                // rigid-splice path, which sits ~`border_standoff_secs` further out and is generally
-                // uncorrelated with the near-gap window dual-fit actually matched.
-                let borders = policies::BorderSeamTemplates {
-                    a_pre: &df.a_pre_mono,
-                    a_post: &df.a_post_mono,
-                    a_pre_ch: &[],
-                    a_post_ch: &[],
-                    pre_window: df.params.seam_window_frames,
-                    post_window: df.params.seam_window_frames,
-                };
-                let seam_ctx = policies::SpliceSeamContext {
-                    seam_cf: df.seam_cf,
-                    gap_start_frame: df.a_start_frame,
-                    gap_end_frame: df.a_end_frame,
-                    a_samples: df.a_samples,
-                    channels: df.params.channels,
-                    single_lag_alignment: false,
-                };
-                let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
-                    &r.fill,
-                    df.params.channels,
-                    &borders,
-                    seam_ctx,
-                );
+                // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
+                // seam-local search already measured (`r.pre_seam_r`/`r.post_seam_r`): A's near-gap
+                // border vs the B window ENDING at the pre shoulder / STARTING at the post shoulder —
+                // the content just OUTSIDE the bridge that each shoulder matched. The interior trim
+                // (`trim_at_lowest_energy_interior`) only edits the bridge interior, guarded clear of
+                // `seam_window_frames` from each end, so the assembled seams equal the ones dual-fit
+                // fit — nothing to re-measure.
+                //
+                // We deliberately do NOT route this through `fill_splice_seam_correlations_interleaved`:
+                // its border branch compares A's border against the fill's own head/tail
+                // (`fill[..w]`/`fill[len-w..]`), which for a dual-fit fill is the B window on the INSIDE
+                // of the shoulder — i.e. the chunk of B immediately ADJACENT to (not overlapping) the
+                // window each seam actually matched. For broadband audio those adjacent windows
+                // correlate at ~0, so a perfect dual-fit fill scored a false ~0 and was skipped. That
+                // scorer is built for the rigid single-lag splice (where the fill head overlaps A's
+                // pre-gap region); it has no access to the B content outside the bridge that dual-fit's
+                // per-shoulder seam-local match relies on.
+                let (splice_pre, splice_post) = (r.pre_seam_r, r.post_seam_r);
                 match classify_fill_waveform_confidence(
                     splice_pre,
                     splice_post,
@@ -1580,6 +1633,55 @@ fn skip_or_dual_fit(
                     request.fill_absolute_floor,
                 ) {
                     Ok(confidence) => {
+                        let residual = measure_dual_fit_residual_verdict(request, df, &r);
+                        let gated_confidence = match &residual {
+                            Some(verdict) => match crate::domain::gap_fill_fit::apply_residual_to_confidence(
+                                Ok(confidence),
+                                verdict,
+                                request.residual_headroom_margin_db,
+                                request.residual_gate.rescue_enabled(),
+                            ) {
+                                Ok(tier) => Ok(tier),
+                                Err(crate::domain::gap_fill_fit::ResidualGateError::HeadroomExceeded {
+                                    headroom_db,
+                                    margin_db,
+                                }) => Err((headroom_db, margin_db, verdict.clone())),
+                                Err(crate::domain::gap_fill_fit::ResidualGateError::PearsonBelowFloor(_)) => {
+                                    Ok(confidence)
+                                }
+                            },
+                            None => Ok(confidence),
+                        };
+                        let confidence = match gated_confidence {
+                            Ok(tier) => tier,
+                            Err((headroom_db, margin_db, verdict)) => {
+                                tracing::debug!(
+                                    a_start = df.a_start_frame,
+                                    headroom_db,
+                                    margin_db,
+                                    "dual-fit candidate rejected by residual headroom gate; falling back to skip"
+                                );
+                                dual_fit_attempt = Some(crate::domain::patch_result::SeamScoreAttempt {
+                                    pre_correlation: splice_pre,
+                                    post_correlation: splice_post,
+                                    source: crate::domain::patch_result::SeamScoreSource::DualFit,
+                                });
+                                return seam_failure_outcome(
+                                    progress,
+                                    request,
+                                    region,
+                                    SeamGateFailure::ResidualHeadroomExceeded {
+                                        pre: splice_pre,
+                                        post: splice_post,
+                                        residual: verdict,
+                                        margin_db,
+                                    },
+                                    min_structure_match_score,
+                                    tag_ctx,
+                                    dual_fit_attempt,
+                                );
+                            }
+                        };
                         tracing::debug!(
                             a_start = df.a_start_frame,
                             pre = splice_pre,
@@ -1606,7 +1708,7 @@ fn skip_or_dual_fit(
                             gap_end_adjust_frames: 0,
                             fit_used_boundary_grid: false,
                             fit_boundary_grid_cells: None,
-                            residual: None,
+                            residual,
                             anchor_seam_used: false,
                             anchor_bracket_move_frames: 0,
                             dual_fit_used: true,
@@ -1621,12 +1723,25 @@ fn skip_or_dual_fit(
                             min_score,
                             "dual-fit candidate failed re-validation at the assembled seam; falling back to skip"
                         );
+                        dual_fit_attempt = Some(crate::domain::patch_result::SeamScoreAttempt {
+                            pre_correlation: splice_pre,
+                            post_correlation: splice_post,
+                            source: crate::domain::patch_result::SeamScoreSource::DualFit,
+                        });
                     }
                 }
             }
         }
     }
-    seam_failure_outcome(progress, request, region, fail, min_structure_match_score, tag_ctx)
+    seam_failure_outcome(
+        progress,
+        request,
+        region,
+        fail,
+        min_structure_match_score,
+        tag_ctx,
+        dual_fit_attempt,
+    )
 }
 
 fn prepare_region_patch(
@@ -1901,7 +2016,7 @@ fn prepare_region_patch(
                 min_fill_correlation,
                 request.fill_absolute_floor,
                 region.crossfade_secs,
-                a_pcm.frames(),
+                cfg.border_standoff_frames,
             )
         })
         .flatten();
@@ -2465,9 +2580,11 @@ fn splice_into_a(
 mod tests {
     use super::{
         anchored_retry_gap_indices, dual_fit_eligible, format_gap_fill_plan_lines,
-        format_gap_fill_result_line, should_apply_anchored_retry_outcome, skipped_patch,
-        GapFillPlanLog, GapFillResultLog, RegionPatchOutcome, SeamGateFailure,
+        format_gap_fill_result_line, measure_dual_fit_residual_verdict,
+        should_apply_anchored_retry_outcome, skipped_patch, DualFitRepairInput,
+        GapFillPlanLog, GapFillResultLog, PatchAudioRequest, RegionPatchOutcome, SeamGateFailure,
     };
+    use crate::domain::gap::GapReport;
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
     use crate::domain::patch_result::GapPatchSkipReason;
@@ -2730,5 +2847,163 @@ mod tests {
             ),
             "gap 2/2 (1:42:08 – 1:46:00): structure alignment failed"
         );
+    }
+
+    fn dual_fit_test_request(
+        measure_residual: bool,
+        residual_gate: crate::domain::ResidualGateMode,
+    ) -> PatchAudioRequest {
+        use crate::domain::align::{AlignedClip, ClipRole, ScanAlignment};
+
+        let alignment = ScanAlignment {
+            clips: vec![AlignedClip {
+                role: ClipRole::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 60.0,
+                aligned: true,
+                offset_secs: Some(0.0),
+                confidence: 0.9,
+                video_a_decode_skips: 0,
+                video_b_decode_skips: 0,
+                video_b_window_start_secs: None,
+                video_b_window_end_secs: None,
+            }],
+            start_aligned: true,
+            end_aligned: None,
+            recommended_offset_secs: Some(0.0),
+            offsets_consistent: true,
+            offset_drift_secs: None,
+            start_overlap: None,
+            query_reference_mode: false,
+        };
+        let report = GapReport {
+            video_a: std::path::PathBuf::from("a.wav"),
+            video_b: std::path::PathBuf::from("b.wav"),
+            track_compatibility: None,
+            alignment,
+            gaps: Vec::new(),
+            gap_offset_agreement: None,
+            decode_chunk_secs: 60,
+            scan_block_ms: 250,
+            silence_peak_fraction: 0.01,
+            limit_fill_to_mapped_region: true,
+            audio_timeline_skew: None,
+        };
+        let mut repair = crate::infrastructure::config::RepairConfig::default();
+        repair.residual_gate = residual_gate;
+        repair.absolute_silence_rms = 0.001;
+        let mut request = repair.patch_settings().into_request(report);
+        request.measure_residual = measure_residual;
+        request
+    }
+
+    /// Regression for the residual-gate bypass fix: dual-fit's success path used to hardcode
+    /// `residual: None` on every rescued patch, silently bypassing `--residual-gate` regardless of
+    /// whether it was active for the rest of the run. `measure_dual_fit_residual_verdict` gives
+    /// dual-fit its own residual measurement (two independent `chosen_delta`s, one per shoulder,
+    /// since dual-fit — unlike the ordinary rigid splice — matches its two shoulders at
+    /// independent lags). This builds a synthetic same-master gap (mirrors
+    /// `dual_fit::tests::recovers_a_stepped_silence_splice`) where A's raw pre/post border windows
+    /// are literal copies of the B content at the placement `try_dual_fit` actually matched, so the
+    /// chosen probe should cancel almost perfectly against the floor and the gate must not reject.
+    #[test]
+    fn measure_dual_fit_residual_verdict_attaches_a_real_verdict() {
+        let sr = 48_000u32;
+        let ch = 1usize;
+        let w = 1200usize;
+        let gap = 4000usize;
+        let step = 200i64;
+
+        let mut seed = 0xDEAD_BEEF_1234_5678u64;
+        let mut rng = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let bn = 40_000usize;
+        let b_mono: Vec<f64> = (0..bn).map(|_| rng()).collect();
+        let b_samples: Vec<f32> = b_mono.iter().map(|&x| x as f32).collect();
+
+        let b_mapped_start = 10_000usize;
+        let a_pre_mono: Vec<f64> = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+        let post_src = b_mapped_start + gap + step as usize;
+        let a_post_mono: Vec<f64> = b_mono[post_src..post_src + w].to_vec();
+
+        let params = crate::domain::dual_fit::DualFitParams {
+            channels: ch,
+            sample_rate: sr,
+            gap_frames: gap,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sr as f64) as usize,
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+            step_real_margin: 0.15,
+            a_gap_floor_db: -60.0,
+        };
+        let r = crate::domain::dual_fit::try_dual_fit(
+            &a_pre_mono,
+            &a_post_mono,
+            &b_mono,
+            &b_samples,
+            b_mapped_start,
+            &params,
+        )
+        .expect("dual-fit target");
+        assert_eq!(r.pre_lag, 0, "pre shoulder matches at nominal lag in this fixture");
+        assert_eq!(r.post_lag, step, "post shoulder's seam-local match sits at +step in B");
+
+        // A's raw audio around the (arbitrary, far-away) gap position: the pre/post border windows
+        // are literal copies of the B content at the matched placement, so chosen == floor.
+        let a_start_frame = 500_000usize;
+        let a_end_frame = a_start_frame + gap;
+        let mut a_samples = vec![0.0f32; a_end_frame + w];
+        for (i, &v) in a_pre_mono.iter().enumerate() {
+            a_samples[a_start_frame - w + i] = v as f32;
+        }
+        for (i, &v) in a_post_mono.iter().enumerate() {
+            a_samples[a_end_frame + i] = v as f32;
+        }
+
+        let df = DualFitRepairInput {
+            params,
+            a_pre_mono,
+            a_post_mono,
+            b_mono,
+            b_samples: &b_samples,
+            b_mapped_start,
+            a_start_frame,
+            a_end_frame,
+            crossfade_secs: 0.02,
+            a_samples: &a_samples,
+            border_standoff_frames: 0,
+        };
+
+        let request = dual_fit_test_request(true, crate::domain::ResidualGateMode::VetoRescue);
+        let verdict = measure_dual_fit_residual_verdict(&request, &df, &r)
+            .expect("residual measurement must run when measure_residual is set");
+        assert!(
+            verdict.informative,
+            "both sides found energetic reference windows; verdict must be informative: {verdict:?}"
+        );
+        let headroom = verdict.worst_headroom_db();
+        assert!(
+            headroom < 1.0,
+            "chosen placement is a literal copy of the matched B content, so headroom vs. the \
+             nominal floor should be ~0 dB, not a rejection-worthy value: {headroom}"
+        );
+        let gated = crate::domain::gap_fill_fit::apply_residual_to_confidence(
+            Ok(FillConfidence::High),
+            &verdict,
+            request.residual_headroom_margin_db,
+            request.residual_gate.rescue_enabled(),
+        );
+        assert_eq!(
+            gated,
+            Ok(FillConfidence::High),
+            "a well-cancelling dual-fit candidate must not be rejected by the residual gate"
+        );
+
+        // Off by default: no residual measurement, matching the ordinary path's `want_residual_measurement`.
+        let off_request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
+        assert!(measure_dual_fit_residual_verdict(&off_request, &df, &r).is_none());
     }
 }
