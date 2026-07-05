@@ -2141,14 +2141,22 @@ pub(crate) fn characterize_gaps_with_gate(
         let brackets = list_feasible_anchor_brackets(&candidates, refined, &anchor_params);
         let mut any_ok = false;
         let mut best_energy: Option<(f64, RefinedGapFrames)> = None;
+        // Populated when the zero-move (throat) bracket scores `Ok` — the structure placement is
+        // already computed inside that gate call, so the later throat-placement read below can reuse
+        // it instead of a second `gate_structure_align` (`oracle_throat_structure_frame`) for the
+        // same `(refined, refined)` pair.
+        let mut throat_structure_frame: Option<usize> = None;
         let mut infos = Vec::with_capacity(brackets.len());
         let bracket_total = brackets.len() as u64;
         for (bn, br) in brackets.iter().enumerate() {
             progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
             let (seam_pre, seam_post, stage) =
                 match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
-                    Ok((pre, post, _, _)) => {
+                    Ok((pre, post, _, _, structure_start_frame)) => {
                         any_ok = true;
+                        if br.refined == refined {
+                            throat_structure_frame = Some(structure_start_frame);
+                        }
                         (Some(pre), Some(post), None)
                     }
                     Err(f) => {
@@ -2315,7 +2323,11 @@ pub(crate) fn characterize_gaps_with_gate(
         }
 
         // Residual stays at the gate's structure throat (same-source cancellation as the gate scores).
-        if let Some(throat_frame) = oracle_throat_structure_frame(&params, &cache, refined) {
+        // Reuse the placement already computed in the bracket loop above when the throat bracket scored
+        // `Ok`; only fall back to a fresh `gate_structure_align` call when it didn't (e.g. no zero-move
+        // bracket, or the throat candidate failed before/without a structure placement).
+        let throat_frame = throat_structure_frame.or_else(|| oracle_throat_structure_frame(&params, &cache, refined));
+        if let Some(throat_frame) = throat_frame {
             fp.residual = oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
                 chosen_pre_db: finite_db(v.chosen_pre_db),
                 chosen_post_db: finite_db(v.chosen_post_db),

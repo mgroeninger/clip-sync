@@ -1282,13 +1282,17 @@ pub fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
 /// Pearson `(pre, post)` + confidence + ranking score, or the gate failure. See
 /// docs/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
 #[doc(hidden)]
+/// The 5th element is the structure-aligned placement (`GateStructureAlign::unified.alignment.start_frame`,
+/// already computed inside the gate) — callers that also need the throat placement (e.g. the zero-move
+/// bracket read in `characterize_gaps_with_gate`) can reuse it instead of a second `gate_structure_align`
+/// call via `oracle_throat_structure_frame` for the same `(refined, baseline)` pair.
 pub fn oracle_score_fit_candidate(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     anchor_seam_bracket: bool,
-) -> Result<(f64, f64, FillConfidence, f64), SeamGateFailure> {
+) -> Result<(f64, f64, FillConfidence, f64, usize), SeamGateFailure> {
     let (outcome, ranking_score) =
         evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket)?;
     Ok((
@@ -1296,6 +1300,7 @@ pub fn oracle_score_fit_candidate(
         outcome.report_post,
         outcome.confidence,
         ranking_score,
+        outcome.structure_start_frame,
     ))
 }
 
