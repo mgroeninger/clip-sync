@@ -390,8 +390,13 @@ pass** over failed gaps only, using the pass-1 anchor table — not a reason to 
 
 #### §2.5.2 Wire types (`domain/gap_repair_spec.rs` — new)
 
-New domain module; **no PCM inside the spec** — only frame indices, offsets, and enums. PCM stays in the
-decode buffer; the executor slices from it using the spec's indices.
+New domain module. **PCM-ownership rule (resolved 2026-07-05):** *characterize* owns all B access. A
+**bracket** spec carries **indices only** (`FillAlignment` + `normalize_gain`); its fill is sliced from the
+decode buffer by the executor. A **silence-splice** spec carries **synthesized PCM** (`fill: Vec<f32>`),
+because dual-fit's interior-trimmed bridge is not reconstructable from decode indices — so the executor for
+that strategy only queues it. The earlier "no PCM inside the spec" phrasing was wrong: it contradicts
+`SilenceSplice.fill`, and `Bracket.normalize_gain` already presupposes characterize sliced B to compute the
+RMS gain. State the asymmetry rather than an invariant the types break.
 
 ```rust
 /// One entry per `FillRegion` after characterization (fix-list + repair-params).
@@ -483,8 +488,13 @@ pub struct GapRepairPlan {
 | `Skip` + dual-fit declined (program-quiet / donor-dead) | **Program-quiet** | G5 + G6 decline |
 | `Skip` + other gate failure | **Program-quiet** or bracket-exhausted skip | map `GapPatchSkipReason` + donor axes |
 
-Implement as `GapRepairSpec::cell(&self) -> GapRepairCell` + reuse harness helpers (`dualfit_target()`, etc.)
-from `clip-sync-repair-harness/src/golden_baseline.rs`.
+`cell()` must be **total** over the stored axes — the ambiguous last row is resolved by the donor D/R fields
+(§2.5.7 item 1): a bracket-exhausted skip with `donor_interior.continuous = false` (internal silent run) is the
+§4.1a **class-4** donor-aligned decline (largest real bucket, 14/62), reported as Program-quiet/donor-dead —
+**not** a cell of its own. `program_quiet_at_nominal` (nominal-span silence) wins over aligned occupancy when
+both fire. Implement as `GapRepairSpec::cell(&self) -> GapRepairCell` + reuse harness helpers
+(`dualfit_target()`, etc.) from `clip-sync-repair-harness/src/golden_baseline.rs`; C4 unit-tests it against all
+six §4.1a classes.
 
 **Relationship to `GapFingerprint`:** the fingerprint struct remains the **licensing-safe export schema**.
 Add `GapRepairSpec::to_fingerprint_summary(&self, x: Option<FingerprintXSet>) -> GapFingerprint` — or build
@@ -503,7 +513,7 @@ Minimal refactor: **extract**, don't rewrite. Initial land keeps `prepare_region
 | **Char — geometry** | Refine A throat, B window | `policies::refine_gap_frames`, `resolve_gap_offset_secs`, `slice_b_segment`, `derive_seam_gate_geometry` | Extract from `prepare_region_patch` ~L1731–1914 |
 | **Char — shared context** | Border templates, signature (future hoist) | `border_templates_for_gap`, `build_gap_signature`, `SeamGateConfig::from_repair` | Hoist in step 1 **after** step 6 boundary |
 | **Char — bracket decision** | G1–G4 + R | `evaluate_seam_gate` (`patch_region.rs`) | Same oracle; output → `GapRepairStrategy::Bracket` or gate `Err` |
-| **Char — dual-fit decision** | G6 detect + fit + validate | `dual_fit_eligible`, `build_dual_fit_input`, `try_dual_fit`, `classify_fill_waveform_confidence`, `fill_splice_seam_correlations_interleaved` | Move re-validation **into characterize**; executor trusts spec |
+| **Char — dual-fit decision** | G6 detect + fit + validate | `dual_fit_eligible`, `build_dual_fit_input`, `try_dual_fit`, `classify_fill_waveform_confidence` on `try_dual_fit`'s returned `pre_seam_r`/`post_seam_r`, `measure_dual_fit_residual_verdict` | Move re-validation **into characterize**; executor trusts spec. **A7:** classify the returned seam scores directly — do **not** re-score via `fill_splice_seam_correlations_interleaved` (its border branch measures the wrong, adjacent B window for a dual-fit bridge). |
 | **Char — skip packaging** | Skip reason + cell | `seam_failure_outcome`, `GapPatchSkipReason` mapping | Replaces inline `skip_or_dual_fit` return path |
 | **Char — diagnostics overlay** | Per-bracket `failure_stage` (fingerprint only) | `oracle_score_fit_candidate`, `oracle_build_fit_cache`, `list_feasible_anchor_brackets` | Keep on fingerprint export path until step 8; optional cache from characterize |
 | **Char — registration/donor D/R** | Axes for golden + dual-fit | `lag_at_placement` / `baseline_lag`, `donor_interior_at`, `program_quiet_at_nominal`, `splice_dualfit_at` | Always for patch/skip decision; X fields still flag-gated |
@@ -547,13 +557,24 @@ Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute`
 1. build_gap_fill_plan(report)           // unchanged
 2. decode_ab(...)                        // unchanged
 3. FOR each region IN plan.regions:
-       specs.push(characterize_region(...))
+       specs.push(characterize_region(...))         // region-INFALLIBLE: every region yields a spec
+                                                     // (failures fold into verdict=Skip, never error out)
 4. [optional] anchored_retry pass 2:
-       re-characterize failed specs with anchor table
+       anchors = build_patch_anchor_candidates(&specs)   // from pass-1 SPECS ONLY (placements live in
+                                                          // Bracket.alignment.start_frame) — NOT execution
+       FOR each spec WHERE verdict is Skip:
+           specs[i] = characterize_region(..., anchors)  // re-characterize failed regions with the table
 5. FOR each spec IN specs WHERE verdict is Patch:
-       patches.push(execute_region_spec(...))
+       patches.push(execute_region_spec(...))        // thin: slices bracket fill / queues splice PCM only
 6. splice_into_a + PatchSummary           // unchanged
 ```
+
+**Why this stays two clean loops:** the anchor table is a cross-gap aggregate, so it *looks* like it breaks
+per-region independence — but `build_patch_anchor_candidates` needs only pass-1 **placements**, which live in
+the specs (`Bracket.alignment.start_frame`), not in executed `RegionPatch`es. So pass 2 is
+`build-anchors-from-specs → re-characterize-failed`, still entirely before any execution. **Confirm this when
+implementing** — if the anchor table ever needs an executed/spliced result, the two-loop shape is wrong and
+this must be revisited.
 
 Scan-only mode: phases 1–2 of the **binary** unchanged. Optional future: run characterize without execute
 when a `--repair-preview` flag is added (not in scope for step 6 — document hook only).
@@ -566,6 +587,45 @@ when a `--repair-preview` flag is added (not in scope for step 6 — document ho
 | **C5** | Live characterize invariance (calls `characterize_all_regions`, not static JSON) | step 7 | Closes §4.6 “live fingerprint recompute” gap for decisions |
 
 Add C4/C5 to §4.7 backlog when implementing; C2 (byte-identical PCM) remains the executor regression gate.
+
+#### §2.5.7 Open specification items (resolve before 6a — added 2026-07-05)
+
+Audit gaps found reviewing §2.5 against the code. Ordered by how much each blocks the build.
+
+1. **The spec's D/R payload is undefined — the crux of "fingerprint = projection."** `tags_ctx: GapRepairTags`
+   is described only as "seam scores, anchor flags, residual summary," and `GapRepairTags` / `FingerprintXSet`
+   (in `to_fingerprint_summary`) are **named but never typed**. Meanwhile the golden harness (§4.1) diffs
+   `baseline_lag` pre/post `peak_r`/`frac_lag_ms`, `splice.step_ms`,
+   `splice_dualfit.{pre,post}_seam_r/post_seam_global_r/trim_frames`,
+   `donor_interior[_nominal].{silence_fraction,continuous}`, `peak_z`, `prominence`, residual dB — **each tagged
+   with its placement**. For the projection to hold, **every §4.1 Tier-1/2 field needs a typed home on the spec,
+   carrying its placement enum**. If they aren't stored, the fingerprint export re-runs the measurements — the
+   exact two-oracle drift the refactor exists to kill (this is the A7 bug in structural form). **Deliverable
+   before 6a:** enumerate the D/R block 1:1 with the §4.1 table; C4 asserts the round-trip.
+
+2. **Single seam-scoring authority (A7 invariant).** After [A7](#47), promote "the executor and fingerprint
+   export **read** correlations from the spec, never recompute" to a **named invariant**. A7 is precisely what a
+   second in-executor re-measurement produces: a seam the characterize pass already scored, recomputed at the
+   wrong placement, drifting to a false skip. This also makes the §4.3 placement-provenance guard enforceable on
+   the **live** path (C5), not just the frozen JSON.
+
+3. **`characterize_region` is region-infallible.** Today `prepare_region_patch` handles `BExtractFailed` /
+   zero-length / out-of-range inline by returning a skip. The §2.5.5 loop only executes `verdict is Patch`, so
+   characterize must **always return a spec** (fold every failure into `verdict = Skip`, never `Result::Err` out
+   of the loop) — otherwise a characterize error silently drops a region that today produces a reported skip.
+   State it as a type-level guarantee (`-> GapRepairSpec`, not `-> Result<…>`).
+
+4. **Report-vs-splice correlation reconciliation owner.** The ordinary path currently picks the better of
+   `report_*` vs `splice_*` correlations at fill time (`use_splice = splice_min >= gate_min`,
+   `patch_audio.rs` ~L2308–2318). Assign that decision to **characterize** and store which won on the spec;
+   otherwise the executor still runs correlation logic and is not "thin" (and violates item 2).
+
+5. **C2 byte-identical needs a shared-state hazard list.** Reordering to characterize-all→execute-all is
+   byte-identical only if characterize writes **nothing** a later characterize or the executor reads. Decode
+   buffers are read-only (good). Enumerate and assert the rest are not mutated mid-characterize before use:
+   global/border RMS caches, progress-driven state, the anchor table (item in §2.5.5). C2 on the fixed corpus
+   can pass and still drift on media with a different gap **ordering** if any such write exists — so the hazard
+   list, not just the corpus diff, is the real guarantee.
 
 ### §2.4 Migration status (§3 steps)
 
