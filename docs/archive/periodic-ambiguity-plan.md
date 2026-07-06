@@ -143,7 +143,7 @@ flowchart TD
 
 ## Cross-plan sequencing
 
-- **Independent** of [TEMP-ac3-backend-plan.md](TEMP-ac3-backend-plan.md).
+- **Independent** of AC-3 backend selection (never shipped; oxideav-ac3 0.0.10 fixed the decode quality issue).
 - **Complements** [query-reference-alignment-plan.md](query-reference-alignment-plan.md) (short-B localization); share `ambiguous` semantics in docs only until query mode ships.
 - Follows [archive/verification-hardening-plan.md](archive/verification-hardening-plan.md) (verify retry, `candidates_tried`); Phase 2 override runs **after** best-attempt selection.
 - JSON additions stay **v1 additive** per [archive/output-error-contract-plan.md](archive/output-error-contract-plan.md).
