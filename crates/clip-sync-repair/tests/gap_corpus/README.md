@@ -32,8 +32,10 @@ cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_committe
 # W5 editorial anchor seam (scan + domain + force patch; ~50s)
 cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_w5_anchor_seam -- --nocapture
 
-# Patch timing on committed gap fixtures (scan + fit patch; 5s border, no extension grid)
-cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed -- --ignored --nocapture
+# Patch timing on committed gap fixtures (scan + gate patch; 5s border, `--release`)
+# Cases: `mid_gap_2s` / `stereo_mid_gap_2s` (happy path), `leading_silence_16s` (fast skip).
+# `multi_gap` is scan-only (`patch_timing = false` in manifest).
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed --release -- --ignored --nocapture
 
 # Production-default fit patch on corpus (slow; run before release)
 cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_production -- --ignored --nocapture

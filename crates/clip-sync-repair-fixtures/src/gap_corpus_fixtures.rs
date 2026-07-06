@@ -17,6 +17,10 @@ use clip_sync_repair::domain::gap::Gap;
 const DEFAULT_SAMPLE_RATE: u32 = 11_025;
 const DEFAULT_TOTAL_SECS: u32 = 30;
 
+fn default_true() -> bool {
+    true
+}
+
 // ── manifest types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +145,12 @@ pub struct GapCorpusCase {
     /// Per-case patch wall-time budget (seconds); falls back to `[defaults].patch_max_wall_secs`.
     #[serde(default)]
     pub max_patch_wall_secs: Option<f64>,
+    /// When false, excluded from `gap_corpus_patch_timing_*` (scan-only or multi-gap rows).
+    #[serde(default = "default_true")]
+    pub patch_timing: bool,
+    /// When true, `gap_corpus_patch_timing_*` requires `patched_count > 0`.
+    #[serde(default)]
+    pub patch_timing_expect_patched: bool,
     /// Sample rate override for generated WAVs (falls back to `[defaults].sample_rate`).
     #[serde(default)]
     pub sample_rate: Option<u32>,
@@ -844,15 +854,25 @@ fn patch_audio_request_from_repair(
     repair.patch_settings().into_request(report)
 }
 
-/// Fit patch config for committed corpus timing: still `fill_mode = fit`, but without the
-/// joint boundary grid and with a smaller B haystack so debug CI stays fast.
+/// Patch timing config: production gate path (structure + waveform), 5s B haystack, no
+/// extension grid, dual-fit rescue, or anchor seam search. Chirp corpus fixtures patch
+/// reliably under gate; fit-joint on chirp is covered by `patch_audio_integration`.
 fn patch_audio_request_for_corpus_timing(
     report: clip_sync_repair::domain::GapReport,
 ) -> clip_sync_repair::application::PatchAudioRequest {
-    let repair = clip_sync_repair::infrastructure::config::RepairConfig {
+    use clip_sync_repair::domain::{AnchorSeamMode, FillMode, GapSignatureMode};
+    use clip_sync_repair::infrastructure::config::RepairConfig;
+
+    let repair = RepairConfig {
+        fill_mode: FillMode::Gate,
         fill_border_search_secs: 5.0,
         gap_end_extend_on_post_seam_fail: false,
         gap_start_extend_on_pre_seam_fail: false,
+        dual_fit: false,
+        normalize_fill: false,
+        gap_signature_mode: GapSignatureMode::Bool,
+        anchor_seam_mode: AnchorSeamMode::Off,
+        min_fill_correlation: 0.35,
         ..Default::default()
     };
     patch_audio_request_from_repair(report, &repair)
@@ -921,7 +941,7 @@ pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
     }
 }
 
-/// Patch wall-time budget guard for committed/generated corpus rows (fit mode, no full grid).
+/// Patch wall-time budget guard for committed/generated corpus rows (gate path, 5s border).
 pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
     use clip_sync_repair::application::{PatchAudio, PatchAudioResult};
 
@@ -932,11 +952,9 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);
 
-    for case in manifest
-        .case
-        .iter()
-        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty())
-    {
+    for case in manifest.case.iter().filter(|c| {
+        c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing
+    }) {
         let max_wall_secs = case
             .max_patch_wall_secs
             .unwrap_or(manifest.defaults.patch_max_wall_secs);
@@ -999,6 +1017,16 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
             elapsed,
         );
 
+        if case.patch_timing_expect_patched {
+            assert!(
+                result.summary.patched_count > 0,
+                "case {}: patch timing expects at least one patched gap (got {} patched, {} skipped)",
+                case.id,
+                result.summary.patched_count,
+                result.summary.skipped_count,
+            );
+        }
+
         assert!(
             elapsed.as_secs_f64() <= max_wall_secs,
             "case {}: patch wall time {:.2?} exceeds {:.1}s budget",
@@ -1020,11 +1048,9 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);
 
-    for case in manifest
-        .case
-        .iter()
-        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty())
-    {
+    for case in manifest.case.iter().filter(|c| {
+        c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing
+    }) {
         let resolved = resolve_case_paths(case, &manifest.defaults);
         let video_a = resolved.video_a.clone();
         let temp_b = tempfile::tempdir().expect("tempdir for reference B");

@@ -139,6 +139,7 @@ try {
             'golden_baseline_corpus_invariance',
             '--', '--ignored'
         )
+        # Patch-timing rows: release-calibrated budgets; debug is ~10–20× slower.
         foreach ($gapFilter in @('gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing')) {
             Invoke-CargoTest @(
                 '-p', 'clip-sync-repair',

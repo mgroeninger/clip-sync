@@ -305,7 +305,7 @@ How `test-tier.ps1` runs `#[ignore]` rows (repair crate). Source of truth: `scri
 | Tier command | Mechanism | Ignored rows |
 |--------------|-----------|--------------|
 | **oracle** | `--test oracle_energy` then `-- --ignored` on same binary | All ignored rows in `oracle_energy.rs` (EC01/EC02 production, patch control/smoke, haystack, EC06 search) |
-| **validation** | `validate_*` feature binaries (no `#[ignore]`) + gap_corpus **substring** filters + `--ignored` | `gap_corpus_generated`, `gap_corpus_external`, `gap_corpus_patch_timing_*` — **not** `gap_corpus_regenerate_*` (manual only) |
+| **validation** | `validate_*` feature binaries (no `#[ignore]`) + gap_corpus **substring** filters + `--ignored` **`--release`** | `gap_corpus_generated`, `gap_corpus_external`, `gap_corpus_patch_timing_*` — **not** `gap_corpus_regenerate_*` (manual only) |
 | **validation** | `--test cli_mux_integration -- --ignored` when ffmpeg on PATH | `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` |
 | **diagnostic** | `diag_*` + `seam_residual_oracle` (no `#[ignore]` in those binaries) | — |
 | **diagnostic** | Named `--ignored` filters (not blanket `--lib --ignored`) | `broadband_oracle_veto_rescue_patches_marginal`, `write_full_surface_repair_golden`, `mux_reports_progress_for_short_fixture` |

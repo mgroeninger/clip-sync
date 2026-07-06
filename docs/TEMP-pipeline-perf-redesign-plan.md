@@ -415,8 +415,9 @@ pub struct GapRepairSpec {
     pub crossfade_secs: f64,
     /// Patch or skip + cell (derived readout for reporting).
     pub verdict: GapRepairVerdict,
-    /// Gate/dual-fit diagnostics needed for JSON tags (not X-set).
-    pub tags_ctx: GapRepairTags,            // seam scores, anchor flags, residual summary
+    /// The full D/R payload — placement-tagged, populated for EVERY gap regardless of verdict.
+    /// This is the single source the fingerprint export + golden record project from (§2.5.2a).
+    pub tags_ctx: GapRepairTags,
 }
 
 pub struct BExtractWindow {
@@ -462,11 +463,20 @@ pub enum GapRepairStrategy {
         normalize_gain: f32,              // 1.0 or computed at characterize time
     },
     SilenceSplice {
-        /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
+        /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`). Not reconstructable
+        /// from decode indices (interior trim) — the PCM-ownership asymmetry above.
         fill: Vec<f32>,
-        pre_seam_r: f64,
-        post_seam_r: f64,
-        trim_frames: i64,
+        pre_seam_r: f64,                  // = DualFitResult.pre_seam_r  (copied from tags.seam_local)
+        post_seam_r: f64,                 // = DualFitResult.post_seam_r (single-source; not recomputed)
+        /// Per-shoulder seam-local lags (frames), re-anchored on nominal `b_mapped`. REQUIRED to rebuild
+        /// `b_pre_seam = b_mapped_start + pre_lag` / `b_post_seam = b_mapped_start + gap_frames + post_lag`
+        /// — the placement A6 residual and A7 re-validation read. Their absence was the §2.5.7 #1 gap
+        /// (a spec that looks complete but can't reconstruct the two-lag mapping → A7 in structural form).
+        pre_lag: i64,                     // DualFitResult.pre_lag
+        post_lag: i64,                    // DualFitResult.post_lag
+        trim_frames: i64,                 // DualFitResult.trim_frames (bridge − gap)
+        /// Per-shoulder residual at (nominal_delta + pre_lag)/(+ post_lag) — the A6 gate.
+        residual: Option<SeamResidualVerdict>,
         confidence: FillConfidence,       // from re-validation at characterize time
     },
 }
@@ -500,6 +510,110 @@ six §4.1a classes.
 Add `GapRepairSpec::to_fingerprint_summary(&self, x: Option<FingerprintXSet>) -> GapFingerprint` — or build
 fingerprints by reading specs and attaching X fields only when `fingerprint_diagnostics` is on. Do **not** make
 production depend on the full `GapFingerprint` blob.
+
+#### §2.5.2a `GapRepairTags` — the typed D/R payload (resolves §2.5.7 #1, 2026-07-06)
+
+`tags_ctx` was previously named but untyped — the crux gap (§2.5.7 #1). Typed here **1:1 against the golden
+`GapRow`** (`clip-sync-repair-harness/src/gap_fingerprint_corpus.rs:379`) / §4.1 table, so the fingerprint
+export is a pure **projection** (no re-measurement — the two-oracle drift that is A7 in structural form). Each
+block's **placement** (§4.3 provenance key) is fixed by construction; the golden differ stamps every scalar
+with it. Reuses domain types `DonorInterior` (`domain/donor.rs:29`) and `SeamResidualVerdict`
+(`domain/policies.rs:1940`) so there is no re-typed struct to drift.
+
+```rust
+/// Where a D/R measurement was taken — part of the golden diff key (§4.3): a refactor that moves a
+/// field across placements FAILS the harness even if the value looks plausible.
+pub enum Placement {
+    GrossBMapped,   // 1 s `baseline_lag` / `splice` / `peak_z`
+    SeamLocal,      // 250 ms ± SEAM_LOCAL_REFINE_MS, nominal-anchored — `splice_dualfit`
+    NominalSpan,    // `b_mapped .. + gap_frames` — `donor_interior_nominal` (registration-independent)
+    AlignedBridge,  // `b_mapped + L_pre .. b_mapped_end + L_post` — `donor_interior`
+    GateThroat,     // structure-slid zero-move seam — gate decision / residual / bracket counts
+    ASide,          // A's own timeline — `levels` floors
+}
+
+/// D/R coordinates for one characterized gap — populated for EVERY gap regardless of verdict.
+/// No X-set (seam_probe / wide_envelope / b_levels) — those stay behind fingerprint_diagnostics.
+pub struct GapRepairTags {
+    pub registration: RegistrationTags,       // GrossBMapped
+    pub seam_local: Option<SeamLocalTags>,    // Some iff dual-fit detect ran (bracket-exhausted skip path)
+    pub donor_nominal: Option<DonorInterior>, // NominalSpan   — reuse domain/donor.rs
+    pub donor_aligned: Option<DonorInterior>, // AlignedBridge
+    pub gate: GateTags,                       // GateThroat
+    pub levels: LevelTags,                    // ASide
+}
+
+/// Placement = GrossBMapped. From `baseline_lag` mono pre/post `LagSummary` + `SpliceSummary`.
+pub struct RegistrationTags {
+    pub pre_peak_r: Option<f64>,       // → GapRow.peak_r_pre        [T2·ε]
+    pub post_peak_r: Option<f64>,      // → GapRow.peak_r_post       [T2·ε]
+    pub pre_frac_lag_ms: Option<f64>,  // → GapRow.frac_lag_pre_ms   [T2·ε]
+    pub post_frac_lag_ms: Option<f64>, // → GapRow.frac_lag_post_ms  [T2·ε]
+    pub pre_peak_z: Option<f64>,       // → GapRow.uniqueness_z (worst) [T2·ε]
+    pub post_peak_z: Option<f64>,
+    pub pre_prominence: Option<f64>,   // → GapRow.uniqueness_prom (worst) [T2·ε]
+    pub post_prominence: Option<f64>,
+    pub step_ms: Option<f64>,          // splice.step_ms → GapRow.splice_step_ms [T2·ε]
+    pub edge_pinned: Option<bool>,     // splice.edge_pinned GIGO guard → GapRow.splice_edge_pinned [T1]
+}
+
+/// Placement = SeamLocal. From `splice_dualfit` (SpliceDualfit) + DualFitResult lags. The block that
+/// makes dual-fit reconstructable — pre_lag/post_lag pin the per-shoulder B placement (A7 invariant).
+pub struct SeamLocalTags {
+    pub pre_seam_r: f64,               // → GapRow.dualfit_pre_r          [T2·ε]
+    pub post_seam_r: f64,              // → GapRow.dualfit_post_r         [T2·ε]
+    pub post_seam_global_r: f64,       // post@pre lag (step-real) → GapRow.dualfit_post_global_r [T2·ε]
+    pub trim_frames: i64,              // bridge − gap (repair-param)     [T2·ε]
+    pub gate_pass: bool,               // min(pre,post) ≥ floors → GapRow.dualfit_pass [T1]
+    pub pre_lag: i64,                  // DualFitResult.pre_lag  — REQUIRED for b_pre_seam
+    pub post_lag: i64,                 // DualFitResult.post_lag — REQUIRED for b_post_seam
+    // Uniqueness validators — None on the production characterize path (Decision 1 below).
+    pub pre_seam_prom: Option<f64>,    // → GapRow.dualfit_seam_prom (min) [T3]
+    pub post_seam_prom: Option<f64>,
+    pub pre_seam_z: Option<f64>,       // [T3]
+    pub post_seam_z: Option<f64>,
+}
+
+/// Placement = GateThroat.
+pub struct GateTags {
+    pub brackets_total: usize,               // → GapRow.brackets_total   [T1 int]
+    pub brackets_passing: usize,             // → GapRow.brackets_passing [T1 int]
+    pub closest_failure_stage: Option<String>, // → GapRow.closest_failure_stage
+    pub structure_min: Option<f64>,          // → GapRow.structure_min     [T2·ε]
+    pub seam_min: Option<f64>,               // throat waveform → GapRow.seam_min [T2·ε]
+    pub best_bracket_seam: Option<f64>,      // → GapRow.best_bracket_seam [T2·ε]
+    pub residual: Option<SeamResidualVerdict>, // → GapRow.residual_headroom_db / _informative [T2·ε]
+}
+
+/// Placement = ASide. From `levels` (LevelProfile).
+pub struct LevelTags {
+    pub a_gap_floor_db: f64,   // → GapRow.a_gap_floor_db   [T2·ε]
+    pub a_noise_floor_db: f64, // → GapRow.a_noise_floor_db [T2·ε]
+}
+```
+
+**Single-source invariant (§2.5.7 #2, named).** When the verdict is `Patch(SilenceSplice)`, its
+`{pre_seam_r, post_seam_r, pre_lag, post_lag, trim_frames}` are assigned from the **same `DualFitResult`**
+whose values populate `tags.seam_local` — copied once, never independently recomputed. Likewise `to_fingerprint_
+summary` and the executor **read** these; neither re-scores a seam. C4 asserts `tags.seam_local.pre_seam_r ==
+strategy.pre_seam_r` (and post) whenever the verdict is a splice — A7 promoted to a type-level convention.
+
+**Resolved open items (2026-07-06):**
+
+1. **Uniqueness validators are `None` on the production path.** `try_dual_fit` does not compute
+   `pre_seam_prom`/`post_seam_prom`/`pre_seam_z`/`post_seam_z` (only the scan's `splice_dualfit_at` does).
+   They are **Tier-3** in §4.1, so the golden diff tolerates their absence; the production `SeamLocalTags`
+   leaves them `None`, and `to_fingerprint_summary` emits `None` rather than re-running the validators. A
+   fingerprint built from a production characterize is therefore **lossy on the T3 uniqueness fields only** —
+   decision-invariant, which is all the harness asserts.
+2. **Donor blocks reuse `DonorInterior` whole.** `donor_nominal`/`donor_aligned` carry the full domain type,
+   including `longest_silence_ms` (not in `GapRow`). The extra field is a harmless superset — keeping the
+   domain type intact avoids a lossy projection struct that could drift from `donor_interior_at`.
+
+**C4 projection scope.** `GapRepairSpec::to_gap_row()` must reproduce every §4.1 Tier-1/2 `GapRow` field
+**without touching audio** (pure projection); the derived predicates (`dualfit_target()`,
+`program_quiet_skip()`, `bracket_exhausted()`) become spec methods reading these fields, mirroring
+`gap_fingerprint_corpus.rs:582–639`. Tier-3 fields (uniqueness validators, X-set) are exempt.
 
 #### §2.5.3 Function map — existing code → target roles
 
@@ -592,16 +706,12 @@ Add C4/C5 to §4.7 backlog when implementing; C2 (byte-identical PCM) remains th
 
 Audit gaps found reviewing §2.5 against the code. Ordered by how much each blocks the build.
 
-1. **The spec's D/R payload is undefined — the crux of "fingerprint = projection."** `tags_ctx: GapRepairTags`
-   is described only as "seam scores, anchor flags, residual summary," and `GapRepairTags` / `FingerprintXSet`
-   (in `to_fingerprint_summary`) are **named but never typed**. Meanwhile the golden harness (§4.1) diffs
-   `baseline_lag` pre/post `peak_r`/`frac_lag_ms`, `splice.step_ms`,
-   `splice_dualfit.{pre,post}_seam_r/post_seam_global_r/trim_frames`,
-   `donor_interior[_nominal].{silence_fraction,continuous}`, `peak_z`, `prominence`, residual dB — **each tagged
-   with its placement**. For the projection to hold, **every §4.1 Tier-1/2 field needs a typed home on the spec,
-   carrying its placement enum**. If they aren't stored, the fingerprint export re-runs the measurements — the
-   exact two-oracle drift the refactor exists to kill (this is the A7 bug in structural form). **Deliverable
-   before 6a:** enumerate the D/R block 1:1 with the §4.1 table; C4 asserts the round-trip.
+1. **RESOLVED (2026-07-06) — see §2.5.2a.** The spec's D/R payload (`tags_ctx: GapRepairTags`) is now typed
+   1:1 against the golden `GapRow` / §4.1 table, every block carrying its `Placement`, reusing `DonorInterior` /
+   `SeamResidualVerdict`. `SilenceSplice` gained `pre_lag`/`post_lag`/`residual` so the per-shoulder B placement
+   is reconstructable (the missing piece — its absence was A7 in structural form). Two sub-decisions recorded in
+   §2.5.2a: uniqueness validators (`*_seam_prom`/`*_seam_z`) are `None` on the production path (Tier-3, tolerated
+   by the diff); donor blocks reuse `DonorInterior` whole. C4 still asserts the round-trip before 6a.
 
 2. **Single seam-scoring authority (A7 invariant).** After [A7](#47), promote "the executor and fingerprint
    export **read** correlations from the spec, never recompute" to a **named invariant**. A7 is precisely what a

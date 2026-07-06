@@ -192,7 +192,7 @@ Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-
 | `validate_patch_audio` | **validation** | Same sine fixtures, production-like fit config | `patch_audio_fit_production_defaults_smoke` (SP05) — run before release |
 | `query_reference_integration` | **integration** (PR) | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
 | `gap_corpus` | external / manual | `CLIP_SYNC_GAP_CORPUS` real media | Listen + skip/marginal counts (see gap corpus README) |
-| `gap_corpus_patch_timing_committed` | **integration** (`#[ignore]`) | Gap corpus WAVs + generated clean B reference | Patch wall-time budget (`max_patch_wall_secs` in manifest) |
+| `gap_corpus_patch_timing_committed` | **integration** (`#[ignore]`) | Gap corpus WAVs + generated clean B reference | Patch wall-time budget (`max_patch_wall_secs`); happy-path cases require `patched_count > 0`. Run with `--release`. |
 | `gap_corpus_patch_timing_production` | **integration** (`#[ignore]`) | Same fixtures, `RepairConfig::default()` fit | Manual perf smoke before release |
 
 **CI command** (PR gate — does **not** run full `patch_audio_integration`; see [development.md](development.md) § Repair integration binary matrix):
@@ -207,9 +207,9 @@ Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-
 # Production-default fit smoke (validation tier)
 .\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair
 
-# Ad hoc patch timing (ignored rows)
-cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed -- --ignored --nocapture
-cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_production -- --ignored --nocapture
+# Ad hoc patch timing (ignored rows; use --release — budgets are release-calibrated)
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_committed --release -- --ignored --nocapture
+cargo test -p clip-sync-repair --test integration_gap_corpus gap_corpus_patch_timing_production --release -- --ignored --nocapture
 ```
 
 **Patch summary fields to track** (JSON / `PatchSummary`): `patched_count`, `skipped_count`, `patched_marginal_count`, per-gap `confidence`, `gap_*_adjust_frames`.

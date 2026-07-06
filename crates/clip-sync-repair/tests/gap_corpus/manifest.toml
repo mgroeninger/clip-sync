@@ -19,7 +19,7 @@ patch_max_wall_secs  = 90.0   # release fit-timing default when a case omits max
 id    = "leading_silence_16s"
 tier  = "committed"
 video_a = "wav/leading_16s_a.wav"
-max_patch_wall_secs = 15.0
+max_patch_wall_secs = 5.0
 [[case.expected_gaps]]
 start_secs = 0.0
 end_secs   = 16.0
@@ -28,7 +28,7 @@ end_secs   = 16.0
 id    = "mid_gap_2s"
 tier  = "committed"
 video_a = "wav/mid_2s_a.wav"
-max_patch_wall_secs = 10.0
+max_patch_wall_secs = 5.0
 patch_timing_expect_patched = true
 [[case.expected_gaps]]
 start_secs = 14.0
@@ -63,7 +63,7 @@ expected_gaps = []
 id    = "stereo_mid_gap_2s"
 tier  = "committed"
 video_a = "wav/stereo_mid_gap_2s_a.wav"
-max_patch_wall_secs = 10.0
+max_patch_wall_secs = 5.0
 patch_timing_expect_patched = true
 # Both channels zeroed in the gap — multichannel scan must still detect it.
 [[case.expected_gaps]]
