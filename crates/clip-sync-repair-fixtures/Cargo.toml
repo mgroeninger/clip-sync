@@ -1,6 +1,6 @@
 [package]
 name = "clip-sync-repair-fixtures"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 publish = false
 description = "Synthetic repair fixtures and oracle helpers for tier tests (not linked into production repair)"

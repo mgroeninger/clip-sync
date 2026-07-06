@@ -23,6 +23,8 @@ Run all commands from the **repo root** (PowerShell):
 | Before release / large validation change | `.\scripts\test-tier.ps1 -Tier validation -Package workspace` | minutes+ |
 | CSV dumps / sweeps (no assertions) | `.\scripts\test-tier.ps1 -Tier diagnostic -Package workspace -Nocapture` | varies |
 
+See [development.md § Versioning and release](development.md#versioning-and-release) for semver bumps and the release checklist.
+
 **CI today:** `.github/workflows/ci.yml` runs `check-repair-test-manifest.ps1` then `-Tier pr` only.
 
 ---

@@ -405,9 +405,9 @@ fn mkv_aac_anchored_end_window_extract_succeeds() {
         rate,
         "mkv_aac anchored end window",
     );
-    let peak = peak_abs(&clip.samples);
+    let peak = peak_abs_i16(&clip.samples);
     assert!(
-        peak > 100,
+        peak > 100.0 / 32767.0,
         "end window should contain chirp audio, peak={peak}"
     );
 }

@@ -1,6 +1,6 @@
 [package]
 name = "clip-sync"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Align two videos by comparing audio fingerprints (library)"
 authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]
@@ -24,7 +24,7 @@ num-complex = "0.4"
 serde = { version = "1", features = ["derive"] }
 symphonia = { version = "0.6", features = ["default", "isomp4", "aac", "mp3", "mkv", "flac"] }
 fdk-aac = { version = "0.8", optional = true }
-oxideav-ac3 = { git = "https://github.com/mgroeninger/oxideav-ac3", optional = true }
+oxideav-ac3 = { version = "0.0.10", optional = true }
 oxideav-core = { version = "0.1", optional = true }
 symphonia-core = { version = "0.6", optional = true }
 thiserror = "1"

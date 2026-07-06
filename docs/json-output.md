@@ -280,3 +280,5 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
    `cargo test -p clip-sync-repair write_full_surface_repair_golden -- --ignored`
 3. Update this document (bump the version marker for breaking changes; additive fields may stay v1 if they are optional-absent).
 4. Land doc + fixture + code in the same commit.
+
+Crate/binary semver (`Cargo.toml`, git tags) is independent — see [development.md](development.md) § Versioning and release.

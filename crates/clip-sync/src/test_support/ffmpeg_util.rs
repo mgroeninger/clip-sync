@@ -555,10 +555,10 @@ fn encode_oxideav_eac3_surround_es(duration_secs: u32) -> Option<Vec<u8>> {
 
 /// Build a 5.1 E-AC-3 MP4 fixture oxideav-ac3 can decode.
 ///
-/// ffmpeg's native `eac3` encoder emits bitstreams (AHT, etc.) that
-/// oxideav-ac3 0.0.8 does not fully implement yet — decode succeeds
-/// structurally but PCM is silent. We encode with oxideav-ac3 and mux
-/// with ffmpeg so the integration test exercises a real decodable stream.
+/// ffmpeg's native `eac3` encoder emits bitstreams (AHT, etc.) that older
+/// oxideav-ac3 builds did not fully implement — decode succeeds structurally
+/// but PCM is silent. We encode with oxideav-ac3 and mux with ffmpeg so the
+/// integration test exercises a real decodable stream.
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]
 pub fn write_eac3_surround_mp4_fixture(path: &Path) -> bool {
     if !ffmpeg_available() {

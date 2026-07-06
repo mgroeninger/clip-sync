@@ -1,6 +1,6 @@
 [package]
 name = "clip-sync-repair"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Gap scan and repair tool for clip-sync"
 authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]

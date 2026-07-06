@@ -5,9 +5,19 @@ pub fn railed_sample_count(samples: &[i16]) -> usize {
     samples.iter().filter(|sample| sample.abs() >= i16::MAX).count()
 }
 
+/// Count normalized f32 samples at full scale (`|s| >= 1.0`).
+pub fn railed_sample_count_f32(samples: &[f32]) -> usize {
+    samples.iter().filter(|sample| sample.abs() >= 1.0).count()
+}
+
 /// Peak absolute sample value in interleaved S16 PCM.
 pub fn peak_abs(samples: &[i16]) -> i16 {
     samples.iter().map(|sample| sample.abs()).max().unwrap_or(0)
+}
+
+/// Peak absolute sample value in normalized f32 PCM.
+pub fn peak_abs_f32(samples: &[f32]) -> f32 {
+    samples.iter().map(|sample| sample.abs()).fold(0.0f32, f32::max)
 }
 
 #[cfg(test)]

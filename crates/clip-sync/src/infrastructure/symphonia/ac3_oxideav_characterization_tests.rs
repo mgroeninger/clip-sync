@@ -7,7 +7,7 @@
 //! Run: `cargo test -p clip-sync --features ac3,ffmpeg-tests ac3_corpus_chirp -- --nocapture`
 //!
 //! Known baseline (oxideav-ac3 0.0.8 crates.io): ~3000 full-scale samples per 60 s stereo clip;
-//! fixed in [mgroeninger/oxideav-ac3](https://github.com/mgroeninger/oxideav-ac3) (0.0.9+).
+//! fixed in oxideav-ac3 0.0.9+ (crates.io 0.0.10 includes the fix).
 
 use std::path::Path;
 use std::time::Duration;
@@ -16,7 +16,7 @@ use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
 use crate::domain::{ClipLabel, ClipWindow, MediaSource};
 use crate::infrastructure::symphonia::probe::probe_media_reusable;
 use crate::infrastructure::symphonia::session::SymphoniaMediaReader;
-use crate::test_support::ac3_pcm_analysis::{peak_abs, railed_sample_count};
+use crate::test_support::ac3_pcm_analysis::{peak_abs, peak_abs_f32, railed_sample_count, railed_sample_count_f32};
 use crate::test_support::audio_fixtures::write_corpus_chirp_wav;
 use crate::test_support::ffmpeg_util::{
     encode_wav_to_ac3_mp4, extract_pcm_s16le_ffmpeg, ffmpeg_available,
@@ -128,9 +128,9 @@ fn oxideav_ac3_corpus_chirp_decode_has_no_railed_samples() {
     )
     .expect("ffmpeg reference decode");
 
-    let oxideav_railed = railed_sample_count(&pcm.samples);
+    let oxideav_railed = railed_sample_count_f32(&pcm.samples);
     let ffmpeg_railed = railed_sample_count(&ffmpeg_pcm);
-    let oxideav_peak = peak_abs(&pcm.samples);
+    let oxideav_peak = peak_abs_f32(&pcm.samples);
     let ffmpeg_peak = peak_abs(&ffmpeg_pcm);
 
     eprintln!(
@@ -147,7 +147,7 @@ fn oxideav_ac3_corpus_chirp_decode_has_no_railed_samples() {
     );
     assert_eq!(
         oxideav_railed, 0,
-        "oxideav-ac3 decode of corpus chirp AC-3 should have zero full-scale (|s|>=32767) \
+        "oxideav-ac3 decode of corpus chirp AC-3 should have zero full-scale (|s|>=1.0) \
          samples; got {oxideav_railed} railed of {} total (peak={oxideav_peak}).",
         pcm.samples.len()
     );

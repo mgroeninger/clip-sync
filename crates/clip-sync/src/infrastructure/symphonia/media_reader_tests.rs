@@ -949,8 +949,11 @@ fn probe_and_extract_ac3_surround_mp4() {
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
     assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
-    let peak = pcm.samples.iter().map(|s| s.abs()).max().unwrap_or(0);
-    assert!(peak > 100, "expected non-silent PCM from AC-3 5.1 decode, peak={peak}");
+    let peak = pcm.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(
+        peak > 100.0 / 32767.0,
+        "expected non-silent PCM from AC-3 5.1 decode, peak={peak}"
+    );
 }
 
 /// Phase 0 — backward-seek characterization: extract a late window, seek back to an early
@@ -1260,6 +1263,9 @@ fn probe_and_extract_eac3_surround_mp4() {
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
     assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
-    let peak = pcm.samples.iter().map(|s| s.abs()).max().unwrap_or(0);
-    assert!(peak > 100, "expected non-silent PCM from E-AC-3 5.1 decode, peak={peak}");
+    let peak = pcm.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(
+        peak > 100.0 / 32767.0,
+        "expected non-silent PCM from E-AC-3 5.1 decode, peak={peak}"
+    );
 }

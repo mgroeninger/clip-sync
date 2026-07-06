@@ -2,7 +2,7 @@
 
 Build commands, Cargo feature flags per crate, and how to run the full test matrix (including slow and `#[ignore]` tiers).
 
-**Related:** [test-tiers.md](test-tiers.md) (**how to run each test tier** — start here for `test-tier.ps1`), [cli-output.md](cli-output.md) (CLI progress and human-report contract), [gap-repair-guide.md](gap-repair-guide.md) (gap types and repair recommendations), [gap-fill-modes.md](gap-fill-modes.md) (`fit` vs `gate`, flags, performance), [README.md](../README.md) § Gap patching pipeline, [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
+**Related:** [test-tiers.md](test-tiers.md) (**how to run each test tier** — start here for `test-tier.ps1`), [cli-output.md](cli-output.md) (CLI progress and human-report contract), [json-output.md](json-output.md) (JSON contract and revision procedure), [gap-repair-guide.md](gap-repair-guide.md) (gap types and repair recommendations), [gap-fill-modes.md](gap-fill-modes.md) (`fit` vs `gate`, flags, performance), [README.md](../README.md) § Gap patching pipeline, [corpus-validation.md](corpus-validation.md) (alignment corpus findings), [tests/corpus/README.md](../tests/corpus/README.md), [gap corpus README](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 
 ---
 
@@ -409,6 +409,80 @@ cargo test --workspace
 cargo test -p clip-sync --features he-aac,test-utils,ffmpeg-tests,ac3 -- --ignored
 cargo test -p clip-sync-repair --features ac3,ffmpeg-mux,ffmpeg-tests -- --ignored
 ```
+
+---
+
+## Versioning and release
+
+Clip-sync uses a **single workspace version** defined in the root `Cargo.toml` under `[workspace.package].version`. Every crate under `crates/` inherits it via `version.workspace = true`. The CLI binaries (`clip-sync`, `clip-sync-repair`) expose it via `-V` / `--version` (Clap `version` → `CARGO_PKG_VERSION`).
+
+| Crate | Role |
+|-------|------|
+| `clip-sync` | Library |
+| `clip-sync-cli` | Analyzer binary |
+| `clip-sync-repair` | Repair binary |
+| `clip-sync-repair-fixtures` | Test fixtures (`publish = false`) |
+| `clip-sync-repair-harness` | Integration runners (`publish = false`) |
+
+**Publish policy:** crates are not published to crates.io today. Version bumps are for operator traceability (git tags, `--version`, support questions). Revisit publish policy before any public crate release.
+
+### Semver guidance
+
+Follow [semver](https://semver.org/) at the workspace level:
+
+| Bump | When |
+|------|------|
+| **PATCH** (`0.1.0` → `0.1.1`) | Bug fixes, performance improvements, refactors with no user-visible behavior change |
+| **MINOR** (`0.1.0` → `0.2.0`) | New features, new CLI flags, additive JSON fields, new gap-repair behavior that does not break existing configs |
+| **MAJOR** (`0.1.0` → `1.0.0`) | Breaking CLI changes, breaking TOML config keys or semantics, non-additive `--format json` changes, removal of supported behavior |
+
+While all crates remain `0.x.y`, treat **MINOR** as the default bump for meaningful user-facing improvements and **PATCH** for fixes-only releases.
+
+### JSON output contract
+
+JSON versioning is **separate** from crate semver. The analyzer/repair `--format json` shape is documented in [json-output.md](json-output.md) (currently **v1**). When changing report DTOs, follow its **Revision procedure**:
+
+1. Change application-layer report types — not domain types.
+2. Regenerate golden fixtures (`write_full_surface_alignment_golden`, `write_full_surface_repair_golden`).
+3. Update [json-output.md](json-output.md) — bump the contract version marker for breaking changes; additive optional fields may stay on v1.
+4. Land doc + fixtures + code in the same commit.
+
+Breaking JSON changes usually warrant a workspace **MINOR** or **MAJOR** bump depending on consumer impact.
+
+### Release checklist
+
+1. **Land pending work** on the release branch (typically `main`).
+2. **Run pre-release validation** — at minimum:
+   ```powershell
+   .\scripts\test-tier.ps1 -Tier pr
+   .\scripts\test-tier.ps1 -Tier validation -Package workspace
+   ```
+   See [Full test suite](#full-test-suite) above and [corpus-validation.md](corpus-validation.md) for operator sign-off when fit/patch defaults or performance tuning changed.
+3. **Decide the bump** (patch / minor / major) using the semver table above.
+4. **Bump the workspace version** (updates root `Cargo.toml` only; all crates inherit):
+   ```powershell
+   .\scripts\bump-version.ps1 -Bump patch    # or minor | major
+   .\scripts\bump-version.ps1 -Version 0.2.0 # explicit set
+   .\scripts\bump-version.ps1                # print current version
+   ```
+5. **Verify** resolved versions (optional — the script prints these after a bump):
+   ```powershell
+   cargo metadata --format-version 1 --no-deps | ConvertFrom-Json |
+     Select-Object -ExpandProperty packages |
+     Where-Object { $_.manifest_path -like '*\crates\*' } |
+     Select-Object name, version
+   ```
+6. **Commit** with a message like `release: v0.1.1` (the version bump only; feature work should already be merged).
+7. **Tag** (recommended when operators install or compare builds from git):
+   ```powershell
+   git tag -a v0.1.1 -m "clip-sync v0.1.1"
+   git push origin v0.1.1
+   ```
+8. **Build release binaries** for local distribution:
+   ```powershell
+   cargo build --release -p clip-sync-cli --features he-aac,ac3
+   cargo build --release -p clip-sync-repair --features ac3,ffmpeg-mux,he-aac
+   ```
 
 ---
 
