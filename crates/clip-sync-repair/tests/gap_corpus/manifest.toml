@@ -9,7 +9,7 @@ min_gap_ms           = 1000
 silence_hold_ms      = 500
 tolerance_secs       = 0.3      # per-boundary tolerance for start/end assertions
 sample_rate          = 11025
-patch_max_wall_secs  = 90.0   # CI fit-timing budget (5s border, no extension grid)
+patch_max_wall_secs  = 90.0   # release fit-timing default when a case omits max_patch_wall_secs
 
 # ── committed cases (WAV files in tests/gap_corpus/wav/) ─────────────────────
 # These run in CI without any external tools.
@@ -29,6 +29,7 @@ id    = "mid_gap_2s"
 tier  = "committed"
 video_a = "wav/mid_2s_a.wav"
 max_patch_wall_secs = 10.0
+patch_timing_expect_patched = true
 [[case.expected_gaps]]
 start_secs = 14.0
 end_secs   = 16.0
@@ -37,7 +38,7 @@ end_secs   = 16.0
 id    = "multi_gap"
 tier  = "committed"
 video_a = "wav/multi_gap_a.wav"
-max_patch_wall_secs = 20.0
+patch_timing = false
 # Three 2-second gaps. Silence regions are block-aligned (250ms blocks at 11025 Hz = 2756 samples),
 # so detected boundaries may differ by ≤0.25s from nominal; tolerance covers this.
 [[case.expected_gaps]]
@@ -62,7 +63,8 @@ expected_gaps = []
 id    = "stereo_mid_gap_2s"
 tier  = "committed"
 video_a = "wav/stereo_mid_gap_2s_a.wav"
-max_patch_wall_secs = 20.0
+max_patch_wall_secs = 10.0
+patch_timing_expect_patched = true
 # Both channels zeroed in the gap — multichannel scan must still detect it.
 [[case.expected_gaps]]
 start_secs = 14.0

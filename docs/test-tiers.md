@@ -20,7 +20,7 @@ Run all commands from the **repo root** (PowerShell):
 | Repair smoke only | `.\scripts\test-tier.ps1 -Tier pr-repair` | ~5–8 min |
 | Repair + sine seam grid | `.\scripts\test-tier.ps1 -Tier pr-repair-extended` | ~20–25 min |
 | **Widest regression** (not diagnostic) | See [§ Composite profiles](#composite-profiles) | ~25–35 min |
-| Before release / large validation change | `.\scripts\test-tier.ps1 -Tier validation -Package workspace` | minutes+ |
+| Before release / large validation change | `.\scripts\test-tier.ps1 -Tier validation -Package workspace` | **~5–8 h** (debug; see below) |
 | CSV dumps / sweeps (no assertions) | `.\scripts\test-tier.ps1 -Tier diagnostic -Package workspace -Nocapture` | varies |
 
 See [development.md § Versioning and release](development.md#versioning-and-release) for semver bumps and the release checklist.
@@ -161,6 +161,44 @@ Requires `ffmpeg` on PATH; external corpus env vars optional (skipped rows stay 
 ```
 
 Add `-Tier diagnostic` when regenerating CSVs or golden surfaces.
+
+### Validation tier wall time
+
+**Not in CI** — run locally before releases or large fit/patch/codec changes. Times below are **debug** builds on a typical dev machine with `ffmpeg` on PATH and `.\scripts\fetch_corpus_sources.ps1` already run. Release builds are faster but the tier is still dominated by real-codec encode/decode and corpus I/O.
+
+| Command | Typical wall time | Notes |
+|---------|-------------------|--------|
+| `-Tier validation -Package clip-sync-repair` | **~4–5 h** | Dominated by `validate_floor_oracle` (Wikimedia/Musopen codec matrix) |
+| `-Tier validation -Package clip-sync` | **~30–90 min** | `corpus_generated` + optional `corpus_external` / query-reference rows |
+| `-Tier validation -Package workspace` | **~5–8 h** | Repair block + alignment block sequentially |
+
+**Repair validation breakdown** (single `cargo test` batch):
+
+| Binary / step | Order of magnitude |
+|---------------|-------------------|
+| `validate_floor_oracle` | **~4 h** (7 tests; `source_gap_oracle_floor_csv` alone ~35 min) |
+| `validate_residual_gate` | ~4 min |
+| `validate_patch_audio` | ~1–2 min |
+| `golden_baseline_invariance` (`--ignored`) | seconds (needs local `gap-files/…`) |
+| `integration_gap_corpus` ignored rows | ~2–5 min |
+| `cli_mux_integration` ignored mux e2e | ~1 min |
+
+**Alignment validation** adds `corpus_generated` (~15–30 min for all generated rows), plus optional long rows (`corpus_query_reference_45min`, external corpus) when env vars are set — those can add **tens of minutes** each.
+
+**Leaner pre-release** when you only changed repair fit/patch:
+
+```powershell
+.\scripts\test-tier.ps1 -Tier pr
+.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair
+```
+
+**Full sign-off** (release checklist in [development.md § Versioning and release](development.md#versioning-and-release)):
+
+```powershell
+.\scripts\check-repair-test-manifest.ps1
+.\scripts\test-tier.ps1 -Tier pr
+.\scripts\test-tier.ps1 -Tier validation -Package workspace
+```
 
 ### Clippy (matches CI + full harness compile)
 

@@ -139,12 +139,15 @@ try {
             'golden_baseline_corpus_invariance',
             '--', '--ignored'
         )
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--test', 'integration_gap_corpus',
-            'gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing',
-            '--', '--ignored'
-        )
+        foreach ($gapFilter in @('gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing')) {
+            Invoke-CargoTest @(
+                '-p', 'clip-sync-repair',
+                '--release',
+                '--test', 'integration_gap_corpus',
+                $gapFilter,
+                '--', '--ignored'
+            )
+        }
         if (Test-FfmpegOnPath) {
             Invoke-CargoTest @(
                 '-p', 'clip-sync-repair',
@@ -225,11 +228,15 @@ try {
         if (-not (Test-FfmpegOnPath)) {
             Write-Warning 'validation tier: ffmpeg recommended for generated corpus cases'
         }
-        Invoke-CargoTest @(
-            '-p', 'clip-sync', '--features', 'he-aac,test-utils',
+        foreach ($corpusFilter in @(
             'corpus_generated', 'corpus_external', 'corpus_source', 'corpus_mkv_tail',
-            'corpus_query_reference_45min', 'corpus_query_reference_b_longer_anchor', '--', '--ignored'
-        )
+            'corpus_query_reference_45min', 'corpus_query_reference_b_longer_anchor'
+        )) {
+            Invoke-CargoTest @(
+                '-p', 'clip-sync', '--features', 'he-aac,test-utils',
+                $corpusFilter, '--', '--ignored'
+            )
+        }
     }
 
     function Invoke-ClipSyncDiagnostic {

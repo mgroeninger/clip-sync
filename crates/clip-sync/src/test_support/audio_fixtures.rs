@@ -167,42 +167,25 @@ pub fn write_tone_wav_at_frequency(path: &Path, sample_rate: u32, seconds: u32, 
     write_mono_wav(path, sample_rate, samples);
 }
 
-/// B shares the start offset with A, but trailing silence makes the end window disagree.
+/// B matches A at the start clip delay, then shifts to a larger delay from `split_secs`
+/// so the end clip disagrees. `tail_silence_secs` is the extra end-window delay
+/// (`offset_end = offset_start + tail_silence_secs`), matching the manifest field name.
 pub fn write_two_clip_inconsistent_pair(
     dir: &Path,
     sample_rate: u32,
     total_secs: u32,
-    offset_secs: u32,
+    split_secs: u32,
+    offset_start_secs: u32,
     tail_silence_secs: u32,
 ) -> (PathBuf, PathBuf) {
-    let total_samples = u64::from(sample_rate) * u64::from(total_secs);
-    let delay_samples = u64::from(sample_rate) * u64::from(offset_secs);
-    let chirp_samples = total_samples.saturating_sub(delay_samples + u64::from(sample_rate) * u64::from(tail_silence_secs));
-
-    let path_a = dir.join("a.wav");
-    let path_b = dir.join("b.wav");
-
-    write_mono_wav(
-        &path_a,
+    write_piecewise_offset_chirp_pair(
+        dir,
         sample_rate,
-        (0..total_samples).map(|index| chirp_sample(sample_rate, index)),
-    );
-
-    write_mono_wav(
-        &path_b,
-        sample_rate,
-        (0..total_samples).map(|index| {
-            if index < delay_samples {
-                0
-            } else if index < delay_samples + chirp_samples {
-                chirp_sample(sample_rate, index - delay_samples)
-            } else {
-                0
-            }
-        }),
-    );
-
-    (path_a, path_b)
+        total_secs,
+        split_secs,
+        offset_start_secs,
+        offset_start_secs + tail_silence_secs,
+    )
 }
 
 /// Piecewise delay: one offset for the start window, another for the end window.

@@ -238,7 +238,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 | `unit` (repair lib, `oracle_`-label skips) | ~30–60 s |
 | `integration` (repair, integration + oracle `--test` binaries; **not** `validate_*` / `diag_*`) | ~20+ min (includes full `patch_audio`) |
 | **`pr` + `integration` + `oracle`** (widest regression, not diagnostic) | ~25–35 min — see [test-tiers.md](test-tiers.md) |
-| `validation` | minutes+; **local only** (not CI); **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
+| `validation` | **~5–8 h** workspace / **~4–5 h** repair-only (debug; see [test-tiers.md § Validation tier wall time](test-tiers.md#validation-tier-wall-time)); **local only** (not CI); **ffmpeg on PATH** + `.\scripts\fetch_corpus_sources.ps1` (floor oracle tests fail fast if missing) |
 
 ---
 
@@ -452,7 +452,7 @@ Breaking JSON changes usually warrant a workspace **MINOR** or **MAJOR** bump de
 ### Release checklist
 
 1. **Land pending work** on the release branch (typically `main`).
-2. **Run pre-release validation** — at minimum:
+2. **Run pre-release validation** — at minimum (budget **~5–8 h** for full workspace validation in debug; see [test-tiers.md § Validation tier wall time](test-tiers.md#validation-tier-wall-time)):
    ```powershell
    .\scripts\test-tier.ps1 -Tier pr
    .\scripts\test-tier.ps1 -Tier validation -Package workspace

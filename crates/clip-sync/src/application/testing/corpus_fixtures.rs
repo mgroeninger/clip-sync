@@ -267,10 +267,12 @@ fn write_chirp_pair_wavs(
         Some("two_clip_inconsistent") => {
             let offset_secs = case.offset_secs.unwrap_or(12);
             let tail_silence_secs = case.tail_silence_secs.unwrap_or(18);
+            let split_secs = case.clip_length_secs.unwrap_or(60) as u32;
             write_two_clip_inconsistent_pair(
                 dir,
                 sample_rate,
                 total_secs,
+                split_secs,
                 offset_secs,
                 tail_silence_secs,
             )
@@ -1579,6 +1581,34 @@ mod tests {
             paths.video_b,
         )
         .expect("B-longer query-reference corpus case should succeed");
+        assert_corpus_expectations(case, &manifest.defaults, &result);
+    }
+
+    #[test]
+    fn corpus_two_clip_inconsistent_blocks_recommendation() {
+        let manifest = load_manifest();
+        let case = manifest
+            .case
+            .iter()
+            .find(|c| c.id == "two_clip_inconsistent")
+            .expect("case");
+        let (_guard, video_a, video_b) = resolve_case_paths(case, &manifest.defaults);
+        let media_reader = SymphoniaMediaReader;
+        let preset = ChromaprintPreset::default();
+        let fingerprinter = ChromaprintFingerprinter::new(preset);
+        let aligner = ChromaprintAligner::new(preset);
+        let progress = FakeProgressReporter;
+        let use_case = crate::application::AlignVideos::new(
+            &media_reader,
+            &fingerprinter,
+            &aligner,
+            &crate::infrastructure::resample::RubatoResampler,
+            &crate::infrastructure::correlation::FftCorrelator,
+            &ChromaprintClipRepetitionDetector,
+            &progress,
+        );
+        let result = run_corpus_case(&use_case, case, &manifest.defaults, video_a, video_b)
+            .expect("align");
         assert_corpus_expectations(case, &manifest.defaults, &result);
     }
 

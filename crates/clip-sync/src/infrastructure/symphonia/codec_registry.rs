@@ -29,9 +29,10 @@ pub fn codec_registry() -> &'static CodecRegistry {
 fn build_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
 
+    register_symphonia_baseline_decoders(&mut registry);
+
     #[cfg(feature = "he-aac")]
     {
-        register_symphonia_decoders_without_native_aac(&mut registry);
         // Native AAC-LC first: MP4/MKV store raw access units (not ADTS). FDK's ADTS
         // wrapper breaks ffmpeg PCE-style 5.1; Symphonia handles container AAC correctly.
         use symphonia::default::codecs;
@@ -41,14 +42,8 @@ fn build_codec_registry() -> CodecRegistry {
 
     #[cfg(not(feature = "he-aac"))]
     {
-        // Register all default Symphonia decoders when HE-AAC is not replacing them.
         use symphonia::default::codecs;
         registry.register_audio_decoder::<codecs::AacDecoder>();
-        registry.register_audio_decoder::<codecs::AdpcmDecoder>();
-        registry.register_audio_decoder::<codecs::FlacDecoder>();
-        registry.register_audio_decoder::<codecs::PcmDecoder>();
-        registry.register_audio_decoder::<codecs::VorbisDecoder>();
-        registry.register_audio_decoder::<codecs::MpaDecoder>();
     }
 
     #[cfg(feature = "ac3")]
@@ -59,12 +54,15 @@ fn build_codec_registry() -> CodecRegistry {
     registry
 }
 
-#[cfg(feature = "he-aac")]
-fn register_symphonia_decoders_without_native_aac(registry: &mut CodecRegistry) {
+/// Symphonia decoders that do not depend on `he-aac` / `ac3` feature wiring.
+/// Shared by both custom-registry paths so baseline formats (incl. MP3) cannot drift.
+#[cfg(any(feature = "he-aac", feature = "ac3"))]
+fn register_symphonia_baseline_decoders(registry: &mut CodecRegistry) {
     use symphonia::default::codecs;
 
     registry.register_audio_decoder::<codecs::AdpcmDecoder>();
     registry.register_audio_decoder::<codecs::FlacDecoder>();
     registry.register_audio_decoder::<codecs::PcmDecoder>();
     registry.register_audio_decoder::<codecs::VorbisDecoder>();
+    registry.register_audio_decoder::<codecs::MpaDecoder>();
 }

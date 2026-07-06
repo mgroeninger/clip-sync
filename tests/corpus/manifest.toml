@@ -171,6 +171,7 @@ generator = "two_clip_inconsistent"
 format = "wav"
 total_secs = 120
 offset_secs = 12
+# Extra delay on B from the end clip onward (end delay = offset_secs + tail_silence_secs).
 tail_silence_secs = 18
 clip_length_secs = 60
 num_clips = 2
