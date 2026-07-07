@@ -1263,6 +1263,9 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         gap_start_extend_on_pre_seam_fail: false,
         disable_structure_trust: true,
         partial_structure_waveform_soften: 1.0,
+        // Isolate the one-strong-seam mechanism: dual-fit (on by default post-A3b–A7) otherwise rescues the
+        // inverted-post-border fixture at the post shoulder's own lag, masking what this test measures.
+        dual_fit: false,
         ..Default::default()
     };
 
@@ -1282,6 +1285,7 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         gap_start_extend_on_pre_seam_fail: false,
         disable_structure_trust: true,
         partial_structure_waveform_soften: 1.0,
+        dual_fit: false, // isolate one-strong-seam (see `strict` above)
         ..Default::default()
     };
     let still_skipped = run_patch(
@@ -1301,6 +1305,7 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         // Above fixture structure scores (~1.0) so the waveform gate runs and one-strong-seam applies.
         strong_structure_trust: 1.01,
         partial_structure_waveform_soften: 1.0,
+        dual_fit: false, // isolate one-strong-seam: the patch must come from the fallback, not dual-fit
         ..Default::default()
     };
 
@@ -1391,6 +1396,9 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         short_gap_one_strong_seam_fallback: false,
         disable_structure_trust: true,
         partial_structure_waveform_soften: 1.0,
+        // Isolate gap-end extension: dual-fit (on by default post-A3b–A7) otherwise rescues the inverted
+        // post-border fixture at the post shoulder's own lag, masking the extension mechanism under test.
+        dual_fit: false,
         ..Default::default()
     };
 
@@ -1408,6 +1416,7 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         short_gap_one_strong_seam_fallback: false,
         disable_structure_trust: true,
         partial_structure_waveform_soften: 1.0,
+        dual_fit: false, // isolate extension: the patch must come from extension, not dual-fit
         ..Default::default()
     };
 
@@ -1478,6 +1487,8 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
     let mut no_extend = fast_fit_patch_options();
     no_extend.gap_end_extend_on_post_seam_fail = false;
     no_extend.gap_start_extend_on_pre_seam_fail = false;
+    // Isolate joint gap-end extension: dual-fit (on by default) otherwise rescues the inverted post border.
+    no_extend.dual_fit = false;
 
     let skipped = run_patch(
         patch_request_with_options(report.clone(), false, 5.0, 0.35, no_extend),
@@ -1489,8 +1500,10 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
         skipped.summary.gaps
     );
 
+    let mut patched_opts = fast_fit_patch_options();
+    patched_opts.dual_fit = false; // isolate: the patch must come from joint extension, not dual-fit
     let patched = run_patch(
-        patch_request_with_options(report, false, 5.0, 0.35, fast_fit_patch_options()),
+        patch_request_with_options(report, false, 5.0, 0.35, patched_opts),
         10,
     );
     assert_eq!(
@@ -1895,7 +1908,10 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
 #[test]
 fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
     let fixture = build_drift_anchor_retry_fixture();
-    let opts = anchored_retry_drift_patch_options();
+    // Isolate anchored-retry: dual-fit (on by default post-A3b–A7) otherwise rescues the hard tail in pass 1,
+    // breaking the "hard gap stays skipped so pass-2 recovers it" premise this test gates on.
+    let mut opts = anchored_retry_drift_patch_options();
+    opts.dual_fit = false;
     let interpolated_opts = PatchTestOptions {
         fill_offset_mode: FillOffsetMode::Interpolated,
         fill_mode: FillMode::Fit,
@@ -1910,6 +1926,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_using_easy_anchors() {
         short_gap_one_strong_seam_fallback: false,
         short_gap_mean_correlation_secs: opts.short_gap_mean_correlation_secs,
         fill_absolute_floor: opts.fill_absolute_floor,
+        dual_fit: false,
         ..Default::default()
     };
 
@@ -2106,6 +2123,9 @@ fn patch_audio_anchored_retry_with_marginal_flag_recovers_hard_gap() {
     let fixture = build_drift_anchor_retry_fixture();
     let mut opts = anchored_retry_drift_patch_options();
     opts.fill_anchor_retry_marginal = true;
+    // Isolate the marginal anchored-retry flag: dual-fit (on by default) otherwise rescues the hard tail,
+    // adding a 5th patch and breaking the "must not regress pass-1 bridge patches" count.
+    opts.dual_fit = false;
 
     let anchored = run_patch(
         patch_request_with_options(

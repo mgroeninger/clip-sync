@@ -1744,6 +1744,87 @@ fn skip_or_dual_fit(
     )
 }
 
+/// Inputs to [`assemble_bracket_fill`] — the sliced B fill (`b_fill_raw` + contiguous `b_extension`), the
+/// A-border templates for Fit-mode length fitting, and the seam context.
+struct BracketFillAssembly<'a> {
+    b_fill_raw: Vec<f32>,
+    b_extension: &'a [f32],
+    channels: usize,
+    gap_frames: usize,
+    fill_mode: FillMode,
+    a_pre_border: &'a [f64],
+    a_post_border: &'a [f64],
+    a_pre_ch: &'a [Vec<f64>],
+    a_post_ch: &'a [Vec<f64>],
+    pre_gate_frames: usize,
+    post_gate_frames: usize,
+    repeat_window_frames: usize,
+    seam_ctx: policies::SpliceSeamContext<'a>,
+    a_start_secs: f64,
+}
+
+/// Assemble the bracket fill PCM to exactly `gap_frames` from the sliced B: **Fit** length-fits against the A
+/// borders ([`fit_fill_length_for_gap`]), **Gate** extends from contiguous B then tail-trims
+/// ([`fit_fill_to_gap_frames`]). Extracted verbatim from `prepare_region_patch` (6b.3a) so the current inline
+/// path and the future `execute_region_spec` share ONE PCM primitive — byte-identical by construction. The
+/// executor reconstructs these inputs deterministically from the spec: `b_fill_raw`/`b_extension` re-sliced
+/// from the decode buffer via `FillAlignment`, and (Fit mode only) the A-border templates + `seam_ctx` rebuilt
+/// from A geometry — never re-deciding.
+fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> Vec<f32> {
+    let BracketFillAssembly {
+        b_fill_raw,
+        b_extension,
+        channels,
+        gap_frames,
+        fill_mode,
+        a_pre_border,
+        a_post_border,
+        a_pre_ch,
+        a_post_ch,
+        pre_gate_frames,
+        post_gate_frames,
+        repeat_window_frames,
+        seam_ctx,
+        a_start_secs,
+    } = inp;
+    // `source_frames` is derived here (not a field) so a caller can't pass one inconsistent with `b_fill_raw`.
+    let source_frames = b_fill_raw.len() / channels;
+    if fill_mode == FillMode::Fit {
+        let borders = policies::BorderSeamTemplates {
+            a_pre: a_pre_border,
+            a_post: a_post_border,
+            a_pre_ch,
+            a_post_ch,
+            pre_window: pre_gate_frames,
+            post_window: post_gate_frames,
+        };
+        fit_fill_length_for_gap(
+            &b_fill_raw,
+            b_extension,
+            channels,
+            gap_frames,
+            &borders,
+            repeat_window_frames,
+            seam_ctx,
+        )
+    } else {
+        let mut gate_fill = b_fill_raw;
+        if source_frames < gap_frames {
+            let need_samples = (gap_frames - source_frames) * channels;
+            let extend_to = need_samples.min(b_extension.len());
+            if extend_to > 0 {
+                gate_fill.extend_from_slice(&b_extension[..extend_to]);
+                tracing::debug!(
+                    a_start_secs,
+                    extended_frames = extend_to / channels,
+                    "B bracket shorter than A gap; extended from contiguous B audio (gate)"
+                );
+            }
+        }
+        fit_fill_to_gap_frames(&gate_fill, channels, gap_frames)
+    }
+}
+
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2201,40 +2282,22 @@ fn prepare_region_patch(
         channels,
         single_lag_alignment: true,
     };
-    let b_fill = if request.fill_mode == FillMode::Fit {
-        let borders = policies::BorderSeamTemplates {
-            a_pre: &a_pre_border,
-            a_post: &a_post_border,
-            a_pre_ch: &a_pre_ch,
-            a_post_ch: &a_post_ch,
-            pre_window: pre_gate_frames,
-            post_window: post_gate_frames,
-        };
-        fit_fill_length_for_gap(
-            &b_fill_raw,
-            b_extension,
-            channels,
-            gap_frames,
-            &borders,
-            repeat_window_frames,
-            seam_ctx,
-        )
-    } else {
-        let mut gate_fill = b_fill_raw;
-        if source_frames < gap_frames {
-            let need_samples = (gap_frames - source_frames) * channels;
-            let extend_to = need_samples.min(b_extension.len());
-            if extend_to > 0 {
-                gate_fill.extend_from_slice(&b_extension[..extend_to]);
-                tracing::debug!(
-                    a_start_secs,
-                    extended_frames = extend_to / channels,
-                    "B bracket shorter than A gap; extended from contiguous B audio (gate)"
-                );
-            }
-        }
-        fit_fill_to_gap_frames(&gate_fill, channels, gap_frames)
-    };
+    let b_fill = assemble_bracket_fill(BracketFillAssembly {
+        b_fill_raw,
+        b_extension,
+        channels,
+        gap_frames,
+        fill_mode: request.fill_mode,
+        a_pre_border: &a_pre_border,
+        a_post_border: &a_post_border,
+        a_pre_ch: &a_pre_ch,
+        a_post_ch: &a_post_ch,
+        pre_gate_frames,
+        post_gate_frames,
+        repeat_window_frames,
+        seam_ctx,
+        a_start_secs,
+    });
 
     let gain = if normalize_fill {
         let border_rms = compute_a_border_rms(
