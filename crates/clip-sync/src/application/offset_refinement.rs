@@ -532,9 +532,7 @@ fn discover_min_accept_score(
     };
     if center_score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW {
         let uplifted = center_score + 0.08;
-        uplifted
-            .max(DISCOVER_COARSE_MIN_CORRELATION)
-            .min(MIN_DISCOVER_CORRELATION)
+        uplifted.clamp(DISCOVER_COARSE_MIN_CORRELATION, MIN_DISCOVER_CORRELATION)
     } else {
         MIN_DISCOVER_CORRELATION.max(center_score + 0.05)
     }
