@@ -21,7 +21,6 @@ const DISCOVER_WIDEN_IF_COARSE_CORR_BELOW: f64 = 0.25;
 const DISCOVER_SKIP_IF_COARSE_SCORE: f64 = 0.9;
 const DISCOVER_COARSE_MIN_CORRELATION: f64 = 0.25;
 const DISCOVER_SCORE_TIE_EPSILON: f64 = 0.05;
-const DISCOVER_FULL_REFINE_RADIUS_FACTOR: usize = 2;
 const MIN_LAG_SIGNAL_SUM: f64 = 1.0;
 
 /// Sample indices into `left` / `right` where the same event satisfies `t_B = t_A + offset`.
@@ -236,7 +235,7 @@ fn pcm_search_near_offset(
     right: &MonoPcmClip,
     center_offset_secs: f64,
     search_radius_secs: f64,
-    correlator: &dyn PcmCorrelator,
+    _correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 || search_radius_secs <= 0.0
     {
@@ -253,13 +252,6 @@ fn pcm_search_near_offset(
     }
 
     let template = samples_to_f64(&left.samples[left_start..left_start + template_samples]);
-    let downsample = choose_downsample(template_samples, right.samples.len());
-    let template_ds = downsample_f64(&template, downsample);
-    let right_ds = downsample_f64(&samples_to_f64(&right.samples), downsample);
-    if right_ds.len() < template_ds.len() || template_ds.is_empty() {
-        return None;
-    }
-
     let predicted_right_sample = (left_start as f64 + center_offset_secs * f64::from(rate))
         .round()
         .clamp(0.0, right.samples.len().saturating_sub(1) as f64) as usize;
@@ -269,83 +261,60 @@ fn pcm_search_near_offset(
     let max_start = right.samples.len().saturating_sub(template_samples);
     let search_end = max_right_sample.min(max_start);
 
-    let min_lag = (min_right_sample / downsample)
-        .min(right_ds.len().saturating_sub(template_ds.len()));
-    let max_lag = (max_right_sample / downsample)
-        .min(right_ds.len().saturating_sub(template_ds.len()));
-
-    let coarse_scores = correlator.slide_template_scores(&template_ds, &right_ds);
-    let mut coarse_peaks: Vec<(usize, f64)> = coarse_scores
-        .iter()
-        .enumerate()
-        .filter(|(lag, _)| *lag >= min_lag && *lag <= max_lag)
-        .map(|(lag, score)| (lag, *score))
-        .collect();
-
-    coarse_peaks.sort_by(|(lag_a, score_a), (lag_b, score_b)| {
-        score_b
-            .partial_cmp(score_a)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                let dist_a = (*lag_a as i64 * downsample as i64 - predicted_right_sample as i64).unsigned_abs();
-                let dist_b = (*lag_b as i64 * downsample as i64 - predicted_right_sample as i64).unsigned_abs();
-                dist_a.cmp(&dist_b)
-            })
-    });
-
-    let mut candidates = vec![predicted_right_sample.min(max_start)];
-    for (lag, score) in coarse_peaks.iter().take(3) {
-        if *score >= DISCOVER_COARSE_MIN_CORRELATION {
-            candidates.push(lag.saturating_mul(downsample).min(max_start));
-        }
+    let search_window = &right.samples[min_right_sample..search_end + template_samples];
+    let downsample = choose_downsample(template_samples, search_window.len());
+    let template_ds = downsample_f64(&template, downsample);
+    let window_ds = downsample_f64(&samples_to_f64(search_window), downsample);
+    if window_ds.len() < template_ds.len() || template_ds.is_empty() {
+        return None;
     }
-    candidates.sort_unstable();
-    candidates.dedup();
 
-    let refine_radius = downsample.saturating_mul(DISCOVER_FULL_REFINE_RADIUS_FACTOR).max(1);
-    let refine_region_start = candidates
+    let max_lag = window_ds.len().saturating_sub(template_ds.len());
+    let slide_scores: Vec<f64> = (0..=max_lag)
+        .map(|lag| {
+            normalized_correlation(&template_ds, &window_ds[lag..lag + template_ds.len()]).abs()
+        })
+        .collect();
+    let right_peak = right
+        .samples
         .iter()
-        .map(|candidate| candidate.saturating_sub(refine_radius).max(min_right_sample))
-        .min()
-        .unwrap_or(min_right_sample);
-    let refine_region_end = candidates
-        .iter()
-        .map(|candidate| (candidate + refine_radius).min(search_end) + template_samples)
+        .map(|sample| sample.unsigned_abs())
         .max()
-        .unwrap_or(refine_region_start + template_samples)
-        .min(right.samples.len());
-    let refine_region = samples_to_f64(&right.samples[refine_region_start..refine_region_end]);
-    let full_scores = correlator.slide_template_scores(&template, &refine_region);
+        .unwrap_or(0);
 
     let mut best_sample = predicted_right_sample.min(max_start);
     let mut best_full_score = f64::NEG_INFINITY;
     let mut best_distance = f64::INFINITY;
 
-    for candidate in candidates {
-        let refine_min = candidate
-            .saturating_sub(refine_radius)
-            .max(min_right_sample);
-        let refine_max = (candidate + refine_radius).min(search_end);
-        for (i, score) in full_scores.iter().enumerate() {
-            let right_start = refine_region_start + i;
-            if right_start < refine_min || right_start > refine_max {
-                continue;
-            }
-            let offset_secs =
-                right_start as f64 / f64::from(rate) - left_start as f64 / f64::from(rate);
-            let distance = (offset_secs - center_offset_secs).abs();
-            let better = *score > best_full_score + DISCOVER_SCORE_TIE_EPSILON
-                || (*score >= best_full_score - DISCOVER_SCORE_TIE_EPSILON
-                    && distance < best_distance);
-            if better {
-                best_full_score = *score;
-                best_sample = right_start;
-                best_distance = distance;
-            }
+    for (lag, score) in slide_scores.iter().enumerate() {
+        let right_start = min_right_sample + lag.saturating_mul(downsample);
+        if right_start > search_end {
+            break;
+        }
+        let segment = &right.samples[right_start..right_start + template_samples];
+        if !window_has_audio(segment, right_peak) {
+            continue;
+        }
+        let offset_secs =
+            right_start as f64 / f64::from(rate) - left_start as f64 / f64::from(rate);
+        let distance = (offset_secs - center_offset_secs).abs();
+        let better = *score > best_full_score + DISCOVER_SCORE_TIE_EPSILON
+            || (*score >= best_full_score - DISCOVER_SCORE_TIE_EPSILON && distance < best_distance);
+        if better {
+            best_full_score = *score;
+            best_sample = right_start;
+            best_distance = distance;
         }
     }
 
-    if best_full_score < MIN_DISCOVER_CORRELATION {
+    if best_full_score
+        < discover_min_accept_score(
+            &template,
+            &right.samples[predicted_right_sample.min(max_start)
+                ..predicted_right_sample.min(max_start) + template_samples],
+            best_full_score,
+        )
+    {
         return None;
     }
 
@@ -540,6 +509,38 @@ fn first_audio_index(samples: &[i16]) -> usize {
         .unwrap_or(0)
 }
 
+/// Skip discover candidates whose right-hand template window is still leading silence.
+fn window_has_audio(samples: &[i16], clip_peak: u16) -> bool {
+    if samples.is_empty() {
+        return false;
+    }
+    let threshold = (f32::from(clip_peak) * SILENCE_PEAK_FRACTION).max(64.0);
+    samples
+        .iter()
+        .any(|sample| f32::from(sample.unsigned_abs()) >= threshold)
+}
+
+fn discover_min_accept_score(
+    template: &[f64],
+    center_segment: &[i16],
+    best_score: f64,
+) -> f64 {
+    let center_score = if center_segment.len() == template.len() {
+        normalized_correlation(template, &samples_to_f64(center_segment)).abs()
+    } else {
+        0.0
+    };
+    if center_score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW {
+        let uplifted = center_score + 0.08;
+        uplifted
+            .max(DISCOVER_COARSE_MIN_CORRELATION)
+            .min(MIN_DISCOVER_CORRELATION)
+    } else {
+        MIN_DISCOVER_CORRELATION.max(center_score + 0.05)
+    }
+    .min(best_score + 1.0)
+}
+
 fn samples_to_f64(samples: &[i16]) -> Vec<f64> {
     samples.iter().map(|sample| f64::from(*sample)).collect()
 }
@@ -659,18 +660,6 @@ mod tests {
         let t = index as f64 / rate;
         let freq = 300.0 + 400.0 * t;
         ((TAU as f64 * freq * t).sin() * (i16::MAX as f64 * 0.5)).round() as i16
-    }
-
-    fn prepare_pair(left: &MonoPcmClip, right: &MonoPcmClip) -> (MonoPcmClip, MonoPcmClip) {
-        let options = PcmPreparationOptions {
-            normalize_loudness: true,
-            trim_silence: true,
-            window_slide_secs: 0,
-        };
-        (
-            prepare_clip_for_fingerprint(left, options).unwrap(),
-            prepare_clip_for_fingerprint(right, options).unwrap(),
-        )
     }
 
     fn tone_holdout_segment(sample_rate: u32, seconds: u32, freq_hz: f64) -> MonoPcmClip {
@@ -944,7 +933,13 @@ mod tests {
     fn pcm_discover_finds_thirty_second_leader_on_sixty_second_clips() {
         let sample_rate = 11_025;
         let (left, right) = delayed_pair(sample_rate, 60, 30);
-        let (left, right) = prepare_pair(&left, &right);
+        let options = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left = prepare_clip_for_fingerprint(&left, options).unwrap();
+        let right = prepare_clip_for_fingerprint(&right, options).unwrap();
 
         let (offset, score) =
             pcm_discover_offset(&left, &right, 16.0, &FftCorrelator).expect("discovered offset");
@@ -960,7 +955,13 @@ mod tests {
     fn pcm_discover_finds_fifteen_second_leader() {
         let sample_rate = 11_025;
         let (left, right) = delayed_pair(sample_rate, 60, 15);
-        let (left, right) = prepare_pair(&left, &right);
+        let options = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left = prepare_clip_for_fingerprint(&left, options).unwrap();
+        let right = prepare_clip_for_fingerprint(&right, options).unwrap();
 
         let (offset, score) =
             pcm_discover_offset(&left, &right, 15.0, &FftCorrelator).expect("discovered offset");
@@ -1153,7 +1154,13 @@ mod tests {
     fn refine_recovers_large_chromaprint_error() {
         let sample_rate = 11_025;
         let (left, right) = delayed_pair(sample_rate, 60, 30);
-        let (left, right) = prepare_pair(&left, &right);
+        let options = PcmPreparationOptions {
+            normalize_loudness: false,
+            trim_silence: false,
+            window_slide_secs: 0,
+        };
+        let left = prepare_clip_for_fingerprint(&left, options).unwrap();
+        let right = prepare_clip_for_fingerprint(&right, options).unwrap();
 
         let coarse = ClipMatchEstimate {
             offset_secs: 16.0,
