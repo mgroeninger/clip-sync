@@ -12,6 +12,13 @@ use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
 use crate::domain::seam_local::seam_local_peak;
 
+/// The **step is real** margin: the post seam at its own lag must beat the post seam forced to the pre lag
+/// (step = 0) by at least this, else a single constant shift suffices and the reported step is a registration
+/// artifact, not a genuine splice. Canonical home (was triplicated: this module's `DualFitParams` field
+/// default + the harness `gap_fingerprint_corpus.rs`). The `DualFitParams.step_real_margin` field carries
+/// this value into `try_dual_fit`; the cell classifier reads the const directly.
+pub const DUALFIT_STEP_REAL_MARGIN: f64 = 0.15;
+
 /// The `dualfit_target()` thresholds + geometry the repair needs (all frame counts / correlations, no config
 /// object — mirrors the analyzer's constants: `min_fill_correlation`/`fill_absolute_floor` from the gate,
 /// `DUALFIT_STEP_REAL_MARGIN` 0.15, `SEAM_LOCAL_SEARCH_MS` 600 ms). Program-quiet uses

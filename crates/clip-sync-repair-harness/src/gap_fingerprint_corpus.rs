@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clip_sync_repair::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
+use clip_sync_repair::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
 use serde::Deserialize;
 
 // ── minimal schema projection ───────────────────────────────────────────────────
@@ -663,10 +664,10 @@ impl GapRow {
 /// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at
 /// least this much — i.e. the step **materially improves** the seam. The earlier `post@pre < 0.35` floor was
 /// wrong: it flagged the step spurious whenever the constant offset merely *cleared* the gate floor, dropping
-/// gaps where the step still helps a lot (7·g4: `post@pre 0.393` barely over 0.35, but `post_own 0.96` — the
-/// step adds 0.57; operator-confirmed real drop). A true artifact reads `post_own ≈ post@pre` (Δ ≈ 0).
-/// Calibrate at ledger A5/C6.
-const DUALFIT_STEP_REAL_MARGIN: f64 = 0.15;
+// `DUALFIT_STEP_REAL_MARGIN` (0.15) — the step-is-real margin — now lives canonically in
+// `clip_sync_repair::domain::dual_fit` (imported at the top; single source of truth, no drift). Rationale:
+// a true artifact reads `post_own ≈ post@pre` (Δ ≈ 0); 7·g4 barely-real drops (`post@pre 0.393`, `post_own
+// 0.96`, Δ 0.57) confirm the 0.15 floor. Calibrate at ledger A5/C6.
 
 /// Full aggregation across every pair dir found.
 #[derive(Debug, Clone, Default)]

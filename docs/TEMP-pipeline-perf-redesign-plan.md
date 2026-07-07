@@ -689,11 +689,11 @@ pub struct LevelTags {
 ```
 
 **6a review follow-ups (open for 6b, found reviewing the landed scaffold):**
-- **Skip cell↔reason consistency guard.** The type permits `Skip { cell, reason }` with an inconsistent pair
-  (e.g. `cell: BracketPatch, reason: ZeroLengthGap`); `cell()` returns the stored cell blindly. Add
-  `reason_admits_cell(reason, cell)` + `debug_assert!` in the characterize constructor (6b) — the stored cell
-  must be in the set reachable from its reason (`CorrelationBelowThreshold` ⟹ `{SilenceSplice, ProgramQuiet,
-  Decorrelated}`). Guards the A7-class silent inconsistency.
+- **RESOLVED (6b.1, 2026-07-07) — Skip cell↔reason consistency guard.** `reason_admits_cell(reason, cell)` +
+  the `GapRepairVerdict::skip` / `skip_with_cell` smart constructors (with `debug_assert!`) landed in
+  `domain/gap_repair_spec.rs`; characterize must build skips through them. `CorrelationBelowThreshold` ⟹
+  `{Decorrelated, SilenceSplice, ProgramQuiet}`; patch-only cells never admissible on a skip. Tested
+  (`skip_constructor_and_admissibility_guard`, `skip_with_cell_rejects_inadmissible_pair`).
 - **`Placement` is unwired.** Defined + re-exported but referenced only in doc comments — decide whether the
   golden differ consumes a machine `field → Placement` map (§4.3 guard) or drop the enum until it does.
 - **Seam-score duplication** (`SeamLocalTags` vs `SilenceSplice`) has no type-level equality guarantee — C4
@@ -766,7 +766,7 @@ Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute`
 | Sub-step | Work | Validates with |
 |----------|------|----------------|
 | **6a** | Add `domain/gap_repair_spec.rs` types + `cell()` / golden projection helpers | **Scaffold landed (2026-07-07):** all wire types (`GapRepairSpec`/`Tags`/`Strategy`/`Cell`/`Verdict`/`BExtractWindow` + placement blocks), `cell()` (total), wildcard-free `cell_for_skip_reason` + in-domain C4b exhaustiveness test — compiles, `--lib` green, clippy clean. **Remaining:** `spec_to_fingerprint_summary` (application free fn, step 8) + C4 projection test (needs 6b `characterize_region`). |
-| **6b** | Extract `characterize_region` + `execute_region_spec`; `prepare_region_patch` = shim | Existing `patch_audio` unit/integration tests · **companion (§2.6): extract `policies/seam_scoring.rs` (P4) as an adjacent byte-preserving PR — land or defer-with-reason before 6b closes** |
+| **6b** | Extract `characterize_region` + `execute_region_spec`; `prepare_region_patch` = shim. **Test-gated increments:** 6b.1 domain skip smart-constructor + `reason_admits_cell` guard (**landed 2026-07-07**, finding #3 closed); 6b.2 domain projection classifier `skip_cell_from_tags` — reconstructs a Skip's cell from stored tags (the "golden projection helper" + characterize consistency backbone), tested across the §4.1a classes; promoted `DUALFIT_STEP_REAL_MARGIN` to a canonical domain const + deduped the harness copy (**landed 2026-07-07**); 6b.3 application `characterize_region`/`execute_region_spec` spec-assembly + rewire shim + byte-parity. | Existing `patch_audio` unit/integration tests · **companion (§2.6): extract `policies/seam_scoring.rs` (P4) as an adjacent byte-preserving PR — land or defer-with-reason before 6b closes** |
 | **6c** | `PatchAudio::execute`: characterize-all → execute-all → splice (two loops) | `validate_dual_fit_oracle.rs`, gap corpus patch timing |
 | **7** | Golden harness: diff `GapRepairSpec` projections (Tier 1/2) on live rescans | §4.7 C1 workflow + `golden_baseline_corpus_invariance` |
 | **8** | Fingerprint: `characterize_gaps_with_gate` → shared characterize + X export only | §4.7 C3; no second gate oracle in dump path |
