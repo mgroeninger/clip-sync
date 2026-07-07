@@ -135,7 +135,9 @@ pub struct GapRepairTags {
     /// Placement = [`Placement::AlignedBridge`].
     pub donor_aligned: Option<DonorInterior>,
     pub gate: GateTags,
-    pub levels: LevelTags,
+    /// `None` when A-levels weren't measured (early mechanical skip). Matches `GapRow.a_gap_floor_db`
+    /// being `Option<f64>` — a non-optional `LevelTags` could not round-trip that.
+    pub levels: Option<LevelTags>,
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -304,10 +306,8 @@ mod tests {
         }
     }
 
-    /// `cell()` is a total projection of the verdict; a skip carries its axis-derived cell verbatim.
-    #[test]
-    fn cell_reads_the_stored_verdict_cell() {
-        let spec = |verdict| GapRepairSpec {
+    fn spec_with(verdict: GapRepairVerdict) -> GapRepairSpec {
+        GapRepairSpec {
             gap_index: 0,
             a_start_secs: 0.0,
             a_end_secs: 1.0,
@@ -322,10 +322,51 @@ mod tests {
                 donor_nominal: None,
                 donor_aligned: None,
                 gate: GateTags::default(),
-                levels: LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 },
+                levels: Some(LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 }),
             },
-        };
-        let decorrelated = spec(GapRepairVerdict::Skip {
+        }
+    }
+
+    fn bracket() -> GapRepairStrategy {
+        GapRepairStrategy::Bracket {
+            alignment: FillAlignment { start_frame: 0, fill_frames: 48_000, pre_correlation: 0.99, post_correlation: 0.99 },
+            structure_start_frame: 0,
+            structure_trusted: true,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
+            seam_pre: 0.99,
+            seam_post: 0.99,
+            used_splice: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            normalize_gain: 1.0,
+        }
+    }
+
+    fn silence_splice() -> GapRepairStrategy {
+        GapRepairStrategy::SilenceSplice {
+            fill: vec![0.0; 96_000],
+            pre_seam_r: 0.98,
+            post_seam_r: 0.97,
+            pre_lag: 24,
+            post_lag: -600,
+            trim_frames: 480,
+            residual: None,
+            confidence: FillConfidence::High,
+        }
+    }
+
+    /// `cell()` is a total projection of the verdict — all three arms.
+    #[test]
+    fn cell_reads_the_stored_verdict_cell() {
+        assert_eq!(spec_with(GapRepairVerdict::Patch(bracket())).cell(), GapRepairCell::BracketPatch);
+        assert_eq!(spec_with(GapRepairVerdict::Patch(silence_splice())).cell(), GapRepairCell::SilenceSplice);
+        let decorrelated = spec_with(GapRepairVerdict::Skip {
             cell: GapRepairCell::Decorrelated,
             reason: GapPatchSkipReason::CorrelationBelowThreshold {
                 pre_correlation: 0.0,
@@ -335,5 +376,25 @@ mod tests {
             },
         });
         assert_eq!(decorrelated.cell(), GapRepairCell::Decorrelated);
+    }
+
+    /// The load-bearing invariant of the whole design: a Silence-splice keeps its cell whether dual-fit
+    /// patched it (`Patch(SilenceSplice)`) or the flag was off and it was declined
+    /// (`Skip { cell: SilenceSplice }`). Only the verdict/projection moves, never the identity.
+    #[test]
+    fn silence_splice_cell_is_invariant_across_dual_fit_flag() {
+        let patched = spec_with(GapRepairVerdict::Patch(silence_splice()));
+        let declined = spec_with(GapRepairVerdict::Skip {
+            cell: GapRepairCell::SilenceSplice,
+            reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: 0.98,
+                post_correlation: 0.97,
+                min_correlation: 0.5,
+                best_attempt: None,
+            },
+        });
+        assert_eq!(patched.cell(), GapRepairCell::SilenceSplice);
+        assert_eq!(declined.cell(), GapRepairCell::SilenceSplice);
+        assert_eq!(patched.cell(), declined.cell(), "cell must not depend on the dual_fit flag");
     }
 }

@@ -679,12 +679,25 @@ pub struct GateTags {
     pub residual: Option<SeamResidualVerdict>, // → GapRow.residual_headroom_db / _informative [T2·ε]
 }
 
-/// Placement = ASide. From `levels` (LevelProfile).
+/// Placement = ASide. From `levels` (LevelProfile). Carried as `Option<LevelTags>` on `GapRepairTags`
+/// (`None` = A-levels not measured, e.g. an early mechanical skip) — `GapRow.a_gap_floor_db` is `Option<f64>`,
+/// so a non-optional block could not round-trip (found scaffolding 6a, 2026-07-07).
 pub struct LevelTags {
     pub a_gap_floor_db: f64,   // → GapRow.a_gap_floor_db   [T2·ε]
     pub a_noise_floor_db: f64, // → GapRow.a_noise_floor_db [T2·ε]
 }
 ```
+
+**6a review follow-ups (open for 6b, found reviewing the landed scaffold):**
+- **Skip cell↔reason consistency guard.** The type permits `Skip { cell, reason }` with an inconsistent pair
+  (e.g. `cell: BracketPatch, reason: ZeroLengthGap`); `cell()` returns the stored cell blindly. Add
+  `reason_admits_cell(reason, cell)` + `debug_assert!` in the characterize constructor (6b) — the stored cell
+  must be in the set reachable from its reason (`CorrelationBelowThreshold` ⟹ `{SilenceSplice, ProgramQuiet,
+  Decorrelated}`). Guards the A7-class silent inconsistency.
+- **`Placement` is unwired.** Defined + re-exported but referenced only in doc comments — decide whether the
+  golden differ consumes a machine `field → Placement` map (§4.3 guard) or drop the enum until it does.
+- **Seam-score duplication** (`SeamLocalTags` vs `SilenceSplice`) has no type-level equality guarantee — C4
+  must assert `tags.seam_local.pre_seam_r == strategy.pre_seam_r` (A7 single-source convention).
 
 **Single-source invariant (§2.5.7 #2, named).** When the verdict is `Patch(SilenceSplice)`, its
 `{pre_seam_r, post_seam_r, pre_lag, post_lag, trim_frames}` are assigned from the **same `DualFitResult`**
