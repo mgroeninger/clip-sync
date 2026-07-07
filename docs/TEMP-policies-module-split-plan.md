@@ -1,12 +1,23 @@
 # `policies.rs` module split — plan (DRAFT)
 
-Status: **draft / not started**. Split `crates/clip-sync-repair/src/domain/policies.rs` (~2,800
-lines) into a `policies/` directory with a stable `crate::domain::policies::*` re-export facade.
-**Opportunistic** — do alongside seam/residual work, not as a standalone refactor.
+Status: **draft / not started** (refreshed 2026-07-07). Split
+`crates/clip-sync-repair/src/domain/policies.rs` (**now 3,827 lines** — grew from ~2,800 as dual-fit /
+residual work piled in: A3b `single_lag_alignment`, A6 residual, seam-scoring additions) into a `policies/`
+directory with a stable `crate::domain::policies::*` re-export facade. **Opportunistic** — do alongside
+seam/residual work, not as a standalone refactor.
 
-Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (shipped)
-(first extraction target), [archive/residual-gate-findings.md](archive/residual-gate-findings.md) (L12 prototype
-retirement), [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
+**Companion to the pipeline redesign.** This is the module-organization axis; the pipeline redesign
+([TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)) is the assembly axis — orthogonal,
+kept as separate plans. But the pipeline redesign is the **de facto driver**: it already spun out focused
+domain modules (`seam_local.rs`, `donor.rs`, `dual_fit.rs`) and its steps touch exactly the regions below, so
+its steps are this plan's concrete **triggers** (§5). **Rule: extract-when-you-touch, as a separate
+byte-preserving PR adjacent to the pipeline step — never bundled into a characterize/execute PR** (that would
+wreck the §4/C2 "diff proves no behavior change" guarantee). The pipeline plan tracks the trigger status in its
+§2.6 so this doesn't get forgotten mid-refactor.
+
+Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (**shipped**
+— P1's trigger has fired; P1 is *ready* but not done), [archive/residual-gate-findings.md](archive/residual-gate-findings.md)
+(L12 prototype retirement), [gap-fill-modes.md](gap-fill-modes.md) § Multichannel seams.
 
 ---
 
@@ -31,19 +42,26 @@ convention.
 - **Blocking residual channel alignment** — channel work can land first; this plan sequences
   extraction so alignment can pull `seam_residual` out when touched.
 
-## 3. Current layout (exact)
+## 3. Current layout (re-derived 2026-07-07)
 
-| Region | Lines (approx.) | Primary consumers |
-|--------|-----------------|-------------------|
-| Silence + RMS | 1–215 | `scan_gaps.rs`, `gap_energy.rs` |
-| Gap refine + borders | 216–537 | `patch_region.rs`, `patch_audio.rs`, harnesses |
-| Seam Pearson scoring | 538–1,248 | `patch_region.rs`, `gap_fill_fit.rs` |
-| Seam residual / floor | 1,249–1,763 | `patch_region.rs`, `gap_fill_fit.rs`, corpus tests |
-| Splice / crossfade | 1,764–1,883 | `patch_audio.rs` |
-| `#[cfg(test)]` | 1,885–2,804 | — |
+| Region | Lines (approx.) | Anchor | Primary consumers |
+|--------|-----------------|--------|-------------------|
+| Silence + RMS | 1–305 | `SilenceRunScanner` @12 | `scan_gaps.rs`, `gap_energy.rs` |
+| Gap refine + borders | 306–643 | `refine_gap_frames` @306 | `patch_region.rs`, `patch_audio.rs`, harnesses |
+| Seam Pearson scoring | 644–1,710 | `SeamTemplates` @644, `fill_splice_seam_correlations_interleaved` @975 | `patch_region.rs`, `gap_fill_fit.rs` |
+| Seam residual / floor | 1,711–2,196 | `seam_chosen_and_floor` @1711, `SeamResidualVerdict` @1940 | `patch_region.rs`, `gap_fill_fit.rs`, corpus tests |
+| Splice / crossfade | 2,197–2,270 | `apply_seam_crossfade` @2197 | `patch_audio.rs` |
+| `#[cfg(test)]` | 2,271–3,827 | — | — |
 
-**Already extracted:** `residual_gate.rs` (55 lines) — `ResidualGateMode`, lag/frame helpers, default
-thresholds. Config/mode only; measurement primitives remain in `policies.rs`.
+Production ≈ 2,270 lines, tests ≈ 1,557. The **seam-scoring region roughly doubled** (was 538–1,248 ≈ 710
+lines; now 644–1,710 ≈ 1,066) — the dual-fit seam work (A3b `single_lag_alignment`, per-channel splice
+scoring). Line numbers shift with every seam/residual PR; re-derive the anchors at extraction time rather than
+trusting these.
+
+**Already extracted / adjacent modules:** `residual_gate.rs` (86 lines) — `ResidualGateMode`, lag/frame
+helpers, thresholds (config/mode only; measurement primitives remain in `policies.rs`). The pipeline redesign
+also created **new** focused primitives — `seam_local.rs` (355), `donor.rs` (133), `dual_fit.rs` (448) — not
+carved *from* policies but demonstrating the one-concern-per-module target this plan finishes.
 
 **Import pattern today:** application code uses `crate::domain::policies::{self, …}` and
 `policies::fn_name` (~25 references in `patch_region.rs` alone). `gap_structure.rs` and
@@ -100,24 +118,51 @@ move it to `seam_residual.rs` behind `#[cfg(test)]` with a one-line doc comment.
 
 ## 5. Extraction order (phasing)
 
-| Phase | Module | Trigger | Notes |
-|-------|--------|---------|-------|
-| **P0** | — | — | No change; file stays monolithic until a seam/residual PR needs it. |
-| **P1** | `seam_residual.rs` | [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (shipped) or residual cleanup | Highest value; pairs with `residual_gate.rs`; retire L12 prototype. |
-| **P2** | `silence.rs` | Next `scan_gaps` / silence-threshold touch | Independent of seam; small, clear boundary. |
-| **P3** | `gap_borders.rs` | Border/standoff/refine work | `FillAlignment`, `RefinedGapFrames`, templates. |
-| **P4** | `seam_scoring.rs` + `seam_splice.rs` | Seam Pearson or crossfade change | Largest block; split scoring vs splice only if `seam_scoring` still feels large (~650 + ~120 lines). |
-| **P5** | Delete `policies.rs` | After P1–P4 | `mod.rs` only; verify `pub use` list matches pre-split API. |
+Triggers are now **anchored to pipeline-redesign steps** (the de facto driver). Each extraction lands as a
+**separate byte-preserving PR adjacent to** its trigger step — see the pipeline plan §2.6 for the live status
+table that keeps these visible during the refactor.
 
-**Do not** execute P1–P5 as a single “split the file” PR unless review bandwidth allows — phased
-landings keep diffs reviewable.
+| Phase | Module | Pipeline trigger step | Status | Notes |
+|-------|--------|----------------------|--------|-------|
+| **P0** | — | — | — | No change; monolith until a step below touches its region. |
+| **P1** | `seam_residual.rs` | A6 residual (**landed**) / residual cleanup | **Ready** (trigger fired, not done) | Highest value; pairs with `residual_gate.rs`; retire L12 prototype. `seam_chosen_and_floor` @1711, `SeamResidualVerdict` @1940. |
+| **P2** | `silence.rs` | **Step 8** hoist (binned-RMS single owner) | Pending step 8 | Independent of seam; small, clear boundary. The hoist *needs* this owner — decomposition = the perf motion. |
+| **P3** | `gap_borders.rs` | **Step 8** hoist (border-extract single owner) | Pending step 8 | `FillAlignment`, `RefinedGapFrames`, templates. Same motion as P2. |
+| **P4** | `seam_scoring.rs` (+ `seam_splice.rs`) | **6b** (seam scoring consolidates into characterize; #4 reconciliation) | Pending 6b | Largest block (~1,066 lines); split scoring vs the ~73-line splice only if still large. |
+| **P5** | Delete `policies.rs` | After P1–P4 | — | `mod.rs` only; verify `pub use` list matches pre-split API. |
+
+**Do not** execute P1–P5 as a single “split the file” PR, and **do not** bundle any Pn into its trigger step's
+PR — phased, standalone, byte-preserving landings keep both the split *and* the pipeline diff reviewable.
 
 ## 6. Verification
 
-- `cargo test -p clip-sync-repair` — full lib + integration green.
-- `cargo clippy -p clip-sync-repair --all-targets` — clean.
-- Grep: no remaining `domain/policies.rs` file; all former `policies::` paths resolve via `mod.rs`.
-- Optional: `cargo doc -p clip-sync-repair --no-deps` — public rustdoc unchanged for `policies::*`.
+**Principle: a pure module move cannot change behavior** — it is the same code in different files. So the
+failure modes are entirely **compile-time** (an incomplete re-export facade, a `super::`/`pub(crate)`
+visibility slip, a colocated test that loses access to a private item) or **clippy** — all caught in
+**seconds-to-minutes**. The hours-long media/behavior tiers test outcomes a move literally cannot alter, so
+they are **not** the gate here. (The old "full lib + integration green" line assumed a fast suite; the
+integration/`validation` tiers now take hours and are unnecessary for a byte-preserving split.)
+
+**Fast gate — run per phase (P1–P5):**
+
+- `cargo build -p clip-sync-repair --all-targets` — **the dominant check**: every re-export resolves and all
+  test/bench targets still compile. A missing `pub use` or a moved-test visibility break fails here.
+- `cargo clippy -p clip-sync-repair --all-targets` — clean (catches new module-level lint triggers).
+- `.\scripts\test-tier.ps1 -Tier pr-repair` — lib unit tests + golden footguns (fast; the CI-default surface).
+  This runs the colocated `#[cfg(test)]` blocks that moved with each region.
+- **Facade checklist:** `grep '^pub ' domain/policies.rs` (pre-move) → assert every symbol is re-exported from
+  `policies/mod.rs` (post-move). This is the pre-delete guard (§7 risk 1).
+
+**Belt-and-suspenders — once, at P5 (final `mod.rs`-only delete):**
+
+- `.\scripts\test-tier.ps1 -Tier integration` — confirms the assembled binaries still link/run. One run at the
+  end, not per phase.
+- Optional `cargo doc -p clip-sync-repair --no-deps` — public rustdoc unchanged for `policies::*`.
+
+**Not required for a module split:** `-Tier validation` (ffmpeg + fetched corpus, **hours**, media-behavior).
+A split that would change a `validation` outcome is by definition not a pure move — if one is ever needed, the
+phase is doing more than moving code and must be re-scoped. Reserve `validation` for the *pipeline* steps that
+touch behavior, per that plan's §4 harness — not for these extractions.
 
 ## 7. Risks
 
