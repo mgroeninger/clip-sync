@@ -11,6 +11,7 @@ pub mod gap_seam_extend;
 pub mod gap_anchor_seam;
 pub mod gap_fill;
 pub mod gap_energy;
+pub mod gap_repair_spec;
 pub mod gap_signature;
 pub mod gap_tags;
 pub mod gap_structure;
@@ -68,6 +69,11 @@ pub use repair_profile::{
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
 pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};
+pub use gap_repair_spec::{
+    cell_for_skip_reason, BExtractWindow, GapRepairCell, GapRepairPlan, GapRepairSpec,
+    GapRepairStrategy, GapRepairTags, GapRepairVerdict, GateTags, LevelTags, Placement,
+    RegistrationTags, SeamLocalTags,
+};
 pub use patch_result::{
     format_gap_fill_marginal_detail, format_gap_fill_marginal_verbose_line,
     format_gap_fill_marginal_warn_reason, format_gap_fill_skip_verbose_line,

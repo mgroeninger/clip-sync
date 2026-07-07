@@ -207,8 +207,11 @@ mod tests {
     /// Tier-2: every continuous D/R input on the row equals the value the spec STORED (within ε), proving no
     /// re-measurement in the export. TODO(6a): compare `row.*` to `spec.tags_ctx.*` per the §2.5.2a mapping
     /// (peak_r, frac_lag_ms, step_ms, dualfit_*_r, donor silence/rms, residual headroom, structure_min,
-    /// seam_min, a_*_floor_db). For SilenceSplice also assert `row.dualfit_pre_r == strategy.pre_seam_r`
-    /// (single-source: strategy and tags carry the SAME DualFitResult value).
+    /// seam_min, a_*_floor_db). Single-source checks (A7 / §2.5.7 #2):
+    ///   * SilenceSplice — `row.dualfit_pre_r == strategy.pre_seam_r` (same `DualFitResult`, not recomputed).
+    ///   * BracketPatch — `row.seam_min == min(strategy.seam_pre, strategy.seam_post)` and, when
+    ///     `strategy.used_splice`, those are the SPLICE scores the reconciliation chose (§2.5.7 #4), not the
+    ///     `alignment.pre/post_correlation` report scores — the executor read them, never re-scored.
     #[allow(dead_code)]
     fn assert_no_recompute(_row: &GapRow, _spec: &()) {
         todo!("6a: field-by-field Tier-2 equality vs stored spec values")
