@@ -1645,7 +1645,7 @@ fn skip_or_dual_fit(
                                 Err(crate::domain::gap_fill_fit::ResidualGateError::HeadroomExceeded {
                                     headroom_db,
                                     margin_db,
-                                }) => Err((headroom_db, margin_db, verdict.clone())),
+                                }) => Err((headroom_db, margin_db, *verdict)),
                                 Err(crate::domain::gap_fill_fit::ResidualGateError::PearsonBelowFloor(_)) => {
                                     Ok(confidence)
                                 }
