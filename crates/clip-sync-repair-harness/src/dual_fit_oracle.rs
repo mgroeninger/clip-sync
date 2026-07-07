@@ -182,7 +182,7 @@ pub fn build_stepped_floor_oracle_pair(
     let mut a_samples: Vec<i16> =
         Vec::with_capacity(gap_start + (gap_end - gap_start) + (samples.len() - post_start));
     a_samples.extend_from_slice(&samples[..gap_start]);
-    a_samples.extend(std::iter::repeat(0i16).take(gap_end - gap_start));
+    a_samples.extend(std::iter::repeat_n(0i16, gap_end - gap_start));
     a_samples.extend_from_slice(&samples[post_start..]);
 
     let a_pregap = dir.join("a_pregap.wav");

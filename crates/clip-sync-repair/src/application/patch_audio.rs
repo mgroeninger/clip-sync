@@ -2889,9 +2889,11 @@ mod tests {
             limit_fill_to_mapped_region: true,
             audio_timeline_skew: None,
         };
-        let mut repair = crate::infrastructure::config::RepairConfig::default();
-        repair.residual_gate = residual_gate;
-        repair.absolute_silence_rms = 0.001;
+        let repair = crate::infrastructure::config::RepairConfig {
+            residual_gate,
+            absolute_silence_rms: 0.001,
+            ..Default::default()
+        };
         let mut request = repair.patch_settings().into_request(report);
         request.measure_residual = measure_residual;
         request
