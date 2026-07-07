@@ -1825,6 +1825,112 @@ fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> Vec<f32> {
     }
 }
 
+/// Everything the executor needs to reconstruct a bracket fill from the spec — the `FillAlignment` indices,
+/// the decode buffers, and the A geometry/config to rebuild the border templates.
+struct ExecuteBracketFillCtx<'a> {
+    alignment: policies::FillAlignment,
+    b_samples: &'a [f32],
+    a_samples: &'a [f32],
+    a_frames: usize,
+    refined: RefinedGapFrames,
+    channels: usize,
+    gap_frames: usize,
+    fill_mode: FillMode,
+    border_frames: usize,
+    border_standoff_frames: usize,
+    silence_peak_fraction: f32,
+    absolute_silence_rms: f32,
+    seam_gate_frames: usize,
+    sample_rate: u32,
+    crossfade_secs: f64,
+    a_start_secs: f64,
+}
+
+/// The executor's bracket-fill reconstruction (6b.3a). Re-derives everything the fill needs from the spec's
+/// [`FillAlignment`] + the decode buffers + A geometry — **independently of characterize** — then assembles
+/// the PCM via the shared [`assemble_bracket_fill`]. This is the "assemble twice" design: characterize
+/// assembles a fill to score the report-vs-splice reconciliation and discards it; the executor re-assembles
+/// from the spec for the splice (borders rebuilt from scratch — deduped later by the step-8 hoists). Pinned
+/// byte-identical to the authoritative inline fill by a `debug_assert_eq!` at the characterize call site until
+/// 6b.3b flips `prepare_region_patch` to the characterize→execute shim.
+fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
+    let ExecuteBracketFillCtx {
+        alignment,
+        b_samples,
+        a_samples,
+        a_frames,
+        refined,
+        channels,
+        gap_frames,
+        fill_mode,
+        border_frames,
+        border_standoff_frames,
+        silence_peak_fraction,
+        absolute_silence_rms,
+        seam_gate_frames,
+        sample_rate,
+        crossfade_secs,
+        a_start_secs,
+    } = ctx;
+    let fill_start_sample = alignment.start_frame * channels;
+    let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
+    let b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
+    let b_extension = if b_fill_end_sample < b_samples.len() {
+        &b_samples[b_fill_end_sample..]
+    } else {
+        &[][..]
+    };
+    let border_spec = GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames,
+        border_standoff_frames,
+        silence_peak_fraction,
+        absolute_rms_floor: absolute_silence_rms,
+    };
+    let (a_pre_border, a_post_border) =
+        policies::border_templates_for_gap(a_samples, channels, &border_spec);
+    let (a_pre_ch, a_post_ch) =
+        policies::border_templates_per_channel_for_gap(a_samples, channels, &border_spec);
+    let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
+    let post_gate_frames = if a_post_border.is_empty() {
+        0
+    } else {
+        seam_gate_frames.min(a_post_border.len()).max(1)
+    };
+    let repeat_window_frames = border_frames.max(1);
+    let seam_cf = policies::effective_seam_crossfade_frames(
+        (crossfade_secs * sample_rate as f64) as usize,
+        refined.start_frame,
+        refined.end_frame,
+        a_frames,
+    );
+    let seam_ctx = policies::SpliceSeamContext {
+        seam_cf,
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        a_samples,
+        channels,
+        single_lag_alignment: true,
+    };
+    assemble_bracket_fill(BracketFillAssembly {
+        b_fill_raw,
+        b_extension,
+        channels,
+        gap_frames,
+        fill_mode,
+        a_pre_border: &a_pre_border,
+        a_post_border: &a_post_border,
+        a_pre_ch: &a_pre_ch,
+        a_post_ch: &a_post_ch,
+        pre_gate_frames,
+        post_gate_frames,
+        repeat_window_frames,
+        seam_ctx,
+        a_start_secs,
+    })
+}
+
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2298,6 +2404,32 @@ fn prepare_region_patch(
         seam_ctx,
         a_start_secs,
     });
+
+    // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec's `FillAlignment` +
+    // decode buffers alone (rebuilding borders independently). Guards the characterize→execute split before
+    // 6b.3b removes the inline path. Debug-only; the release path is unchanged.
+    debug_assert_eq!(
+        execute_bracket_fill(ExecuteBracketFillCtx {
+            alignment,
+            b_samples,
+            a_samples: &a_pcm.samples,
+            a_frames: a_pcm.frames(),
+            refined,
+            channels,
+            gap_frames,
+            fill_mode: request.fill_mode,
+            border_frames,
+            border_standoff_frames,
+            silence_peak_fraction,
+            absolute_silence_rms,
+            seam_gate_frames,
+            sample_rate,
+            crossfade_secs: region.crossfade_secs,
+            a_start_secs,
+        }),
+        b_fill,
+        "6b.3a: executor bracket-fill reconstruction must byte-match the inline fill"
+    );
 
     let gain = if normalize_fill {
         let border_rms = compute_a_border_rms(
