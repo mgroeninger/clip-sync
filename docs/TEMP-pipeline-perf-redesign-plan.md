@@ -437,14 +437,35 @@ pub enum GapRepairVerdict {
     },
 }
 
-/// [gap-vocabulary.md](gap-vocabulary.md) cell — **derived**, not stored as the decision primitive.
+/// [gap-vocabulary.md](gap-vocabulary.md) cell — a gap-type we **see and reconcile to an action** (patch OR a
+/// *reasoned* skip). This "reconcile to an action" test is the discriminator: a per-gap disposition is a cell
+/// iff it resolves to a per-gap action; **pair-level aborts** (no per-gap action) are not cells. Derived from
+/// the real code disposition (`GapPatchSkipReason` + dual-fit outcome), not an abstract axis space — so
+/// `cell() -> GapRepairCell` is **total** (finite reason enum → cell): no `Option`, no invented catch-all.
 pub enum GapRepairCell {
-    BracketPatch,
-    SilenceSplice,
-    ProgramQuiet,
-    NoPlacement,
-    PlanSkipped,  // G0b / track / not fillable — only on `GapFillPlan.skipped`, not per-region characterize
+    // --- patch actions ---
+    BracketPatch,   // gate Ok → RegionPatch                              — action: patch
+    SilenceSplice,  // dual-fit accepted → RegionPatch                    — action: dual-fit patch
+    // --- reasoned-skip actions ---
+    ProgramQuiet,   // GapPatchSkipReason::ProgramQuiet (nominal ∨ aligned-dead) — action: skip, nothing to fill
+    NoPlacement,    // StructureAlignmentFailed → BoundaryAlignmentFailed — action: skip, no placement found
+    /// Bare `CorrelationBelowThreshold`: bracket-exhausted, donor OCCUPIED, seams don't recover at any lag —
+    /// B has different content. §4.6 decorrelated/different-source regime; **zero re-anchor members** (seen in
+    /// wider production, not the golden). Action: reasoned skip.
+    Decorrelated,
+    /// `ResidualHeadroomExceeded`: seams PASS the waveform gate but least-squares cancellation shows B ≠ A
+    /// (echo / repeat / similar-but-different source). The residual gate (G4, dual-fit A6) IS the
+    /// reconciliation. Action: reasoned skip (false same-source). Not in the re-anchor golden.
+    ResidualVeto,
+    /// **Unfillable family** — structurally cannot fill, so the action is a definite skip (no judgment):
+    /// per-gap `BExtractFailed` / `AlignedSegmentOutOfRange` / `ZeroLengthGap`. The plan-time arm of the same
+    /// family (vocab **Tail** geometry mismatch, `OutsideReferenceCoverage`) lands on `GapFillPlan.skipped`
+    /// (`GapFillSkipReason`) instead of per-region `cell()`. Carry the exact reason alongside for reporting.
+    Unfillable,
 }
+
+// NOT cells (no per-gap action to reconcile): pair-level aborts `TrackLayoutMismatch` /
+// `TrackCompatibilityUnavailable` — they empty the whole plan, never reaching per-region characterize.
 
 pub enum GapRepairStrategy {
     Bracket {
@@ -488,23 +509,74 @@ pub struct GapRepairPlan {
 }
 ```
 
-**Cell derivation** (pure function on spec fields — mirrors §4.1 golden predicates):
+**Cell derivation — from the D/R axes, NOT the verdict** (`gap-vocabulary.md:4,66`: *"patch/skip is a
+function of the cell, not a score"*; *"read the cell instead"*). The cell is the gap's **identity**;
+`Patch`/`Skip` and `outcome.tier` are **projections** of it (the legacy W5/W7 tags are the same projection —
+[gap-vocabulary.md](gap-vocabulary.md) W5/W7 are outcomes, not gap types). **Characterize always *detects* the
+cell** — it runs the seam-local / donor / step-real measurements regardless of the `dual_fit` flag; the flag
+only decides whether a Silence-splice is *emitted* as `Patch(SilenceSplice)` or as `Skip { cell: SilenceSplice }`
+(the D6 flag-off / decline path). So the **same physical gap keeps the same cell whether or not it is
+repaired** — deriving the cell from the verdict would let it flip when the flag toggles, the exact drift the
+vocabulary forbids.
 
-| `GapRepairVerdict` | `GapRepairCell` | Source axes |
-|--------------------|-----------------|-------------|
-| `Patch(Bracket { .. })` | **Bracket patch** | G1–G4 pass |
-| `Patch(SilenceSplice { .. })` | **Silence-splice** | G6 rescue accepted at characterize |
-| `Skip` + `StructureAlignmentFailed` | **No-placement** | G1 reject |
-| `Skip` + dual-fit declined (program-quiet / donor-dead) | **Program-quiet** | G5 + G6 decline |
-| `Skip` + other gate failure | **Program-quiet** or bracket-exhausted skip | map `GapPatchSkipReason` + donor axes |
+| `GapRepairCell` | Deriving axes (tier-independent) | Emitted as |
+|-----------------|----------------------------------|------------|
+| **Bracket patch** | `brackets_passing > 0` (G1–G4 pass) | `Patch(Bracket)` |
+| **Silence-splice** | `bracket_exhausted ∧ dualfit_pass ∧ step_is_real ∧ donor_aligned.continuous ∧ ¬program_quiet` | `Patch(SilenceSplice)` if `dual_fit` on & accepted; else `Skip { cell: SilenceSplice }` |
+| **No-placement** | `brackets_total = 0 ∧ ¬program_quiet` (`StructureAlignmentFailed`) | `Skip` |
+| **Program-quiet** | `program_quiet_at_nominal` (nominal-span silence) — wins over aligned occupancy | `Skip` |
+| **Program-quiet / donor-dead** *(class-4, reported as Program-quiet)* | `bracket_exhausted ∧ ¬donor_aligned.continuous ∧ ¬program_quiet` | `Skip` |
+| **Decorrelated** | `bracket_exhausted ∧ ¬dualfit_pass ∧ donor_aligned.continuous ∧ ¬program_quiet` — §4.6, no re-anchor member | `Skip { reason: CorrelationBelowThreshold }` |
+| **Residual-veto** | seams pass waveform gate ∧ residual gate vetoes (`headroom_db > margin`) — no re-anchor member | `Skip { reason: ResidualHeadroomExceeded }` |
+| **Unfillable** | B window empty / segment out of range / zero-length gap | `Skip { reason: BExtractFailed \| AlignedSegmentOutOfRange \| ZeroLengthGap }` |
 
-`cell()` must be **total** over the stored axes — the ambiguous last row is resolved by the donor D/R fields
-(§2.5.7 item 1): a bracket-exhausted skip with `donor_interior.continuous = false` (internal silent run) is the
-§4.1a **class-4** donor-aligned decline (largest real bucket, 14/62), reported as Program-quiet/donor-dead —
-**not** a cell of its own. `program_quiet_at_nominal` (nominal-span silence) wins over aligned occupancy when
-both fire. Implement as `GapRepairSpec::cell(&self) -> GapRepairCell` + reuse harness helpers
-(`dualfit_target()`, etc.) from `clip-sync-repair-harness/src/golden_baseline.rs`; C4 unit-tests it against all
-six §4.1a classes.
+`GapRepairVerdict::Skip { cell, .. }` therefore **carries the axis-derived cell** (its slot already exists) —
+a declined-only-because-flag-off Silence-splice is `Skip { cell: SilenceSplice }`, not a nameless skip.
+`dualfit_target()` / `outcome.tier` / W5 / W7 are **reproduced from `cell()` + the run's `dual_fit` flag**,
+never the reverse.
+
+`cell()` is **total to a cell** by construction (finite reason enum → `GapRepairCell`, no `Option`). The
+ambiguous class-4 row is resolved by the donor D/R fields (§2.5.7 item 1): a bracket-exhausted skip with
+`donor_interior.continuous = false` (internal silent run) is the §4.1a **class-4** donor-aligned decline
+(largest real bucket, 14/62), reported as Program-quiet/donor-dead — **not** a cell of its own.
+`program_quiet_at_nominal` (nominal-span silence) wins over aligned occupancy when both fire. Implement as
+`GapRepairSpec::cell(&self) -> GapRepairCell` + reuse harness helpers (`dualfit_target()`, etc.) from
+`clip-sync-repair-harness/src/golden_baseline.rs`; C4 unit-tests it against the six §4.1a classes **plus** the
+three wider-production cells (**Decorrelated**, **Residual-veto**, **Unfillable**) via hand-built fixtures.
+
+**Ground truth is the source, not the golden/vocab.** The production classifier — `evaluate_seam_gate` →
+`seam_failure_outcome` (`patch_audio.rs:1328`) → `GapPatchSkipReason` (`patch_result.rs:116`) — was written
+against gap-files **before** the vocab existed and is what actually runs. `GapRepairCell` must therefore be a
+**projection of that finite reason enum**, not of an abstract axis space. Code → cell (the "reconcile to an
+action" discriminator makes every per-region disposition a cell; only pair-level aborts fall out):
+
+| Real code disposition | `GapRepairCell` |
+|-----------------------|-----------------|
+| gate `Ok` → `RegionPatch` | `BracketPatch` |
+| `WaveformBelowThreshold` → dual-fit accepted → `RegionPatch` | `SilenceSplice` |
+| `GapPatchSkipReason::ProgramQuiet` (dual-fit/donor decline) | `ProgramQuiet` |
+| `StructureAlignmentFailed` → `BoundaryAlignmentFailed` | `NoPlacement` |
+| `CorrelationBelowThreshold` (bracket skip, dual-fit declined non-donor) | `Decorrelated` — §4.6, no re-anchor member |
+| `ResidualHeadroomExceeded` (seams pass, residual vetoes) | `ResidualVeto` — no re-anchor member |
+| `BExtractFailed` / `AlignedSegmentOutOfRange` / `ZeroLengthGap` | `Unfillable` |
+| plan-time `NotFillable` / `OutsideReferenceCoverage` (Tail) | plan-scope Unfillable arm (`GapFillPlan.skipped`) |
+| plan-time `TrackLayoutMismatch` / `TrackCompatibilityUnavailable` | **not a cell** — pair-level abort |
+
+My earlier `BracketExhaustedUndetermined` / `None`-residual was a mistake in the *other* direction: under
+"reconcile to an action," the bare `CorrelationBelowThreshold` case (bracket-exhausted, donor-occupied, seams
+don't recover) reconciles to a deliberate skip, so it **is** a cell (`Decorrelated`) — not a nameless `None`.
+The vocab `5·g0` ("gate unmeasured") is the same bucket pre-measurement; characterize-always-measures removes
+the *unmeasured* variant, leaving the decorrelated one that the source names `CorrelationBelowThreshold`.
+
+**Program-quiet is a two-predicate union (vocab reconciliation).** [gap-vocabulary.md](gap-vocabulary.md)
+defines the Program-quiet cell by **Donor — nominal** silence, but its largest sub-bucket (class-4) is
+discriminated by **Donor — aligned** broken, where *nominal may be occupied*. In code, both emit
+`GapPatchSkipReason::ProgramQuiet` (the dual-fit decline covers donor-dead) — so `cell() == ProgramQuiet` iff
+`program_quiet_at_nominal` **∨** (`bracket_exhausted ∧ ¬donor_aligned.continuous`). The harness
+`program_quiet()` (`gap_fingerprint_corpus.rs:638`, nominal-only) captures only the **first** term — so a
+class-4 gap is correctly `cell()==ProgramQuiet` **and** `program_quiet_skip()==false`. C4 asserts exactly that
+pair; it is the nominal predicate being a *partial* projection of the cell, not a contradiction. Worth a
+one-line vocab note that the cell also admits the aligned-donor-dead sub-case.
 
 **Relationship to `GapFingerprint`:** the fingerprint struct remains the **licensing-safe export schema**.
 Add `GapRepairSpec::to_fingerprint_summary(&self, x: Option<FingerprintXSet>) -> GapFingerprint` — or build
@@ -697,7 +769,8 @@ when a `--repair-preview` flag is added (not in scope for step 6 — document ho
 
 | ID | Item | Blocks | Notes |
 |----|------|--------|-------|
-| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection test | step 6a | Every §4.1 Tier-1/2 field must round-trip through the spec type |
+| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection test | step 6a | Every §4.1 Tier-1/2 field must round-trip through the spec type; nine classes → seven cells |
+| **C4b** | `cell()` exhaustive over `GapPatchSkipReason` | step 6a | Wildcard-free `cell_for_skip_reason` match (compile-time) + runtime backstop over every variant — a new source reason can't escape the vocabulary |
 | **C5** | Live characterize invariance (calls `characterize_all_regions`, not static JSON) | step 7 | Closes §4.6 “live fingerprint recompute” gap for decisions |
 
 Add C4/C5 to §4.7 backlog when implementing; C2 (byte-identical PCM) remains the executor regression gate.
@@ -843,8 +916,12 @@ only, no audio) and is what the synthetic fixtures replicate:
 | 6 | **Bracket patch** (negative control) | `tier=patch`, `brackets_passing>0` | e.g. 1·g1/g2/g6/g8/g20/g23 | Existing `energy_signature_fixtures.rs` F1–F4 / patch-path tests; dual-fit code path never engages |
 
 **Vocab edge case not in this table:** **Bracket-exhausted, gate unmeasured** (`5·g0` — donor continuous but
-`splice_dualfit` absent; not in the nine silence-splice targets). **Tail** gaps (n=7) are filtered at G0b
-before the matched denominator — see [gap-vocabulary.md](gap-vocabulary.md).
+`splice_dualfit` absent; not in the nine silence-splice targets). In the characterize→execute model seams are
+always measured, so the *unmeasured* variant is gone; the general residual (bracket-exhausted, donor-occupied,
+seams don't recover) is a bare `GapPatchSkipReason::CorrelationBelowThreshold` in the source — the §4.6
+decorrelated regime, `cell() == Decorrelated` (§2.5.2), zero re-anchor members. **Tail** gaps (n=7) are
+filtered at G0b before the matched denominator (plan-scope arm of the **Unfillable** family) — see
+[gap-vocabulary.md](gap-vocabulary.md).
 
 Classes 1–2 are collapsed by the same precondition (`bracket_exhausted`) in code, but are kept distinct here
 because they arrive at that precondition via different upstream reasons (no structure placement at all vs. an
@@ -972,7 +1049,8 @@ Land **Tier A before step 1 hoists**; **B1 before step 4 FFT**; Tier C before ca
 | **C1** | Document + script pre-release invariance workflow | release sign-off | **OPEN** | Rescan dirs 1–7 → `test-tier.ps1 -Tier validation`; optional `scripts/perf-invariance.ps1` checking `gap-files/re-anchor-dual-fit-on-nominal` |
 | **C2** | `--no-dual-fit` D6 smoke on committed gap corpus | production wiring / step 6b | **OPEN** | `PatchAudio` with `dual_fit: true` vs `false` on bracket-patch gaps ⇒ byte-identical PCM when dual-fit not needed |
 | **C3** | `fingerprint_diagnostics` flag smoke | step 8 regression | **OPEN** | Flag off ⇒ X fields absent; flag on ⇒ `seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels` present |
-| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection | step 6a | **OPEN** | Unit test: synthetic specs cover all §4.1a classes; Tier-1 fields match harness predicates |
+| **C4** | `GapRepairSpec` ↔ golden `gap_row` projection | step 6a | **OPEN** | Unit test: synthetic specs cover the six §4.1a classes + three wider-production cells (Decorrelated/ResidualVeto/Unfillable, hand-built); Tier-1 fields match harness predicates. Skeleton: `gap_repair_spec_projection.rs` |
+| **C4b** | `cell()` exhaustive over `GapPatchSkipReason` | step 6a | **OPEN** | Wildcard-free `cell_for_skip_reason` (compile-time) + runtime backstop constructing every variant; pins the vocab ↔ source mapping so a new skip reason must be classified. Skeleton stub in `gap_repair_spec_projection.rs` |
 | **C5** | Live characterize invariance (`characterize_all_regions` vs rescan) | step 7 | **OPEN** | Extends C1 — closes §4.6 static-JSON-only gap for **decisions** |
 | **D1** | Edge-pin footgun synthetic | low | **OPEN** | 0/55 on corpus; defer |
 | **D2** | Wall-clock per phase (§4.5) | perf validation | **OPEN** | Manual benchmark script, not unit test |
@@ -1005,7 +1083,7 @@ updates themselves are unstaged on top.
 Before hoists (step 8):  A1 → A3 → A2   [DONE 2026-07-03]
 Before FFT (step 4):     B1  (+ existing Tier-2 ε in golden diff)   [DONE 2026-07-04]
                          B2 (`validate_dual_fit_oracle.rs`)         [DONE]
-Before step 6:           C4 (spec ↔ golden projection)
+Before step 6:           C4 (spec ↔ golden projection) + C4b (cell() exhaustive over GapPatchSkipReason)
 Step 6 (§2.5):           6a → 6b → 6c → 7 (C5) → 8 (fingerprint unify + C3)
 Executor regression:     C2 (byte-identical PCM, bracket path)
 Release sign-off:        C1 (+ validation tier locally)

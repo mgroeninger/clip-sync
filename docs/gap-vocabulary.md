@@ -2,9 +2,12 @@
 
 A gap is a point in a small measurement space — how A's kept content meets B's donor content at the
 seam(s). Its **type** is the cell that point falls into; patch/skip is a function of the cell, not a
-single conflated score. This doc names the cells that actually occur in the corpus
-(`gap-files/re-anchor-dual-fit-on-nominal`, 62 matched gaps). Background and derivation:
-[TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md).
+single conflated score. This doc names the cells we **see and reconcile to an action** — a patch, or a
+*reasoned* skip. The re-anchor corpus (`gap-files/re-anchor-dual-fit-on-nominal`, 62 matched gaps) is narrow
+and nowhere near complete, so it exercises only the core cells; three more — **Decorrelated**,
+**Residual-veto**, and the **Unfillable** family — are real production dispositions (from the source
+classifier `GapPatchSkipReason`) named here even though the re-anchor golden has no member. Background and
+derivation: [TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md).
 
 ## Axes (read before the cells)
 
@@ -27,7 +30,8 @@ envelope, uniqueness as diagnostic, …): [redesign plan §2](archive/TEMP-gap-v
 
 ## The cells
 
-That's the whole vocabulary for this corpus — five named interior types, one edge case, plus tail:
+The core cells for this corpus — five named interior types, one edge case, plus tail (the three
+wider-production cells follow in their own subsection):
 
 **Bracket patch** (n=23, e.g. 1·g6, 5·g3 +72 ms step) — a bracket search found a placement where both
 seams pass at lag 0; today's normal path. Includes **7 donor-BROKEN interior patches** (e.g. 1·g1, 1·g2)
@@ -58,7 +62,34 @@ upstream of seam scoring.*
 
 **Bracket-exhausted, gate unmeasured** (n=1, `5·g0`) — bracket search exhausted and donor is continuous,
 but seam viability was not measured (`splice_dualfit` absent); not in the dual-fit addressable set. Counted
-among the 32 bracket-exhausted skips in §7g, outside the nine silence-splice targets.
+among the 32 bracket-exhausted skips in §7g, outside the nine silence-splice targets. *In the
+characterize→execute pipeline seams are always measured, so this pre-measurement variant disappears — a gap
+here resolves to **Decorrelated** (below) once its seams are scored.*
+
+## Wider-production cells (not in the re-anchor corpus)
+
+These are real dispositions the source classifier emits (`GapPatchSkipReason`) but that the narrow re-anchor
+corpus happens not to contain (**n=0** here). They are named because each **reconciles to an action** — a
+reasoned skip — and wider production data does produce them. Fixtures are hand-built until real media supplies
+a member.
+
+**Decorrelated** (n=0 on re-anchor) — bracket search exhausted, donor is **occupied**, but the seams do not
+recover at *any* lag: B has genuinely *different* content across the hole (not a registration offset). Distinct
+from silence-splice (seams recover at their own lag) and from program-quiet (donor is occupied, not silent).
+Source: a bare `CorrelationBelowThreshold` skip with no dual-fit rescue. Action: reasoned skip.
+
+**Residual-veto** (n=0 on re-anchor) — the seams **pass** the waveform gate, but least-squares cancellation at
+the throat shows B ≠ A (echo / repeat / a similar-but-different source that merely correlates). The residual
+gate (G4, and dual-fit's A6 shoulder check) is the reconciliation; a false same-source is *correctly* rejected.
+Source: `ResidualHeadroomExceeded`. Action: reasoned skip. Distinct from every seam-correlation cell — it is
+the cell the residual confirm exists to catch.
+
+**Unfillable** (family; n=0 per-gap on re-anchor) — the gap structurally cannot be filled, so the action is a
+definite skip with no judgment: B window empty / segment out of range / zero-length (`BExtractFailed`,
+`AlignedSegmentOutOfRange`, `ZeroLengthGap`). **Tail** (above) is the plan-time arm of the same family
+(geometry mismatch, `OutsideReferenceCoverage`), filtered before per-gap scoring. Pair-level aborts
+(`TrackLayoutMismatch`, `TrackCompatibilityUnavailable`) are **not** cells — they abort the whole pair, with no
+per-gap action to reconcile.
 
 ## Derived readouts (not primitives)
 
@@ -80,11 +111,17 @@ correspondence for orientation, not a lookup table any code consults — the tie
 | W2 | Balanced marginal | Bracket patch, marginal confidence |
 | W3 | Asymmetric marginal | Bracket patch, one seam much weaker (echo/repeat) |
 | W4 | Asymmetric dead zone | Throat skip in the dead-zone band (`patch_tier=dead_zone`) — often bracket-exhausted pre-rescue; not a successful bracket patch |
-| W5 | Symmetric weak | **Was** "weak content" — is actually **silence-splice or program-quiet**, i.e. same-master content that failed lag-0 bracket search, not decorrelated/low-quality content |
+| W5 | Symmetric weak | **Was** "weak content" — on this corpus is actually **silence-splice or program-quiet** (same-master content that failed lag-0 bracket search). The *genuinely* decorrelated/low-quality content W5 was originally assumed to be is the **Decorrelated** cell — real in wider production, absent from re-anchor |
 | W6 | Structure fail | No-placement |
 | W7 | Bracket-exhausted → dual-fit | Post-rescue **patch tier** on a silence-splice gap (default `dual_fit` on) — not a separate cell |
+
+No legacy W-tier maps to **Residual-veto** or **Unfillable**: the Pearson tiers are computed from `min(pre,
+post)` alone, so they cannot see the residual confirm (B correlates but ≠ A) or a structural non-fill — another
+way the legacy score conflates cells the D/R axes separate.
 
 The corrected reading of **W5** is the reason this doc exists: `min(pre, post)` at lag 0 can't
 distinguish "B doesn't have this content" (program-quiet) from "B has it at a different lag than the
 bracket tried" (silence-splice) — two cells with opposite correct actions (skip forever vs. dual-fit
-rescue) that collapsed onto one score.
+rescue) that collapsed onto one score. A *third* action-distinct cell hides in the same band once wider
+data is admitted — **Decorrelated** (B has *different* content, a reasoned skip) — which is why the cell,
+not the score, is the primitive.
