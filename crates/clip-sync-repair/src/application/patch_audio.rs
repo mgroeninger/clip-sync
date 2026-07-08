@@ -42,8 +42,7 @@ use crate::domain::{
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
     gap_repair_spec::{
-        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict, GateTags,
-        RegistrationTags,
+        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
     },
     RepairPatchConfigView,
     Gap, GapReport,
@@ -1696,30 +1695,40 @@ fn skip_or_dual_fit(
                             ?confidence,
                             "dual-fit rescued a bracket-exhausted skip"
                         );
-                        let patch = RegionPatch {
-                            b_samples: r.fill,
-                            gain: 1.0,
-                            a_start_frame: df.a_start_frame,
-                            a_end_frame: df.a_end_frame,
+                        // 6b.3d: build a `Patch(SilenceSplice)` spec and route it through the executor. The
+                        // synthesized bridge PCM lives on the spec; geometry comes from the dual-fit input
+                        // (`refined` = the gap frames). `b_extract` / `gap_offset` / tags are inert for this
+                        // arm (the executor reads only `refined` + `crossfade` + the SilenceSplice fields).
+                        let spec = GapRepairSpec {
+                            gap_index: 0,
+                            a_start_secs: region.a_start_secs,
+                            a_end_secs: region.a_end_secs,
+                            gap_offset_secs: 0.0,
+                            refined: RefinedGapFrames {
+                                start_frame: df.a_start_frame,
+                                end_frame: df.a_end_frame,
+                            },
+                            b_extract: BExtractWindow {
+                                start_frame: 0,
+                                end_frame: 0,
+                                b_mapped_start_frame: 0,
+                            },
                             crossfade_secs: df.crossfade_secs,
+                            verdict: GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+                                fill: r.fill,
+                                pre_seam_r: splice_pre,
+                                post_seam_r: splice_post,
+                                pre_lag: r.pre_lag,
+                                post_lag: r.post_lag,
+                                trim_frames: r.trim_frames,
+                                residual,
+                                confidence,
+                            }),
+                            tags_ctx: GapRepairTags::default(),
                         };
-                        let outcome = RegionPatchOutcome::Patched {
-                            pre_correlation: splice_pre,
-                            post_correlation: splice_post,
-                            align_adjustment_secs: 0.0,
-                            waveform_adjustment_secs: 0.0,
-                            structure_trusted: false,
-                            confidence,
-                            gap_start_adjust_frames: 0,
-                            gap_end_adjust_frames: 0,
-                            fit_used_boundary_grid: false,
-                            fit_boundary_grid_cells: None,
-                            residual,
-                            anchor_seam_used: false,
-                            anchor_bracket_move_frames: 0,
-                            dual_fit_used: true,
-                        };
-                        return (Some(patch), outcome, tag_ctx);
+                        let (patch, outcome) =
+                            execute_region_spec(spec, None, df.params.sample_rate);
+                        return (patch, outcome, tag_ctx);
                     }
                     Err(min_score) => {
                         tracing::debug!(
@@ -2003,17 +2012,19 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
     (patch, outcome)
 }
 
-/// The executor entry (6b.3c): produce `(patch, outcome)` from a `GapRepairSpec` — the typed
-/// characterize→execute handoff. Routes on the verdict; only `Patch(Bracket)` is wired so far (skip /
-/// dual-fit land in 6b.3d). The bracket output is read **entirely from the spec**. `fill` is passed in for
-/// now — characterize already assembled it to score the reconciliation; 6c re-derives it from the spec's
-/// `FillAlignment` (via `execute_bracket_fill`) once the passes split.
+/// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
+/// handoff. Handles the two PATCH verdicts; `Skip` isn't *executed* (the loop filters skips and derives their
+/// outcome from the spec, §2.5.5). `bracket_fill` is the transitional pre-assembled bracket fill (6b.3c) —
+/// `Some` for `Bracket`, `None` for `SilenceSplice` (whose fill is on the spec); 6c re-derives the bracket
+/// fill from `FillAlignment` and drops this param. Takes `spec` by value so the SilenceSplice fill moves out
+/// without a clone.
 fn execute_region_spec(
-    spec: &GapRepairSpec,
-    fill: Vec<f32>,
+    spec: GapRepairSpec,
+    bracket_fill: Option<Vec<f32>>,
     sample_rate: u32,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
-    match &spec.verdict {
+    let GapRepairSpec { refined, crossfade_secs, b_extract, verdict, .. } = spec;
+    match verdict {
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
             structure_start_frame,
@@ -2032,32 +2043,66 @@ fn execute_region_spec(
             ..
         }) => {
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
-                fill,
-                gain: *normalize_gain,
-                refined: spec.refined,
-                crossfade_secs: spec.crossfade_secs,
-                final_pre: *seam_pre,
-                final_post: *seam_post,
-                final_confidence: *confidence,
-                structure_trusted: *structure_trusted,
-                gap_start_adjust_frames: *gap_start_adjust_frames,
-                gap_end_adjust_frames: *gap_end_adjust_frames,
-                fit_used_boundary_grid: *fit_used_boundary_grid,
-                fit_boundary_grid_cells: *fit_boundary_grid_cells,
-                residual: *residual,
-                anchor_seam_used: *anchor_seam_used,
-                anchor_bracket_move_frames: *anchor_bracket_move_frames,
-                structure_start_frame: *structure_start_frame,
+                fill: bracket_fill.expect("bracket verdict requires a bracket fill until 6c re-derivation"),
+                gain: normalize_gain,
+                refined,
+                crossfade_secs,
+                final_pre: seam_pre,
+                final_post: seam_post,
+                final_confidence: confidence,
+                structure_trusted,
+                gap_start_adjust_frames,
+                gap_end_adjust_frames,
+                fit_used_boundary_grid,
+                fit_boundary_grid_cells,
+                residual,
+                anchor_seam_used,
+                anchor_bracket_move_frames,
+                structure_start_frame,
                 alignment_start_frame: alignment.start_frame,
-                offset_nominal_start: spec.b_extract.b_mapped_start_frame,
+                offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
             });
             (Some(patch), outcome)
         }
-        _ => unreachable!(
-            "6b.3c: only Patch(Bracket) verdicts are routed through execute_region_spec; \
-             skip / dual-fit paths are wired in 6b.3d"
-        ),
+        GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+            fill,
+            pre_seam_r,
+            post_seam_r,
+            residual,
+            confidence,
+            ..
+        }) => {
+            // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
+            // there is no align/waveform slide and no structure trust.
+            let patch = RegionPatch {
+                b_samples: fill,
+                gain: 1.0,
+                a_start_frame: refined.start_frame,
+                a_end_frame: refined.end_frame,
+                crossfade_secs,
+            };
+            let outcome = RegionPatchOutcome::Patched {
+                pre_correlation: pre_seam_r,
+                post_correlation: post_seam_r,
+                align_adjustment_secs: 0.0,
+                waveform_adjustment_secs: 0.0,
+                structure_trusted: false,
+                confidence,
+                gap_start_adjust_frames: 0,
+                gap_end_adjust_frames: 0,
+                fit_used_boundary_grid: false,
+                fit_boundary_grid_cells: None,
+                residual,
+                anchor_seam_used: false,
+                anchor_bracket_move_frames: 0,
+                dual_fit_used: true,
+            };
+            (Some(patch), outcome)
+        }
+        GapRepairVerdict::Skip { .. } => {
+            unreachable!("skips are not executed — the loop derives their outcome from the spec (§2.5.5)")
+        }
     }
 }
 
@@ -2673,16 +2718,9 @@ fn prepare_region_patch(
             residual: residual_verdict,
             normalize_gain: gain,
         }),
-        tags_ctx: GapRepairTags {
-            registration: RegistrationTags::default(),
-            seam_local: None,
-            donor_nominal: None,
-            donor_aligned: None,
-            gate: GateTags::default(),
-            levels: None,
-        },
+        tags_ctx: GapRepairTags::default(),
     };
-    let (patch, outcome) = execute_region_spec(&spec, b_fill, sample_rate);
+    let (patch, outcome) = execute_region_spec(spec, Some(b_fill), sample_rate);
     (patch, outcome, tag_ctx)
 }
 

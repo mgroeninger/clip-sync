@@ -125,7 +125,9 @@ pub struct LevelTags {
 
 /// The decision/repair-bearing coordinates for one characterized gap — populated for EVERY gap regardless of
 /// verdict. The single source the fingerprint export + golden record project from. No X-set here.
-#[derive(Debug, Clone)]
+/// `Default` = the all-`None`/default "partial" tags used in 6b (production doesn't compute the full D/R set
+/// until step 8); both spec-build sites use `GapRepairTags::default()`.
+#[derive(Debug, Clone, Default)]
 pub struct GapRepairTags {
     pub registration: RegistrationTags,
     /// `Some` iff dual-fit detect ran (bracket-exhausted skip path).

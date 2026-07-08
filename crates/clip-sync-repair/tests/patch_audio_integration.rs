@@ -1213,6 +1213,82 @@ fn patch_audio_skips_when_structure_trust_disabled_and_waveform_disagrees() {
     }
 }
 
+/// 6b.3d coverage: the dual-fit rescue path routes through `execute_region_spec`'s SilenceSplice arm. Same
+/// inverted-post-border fixture as the one-strong-seam test, but dual-fit ON (production default) — the
+/// bracket search is exhausted (the post seam collapses at lag 0), yet dual-fit recovers the post shoulder at
+/// its own lag and rescues the gap. Pins that the rescued patch is produced with `dual_fit_used: true` — the
+/// fast-tier gate for the SilenceSplice executor arm (previously covered only by the validation-tier
+/// `validate_dual_fit_oracle`).
+#[test]
+fn patch_audio_dual_fit_rescues_inverted_post_border() {
+    const SHORT_GAP_END: f64 = 4.0;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_sine_with_gap(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        GAP_START as u32,
+        SHORT_GAP_END as u32,
+        440.0,
+        16_000.0,
+    );
+    write_stereo_sine_with_inverted_region(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        SHORT_GAP_END - 0.05,
+        SHORT_GAP_END + 0.50,
+        440.0,
+        16_000.0,
+    );
+
+    let gap = default_gap();
+    let gap = Gap {
+        video_a_end_secs: SHORT_GAP_END,
+        video_b_end_secs: Some(SHORT_GAP_END),
+        ..gap
+    };
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
+    let report = GapReport {
+        gaps: vec![gap],
+        ..report
+    };
+
+    // Bracket search exhausted (post seam collapses at lag 0), all fallback mechanisms off — only dual-fit
+    // can rescue. `dual_fit` defaults to the production value (on).
+    let opts = PatchTestOptions {
+        short_gap_one_strong_seam_fallback: false,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 2.0, 0.12, opts),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "dual-fit should rescue the inverted post border, got {:?}",
+        patched.summary.gaps
+    );
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched { dual_fit_used: true, .. } => {}
+        other => panic!("expected a dual-fit-rescued patch (dual_fit_used), got {other:?}"),
+    }
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, SHORT_GAP_END);
+    assert!(
+        gap_rms > 100.0 / 32767.0,
+        "dual-fit-rescued gap should contain audio, rms={gap_rms}"
+    );
+}
+
 #[test]
 fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
     const SHORT_GAP_END: f64 = 4.0;
