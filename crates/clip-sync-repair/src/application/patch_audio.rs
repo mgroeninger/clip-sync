@@ -1852,9 +1852,11 @@ struct ExecuteBracketFillCtx<'a> {
 /// [`FillAlignment`] + the decode buffers + A geometry — **independently of characterize** — then assembles
 /// the PCM via the shared [`assemble_bracket_fill`]. This is the "assemble twice" design: characterize
 /// assembles a fill to score the report-vs-splice reconciliation and discards it; the executor re-assembles
-/// from the spec for the splice (borders rebuilt from scratch — deduped later by the step-8 hoists). Pinned
-/// byte-identical to the authoritative inline fill by a `debug_assert_eq!` at the characterize call site until
-/// 6b.3b flips `prepare_region_patch` to the characterize→execute shim.
+/// from the spec for the splice (borders rebuilt from scratch — deduped later by the step-8 hoists).
+///
+/// **Currently exercised only by the fill `debug_assert_eq!` shadow** (the live fill is still the inline
+/// `assemble_bracket_fill`, shared with the reconciliation). It becomes the live fill path at 6b.3c, when
+/// `execute_region_spec` re-assembles from the spec in a separate execute step.
 fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
     let ExecuteBracketFillCtx {
         alignment,
@@ -1960,9 +1962,10 @@ struct ExecuteBracketOutputCtx {
     sample_rate: u32,
 }
 
-/// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly (6b.3a). Recomputes the geometry
-/// slides independently and builds the structs from the resolved/spec values — `dual_fit_used` is always
-/// `false` for a bracket. Pinned byte-identical to the inline return by a `debug_assert_eq!` until 6b.3b.
+/// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
+/// independently and builds the structs from the resolved/spec values — `dual_fit_used` is always `false`
+/// for a bracket. **The authoritative bracket output path since 6b.3b** (was shadow-validated byte-identical
+/// across the full suite in 6b.3a before the inline construction was removed).
 fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionPatchOutcome) {
     let refined_b_start_secs =
         ctx.refined.start_frame as f64 / ctx.sample_rate as f64 + ctx.gap_offset_secs;
@@ -2385,7 +2388,8 @@ fn prepare_region_patch(
         / sample_rate as f64;
     let waveform_slide_secs =
         (alignment.start_frame as f64 - structure_start_frame as f64) / sample_rate as f64;
-    let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
+    // `align_adjustment_secs` (= structure + waveform slide) is recomputed inside `execute_bracket_output`
+    // from the placement fields; `structure_slide_secs`/`waveform_slide_secs` remain for the verbose log.
 
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
@@ -2573,20 +2577,18 @@ fn prepare_region_patch(
         (report_pre, report_post, confidence)
     };
 
-    let inline_patch = Some(RegionPatch {
-        b_samples: b_fill,
+    // 6b.3b: the executor assembles the bracket (patch, outcome) from the resolved/spec values + geometry
+    // (slides recomputed from the placement fields). Shadow-proven byte-identical across the full suite in
+    // 6b.3a; now the authoritative path — the inline construction + shadow are gone.
+    let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
+        fill: b_fill,
         gain,
-        a_start_frame: refined.start_frame,
-        a_end_frame: refined.end_frame,
+        refined,
         crossfade_secs: region.crossfade_secs,
-    });
-    let inline_outcome = RegionPatchOutcome::Patched {
-        pre_correlation: final_pre,
-        post_correlation: final_post,
-        align_adjustment_secs,
-        waveform_adjustment_secs: waveform_slide_secs,
+        final_pre,
+        final_post,
+        final_confidence,
         structure_trusted: patched_structure_trusted,
-        confidence: final_confidence,
         gap_start_adjust_frames,
         gap_end_adjust_frames,
         fit_used_boundary_grid,
@@ -2594,43 +2596,13 @@ fn prepare_region_patch(
         residual: residual_verdict,
         anchor_seam_used,
         anchor_bracket_move_frames,
-        dual_fit_used: false,
-    };
-
-    // 6b.3a shadow: prove the executor assembles the identical (patch, outcome) from the resolved/spec
-    // values + geometry (slides recomputed independently). Debug-only; the release path is unchanged.
-    #[cfg(debug_assertions)]
-    if let Some(inline_p) = inline_patch.as_ref() {
-        let (exec_patch, exec_outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
-            fill: inline_p.b_samples.clone(),
-            gain: inline_p.gain,
-            refined,
-            crossfade_secs: region.crossfade_secs,
-            final_pre,
-            final_post,
-            final_confidence,
-            structure_trusted: patched_structure_trusted,
-            gap_start_adjust_frames,
-            gap_end_adjust_frames,
-            fit_used_boundary_grid,
-            fit_boundary_grid_cells,
-            residual: residual_verdict,
-            anchor_seam_used,
-            anchor_bracket_move_frames,
-            structure_start_frame,
-            alignment_start_frame: alignment.start_frame,
-            b_extract_start_secs,
-            gap_offset_secs,
-            sample_rate,
-        });
-        debug_assert_eq!(exec_patch, *inline_p, "6b.3a: executor RegionPatch must match inline");
-        debug_assert_eq!(
-            exec_outcome, inline_outcome,
-            "6b.3a: executor RegionPatchOutcome must match inline"
-        );
-    }
-
-    (inline_patch, inline_outcome, tag_ctx)
+        structure_start_frame,
+        alignment_start_frame: alignment.start_frame,
+        b_extract_start_secs,
+        gap_offset_secs,
+        sample_rate,
+    });
+    (Some(patch), outcome, tag_ctx)
 }
 
 fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
