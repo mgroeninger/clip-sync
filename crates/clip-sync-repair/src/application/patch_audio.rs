@@ -293,6 +293,7 @@ impl PatchRequestSettings {
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 // Collected B segment ready to splice into A.
+#[derive(Debug, PartialEq)]
 struct RegionPatch {
     b_samples: Vec<f32>,
     gain: f32,
@@ -559,6 +560,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum RegionPatchOutcome {
     Patched {
         pre_correlation: f64,
@@ -1931,6 +1933,72 @@ fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
     })
 }
 
+/// Resolved values the executor assembles a bracket `(RegionPatch, RegionPatchOutcome)` from. Everything
+/// here is either read from the spec (gain, seam correlations, confidence, flags) or reconstructed (`fill`
+/// via [`execute_bracket_fill`], slides recomputed from the geometry fields).
+struct ExecuteBracketOutputCtx {
+    fill: Vec<f32>,
+    gain: f32,
+    refined: RefinedGapFrames,
+    crossfade_secs: f64,
+    final_pre: f64,
+    final_post: f64,
+    final_confidence: FillConfidence,
+    structure_trusted: bool,
+    gap_start_adjust_frames: i64,
+    gap_end_adjust_frames: i64,
+    fit_used_boundary_grid: bool,
+    fit_boundary_grid_cells: Option<u32>,
+    residual: Option<policies::SeamResidualVerdict>,
+    anchor_seam_used: bool,
+    anchor_bracket_move_frames: usize,
+    // Slide geometry — recomputed here, independent of characterize.
+    structure_start_frame: usize,
+    alignment_start_frame: usize,
+    b_extract_start_secs: f64,
+    gap_offset_secs: f64,
+    sample_rate: u32,
+}
+
+/// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly (6b.3a). Recomputes the geometry
+/// slides independently and builds the structs from the resolved/spec values — `dual_fit_used` is always
+/// `false` for a bracket. Pinned byte-identical to the inline return by a `debug_assert_eq!` until 6b.3b.
+fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionPatchOutcome) {
+    let refined_b_start_secs =
+        ctx.refined.start_frame as f64 / ctx.sample_rate as f64 + ctx.gap_offset_secs;
+    let offset_nominal_start =
+        ((refined_b_start_secs - ctx.b_extract_start_secs) * ctx.sample_rate as f64).round() as usize;
+    let structure_slide_secs =
+        (ctx.structure_start_frame as f64 - offset_nominal_start as f64) / ctx.sample_rate as f64;
+    let waveform_slide_secs =
+        (ctx.alignment_start_frame as f64 - ctx.structure_start_frame as f64) / ctx.sample_rate as f64;
+    let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
+    let patch = RegionPatch {
+        b_samples: ctx.fill,
+        gain: ctx.gain,
+        a_start_frame: ctx.refined.start_frame,
+        a_end_frame: ctx.refined.end_frame,
+        crossfade_secs: ctx.crossfade_secs,
+    };
+    let outcome = RegionPatchOutcome::Patched {
+        pre_correlation: ctx.final_pre,
+        post_correlation: ctx.final_post,
+        align_adjustment_secs,
+        waveform_adjustment_secs: waveform_slide_secs,
+        structure_trusted: ctx.structure_trusted,
+        confidence: ctx.final_confidence,
+        gap_start_adjust_frames: ctx.gap_start_adjust_frames,
+        gap_end_adjust_frames: ctx.gap_end_adjust_frames,
+        fit_used_boundary_grid: ctx.fit_used_boundary_grid,
+        fit_boundary_grid_cells: ctx.fit_boundary_grid_cells,
+        residual: ctx.residual,
+        anchor_seam_used: ctx.anchor_seam_used,
+        anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
+        dual_fit_used: false,
+    };
+    (patch, outcome)
+}
+
 fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2505,21 +2573,43 @@ fn prepare_region_patch(
         (report_pre, report_post, confidence)
     };
 
-    (
-        Some(RegionPatch {
-            b_samples: b_fill,
-            gain,
-            a_start_frame: refined.start_frame,
-            a_end_frame: refined.end_frame,
+    let inline_patch = Some(RegionPatch {
+        b_samples: b_fill,
+        gain,
+        a_start_frame: refined.start_frame,
+        a_end_frame: refined.end_frame,
+        crossfade_secs: region.crossfade_secs,
+    });
+    let inline_outcome = RegionPatchOutcome::Patched {
+        pre_correlation: final_pre,
+        post_correlation: final_post,
+        align_adjustment_secs,
+        waveform_adjustment_secs: waveform_slide_secs,
+        structure_trusted: patched_structure_trusted,
+        confidence: final_confidence,
+        gap_start_adjust_frames,
+        gap_end_adjust_frames,
+        fit_used_boundary_grid,
+        fit_boundary_grid_cells,
+        residual: residual_verdict,
+        anchor_seam_used,
+        anchor_bracket_move_frames,
+        dual_fit_used: false,
+    };
+
+    // 6b.3a shadow: prove the executor assembles the identical (patch, outcome) from the resolved/spec
+    // values + geometry (slides recomputed independently). Debug-only; the release path is unchanged.
+    #[cfg(debug_assertions)]
+    if let Some(inline_p) = inline_patch.as_ref() {
+        let (exec_patch, exec_outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
+            fill: inline_p.b_samples.clone(),
+            gain: inline_p.gain,
+            refined,
             crossfade_secs: region.crossfade_secs,
-        }),
-        RegionPatchOutcome::Patched {
-            pre_correlation: final_pre,
-            post_correlation: final_post,
-            align_adjustment_secs,
-            waveform_adjustment_secs: waveform_slide_secs,
+            final_pre,
+            final_post,
+            final_confidence,
             structure_trusted: patched_structure_trusted,
-            confidence: final_confidence,
             gap_start_adjust_frames,
             gap_end_adjust_frames,
             fit_used_boundary_grid,
@@ -2527,10 +2617,20 @@ fn prepare_region_patch(
             residual: residual_verdict,
             anchor_seam_used,
             anchor_bracket_move_frames,
-            dual_fit_used: false,
-        },
-        tag_ctx,
-    )
+            structure_start_frame,
+            alignment_start_frame: alignment.start_frame,
+            b_extract_start_secs,
+            gap_offset_secs,
+            sample_rate,
+        });
+        debug_assert_eq!(exec_patch, *inline_p, "6b.3a: executor RegionPatch must match inline");
+        debug_assert_eq!(
+            exec_outcome, inline_outcome,
+            "6b.3a: executor RegionPatchOutcome must match inline"
+        );
+    }
+
+    (inline_patch, inline_outcome, tag_ctx)
 }
 
 fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
