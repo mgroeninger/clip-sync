@@ -773,6 +773,30 @@ Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute`
 
 **Then** resume step 1 hoists (binned-RMS, border extract) inside `characterize_region`'s shared context.
 
+##### 6b.3 sub-step ledger (authoritative status — the 6b row above is a historical log)
+
+The characterize→execute split within `prepare_region_patch` proceeds as a **finite** sequence. Shadow-first:
+build + validate executor reconstruction against the authoritative inline, then wire the spec, then split the
+function. Current state after 2026-07-07:
+
+| Sub-step | Scope | Status |
+|----------|-------|--------|
+| **6b.1** | Domain skip constructors + `reason_admits_cell` guard | **Done** |
+| **6b.2** | Domain classifiers (`skip_cell_from_tags`), `DUALFIT_STEP_REAL_MARGIN` dedup | **Done** |
+| **6b.3a** | Executor primitives `assemble_bracket_fill` / `execute_bracket_fill` / `execute_bracket_output`, shadow-validated 25/25 | **Done** |
+| **6b.3b** | Flip bracket **output** to `execute_bracket_output` (authoritative; inline construction + output shadow removed) | **Done** |
+| **6b.3c** | **Wire `GapRepairSpec` as the handoff:** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, decode, config)` destructures → builds the executor ctx → calls the primitives. Makes `execute_bracket_fill` live + `GapRepairSpec` used-in-prod. | **Next** |
+| **6b.3d** | Route `Skip` / `Patch(SilenceSplice)` verdicts through `execute_region_spec` | Open |
+| **6b.3e** | Extract the function boundary: `prepare_region_patch` = `characterize_region` + `execute_region_spec` shim | Open |
+
+**Known-and-tracked (not defects):** (a) the domain `GapRepairSpec` types are built + unit-tested but **not yet
+consumed by production** — the executor uses parallel `ExecuteBracket*Ctx` bundles; 6b.3c wires the spec in (do
+it next so the scaffolding stays short-lived). (b) `execute_bracket_fill` is currently exercised **only by its
+shadow** until 6b.3c makes it live. (c) 6b.3c/6c introduce a temporary **2× fill/border assembly per bracket**
+(the "assemble twice" design) — deduped by the step-8 hoists. (d) `skip_cell_from_tags` assumes `seam_local` is
+populated for bracket-exhausted skips (characterize-always-detects) — a **step-8** dependency, not exercised in
+6b.
+
 #### §2.5.5 `PatchAudio::execute` target shape
 
 ```text
