@@ -785,17 +785,20 @@ function. Current state after 2026-07-07:
 | **6b.2** | Domain classifiers (`skip_cell_from_tags`), `DUALFIT_STEP_REAL_MARGIN` dedup | **Done** |
 | **6b.3a** | Executor primitives `assemble_bracket_fill` / `execute_bracket_fill` / `execute_bracket_output`, shadow-validated 25/25 | **Done** |
 | **6b.3b** | Flip bracket **output** to `execute_bracket_output` (authoritative; inline construction + output shadow removed) | **Done** |
-| **6b.3c** | **Wire `GapRepairSpec` as the handoff:** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, decode, config)` destructures → builds the executor ctx → calls the primitives. Makes `execute_bracket_fill` live + `GapRepairSpec` used-in-prod. | **Next** |
-| **6b.3d** | Route `Skip` / `Patch(SilenceSplice)` verdicts through `execute_region_spec` | Open |
+| **6b.3c** | **Wire `GapRepairSpec` as the handoff (landed 2026-07-08):** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, fill, sr)` routes on `verdict` and reads the bracket output **entirely from the spec**. `GapRepairSpec` now used-in-prod; byte-parity 25/25. **Uncovered + fixed a spec-completeness gap:** the slide `offset_nominal_start` must be read as exact frames (`b_extract.b_mapped_start_frame`), not recomputed from the float `b_extract_start_secs` (lossy by ≤1/sr — the 6b.3a shadow masked it by passing the exact float). Hands over the pre-assembled `b_fill` (no 2×); `execute_bracket_fill` goes live at **6c** where the passes split. | **Done** |
+| **6b.3d** | Route `Skip` / `Patch(SilenceSplice)` verdicts through `execute_region_spec` | **Next** |
 | **6b.3e** | Extract the function boundary: `prepare_region_patch` = `characterize_region` + `execute_region_spec` shim | Open |
 
-**Known-and-tracked (not defects):** (a) the domain `GapRepairSpec` types are built + unit-tested but **not yet
-consumed by production** — the executor uses parallel `ExecuteBracket*Ctx` bundles; 6b.3c wires the spec in (do
-it next so the scaffolding stays short-lived). (b) `execute_bracket_fill` is currently exercised **only by its
-shadow** until 6b.3c makes it live. (c) 6b.3c/6c introduce a temporary **2× fill/border assembly per bracket**
-(the "assemble twice" design) — deduped by the step-8 hoists. (d) `skip_cell_from_tags` assumes `seam_local` is
-populated for bracket-exhausted skips (characterize-always-detects) — a **step-8** dependency, not exercised in
-6b.
+**Known-and-tracked (not defects):** (a) **RESOLVED (6b.3c)** — `GapRepairSpec` is now built + consumed by
+production (`execute_region_spec` reads the bracket output from the spec). The `ExecuteBracket*Ctx` bundles are
+now call-boundary plumbing that `execute_region_spec` fills from the spec, not a competing representation.
+(b) `execute_bracket_fill` is still exercised **only by its shadow** — it goes live at **6c** (not 6b.3c, which
+hands over the pre-assembled fill), the boundary where characterize discards the fill and execute must re-derive
+it. (c) **6c** introduces the temporary **2× fill/border assembly per bracket** (the "assemble twice" design;
+6b.3c avoids it by passing the fill) — deduped by the step-8 hoists. (d) `skip_cell_from_tags` assumes
+`seam_local` is populated for bracket-exhausted skips (characterize-always-detects) — a **step-8** dependency,
+not exercised in 6b. (e) The spec's `tags_ctx` is **partial** in 6b (all-`None`/default; the executor ignores
+it) — step 8 populates the D/R payload for the fingerprint projection.
 
 #### §2.5.5 `PatchAudio::execute` target shape
 

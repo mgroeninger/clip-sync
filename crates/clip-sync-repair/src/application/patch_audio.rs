@@ -41,6 +41,10 @@ use crate::domain::{
         GapPatchStatus, PatchSummary,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
+    gap_repair_spec::{
+        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict, GateTags,
+        RegistrationTags,
+    },
     RepairPatchConfigView,
     Gap, GapReport,
 };
@@ -1954,11 +1958,12 @@ struct ExecuteBracketOutputCtx {
     residual: Option<policies::SeamResidualVerdict>,
     anchor_seam_used: bool,
     anchor_bracket_move_frames: usize,
-    // Slide geometry — recomputed here, independent of characterize.
+    // Slide geometry — recomputed here from EXACT frame values (no float round-trip). `offset_nominal_start`
+    // is the nominal gap start within the B extract window, stored on the spec as `b_extract.b_mapped_start_frame`
+    // (deriving it back from `b_extract_start_secs` would be lossy by up to 1/sr — a byte-parity break).
     structure_start_frame: usize,
     alignment_start_frame: usize,
-    b_extract_start_secs: f64,
-    gap_offset_secs: f64,
+    offset_nominal_start: usize,
     sample_rate: u32,
 }
 
@@ -1967,12 +1972,8 @@ struct ExecuteBracketOutputCtx {
 /// for a bracket. **The authoritative bracket output path since 6b.3b** (was shadow-validated byte-identical
 /// across the full suite in 6b.3a before the inline construction was removed).
 fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionPatchOutcome) {
-    let refined_b_start_secs =
-        ctx.refined.start_frame as f64 / ctx.sample_rate as f64 + ctx.gap_offset_secs;
-    let offset_nominal_start =
-        ((refined_b_start_secs - ctx.b_extract_start_secs) * ctx.sample_rate as f64).round() as usize;
     let structure_slide_secs =
-        (ctx.structure_start_frame as f64 - offset_nominal_start as f64) / ctx.sample_rate as f64;
+        (ctx.structure_start_frame as f64 - ctx.offset_nominal_start as f64) / ctx.sample_rate as f64;
     let waveform_slide_secs =
         (ctx.alignment_start_frame as f64 - ctx.structure_start_frame as f64) / ctx.sample_rate as f64;
     let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
@@ -2000,6 +2001,64 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
         dual_fit_used: false,
     };
     (patch, outcome)
+}
+
+/// The executor entry (6b.3c): produce `(patch, outcome)` from a `GapRepairSpec` — the typed
+/// characterize→execute handoff. Routes on the verdict; only `Patch(Bracket)` is wired so far (skip /
+/// dual-fit land in 6b.3d). The bracket output is read **entirely from the spec**. `fill` is passed in for
+/// now — characterize already assembled it to score the reconciliation; 6c re-derives it from the spec's
+/// `FillAlignment` (via `execute_bracket_fill`) once the passes split.
+fn execute_region_spec(
+    spec: &GapRepairSpec,
+    fill: Vec<f32>,
+    sample_rate: u32,
+) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    match &spec.verdict {
+        GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
+            alignment,
+            structure_start_frame,
+            structure_trusted,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
+            seam_pre,
+            seam_post,
+            confidence,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
+            fit_used_boundary_grid,
+            fit_boundary_grid_cells,
+            residual,
+            normalize_gain,
+            ..
+        }) => {
+            let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
+                fill,
+                gain: *normalize_gain,
+                refined: spec.refined,
+                crossfade_secs: spec.crossfade_secs,
+                final_pre: *seam_pre,
+                final_post: *seam_post,
+                final_confidence: *confidence,
+                structure_trusted: *structure_trusted,
+                gap_start_adjust_frames: *gap_start_adjust_frames,
+                gap_end_adjust_frames: *gap_end_adjust_frames,
+                fit_used_boundary_grid: *fit_used_boundary_grid,
+                fit_boundary_grid_cells: *fit_boundary_grid_cells,
+                residual: *residual,
+                anchor_seam_used: *anchor_seam_used,
+                anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                structure_start_frame: *structure_start_frame,
+                alignment_start_frame: alignment.start_frame,
+                offset_nominal_start: spec.b_extract.b_mapped_start_frame,
+                sample_rate,
+            });
+            (Some(patch), outcome)
+        }
+        _ => unreachable!(
+            "6b.3c: only Patch(Bracket) verdicts are routed through execute_region_spec; \
+             skip / dual-fit paths are wired in 6b.3d"
+        ),
+    }
 }
 
 fn prepare_region_patch(
@@ -2536,8 +2595,10 @@ fn prepare_region_patch(
         },
     );
 
-    let (final_pre, final_post, final_confidence) = if patched_structure_trusted {
-        (report_pre, report_post, confidence)
+    // Report-vs-splice reconciliation (§2.5.7 #4). `used_splice` is captured for the spec's placement
+    // provenance (§4.3): false = the gate-throat report seam won, true = the assembled-fill splice seam.
+    let (final_pre, final_post, final_confidence, used_splice) = if patched_structure_trusted {
+        (report_pre, report_post, confidence, false)
     } else if request.fill_mode == FillMode::Fit {
         let (splice_pre, splice_post) = policies::fill_splice_seam_correlations_interleaved(
             &b_fill,
@@ -2572,37 +2633,57 @@ fn prepare_region_patch(
         } else {
             confidence
         };
-        (pre, post, splice_confidence)
+        (pre, post, splice_confidence, use_splice)
     } else {
-        (report_pre, report_post, confidence)
+        (report_pre, report_post, confidence, false)
     };
 
-    // 6b.3b: the executor assembles the bracket (patch, outcome) from the resolved/spec values + geometry
-    // (slides recomputed from the placement fields). Shadow-proven byte-identical across the full suite in
-    // 6b.3a; now the authoritative path — the inline construction + shadow are gone.
-    let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
-        fill: b_fill,
-        gain,
-        refined,
-        crossfade_secs: region.crossfade_secs,
-        final_pre,
-        final_post,
-        final_confidence,
-        structure_trusted: patched_structure_trusted,
-        gap_start_adjust_frames,
-        gap_end_adjust_frames,
-        fit_used_boundary_grid,
-        fit_boundary_grid_cells,
-        residual: residual_verdict,
-        anchor_seam_used,
-        anchor_bracket_move_frames,
-        structure_start_frame,
-        alignment_start_frame: alignment.start_frame,
-        b_extract_start_secs,
+    // 6b.3c: build the typed `GapRepairSpec` — the characterize→execute handoff — and route through the
+    // executor. The Bracket strategy carries the resolved repair-params; geometry (incl. the exact
+    // `offset_nominal_start` as `b_mapped_start_frame`) is on the spec, so the executor reads everything from
+    // it. `tags_ctx` is PARTIAL in 6b (the executor ignores it; step 8 populates the D/R payload). `b_fill`
+    // is handed over for now — 6c re-derives it from `FillAlignment` when the passes split.
+    let spec = GapRepairSpec {
+        gap_index: 0, // not projected in 6b; the fingerprint index is assigned at step 8
+        a_start_secs: region.a_start_secs,
+        a_end_secs: region.a_end_secs,
         gap_offset_secs,
-        sample_rate,
-    });
-    (Some(patch), outcome, tag_ctx)
+        refined,
+        b_extract: BExtractWindow {
+            start_frame: (b_extract_start_secs * sample_rate as f64).round() as usize,
+            end_frame: (b_extract_end_secs * sample_rate as f64).round() as usize,
+            b_mapped_start_frame: offset_nominal_start,
+        },
+        crossfade_secs: region.crossfade_secs,
+        verdict: GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
+            alignment,
+            structure_start_frame,
+            structure_trusted: patched_structure_trusted,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
+            anchor_trusted,
+            seam_pre: final_pre,
+            seam_post: final_post,
+            used_splice,
+            confidence: final_confidence,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
+            fit_used_boundary_grid,
+            fit_boundary_grid_cells,
+            residual: residual_verdict,
+            normalize_gain: gain,
+        }),
+        tags_ctx: GapRepairTags {
+            registration: RegistrationTags::default(),
+            seam_local: None,
+            donor_nominal: None,
+            donor_aligned: None,
+            gate: GateTags::default(),
+            levels: None,
+        },
+    };
+    let (patch, outcome) = execute_region_spec(&spec, b_fill, sample_rate);
+    (patch, outcome, tag_ctx)
 }
 
 fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
