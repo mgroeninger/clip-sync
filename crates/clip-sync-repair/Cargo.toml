@@ -147,6 +147,11 @@ path = "tests/golden_baseline_invariance.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "gap_repair_spec_diff"
+path = "tests/gap_repair_spec_diff.rs"
+required-features = ["validation-tests"]
+
+[[test]]
 name = "diag_energy_matrix"
 path = "tests/diag_energy_matrix.rs"
 required-features = ["diagnostic-tests"]

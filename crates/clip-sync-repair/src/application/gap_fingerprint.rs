@@ -368,12 +368,23 @@ pub struct StructureScores {
     pub baseline_post: f64,
 }
 
+/// Read a `Vec<(f64, f64)>` where a dead channel's Pearson was non-finite and serialized as JSON `null`
+/// (same reason as [`de_null_as_nan`]); map each `null` back to `NaN` so a corpus fingerprint round-trips.
+fn de_pairs_null_as_nan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<(f64, f64)>, D::Error> {
+    let raw: Vec<(Option<f64>, Option<f64>)> = Vec::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .map(|(a, b)| (a.unwrap_or(f64::NAN), b.unwrap_or(f64::NAN)))
+        .collect())
+}
+
 /// Baseline waveform seam correlations, per-channel and selected channels (the gate's view).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeamScores {
     pub baseline_pre: f64,
     pub baseline_post: f64,
     pub selected_channels: Vec<usize>,
+    #[serde(deserialize_with = "de_pairs_null_as_nan")]
     pub per_channel: Vec<(f64, f64)>,
     pub mono_pre: f64,
     pub mono_post: f64,
@@ -527,14 +538,26 @@ struct LagSideSweep<'a> {
     gross_lag_shift: i64,
 }
 
+/// Read a residual dB that the writer emits as JSON `null` when it was non-finite (a fully-silent gap cancels
+/// to ~0 ⇒ `to_db(0) = -inf`, which serde_json can't represent) back as `NaN`. Without this, deserializing a
+/// corpus fingerprint into [`ResidualInfo`] fails on the whole gap (mirrors the harness `Residual` `Option`
+/// tolerance). `NaN` round-trips back to `null` on re-serialization, so the reader still reads "unavailable".
+fn de_null_as_nan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
+}
+
 /// Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
 /// versus the measured noise floor. `chosen_*_db ≤ floor_*_db` with `informative` ⇒ genuine same source
 /// (the strong test, beyond mere correlation). A shallow residual above the floor ⇒ B differs.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ResidualInfo {
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub chosen_pre_db: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub chosen_post_db: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub floor_pre_db: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub floor_post_db: f64,
     /// The noise floor established cancellation on every measured side — the residual is interpretable.
     pub informative: bool,
@@ -917,6 +940,185 @@ fn skip_reason_tag(reason: &GapPatchSkipReason) -> &'static str {
         GapPatchSkipReason::ProgramQuiet => "program_quiet",
         GapPatchSkipReason::CorrelationBelowThreshold { .. } => "correlation_below_threshold",
         GapPatchSkipReason::ResidualHeadroomExceeded { .. } => "residual_headroom_exceeded",
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Inverse: GapFingerprint → GapRepairTags / GapRepairSpec (Fingerprint-unification 8f)
+// ---------------------------------------------------------------------------------------------
+//
+// The 8f overlay populates the full D/R payload for the export path. It is validated by an in-process
+// differential (harness `gap_repair_spec_diff`): extract tags from an oracle-produced `GapFingerprint`, project
+// them back, and assert the corpus reader's decision axes (`golden_baseline`) are unchanged. Reads only the
+// decision/repair fields the reader consumes — the same set `spec_to_fingerprint_summary` re-emits — so the
+// round-trip is identity on `GoldenRecord`. `tags_from_fingerprint` mirrors `gap_fingerprint_corpus::gap_row`
+// (baseline_lag-preferred registration, per-side donor, brackets → counts/best/closest).
+
+fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
+    v.iter().find(|e| e.channel == LagChannel::Mono).or_else(|| v.first())
+}
+
+/// [`FailureStage`] → corpus-reader tag (inverse of [`failure_stage_from_tag`]).
+fn failure_stage_tag(stage: FailureStage) -> &'static str {
+    match stage {
+        FailureStage::StructureAlign => "structure_align",
+        FailureStage::StructureFloor => "structure_floor",
+        FailureStage::WaveformFloor => "waveform_floor",
+        FailureStage::Residual => "residual",
+    }
+}
+
+/// Extract the D/R payload (`GapRepairTags`) an oracle-produced [`GapFingerprint`] carries — the inverse of
+/// [`spec_to_fingerprint_summary`]'s tag mapping, mirroring `gap_row`'s reads so the projection round-trips the
+/// `golden_baseline` axes. Registration prefers `baseline_lag` (falls back to the diagnostic `lag`), matching
+/// the reader.
+pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
+    use crate::domain::gap_repair_spec::{GateTags, LevelTags, RegistrationTags, SeamLocalTags};
+
+    let lag = fp.baseline_lag.as_ref().or(fp.lag.as_ref());
+    let pre = lag.and_then(|l| mono_lag(&l.pre_anchor));
+    let post = lag.and_then(|l| mono_lag(&l.post_anchor));
+    let splice = fp.splice.as_ref();
+
+    let pre_peak_r = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|p| p.peak_r));
+    let post_peak_r = splice.map(|s| s.post_peak_r).or_else(|| post.map(|p| p.peak_r));
+    let pre_frac_lag_ms = pre.map(|p| p.frac_lag_ms);
+    let post_frac_lag_ms = post.map(|p| p.frac_lag_ms);
+    let step_ms = splice.map(|s| s.step_ms).or(match (post_frac_lag_ms, pre_frac_lag_ms) {
+        (Some(a), Some(b)) => Some(a - b),
+        _ => None,
+    });
+    let registration = RegistrationTags {
+        pre_peak_r,
+        post_peak_r,
+        pre_frac_lag_ms,
+        post_frac_lag_ms,
+        pre_peak_z: splice.and_then(|s| s.pre_peak_z).or_else(|| pre.and_then(|p| p.peak_z)),
+        post_peak_z: splice.and_then(|s| s.post_peak_z).or_else(|| post.and_then(|p| p.peak_z)),
+        pre_prominence: pre.and_then(|p| p.prominence),
+        post_prominence: post.and_then(|p| p.prominence),
+        step_ms,
+        edge_pinned: splice.and_then(|s| s.edge_pinned),
+    };
+
+    let seam_local = fp.splice_dualfit.map(|d| SeamLocalTags {
+        pre_seam_r: d.pre_seam_r,
+        post_seam_r: d.post_seam_r,
+        post_seam_global_r: d.post_seam_global_r,
+        trim_frames: d.trim_frames,
+        gate_pass: d.gate_pass,
+        pre_lag: 0, // not read by the reader; the spec's lags live on the SilenceSplice strategy
+        post_lag: 0,
+        pre_seam_prom: d.pre_seam_prom,
+        post_seam_prom: d.post_seam_prom,
+        pre_seam_z: d.pre_seam_z,
+        post_seam_z: d.post_seam_z,
+    });
+
+    let min_seam = |b: &BracketInfo| match (b.seam_pre, b.seam_post) {
+        (Some(a), Some(c)) => Some(a.min(c)),
+        _ => None,
+    };
+    let best_bracket_seam = fp
+        .brackets
+        .iter()
+        .filter_map(min_seam)
+        .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v))));
+    let closest_failure_stage = fp
+        .brackets
+        .iter()
+        .filter(|b| b.failure_stage.is_some())
+        .max_by(|x, y| {
+            min_seam(x)
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&min_seam(y).unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .and_then(|b| b.failure_stage.map(|s| failure_stage_tag(s).to_string()));
+    let residual = fp.residual.map(|r| crate::domain::policies::SeamResidualVerdict {
+        chosen_pre_db: r.chosen_pre_db,
+        chosen_post_db: r.chosen_post_db,
+        floor_pre_db: r.floor_pre_db,
+        floor_post_db: r.floor_post_db,
+        floor_source_pre: crate::domain::policies::SeamFloorSource::None,
+        floor_source_post: crate::domain::policies::SeamFloorSource::None,
+        informative: r.informative,
+        placement_slide_frames: 0,
+        max_lag_frames: 0,
+    });
+    let gate = GateTags {
+        brackets_total: fp.brackets.len(),
+        brackets_passing: fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
+        closest_failure_stage,
+        structure_min: fp.structure.as_ref().map(|s| s.baseline_pre.min(s.baseline_post)),
+        seam_min: fp.seams.as_ref().map(|s| s.baseline_pre.min(s.baseline_post)),
+        best_bracket_seam,
+        residual,
+    };
+
+    let levels = Some(LevelTags {
+        a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
+        a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
+    });
+
+    crate::domain::gap_repair_spec::GapRepairTags {
+        registration,
+        seam_local,
+        donor_nominal: fp.donor_interior_nominal,
+        donor_aligned: fp.donor_interior,
+        gate,
+        levels,
+    }
+}
+
+/// Rebuild a decision-equivalent [`GapRepairSpec`] from an oracle [`GapFingerprint`] (8f differential). The
+/// verdict carries only the `patch`/`skip` distinction the reader's `tier` axis needs (a placeholder strategy
+/// / reason — cell and skip-reason strings are not read by `golden_baseline`); the D/R payload comes from
+/// [`tags_from_fingerprint`].
+pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairSpec {
+    use crate::domain::gap_fill_fit::FillConfidence;
+    use crate::domain::gap_repair_spec::{
+        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
+    };
+    use crate::domain::policies::RefinedGapFrames;
+
+    let is_skip = fp.outcome.as_ref().map(|o| o.tier == "skip").unwrap_or(false);
+    let verdict = if is_skip {
+        GapRepairVerdict::Skip {
+            cell: GapRepairCell::Decorrelated,
+            reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: 0.0,
+                post_correlation: 0.0,
+                min_correlation: 0.0,
+                best_attempt: None,
+            },
+        }
+    } else {
+        GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+            fill: Vec::new(),
+            pre_seam_r: 0.0,
+            post_seam_r: 0.0,
+            pre_lag: 0,
+            post_lag: 0,
+            trim_frames: 0,
+            residual: None,
+            confidence: FillConfidence::High,
+        })
+    };
+
+    GapRepairSpec {
+        gap_index: fp.index,
+        a_start_secs: fp.geometry.a_start_secs,
+        a_end_secs: fp.geometry.a_end_secs,
+        gap_offset_secs: fp.geometry.fill_offset_secs.unwrap_or(0.0),
+        refined: RefinedGapFrames {
+            start_frame: (fp.geometry.a_refined_start_secs * f64::from(fp.sample_rate)).round() as usize,
+            end_frame: (fp.geometry.a_refined_end_secs * f64::from(fp.sample_rate)).round() as usize,
+        },
+        b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+        crossfade_secs: 0.0,
+        verdict,
+        tags_ctx: tags_from_fingerprint(fp),
     }
 }
 
