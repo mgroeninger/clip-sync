@@ -6,6 +6,7 @@ pub mod dual_fit_oracle;
 pub mod energy_matrix;
 pub mod floor_oracle;
 pub mod gap_fingerprint_corpus;
+pub mod gap_repair_spec_projection;
 pub mod golden_baseline;
 pub mod patch_audio;
 pub mod residual_gate;

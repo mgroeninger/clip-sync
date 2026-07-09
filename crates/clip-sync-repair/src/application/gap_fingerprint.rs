@@ -26,6 +26,8 @@ use crate::domain::policies::{
     interleaved_to_channels, interleaved_to_mono, refine_gap_frames, seam_channel_diagnostics,
     GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
+use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
+use crate::domain::patch_result::GapPatchSkipReason;
 
 // ---------------------------------------------------------------------------------------------
 // Corpus envelope
@@ -648,6 +650,274 @@ pub struct GateOutcome {
     pub signature_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub skip_reason: Option<String>,
+}
+
+// ---------------------------------------------------------------------------------------------
+// GapRepairSpec → GapFingerprint projection (Fingerprint-unification 8e)
+// ---------------------------------------------------------------------------------------------
+
+/// Diagnostic X-set attached to a projected fingerprint — the fields production characterize does not carry
+/// (§1.2 label X). `None`/empty on the production path; populated only when `fingerprint_diagnostics` is on
+/// (8g). Kept out of the D/R projection so a decision-only fingerprint is `spec_to_fingerprint_summary(.., None)`.
+#[derive(Debug, Clone, Default)]
+pub struct FingerprintXSet {
+    pub seam_probe: Option<SeamProbeFingerprint>,
+    pub wide_envelope: Option<WideEnvelopeFingerprint>,
+    pub b_levels: Option<LevelProfile>,
+    pub lag: Option<LagFingerprint>,
+}
+
+/// Project a characterized [`GapRepairSpec`] into the licensing-safe [`GapFingerprint`] export schema
+/// (Fingerprint-unification 8e). **Pure** — reads the spec's stored D/R tags + verdict and measures nothing
+/// (the A7 single-source rule): every seam/lag/donor scalar is the value characterize already computed. X-set
+/// fields are attached only when supplied.
+///
+/// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors` are minimal placeholders (X, not
+/// read by the corpus reader); `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs`
+/// tier logic); uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
+/// (Tier-3, tolerated by the golden diff). `bracket` scores are synthesized to round-trip the stored
+/// counts/best/closest through the corpus reader, not the original per-bracket detail. See §2.5.2a / 8e.
+pub fn spec_to_fingerprint_summary(
+    spec: &GapRepairSpec,
+    sample_rate: u32,
+    channels: u16,
+    x: Option<FingerprintXSet>,
+) -> GapFingerprint {
+    let tags = &spec.tags_ctx;
+    let rate = f64::from(sample_rate.max(1));
+    let refined_start_secs = spec.refined.start_frame as f64 / rate;
+    let refined_end_secs = spec.refined.end_frame as f64 / rate;
+    let x = x.unwrap_or_default();
+
+    let (tier, skip_reason) = match &spec.verdict {
+        GapRepairVerdict::Patch(_) => ("patch".to_string(), None),
+        GapRepairVerdict::Skip { reason, .. } => {
+            ("skip".to_string(), Some(skip_reason_tag(reason).to_string()))
+        }
+    };
+
+    let reg = &tags.registration;
+    let splice = match (reg.step_ms, reg.pre_peak_r, reg.post_peak_r) {
+        (Some(step_ms), Some(pre_peak_r), Some(post_peak_r)) => Some(SpliceSummary {
+            step_ms,
+            pre_peak_r,
+            post_peak_r,
+            pre_peak_z: reg.pre_peak_z,
+            post_peak_z: reg.post_peak_z,
+            edge_pinned: reg.edge_pinned,
+        }),
+        _ => None,
+    };
+    let baseline_lag = if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
+        Some(LagFingerprint {
+            pre_anchor: projected_lag_entry(reg.pre_peak_r, reg.pre_frac_lag_ms, reg.pre_peak_z, reg.pre_prominence),
+            post_anchor: projected_lag_entry(reg.post_peak_r, reg.post_frac_lag_ms, reg.post_peak_z, reg.post_prominence),
+        })
+    } else {
+        None
+    };
+
+    let gate = &tags.gate;
+    let structure = gate.structure_min.map(|m| StructureScores { baseline_pre: m, baseline_post: m });
+    let seams = gate.seam_min.map(|m| SeamScores {
+        baseline_pre: m,
+        baseline_post: m,
+        selected_channels: Vec::new(),
+        per_channel: Vec::new(),
+        mono_pre: m,
+        mono_post: m,
+    });
+    let residual = gate.residual.map(|r| ResidualInfo {
+        chosen_pre_db: r.chosen_pre_db,
+        chosen_post_db: r.chosen_post_db,
+        floor_pre_db: r.floor_pre_db,
+        floor_post_db: r.floor_post_db,
+        informative: r.informative,
+    });
+    let brackets = synth_brackets(
+        gate.brackets_total,
+        gate.brackets_passing,
+        gate.best_bracket_seam,
+        gate.closest_failure_stage.as_deref(),
+    );
+
+    let gap_frames = spec.refined.end_frame.saturating_sub(spec.refined.start_frame);
+    let splice_dualfit = tags.seam_local.as_ref().map(|sl| SpliceDualfit {
+        pre_seam_r: sl.pre_seam_r,
+        post_seam_r: sl.post_seam_r,
+        gap_frames,
+        bridge_frames: gap_frames as i64 + sl.trim_frames,
+        trim_frames: sl.trim_frames,
+        gate_pass: sl.gate_pass,
+        post_seam_global_r: sl.post_seam_global_r,
+        pre_seam_prom: sl.pre_seam_prom,
+        post_seam_prom: sl.post_seam_prom,
+        pre_seam_z: sl.pre_seam_z,
+        post_seam_z: sl.post_seam_z,
+    });
+
+    GapFingerprint {
+        index: spec.gap_index,
+        tier: DetailTier::Full,
+        sample_rate,
+        channels,
+        geometry: GapGeometry {
+            a_start_secs: spec.a_start_secs,
+            a_end_secs: spec.a_end_secs,
+            a_refined_start_secs: refined_start_secs,
+            a_refined_end_secs: refined_end_secs,
+            duration_secs: (refined_end_secs - refined_start_secs).max(0.0),
+            b_mapped_start_secs: Some(refined_start_secs + spec.gap_offset_secs),
+            b_mapped_end_secs: Some(refined_end_secs + spec.gap_offset_secs),
+            fill_offset_secs: Some(spec.gap_offset_secs),
+        },
+        levels: projected_level_profile(tags.levels.as_ref()),
+        silence: SilenceProfile {
+            collar_rms_peak_ratio: 0.0,
+            collar_above_relative_floor: false,
+            silence_peak_fraction: 0.0,
+        },
+        contour: ContourInfo {
+            has_anchor_seam_contour: false,
+            pre_flatness: 0.0,
+            post_flatness: 0.0,
+        },
+        anchors: AnchorSet::default(),
+        brackets,
+        structure,
+        seams,
+        lag: x.lag,
+        baseline_lag,
+        residual,
+        seam_probe: x.seam_probe,
+        donor_interior: tags.donor_aligned,
+        donor_interior_nominal: tags.donor_nominal,
+        b_levels: x.b_levels,
+        splice,
+        wide_envelope: x.wide_envelope,
+        splice_dualfit,
+        outcome: Some(GateOutcome {
+            plan_kind: "fillable".into(),
+            tier,
+            seam_shape: String::new(),
+            fit_path: None,
+            signature_mode: None,
+            skip_reason,
+        }),
+    }
+}
+
+/// One mono `LagSummary` from the stored registration scalars (empty when the shoulder wasn't measured).
+fn projected_lag_entry(
+    peak_r: Option<f64>,
+    frac_lag_ms: Option<f64>,
+    peak_z: Option<f64>,
+    prominence: Option<f64>,
+) -> Vec<LagSummary> {
+    match peak_r {
+        Some(pr) => vec![LagSummary {
+            window_ms: 0,
+            max_lag_ms: 0,
+            channel: LagChannel::Mono,
+            lag0_r: pr,
+            peak_r: pr,
+            second_peak_r: None,
+            peak_z,
+            prominence,
+            top2_spacing_ms: None,
+            peak_lag_samples: 0,
+            frac_lag_samples: 0.0,
+            frac_lag_ms: frac_lag_ms.unwrap_or(0.0),
+            edge_pinned: None,
+            verdict: LagVerdict::TimingOffset,
+        }],
+        None => Vec::new(),
+    }
+}
+
+/// Synthesize a bracket list that round-trips the stored gate summary through the corpus reader's derivations
+/// (`brackets_total = len`, `brackets_passing = count(no failure_stage)`, `best_bracket_seam = max min-seam`,
+/// `closest_failure_stage = failing bracket with the highest min-seam`). Not the original per-bracket detail —
+/// only enough structure to reproduce those four reads. Requires a closest stage whenever a bracket fails.
+fn synth_brackets(
+    total: usize,
+    passing: usize,
+    best: Option<f64>,
+    closest: Option<&str>,
+) -> Vec<BracketInfo> {
+    let closest_stage = closest.and_then(failure_stage_from_tag);
+    let failing = total.saturating_sub(passing);
+    debug_assert!(
+        failing == 0 || closest_stage.is_some(),
+        "a failing bracket needs a closest_failure_stage to round-trip"
+    );
+    let mk = |seam: Option<f64>, failure_stage: Option<FailureStage>| BracketInfo {
+        pre_time_secs: 0.0,
+        post_time_secs: 0.0,
+        span_secs: 0.0,
+        move_frames: 0,
+        structure_pre: None,
+        structure_post: None,
+        seam_pre: seam,
+        seam_post: seam,
+        failure_stage,
+    };
+    (0..total)
+        .map(|i| {
+            if i < passing {
+                // First passing bracket carries `best` so the reader's max-min derives it; rest carry None.
+                mk(if i == 0 { best } else { None }, None)
+            } else if i == passing {
+                // First failing bracket is the "closest": a seam so the reader selects it, plus the stage.
+                // When there are no passing brackets it also carries `best` (the reader's max sees it here).
+                let seam = if passing == 0 { best } else { best.map(|b| b - 0.01) };
+                mk(seam, closest_stage)
+            } else {
+                mk(None, Some(FailureStage::StructureAlign))
+            }
+        })
+        .collect()
+}
+
+/// Corpus-reader `failure_stage` tag → [`FailureStage`] (serde snake_case, mirrors [`FailureStage`]'s repr).
+fn failure_stage_from_tag(tag: &str) -> Option<FailureStage> {
+    match tag {
+        "structure_align" => Some(FailureStage::StructureAlign),
+        "structure_floor" => Some(FailureStage::StructureFloor),
+        "waveform_floor" => Some(FailureStage::WaveformFloor),
+        "residual" => Some(FailureStage::Residual),
+        _ => None,
+    }
+}
+
+/// A minimal [`LevelProfile`] carrying only the summary floors the corpus reader consumes (`gap_floor_db`,
+/// `noise_floor_db`); the RMS envelope is X (unread). `None` tags ⇒ silence-floored placeholder.
+fn projected_level_profile(l: Option<&LevelTags>) -> LevelProfile {
+    let (gap_floor_db, noise_floor_db) = match l {
+        Some(lt) => (lt.a_gap_floor_db as f32, lt.a_noise_floor_db as f32),
+        None => (SILENCE_FLOOR_DB, SILENCE_FLOOR_DB),
+    };
+    LevelProfile {
+        bin_ms: 0,
+        profile_db: Vec::new(),
+        floor_db: SILENCE_FLOOR_DB,
+        speech_peak_db: SILENCE_FLOOR_DB,
+        noise_floor_db,
+        gap_floor_db,
+    }
+}
+
+/// The corpus-reader skip-reason tag for a [`GapPatchSkipReason`] (serde snake_case variant name).
+fn skip_reason_tag(reason: &GapPatchSkipReason) -> &'static str {
+    match reason {
+        GapPatchSkipReason::BExtractFailed => "b_extract_failed",
+        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range",
+        GapPatchSkipReason::ZeroLengthGap => "zero_length_gap",
+        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary_alignment_failed",
+        GapPatchSkipReason::ProgramQuiet => "program_quiet",
+        GapPatchSkipReason::CorrelationBelowThreshold { .. } => "correlation_below_threshold",
+        GapPatchSkipReason::ResidualHeadroomExceeded { .. } => "residual_headroom_exceeded",
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2565,6 +2835,95 @@ pub(crate) fn write_corpus_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::gap_repair_spec::{
+        BExtractWindow, GapRepairCell, GapRepairTags, GapRepairVerdict, GateTags, SeamLocalTags,
+    };
+    use crate::domain::policies::RefinedGapFrames;
+
+    /// 8e projection: a bracket-exhausted **silence-splice skip** (dual-fit declined) projects to a
+    /// fingerprint whose corpus-read fields equal the spec's stored tags — no re-measurement (A7). Exercises
+    /// the seam_local → splice_dualfit, donor, gate-count → bracket-synthesis, and outcome mappings.
+    #[test]
+    fn spec_to_fingerprint_projects_silence_splice_skip_axes() {
+        let tags = GapRepairTags {
+            seam_local: Some(SeamLocalTags {
+                pre_seam_r: 0.97,
+                post_seam_r: 0.95,
+                post_seam_global_r: 0.40,
+                trim_frames: 480,
+                gate_pass: true,
+                pre_lag: 12,
+                post_lag: -8,
+                pre_seam_prom: None,
+                post_seam_prom: None,
+                pre_seam_z: None,
+                post_seam_z: None,
+            }),
+            donor_aligned: Some(crate::domain::donor::DonorInterior {
+                rms_db: -22.0,
+                silence_fraction: 0.03,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            donor_nominal: Some(crate::domain::donor::DonorInterior {
+                rms_db: -25.0,
+                silence_fraction: 0.10,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            gate: GateTags {
+                brackets_total: 4,
+                brackets_passing: 0,
+                closest_failure_stage: Some("waveform_floor".into()),
+                best_bracket_seam: Some(0.6),
+                ..GateTags::default()
+            },
+            ..GapRepairTags::default()
+        };
+        let spec = GapRepairSpec {
+            gap_index: 3,
+            a_start_secs: 10.0,
+            a_end_secs: 10.5,
+            gap_offset_secs: 0.25,
+            refined: RefinedGapFrames { start_frame: 480_000, end_frame: 504_000 },
+            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            crossfade_secs: 0.01,
+            verdict: GapRepairVerdict::Skip {
+                cell: GapRepairCell::SilenceSplice,
+                reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.97,
+                    post_correlation: 0.95,
+                    min_correlation: 0.5,
+                    best_attempt: None,
+                },
+            },
+            tags_ctx: tags,
+        };
+
+        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None);
+
+        // outcome: a skip (tier is patch/skip, matching the scan path).
+        let o = fp.outcome.as_ref().unwrap();
+        assert_eq!(o.tier, "skip");
+        assert_eq!(o.skip_reason.as_deref(), Some("correlation_below_threshold"));
+
+        // splice_dualfit — single-source copies of seam_local (A7), gate_pass + step-real inputs preserved.
+        let df = fp.splice_dualfit.expect("splice_dualfit projected");
+        assert_eq!(df.pre_seam_r, 0.97);
+        assert_eq!(df.post_seam_r, 0.95);
+        assert_eq!(df.post_seam_global_r, 0.40);
+        assert!(df.gate_pass);
+        assert_eq!(df.gap_frames, 24_000);
+        assert_eq!(df.trim_frames, 480);
+
+        // donor blocks round-trip whole.
+        assert_eq!(fp.donor_interior.unwrap().silence_fraction, 0.03);
+        assert_eq!(fp.donor_interior_nominal.unwrap().silence_fraction, 0.10);
+
+        // brackets: synthesized to read back total=4, passing=0 (bracket-exhausted).
+        assert_eq!(fp.brackets.len(), 4);
+        assert_eq!(fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(), 0);
+    }
 
     /// splitmix64 finalizer → deterministic noise in [-1, 1).
     fn noise(seed: u64, i: usize) -> f64 {
