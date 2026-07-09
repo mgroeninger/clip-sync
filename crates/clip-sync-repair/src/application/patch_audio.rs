@@ -43,6 +43,7 @@ use crate::domain::{
     policies::{self, GapBorderSpec, RefinedGapFrames},
     gap_repair_spec::{
         BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
+        SeamLocalTags,
     },
     RepairPatchConfigView,
     Gap, GapReport,
@@ -1721,8 +1722,37 @@ fn skip_or_dual_fit(
                         // 6b.3d/e: build a `Patch(SilenceSplice)` spec and hand it back for the shim to
                         // execute (characterize decides, execute runs — §2.5). The synthesized bridge PCM
                         // lives on the spec; geometry comes from the dual-fit input (`refined` = the gap
-                        // frames). `b_extract` / `gap_offset` / tags are inert for this arm (the executor
-                        // reads only `refined` + `crossfade` + the SilenceSplice fields) — known-tracked (f).
+                        // frames). `b_extract` / `gap_offset` are still inert for this arm (the executor
+                        // reads only `refined` + `crossfade` + the SilenceSplice fields) — known-tracked (f),
+                        // fixed at Fingerprint-unification 8c.
+                        //
+                        // 8a: populate the dual-fit D/R payload (`seam_local` + `donor_aligned`) from the ONE
+                        // `DualFitResult` `r` — single-source (A7 / §2.5.2a): the tag seam scores ARE the
+                        // strategy's, copied not re-measured. `gate_pass` is trivially true here (we only reach
+                        // this build after `try_dual_fit` passed its own `smin ≥ floors` gate and the assembled
+                        // seam re-validated Ok). Uniqueness validators stay `None` (Tier-3, production path).
+                        let seam_local = SeamLocalTags {
+                            pre_seam_r: r.pre_seam_r,
+                            post_seam_r: r.post_seam_r,
+                            post_seam_global_r: r.post_seam_global_r,
+                            trim_frames: r.trim_frames,
+                            gate_pass: true,
+                            pre_lag: r.pre_lag,
+                            post_lag: r.post_lag,
+                            pre_seam_prom: None,
+                            post_seam_prom: None,
+                            pre_seam_z: None,
+                            post_seam_z: None,
+                        };
+                        // Single-source invariant (§2.5.7 #2): the tag seams equal the strategy seams because
+                        // both are `r.{pre,post}_seam_r` (splice_pre/splice_post are those same values, L1654).
+                        debug_assert_eq!(seam_local.pre_seam_r, splice_pre);
+                        debug_assert_eq!(seam_local.post_seam_r, splice_post);
+                        let tags_ctx = GapRepairTags {
+                            seam_local: Some(seam_local),
+                            donor_aligned: Some(r.aligned_donor),
+                            ..GapRepairTags::default()
+                        };
                         let spec = GapRepairSpec {
                             gap_index: 0,
                             a_start_secs: region.a_start_secs,
@@ -1748,7 +1778,7 @@ fn skip_or_dual_fit(
                                 residual,
                                 confidence,
                             }),
-                            tags_ctx: GapRepairTags::default(),
+                            tags_ctx,
                         };
                         return (
                             RegionCharacterization::Patch { spec, bracket_fill: None },

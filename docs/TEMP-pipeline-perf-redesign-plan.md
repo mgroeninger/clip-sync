@@ -218,7 +218,7 @@ decodes once, characterizes, writes corpus. Repair decode reuse is already share
 | **Two outputs** | Typed fix-list + repair-params (`GapRepairPlan` / `GapRepairSpec`) | **Open** — production interleaves gate + fill inline (`prepare_region_patch`); fingerprint JSON is a parallel re-run, not consumed by repair (§2.5). |
 | **Characterize → execute** | One D/R oracle pass per gap; executor is fill-only | **Open** — gate, dual-fit detect, and fill extraction run in one function today (§2.5). |
 | **Lazy diagnostics** | X-set behind flag | **Partial** — X fields gated; per-bracket oracle + lag + `splice_dualfit` still always on in fingerprint scan. |
-| **Compute-once-share** | One decode · binned-RMS · border extract · lag curve | Decode shared inside patch ✓; scan still re-decodes A/B; `skip_baseline_placement` dedup ✓; binned-RMS · border hoists **open** (step 1, after §2.5 step 6). |
+| **Compute-once-share** | One decode · binned-RMS · **mono downmix** · lag curve | Decode shared inside patch ✓; scan still re-decodes A/B; `skip_baseline_placement` dedup ✓; hoist **open + rescoped** (step 1/8): share the per-side mono downmix (exactly slice-able), **not** one border template/RMS grid — §3.1 feasibility. |
 | **Shared primitives** | No scan/prod drift | `domain/seam_local.rs`, `domain/donor.rs`, `domain/dual_fit.rs` ✓ |
 | **FFT lag sweep** | §3 step 4 | **Done** — `lag_correlation_curve_auto` in `domain/seam_local.rs` (2026-07-04). |
 
@@ -768,10 +768,12 @@ Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute`
 | **6a** | Add `domain/gap_repair_spec.rs` types + `cell()` / golden projection helpers | **Scaffold landed (2026-07-07):** all wire types (`GapRepairSpec`/`Tags`/`Strategy`/`Cell`/`Verdict`/`BExtractWindow` + placement blocks), `cell()` (total), wildcard-free `cell_for_skip_reason` + in-domain C4b exhaustiveness test — compiles, `--lib` green, clippy clean. **Remaining:** `spec_to_fingerprint_summary` (application free fn, step 8) + C4 projection test (needs 6b `characterize_region`). |
 | **6b** | Extract `characterize_region` + `execute_region_spec`; `prepare_region_patch` = shim. **Test-gated increments:** 6b.1 domain skip smart-constructor + `reason_admits_cell` guard (**landed 2026-07-07**, finding #3 closed); 6b.2 domain projection classifier `skip_cell_from_tags` — reconstructs a Skip's cell from stored tags (the "golden projection helper" + characterize consistency backbone), tested across the §4.1a classes; promoted `DUALFIT_STEP_REAL_MARGIN` to a canonical domain const + deduped the harness copy (**landed 2026-07-07**); 6b.3a **first move landed (2026-07-07):** extracted `assemble_bracket_fill` (the Fit/Gate b_fill PCM assembly) verbatim from `prepare_region_patch` into a shared primitive the executor will call — byte-neutral, verified (lib 351/351; fill-path integration passes; a `git stash` A/B confirms the extraction moves no behavior). **Surfaced + FIXED 5 PRE-EXISTING `patch_audio_integration` failures** on `main` (NOT caused by this refactor). **Triaged 2026-07-07:** all 5 were *stale expectations*, not a regression — mechanism-isolation tests (one-strong-seam, gap-end-extension, joint-extension, anchored-retry×2) whose weak/inverted-seam fixtures dual-fit (**on by default** post-A3b–A7) now correctly rescues (an inverted sine = half-period phase shift recovered at the shoulder's own lag), masking the mechanism under test. Fix: `dual_fit: false` on each test's runs to isolate the intended mechanism (per-run, not the shared option helpers). **Suite now 25/25 green** — byte-parity gate restored for 6b.3b. 6b.3a **fill reconstruction landed + shadow-proven (2026-07-07):** `execute_bracket_fill` reconstructs the bracket fill *independently* from the spec's `FillAlignment` + decode buffers + A geometry (rebuilding borders from scratch — the "assemble twice" design that resolves the reconciliation-depends-on-fill tangle); a `debug_assert_eq!` at the characterize call site pins it byte-identical to the inline fill on **every bracket patch** — validated 25/25 across `patch_audio_integration` + the energy-patch tests. 6b.3a **output assembly landed + shadow-proven (2026-07-07):** `execute_bracket_output` recomputes the geometry slides independently and assembles `(RegionPatch, RegionPatchOutcome)` from the resolved/spec values (gain/correlations/confidence/flags read; `dual_fit_used: false`); a second `debug_assert_eq!` pins it byte-identical to the inline return on **every bracket patch** — validated 25/25 + energy-patch, both shadows (fill + output) active. Confirms the spec carries every input (fill via `FillAlignment`, gain=`normalize_gain`, slide geometry = `structure_start_frame`/`alignment`/`b_extract`/`gap_offset`). **The full bracket executor path is reconstructable from the spec and continuously proven.** Remaining 6b: 6b.3b flip the shim (build spec in characterize, call `execute_bracket_fill`+`execute_bracket_output`, delete inline) + the dual-fit/skip executor paths — the current inline code stays authoritative while `execute_region_spec(spec)` is `debug_assert!`-ed to reproduce the identical PCM/outcome on every gap the tests hit) and **6b.3b** (flip `prepare_region_patch` to the characterize→execute shim, delete the old path, integration byte-parity). Two scope clarifications: `RegionPatchOutcome` reconstructs from the spec (execute recomputes the geometry slides — no missing fields); `tags_ctx` is **partial** in 6b (only what the decision computes — bracket gate scores, dual-fit donor/seam), full registration/donor-for-every-gap deferred to step 8, so 6b byte-parity is about PCM not measurements. | Existing `patch_audio` unit/integration tests · **companion (§2.6): extract `policies/seam_scoring.rs` (P4) as an adjacent byte-preserving PR — land or defer-with-reason before 6b closes** |
 | **6c** | `PatchAudio::execute`: characterize-all → execute-all → splice (two loops) — **landed 2026-07-08**. Split the orchestrator loop to call `characterize_region` then `execute_region_spec` directly (the shim's components), **carrying the bracket fill** in `RegionCharacterization::Patch` (same memory as the prior `patches` accumulation). Byte-identical (integration-gated); per-gap tracing/progress reorders (char pass, then exec pass) with no tested-surface change. The anchored-retry still re-runs the `prepare_region_patch` shim on failed gaps. **Enables scan-only preview** (run pass 1 without pass 2). **Deliberately did NOT re-derive** the fill — `execute_bracket_fill`-live + dropping the transitional `bracket_fill` moved to **Hoists** (§3 step 8), where the shared border/RMS owner makes re-derivation clean (no premature duplication); hence no 2× at 6c. **Clears:** companion P4 `seam_scoring.rs`. | `validate_dual_fit_oracle.rs`, gap corpus patch timing |
-| **7** | Golden harness: diff `GapRepairSpec` projections (Tier 1/2) on live rescans | §4.7 C1 workflow + `golden_baseline_corpus_invariance` |
-| **8 (Fingerprint-unification)** | `characterize_gaps_with_gate` → shared characterize + X export only. **Clears (resolution index):** (d) pin `skip_cell_from_tags` `seam_local`; (e) populate `tags_ctx` D/R payload; (f) fix SilenceSplice inert geometry (#1); make skips real `Skip`-verdict specs. | §4.7 C3; no second gate oracle in dump path |
+| **7** | Golden harness: diff `GapRepairSpec` projections (Tier 1/2) on live rescans. **Not a separate build — C4/C5 are produced by Fingerprint-unification (8e/8g);** fold into step 8 or narrow to Tier-1 `cell()`/verdict identity. See the Fingerprint-unification ledger's "Sequencing" note. | §4.7 C1 workflow + `golden_baseline_corpus_invariance` |
+| **8 (Fingerprint-unification)** | `characterize_gaps_with_gate` → shared characterize + X export only. **Clears (resolution index):** (d) pin `skip_cell_from_tags` `seam_local`; (e) populate `tags_ctx` D/R payload; (f) fix SilenceSplice inert geometry (#1); make skips real `Skip`-verdict specs. **Decomposed into 8a–8g — see the Fingerprint-unification sub-step ledger below.** | §4.7 C3; no second gate oracle in dump path |
 
-**Then** resume step 1 hoists (binned-RMS, border extract) inside `characterize_region`'s shared context.
+**Then** resume step 1 hoists inside `characterize_region`'s shared context — **rescoped**: share the
+per-side mono downmix (exactly slice-able), **not** one border template / RMS grid for all consumers (§3 step 8,
+feasibility dig).
 
 ##### 6b.3 sub-step ledger (authoritative status — the 6b row above is a historical log)
 
@@ -828,6 +830,51 @@ its listed items before it closes.**
 
 (Notes (d)/(e)/(f) above now say "Fingerprint-unification" not "step 8"; note (c)'s "step-8 hoists" = the
 Hoists step.)
+
+##### Fingerprint-unification sub-step ledger (§2.5.4 sub-step 8 — proposed 2026-07-08)
+
+Decomposes the "step 8 (Fingerprint-unification)" row into a shadow-first, test-gated sequence, in the 6b.3
+style. **Not yet started** — this is the plan of record for it; adjust as sub-steps land.
+
+**Prerequisite framing (must hold across the whole step).** Unification removes the **second *gate* oracle**
+from the dump path (`gap_fingerprint.rs:2132–2176`, the per-bracket `oracle_*` re-run) — **not** the
+registration / `donor_interior` / `splice_dualfit` measurements. Those are legitimately fingerprint-scope:
+§1.2 labels `baseline_lag` / `donor_interior` **R** (needed only on the dual-fit/repair path); for a clean
+**Bracket patch** they are **X**. So populating `tags_ctx` for *every* gap on the production patch path would
+push X-set work onto production and break the "production carries only D/R" thesis (§1.0). The split this step
+must preserve:
+
+- **`characterize_region` populates `tags_ctx` only from what the decision already computes** — which, per the
+  code audit for 8a (2026-07-08), is **narrower than first scoped**: only the **dual-fit path** yields a
+  fully-decision-local, single-source, complete payload (`seam_local` + `donor_aligned`, copied from the one
+  `DualFitResult`). The bracket path's `GateTags` **counts** (`brackets_total`/`brackets_passing`,
+  `closest_failure_stage`, `best_bracket_seam`, `structure_min`) are **not** computed by the production gate —
+  only the fingerprint per-bracket oracle (`gap_fingerprint.rs:2140–2177`) enumerates them. `levels` (A gap/noise
+  floor) and `registration`/`donor_nominal` are likewise not on the production decision path. **All of those move
+  to the 8f overlay**, not 8a.
+- **The full registration/donor/`splice_dualfit`/gate-counts/levels-for-every-gap payload the golden wants is
+  computed on the fingerprint *export* path** (8f), reusing the shared characterize primitives as an R/X overlay
+  — never on the plain patch path.
+
+**8c approach — DECIDED (2026-07-08): return the strategy, wrap in `characterize_region`.** `skip_or_dual_fit`
+returns the `SilenceSplice` *strategy* (no geometry); `characterize_region` (which holds `b_extract`/
+`gap_offset`/`gap_index`) wraps it into the full spec. Chosen over threading geometry into `skip_or_dual_fit`
+because geometry ownership stays in one place and it matches the region-infallible `-> spec` shape (§2.5.7 #3).
+
+| Sub-step | Scope | Clears | Validates with |
+|----------|-------|--------|----------------|
+| **8a** | **LANDED (2026-07-08).** Populate the **dual-fit** D/R payload on the `Patch(SilenceSplice)` spec (`skip_or_dual_fit`): `tags_ctx.seam_local` + `donor_aligned`, single-source from the one `DualFitResult`. Surfaced `post_seam_global_r` + `aligned_donor` onto `DualFitResult` (both already computed inside `try_dual_fit` — step-real denominator L150, aligned-donor gate L165 — just not returned) so the tags are copies, not re-measurements. `gate_pass = true` (only reached post-gate); uniqueness validators `None` (Tier-3). **Scope correction vs first draft:** `GateTags` counts/`structure_min`/`best_bracket_seam`/`closest_failure_stage`, `levels`, `registration`, `donor_nominal` are **not** decision-local in production → deferred to **8f** (see prereq). Bracket-path `tags_ctx` stays `default()` until 8f. | (e) *partial (dual-fit only)* | **Done:** lib 351/351 · `patch_audio_integration` 26/26 (byte-parity, incl. `patch_audio_dual_fit_rescues_inverted_post_border`) · single-source `debug_assert_eq!(seam_local.pre_seam_r, splice_pre)` at the build site |
+| **8b** | Pin the `skip_cell_from_tags` `seam_local` assumption with a test now that 8a populates it on the bracket-exhausted skip path (characterize-always-detects). | (d) | Domain test over the §4.1a bracket-exhausted classes (extends `gap_repair_spec.rs:555`) |
+| **8c** | Fix SilenceSplice inert geometry (note f): `skip_or_dual_fit` returns the `SilenceSplice` **strategy**; `characterize_region` wraps it with real `b_extract`/`gap_offset`/`gap_index`; the all-zero `b_extract` placeholder deleted. | (f) *geometry half* | C2 byte-parity (rescue PCM identical); projection round-trip on a rescued gap reads real geometry, not zeros |
+| **8d** | Make skips real `Skip`-verdict specs: `RegionCharacterization::Skip(outcome)` → carry a `GapRepairSpec { verdict: Skip{cell,reason,..}, tags_ctx }`; the loop derives the existing `RegionPatchOutcome` **from** the spec (§2.5.5). | (f) *skips-are-specs half* | C2 byte-parity (outcome fields identical); every region now yields a projectable spec |
+| **8e** | `spec_to_fingerprint_summary(spec, x: Option<FingerprintXSet>) -> GapFingerprint` — **application** free fn (§2.5.2 layering note), pure projection, no re-measurement. Wire the C4 skeleton (`gap_repair_spec_projection.rs`) to real, un-`#[ignore]`. | step-6a "Remaining" + **C4** | C4 Tier-1/2 round-trip through the frozen `gap_row` reader; A7 single-source asserts |
+| **8f** | Fingerprint R/X overlay on the export path — the payload production legitimately skips (confirmed 8a): registration / `donor_nominal` / `splice_dualfit`-for-every-gap via the shared primitives (`lag_at_placement`, `donor_interior_at`, `splice_dualfit_at`), **plus the `GateTags` bracket counts / `structure_min` / `best_bracket_seam` / `closest_failure_stage`** (the per-bracket oracle enumeration, `gap_fingerprint.rs:2140–2177`) **and `levels`** (A gap/noise floor). Attach to each spec's `tags_ctx` before projection. **Order-independent** (§2.5.7 #5 H2): precompute read-only or memoize by pure per-gap key. | (e) *full* | Golden diff on dirs 1–7 (Tier-1/2 unchanged vs frozen `re-anchor-dual-fit-on-nominal.golden.json`) |
+| **8g** | Flip `dump_gap_fingerprints` → `characterize_gaps_with_gate` to call the shared `characterize_all_regions` (**new — only per-region `characterize_region` exists today**, `patch_audio.rs:2156`) + 8f overlay + `spec_to_fingerprint_summary`; **delete the second gate oracle** (`gap_fingerprint.rs:2132–2176`). | §4.7 **C3**, **C5**, §3 step 7 | C5 calls `characterize_all_regions` (not static JSON); C3 asserts the gate is scored exactly once in the dump path |
+
+**Sequencing — step 7 is produced here.** §3 step 7 (golden harness on live spec projections) is **not a
+separate build**: its **C4** lands at 8e and **C5** at 8g. Fold §3-step-7 into this step, or narrow a
+standalone step 7 to Tier-1 `cell()`/verdict identity (which needs neither `tags_ctx` nor the projection fn).
+This resolves the ordering inversion — step 7 as written in the §3 table depends on step-8 outputs.
 
 #### §2.5.5 `PatchAudio::execute` target shape
 
@@ -958,7 +1005,7 @@ the exact moment the region is touched, not left to memory. Mirror any status ch
 
 | Step | Work | Status | Evidence / notes |
 |------|------|--------|------------------|
-| **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). |
+| **1** | Hoist shared subexpressions (border extract, binned-RMS, dedup `place_on_b`) | **Partial** | `skip_baseline_placement` in `build_gap_fingerprint` / `characterize_gaps` ✓. Border extract + binned-RMS still rebuilt per consumer (§1.4). **Rescoped at §3.1 (2026-07-08):** the byte-preservable + worthwhile hoist is the shared **mono downmix**, not one border template/RMS grid for all consumers. |
 | **2** | Gate diagnostics (X-set) behind a flag | **Done** | `RepairConfig.fingerprint_diagnostics` + `--fingerprint-diagnostics`; gates `seam_probe`, `wide_envelope`, `b_levels`, diagnostic `lag`. Per-bracket oracle **not** gated. |
 | **3** | Cheap early-reject (G0b at plan) | **Partial (closed on G5)** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03); **investigated as a pre-gate skip and withdrawn 2026-07-04, see §2.2a** (measured false-skip rate on real corpus data, no safe formulation found). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Done (2026-07-04)** | `lag_correlation_curve_fft` (B1) wired behind cost-crossover `lag_correlation_curve_auto` in `domain/seam_local.rs`; `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep` (the `baseline_lag` ±600 ms / ~1 s-window sweep, the dominant diagnostic-scan cost per §1.3) both switched from naive to auto. |
@@ -993,11 +1040,47 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 | 6 | **Characterize → execute** — `GapRepairSpec` / `GapRepairPlan`; extract `characterize_region` + `execute_region_spec` from `prepare_region_patch`; two-loop `PatchAudio::execute`; fingerprint export from shared characterize (§2.5) | **Design complete (§2.5.7 all resolved); 6a impl next** |
 | 7 | Golden harness on live `GapRepairSpec` projections (§4.7 C4, C5) | **Open** |
-| 8 | Step 1 hoists inside characterize shared context (border extract, binned-RMS). **Clears (resolution index):** (c) dedups the 2× fill/border assembly via the shared owner; companion P2 `silence.rs` + P3 `gap_borders.rs`. | **Open** — blocked on step 6 · **companion (§2.6): the hoist's single owner = `policies/silence.rs` (P2) + `policies/gap_borders.rs` (P3); extract as adjacent byte-preserving PRs — land or defer-with-reason before step 8 (Hoists) closes** |
+| 8 | Step 1 hoists inside characterize shared context. **Rescoped (§3.1, 2026-07-08):** share the per-side **mono downmix** (exactly slice-able); **drop** "one border template / RMS grid for all consumers" (infeasible byte-identical + low-value). **Clears (resolution index):** (c) dedups the 2× fill/border assembly via the shared owner; companion P2 `silence.rs` + P3 `gap_borders.rs`. | **Open** — blocked on step 6 · **companion (§2.6): the hoist's single owner = `policies/silence.rs` (P2) + `policies/gap_borders.rs` (P3); extract as adjacent byte-preserving PRs — land or defer-with-reason before step 8 (Hoists) closes** |
 
 Step 6 is the next structural milestone. Step 5 historical note: built **before** scan optimization
 (2026-07-01 sequencing decision) — complete. Step 1 hoists move to **step 8** so shared subexpressions have a
 single owner (`characterize_region`).
+
+### §3.1 Hoist feasibility — the shareable primitive is the downmix, not the template (2026-07-08)
+
+The §1.4 framing ("Border templates are rebuilt in G1, `lag_at_placement`, `seam_probe`, `wide_envelope`,
+`splice_dualfit` → **hoist one extract per gap**") over-promises. Traced against the code, "one max-radius
+template, slice for all consumers" is **not byte-preservable**, for two independent couplings to the radius:
+
+1. **Peak-relative trim threshold.** `trim_low_energy_suffix`/`_prefix` (`policies.rs:2157,2174`) set
+   `threshold = peak * 0.12` over the *entire extracted window*, then trim trailing/leading samples below it. A
+   wider radius can pull in a louder sample → higher `peak` → higher threshold → the trim point **near the gap**
+   moves. So a small-radius template is not a suffix/prefix of the max-radius one.
+2. **Silence walk bounded by `border_frames`.** `gap_border_frame_range` (`policies.rs:416–442`) walks `pre_end`
+   back over silent frames but stops at `pre_start = gap_start − border_frames`. When the near-gap border is
+   silent for a stretch comparable to the radius, a larger radius walks further into real content → different
+   `pre_end`/`post_start`. Different result, not a slice.
+
+Compounding it, the consumers pass genuinely **different `GapBorderSpec`** (different `border_frames` *and*
+`standoff`/`floor`), so there is no single template that serves all: `border_frames` = `bin_frames*3`
+(`gap_fingerprint.rs:996,1386`) vs `window + max_lag` (`:1210`) vs `border_secs·rate` (`:1722`) vs the
+normalize-window (`patch_audio.rs:2375`). The plan is right to reject *that* hoist.
+
+**What IS shareable (exactly, byte-identical): the mono downmix.** `interleaved_to_mono` (`policies.rs:244`) is
+a pure per-frame mean, so `mono(samples)[a..b] == mono(samples[a..b])` — every consumer's sub-slice equals the
+slice of one shared wide per-gap downmix. The expensive-input consumers already take a pre-downmixed buffer
+(`donor_interior_at(b_mono, …)`, `donor.rs:40`), so the real redundancy is **B (and A) being downmixed
+repeatedly per gap** (nominal donor, aligned donor, borders, levels each re-downmix their span). One shared
+downmix in `characterize_region`'s context removes that with no threshold/phase hazard. The per-consumer
+*shaping* on top — silence walk, peak-trim, and chunk-binning **anchored at each consumer's `start_frame`**
+(`donor.rs:56` `span.chunks(bin)` with per-call phase; `DONOR_BIN_MS` ≠ `gap_signature_bin_ms=50` ≠ level bin)
+— is **not** shareable, but is O(border)/O(span) cheap and does not need to be.
+
+**Priority caveat.** Both the downmix and the binning sit in the plan's **cheap tier** (§1.3 #4: "O(N) RMS …
+border"); the dominant per-gap costs are structure-search-per-bracket and the lag sweep (§1.3 #1–2). So even
+the *safe* hoist targets a non-dominant cost. **Before spending effort here, measure whether the shared downmix
+moves wall-clock at all**; if not, demote Hoists below the still-unclaimed **per-bracket-oracle** gating (§2.2
+"Remaining perf targets" — the `N_brackets × O(N·radius)` re-run), which attacks §1.3 #1 directly.
 
 ---
 

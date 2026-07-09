@@ -8,7 +8,7 @@
 
 use clip_sync::normalized_correlation;
 
-use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal};
+use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal, DonorInterior};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
 use crate::domain::seam_local::seam_local_peak;
 
@@ -49,6 +49,10 @@ pub struct DualFitResult {
     pub fill: Vec<f32>,
     pub pre_seam_r: f64,
     pub post_seam_r: f64,
+    /// Post seam scored at the PRE lag (step forced to 0) — the step-real denominator. Surfaced so the
+    /// characterize spec's `SeamLocalTags.post_seam_global_r` is a single-source copy of the value dual-fit
+    /// already measured (§2.5.2a; Fingerprint-unification 8a), not a re-measurement.
+    pub post_seam_global_r: f64,
     pub trim_frames: i64,
     /// Seam-local lag (frames) each shoulder matched at, relative to the nominal `b_mapped_start` /
     /// `b_mapped_start + gap_frames` search center — lets a caller reconstruct the actual matched B
@@ -56,6 +60,9 @@ pub struct DualFitResult {
     /// per-shoulder mapping dual-fit itself used, instead of one shared lag.
     pub pre_lag: i64,
     pub post_lag: i64,
+    /// The aligned donor bridge (`b_pre_seam .. b_post_seam`) measured during the continuity gate. Surfaced
+    /// for the characterize spec's `donor_aligned` tag (single-source; §2.5.2a, 8a).
+    pub aligned_donor: DonorInterior,
 }
 
 /// Attempt a dual-fit fill. `a_pre_mono`/`a_post_mono` are A's mono seam borders (the `seam_window` frames
@@ -197,9 +204,11 @@ pub fn try_dual_fit(
         fill,
         pre_seam_r: pre_r,
         post_seam_r: post_r,
+        post_seam_global_r: post_global,
         trim_frames,
         pre_lag,
         post_lag,
+        aligned_donor: aligned,
     })
 }
 
