@@ -267,6 +267,25 @@ mod tests {
         }
     }
 
+    /// The **gate-scalar** round-trip the golden baseline does NOT cover: `structure_min` / `seam_min` /
+    /// `best_bracket_seam` / `closest_failure_stage` are read back through the corpus reader from the
+    /// projection's synthesized brackets + structure/seams blocks. Pins the common case (a bracket reached seam
+    /// scoring, so `best_bracket_seam` is `Some`); the all-pre-seam-failure case (`best = None`) is a known
+    /// limitation — `closest_failure_stage` is then an arbitrary tie-break in the reader itself (see
+    /// `synth_brackets`), so it is not asserted.
+    #[test]
+    fn projection_reproduces_gate_scalars() {
+        // Decorrelated: gate(total=4, passing=0, closest="waveform_floor"); structure_min 0.7, seam_min 0.5,
+        // best_bracket_seam 0.6 (from the `gate()` fixture helper).
+        let row = project_to_row(&spec_for_class(Class::Decorrelated));
+        assert_eq!(row.brackets_total, 4);
+        assert_eq!(row.brackets_passing, 0);
+        assert_eq!(row.structure_min, Some(0.7), "structure_min");
+        assert_eq!(row.seam_min, Some(0.5), "seam_min");
+        assert_eq!(row.best_bracket_seam, Some(0.6), "best_bracket_seam");
+        assert_eq!(row.closest_failure_stage.as_deref(), Some("waveform_floor"), "closest_failure_stage");
+    }
+
     /// A Silence-splice keeps its cell across the `dual_fit` flag; only the projections move. Guards against
     /// ever re-deriving the cell from the verdict/tier.
     #[test]

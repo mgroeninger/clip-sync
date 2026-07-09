@@ -364,7 +364,9 @@ pub enum FailureStage {
 /// Baseline structure-tier correlations at the throat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructureScores {
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub baseline_pre: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub baseline_post: f64,
 }
 
@@ -381,12 +383,16 @@ fn de_pairs_null_as_nan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<(f
 /// Baseline waveform seam correlations, per-channel and selected channels (the gate's view).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeamScores {
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub baseline_pre: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub baseline_post: f64,
     pub selected_channels: Vec<usize>,
     #[serde(deserialize_with = "de_pairs_null_as_nan")]
     pub per_channel: Vec<(f64, f64)>,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub mono_pre: f64,
+    #[serde(deserialize_with = "de_null_as_nan")]
     pub mono_post: f64,
 }
 
@@ -862,6 +868,13 @@ fn projected_lag_entry(
 /// (`brackets_total = len`, `brackets_passing = count(no failure_stage)`, `best_bracket_seam = max min-seam`,
 /// `closest_failure_stage = failing bracket with the highest min-seam`). Not the original per-bracket detail —
 /// only enough structure to reproduce those four reads. Requires a closest stage whenever a bracket fails.
+///
+/// **Limitation (`best = None`):** when no bracket reached seam scoring (all failed pre-seam ⇒ every synthetic
+/// seam is `None`), the reader's `closest_failure_stage` is an arbitrary tie-break over equal (`NEG_INFINITY`)
+/// min-seams — it may report a filler stage rather than the stored one. `closest_failure_stage`/
+/// `best_bracket_seam` are **not** decision axes (`golden_baseline` omits them), so this does not affect the 8f
+/// differential or C4; a diagnostics consumer that reads them from a projected corpus should carry the real
+/// `Vec<BracketInfo>` (8g full-fidelity) rather than rely on the synthesis in this edge.
 fn synth_brackets(
     total: usize,
     passing: usize,
