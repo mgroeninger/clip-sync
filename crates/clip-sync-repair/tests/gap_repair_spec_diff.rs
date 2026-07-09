@@ -120,7 +120,17 @@ fn gap_repair_spec_projection_preserves_golden_baseline() {
     };
 
     // OLD baseline: analyze the real oracle corpus.
+    let using_default = std::env::var("GAP_FP_DIRS").ok().filter(|s| !s.trim().is_empty()).is_none();
     let old = analyze_dirs(&roots, drift_eps_from_env(), tail_secs_from_env()).golden_baseline();
+    // Echo what was actually checked (run with `-- --nocapture`) — the source of the earlier
+    // "did it use my media?" confusion: on success the test was silent.
+    eprintln!(
+        "differential: {} gap(s) across {} root(s) [{}]: {:?}",
+        old.gap_count,
+        roots.len(),
+        if using_default { "in-repo default — set GAP_FP_DIRS for your media" } else { "GAP_FP_DIRS" },
+        roots,
+    );
     assert!(old.gap_count > 0, "no gaps under {roots:?}");
 
     // NEW baseline: re-project every gap into a layout-matching mirror (same root basenames ⇒ same labels).
