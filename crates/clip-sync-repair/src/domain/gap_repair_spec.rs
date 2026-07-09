@@ -628,4 +628,51 @@ mod tests {
         let t = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), Some(seam(true, 0.98, 0.95)));
         assert_eq!(skip_cell_from_tags(&corr(), &t), GapRepairCell::Decorrelated);
     }
+
+    // --- 8b: pin the `seam_local` dependency (carried item d). `classify_bracket_exhausted_skip` can only
+    // reach SilenceSplice / donor-dead-ProgramQuiet when `seam_local` is populated; with `seam_local = None`
+    // it falls through to Decorrelated. That is correct ONLY under the characterize-always-detects invariant
+    // (§2.5.2 — seam-local is measured for every bracket-exhausted disposition, decline included). These tests
+    // lock the degradation so that if a future characterize skip path (8d/8f) forgets to populate `seam_local`,
+    // the misclassification is caught here rather than silently mislabelling real silence-splice/donor-dead
+    // gaps as Decorrelated in the corpus. 8a populates it on the accepted rescue path; the DECLINE path is
+    // wired at 8d — until then this documents the requirement it must meet.
+
+    #[test]
+    fn classifier_none_seam_local_collapses_class3_to_decorrelated() {
+        // Axes that WOULD be class-3 SilenceSplice (donor bridges, nominal occupied) but seams UNMEASURED.
+        // Without `seam_local` the step-real / gate_pass test is unreachable ⇒ Decorrelated, NOT SilenceSplice.
+        let would_be_class3 = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), Some(seam(true, 0.98, 0.30)));
+        assert_eq!(skip_cell_from_tags(&corr(), &would_be_class3), GapRepairCell::SilenceSplice);
+        let seams_dropped = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), None);
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &seams_dropped),
+            GapRepairCell::Decorrelated,
+            "unmeasured seam_local must degrade a class-3 signature to Decorrelated — characterize MUST detect"
+        );
+    }
+
+    #[test]
+    fn classifier_none_seam_local_collapses_class4_to_decorrelated() {
+        // Axes that WOULD be class-4 donor-dead ProgramQuiet (aligned donor broken, nominal occupied) but
+        // seams UNMEASURED. The `if !donor_bridges ⇒ ProgramQuiet` arm lives INSIDE `if let Some(seam_local)`,
+        // so dropping seams also loses the donor-dead classification ⇒ Decorrelated.
+        let would_be_class4 = corr_tags(Some(donor(0.05, false)), Some(donor(0.6, false)), Some(seam(true, 0.98, 0.30)));
+        assert_eq!(skip_cell_from_tags(&corr(), &would_be_class4), GapRepairCell::ProgramQuiet);
+        let seams_dropped = corr_tags(Some(donor(0.05, false)), Some(donor(0.6, false)), None);
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &seams_dropped),
+            GapRepairCell::Decorrelated,
+            "unmeasured seam_local must degrade a class-4 donor-dead signature to Decorrelated — characterize MUST detect"
+        );
+    }
+
+    #[test]
+    fn classifier_none_seam_local_still_honors_nominal_quiet() {
+        // The nominal-quiet term is read BEFORE `seam_local` (it wins outright), so a program-quiet gap is
+        // still correctly ProgramQuiet even with seams unmeasured — the dependency is specific to the
+        // seam-recovery / donor-dead branches, not the whole classifier.
+        let nominal_quiet = corr_tags(Some(donor(1.0, false)), Some(donor(0.05, true)), None);
+        assert_eq!(skip_cell_from_tags(&corr(), &nominal_quiet), GapRepairCell::ProgramQuiet);
+    }
 }
