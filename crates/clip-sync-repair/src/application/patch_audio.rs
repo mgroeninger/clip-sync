@@ -1600,7 +1600,7 @@ fn skip_or_dual_fit(
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
     dual_fit: Option<&DualFitRepairInput<'_>>,
-) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
+) -> (RegionCharacterization, GapTagsPatchContext) {
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(df) = dual_fit {
@@ -1671,7 +1671,7 @@ fn skip_or_dual_fit(
                                     post_correlation: splice_post,
                                     source: crate::domain::patch_result::SeamScoreSource::DualFit,
                                 });
-                                return seam_failure_outcome(
+                                let (_, outcome, tag_ctx) = seam_failure_outcome(
                                     progress,
                                     request,
                                     region,
@@ -1685,6 +1685,7 @@ fn skip_or_dual_fit(
                                     tag_ctx,
                                     dual_fit_attempt,
                                 );
+                                return (RegionCharacterization::Skip(outcome), tag_ctx);
                             }
                         };
                         tracing::debug!(
@@ -1695,10 +1696,11 @@ fn skip_or_dual_fit(
                             ?confidence,
                             "dual-fit rescued a bracket-exhausted skip"
                         );
-                        // 6b.3d: build a `Patch(SilenceSplice)` spec and route it through the executor. The
-                        // synthesized bridge PCM lives on the spec; geometry comes from the dual-fit input
-                        // (`refined` = the gap frames). `b_extract` / `gap_offset` / tags are inert for this
-                        // arm (the executor reads only `refined` + `crossfade` + the SilenceSplice fields).
+                        // 6b.3d/e: build a `Patch(SilenceSplice)` spec and hand it back for the shim to
+                        // execute (characterize decides, execute runs — §2.5). The synthesized bridge PCM
+                        // lives on the spec; geometry comes from the dual-fit input (`refined` = the gap
+                        // frames). `b_extract` / `gap_offset` / tags are inert for this arm (the executor
+                        // reads only `refined` + `crossfade` + the SilenceSplice fields) — known-tracked (f).
                         let spec = GapRepairSpec {
                             gap_index: 0,
                             a_start_secs: region.a_start_secs,
@@ -1726,9 +1728,10 @@ fn skip_or_dual_fit(
                             }),
                             tags_ctx: GapRepairTags::default(),
                         };
-                        let (patch, outcome) =
-                            execute_region_spec(spec, None, df.params.sample_rate);
-                        return (patch, outcome, tag_ctx);
+                        return (
+                            RegionCharacterization::Patch { spec, bracket_fill: None },
+                            tag_ctx,
+                        );
                     }
                     Err(min_score) => {
                         tracing::debug!(
@@ -1748,7 +1751,7 @@ fn skip_or_dual_fit(
             }
         }
     }
-    seam_failure_outcome(
+    let (_, outcome, tag_ctx) = seam_failure_outcome(
         progress,
         request,
         region,
@@ -1756,7 +1759,8 @@ fn skip_or_dual_fit(
         min_structure_match_score,
         tag_ctx,
         dual_fit_attempt,
-    )
+    );
+    (RegionCharacterization::Skip(outcome), tag_ctx)
 }
 
 /// Inputs to [`assemble_bracket_fill`] — the sliced B fill (`b_fill_raw` + contiguous `b_extension`), the
@@ -2012,6 +2016,22 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
     (patch, outcome)
 }
 
+/// What `characterize_region` decided for one region (6b.3e). A `Patch` carries the spec to execute plus the
+/// transitional pre-assembled bracket fill (`None` for dual-fit, whose fill is on the spec); a `Skip` carries
+/// its already-built outcome — skips are not executed (§2.5.5), so there is nothing for the executor to do.
+/// (Skips are not yet full `Skip`-verdict specs; the fingerprint projection at step 8 will need that, tracked
+/// separately.)
+// A transient per-region value, built once and matched immediately — boxing the large `Patch` variant would
+// add a pointless heap alloc, so the size disparity is deliberate.
+#[allow(clippy::large_enum_variant)]
+enum RegionCharacterization {
+    Patch {
+        spec: GapRepairSpec,
+        bracket_fill: Option<Vec<f32>>,
+    },
+    Skip(RegionPatchOutcome),
+}
+
 /// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
 /// handoff. Handles the two PATCH verdicts; `Skip` isn't *executed* (the loop filters skips and derives their
 /// outcome from the spec, §2.5.5). `bracket_fill` is the transitional pre-assembled bracket fill (6b.3c) —
@@ -2106,14 +2126,19 @@ fn execute_region_spec(
     }
 }
 
-fn prepare_region_patch(
+/// **Characterize** one region (6b.3e): run geometry → gate → dual-fit/reconciliation and decide a
+/// [`RegionCharacterization`] — a `Patch` spec to execute, or an already-built `Skip` outcome. Does NOT
+/// assemble the final patch; that is `execute_region_spec`, invoked by the `prepare_region_patch` shim. This
+/// is the characterize→execute boundary (§2.5): all repair *decisions* live here; PCM *assembly* lives in the
+/// executor.
+fn characterize_region(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
     region: &FillRegion,
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
-) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
+) -> (RegionCharacterization, GapTagsPatchContext) {
     let RegionPatchMedia {
         b_samples_full,
         a_pcm,
@@ -2288,8 +2313,7 @@ fn prepare_region_patch(
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
         return (
-            None,
-            skipped_patch(GapPatchSkipReason::ZeroLengthGap),
+            RegionCharacterization::Skip(skipped_patch(GapPatchSkipReason::ZeroLengthGap)),
             tag_ctx,
         );
     }
@@ -2320,8 +2344,7 @@ fn prepare_region_patch(
                 &reason,
             );
             return (
-                None,
-                skipped_patch(reason),
+                RegionCharacterization::Skip(skipped_patch(reason)),
                 tag_ctx,
             );
         }
@@ -2507,8 +2530,7 @@ fn prepare_region_patch(
             &reason,
         );
         return (
-            None,
-            skipped_patch(reason),
+            RegionCharacterization::Skip(skipped_patch(reason)),
             tag_ctx,
         );
     }
@@ -2720,8 +2742,33 @@ fn prepare_region_patch(
         }),
         tags_ctx: GapRepairTags::default(),
     };
-    let (patch, outcome) = execute_region_spec(spec, Some(b_fill), sample_rate);
-    (patch, outcome, tag_ctx)
+    (
+        RegionCharacterization::Patch { spec, bracket_fill: Some(b_fill) },
+        tag_ctx,
+    )
+}
+
+/// Thin shim (6b.3e): characterize the region, then execute if it's a patch. The former target of this name;
+/// the split lives in [`characterize_region`] + [`execute_region_spec`]. `sample_rate` for the executor comes
+/// from the region context.
+fn prepare_region_patch(
+    progress: &dyn ProgressReporter,
+    media: &RegionPatchMedia<'_>,
+    region: &FillRegion,
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
+    opts: RegionPatchOpts<'_>,
+) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
+    let sample_rate = ctx.sample_rate;
+    let (characterization, tag_ctx) =
+        characterize_region(progress, media, region, request, ctx, opts);
+    match characterization {
+        RegionCharacterization::Patch { spec, bracket_fill } => {
+            let (patch, outcome) = execute_region_spec(spec, bracket_fill, sample_rate);
+            (patch, outcome, tag_ctx)
+        }
+        RegionCharacterization::Skip(outcome) => (None, outcome, tag_ctx),
+    }
 }
 
 fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {

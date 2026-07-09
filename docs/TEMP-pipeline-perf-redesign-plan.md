@@ -787,7 +787,7 @@ function. Current state after 2026-07-07:
 | **6b.3b** | Flip bracket **output** to `execute_bracket_output` (authoritative; inline construction + output shadow removed) | **Done** |
 | **6b.3c** | **Wire `GapRepairSpec` as the handoff (landed 2026-07-08):** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, fill, sr)` routes on `verdict` and reads the bracket output **entirely from the spec**. `GapRepairSpec` now used-in-prod; byte-parity 25/25. **Uncovered + fixed a spec-completeness gap:** the slide `offset_nominal_start` must be read as exact frames (`b_extract.b_mapped_start_frame`), not recomputed from the float `b_extract_start_secs` (lossy by ≤1/sr — the 6b.3a shadow masked it by passing the exact float). Hands over the pre-assembled `b_fill` (no 2×); `execute_bracket_fill` goes live at **6c** where the passes split. | **Done** |
 | **6b.3d** | Route the dual-fit rescue (`Patch(SilenceSplice)`) through `execute_region_spec` (**landed 2026-07-08**): added the SilenceSplice arm (faithful transcription of the inline dual-fit block); `execute_region_spec` now takes `spec` by value + `bracket_fill: Option<Vec<f32>>` (SilenceSplice fill moves off the spec, no clone); `skip_or_dual_fit` builds a `Patch(SilenceSplice)` spec. **`Skip` is not executed** — the loop derives its outcome from the spec (§2.5.5), so no Skip arm. Added a **fast-tier** rescue test (`patch_audio_dual_fit_rescues_inverted_post_border`) — dual-fit rescue previously had only validation-tier coverage. Bracket 25/25 + lib 351/351. | **Done** |
-| **6b.3e** | Extract the function boundary: `prepare_region_patch` = `characterize_region` + `execute_region_spec` shim | **Next** |
+| **6b.3e** | Extract the function boundary (**landed 2026-07-08**): `prepare_region_patch` is now a thin shim — `characterize_region(...) -> (RegionCharacterization, GapTagsPatchContext)` decides `Patch { spec, bracket_fill }` or `Skip(outcome)`; the shim runs `execute_region_spec` on patches, returns the skip outcome otherwise. `skip_or_dual_fit` returns a `RegionCharacterization` (SilenceSplice spec on rescue, `Skip` on decline) instead of executing. All repair *decisions* now live in characterize; PCM *assembly* in the executor. lib 351/351 + dual-fit rescue green; full byte-parity gate running. **Did NOT fix finding #1** (see note f — `skip_or_dual_fit` still lacks the geometry). | **Done** |
 
 **Known-and-tracked (not defects):** (a) **RESOLVED (6b.3c)** — `GapRepairSpec` is now built + consumed by
 production (`execute_region_spec` reads the bracket output from the spec). The `ExecuteBracket*Ctx` bundles are
@@ -801,9 +801,14 @@ not exercised in 6b. (e) The spec's `tags_ctx` is **partial** in 6b (`GapRepairT
 populates the D/R payload for the fingerprint projection. (f) **Step-8 trap (6b review):** the
 `Patch(SilenceSplice)` spec built in `skip_or_dual_fit` (6b.3d) carries **inert geometry** (`b_extract`
 all-zero, `gap_offset`/`gap_index` 0) because that call site lacks the full geometry — the executor's
-SilenceSplice arm ignores it (no current bug), but a fingerprint projection would read garbage. **6b.3e** (the
-function split) must build all specs where the geometry lives, or `skip_or_dual_fit` must return a
-verdict/strategy the caller wraps with real geometry. Do not trust the SilenceSplice spec's geometry until then.
+SilenceSplice arm ignores it (no current bug), but a fingerprint projection would read garbage. **NOT fixed by 6b.3e** — `skip_or_dual_fit` still builds the
+SilenceSplice spec and still lacks the geometry (the split kept the spec-build there). Clean fix (do at step 8,
+or sooner): thread `b_extract`/`gap_offset` into `skip_or_dual_fit` (it already has `df.b_mapped_start` for
+`b_mapped_start_frame`), or have it return the SilenceSplice *strategy* and let `characterize_region` (which
+has the geometry) wrap it. Also **skips are not yet `Skip`-verdict specs** — `characterize_region` returns a
+pre-built `Skip(outcome)`, so step 8 (fingerprint projection over all gaps) must additionally produce Skip
+specs with their D/R tags. Do not trust the SilenceSplice spec's geometry, and don't assume skips are specs,
+until then.
 
 #### §2.5.5 `PatchAudio::execute` target shape
 
