@@ -404,14 +404,44 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         self.progress
             .phase(&format_align_fill_regions_phase(&plan));
 
+        // 6c: two passes — characterize ALL regions (decisions), then execute ALL patches (PCM) — instead
+        // of the per-region `prepare_region_patch` shim. Same components (`characterize_region` +
+        // `execute_region_spec`), byte-identical output; the per-gap tracing/progress reorders (char pass
+        // then exec pass) but no tested surface (PCM/outcomes) changes. The anchored-retry (below) still
+        // re-runs the `prepare_region_patch` shim on failed gaps.
+        //
+        // Pass 1 — characterize.
+        let mut characterizations: Vec<(RegionCharacterization, GapTagsPatchContext)> =
+            Vec::with_capacity(plan.regions.len());
         for (index, region) in plan.regions.iter().enumerate() {
             let gap_num = index as u64 + 1;
-            self.progress.progress("patch-gap", gap_num, region_count);
+            self.progress.progress("patch-characterize", gap_num, region_count);
             self.progress.phase_verbose(&format!(
                 "  gap {gap_num}/{region_count}: A {}",
                 format_time_range_verbose(region.a_start_secs, region.a_end_secs)
             ));
+            characterizations.push(characterize_region(
+                self.progress,
+                &RegionPatchMedia {
+                    b_samples_full: &b_samples_full,
+                    a_pcm: &a_pcm,
+                },
+                region,
+                &request,
+                &region_ctx,
+                RegionPatchOpts {
+                    anchored_retry_pass: AnchoredRetryPass::First,
+                    patch_anchors: None,
+                },
+            ));
+        }
 
+        // Pass 2 — execute patches (skips carry their outcome; nothing to run).
+        for ((characterization, tag_ctx), (index, region)) in
+            characterizations.into_iter().zip(plan.regions.iter().enumerate())
+        {
+            let gap_num = index as u64 + 1;
+            self.progress.progress("patch-gap", gap_num, region_count);
             let gap_span = tracing::info_span!(
                 "patch_gap",
                 gap_index = gap_num,
@@ -428,20 +458,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             );
             let _gap_enter = gap_span.enter();
 
-            let (patch, outcome, tag_ctx) = prepare_region_patch(
-                self.progress,
-                &RegionPatchMedia {
-                    b_samples_full: &b_samples_full,
-                    a_pcm: &a_pcm,
-                },
-                region,
-                &request,
-                &region_ctx,
-                RegionPatchOpts {
-                    anchored_retry_pass: AnchoredRetryPass::First,
-                    patch_anchors: None,
-                },
-            );
+            let (patch, outcome) = match characterization {
+                RegionCharacterization::Patch { spec, bracket_fill } => {
+                    execute_region_spec(spec, bracket_fill, region_ctx.sample_rate)
+                }
+                RegionCharacterization::Skip(outcome) => (None, outcome),
+            };
             let tags = region_outcome_gap_tags(&outcome, tag_ctx);
             log_gap_tags_verbose(self.progress, &tags);
             record_patch_gap_span(&gap_span, &outcome);

@@ -767,9 +767,9 @@ Behavior-preserving: byte-identical patched PCM vs today's `PatchAudio::execute`
 |----------|------|----------------|
 | **6a** | Add `domain/gap_repair_spec.rs` types + `cell()` / golden projection helpers | **Scaffold landed (2026-07-07):** all wire types (`GapRepairSpec`/`Tags`/`Strategy`/`Cell`/`Verdict`/`BExtractWindow` + placement blocks), `cell()` (total), wildcard-free `cell_for_skip_reason` + in-domain C4b exhaustiveness test — compiles, `--lib` green, clippy clean. **Remaining:** `spec_to_fingerprint_summary` (application free fn, step 8) + C4 projection test (needs 6b `characterize_region`). |
 | **6b** | Extract `characterize_region` + `execute_region_spec`; `prepare_region_patch` = shim. **Test-gated increments:** 6b.1 domain skip smart-constructor + `reason_admits_cell` guard (**landed 2026-07-07**, finding #3 closed); 6b.2 domain projection classifier `skip_cell_from_tags` — reconstructs a Skip's cell from stored tags (the "golden projection helper" + characterize consistency backbone), tested across the §4.1a classes; promoted `DUALFIT_STEP_REAL_MARGIN` to a canonical domain const + deduped the harness copy (**landed 2026-07-07**); 6b.3a **first move landed (2026-07-07):** extracted `assemble_bracket_fill` (the Fit/Gate b_fill PCM assembly) verbatim from `prepare_region_patch` into a shared primitive the executor will call — byte-neutral, verified (lib 351/351; fill-path integration passes; a `git stash` A/B confirms the extraction moves no behavior). **Surfaced + FIXED 5 PRE-EXISTING `patch_audio_integration` failures** on `main` (NOT caused by this refactor). **Triaged 2026-07-07:** all 5 were *stale expectations*, not a regression — mechanism-isolation tests (one-strong-seam, gap-end-extension, joint-extension, anchored-retry×2) whose weak/inverted-seam fixtures dual-fit (**on by default** post-A3b–A7) now correctly rescues (an inverted sine = half-period phase shift recovered at the shoulder's own lag), masking the mechanism under test. Fix: `dual_fit: false` on each test's runs to isolate the intended mechanism (per-run, not the shared option helpers). **Suite now 25/25 green** — byte-parity gate restored for 6b.3b. 6b.3a **fill reconstruction landed + shadow-proven (2026-07-07):** `execute_bracket_fill` reconstructs the bracket fill *independently* from the spec's `FillAlignment` + decode buffers + A geometry (rebuilding borders from scratch — the "assemble twice" design that resolves the reconciliation-depends-on-fill tangle); a `debug_assert_eq!` at the characterize call site pins it byte-identical to the inline fill on **every bracket patch** — validated 25/25 across `patch_audio_integration` + the energy-patch tests. 6b.3a **output assembly landed + shadow-proven (2026-07-07):** `execute_bracket_output` recomputes the geometry slides independently and assembles `(RegionPatch, RegionPatchOutcome)` from the resolved/spec values (gain/correlations/confidence/flags read; `dual_fit_used: false`); a second `debug_assert_eq!` pins it byte-identical to the inline return on **every bracket patch** — validated 25/25 + energy-patch, both shadows (fill + output) active. Confirms the spec carries every input (fill via `FillAlignment`, gain=`normalize_gain`, slide geometry = `structure_start_frame`/`alignment`/`b_extract`/`gap_offset`). **The full bracket executor path is reconstructable from the spec and continuously proven.** Remaining 6b: 6b.3b flip the shim (build spec in characterize, call `execute_bracket_fill`+`execute_bracket_output`, delete inline) + the dual-fit/skip executor paths — the current inline code stays authoritative while `execute_region_spec(spec)` is `debug_assert!`-ed to reproduce the identical PCM/outcome on every gap the tests hit) and **6b.3b** (flip `prepare_region_patch` to the characterize→execute shim, delete the old path, integration byte-parity). Two scope clarifications: `RegionPatchOutcome` reconstructs from the spec (execute recomputes the geometry slides — no missing fields); `tags_ctx` is **partial** in 6b (only what the decision computes — bracket gate scores, dual-fit donor/seam), full registration/donor-for-every-gap deferred to step 8, so 6b byte-parity is about PCM not measurements. | Existing `patch_audio` unit/integration tests · **companion (§2.6): extract `policies/seam_scoring.rs` (P4) as an adjacent byte-preserving PR — land or defer-with-reason before 6b closes** |
-| **6c** | `PatchAudio::execute`: characterize-all → execute-all → splice (two loops) | `validate_dual_fit_oracle.rs`, gap corpus patch timing |
+| **6c** | `PatchAudio::execute`: characterize-all → execute-all → splice (two loops) — **landed 2026-07-08**. Split the orchestrator loop to call `characterize_region` then `execute_region_spec` directly (the shim's components), **carrying the bracket fill** in `RegionCharacterization::Patch` (same memory as the prior `patches` accumulation). Byte-identical (integration-gated); per-gap tracing/progress reorders (char pass, then exec pass) with no tested-surface change. The anchored-retry still re-runs the `prepare_region_patch` shim on failed gaps. **Enables scan-only preview** (run pass 1 without pass 2). **Deliberately did NOT re-derive** the fill — `execute_bracket_fill`-live + dropping the transitional `bracket_fill` moved to **Hoists** (§3 step 8), where the shared border/RMS owner makes re-derivation clean (no premature duplication); hence no 2× at 6c. **Clears:** companion P4 `seam_scoring.rs`. | `validate_dual_fit_oracle.rs`, gap corpus patch timing |
 | **7** | Golden harness: diff `GapRepairSpec` projections (Tier 1/2) on live rescans | §4.7 C1 workflow + `golden_baseline_corpus_invariance` |
-| **8** | Fingerprint: `characterize_gaps_with_gate` → shared characterize + X export only | §4.7 C3; no second gate oracle in dump path |
+| **8 (Fingerprint-unification)** | `characterize_gaps_with_gate` → shared characterize + X export only. **Clears (resolution index):** (d) pin `skip_cell_from_tags` `seam_local`; (e) populate `tags_ctx` D/R payload; (f) fix SilenceSplice inert geometry (#1); make skips real `Skip`-verdict specs. | §4.7 C3; no second gate oracle in dump path |
 
 **Then** resume step 1 hoists (binned-RMS, border extract) inside `characterize_region`'s shared context.
 
@@ -785,30 +785,49 @@ function. Current state after 2026-07-07:
 | **6b.2** | Domain classifiers (`skip_cell_from_tags`), `DUALFIT_STEP_REAL_MARGIN` dedup | **Done** |
 | **6b.3a** | Executor primitives `assemble_bracket_fill` / `execute_bracket_fill` / `execute_bracket_output`, shadow-validated 25/25 | **Done** |
 | **6b.3b** | Flip bracket **output** to `execute_bracket_output` (authoritative; inline construction + output shadow removed) | **Done** |
-| **6b.3c** | **Wire `GapRepairSpec` as the handoff (landed 2026-07-08):** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, fill, sr)` routes on `verdict` and reads the bracket output **entirely from the spec**. `GapRepairSpec` now used-in-prod; byte-parity 25/25. **Uncovered + fixed a spec-completeness gap:** the slide `offset_nominal_start` must be read as exact frames (`b_extract.b_mapped_start_frame`), not recomputed from the float `b_extract_start_secs` (lossy by ≤1/sr — the 6b.3a shadow masked it by passing the exact float). Hands over the pre-assembled `b_fill` (no 2×); `execute_bracket_fill` goes live at **6c** where the passes split. | **Done** |
+| **6b.3c** | **Wire `GapRepairSpec` as the handoff (landed 2026-07-08):** build `GapRepairStrategy::Bracket` + geometry (+ partial tags, `used_splice`) in characterize; `execute_region_spec(spec, fill, sr)` routes on `verdict` and reads the bracket output **entirely from the spec**. `GapRepairSpec` now used-in-prod; byte-parity 25/25. **Uncovered + fixed a spec-completeness gap:** the slide `offset_nominal_start` must be read as exact frames (`b_extract.b_mapped_start_frame`), not recomputed from the float `b_extract_start_secs` (lossy by ≤1/sr — the 6b.3a shadow masked it by passing the exact float). Hands over the pre-assembled `b_fill` (no 2×); `execute_bracket_fill` goes live at the **Hoists** step (§3 step 8). | **Done** |
 | **6b.3d** | Route the dual-fit rescue (`Patch(SilenceSplice)`) through `execute_region_spec` (**landed 2026-07-08**): added the SilenceSplice arm (faithful transcription of the inline dual-fit block); `execute_region_spec` now takes `spec` by value + `bracket_fill: Option<Vec<f32>>` (SilenceSplice fill moves off the spec, no clone); `skip_or_dual_fit` builds a `Patch(SilenceSplice)` spec. **`Skip` is not executed** — the loop derives its outcome from the spec (§2.5.5), so no Skip arm. Added a **fast-tier** rescue test (`patch_audio_dual_fit_rescues_inverted_post_border`) — dual-fit rescue previously had only validation-tier coverage. Bracket 25/25 + lib 351/351. | **Done** |
 | **6b.3e** | Extract the function boundary (**landed 2026-07-08**): `prepare_region_patch` is now a thin shim — `characterize_region(...) -> (RegionCharacterization, GapTagsPatchContext)` decides `Patch { spec, bracket_fill }` or `Skip(outcome)`; the shim runs `execute_region_spec` on patches, returns the skip outcome otherwise. `skip_or_dual_fit` returns a `RegionCharacterization` (SilenceSplice spec on rescue, `Skip` on decline) instead of executing. All repair *decisions* now live in characterize; PCM *assembly* in the executor. lib 351/351 + dual-fit rescue green; full byte-parity gate running. **Did NOT fix finding #1** (see note f — `skip_or_dual_fit` still lacks the geometry). | **Done** |
 
 **Known-and-tracked (not defects):** (a) **RESOLVED (6b.3c)** — `GapRepairSpec` is now built + consumed by
 production (`execute_region_spec` reads the bracket output from the spec). The `ExecuteBracket*Ctx` bundles are
 now call-boundary plumbing that `execute_region_spec` fills from the spec, not a competing representation.
-(b) `execute_bracket_fill` is still exercised **only by its shadow** — it goes live at **6c** (not 6b.3c, which
-hands over the pre-assembled fill), the boundary where characterize discards the fill and execute must re-derive
-it. (c) **6c** introduces the temporary **2× fill/border assembly per bracket** (the "assemble twice" design;
-6b.3c avoids it by passing the fill) — deduped by the step-8 hoists. (d) `skip_cell_from_tags` assumes
-`seam_local` is populated for bracket-exhausted skips (characterize-always-detects) — a **step-8** dependency,
-not exercised in 6b. (e) The spec's `tags_ctx` is **partial** in 6b (`GapRepairTags::default()`; the executor ignores it) — step 8
-populates the D/R payload for the fingerprint projection. (f) **Step-8 trap (6b review):** the
+(b) `execute_bracket_fill` is still exercised **only by its shadow** — it goes live at the **Hoists** step
+(§3 step 8), *not* 6c: 6c carries the fill across the two loops (same memory as before), so re-derivation waits
+for the shared border/RMS owner where it's clean. (c) The temporary **2× fill/border assembly per bracket**
+(the "assemble twice" design) therefore appears — and is deduped — **together at Hoists**, not 6c (6c carries
+the fill, so no 2×). (d) `skip_cell_from_tags`
+assumes `seam_local` is populated for bracket-exhausted skips (characterize-always-detects) — a
+**Fingerprint-unification** dependency (resolution index), not exercised in 6b. (e) The spec's `tags_ctx` is
+**partial** in 6b (`GapRepairTags::default()`; the executor ignores it) — **Fingerprint-unification** populates
+the D/R payload for the projection. (f) **Fingerprint-unification trap (6b review):** the
 `Patch(SilenceSplice)` spec built in `skip_or_dual_fit` (6b.3d) carries **inert geometry** (`b_extract`
 all-zero, `gap_offset`/`gap_index` 0) because that call site lacks the full geometry — the executor's
-SilenceSplice arm ignores it (no current bug), but a fingerprint projection would read garbage. **NOT fixed by 6b.3e** — `skip_or_dual_fit` still builds the
-SilenceSplice spec and still lacks the geometry (the split kept the spec-build there). Clean fix (do at step 8,
-or sooner): thread `b_extract`/`gap_offset` into `skip_or_dual_fit` (it already has `df.b_mapped_start` for
-`b_mapped_start_frame`), or have it return the SilenceSplice *strategy* and let `characterize_region` (which
-has the geometry) wrap it. Also **skips are not yet `Skip`-verdict specs** — `characterize_region` returns a
-pre-built `Skip(outcome)`, so step 8 (fingerprint projection over all gaps) must additionally produce Skip
-specs with their D/R tags. Do not trust the SilenceSplice spec's geometry, and don't assume skips are specs,
+SilenceSplice arm ignores it (no current bug), but a fingerprint projection would read garbage. **NOT fixed by
+6b.3e** — `skip_or_dual_fit` still builds the SilenceSplice spec and still lacks the geometry (the split kept
+the spec-build there). Clean fix (do at **Fingerprint-unification**, or sooner): thread `b_extract`/`gap_offset`
+into `skip_or_dual_fit` (it already has `df.b_mapped_start` for `b_mapped_start_frame`), or have it return the
+SilenceSplice *strategy* and let `characterize_region` (which has the geometry) wrap it. Also **skips are not
+yet `Skip`-verdict specs** — `characterize_region` returns a pre-built `Skip(outcome)`, so
+**Fingerprint-unification** (projection over all gaps) must additionally produce Skip specs with their D/R tags. Do not trust the SilenceSplice spec's geometry, and don't assume skips are specs,
 until then.
+
+##### Carried-forward resolution index (every deferral has a named, forward-referenced target)
+
+**Numbers alone are ambiguous** — "step 8" has meant two things: the **Hoists step** (§3 step 8, binned-RMS /
+border extract) *and* the **Fingerprint-unification** sub-step (the tail of step 6 = §2.5.4 sub-step 8). Use the
+**named** targets below. Each target's row (linked) carries a "clears:" pointer back here; **a target must clear
+its listed items before it closes.**
+
+| Carried-forward item | Resolve at (named) |
+|----------------------|--------------------|
+| (b) `execute_bracket_fill` goes **live** (spec self-sufficient); transitional `bracket_fill: Option` dropped; (c) the temporary 2× fill/border assembly appears *and* is deduped | **Hoists** (§3 step 8) — *re-sequenced from 6c (2026-07-08): 6c carries the fill, so re-derivation waits for the shared border/RMS owner and its dedup, avoiding premature duplication* |
+| (d) pin `skip_cell_from_tags`'s `seam_local` assumption with a test; (e) populate the `tags_ctx` D/R payload; (f) fix the SilenceSplice inert geometry (#1); make skips real `Skip`-verdict specs | **Fingerprint-unification** (step-6 tail / §2.5.4 sub-step 8) |
+| companion `policies/` extractions: P2 `silence.rs` + P3 `gap_borders.rs` | **Hoists** (§3 step 8, §2.6) |
+| companion `policies/` extraction: P4 `seam_scoring.rs` | **Hoists** (§3 step 8, §2.6) — *6b/6c closed carrying it; now grouped with P2/P3, or sooner* |
+
+(Notes (d)/(e)/(f) above now say "Fingerprint-unification" not "step 8"; note (c)'s "step-8 hoists" = the
+Hoists step.)
 
 #### §2.5.5 `PatchAudio::execute` target shape
 
@@ -974,7 +993,7 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
 | 6 | **Characterize → execute** — `GapRepairSpec` / `GapRepairPlan`; extract `characterize_region` + `execute_region_spec` from `prepare_region_patch`; two-loop `PatchAudio::execute`; fingerprint export from shared characterize (§2.5) | **Design complete (§2.5.7 all resolved); 6a impl next** |
 | 7 | Golden harness on live `GapRepairSpec` projections (§4.7 C4, C5) | **Open** |
-| 8 | Step 1 hoists inside characterize shared context (border extract, binned-RMS) | **Open** — blocked on step 6 · **companion (§2.6): the hoist's single owner = `policies/silence.rs` (P2) + `policies/gap_borders.rs` (P3); extract as adjacent byte-preserving PRs — land or defer-with-reason before step 8 closes** |
+| 8 | Step 1 hoists inside characterize shared context (border extract, binned-RMS). **Clears (resolution index):** (c) dedups the 2× fill/border assembly via the shared owner; companion P2 `silence.rs` + P3 `gap_borders.rs`. | **Open** — blocked on step 6 · **companion (§2.6): the hoist's single owner = `policies/silence.rs` (P2) + `policies/gap_borders.rs` (P3); extract as adjacent byte-preserving PRs — land or defer-with-reason before step 8 (Hoists) closes** |
 
 Step 6 is the next structural milestone. Step 5 historical note: built **before** scan optimization
 (2026-07-01 sequencing decision) — complete. Step 1 hoists move to **step 8** so shared subexpressions have a
