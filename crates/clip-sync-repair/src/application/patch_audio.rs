@@ -463,7 +463,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 RegionCharacterization::Patch { spec, bracket_fill } => {
                     execute_region_spec(spec, bracket_fill, region_ctx.sample_rate)
                 }
-                RegionCharacterization::Skip(outcome) => (None, outcome),
+                RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec)),
             };
             let tags = region_outcome_gap_tags(&outcome, tag_ctx);
             log_gap_tags_verbose(self.progress, &tags);
@@ -1623,7 +1623,7 @@ fn skip_or_dual_fit(
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
     dual_fit: Option<&DualFitRepairInput<'_>>,
-) -> (RegionCharacterization, GapTagsPatchContext) {
+) -> (DualFitDecision, GapTagsPatchContext) {
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(df) = dual_fit {
@@ -1708,7 +1708,7 @@ fn skip_or_dual_fit(
                                     tag_ctx,
                                     dual_fit_attempt,
                                 );
-                                return (RegionCharacterization::Skip(outcome), tag_ctx);
+                                return (dual_fit_skipped(outcome), tag_ctx);
                             }
                         };
                         tracing::debug!(
@@ -1753,35 +1753,30 @@ fn skip_or_dual_fit(
                             donor_aligned: Some(r.aligned_donor),
                             ..GapRepairTags::default()
                         };
-                        let spec = GapRepairSpec {
-                            gap_index: 0,
-                            a_start_secs: region.a_start_secs,
-                            a_end_secs: region.a_end_secs,
-                            gap_offset_secs: 0.0,
-                            refined: RefinedGapFrames {
-                                start_frame: df.a_start_frame,
-                                end_frame: df.a_end_frame,
-                            },
-                            b_extract: BExtractWindow {
-                                start_frame: 0,
-                                end_frame: 0,
-                                b_mapped_start_frame: 0,
-                            },
-                            crossfade_secs: df.crossfade_secs,
-                            verdict: GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
-                                fill: r.fill,
-                                pre_seam_r: splice_pre,
-                                post_seam_r: splice_post,
-                                pre_lag: r.pre_lag,
-                                post_lag: r.post_lag,
-                                trim_frames: r.trim_frames,
-                                residual,
-                                confidence,
-                            }),
-                            tags_ctx,
-                        };
+                        // 8c: return the SilenceSplice *strategy* + base geometry (from the dual-fit input) +
+                        // tags. `characterize_region` (which holds the region geometry) wraps this into the full
+                        // `GapRepairSpec` with real `b_extract` / `gap_offset` — this call site lacks them, and
+                        // returning inert placeholders here was the note-(f) trap. `refined` / `crossfade` come
+                        // from `df` (the pre-gate base geometry dual-fit worked on).
                         return (
-                            RegionCharacterization::Patch { spec, bracket_fill: None },
+                            DualFitDecision::Rescued(Box::new(DualFitRescue {
+                                strategy: GapRepairStrategy::SilenceSplice {
+                                    fill: r.fill,
+                                    pre_seam_r: splice_pre,
+                                    post_seam_r: splice_post,
+                                    pre_lag: r.pre_lag,
+                                    post_lag: r.post_lag,
+                                    trim_frames: r.trim_frames,
+                                    residual,
+                                    confidence,
+                                },
+                                tags_ctx,
+                                refined: RefinedGapFrames {
+                                    start_frame: df.a_start_frame,
+                                    end_frame: df.a_end_frame,
+                                },
+                                crossfade_secs: df.crossfade_secs,
+                            })),
                             tag_ctx,
                         );
                     }
@@ -1812,7 +1807,7 @@ fn skip_or_dual_fit(
         tag_ctx,
         dual_fit_attempt,
     );
-    (RegionCharacterization::Skip(outcome), tag_ctx)
+    (dual_fit_skipped(outcome), tag_ctx)
 }
 
 /// Inputs to [`assemble_bracket_fill`] — the sliced B fill (`b_fill_raw` + contiguous `b_extension`), the
@@ -2081,7 +2076,128 @@ enum RegionCharacterization {
         spec: GapRepairSpec,
         bracket_fill: Option<Vec<f32>>,
     },
-    Skip(RegionPatchOutcome),
+    /// A reasoned/mechanical skip — now a full `Skip`-verdict [`GapRepairSpec`] (8d), not a bare outcome, so
+    /// every region yields a projectable spec (§2.5.5). The loop/shim derives the [`RegionPatchOutcome`] from
+    /// it via [`skip_outcome_from_spec`]; downstream reporting/tiering is byte-identical.
+    Skip(GapRepairSpec),
+}
+
+/// What `skip_or_dual_fit` decided, **before** the region geometry is attached (8c). The dual-fit call site
+/// lacks `b_extract` / `gap_offset` / `gap_index`, so on a rescue it returns the SilenceSplice *strategy* plus
+/// the base geometry it does own (from the dual-fit input); [`finalize_dual_fit`] — called from
+/// `characterize_region`, which holds the region geometry — wraps it into a full [`GapRepairSpec`]. This keeps
+/// geometry ownership in one place (the decided 8c approach) instead of stamping inert placeholders.
+enum DualFitDecision {
+    /// Dual-fit rescued the gap: the SilenceSplice strategy + its D/R tags + the base A geometry
+    /// (`refined`/`crossfade` from the pre-gate dual-fit input). Boxed — the payload is large relative to
+    /// [`DualFitDecision::Skipped`] (clippy `large_enum_variant`).
+    Rescued(Box<DualFitRescue>),
+    /// Dual-fit declined or was ineligible — the skip `reason` + gate `residual`. `finalize_dual_fit` wraps it
+    /// into a `Skip`-verdict spec with the region geometry (8c/8d), same as the rescue arm.
+    Skipped {
+        reason: GapPatchSkipReason,
+        residual: Option<policies::SeamResidualVerdict>,
+    },
+}
+
+/// The dual-fit rescue payload — everything `skip_or_dual_fit` owns before `characterize_region` attaches the
+/// region geometry (8c).
+struct DualFitRescue {
+    strategy: GapRepairStrategy,
+    tags_ctx: GapRepairTags,
+    refined: RefinedGapFrames,
+    crossfade_secs: f64,
+}
+
+/// Wrap a [`DualFitDecision`] into a [`RegionCharacterization`], attaching the region geometry the dual-fit
+/// call site lacked (`gap_offset`, `b_extract`). `gap_index` stays `0` — assigned at the fingerprint
+/// projection (8e/8f), same as the bracket path — so it is not SilenceSplice-specific inert geometry.
+fn finalize_dual_fit(
+    decision: DualFitDecision,
+    region: &FillRegion,
+    gap_offset_secs: f64,
+    b_extract: BExtractWindow,
+    gap_refined: RefinedGapFrames,
+) -> RegionCharacterization {
+    match decision {
+        DualFitDecision::Rescued(rescue) => {
+            let DualFitRescue { strategy, tags_ctx, refined, crossfade_secs } = *rescue;
+            let spec = GapRepairSpec {
+                gap_index: 0,
+                a_start_secs: region.a_start_secs,
+                a_end_secs: region.a_end_secs,
+                gap_offset_secs,
+                refined,
+                b_extract,
+                crossfade_secs,
+                verdict: GapRepairVerdict::Patch(strategy),
+                tags_ctx,
+            };
+            RegionCharacterization::Patch { spec, bracket_fill: None }
+        }
+        DualFitDecision::Skipped { reason, residual } => {
+            RegionCharacterization::Skip(skip_region_spec(
+                reason, residual, region, gap_offset_secs, gap_refined, b_extract,
+            ))
+        }
+    }
+}
+
+/// Build a `Skip`-verdict [`GapRepairSpec`] (8d). Carries the `reason` (in the verdict) and `residual` (in
+/// `tags_ctx.gate.residual`) so [`skip_outcome_from_spec`] reproduces the identical [`RegionPatchOutcome`].
+/// The cell is derived from the reason + whatever tags are available (`skip_cell_from_tags`); on the decline
+/// path tags are partial (no `seam_local`) until 8f, so a class-3/4 decline reports as `Decorrelated` for now
+/// — cell correctness is a projection (8f) concern, not an outcome one (§8b guard).
+fn skip_region_spec(
+    reason: GapPatchSkipReason,
+    residual: Option<policies::SeamResidualVerdict>,
+    region: &FillRegion,
+    gap_offset_secs: f64,
+    refined: RefinedGapFrames,
+    b_extract: BExtractWindow,
+) -> GapRepairSpec {
+    let mut tags_ctx = GapRepairTags::default();
+    tags_ctx.gate.residual = residual;
+    let cell = crate::domain::gap_repair_spec::skip_cell_from_tags(&reason, &tags_ctx);
+    GapRepairSpec {
+        gap_index: 0,
+        a_start_secs: region.a_start_secs,
+        a_end_secs: region.a_end_secs,
+        gap_offset_secs,
+        refined,
+        b_extract,
+        crossfade_secs: region.crossfade_secs,
+        verdict: GapRepairVerdict::skip_with_cell(cell, reason),
+        tags_ctx,
+    }
+}
+
+/// Reproduce the [`RegionPatchOutcome::Skipped`] for a `Skip`-verdict spec (8d) — `reason` from the verdict,
+/// `residual` from `tags_ctx.gate.residual`, the two fields `RegionPatchOutcome::Skipped` carries. Byte-
+/// identical to the pre-8d `skipped_patch` / `seam_failure_outcome` outputs.
+fn skip_outcome_from_spec(spec: &GapRepairSpec) -> RegionPatchOutcome {
+    match &spec.verdict {
+        GapRepairVerdict::Skip { reason, .. } => RegionPatchOutcome::Skipped {
+            reason: reason.clone(),
+            residual: spec.tags_ctx.gate.residual,
+        },
+        GapRepairVerdict::Patch(_) => {
+            unreachable!("skip_outcome_from_spec called on a Patch-verdict spec")
+        }
+    }
+}
+
+/// Adapt a `seam_failure_outcome` result (always a `Skipped`) into a [`DualFitDecision::Skipped`] so
+/// `finalize_dual_fit` can wrap it into a `Skip`-verdict spec with the region geometry (8d).
+fn dual_fit_skipped(outcome: RegionPatchOutcome) -> DualFitDecision {
+    match outcome {
+        RegionPatchOutcome::Skipped { reason, residual } => {
+            DualFitDecision::Skipped { reason, residual }
+        }
+        RegionPatchOutcome::Patched { .. } => {
+            unreachable!("seam_failure_outcome always yields a skip outcome")
+        }
+    }
 }
 
 /// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
@@ -2364,8 +2480,13 @@ fn characterize_region(
 
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     if gap_frames == 0 {
+        // Pre-placement mechanical skip: no B window established yet (`b_extract` is the not-measured zero
+        // window — full geometry for such skips is an 8f concern; the outcome ignores it).
         return (
-            RegionCharacterization::Skip(skipped_patch(GapPatchSkipReason::ZeroLengthGap)),
+            RegionCharacterization::Skip(skip_region_spec(
+                GapPatchSkipReason::ZeroLengthGap, None, region, gap_offset_secs, refined,
+                BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            )),
             tag_ctx,
         );
     }
@@ -2396,7 +2517,10 @@ fn characterize_region(
                 &reason,
             );
             return (
-                RegionCharacterization::Skip(skipped_patch(reason)),
+                RegionCharacterization::Skip(skip_region_spec(
+                    reason, None, region, gap_offset_secs, refined,
+                    BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+                )),
                 tag_ctx,
             );
         }
@@ -2458,6 +2582,15 @@ fn characterize_region(
         })
         .flatten();
 
+    // 8c: the B extract window for a dual-fit rescue spec — real geometry (`b_mapped_start` is the extract-
+    // relative nominal gap start the dual-fit input already computed). Built here so `finalize_dual_fit` can
+    // attach it; the executor's SilenceSplice arm doesn't read it, so this is PCM-neutral (byte-parity).
+    let silence_splice_b_extract = BExtractWindow {
+        start_frame: (b_extract_start_secs * sample_rate as f64).round() as usize,
+        end_frame: (b_extract_end_secs * sample_rate as f64).round() as usize,
+        b_mapped_start_frame: dual_fit_input.as_ref().map(|d| d.b_mapped_start).unwrap_or(0),
+    };
+
     let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
         Ok(outcome) => outcome,
         Err(fail)
@@ -2480,7 +2613,7 @@ fn characterize_region(
                     ) {
                         Ok(outcome) => outcome,
                         Err(retry_fail) => {
-                            return skip_or_dual_fit(
+                            let (decision, tag_ctx) = skip_or_dual_fit(
                                 progress,
                                 request,
                                 region,
@@ -2489,11 +2622,15 @@ fn characterize_region(
                                 tag_ctx,
                                 dual_fit_input.as_ref(),
                             );
+                            return (
+                                finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                                tag_ctx,
+                            );
                         }
                     }
                 }
                 other => {
-                    return skip_or_dual_fit(
+                    let (decision, tag_ctx) = skip_or_dual_fit(
                         progress,
                         request,
                         region,
@@ -2502,11 +2639,15 @@ fn characterize_region(
                         tag_ctx,
                         dual_fit_input.as_ref(),
                     );
+                    return (
+                        finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                        tag_ctx,
+                    );
                 }
             }
         }
         Err(other) => {
-            return skip_or_dual_fit(
+            let (decision, tag_ctx) = skip_or_dual_fit(
                 progress,
                 request,
                 region,
@@ -2514,6 +2655,10 @@ fn characterize_region(
                 min_structure_match_score,
                 tag_ctx,
                 dual_fit_input.as_ref(),
+            );
+            return (
+                finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                tag_ctx,
             );
         }
     };
@@ -2582,7 +2727,9 @@ fn characterize_region(
             &reason,
         );
         return (
-            RegionCharacterization::Skip(skipped_patch(reason)),
+            RegionCharacterization::Skip(skip_region_spec(
+                reason, None, region, gap_offset_secs, refined, silence_splice_b_extract,
+            )),
             tag_ctx,
         );
     }
@@ -2819,7 +2966,7 @@ fn prepare_region_patch(
             let (patch, outcome) = execute_region_spec(spec, bracket_fill, sample_rate);
             (patch, outcome, tag_ctx)
         }
-        RegionCharacterization::Skip(outcome) => (None, outcome, tag_ctx),
+        RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec), tag_ctx),
     }
 }
 
