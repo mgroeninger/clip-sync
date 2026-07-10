@@ -5,6 +5,7 @@ pub mod anchor_prominence;
 pub mod dual_fit_oracle;
 pub mod energy_matrix;
 pub mod floor_oracle;
+pub mod corpus_projection;
 pub mod gap_fingerprint_corpus;
 pub mod gap_repair_spec_projection;
 pub mod golden_baseline;

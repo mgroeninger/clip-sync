@@ -16,6 +16,7 @@ impl ProgressReporter for NoOpProgressReporter {
 
 pub mod anchor_seam_diagnostic;
 pub mod energy_signature_fixtures;
+pub mod fingerprint_corpus_fixtures;
 pub mod energy_signature_production;
 pub mod gap_corpus_fixtures;
 pub mod patch_geometry_preview;

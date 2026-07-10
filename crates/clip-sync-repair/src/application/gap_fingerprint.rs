@@ -2533,7 +2533,10 @@ fn anchor_params_from_gate(
 /// `b_levels`) from the production gate (`oracle_*`) — **N + 1** unified searches per gap when diagnostics
 /// are on (N brackets via `oracle_score_fit_candidate`, plus optional `place_on_b` for diagnostic `lag`).
 /// Only the selected gaps are built; unselected gaps are never characterized.
-pub(crate) fn characterize_gaps_with_gate(
+/// Full per-gap fingerprint characterization: the summary base + the gate overlay (per-bracket oracle, lag,
+/// donor, splice-dualfit) + optional X-set. Public so the fixtures crate can drive it on a synthetic A/B pair
+/// for the 8g decode differential (`fingerprint_corpus_fixtures::synth_ab_corpus`).
+pub fn characterize_gaps_with_gate(
     report: &crate::domain::GapReport,
     a_pcm: &clip_sync::MultiChannelPcm,
     b_samples_full: &[f32],

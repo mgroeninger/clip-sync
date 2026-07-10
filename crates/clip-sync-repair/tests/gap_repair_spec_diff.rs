@@ -27,9 +27,8 @@
 
 use std::path::{Path, PathBuf};
 
-use clip_sync_repair::application::gap_fingerprint::{
-    fingerprint_to_spec, spec_to_fingerprint_summary, FingerprintXSet, GapCorpus,
-};
+use clip_sync_repair::application::gap_fingerprint::GapCorpus;
+use clip_sync_repair_harness::corpus_projection::project_corpus;
 use clip_sync_repair_harness::gap_fingerprint_corpus::{
     analyze_dirs, drift_eps_from_env, tail_secs_from_env,
 };
@@ -62,22 +61,6 @@ fn corpus_roots() -> Option<Vec<PathBuf>> {
     }
     let d = default_corpus_dir();
     d.is_dir().then(|| vec![d])
-}
-
-/// Re-project every gap: old `GapFingerprint` → `GapRepairTags` → new `GapFingerprint`. `b_levels` is carried
-/// through the X-set (the corpus reader's `b_*_floor_db` read it; it is the only diagnostic field the
-/// `golden_baseline` captures).
-fn project_corpus(orig: &GapCorpus) -> GapCorpus {
-    let gaps = orig
-        .gaps
-        .iter()
-        .map(|fp| {
-            let spec = fingerprint_to_spec(fp);
-            let x = FingerprintXSet { b_levels: fp.b_levels.clone(), ..Default::default() };
-            spec_to_fingerprint_summary(&spec, fp.sample_rate, fp.channels, Some(x))
-        })
-        .collect();
-    GapCorpus { source: orig.source.clone(), gaps }
 }
 
 /// Re-project one pair dir's `corpus.json` into `dst/corpus.json`.

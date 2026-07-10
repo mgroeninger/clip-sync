@@ -2947,6 +2947,41 @@ fn characterize_region(
     )
 }
 
+/// Characterize every planned region into a spec — the §2.5.5 multi-region loop over [`characterize_region`],
+/// for the fingerprint/dump path (Fingerprint-unification 8g). **Region-infallible:** exactly one spec per
+/// region, every failure folded into a `Skip` verdict (§2.5.7 #3), so `specs.len() == regions.len()`. Drops
+/// the executor/reporting extras (`bracket_fill` / `GapTagsPatchContext`) that the patch path needs — the dump
+/// only projects specs. First-pass anchors only (pass-2 anchored retry re-characterizes from the specs, §2.5.5).
+///
+/// **Shadow at 8g.2** (built + unit-tested, not yet on any live path); the from-decode dump wires it at 8g.3
+/// — where it (and `RegionPatchContext`/`RegionPatchMedia`) become `pub(crate)` for the composition layer.
+#[allow(dead_code)] // shadow until the dump path calls it (8g.3)
+fn characterize_all_regions(
+    progress: &dyn ProgressReporter,
+    media: &RegionPatchMedia<'_>,
+    regions: &[FillRegion],
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
+) -> Vec<GapRepairSpec> {
+    regions
+        .iter()
+        .map(|region| {
+            let (characterization, _tag_ctx) = characterize_region(
+                progress,
+                media,
+                region,
+                request,
+                ctx,
+                RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
+            );
+            match characterization {
+                RegionCharacterization::Patch { spec, .. } => spec,
+                RegionCharacterization::Skip(spec) => spec,
+            }
+        })
+        .collect()
+}
+
 /// Thin shim (6b.3e): characterize the region, then execute if it's a patch. The former target of this name;
 /// the split lives in [`characterize_region`] + [`execute_region_spec`]. `sample_rate` for the executor comes
 /// from the region context.
@@ -3235,6 +3270,132 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+        }
+    }
+
+    /// **8g.2 — `characterize_all_regions` yields one consistent spec per region.** Region-infallible
+    /// (`specs.len() == regions.len()`), and each spec's verdict agrees with what the `prepare_region_patch`
+    /// shim executes for that region: a `Patch` verdict ⟺ the executor emits a `RegionPatch`; a `Skip` verdict
+    /// ⟺ a `Skipped` outcome. (Both go through the same `characterize_region`, so this pins the multi-region
+    /// loop's spec extraction against the live shim.)
+    #[test]
+    fn characterize_all_regions_yields_one_consistent_spec_per_region() {
+        use super::{
+            characterize_all_regions, prepare_region_patch, AnchoredRetryPass, GapRepairVerdict,
+            RegionPatchContext, RegionPatchMedia, RegionPatchOpts,
+        };
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_fill::FillRegion;
+        use crate::domain::policies;
+        use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let secs = |s: f64| (s * f64::from(rate)) as usize;
+        let total = secs(3.0);
+        let (g0, g1) = (secs(1.0), secs(2.0));
+        let sine = |buf: &mut [f32], start: usize, end: usize, freq: f64| {
+            for f in start..end.min(total) {
+                buf[f] = (std::f64::consts::TAU * freq * (f as f64) / f64::from(rate)).sin() as f32 * 0.2;
+            }
+        };
+        // A: content outside the gap, silent inside. B: content everywhere (fill available in the gap).
+        let mut a = vec![0f32; total];
+        let mut b = vec![0f32; total];
+        sine(&mut a, 0, g0, 330.0);
+        sine(&mut a, g1, total, 440.0);
+        sine(&mut b, 0, total, 330.0);
+
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples: a,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: g0 as f64 / f64::from(rate),
+                video_a_end_secs: g1 as f64 / f64::from(rate),
+                video_b_start_secs: Some(g0 as f64 / f64::from(rate)),
+                video_b_end_secs: Some(g1 as f64 / f64::from(rate)),
+                b_has_energy: true,
+            }],
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            scan_block_ms: 20,
+            silence_peak_fraction: 0.05,
+            limit_fill_to_mapped_region: false,
+            audio_timeline_skew: None,
+        };
+        let repair = RepairConfig {
+            gap_signature_mode: GapSignatureMode::Energy,
+            gap_signature_context_secs: 0.5,
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_length_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            border_standoff_secs: 0.0,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            ..RepairConfig::default()
+        };
+        let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
+
+        let regions = vec![FillRegion {
+            a_start_secs: g0 as f64 / f64::from(rate),
+            a_end_secs: g1 as f64 / f64::from(rate),
+            b_start_secs: g0 as f64 / f64::from(rate),
+            b_end_secs: g1 as f64 / f64::from(rate),
+            gain: 1.0,
+            crossfade_secs: 0.01,
+        }];
+        let ctx = RegionPatchContext {
+            channels: 1,
+            sample_rate: rate,
+            max_refine_frames: (0.05 * f64::from(rate)) as usize,
+            global_a_rms: policies::rms_interleaved(&a_pcm.samples),
+            silence_peak_fraction: 0.05,
+        };
+        let media = RegionPatchMedia { b_samples_full: &b, a_pcm: &a_pcm };
+        let progress = NoOpProgressReporter;
+
+        let specs = characterize_all_regions(&progress, &media, &regions, &request, &ctx);
+        assert_eq!(specs.len(), regions.len(), "one spec per region (region-infallible)");
+
+        for (spec, region) in specs.iter().zip(regions.iter()) {
+            let (patch, outcome, _tags) = prepare_region_patch(
+                &progress,
+                &media,
+                region,
+                &request,
+                &ctx,
+                RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
+            );
+            let is_patch = matches!(spec.verdict, GapRepairVerdict::Patch(_));
+            assert_eq!(is_patch, patch.is_some(), "Patch verdict ⟺ executor emits a RegionPatch");
+            assert_eq!(
+                !is_patch,
+                matches!(outcome, RegionPatchOutcome::Skipped { .. }),
+                "Skip verdict ⟺ Skipped outcome",
+            );
         }
     }
 

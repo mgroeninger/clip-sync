@@ -152,6 +152,10 @@ path = "tests/gap_repair_spec_diff.rs"
 required-features = ["validation-tests"]
 
 [[test]]
+name = "decode_path_projection"
+path = "tests/decode_path_projection.rs"
+
+[[test]]
 name = "diag_energy_matrix"
 path = "tests/diag_energy_matrix.rs"
 required-features = ["diagnostic-tests"]
