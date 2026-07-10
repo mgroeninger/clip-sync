@@ -985,13 +985,28 @@ fn failure_stage_tag(stage: FailureStage) -> &'static str {
 /// [`spec_to_fingerprint_summary`]'s tag mapping, mirroring `gap_row`'s reads so the projection round-trips the
 /// `golden_baseline` axes. Registration prefers `baseline_lag` (falls back to the diagnostic `lag`), matching
 /// the reader.
-pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
-    use crate::domain::gap_repair_spec::{GateTags, LevelTags, RegistrationTags, SeamLocalTags};
+/// Shared core of [`tags_from_fingerprint`] and [`tags_from_measurements`] — build the D/R tag payload from the
+/// individual overlay fields, so the oracle-fingerprint path (8f) and the from-decode path (8g.3b) read specs
+/// through ONE mapping. `structure`/`seams` are the summary throat scores (`None` under `skip_baseline`).
+#[allow(clippy::too_many_arguments)]
+fn tags_from_fields(
+    baseline_lag: Option<&LagFingerprint>,
+    diag_lag: Option<&LagFingerprint>,
+    splice: Option<&SpliceSummary>,
+    splice_dualfit: Option<SpliceDualfit>,
+    brackets: &[BracketInfo],
+    structure: Option<&StructureScores>,
+    seams: Option<&SeamScores>,
+    residual: Option<ResidualInfo>,
+    donor_interior: Option<DonorInterior>,
+    donor_interior_nominal: Option<DonorInterior>,
+    levels: Option<crate::domain::gap_repair_spec::LevelTags>,
+) -> crate::domain::gap_repair_spec::GapRepairTags {
+    use crate::domain::gap_repair_spec::{GateTags, RegistrationTags, SeamLocalTags};
 
-    let lag = fp.baseline_lag.as_ref().or(fp.lag.as_ref());
+    let lag = baseline_lag.or(diag_lag);
     let pre = lag.and_then(|l| mono_lag(&l.pre_anchor));
     let post = lag.and_then(|l| mono_lag(&l.post_anchor));
-    let splice = fp.splice.as_ref();
 
     let pre_peak_r = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|p| p.peak_r));
     let post_peak_r = splice.map(|s| s.post_peak_r).or_else(|| post.map(|p| p.peak_r));
@@ -1014,7 +1029,7 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
         edge_pinned: splice.and_then(|s| s.edge_pinned),
     };
 
-    let seam_local = fp.splice_dualfit.map(|d| SeamLocalTags {
+    let seam_local = splice_dualfit.map(|d| SeamLocalTags {
         pre_seam_r: d.pre_seam_r,
         post_seam_r: d.post_seam_r,
         post_seam_global_r: d.post_seam_global_r,
@@ -1032,13 +1047,11 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
         (Some(a), Some(c)) => Some(a.min(c)),
         _ => None,
     };
-    let best_bracket_seam = fp
-        .brackets
+    let best_bracket_seam = brackets
         .iter()
         .filter_map(min_seam)
         .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v))));
-    let closest_failure_stage = fp
-        .brackets
+    let closest_failure_stage = brackets
         .iter()
         .filter(|b| b.failure_stage.is_some())
         .max_by(|x, y| {
@@ -1048,7 +1061,7 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .and_then(|b| b.failure_stage.map(|s| failure_stage_tag(s).to_string()));
-    let residual = fp.residual.map(|r| crate::domain::policies::SeamResidualVerdict {
+    let residual = residual.map(|r| crate::domain::policies::SeamResidualVerdict {
         chosen_pre_db: r.chosen_pre_db,
         chosen_post_db: r.chosen_post_db,
         floor_pre_db: r.floor_pre_db,
@@ -1060,28 +1073,67 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
         max_lag_frames: 0,
     });
     let gate = GateTags {
-        brackets_total: fp.brackets.len(),
-        brackets_passing: fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
+        brackets_total: brackets.len(),
+        brackets_passing: brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
         closest_failure_stage,
-        structure_min: fp.structure.as_ref().map(|s| s.baseline_pre.min(s.baseline_post)),
-        seam_min: fp.seams.as_ref().map(|s| s.baseline_pre.min(s.baseline_post)),
+        structure_min: structure.map(|s| s.baseline_pre.min(s.baseline_post)),
+        seam_min: seams.map(|s| s.baseline_pre.min(s.baseline_post)),
         best_bracket_seam,
         residual,
     };
 
-    let levels = Some(LevelTags {
-        a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
-        a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
-    });
-
     crate::domain::gap_repair_spec::GapRepairTags {
         registration,
         seam_local,
-        donor_nominal: fp.donor_interior_nominal,
-        donor_aligned: fp.donor_interior,
+        donor_nominal: donor_interior_nominal,
+        donor_aligned: donor_interior,
         gate,
         levels,
     }
+}
+
+/// Extract the D/R tag payload from an oracle [`GapFingerprint`] (8f). Thin wrapper over [`tags_from_fields`].
+pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
+    tags_from_fields(
+        fp.baseline_lag.as_ref(),
+        fp.lag.as_ref(),
+        fp.splice.as_ref(),
+        fp.splice_dualfit,
+        &fp.brackets,
+        fp.structure.as_ref(),
+        fp.seams.as_ref(),
+        fp.residual,
+        fp.donor_interior,
+        fp.donor_interior_nominal,
+        Some(crate::domain::gap_repair_spec::LevelTags {
+            a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
+            a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
+        }),
+    )
+}
+
+/// Build the D/R tag payload from the shared [`RegionMeasurements`] (computed from decode) + the A-side levels
+/// (8g.3b). Mirrors [`tags_from_fingerprint`] via [`tags_from_fields`]; `structure`/`seams` are omitted
+/// (`None`) to match the `skip_baseline_placement` summary the dump uses — so from-decode tags equal the
+/// oracle's on that path by construction.
+#[allow(dead_code)] // wired into the from-decode dump at 8g.4
+fn tags_from_measurements(
+    m: &RegionMeasurements,
+    levels: Option<crate::domain::gap_repair_spec::LevelTags>,
+) -> crate::domain::gap_repair_spec::GapRepairTags {
+    tags_from_fields(
+        m.baseline_lag.as_ref(),
+        m.lag.as_ref(),
+        m.splice.as_ref(),
+        m.splice_dualfit,
+        &m.brackets,
+        None,
+        None,
+        m.residual,
+        m.donor_interior,
+        m.donor_interior_nominal,
+        levels,
+    )
 }
 
 /// Rebuild a decision-equivalent [`GapRepairSpec`] from an oracle [`GapFingerprint`] (8f differential). The
@@ -3244,6 +3296,105 @@ mod tests {
         // brackets: synthesized to read back total=4, passing=0 (bracket-exhausted).
         assert_eq!(fp.brackets.len(), 4);
         assert_eq!(fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(), 0);
+    }
+
+    /// **8g.3b — `tags_from_measurements` reads the shared measurements correctly.** Builds a
+    /// `RegionMeasurements` with distinctive values and asserts the D/R tags map the expected fields (brackets
+    /// counts, seam_local from splice_dualfit, per-side donor, registration from splice, residual, levels), and
+    /// that `structure`/`seams` are omitted (`None`) — matching the `skip_baseline_placement` dump so
+    /// from-decode tags equal the oracle's on that path. (The shared `tags_from_fields` core is validated
+    /// end-to-end for `tags_from_fingerprint` by the 8g.1 / media / C4 differentials.)
+    #[test]
+    fn tags_from_measurements_maps_the_shared_fields() {
+        use crate::domain::donor::DonorInterior;
+        use crate::domain::gap_repair_spec::LevelTags;
+
+        let donor = |silence: f64, cont: bool| DonorInterior {
+            rms_db: -20.0,
+            silence_fraction: silence,
+            longest_silence_ms: 0.0,
+            continuous: cont,
+        };
+        let bracket = |stage: Option<FailureStage>, seam: Option<f64>| BracketInfo {
+            pre_time_secs: 0.0,
+            post_time_secs: 0.0,
+            span_secs: 0.0,
+            move_frames: 0,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre: seam,
+            seam_post: seam,
+            failure_stage: stage,
+        };
+        let m = RegionMeasurements {
+            brackets: vec![bracket(None, Some(0.7)), bracket(Some(FailureStage::WaveformFloor), Some(0.4))],
+            throat_seam: None,
+            outcome: GateOutcome {
+                plan_kind: "fillable".into(),
+                tier: "patch".into(),
+                seam_shape: String::new(),
+                fit_path: None,
+                signature_mode: None,
+                skip_reason: None,
+            },
+            baseline_lag: None,
+            splice: Some(SpliceSummary {
+                step_ms: 12.5,
+                pre_peak_r: 0.93,
+                post_peak_r: 0.91,
+                pre_peak_z: Some(14.0),
+                post_peak_z: Some(13.0),
+                edge_pinned: Some(false),
+            }),
+            seam_probe: None,
+            donor_interior: Some(donor(0.05, true)),
+            donor_interior_nominal: Some(donor(0.10, false)),
+            b_levels: None,
+            splice_dualfit: Some(SpliceDualfit {
+                pre_seam_r: 0.97,
+                post_seam_r: 0.95,
+                gap_frames: 24_000,
+                bridge_frames: 24_480,
+                trim_frames: 480,
+                gate_pass: true,
+                post_seam_global_r: 0.40,
+                pre_seam_prom: None,
+                post_seam_prom: None,
+                pre_seam_z: None,
+                post_seam_z: None,
+            }),
+            wide_envelope: None,
+            residual: Some(ResidualInfo {
+                chosen_pre_db: -42.0,
+                chosen_post_db: -41.0,
+                floor_pre_db: -40.0,
+                floor_post_db: -40.0,
+                informative: true,
+            }),
+            lag: None,
+        };
+        let levels = LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 };
+
+        let tags = tags_from_measurements(&m, Some(levels));
+
+        // Gate counts from the bracket list; structure/seams omitted (skip_baseline).
+        assert_eq!(tags.gate.brackets_total, 2);
+        assert_eq!(tags.gate.brackets_passing, 1);
+        assert_eq!(tags.gate.structure_min, None, "structure omitted");
+        assert_eq!(tags.gate.seam_min, None, "seams omitted");
+        assert!(tags.gate.residual.is_some(), "residual mapped");
+        // seam_local from splice_dualfit (single-source).
+        let sl = tags.seam_local.expect("seam_local");
+        assert_eq!(sl.pre_seam_r, 0.97);
+        assert_eq!(sl.post_seam_r, 0.95);
+        assert_eq!(sl.post_seam_global_r, 0.40);
+        assert!(sl.gate_pass);
+        // registration from splice; per-side donor mapped (nominal vs aligned).
+        assert_eq!(tags.registration.pre_peak_r, Some(0.93));
+        assert_eq!(tags.registration.step_ms, Some(12.5));
+        assert_eq!(tags.donor_aligned.unwrap().silence_fraction, 0.05);
+        assert_eq!(tags.donor_nominal.unwrap().silence_fraction, 0.10);
+        assert_eq!(tags.levels.unwrap().a_gap_floor_db, -70.0);
     }
 
     /// splitmix64 finalizer → deterministic noise in [-1, 1).
