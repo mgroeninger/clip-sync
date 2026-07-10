@@ -2536,6 +2536,316 @@ fn anchor_params_from_gate(
 /// Full per-gap fingerprint characterization: the summary base + the gate overlay (per-bracket oracle, lag,
 /// donor, splice-dualfit) + optional X-set. Public so the fixtures crate can drive it on a synthetic A/B pair
 /// for the 8g decode differential (`fingerprint_corpus_fixtures::synth_ab_corpus`).
+/// The gate-overlay measurements for one gap (Fingerprint-unification 8g.3a) — every field the per-gap loop of
+/// [`characterize_gaps_with_gate`] assigns onto `fp`, computed from decode via the shared primitives and
+/// returned instead of mutated in place. Extracted byte-neutrally so the fingerprint dump (old path) and the
+/// from-decode tags (8g.3b) share ONE measurement site. `throat_seam` is the throat bracket's `(pre, post)`
+/// (applied onto `fp.seams` by the caller, unconditionally when a zero-move bracket exists).
+struct RegionMeasurements {
+    brackets: Vec<BracketInfo>,
+    throat_seam: Option<(Option<f64>, Option<f64>)>,
+    outcome: GateOutcome,
+    baseline_lag: Option<LagFingerprint>,
+    splice: Option<SpliceSummary>,
+    seam_probe: Option<SeamProbeFingerprint>,
+    donor_interior: Option<DonorInterior>,
+    donor_interior_nominal: Option<DonorInterior>,
+    b_levels: Option<LevelProfile>,
+    splice_dualfit: Option<SpliceDualfit>,
+    wide_envelope: Option<WideEnvelopeFingerprint>,
+    residual: Option<ResidualInfo>,
+    lag: Option<LagFingerprint>,
+}
+
+/// Per-gap inputs for [`compute_region_measurements`] — the geometry the caller resolved (refined throat, B
+/// extract window/offset) plus the shared config/frame params. `gap_floor_db` is `fp.levels.gap_floor_db` from
+/// the summary pass (the donor/seam-probe floor).
+struct RegionMeasureInput<'a> {
+    a_pcm: &'a clip_sync::MultiChannelPcm,
+    ch: usize,
+    b_slice: &'a [f32],
+    b_extract_start_secs: f64,
+    gap_offset: f64,
+    refined: RefinedGapFrames,
+    gap_frames: usize,
+    gate_cfg: &'a crate::application::patch_region::SeamGateConfig,
+    cfg: &'a FingerprintConfig,
+    gap_floor_db: f32,
+    include_diagnostics: bool,
+    context_frames: usize,
+    bin_frames: usize,
+    search_radius_frames: usize,
+    rate: f64,
+    sample_rate: u32,
+    progress: &'a dyn clip_sync::ProgressReporter,
+}
+
+/// Compute one gap's gate-overlay measurements from decode. **Byte-neutral extraction of
+/// [`characterize_gaps_with_gate`]'s per-gap loop body (8g.3a)** — the caller assigns the returned fields onto
+/// `fp` exactly as the inline loop did.
+fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurements {
+    use crate::application::patch_region::{
+        derive_seam_gate_geometry, oracle_build_fit_cache, oracle_measure_residual,
+        oracle_score_fit_candidate, oracle_throat_structure_frame, SeamGateParams,
+    };
+    let RegionMeasureInput {
+        a_pcm,
+        ch,
+        b_slice,
+        b_extract_start_secs,
+        gap_offset,
+        refined,
+        gap_frames,
+        gate_cfg,
+        cfg,
+        gap_floor_db,
+        include_diagnostics,
+        context_frames,
+        bin_frames,
+        search_radius_frames,
+        rate,
+        sample_rate,
+        progress,
+    } = inp;
+
+    let geom = derive_seam_gate_geometry(
+        gate_cfg,
+        a_pcm,
+        b_slice,
+        b_extract_start_secs,
+        refined.start_frame as f64 / rate + gap_offset,
+        refined.end_frame as f64 / rate + gap_offset,
+        gap_frames,
+        None,
+    );
+    let params = SeamGateParams { cfg: gate_cfg, geom };
+    let cache = oracle_build_fit_cache(&params);
+
+    // Per-bracket authoritative seam + failure_stage (gate enumeration). The zero-move bracket is the throat;
+    // its score becomes the baseline seam (consistent with the brackets and ~the production throat).
+    let anchor_params = anchor_params_from_gate(gate_cfg, refined);
+    let candidates = list_anchor_candidates_a(&a_pcm.samples, ch, refined, &anchor_params);
+    let brackets = list_feasible_anchor_brackets(&candidates, refined, &anchor_params);
+    let mut any_ok = false;
+    let mut best_energy: Option<(f64, RefinedGapFrames)> = None;
+    // Populated when the zero-move (throat) bracket scores `Ok` — the structure placement is already computed
+    // inside that gate call, so the residual read below reuses it instead of a second `gate_structure_align`.
+    let mut throat_structure_frame: Option<usize> = None;
+    let mut throat_seam: Option<(Option<f64>, Option<f64>)> = None;
+    let mut infos = Vec::with_capacity(brackets.len());
+    let bracket_total = brackets.len() as u64;
+    for (bn, br) in brackets.iter().enumerate() {
+        progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
+        let (seam_pre, seam_post, stage) =
+            match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
+                Ok((pre, post, _, _, structure_start_frame)) => {
+                    any_ok = true;
+                    if br.refined == refined {
+                        throat_structure_frame = Some(structure_start_frame);
+                    }
+                    (Some(pre), Some(post), None)
+                }
+                Err(f) => {
+                    let (stage, pre, post) = stage_of(&f);
+                    (pre, post, Some(stage))
+                }
+            };
+        if br.refined == refined {
+            throat_seam = Some((seam_pre, seam_post));
+        }
+        infos.push(BracketInfo {
+            pre_time_secs: br.pre.frame as f64 / rate,
+            post_time_secs: br.post.frame as f64 / rate,
+            span_secs: br.post.frame.saturating_sub(br.pre.frame) as f64 / rate,
+            move_frames: br.move_frames,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre,
+            seam_post,
+            failure_stage: stage,
+        });
+        if include_diagnostics
+            && br.pre.source == AnchorSource::EnergyPeak
+            && br.post.source == AnchorSource::EnergyPeak
+        {
+            let smin = match (seam_pre, seam_post) {
+                (Some(a), Some(b)) => a.min(b),
+                _ => f64::NEG_INFINITY,
+            };
+            if best_energy.is_none_or(|(bs, _)| smin > bs) {
+                best_energy = Some((smin, br.refined));
+            }
+        }
+    }
+    let patched = any_ok;
+    let outcome = GateOutcome {
+        plan_kind: "fillable".into(),
+        tier: if patched { "patch".into() } else { "skip".into() },
+        seam_shape: String::new(),
+        fit_path: None,
+        signature_mode: None,
+        skip_reason: (!patched).then(|| "gate skipped".into()),
+    };
+
+    // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
+    let b_mono = interleaved_to_mono(b_slice, ch);
+    let b_ch = interleaved_to_channels(b_slice, ch);
+    let b_mapped_start = b_mapped_frame_in_haystack(refined.start_frame, rate, gap_offset, b_extract_start_secs);
+    let b_mapped_bracket = |refined_b: RefinedGapFrames| {
+        b_mapped_frame_in_haystack(refined_b.start_frame, rate, gap_offset, b_extract_start_secs)
+    };
+
+    // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag sweep.
+    let baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
+        a_samples: &a_pcm.samples,
+        channels: ch,
+        refined,
+        b_mono: &b_mono,
+        b_ch: &b_ch,
+        selected: None,
+        start_frame: b_mapped_start,
+        cfg,
+        sample_rate,
+    }));
+    let pre_shift_frames = baseline_lag
+        .as_ref()
+        .and_then(|l| mono_lag_side(l, true))
+        .map(|s| s.frac_lag_samples.round() as i64)
+        .unwrap_or(0);
+    let post_gross_frames = baseline_lag
+        .as_ref()
+        .and_then(|l| mono_lag_side(l, false))
+        .map(|s| s.frac_lag_samples.round() as i64);
+    let seam_probe = if include_diagnostics {
+        Some(seam_probe_at_placement(&SeamProbeAtPlacementInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
+            refined,
+            b_mono: &b_mono,
+            start_frame: b_mapped_start,
+            post_shift_frames: pre_shift_frames,
+            bin_frames,
+            cfg,
+            sample_rate,
+            gap_floor_db: f64::from(gap_floor_db),
+        }))
+    } else {
+        None
+    };
+    let b_pre_aligned = (b_mapped_start as i64 + pre_shift_frames).max(0) as usize;
+    let b_post_aligned = post_gross_frames
+        .map(|g| (b_mapped_start as i64 + gap_frames as i64 + g).max(0) as usize)
+        .unwrap_or(b_mapped_start + gap_frames);
+    let donor_interior =
+        donor_interior_at(&b_mono, b_pre_aligned, b_post_aligned, f64::from(gap_floor_db), sample_rate);
+    let b_gap_end = b_mapped_start + gap_frames;
+    let donor_interior_nominal =
+        donor_interior_at(&b_mono, b_mapped_start, b_gap_end, f64::from(gap_floor_db), sample_rate);
+    let b_levels = if include_diagnostics {
+        Some(level_profile(
+            |f, end| mono_slice_rms(&b_mono, f, end),
+            LevelProfileSpan {
+                gap_start: b_mapped_start,
+                gap_end: b_gap_end,
+                context_start: b_mapped_start.saturating_sub(context_frames),
+                context_end: (b_gap_end + context_frames).min(b_mono.len()),
+            },
+            bin_frames,
+            cfg.gap_signature_bin_ms as u32,
+        ))
+    } else {
+        None
+    };
+    let splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
+        a_samples: &a_pcm.samples,
+        channels: ch,
+        refined,
+        b_mono: &b_mono,
+        b_mapped_start,
+        cfg,
+        sample_rate,
+    });
+    let wide_envelope = if include_diagnostics {
+        Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
+            refined,
+            b_mono: &b_mono,
+            start_frame: b_mapped_start,
+            post_shift_frames: pre_shift_frames,
+            cfg,
+            sample_rate,
+        }))
+    } else {
+        None
+    };
+    let splice = baseline_lag.as_ref().and_then(splice_summary_from_lag);
+
+    // Residual stays at the gate's structure throat. Reuse the throat placement from the bracket loop when the
+    // throat bracket scored `Ok`; else a fresh `gate_structure_align` call.
+    let throat_frame =
+        throat_structure_frame.or_else(|| oracle_throat_structure_frame(&params, &cache, refined));
+    let residual = throat_frame.and_then(|throat_frame| {
+        oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
+            chosen_pre_db: finite_db(v.chosen_pre_db),
+            chosen_post_db: finite_db(v.chosen_post_db),
+            floor_pre_db: finite_db(v.floor_pre_db),
+            floor_post_db: finite_db(v.floor_post_db),
+            informative: v.informative,
+        })
+    });
+
+    // Diagnostic lag (Tier-3): one placement search at the best (highest-seam) speech bracket.
+    let lag = if include_diagnostics {
+        best_energy.and_then(|(_, refined_b)| {
+            place_on_b(&PlaceOnBInput {
+                a_samples: &a_pcm.samples,
+                channels: ch,
+                refined: refined_b,
+                b_haystack: b_slice,
+                b_mono: &b_mono,
+                b_ch: &b_ch,
+                nominal_fill_start: b_mapped_bracket(refined_b),
+                context_frames,
+                bin_frames,
+                search_radius_frames,
+                cfg,
+            })
+            .map(|p| {
+                lag_at_placement(&LagAtPlacementInput {
+                    a_samples: &a_pcm.samples,
+                    channels: ch,
+                    refined: refined_b,
+                    b_mono: &b_mono,
+                    b_ch: &b_ch,
+                    selected: p.selected_channels.first().copied(),
+                    start_frame: p.start_frame,
+                    cfg,
+                    sample_rate,
+                })
+            })
+        })
+    } else {
+        None
+    };
+
+    RegionMeasurements {
+        brackets: infos,
+        throat_seam,
+        outcome,
+        baseline_lag,
+        splice,
+        seam_probe,
+        donor_interior,
+        donor_interior_nominal,
+        b_levels,
+        splice_dualfit,
+        wide_envelope,
+        residual,
+        lag,
+    }
+}
+
 pub fn characterize_gaps_with_gate(
     report: &crate::domain::GapReport,
     a_pcm: &clip_sync::MultiChannelPcm,
@@ -2545,11 +2855,6 @@ pub fn characterize_gaps_with_gate(
     include_diagnostics: bool,
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
-    use crate::application::patch_region::{
-        oracle_build_fit_cache, oracle_measure_residual, oracle_score_fit_candidate,
-        oracle_throat_structure_frame,
-    };
-
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
     let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
@@ -2606,255 +2911,53 @@ pub fn characterize_gaps_with_gate(
         }
         let b_slice = &b_samples_full[lo * ch..hi * ch];
         let b_extract_start_secs = lo as f64 / rate;
-        let geom = crate::application::patch_region::derive_seam_gate_geometry(
-            &gate_cfg,
-            a_pcm,
-            b_slice,
-            b_extract_start_secs,
-            refined.start_frame as f64 / rate + gap_offset,
-            refined.end_frame as f64 / rate + gap_offset,
-            gap_frames,
-            None,
-        );
-        let params = crate::application::patch_region::SeamGateParams { cfg: &gate_cfg, geom };
-        let cache = oracle_build_fit_cache(&params);
         fp.tier = DetailTier::Full;
 
-        // Per-bracket authoritative seam + failure_stage (gate enumeration). The zero-move bracket is
-        // the throat; its score becomes the baseline seam (consistent with the brackets and ~the
-        // production throat — unlike a separate non-anchor baseline, whose unbiased search drifts to a
-        // different placement and reads a divergent value).
-        let anchor_params = anchor_params_from_gate(&gate_cfg, refined);
-        let candidates = list_anchor_candidates_a(&a_pcm.samples, ch, refined, &anchor_params);
-        let brackets = list_feasible_anchor_brackets(&candidates, refined, &anchor_params);
-        let mut any_ok = false;
-        let mut best_energy: Option<(f64, RefinedGapFrames)> = None;
-        // Populated when the zero-move (throat) bracket scores `Ok` — the structure placement is
-        // already computed inside that gate call, so the later throat-placement read below can reuse
-        // it instead of a second `gate_structure_align` (`oracle_throat_structure_frame`) for the
-        // same `(refined, refined)` pair.
-        let mut throat_structure_frame: Option<usize> = None;
-        let mut infos = Vec::with_capacity(brackets.len());
-        let bracket_total = brackets.len() as u64;
-        for (bn, br) in brackets.iter().enumerate() {
-            progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
-            let (seam_pre, seam_post, stage) =
-                match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
-                    Ok((pre, post, _, _, structure_start_frame)) => {
-                        any_ok = true;
-                        if br.refined == refined {
-                            throat_structure_frame = Some(structure_start_frame);
-                        }
-                        (Some(pre), Some(post), None)
-                    }
-                    Err(f) => {
-                        let (stage, pre, post) = stage_of(&f);
-                        (pre, post, Some(stage))
-                    }
-                };
-            if br.refined == refined {
-                if let Some(s) = &mut fp.seams {
-                    if let Some(p) = seam_pre {
-                        s.baseline_pre = p;
-                    }
-                    if let Some(p) = seam_post {
-                        s.baseline_post = p;
-                    }
-                }
-            }
-            infos.push(BracketInfo {
-                pre_time_secs: br.pre.frame as f64 / rate,
-                post_time_secs: br.post.frame as f64 / rate,
-                span_secs: br.post.frame.saturating_sub(br.pre.frame) as f64 / rate,
-                move_frames: br.move_frames,
-                structure_pre: None,
-                structure_post: None,
-                seam_pre,
-                seam_post,
-                failure_stage: stage,
-            });
-            if include_diagnostics
-                && br.pre.source == AnchorSource::EnergyPeak
-                && br.post.source == AnchorSource::EnergyPeak
-            {
-                let smin = match (seam_pre, seam_post) {
-                    (Some(a), Some(b)) => a.min(b),
-                    _ => f64::NEG_INFINITY,
-                };
-                if best_energy.is_none_or(|(bs, _)| smin > bs) {
-                    best_energy = Some((smin, br.refined));
-                }
-            }
-        }
-        fp.brackets = infos;
-        let patched = any_ok;
-        fp.outcome = Some(GateOutcome {
-            plan_kind: "fillable".into(),
-            tier: if patched { "patch".into() } else { "skip".into() },
-            seam_shape: String::new(),
-            fit_path: None,
-            signature_mode: None,
-            skip_reason: (!patched).then(|| "gate skipped".into()),
-        });
-
-        // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
-        let b_mono = interleaved_to_mono(b_slice, ch);
-        let b_ch = interleaved_to_channels(b_slice, ch);
-        let b_mapped_start = b_mapped_frame_in_haystack(
-            refined.start_frame,
-            rate,
-            gap_offset,
+        // 8g.3a: the per-gap gate-overlay measurements are computed by the shared `compute_region_measurements`
+        // (byte-neutral extraction); the caller only assigns the returned fields onto `fp`, exactly as the
+        // inline loop did.
+        let m = compute_region_measurements(RegionMeasureInput {
+            a_pcm,
+            ch,
+            b_slice,
             b_extract_start_secs,
-        );
-        let b_mapped_bracket = |refined_b: RefinedGapFrames| {
-            b_mapped_frame_in_haystack(refined_b.start_frame, rate, gap_offset, b_extract_start_secs)
-        };
-
-        // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag
-        // sweep, sequentially centered (ledger A2 sequential registration). Correlation/uniqueness
-        // is mono (frozen, §3.6a).
-        fp.baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
-            a_samples: &a_pcm.samples,
-            channels: ch,
+            gap_offset,
             refined,
-            b_mono: &b_mono,
-            b_ch: &b_ch,
-            selected: None,
-            start_frame: b_mapped_start,
+            gap_frames,
+            gate_cfg: &gate_cfg,
             cfg: &cfg,
+            gap_floor_db: fp.levels.gap_floor_db,
+            include_diagnostics,
+            context_frames,
+            bin_frames,
+            search_radius_frames,
+            rate,
             sample_rate,
-        }));
-        // L_pre / L_post_gross (mono) drive the same sequential post centering in seam_probe/wide_envelope,
-        // and the aligned bridge span for donor_interior — see lag_pair's doc comment for the derivation.
-        let pre_shift_frames = fp
-            .baseline_lag
-            .as_ref()
-            .and_then(|l| mono_lag_side(l, true))
-            .map(|s| s.frac_lag_samples.round() as i64)
-            .unwrap_or(0);
-        let post_gross_frames = fp
-            .baseline_lag
-            .as_ref()
-            .and_then(|l| mono_lag_side(l, false))
-            .map(|s| s.frac_lag_samples.round() as i64);
-        fp.seam_probe = if include_diagnostics {
-            Some(seam_probe_at_placement(&SeamProbeAtPlacementInput {
-                a_samples: &a_pcm.samples,
-                channels: ch,
-                refined,
-                b_mono: &b_mono,
-                start_frame: b_mapped_start,
-                post_shift_frames: pre_shift_frames,
-                bin_frames,
-                cfg: &cfg,
-                sample_rate,
-                gap_floor_db: f64::from(fp.levels.gap_floor_db),
-            }))
-        } else {
-            None
-        };
-        {
-            let b_pre_aligned = (b_mapped_start as i64 + pre_shift_frames).max(0) as usize;
-            // Fall back to the naive A-length span when the post lag search found no peak, rather than
-            // dropping donor_interior entirely.
-            let b_post_aligned = post_gross_frames
-                .map(|g| (b_mapped_start as i64 + gap_frames as i64 + g).max(0) as usize)
-                .unwrap_or(b_mapped_start + gap_frames);
-            fp.donor_interior =
-                donor_interior_at(&b_mono, b_pre_aligned, b_post_aligned, f64::from(fp.levels.gap_floor_db), sample_rate);
-            // Registration-independent B occupancy + symmetric B level profile at the NOMINAL geometry
-            // b_mapped span (no per-shoulder lag) — the "quiet in both masters ⇒ not a dropout" signals (D11).
-            let b_gap_end = b_mapped_start + gap_frames;
-            fp.donor_interior_nominal =
-                donor_interior_at(&b_mono, b_mapped_start, b_gap_end, f64::from(fp.levels.gap_floor_db), sample_rate);
-            if include_diagnostics {
-                fp.b_levels = Some(level_profile(
-                    |f, end| mono_slice_rms(&b_mono, f, end),
-                    LevelProfileSpan {
-                        gap_start: b_mapped_start,
-                        gap_end: b_gap_end,
-                        context_start: b_mapped_start.saturating_sub(context_frames),
-                        context_end: (b_gap_end + context_frames).min(b_mono.len()),
-                    },
-                    bin_frames,
-                    cfg.gap_signature_bin_ms as u32,
-                ));
-            }
-            // Dual-fit viability: the seam search re-anchors on nominal `b_mapped` (not the gross lag), so it
-            // runs regardless of whether the gross post lag resolved — each seam finds its own placement.
-            fp.splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
-                a_samples: &a_pcm.samples,
-                channels: ch,
-                refined,
-                b_mono: &b_mono,
-                b_mapped_start,
-                cfg: &cfg,
-                sample_rate,
-            });
-        }
-        fp.wide_envelope = if include_diagnostics {
-            Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
-                a_samples: &a_pcm.samples,
-                channels: ch,
-                refined,
-                b_mono: &b_mono,
-                start_frame: b_mapped_start,
-                post_shift_frames: pre_shift_frames,
-                cfg: &cfg,
-                sample_rate,
-            }))
-        } else {
-            None
-        };
-        if let Some(ref bl) = fp.baseline_lag {
-            fp.splice = splice_summary_from_lag(bl);
-        }
-
-        // Residual stays at the gate's structure throat (same-source cancellation as the gate scores).
-        // Reuse the placement already computed in the bracket loop above when the throat bracket scored
-        // `Ok`; only fall back to a fresh `gate_structure_align` call when it didn't (e.g. no zero-move
-        // bracket, or the throat candidate failed before/without a structure placement).
-        let throat_frame = throat_structure_frame.or_else(|| oracle_throat_structure_frame(&params, &cache, refined));
-        if let Some(throat_frame) = throat_frame {
-            fp.residual = oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
-                chosen_pre_db: finite_db(v.chosen_pre_db),
-                chosen_post_db: finite_db(v.chosen_post_db),
-                floor_pre_db: finite_db(v.floor_pre_db),
-                floor_post_db: finite_db(v.floor_post_db),
-                informative: v.informative,
-            });
-        }
-
-        // Diagnostic lag (Tier-3): one placement search at the best (highest-seam) speech bracket.
-        if include_diagnostics {
-            if let Some((_, refined_b)) = best_energy {
-                if let Some(p) = place_on_b(&PlaceOnBInput {
-                    a_samples: &a_pcm.samples,
-                    channels: ch,
-                    refined: refined_b,
-                    b_haystack: b_slice,
-                    b_mono: &b_mono,
-                    b_ch: &b_ch,
-                    nominal_fill_start: b_mapped_bracket(refined_b),
-                    context_frames,
-                    bin_frames,
-                    search_radius_frames,
-                    cfg: &cfg,
-                }) {
-                    fp.lag = Some(lag_at_placement(&LagAtPlacementInput {
-                        a_samples: &a_pcm.samples,
-                        channels: ch,
-                        refined: refined_b,
-                        b_mono: &b_mono,
-                        b_ch: &b_ch,
-                        selected: p.selected_channels.first().copied(),
-                        start_frame: p.start_frame,
-                        cfg: &cfg,
-                        sample_rate,
-                    }));
+            progress,
+        });
+        fp.brackets = m.brackets;
+        // Throat bracket seam applied onto the summary `fp.seams` exactly as the inline loop did.
+        if let Some((seam_pre, seam_post)) = m.throat_seam {
+            if let Some(s) = &mut fp.seams {
+                if let Some(p) = seam_pre {
+                    s.baseline_pre = p;
+                }
+                if let Some(p) = seam_post {
+                    s.baseline_post = p;
                 }
             }
         }
+        fp.outcome = Some(m.outcome);
+        fp.baseline_lag = m.baseline_lag;
+        fp.seam_probe = m.seam_probe;
+        fp.donor_interior = m.donor_interior;
+        fp.donor_interior_nominal = m.donor_interior_nominal;
+        fp.b_levels = m.b_levels;
+        fp.splice_dualfit = m.splice_dualfit;
+        fp.wide_envelope = m.wide_envelope;
+        fp.splice = m.splice;
+        fp.residual = m.residual;
+        fp.lag = m.lag;
     }
     corpus
 }
