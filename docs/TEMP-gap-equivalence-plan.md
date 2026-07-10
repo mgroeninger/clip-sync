@@ -1,0 +1,421 @@
+# Gap content equivalence (skip redundant fills) — plan (DRAFT)
+
+Status: **not started**.
+
+Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
+[gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [json-output.md](json-output.md),
+[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
+
+Motivating use case: sensitive gap scan (`min_gap_ms=500`, `scan_block_ms=100`, …) finds many
+silent runs on A that ffmpeg also sees, but a large fraction are **not editorial dropouts** — A
+already carries the same program audio as B at the aligned position (scan false positives, or a
+fill would be ~identity). Today `b_has_energy=true` marks them **repairable** and they enter the
+expensive patch path, often skipping later with weak seam scores. A **content-equivalence** gate
+would classify “B already matches A here” **before** patch and skip with an explicit reason.
+
+Real-world anchor: `licensed-pair-A.mkv` vs `licensed-pair-B.mkv` — 39 scan gaps vs 14 ffmpeg
+`silencedetect` hits at `d=0.5`; extras cluster around low-level dips where B has matching chase /
+room content at sync time.
+
+---
+
+## 1. Problem (one paragraph)
+
+Phase 2 answers: “Is A silent here, and does B have *any* audio at the mapped time?” (`b_has_energy`).
+Phase 4 answers: “Can we *splice* B into A with acceptable seams?” (structure + Pearson + residual).
+Neither answers: “Would patching **change** the program audio?” When scan is loosened to match ffmpeg
+on borderline sub-second silences, many gaps are **repairable** but **redundant** — nominal B content
+already matches A’s borders / same-source residual confirms identity. Patching them wastes decode +
+search time and clutters reports. We need a cheap **equivalence** measurement between aligned A and B
+spans that skips plan-time fill when a splice would be a no-op (or when scan misclassified a low-level
+dip as a dropout).
+
+---
+
+## 2. Relationship to existing signals
+
+| Signal | Question | Equivalence gate |
+|--------|----------|------------------|
+| `b_has_energy=false` | Is B silent at map time? (**shared pause**) | **Out of scope** — already `unfillable` / `NotFillable` |
+| `program_quiet_at_nominal` (G5) | Is B interior mostly silent at nominal map? | **Opposite** — B empty, not “same sound” |
+| Patch Pearson + structure | Can we place a splice? | **Later, expensive** — “can splice” ≠ “should splice” |
+| Residual same-source (G4) | Does B cancel A at throat? | **Reuse** — strong positive for equivalence |
+| `GapFillSkipReason::NotFillable` | No B donor | Different family |
+
+**New vocabulary cell (proposed):** **Already-equivalent** — A reads as a gap, B has energy, but
+aligned content matches; action = plan-time skip (`already_matches_reference`). Distinct from
+**Program-quiet** (B silent), **Decorrelated** (B different), and **Unfillable** (no donor).
+
+Orthogonal to [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md): selection = user subset;
+equivalence = automatic “no-op fill” detection.
+
+---
+
+## 3. Definitions
+
+| Term | Meaning |
+|------|---------|
+| **Nominal map** | `b = a + gap_offset_secs` using `fill_offset_mode` (same as fill plan) |
+| **Gap interior** | `[a_start, a_end]` on A; `[b_start, b_end]` on B under nominal map |
+| **Border windows** | `fill_seam_search_secs` (default 0.25 s) or `border_standoff_secs`-aware templates on each side |
+| **Equivalence** | Metrics indicate B@map is the same program source as A’s border-implied content; patch ≈ identity |
+| **Scan false positive** | A block-scanner silence run where A’s low-level PCM still corresponds to B’s content at sync time |
+
+**Not in v1:** perceptual / chromaprint identity on the interior, ML classifiers, or PTS-clock comparison.
+
+---
+
+## 4. User-facing semantics
+
+| Rule | Detail |
+|------|--------|
+| **Default off** | `skip_equivalent_gaps = false` — zero behavior change until opted in |
+| **Write + scan-only** | Equivalence is computed when enabled; **plan skip** only affects write mode (phase 3). Scan-only runs may show a new **advisory** column / JSON field |
+| **Full scan table** | All detected gaps remain listed; equivalence does not remove rows |
+| **Conservative skip** | When metrics are ambiguous, **do not skip** — fall through to patch (prefer false negative over skipping a real dropout) |
+| **Precedence** | `NotFillable`, `OutsideReferenceCoverage`, track blocks beat equivalence; equivalence beats `GapNotSelected` (when selection ships) |
+| **Status string** | `not planned: already matches reference` (machine: `already_matches_reference`) |
+
+**stderr when active:**
+
+```text
+Equivalence: 8 of 21 repairable gaps skipped (already match B at nominal map)
+```
+
+---
+
+## 5. Algorithm
+
+### 5.1 Placement in pipeline
+
+```text
+Align → ScanGaps → [CharacterizeEquivalence?] → build_gap_fill_plan → PatchAudio
+```
+
+- **v1 hook:** `build_gap_fill_plan` (plan-time, needs only short PCM extracts per gap — no full patch search).
+- **Optional v1.5:** fold measurements into `characterize_gaps` / `--gap-fingerprints` first for tuning.
+
+### 5.2 Per-gap inputs
+
+From existing report + alignment:
+
+- `Gap` geometry on A; `video_b_*` map; `b_has_energy`
+- `gap_offset_secs` per `fill_offset_mode` (reuse `resolve_gap_offset_secs`)
+- `sample_rate`, `channels` (downmix policy: **mono mean** for metrics, same as structure path)
+- Config thresholds (§6)
+
+Skip early when:
+
+- `!gap.is_fillable()` → existing `NotFillable`
+- `gap_outside_reference_coverage` → existing reason
+- Gap duration `< equivalence_min_gap_secs` (default 0 — no floor) or `> equivalence_max_gap_secs` (default none — long spans need patch path)
+
+### 5.3 Measurements (cheap path)
+
+Implement in new `domain/gap_equivalence.rs` (name illustrative). Reuse primitives from
+`domain/policies.rs`, `domain/gap_fill_fit.rs`, `domain/gap_structure.rs`, `domain/donor.rs`,
+`application/gate_oracle.rs` / residual helpers — **no duplicate correlation math**.
+
+| ID | Measurement | Cost | Reuse |
+|----|-------------|------|-------|
+| **E1** | **Nominal seam Pearson** `pre₀`, `post₀` | O(seam) | `fill_seam_correlations` @ nominal B map, lag 0 |
+| **E2** | **Same-source residual** @ nominal throat | O(seam) | `oracle_measure_residual` / `SeamResidualVerdict` |
+| **E3** | **Donor interior @ nominal** | O(gap) | `donor_interior_at` on B mono — **occupied** required for equivalence (not program-quiet) |
+| **E4** | **A gap RMS vs floor** | O(gap) | `levels.gap_floor_db` / block RMS — confirm A side is actually quiet |
+| **E5** | **Interior bridge correlation** (optional v1.5) | O(gap) | Correlate B interior with linear bridge from A pre→post envelopes |
+
+Decode strategy:
+
+- **v1:** one bounded B extract per gap (reuse `fill_border_search_secs` margin + gap length) via existing media reader window API used by patch; A borders from same window.
+- **Do not** run unified structure search or bracket grid.
+
+### 5.4 Decision policy (conservative — v1)
+
+Record all metrics on `EquivalenceVerdict` regardless of skip.
+
+```rust
+pub enum EquivalenceDisposition {
+    /// Metrics say patch would be redundant / identity.
+    Skip,
+    /// Metrics inconclusive or contradictory — attempt patch.
+    AttemptPatch,
+    /// Equivalence not evaluated (disabled, missing B map, etc.).
+    NotEvaluated,
+}
+```
+
+**Skip** (`AlreadyMatchesReference`) only when **all** hold:
+
+1. **E3 occupied:** `donor_interior_nominal.continuous == true` AND `silence_fraction < PROGRAM_QUIET_SILENCE_FRAC` (B has program audio across hole).
+2. **E4 quiet A:** A interior RMS below scan silence floor (or `gap_peak < absolute_silence_rms`) — confirms scan target is a dropout, not a loud false negative.
+3. **E1 strong seams:** `min(pre₀, post₀) >= equivalence_min_seam` (default **0.35**, same as `min_fill_correlation`).
+4. **E2 same-source:** residual `informative == true` AND `worst_headroom_db() <= equivalence_residual_headroom_db` (default reuse `residual_headroom_margin_db`).
+
+**Never skip** when:
+
+- `min(pre₀, post₀) < equivalence_min_seam` but within marginal band — **chaotic** scenes (car chase) must reach patch search.
+- E2 not informative or beyond lag reach.
+- E3 program-quiet (B mostly silent) — that is `unfillable`, not equivalence.
+- Any metric missing (decode fail) → `AttemptPatch`.
+
+**v1.5 optional tier — `RedundantScanDip`:** weaker rule for scan false positives only:
+
+- A interior very quiet, `min(pre₀, post₀) >= equivalence_marginal_seam` (default 0.27), E2 pass — skip with `redundant_scan_dip` reason. **Off by default.**
+
+### 5.5 Outputs
+
+```rust
+#[derive(Debug, Clone, Serialize)]
+pub struct EquivalenceVerdict {
+    pub disposition: EquivalenceDisposition,
+    pub nominal_pre: Option<f64>,
+    pub nominal_post: Option<f64>,
+    pub residual_headroom_db: Option<f64>,
+    pub residual_informative: bool,
+    pub donor_silence_fraction: Option<f64>,
+    pub a_gap_rms_db: Option<f64>,
+    pub skip_reason: Option<EquivalenceSkipReason>,
+}
+
+pub enum EquivalenceSkipReason {
+    AlreadyMatchesReference,
+    #[serde(rename = "redundant_scan_dip")]
+    RedundantScanDip, // v1.5
+}
+```
+
+Attach to plan skip:
+
+```rust
+pub enum GapFillSkipReason {
+    // ... existing ...
+    AlreadyMatchesReference,
+    // RedundantScanDip, // v1.5
+}
+```
+
+JSON gap row (additive):
+
+```json
+"equivalence": {
+  "evaluated": true,
+  "skip": true,
+  "nominal_pre": 0.91,
+  "nominal_post": 0.88,
+  "residual_headroom_db": 1.2,
+  "plan_skip_reason": "already_matches_reference"
+}
+```
+
+---
+
+## 6. CLI and config (v1)
+
+### Flags
+
+```text
+--skip-equivalent-gaps     Enable equivalence gate at fill-plan time [default: off]
+--equivalence-min-seam <N> Nominal min(pre,post) to skip [default: 0.35]
+```
+
+TOML (`[repair]`):
+
+```toml
+skip_equivalent_gaps = true
+equivalence_min_seam = 0.35
+# equivalence_residual_headroom_db = 6.0  # default: same as residual_headroom_margin_db
+```
+
+### Interaction with scan knobs
+
+Equivalence does **not** change scan thresholds. Document that sensitive scan + `skip_equivalent_gaps`
+is the intended pair for “find everything ffmpeg sees, patch only real dropouts.”
+
+---
+
+## 7. Implementation sketch
+
+### 7.1 Types and module
+
+| Item | Location |
+|------|----------|
+| `EquivalenceVerdict`, `measure_gap_equivalence` | `domain/gap_equivalence.rs` |
+| `GapEquivalenceParams` (thresholds + seam window secs) | `domain/gap_equivalence.rs` or `RepairConfig` |
+| PCM extract helper | `application/gap_equivalence.rs` or extend `patch_audio` extract path |
+| Plan hook | `domain/gap_fill.rs::build_gap_fill_plan` |
+| Orchestration | `application/patch_audio.rs` or `run_repair.rs` — compute verdicts before plan |
+
+### 7.2 Fill plan signature
+
+```rust
+pub fn build_gap_fill_plan(
+    report: &GapReport,
+    crossfade_ms: u64,
+    selection: &GapSelection,        // from gap-selection plan; default All
+    equivalence: &GapEquivalenceSet, // per-gap verdict; default empty / not evaluated
+) -> GapFillPlan
+```
+
+When `equivalence[i].disposition == Skip`:
+
+```rust
+GapFillSkipped {
+    reason: GapFillSkipReason::AlreadyMatchesReference,
+    ...
+}
+```
+
+### 7.3 Tags and human output
+
+`domain/gap_tags.rs`:
+
+- `PlanKind::NotPlanned` + `plan_skip_reason: AlreadyMatchesReference`
+- Human suffix: `[already equivalent]` (optional, `-v`)
+
+`infrastructure/cli/output.rs`:
+
+- Count line: `N skipped as already equivalent`
+- Table prefix: `~` or status `not planned: already matches reference`
+
+### 7.4 Fingerprint path (phase 0 / v1)
+
+Add to `GapFingerprint` (analyzer only in v1):
+
+```json
+"equivalence": { ... same fields as §5.5 ... }
+```
+
+Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so licensed-pair tuning does not require write mode.
+
+---
+
+## 8. Interactions
+
+| Feature | Behavior |
+|---------|----------|
+| **`--gap-fingerprints`** | Always record equivalence block when characterized; production skip independent |
+| **`anchored_retry`** | Equivalence evaluated on pass 1 plan; skipped gaps never anchor pass 2 |
+| **`dual_fit`** | Equivalence skip is plan-time — dual-fit never reached |
+| **Gap selection** | Equivalence skip wins over “selected for patch”; selected + equivalent → `already_matches_reference`, not `gap_not_selected` |
+| **Query-reference / coverage** | `OutsideReferenceCoverage` before equivalence |
+| **6ch** | Downmix to mono for metrics; document that per-channel mismatch may false-negative equivalence |
+
+---
+
+## 9. Validation corpus
+
+### 9.1 licensed-pair external row (primary)
+
+Add `gap_corpus` **external** case (or harness golden) when media available:
+
+| File | Role |
+|------|------|
+| `licensed-pair-A.mkv` | A (reference) |
+| `licensed-pair-B.mkv` | B |
+
+ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master.
+
+**Acceptance (tune thresholds):**
+
+| Set | Expected equivalence disposition |
+|-----|----------------------------------|
+| 14 ffmpeg anchors on the licensed pair | `AttemptPatch` or `NotEvaluated` — **must not** `AlreadyMatchesReference` |
+| Scan extras with sensitive recipe (~25 gaps) | Majority `AlreadyMatchesReference` when `skip_equivalent_gaps=true` |
+| Mutual silence (#1 leading, #39 tail on that scan) | `NotFillable` before equivalence runs |
+
+### 9.2 Synthetic fixtures (CI)
+
+| Fixture | Expect |
+|---------|--------|
+| `a_gap_b_same_master` | B = A with zeroed gap; nominal seams ≈ 1.0, residual clean → **Skip** |
+| `a_gap_b_shared_pause` | B also silent → **NotFillable**, equivalence not run |
+| `a_gap_b_different_content` | B has wrong clip → low seams → **AttemptPatch** |
+| `a_quiet_dip_b_matches` | Low-level A dip, B correct → **Skip** (v1.5 `RedundantScanDip` if enabled) |
+| `a_dropout_chaotic_seams` | Real silence, B correct but Pearson < 0.35 → **AttemptPatch** (car-chase guard) |
+
+---
+
+## 10. Phased delivery
+
+| Phase | Scope |
+|-------|-------|
+| **0 — Fingerprint only** | `equivalence` block in `--gap-fingerprints`; tune on licensed-pair; no production skip |
+| **v1** | `skip_equivalent_gaps`, plan-time skip, `AlreadyMatchesReference`, human + JSON output, synthetic tests |
+| **v1.5** | `RedundantScanDip` tier; interior bridge (E5); `--equivalence-min-seam` exposure |
+| **v2** | Batch equivalence in scan phase (reuse B silence map decode); optional `equivalence_mode: aggressive\|conservative` profile |
+
+---
+
+## 11. Implementation checklist
+
+### Phase 0 (fingerprint)
+
+- [ ] `domain/gap_equivalence.rs` — `measure_gap_equivalence` + unit tests (synthetic PCM)
+- [ ] Wire into `gap_fingerprint.rs` characterize path
+- [ ] JSON schema + `json-output.md` § `equivalence`
+- [ ] Run on licensed-pair / second-recording; spreadsheet: gap #, ffmpeg?, equivalence metrics
+
+### v1 (production gate)
+
+- [ ] `RepairConfig`: `skip_equivalent_gaps`, `equivalence_min_seam`, `equivalence_residual_headroom_db`
+- [ ] `Args` + `cli/mod.rs` overrides
+- [ ] `GapFillSkipReason::AlreadyMatchesReference` + formatters / `gap_tags` / `PlanKind`
+- [ ] `application/gap_equivalence.rs` — bounded PCM extract per gap
+- [ ] `build_gap_fill_plan` hook + domain tests
+- [ ] `PatchAudio` / `run_repair` orchestration
+- [ ] Human report + JSON gap fields
+- [ ] Integration: synthetic same-master skip; chaotic seam still patches
+- [ ] Docs: `gap-scan.md` § equivalence, `gap-repair-guide.md`, `pipeline.md` §3 paragraph
+
+### v1.5
+
+- [ ] `RedundantScanDip` reason + config flag
+- [ ] Interior bridge correlation (E5)
+
+---
+
+## 12. Test plan
+
+| Layer | Cases |
+|-------|-------|
+| **Unit** | Same-master → Skip; decorrelated → AttemptPatch; program-quiet → not evaluated; missing decode → AttemptPatch |
+| **Policy** | `min_seam` 0.35 blocks 0.21 car-chase nominal; 0.91 passes |
+| **Plan** | Equivalence skip excluded from `regions`; `repairable_count` unchanged; `planned_count` reduced |
+| **Patch** | Skipped gap samples identical to input A in output |
+| **Fingerprint** | Equivalence block present; matches plan verdict when both run |
+| **External** | licensed-pair: zero ffmpeg anchors equivalence-skipped |
+
+---
+
+## 13. Non-goals
+
+- Replacing `b_has_energy` / mutual-silence detection
+- Skipping gaps based on ffmpeg timestamps alone (no ffmpeg runtime dependency)
+- Proving perceptual identity to listeners — statistical same-source only
+- Equivalence on gaps **without** B map / track mismatch pairs
+- Auto-tightening scan thresholds from equivalence results (separate workstream)
+- v1 **content-based** “A and B both have audio and sound the same” (non-silent A) — future extension
+
+---
+
+## 14. Open decisions
+
+1. **Default `equivalence_min_seam`:** 0.35 (match `min_fill_correlation`) vs 0.40 (stricter skip) — recommend **0.35** with conservative AND on residual.
+2. **Decode cost:** per-gap extract vs batch B decode — v1 per-gap acceptable for ≤50 gaps; profile for 100+.
+3. **Scan-only advisory:** show `~` in table when equivalence would skip but write mode off — recommend **yes** when `--skip-equivalent-gaps` set.
+4. **Cell name in [gap-vocabulary.md](gap-vocabulary.md):** **Already-equivalent** vs **Redundant-fill** — recommend **Already-equivalent** for residual-confirmed; **Redundant-scan-dip** for v1.5 weak tier.
+5. **Order vs [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md):** implement equivalence first (automatic noise reduction) or selection first (manual control) — recommend **equivalence fingerprint (phase 0)** immediately, **v1 gate** after phase 0 tuning; selection can ship in parallel.
+
+---
+
+## 15. Promotion / done criteria
+
+When v1 ships:
+
+- Mark status **v1 done**; move operator contract into [gap-repair-guide.md](gap-repair-guide.md) and [gap-scan.md](gap-scan.md).
+- Add **Already-equivalent** cell to [gap-vocabulary.md](gap-vocabulary.md).
+- Link from [pipeline.md](pipeline.md) fill-plan section.
+- Keep phase 0 / v1.5 notes here until implemented or archived.
+
+**Done means:** on licensed-pair sensitive scan, `skip_equivalent_gaps=true` removes ≥80% of non-ffmpeg extras from the fill plan without equivalence-skipping any ffmpeg anchor gap (manual verification + external corpus row).
