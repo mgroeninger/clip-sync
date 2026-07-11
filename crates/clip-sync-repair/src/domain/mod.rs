@@ -4,6 +4,7 @@ pub mod diagnostics;
 pub mod donor;
 pub mod dual_fit;
 pub mod fill_mode;
+pub mod gap_equivalence;
 pub mod fill_offset;
 pub mod gap_fill_fit;
 pub mod gap;
