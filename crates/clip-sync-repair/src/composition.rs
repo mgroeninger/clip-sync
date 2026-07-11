@@ -7,7 +7,6 @@ use clap::Parser;
 use clip_sync::{ProgressReporter, SymphoniaMediaReader};
 
 use crate::application::error::RepairError;
-use crate::application::gap_fingerprint::characterize_gaps_with_gate;
 use crate::application::patch_audio::decode_ab;
 use crate::application::run_repair::{PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair};
 use crate::domain::GapReport;
@@ -112,27 +111,18 @@ fn dump_gap_fingerprints(
         progress.phase(&format!("wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}", out.display()));
         Ok(())
     };
-    let run = |from_decode: bool| {
-        let f = if from_decode {
-            crate::application::gap_fingerprint::characterize_gaps_from_decode
-        } else {
-            characterize_gaps_with_gate
-        };
-        f(report, &decoded.a_pcm, &decoded.b_samples_full, &request, &args.fingerprint_gap, config.repair.fingerprint_diagnostics, progress)
-    };
-
-    if args.validate_from_decode {
-        // A/B validation harness (retained through 8g.4b; removed with the oracle at 8g.6): dump BOTH pipelines
-        // from the SAME decode into `DIR/oracle` + `DIR/from_decode` (identical source-id ⇒ zero
-        // re-decode/code-version confound), for the source-id-aligned diff (`from_decode_vs_oracle` test).
-        progress.phase("  [--validate-from-decode] dumping oracle + from-decode pipelines for comparison");
-        dump("oracle", run(false))?;
-        dump("from_decode", run(true))?;
-    } else {
-        // 8g.4b: the default dump is the from-decode pipeline (was `run(false)`, the per-bracket oracle). The
-        // oracle (`characterize_gaps_with_gate`) is retained as the differentials' reference until 8g.6.
-        dump("", run(true))?;
-    }
+    // The dump is characterized from decode via the shared projection (8g.4a/8g.4b); the old per-bracket
+    // oracle path was removed at 8g.6.
+    let corpus = crate::application::gap_fingerprint::characterize_gaps_from_decode(
+        report,
+        &decoded.a_pcm,
+        &decoded.b_samples_full,
+        &request,
+        &args.fingerprint_gap,
+        config.repair.fingerprint_diagnostics,
+        progress,
+    );
+    dump("", corpus)?;
     Ok(())
 }
 

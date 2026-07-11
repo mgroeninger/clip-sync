@@ -9,7 +9,7 @@
 //!
 //! Closes the gap flagged in `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7 (B2): the golden
 //! invariance harness (`golden_baseline_corpus_invariance`) only diffs a frozen `corpus.json` — it
-//! never calls `characterize_gaps_with_gate` or the real production `PatchAudio` path against
+//! never calls the fingerprint dump (`characterize_gaps_from_decode`) or the real production `PatchAudio` path against
 //! decoded audio. This test runs the ACTUAL production entry point
 //! (`residual_gate::run_built_floor_oracle_cfg` → `PatchAudio::execute`) on a real, licensed-media
 //! jump-cut gap and asserts the Tier-1 §4.1 boolean the golden harness cares about most for A3:

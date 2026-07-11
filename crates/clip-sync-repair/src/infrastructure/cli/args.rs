@@ -35,12 +35,6 @@ pub struct Args {
     #[arg(long, value_name = "IDX")]
     pub fingerprint_gap: Vec<usize>,
 
-    /// Validation (transitional, Fingerprint-unification 8g.4a): with --gap-fingerprints, dump BOTH the
-    /// current oracle and the new from-decode pipeline from the same decode into DIR/oracle and
-    /// DIR/from_decode, so the source-id-aligned differential can confirm the flip is behavior-preserving.
-    #[arg(long)]
-    pub validate_from_decode: bool,
-
     /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,
     /// `wide_envelope`, diagnostic `lag`, `b_levels`). Slower; needed for analyzer seam-probe reports
     /// [default: off — decision/repair fields only].

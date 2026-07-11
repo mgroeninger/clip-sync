@@ -1,14 +1,11 @@
-//! Synthetic A/B → fingerprint-corpus driver for the Fingerprint-unification decode differential (8g.1).
+//! Synthetic A/B → fingerprint-corpus driver for the Fingerprint-unification harness (no media).
 //!
-//! Runs the production oracle (`characterize_gaps_with_gate`) on an in-memory synthetic A/B pair, so a
-//! harness/test can validate the projection (and, at 8g.3, the from-decode path) end-to-end with **no media**.
-//! Mirrors the in-crate diagnostics fixture: same-master speech bursts, decorrelated collars, B carrying fill
-//! across the gap.
+//! Runs the from-decode dump pipeline (`characterize_gaps_from_decode`) on an in-memory synthetic A/B pair, so a
+//! harness/test can exercise the live dump + projection end-to-end with **no media**. Same-master speech bursts,
+//! decorrelated collars, B carrying fill across the gap.
 
 use clip_sync::MultiChannelPcm;
-use clip_sync_repair::application::gap_fingerprint::{
-    characterize_gaps_from_decode, characterize_gaps_with_gate, GapCorpus,
-};
+use clip_sync_repair::application::gap_fingerprint::{characterize_gaps_from_decode, GapCorpus};
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::gap::Gap;
 use clip_sync_repair::domain::{GapReport, GapSignatureMode, ScanAlignment};
@@ -41,16 +38,9 @@ fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
     }
 }
 
-/// Characterize the synthetic A/B pair through the **oracle** (`characterize_gaps_with_gate`) — the current
-/// inline fingerprint build. `diagnostics` toggles the X-set (`seam_probe`/`wide_envelope`/`b_levels`/`lag`).
-pub fn synth_ab_corpus(diagnostics: bool) -> GapCorpus {
-    let (a_pcm, b, report, request) = synth_ab_inputs();
-    characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)
-}
-
-/// Characterize the same synthetic A/B pair through the **from-decode** pipeline
-/// (`characterize_gaps_from_decode`, 8g.4a). Diffing this against [`synth_ab_corpus`] on `golden_baseline` is
-/// the empirical old-vs-new decode differential.
+/// Characterize the synthetic A/B pair through the **from-decode** dump pipeline
+/// (`characterize_gaps_from_decode`) — the live `--gap-fingerprints` path. `diagnostics` toggles the X-set
+/// (`seam_probe`/`wide_envelope`/`b_levels`/`lag`).
 pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
     let (a_pcm, b, report, request) = synth_ab_inputs();
     characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)

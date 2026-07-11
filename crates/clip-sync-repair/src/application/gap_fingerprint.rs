@@ -2246,8 +2246,8 @@ fn classify_bracket_stage(
 
 /// Build a fingerprint for one gap from decoded windows.
 ///
-/// When `skip_baseline_placement` is true (the pre-gate summary pass before
-/// [`characterize_gaps_with_gate`]), the expensive unified `place_on_b` search is omitted — the gate
+/// When `skip_baseline_placement` is true (the pre-gate summary pass before the gate overlay in
+/// [`characterize_gaps_from_decode`]), the expensive unified `place_on_b` search is omitted — the gate
 /// overlay supplies authoritative seams and brackets (D12 §3 step 1).
 pub fn build_gap_fingerprint(
     index: usize,
@@ -2585,23 +2585,12 @@ fn anchor_params_from_gate(
     }
 }
 
-/// Characterize the gaps in `select` (empty ⇒ **all** gaps) at **full** authoritative detail (the bin
-/// path). Each gap gets its per-bracket `failure_stage` + seam, `b_mapped` registration metrics, outcome,
-/// and (when `include_diagnostics`) Tier-3 fields (`seam_probe`, `wide_envelope`, diagnostic `lag`,
-/// `b_levels`) from the production gate (`oracle_*`) — **N + 1** unified searches per gap when diagnostics
-/// are on (N brackets via `oracle_score_fit_candidate`, plus optional `place_on_b` for diagnostic `lag`).
-/// Only the selected gaps are built; unselected gaps are never characterized.
-/// Full per-gap fingerprint characterization: the summary base + the gate overlay (per-bracket oracle, lag,
-/// donor, splice-dualfit) + optional X-set. Public so the fixtures crate can drive it on a synthetic A/B pair
-/// for the 8g decode differential (`fingerprint_corpus_fixtures::synth_ab_corpus`).
-/// The gate-overlay measurements for one gap (Fingerprint-unification 8g.3a) — every field the per-gap loop of
-/// [`characterize_gaps_with_gate`] assigns onto `fp`, computed from decode via the shared primitives and
-/// returned instead of mutated in place. Extracted byte-neutrally so the fingerprint dump (old path) and the
-/// from-decode tags (8g.3b) share ONE measurement site. `throat_seam` is the throat bracket's `(pre, post)`
-/// (applied onto `fp.seams` by the caller, unconditionally when a zero-move bracket exists).
+/// The gate-overlay measurements for one gap (Fingerprint-unification 8g.3a) — the shared measurement site the
+/// from-decode dump ([`characterize_gaps_from_decode`]) projects into a `GapFingerprint` via
+/// [`tags_from_measurements`]. `structure`/`seams` are deliberately omitted (from-decode runs under
+/// `skip_baseline_placement`; populating `fp.seams` from the throat seam is the deferred F1 fix).
 struct RegionMeasurements {
     brackets: Vec<BracketInfo>,
-    throat_seam: Option<(Option<f64>, Option<f64>)>,
     outcome: GateOutcome,
     baseline_lag: Option<LagFingerprint>,
     splice: Option<SpliceSummary>,
@@ -2638,9 +2627,8 @@ struct RegionMeasureInput<'a> {
     progress: &'a dyn clip_sync::ProgressReporter,
 }
 
-/// Compute one gap's gate-overlay measurements from decode. **Byte-neutral extraction of
-/// [`characterize_gaps_with_gate`]'s per-gap loop body (8g.3a)** — the caller assigns the returned fields onto
-/// `fp` exactly as the inline loop did.
+/// Compute one gap's gate-overlay measurements from decode — the shared per-gap measurement site the
+/// from-decode dump ([`characterize_gaps_from_decode`]) projects via [`tags_from_measurements`] (8g.3a).
 fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurements {
     use crate::application::patch_region::{
         derive_seam_gate_geometry, oracle_build_fit_cache, oracle_measure_residual,
@@ -2689,7 +2677,6 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     // Populated when the zero-move (throat) bracket scores `Ok` — the structure placement is already computed
     // inside that gate call, so the residual read below reuses it instead of a second `gate_structure_align`.
     let mut throat_structure_frame: Option<usize> = None;
-    let mut throat_seam: Option<(Option<f64>, Option<f64>)> = None;
     let mut infos = Vec::with_capacity(brackets.len());
     let bracket_total = brackets.len() as u64;
     for (bn, br) in brackets.iter().enumerate() {
@@ -2708,9 +2695,6 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
                     (pre, post, Some(stage))
                 }
             };
-        if br.refined == refined {
-            throat_seam = Some((seam_pre, seam_post));
-        }
         infos.push(BracketInfo {
             pre_time_secs: br.pre.frame as f64 / rate,
             post_time_secs: br.post.frame as f64 / rate,
@@ -2889,7 +2873,6 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
 
     RegionMeasurements {
         brackets: infos,
-        throat_seam,
         outcome,
         baseline_lag,
         splice,
@@ -2904,124 +2887,8 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     }
 }
 
-pub fn characterize_gaps_with_gate(
-    report: &crate::domain::GapReport,
-    a_pcm: &clip_sync::MultiChannelPcm,
-    b_samples_full: &[f32],
-    request: &crate::application::PatchAudioRequest,
-    select: &[usize],
-    include_diagnostics: bool,
-    progress: &dyn clip_sync::ProgressReporter,
-) -> GapCorpus {
-    let sample_rate = a_pcm.sample_rate;
-    let channels = a_pcm.channels as usize;
-    let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
-    // Build only the selected gaps (summary base: baseline structure/seam, no per-bracket, no lag).
-    let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
-
-    let mut gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
-        request,
-        sample_rate,
-        channels,
-        report.silence_peak_fraction,
-    );
-    // Force the same-source residual probe on for every gap (the fingerprint records it; the gate
-    // would otherwise only measure it when the residual gate is active or DEBUG logging is on).
-    gate_cfg.measure_residual = true;
-    let rate = f64::from(sample_rate).max(1.0);
-    let ch = channels.max(1);
-    let b_total = b_samples_full.len() / ch;
-    let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
-    let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
-    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate).round().max(1.0) as usize;
-    let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
-    let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
-    let pad_tail = cfg.gap_signature_context_secs
-        + cfg.fill_length_slack_secs.max(cfg.fill_align_margin_secs)
-        + cfg.fill_border_search_secs
-        + cfg.fill_align_margin_secs;
-
-    let total_gaps = corpus.gaps.len() as u64;
-    for (gn, fp) in corpus.gaps.iter_mut().enumerate() {
-        progress.progress("fingerprint-gap", gn as u64 + 1, total_gaps);
-        let i = fp.index;
-        let gap = &report.gaps[i];
-        let Some(b_start) = gap.video_b_start_secs else { continue };
-        let refined = refine_gap_frames(
-            &a_pcm.samples,
-            ch,
-            (gap.video_a_start_secs * rate) as usize,
-            (gap.video_a_end_secs * rate) as usize,
-            cfg.silence_peak_fraction,
-            cfg.absolute_silence_rms,
-            max_refine_frames,
-        );
-        let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
-        if gap_frames == 0 {
-            continue;
-        }
-        let gap_offset = b_start - gap.video_a_start_secs;
-        let b_end = gap.video_b_end_secs.unwrap_or(gap.video_a_end_secs);
-        let lo = (((b_start - pad_lead).max(0.0) * rate) as usize).min(b_total);
-        let hi = (((b_end + pad_tail) * rate).ceil() as usize).min(b_total);
-        if hi <= lo {
-            continue;
-        }
-        let b_slice = &b_samples_full[lo * ch..hi * ch];
-        let b_extract_start_secs = lo as f64 / rate;
-        fp.tier = DetailTier::Full;
-
-        // 8g.3a: the per-gap gate-overlay measurements are computed by the shared `compute_region_measurements`
-        // (byte-neutral extraction); the caller only assigns the returned fields onto `fp`, exactly as the
-        // inline loop did.
-        let m = compute_region_measurements(RegionMeasureInput {
-            a_pcm,
-            ch,
-            b_slice,
-            b_extract_start_secs,
-            gap_offset,
-            refined,
-            gap_frames,
-            gate_cfg: &gate_cfg,
-            cfg: &cfg,
-            gap_floor_db: fp.levels.gap_floor_db,
-            include_diagnostics,
-            context_frames,
-            bin_frames,
-            search_radius_frames,
-            rate,
-            sample_rate,
-            progress,
-        });
-        fp.brackets = m.brackets;
-        // Throat bracket seam applied onto the summary `fp.seams` exactly as the inline loop did.
-        if let Some((seam_pre, seam_post)) = m.throat_seam {
-            if let Some(s) = &mut fp.seams {
-                if let Some(p) = seam_pre {
-                    s.baseline_pre = p;
-                }
-                if let Some(p) = seam_post {
-                    s.baseline_post = p;
-                }
-            }
-        }
-        fp.outcome = Some(m.outcome);
-        fp.baseline_lag = m.baseline_lag;
-        fp.seam_probe = m.seam_probe;
-        fp.donor_interior = m.donor_interior;
-        fp.donor_interior_nominal = m.donor_interior_nominal;
-        fp.b_levels = m.b_levels;
-        fp.splice_dualfit = m.splice_dualfit;
-        fp.wide_envelope = m.wide_envelope;
-        fp.splice = m.splice;
-        fp.residual = m.residual;
-        fp.lag = m.lag;
-    }
-    corpus
-}
-
-/// Fingerprint dump computed **from decode via the shared projection** (Fingerprint-unification 8g.4a) — the
-/// behavior-preserving replacement for [`characterize_gaps_with_gate`]'s inline `GapFingerprint` build. Per
+/// Fingerprint dump computed **from decode via the shared projection** (Fingerprint-unification 8g.4a/8g.4b) —
+/// the `--gap-fingerprints` dump path (the old per-bracket-oracle inline build was removed at 8g.6). Per
 /// gap: the summary (geometry/levels, already in `corpus`) + [`compute_region_measurements`] (8g.3a) → `m`,
 /// then a spec (verdict from `m.outcome.tier` = the fingerprint **`any_ok`** semantics; tags from
 /// [`tags_from_measurements`], 8g.3b) → [`spec_to_fingerprint_summary`]. Keeps fingerprint semantics — does NOT
@@ -3177,7 +3044,7 @@ pub fn characterize_gaps_from_decode(
 /// Build A-side **summary** fingerprints for the gaps in `select` (empty ⇒ all) against decoded
 /// full A/B PCM: geometry + levels + contour + anchors + a baseline structure/seam per gap. The
 /// authoritative gate detail (brackets / `failure_stage` / lag / outcome) is layered on by
-/// [`characterize_gaps_with_gate`]. A gap with no B mapping is characterized A-only.
+/// [`characterize_gaps_from_decode`]. A gap with no B mapping is characterized A-only.
 pub fn characterize_gaps(
     report: &crate::domain::GapReport,
     a_samples: &[f32],
@@ -3488,7 +3355,6 @@ mod tests {
         };
         let m = RegionMeasurements {
             brackets: vec![bracket(None, Some(0.7)), bracket(Some(FailureStage::WaveformFloor), Some(0.4))],
-            throat_seam: None,
             outcome: GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "patch".into(),
@@ -3993,10 +3859,10 @@ mod tests {
     /// **C3 — `fingerprint_diagnostics` gates the X-set:** off, the diagnostic-only fields
     /// (`seam_probe`, `wide_envelope`, `b_levels`) are absent; on, they're populated. Closes
     /// perf-plan `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C3** — the flag
-    /// exists (`RepairConfig.fingerprint_diagnostics`, `characterize_gaps_with_gate`'s
+    /// exists (`RepairConfig.fingerprint_diagnostics`, `characterize_gaps_from_decode`'s
     /// `include_diagnostics`) but had no regression test pinning what it actually gates.
     #[test]
-    fn characterize_gaps_with_gate_include_diagnostics_toggles_x_set() {
+    fn characterize_gaps_from_decode_include_diagnostics_toggles_x_set() {
         use crate::application::PatchAudioRequest;
         use crate::domain::gap::Gap;
         use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
@@ -4085,8 +3951,8 @@ mod tests {
         let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
         let progress = NoOpProgressReporter;
 
-        let off = characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], false, &progress);
-        let on = characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], true, &progress);
+        let off = characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], false, &progress);
+        let on = characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], true, &progress);
 
         let fp_off = off.gaps.first().expect("one gap (off)");
         assert!(fp_off.seam_probe.is_none(), "diagnostics off: seam_probe must be absent");

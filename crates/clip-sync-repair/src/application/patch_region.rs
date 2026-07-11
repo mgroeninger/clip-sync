@@ -1284,7 +1284,7 @@ pub fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
 #[doc(hidden)]
 /// The 5th element is the structure-aligned placement (`GateStructureAlign::unified.alignment.start_frame`,
 /// already computed inside the gate) — callers that also need the throat placement (e.g. the zero-move
-/// bracket read in `characterize_gaps_with_gate`) can reuse it instead of a second `gate_structure_align`
+/// bracket read in `compute_region_measurements`) can reuse it instead of a second `gate_structure_align`
 /// call via `oracle_throat_structure_frame` for the same `(refined, baseline)` pair.
 pub fn oracle_score_fit_candidate(
     params: &SeamGateParams<'_>,

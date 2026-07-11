@@ -24,10 +24,6 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
-- `--validate-from-decode` *(transitional dev flag; removed after the dump unification lands)* — dump
-  **both** the current oracle and the in-progress from-decode pipeline from one decode into `DIR/oracle`
-  and `DIR/from_decode`, for the source-id-aligned behavior-preservation differential
-  (`from_decode_vs_oracle`, validation tier). See `docs/TEMP-pipeline-perf-redesign-plan.md` §2.5.4 (8g.4).
 
 To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
 every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in

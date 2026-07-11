@@ -1,82 +1,31 @@
-//! **8g.1 — decode-path projection differential (always-on, no media).**
+//! **C5 — live from-decode dump self-guard (always-on, no media).**
 //!
-//! Tier: **default** (synthetic A/B fixture; runs on every `cargo test`). The media-free counterpart of
-//! `gap_repair_spec_diff` (which reads on-disk corpora): run the production oracle
-//! (`characterize_gaps_with_gate`) on a synthetic A/B pair, then assert the projection
-//! (`GapFingerprint → GapRepairTags → GapFingerprint`) preserves every `golden_baseline` decision axis.
+//! Tier: **default** (synthetic A/B fixture; runs on every `cargo test`). Runs the live `--gap-fingerprints`
+//! dump pipeline (`characterize_gaps_from_decode`, via the `synth_ab_from_decode_corpus` fixture) and asserts
+//! its output is well-formed and survives a projection round-trip (`GapFingerprint → GapRepairTags →
+//! GapFingerprint`) with every `golden_baseline` decision axis preserved — in both lean and diagnostics modes.
 //!
-//! This is the harness the from-decode path (8g.3) extends: it will run the NEW characterize on the same
-//! synthetic input and diff it against this OLD oracle. Shadow-first — the gate exists before the flip.
+//! History: this replaced the transitional old-vs-new decode differentials (`characterize_gaps_with_gate` vs
+//! from-decode), which were **migration scaffolding**. The migration is complete and the oracle was deleted at
+//! 8g.6, so we no longer check "new matches old" — only that the from-decode dump stays internally consistent.
 
-/// Diagnostics on ⇒ the corpus also carries the X-set, exercising the `b_levels` carry through the projection.
+/// Both modes: the live from-decode dump produces gaps, and each gap's decision axes survive the spec
+/// projection round-trip unchanged (diagnostics-on additionally exercises the `b_levels` X-set carry).
 #[test]
-fn decode_path_projection_preserves_golden_baseline() {
-    let corpus = clip_sync_repair_fixtures::fingerprint_corpus_fixtures::synth_ab_corpus(true);
-    assert!(!corpus.gaps.is_empty(), "synthetic fixture produced no gaps");
-    let diffs = clip_sync_repair_harness::corpus_projection::projection_diff(&corpus);
-    assert!(
-        diffs.is_empty(),
-        "projection changed {} decision-axis field(s) on the synthetic decode path:\n{}",
-        diffs.len(),
-        diffs.join("\n"),
-    );
-}
-
-/// **8g.4a — the REAL old-vs-new decode differential (CI, no media).** Run the **oracle**
-/// (`characterize_gaps_with_gate`, today's inline build) and the **from-decode** pipeline
-/// (`characterize_gaps_from_decode` = summary + `compute_region_measurements` + `tags_from_measurements` +
-/// projection) on the **same** synthetic A/B PCM, and assert their `golden_baseline` is identical — in **both**
-/// lean and diagnostics-on modes. This is the empirical proof the 8g.4b flip is behavior-preserving; it covers
-/// `tier`/`levels`/`geometry`, not just tags (superseding 8g.3b's by-construction argument). The licensed-media
-/// analogue (both modes) is the gate for the actual flip (8g.4b).
-#[test]
-fn from_decode_pipeline_matches_oracle_golden_baseline() {
-    use clip_sync_repair_fixtures::fingerprint_corpus_fixtures::{synth_ab_corpus, synth_ab_from_decode_corpus};
-    use clip_sync_repair_harness::corpus_projection::golden_baseline_of_corpus;
-    use clip_sync_repair_harness::golden_baseline::{diff_baselines, TIER2_ABS_EPS};
-
+fn from_decode_dump_projection_preserves_golden_baseline() {
     for diagnostics in [false, true] {
-        let oracle = synth_ab_corpus(diagnostics);
-        let from_decode = synth_ab_from_decode_corpus(diagnostics);
-        assert_eq!(oracle.gaps.len(), from_decode.gaps.len(), "gap count (diagnostics={diagnostics})");
-        let base_oracle = golden_baseline_of_corpus(&oracle);
-        let base_from_decode = golden_baseline_of_corpus(&from_decode);
-        let diffs = diff_baselines(&base_oracle, &base_from_decode, TIER2_ABS_EPS);
+        let corpus =
+            clip_sync_repair_fixtures::fingerprint_corpus_fixtures::synth_ab_from_decode_corpus(diagnostics);
+        assert!(
+            !corpus.gaps.is_empty(),
+            "synthetic from-decode dump produced no gaps (diagnostics={diagnostics})"
+        );
+        let diffs = clip_sync_repair_harness::corpus_projection::projection_diff(&corpus);
         assert!(
             diffs.is_empty(),
-            "from-decode diverged from the oracle on {} decision axis field(s) (diagnostics={diagnostics}):\n{}",
+            "projection changed {} decision-axis field(s) on the from-decode dump (diagnostics={diagnostics}):\n{}",
             diffs.len(),
             diffs.join("\n"),
         );
-    }
-}
-
-/// **8g.4b — full-fidelity diff: real per-bracket rows + X-set survive the flip.** `golden_baseline`
-/// deliberately omits the per-bracket **rows** (only the counts are decision axes) and the diagnostic X-set
-/// (`seam_probe`/`wide_envelope`/diagnostic `lag`), so the differential above cannot see them. This asserts the
-/// from-decode dump reproduces the oracle's `brackets` rows (carried via `real_brackets` at 8g.4b — without it,
-/// they synthesize from counts and diverge on ~every row) **and** the full X-set, on the same synthetic PCM, in
-/// **both** modes. This is the media-free formalization of the 7-pair ad-hoc diff that gated the flip.
-#[test]
-fn from_decode_matches_oracle_full_fidelity_brackets_and_xset() {
-    use clip_sync_repair_fixtures::fingerprint_corpus_fixtures::{synth_ab_corpus, synth_ab_from_decode_corpus};
-    use serde_json::Value;
-
-    for diagnostics in [false, true] {
-        let oracle = synth_ab_corpus(diagnostics);
-        let from_decode = synth_ab_from_decode_corpus(diagnostics);
-        assert_eq!(oracle.gaps.len(), from_decode.gaps.len(), "gap count (diagnostics={diagnostics})");
-        for (o, n) in oracle.gaps.iter().zip(from_decode.gaps.iter()) {
-            let ov: Value = serde_json::to_value(o).expect("serialize oracle gap");
-            let nv: Value = serde_json::to_value(n).expect("serialize from-decode gap");
-            let idx = ov.get("index").and_then(Value::as_u64).unwrap_or(0);
-            for key in ["brackets", "seam_probe", "wide_envelope", "b_levels", "lag"] {
-                assert_eq!(
-                    ov.get(key),
-                    nv.get(key),
-                    "field `{key}` diverged (diagnostics={diagnostics}) at gap index {idx}",
-                );
-            }
-        }
     }
 }
