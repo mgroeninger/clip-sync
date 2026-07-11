@@ -1,6 +1,7 @@
 # Gap content equivalence (skip redundant fills) — plan (DRAFT)
 
-Status: **not started**.
+Status: **orchestration not started** — low-level comparison primitives are **landed** (§5.0); the
+dedicated cheap equivalence block, plan-time gate, and production skip are **not**.
 
 Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
 [gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
@@ -40,7 +41,7 @@ dip as a dropout).
 | `b_has_energy=false` | Is B silent at map time? (**shared pause**) | **Out of scope** — already `unfillable` / `NotFillable` |
 | `program_quiet_at_nominal` (G5) | Is B interior mostly silent at nominal map? | **Opposite** — B empty, not “same sound” |
 | Patch Pearson + structure | Can we place a splice? | **Later, expensive** — “can splice” ≠ “should splice” |
-| Residual same-source (G4) | Does B cancel A at throat? | **Reuse** — strong positive for equivalence |
+| Residual same-source (G4) | Does B cancel A at throat? | **Reuse at nominal, lag 0** — `seam_chosen_and_floor`, not oracle throat search |
 | `GapFillSkipReason::NotFillable` | No B donor | Different family |
 
 **New vocabulary cell (proposed):** **Already-equivalent** — A reads as a gap, B has energy, but
@@ -87,14 +88,39 @@ Equivalence: 8 of 21 repairable gaps skipped (already match B at nominal map)
 
 ## 5. Algorithm
 
+### 5.0 Existing primitives (built vs missing)
+
+The **mechanical comparison machinery already exists** in production and fingerprint paths. What is
+missing is a **single cheap equivalence block** that composes those primitives at **nominal map, lag 0**,
+plus plan-time wiring. Do **not** reimplement correlation or residual math.
+
+| Piece | Status | Location | Notes |
+|-------|--------|----------|-------|
+| **E1** lag-0 seam Pearson | **Built** | `domain/policies.rs` — `fill_seam_correlations`, `border_templates_for_gap` | Production patch + `gap_fill_fit` use at chosen placement; fingerprint uses `seam_local_peak` (±600 ms) for dual-fit viability — **not** the equivalence read |
+| **E2** same-source residual | **Built** | `domain/policies.rs` — `seam_chosen_and_floor`, `SeamResidualVerdict` | Fingerprint/oracle path uses `oracle_measure_residual` **after structure align / throat frame** — too expensive for equivalence |
+| **E3** donor interior @ nominal | **Built** | `domain/donor.rs` — `donor_interior_at`, `program_quiet_at_nominal` | Already computed in `characterize_gaps_from_decode` as `donor_interior_nominal` |
+| **E4** A gap quiet / floor | **Built** | Scan `Gap` fields + level profiling in fingerprint | Bounded A extract still needed at plan time |
+| **E5** interior bridge (v1.5) | **Not built** | — | Optional later |
+| **`measure_cheap_equivalence`** | **Not built** | planned `domain/gap_equivalence.rs` | Composer + conservative policy (§5.4) |
+| **Plan-time skip** | **Not built** | `build_gap_fill_plan` | No `AlreadyMatchesReference` in `GapFillSkipReason` today |
+| **Cheap equivalence block type** | **Not built** | planned `CheapEquivalenceArtifacts` (§5.3) | Lag-0 Pearson + nominal residual only |
+
+**Implementer rule:** equivalence = **new orchestration on old primitives**, not new seam scoring.
+
 ### 5.1 Placement in pipeline
 
 ```text
-Align → ScanGaps → [CharacterizeEquivalence?] → build_gap_fill_plan → PatchAudio
+Align → ScanGaps → [CheapEquivalenceBlock?] → build_gap_fill_plan → PatchAudio → [characterize_region if not skipped]
 ```
 
-- **v1 hook:** `build_gap_fill_plan` (plan-time, needs only short PCM extracts per gap — no full patch search).
-- **Optional v1.5:** fold measurements into `characterize_gaps` / `--gap-fingerprints` first for tuning.
+- **v1 hook:** `build_gap_fill_plan` (plan-time). Run the **cheap equivalence block** as early as possible —
+  immediately after scan/report, **before** any per-gap bracket search, dual-fit, or structure align.
+- **Design priority:** one bounded A+B extract per gap → **lag-0 Pearson + nominal residual** (E1–E4) →
+  verdict. This is intentionally cheaper than fingerprint `splice_dualfit` / oracle throat residual.
+- **Artifact reuse (required):** anything computed in the cheap block that later stages might need must be
+  **stored on a per-gap artifact struct** and passed forward so characterize/patch does not re-decode or
+  re-score the same windows (§5.3, §7.1).
+- **Phase 0:** emit the same block under `--gap-fingerprints` for licensed-pair tuning without enabling production skip.
 
 ### 5.2 Per-gap inputs
 
@@ -111,24 +137,70 @@ Skip early when:
 - `gap_outside_reference_coverage` → existing reason
 - Gap duration `< equivalence_min_gap_secs` (default 0 — no floor) or `> equivalence_max_gap_secs` (default none — long spans need patch path)
 
-### 5.3 Measurements (cheap path)
+### 5.3 Dedicated cheap equivalence block
 
-Implement in new `domain/gap_equivalence.rs` (name illustrative). Reuse primitives from
-`domain/policies.rs`, `domain/gap_fill_fit.rs`, `domain/gap_structure.rs`, `domain/donor.rs`,
-`application/gate_oracle.rs` / residual helpers — **no duplicate correlation math**.
+Implement in new `domain/gap_equivalence.rs` (name illustrative). The block is the **only** equivalence
+measurement path in v1 — do not piggyback on fingerprint dual-fit or oracle throat residual.
 
-| ID | Measurement | Cost | Reuse |
-|----|-------------|------|-------|
-| **E1** | **Nominal seam Pearson** `pre₀`, `post₀` | O(seam) | `fill_seam_correlations` @ nominal B map, lag 0 |
-| **E2** | **Same-source residual** @ nominal throat | O(seam) | `oracle_measure_residual` / `SeamResidualVerdict` |
-| **E3** | **Donor interior @ nominal** | O(gap) | `donor_interior_at` on B mono — **occupied** required for equivalence (not program-quiet) |
-| **E4** | **A gap RMS vs floor** | O(gap) | `levels.gap_floor_db` / block RMS — confirm A side is actually quiet |
-| **E5** | **Interior bridge correlation** (optional v1.5) | O(gap) | Correlate B interior with linear bridge from A pre→post envelopes |
+**Core measurements (v1 — run in this order, bail early when cheap):**
+
+| ID | Measurement | Cost | Reuse | Equivalence call pattern |
+|----|-------------|------|-------|--------------------------|
+| **E4** | **A gap RMS vs floor** | O(gap) | scan `Gap` + block RMS | Confirm A is a dropout; skip E1–E3 work when A is not quiet |
+| **E3** | **Donor interior @ nominal** | O(gap) | `donor_interior_at` | `b_mapped_start .. b_mapped_start + gap_frames` on B mono — **occupied** required (not program-quiet) |
+| **E1** | **Nominal seam Pearson** `pre₀`, `post₀` | O(seam) | `fill_seam_correlations` | `SeamPlacement { start: b_mapped_start, gap_frames, pre_window, post_window }` at nominal map — **lag 0** (no shoulder search) |
+| **E2** | **Same-source residual @ nominal** | O(seam) | `seam_chosen_and_floor` → `SeamResidualVerdict::from_parts_with_placement` | Pre/post at nominal throat with `chosen_delta = 0` — **do not** call `oracle_measure_residual` or `gate_structure_align` |
+| **E5** | **Interior bridge correlation** (v1.5) | O(gap) | new | Correlate B interior with linear bridge from A pre→post envelopes |
+
+**Explicitly out of scope for the cheap block:** `seam_local_peak` (±600 ms), `splice_dualfit_at`,
+`baseline_lag`, bracket grid, structure search, `oracle_measure_residual` (needs throat frame from search).
+
+#### Artifact struct (save for downstream reuse)
+
+Decode once per gap; compute cheap metrics once; **retain artifacts** so later characterize/patch paths do
+not repeat the same work when the gap is not equivalence-skipped.
+
+```rust
+/// Bounded PCM + cheap nominal metrics for one gap. Owned by characterize when patch runs later.
+pub struct CheapEquivalenceArtifacts {
+  // PCM (or reader window handles) — sized to seam margins + gap only
+  pub a_border_templates: SeamTemplatesOwned,  // from border_templates_for_gap
+  pub b_mono: Vec<f64>,                        // nominal span + seam margins
+  pub b_mapped_start: usize,
+  pub gap_frames: usize,
+
+  // Cheap metrics (always populated when decode succeeds)
+  pub nominal_pre: Option<f64>,
+  pub nominal_post: Option<f64>,
+  pub residual: Option<SeamResidualVerdict>,
+  pub donor_interior_nominal: Option<DonorInterior>,
+  pub a_gap_rms_db: Option<f64>,
+
+  // Verdict (policy output)
+  pub verdict: EquivalenceVerdict,
+}
+```
+
+**Reuse rules:**
+
+| Artifact | Later consumer | If equivalence-skipped |
+|----------|----------------|-------------------------|
+| `a_border_templates`, `b_mono`, `b_mapped_start` | `characterize_region` / structure if ever needed | Not reached |
+| `nominal_pre`, `nominal_post` | Fingerprint JSON, tuning spreadsheets | Stored on skip row |
+| `residual` (nominal) | Optional fast-path hint; full patch may still re-run residual at **chosen** placement | Do not assume identity with patch residual |
+| `donor_interior_nominal` | `GapFingerprint`, dual-fit decline hints | Stored |
+| `verdict` | `build_gap_fill_plan`, human/JSON output | Plan-time skip |
+
+When a gap **passes** equivalence (→ `AttemptPatch`), pass `CheapEquivalenceArtifacts` into the existing
+characterize path (or a shared per-gap cache keyed by gap id) so border templates and B mono are not
+re-extracted. Align with [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.5
+“characterize owns B access” — equivalence characterize is the **first** B touch at plan time.
 
 Decode strategy:
 
-- **v1:** one bounded B extract per gap (reuse `fill_border_search_secs` margin + gap length) via existing media reader window API used by patch; A borders from same window.
-- **Do not** run unified structure search or bracket grid.
+- **v1:** one bounded A+B extract per gap (reuse `fill_border_search_secs` margin + gap length) via the
+  existing media reader window API used by patch.
+- **Do not** run unified structure search or bracket grid inside the equivalence block.
 
 ### 5.4 Decision policy (conservative — v1)
 
@@ -150,7 +222,9 @@ pub enum EquivalenceDisposition {
 1. **E3 occupied:** `donor_interior_nominal.continuous == true` AND `silence_fraction < PROGRAM_QUIET_SILENCE_FRAC` (B has program audio across hole).
 2. **E4 quiet A:** A interior RMS below scan silence floor (or `gap_peak < absolute_silence_rms`) — confirms scan target is a dropout, not a loud false negative.
 3. **E1 strong seams:** `min(pre₀, post₀) >= equivalence_min_seam` (default **0.35**, same as `min_fill_correlation`).
-4. **E2 same-source:** residual `informative == true` AND `worst_headroom_db() <= equivalence_residual_headroom_db` (default reuse `residual_headroom_margin_db`).
+4. **E2 same-source:** nominal residual (`seam_chosen_and_floor` at lag 0, not oracle throat) —
+   `informative == true` AND `worst_headroom_db() <= equivalence_residual_headroom_db` (default reuse
+   `residual_headroom_margin_db`).
 
 **Never skip** when:
 
@@ -240,11 +314,12 @@ is the intended pair for “find everything ffmpeg sees, patch only real dropout
 
 | Item | Location |
 |------|----------|
-| `EquivalenceVerdict`, `measure_gap_equivalence` | `domain/gap_equivalence.rs` |
+| `CheapEquivalenceArtifacts`, `EquivalenceVerdict`, `measure_cheap_equivalence` | `domain/gap_equivalence.rs` |
 | `GapEquivalenceParams` (thresholds + seam window secs) | `domain/gap_equivalence.rs` or `RepairConfig` |
-| PCM extract helper | `application/gap_equivalence.rs` or extend `patch_audio` extract path |
+| Bounded PCM extract + artifact cache | `application/gap_equivalence.rs` or extend `patch_audio` / `run_repair` extract path |
+| Per-gap artifact cache (optional) | `application/patch_audio.rs` — keyed by gap; consumed by `characterize_region` when patch proceeds |
 | Plan hook | `domain/gap_fill.rs::build_gap_fill_plan` |
-| Orchestration | `application/patch_audio.rs` or `run_repair.rs` — compute verdicts before plan |
+| Orchestration | `run_repair.rs` — **cheap block before plan**; skipped gaps never enter characterize |
 
 ### 7.2 Fill plan signature
 
@@ -280,13 +355,28 @@ GapFillSkipped {
 
 ### 7.4 Fingerprint path (phase 0 / v1)
 
-Add to `GapFingerprint` (analyzer only in v1):
+Add a dedicated **`equivalence`** block to `GapFingerprint` — **not** a projection of `splice_dualfit` or
+oracle-throat residual. Call the **same** `measure_cheap_equivalence` / `CheapEquivalenceArtifacts` path
+the production gate will use (single source of truth).
 
 ```json
-"equivalence": { ... same fields as §5.5 ... }
+"equivalence": {
+  "evaluated": true,
+  "disposition": "skip",
+  "nominal_pre": 0.91,
+  "nominal_post": 0.88,
+  "residual_headroom_db": 1.2,
+  "residual_informative": true,
+  "donor_silence_fraction": 0.04,
+  "a_gap_rms_db": -52.1,
+  "plan_skip_reason": "already_matches_reference"
+}
 ```
 
-Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so licensed-pair tuning does not require write mode.
+Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so licensed-pair tuning does not require
+write mode. Fingerprint may still run heavier diagnostic fields (`seam_probe`, `splice_dualfit`, throat
+residual) **in parallel** for comparison during phase 0 — but the `equivalence` block must remain the cheap
+lag-0 + nominal-residual read.
 
 ---
 
@@ -294,7 +384,8 @@ Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so licens
 
 | Feature | Behavior |
 |---------|----------|
-| **`--gap-fingerprints`** | Always record equivalence block when characterized; production skip independent |
+| **`--gap-fingerprints`** | Always record cheap `equivalence` block when characterized; heavier diagnostic fields optional; production skip independent |
+| **Artifact cache** | Non-skipped gaps pass `CheapEquivalenceArtifacts` into characterize — no second bounded extract for saved border/B windows |
 | **`anchored_retry`** | Equivalence evaluated on pass 1 plan; skipped gaps never anchor pass 2 |
 | **`dual_fit`** | Equivalence skip is plan-time — dual-fit never reached |
 | **Gap selection** | Equivalence skip wins over “selected for patch”; selected + equivalent → `already_matches_reference`, not `gap_not_selected` |
@@ -340,8 +431,8 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 | Phase | Scope |
 |-------|-------|
-| **0 — Fingerprint only** | `equivalence` block in `--gap-fingerprints`; tune on licensed-pair; no production skip |
-| **v1** | `skip_equivalent_gaps`, plan-time skip, `AlreadyMatchesReference`, human + JSON output, synthetic tests |
+| **0 — Cheap block + fingerprint** | `measure_cheap_equivalence` + `CheapEquivalenceArtifacts`; `equivalence` block in `--gap-fingerprints`; tune on licensed-pair; no production skip |
+| **v1** | `skip_equivalent_gaps`, plan-time skip, artifact cache into characterize, `AlreadyMatchesReference`, human + JSON output, synthetic tests |
 | **v1.5** | `RedundantScanDip` tier; interior bridge (E5); `--equivalence-min-seam` exposure |
 | **v2** | Batch equivalence in scan phase (reuse B silence map decode); optional `equivalence_mode: aggressive\|conservative` profile |
 
@@ -349,23 +440,25 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 ## 11. Implementation checklist
 
-### Phase 0 (fingerprint)
+### Phase 0 (cheap block + fingerprint)
 
-- [ ] `domain/gap_equivalence.rs` — `measure_gap_equivalence` + unit tests (synthetic PCM)
-- [ ] Wire into `gap_fingerprint.rs` characterize path
+- [ ] `domain/gap_equivalence.rs` — `CheapEquivalenceArtifacts`, `measure_cheap_equivalence` (E1 lag-0 +
+  E2 nominal `seam_chosen_and_floor` only) + unit tests (synthetic PCM)
+- [ ] `application/gap_equivalence.rs` — bounded A+B extract; populate artifact struct
+- [ ] Wire **same** function into `gap_fingerprint.rs` characterize path (not dual-fit proxy)
 - [ ] JSON schema + `json-output.md` § `equivalence`
-- [ ] Run on licensed-pair / second-recording; spreadsheet: gap #, ffmpeg?, equivalence metrics
+- [ ] Run on licensed-pair / second-recording; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
 
 ### v1 (production gate)
 
 - [ ] `RepairConfig`: `skip_equivalent_gaps`, `equivalence_min_seam`, `equivalence_residual_headroom_db`
 - [ ] `Args` + `cli/mod.rs` overrides
 - [ ] `GapFillSkipReason::AlreadyMatchesReference` + formatters / `gap_tags` / `PlanKind`
-- [ ] `application/gap_equivalence.rs` — bounded PCM extract per gap
+- [ ] `run_repair.rs` — cheap block **before** `build_gap_fill_plan`; artifact cache for non-skipped gaps
+- [ ] `characterize_region` / `patch_audio` — consume cached `CheapEquivalenceArtifacts` (no re-extract of saved windows)
 - [ ] `build_gap_fill_plan` hook + domain tests
-- [ ] `PatchAudio` / `run_repair` orchestration
 - [ ] Human report + JSON gap fields
-- [ ] Integration: synthetic same-master skip; chaotic seam still patches
+- [ ] Integration: synthetic same-master skip; chaotic seam still patches; verify no double-decode on patch path
 - [ ] Docs: `gap-scan.md` § equivalence, `gap-repair-guide.md`, `pipeline.md` §3 paragraph
 
 ### v1.5
@@ -379,8 +472,9 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 | Layer | Cases |
 |-------|-------|
-| **Unit** | Same-master → Skip; decorrelated → AttemptPatch; program-quiet → not evaluated; missing decode → AttemptPatch |
+| **Unit** | Same-master → Skip; decorrelated → AttemptPatch; program-quiet → not evaluated; missing decode → AttemptPatch; E2 uses nominal residual only (no structure align) |
 | **Policy** | `min_seam` 0.35 blocks 0.21 car-chase nominal; 0.91 passes |
+| **Artifact** | Patch path reuses cached `b_mono` + border templates — no duplicate decode for same gap |
 | **Plan** | Equivalence skip excluded from `regions`; `repairable_count` unchanged; `planned_count` reduced |
 | **Patch** | Skipped gap samples identical to input A in output |
 | **Fingerprint** | Equivalence block present; matches plan verdict when both run |
