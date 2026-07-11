@@ -27,6 +27,18 @@ root cause of the 11:50 & 21:46 false skips, A3b/A4 were narrowing fixes that di
 source-grounded (7 cells, "reconcile to an action"), C4/C4b harness skeletons + vocab cells written — 6a
 (`domain/gap_repair_spec.rs`) is unblocked and is the next implementation step.**
 
+**Current (2026-07-10): Step 6 (characterize→execute) is COMPLETE — 6a–6c landed and byte-parity-gated. Step
+6's Fingerprint-unification tail (§2.5.4 sub-steps) is COMPLETE through 8g.4a: 8a–8f landed (projection +
+`tags_from_fingerprint` + differentials, validated on the re-anchor corpus AND real 5.1 licensed media); the
+8g dump-unification sub-ledger has landed 8g.1 (decode-differential harness), 8g.2 (`characterize_all_regions`,
+re-scoped to a repair-preview building block — NOT the dump), 8g.3a (`compute_region_measurements`, git-proven
+byte-identical), 8g.3b (`tags_from_measurements` via shared `tags_from_fields`), and 8g.4a (the from-decode
+pipeline `characterize_gaps_from_decode` + the empirical old-vs-new decode differential, green both modes +
+the `--validate-from-decode` CLI media gate). Authoritative detail: the 8g sub-step ledger under §2.5.4.
+NEXT: 8g.4b — flip `dump_gap_fingerprints` to the from-decode pipeline (gated on the media differential),
+delete the oracle. Then §3 step 8 (Hoists). All work so far is additive/byte-neutral to the live dump — the
+default `--gap-fingerprints` output is still the oracle until 8g.4b.**
+
 ---
 
 ## §1 — Audit (what the pipeline does today)
@@ -1058,8 +1070,8 @@ the exact moment the region is touched, not left to memory. Mirror any status ch
 | **3** | Cheap early-reject (G0b at plan) | **Partial (closed on G5)** | G0b at fill-plan ✓. G5 (D11) analyzer + dual-fit only — not production pre-gate (2026-07-03); **investigated as a pre-gate skip and withdrawn 2026-07-04, see §2.2a** (measured false-skip rate on real corpus data, no safe formulation found). |
 | **4** | FFT lag sweep + `fft ≈ naive` equivalence test | **Done (2026-07-04)** | `lag_correlation_curve_fft` (B1) wired behind cost-crossover `lag_correlation_curve_auto` in `domain/seam_local.rs`; `seam_local_peak` and `gap_fingerprint.rs::lag_side_sweep` (the `baseline_lag` ±600 ms / ~1 s-window sweep, the dominant diagnostic-scan cost per §1.3) both switched from naive to auto. |
 | **5** | A3 production dual-fit + split from diagnostic dump | **Done** | `--dual-fit` → `skip_or_dual_fit` / `try_dual_fit`; shared `domain/` primitives. §5 build plan superseded by code. |
-| **6** | **Characterize → execute split** (`GapRepairSpec`) | **Design complete; 6a impl next** | §2.5 — **all §2.5.7 spec items resolved (2026-07-06/07), 6a unblocked.** types (6a), extract characterize/execute (6b), two-loop `PatchAudio` (6c), golden projection (7), fingerprint unification (8). **Blocks step 1 hoists.** |
-| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). **C3 DONE (2026-07-10).** C1, C2, **C4, C5, C3-dump** still open — see §4.7. |
+| **6** | **Characterize → execute split** (`GapRepairSpec`) | **6a–6c DONE (byte-parity-gated); Fingerprint-unification 8a–8g.4a DONE; 8g.4b next** | §2.5 — types (6a) ✓, extract characterize/execute (6b) ✓, two-loop `PatchAudio` (6c) ✓, golden projection (7 = 8e/C4) ✓, fingerprint unification (8a–8g.4a) ✓. **8g.4b (dump flip) is the only remaining sub-step; then unblocks step 1 hoists.** Detail: §2.5.4 sub-step + 8g sub-step ledgers. |
+| **§4** | Decision-invariance harness | **Partial** | Golden schema + diff landed (`golden_baseline.rs`, `golden_baseline_invariance.rs`/`golden_baseline_smoke.rs`, frozen `golden/re-anchor-dual-fit-on-nominal.golden.json`). **§4.7 Tier A (A1–A3) landed 2026-07-03 — footguns + harness `--lib` now run in default CI.** **B2 landed** (`validate_dual_fit_oracle.rs`, validation tier). **C3 DONE (2026-07-10).** **C4 DONE (8e — `gap_repair_spec_projection` 3 tests: 9-class cell identity + Tier-1 projection + flag-invariance + gate scalars).** **Decode differentials landed (8g.1/8g.4a): `decode_path_projection` (default CI) + `from_decode_vs_oracle` (media gate).** C1, C2, **C5** (folds into 8g.6), C3-dump still open — see §4.7. |
 | **Companion** | `policies.rs` decomposition (§2.6) | **Tracked** | Trigger table in §2.6; extractions land as separate byte-preserving PRs adjacent to their step (P1 ready, P4←6b, P2/P3←step 8). Completion-checkpoint: a step isn't done until its extraction lands or is deferred-with-reason. |
 
 > **Sequencing (updated 2026-07-07):** A3 (step 5), G5 production, §4.7 **Tier A (A1–A3)**, **B1**, **B2**, and
@@ -1086,13 +1098,13 @@ Each step behavior-preserving; land behind the §4 regression harness. **Status 
 | 3 | Cheap early-reject gates (G0b at plan; G5 in production before seam gate) | **Partial — G5-before-seam-gate withdrawn (§2.2a)** |
 | 4 | **FFT lag sweep** — numerator via FFT, denominator via prefix sums; naive fallback for small `L`; gate on `fft_curve ≈ naive_curve` test (§4.7 **B1**). *(Full spec: ledger "FFT lag sweep" block.)* | **Done (2026-07-04)** — `lag_correlation_curve_auto` (cost-crossover) wired into `seam_local_peak` and `lag_side_sweep` |
 | 5 | A3 production dual-fit (`--dual-fit`) + shared `domain/` primitives | **Done** |
-| 6 | **Characterize → execute** — `GapRepairSpec` / `GapRepairPlan`; extract `characterize_region` + `execute_region_spec` from `prepare_region_patch`; two-loop `PatchAudio::execute`; fingerprint export from shared characterize (§2.5) | **Design complete (§2.5.7 all resolved); 6a impl next** |
-| 7 | Golden harness on live `GapRepairSpec` projections (§4.7 C4, C5) | **Open** |
+| 6 | **Characterize → execute** — `GapRepairSpec` / `GapRepairPlan`; extract `characterize_region` + `execute_region_spec` from `prepare_region_patch`; two-loop `PatchAudio::execute`; fingerprint export from shared characterize (§2.5) | **6a–6c DONE; Fingerprint-unification 8a–8g.4a DONE; 8g.4b (dump flip) next** |
+| 7 | Golden harness on live `GapRepairSpec` projections (§4.7 C4, C5) | **C4 DONE (8e); C5 folds into 8g.6** (see §2.5.4 "Sequencing") |
 | 8 | Step 1 hoists inside characterize shared context. **Rescoped (§3.1, 2026-07-08):** share the per-side **mono downmix** (exactly slice-able); **drop** "one border template / RMS grid for all consumers" (infeasible byte-identical + low-value). **Clears (resolution index):** (c) dedups the 2× fill/border assembly via the shared owner; companion P2 `silence.rs` + P3 `gap_borders.rs`. | **Open** — blocked on step 6 · **companion (§2.6): the hoist's single owner = `policies/silence.rs` (P2) + `policies/gap_borders.rs` (P3); extract as adjacent byte-preserving PRs — land or defer-with-reason before step 8 (Hoists) closes** |
 
-Step 6 is the next structural milestone. Step 5 historical note: built **before** scan optimization
-(2026-07-01 sequencing decision) — complete. Step 1 hoists move to **step 8** so shared subexpressions have a
-single owner (`characterize_region`).
+Step 6 is complete through 8g.4a (2026-07-10); **8g.4b (flip the dump) is the next and last step-6 sub-step**,
+then §3 step 8 (Hoists). Step 5 historical note: built **before** scan optimization (2026-07-01 sequencing
+decision) — complete. Step 1 hoists move to **step 8** so shared subexpressions have a single owner.
 
 ### §3.1 Hoist feasibility — the shareable primitive is the downmix, not the template (2026-07-08)
 
