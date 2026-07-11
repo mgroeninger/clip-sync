@@ -2947,15 +2947,17 @@ fn characterize_region(
     )
 }
 
-/// Characterize every planned region into a spec — the §2.5.5 multi-region loop over [`characterize_region`],
-/// for the fingerprint/dump path (Fingerprint-unification 8g). **Region-infallible:** exactly one spec per
-/// region, every failure folded into a `Skip` verdict (§2.5.7 #3), so `specs.len() == regions.len()`. Drops
-/// the executor/reporting extras (`bracket_fill` / `GapTagsPatchContext`) that the patch path needs — the dump
-/// only projects specs. First-pass anchors only (pass-2 anchored retry re-characterizes from the specs, §2.5.5).
+/// Characterize every planned region into a spec — the §2.5.5 multi-region loop over [`characterize_region`].
+/// **Region-infallible:** exactly one spec per region, every failure folded into a `Skip` verdict (§2.5.7 #3),
+/// so `specs.len() == regions.len()`. Drops the executor/reporting extras (`bracket_fill` /
+/// `GapTagsPatchContext`) — this yields the repair *decisions* without executing PCM. First-pass anchors only
+/// (pass-2 anchored retry re-characterizes from the specs, §2.5.5).
 ///
-/// **Shadow at 8g.2** (built + unit-tested, not yet on any live path); the from-decode dump wires it at 8g.3
-/// — where it (and `RegionPatchContext`/`RegionPatchMedia`) become `pub(crate)` for the composition layer.
-#[allow(dead_code)] // shadow until the dump path calls it (8g.3)
+/// **Role (re-scoped by the pre-flip review, 2026-07-10):** the scan-only **repair-preview** building block
+/// (§2.5.5 "run characterize without execute"). It is **NOT** on the fingerprint-dump path — the dump keeps
+/// fingerprint `any_ok` semantics (from `compute_region_measurements`), whereas this runs the production patch
+/// gate, which diverges on residual-veto. Shadow (`#[allow(dead_code)]`) until a preview consumer wires it.
+#[allow(dead_code)] // shadow: no consumer yet (repair-preview building block, not the dump)
 fn characterize_all_regions(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,

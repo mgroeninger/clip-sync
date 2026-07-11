@@ -21,3 +21,32 @@ fn decode_path_projection_preserves_golden_baseline() {
         diffs.join("\n"),
     );
 }
+
+/// **8g.4a — the REAL old-vs-new decode differential (CI, no media).** Run the **oracle**
+/// (`characterize_gaps_with_gate`, today's inline build) and the **from-decode** pipeline
+/// (`characterize_gaps_from_decode` = summary + `compute_region_measurements` + `tags_from_measurements` +
+/// projection) on the **same** synthetic A/B PCM, and assert their `golden_baseline` is identical — in **both**
+/// lean and diagnostics-on modes. This is the empirical proof the 8g.4b flip is behavior-preserving; it covers
+/// `tier`/`levels`/`geometry`, not just tags (superseding 8g.3b's by-construction argument). The licensed-media
+/// analogue (both modes) is the gate for the actual flip (8g.4b).
+#[test]
+fn from_decode_pipeline_matches_oracle_golden_baseline() {
+    use clip_sync_repair_fixtures::fingerprint_corpus_fixtures::{synth_ab_corpus, synth_ab_from_decode_corpus};
+    use clip_sync_repair_harness::corpus_projection::golden_baseline_of_corpus;
+    use clip_sync_repair_harness::golden_baseline::{diff_baselines, TIER2_ABS_EPS};
+
+    for diagnostics in [false, true] {
+        let oracle = synth_ab_corpus(diagnostics);
+        let from_decode = synth_ab_from_decode_corpus(diagnostics);
+        assert_eq!(oracle.gaps.len(), from_decode.gaps.len(), "gap count (diagnostics={diagnostics})");
+        let base_oracle = golden_baseline_of_corpus(&oracle);
+        let base_from_decode = golden_baseline_of_corpus(&from_decode);
+        let diffs = diff_baselines(&base_oracle, &base_from_decode, TIER2_ABS_EPS);
+        assert!(
+            diffs.is_empty(),
+            "from-decode diverged from the oracle on {} decision axis field(s) (diagnostics={diagnostics}):\n{}",
+            diffs.len(),
+            diffs.join("\n"),
+        );
+    }
+}

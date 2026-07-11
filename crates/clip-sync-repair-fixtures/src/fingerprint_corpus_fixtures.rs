@@ -6,7 +6,9 @@
 //! across the gap.
 
 use clip_sync::MultiChannelPcm;
-use clip_sync_repair::application::gap_fingerprint::{characterize_gaps_with_gate, GapCorpus};
+use clip_sync_repair::application::gap_fingerprint::{
+    characterize_gaps_from_decode, characterize_gaps_with_gate, GapCorpus,
+};
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::gap::Gap;
 use clip_sync_repair::domain::{GapReport, GapSignatureMode, ScanAlignment};
@@ -39,9 +41,24 @@ fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
     }
 }
 
-/// Characterize a synthetic A/B pair through the production oracle and return its corpus. `diagnostics` toggles
-/// the X-set (`seam_probe`/`wide_envelope`/`b_levels`/diagnostic `lag`).
+/// Characterize the synthetic A/B pair through the **oracle** (`characterize_gaps_with_gate`) — the current
+/// inline fingerprint build. `diagnostics` toggles the X-set (`seam_probe`/`wide_envelope`/`b_levels`/`lag`).
 pub fn synth_ab_corpus(diagnostics: bool) -> GapCorpus {
+    let (a_pcm, b, report, request) = synth_ab_inputs();
+    characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)
+}
+
+/// Characterize the same synthetic A/B pair through the **from-decode** pipeline
+/// (`characterize_gaps_from_decode`, 8g.4a). Diffing this against [`synth_ab_corpus`] on `golden_baseline` is
+/// the empirical old-vs-new decode differential.
+pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
+    let (a_pcm, b, report, request) = synth_ab_inputs();
+    characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)
+}
+
+/// The synthetic A/B pair + report/request the two `synth_ab_*` helpers share: same-master speech bursts,
+/// decorrelated collars, B carrying fill across the gap.
+fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest) {
     let rate = 48_000u32;
     let ch = 1usize;
     let secs = |s: f64| (s * f64::from(rate)) as usize;
@@ -117,5 +134,5 @@ pub fn synth_ab_corpus(diagnostics: bool) -> GapCorpus {
         ..RepairConfig::default()
     };
     let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
-    characterize_gaps_with_gate(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)
+    (a_pcm, b, report, request)
 }

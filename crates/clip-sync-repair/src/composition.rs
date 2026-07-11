@@ -97,15 +97,33 @@ fn dump_gap_fingerprints(
     let media_reader = SymphoniaMediaReader;
     let decoded = decode_ab(&media_reader, report, progress)?;
     let request = config.repair.patch_settings().into_request(report.clone());
-    let mut corpus = characterize_gaps_with_gate(
-        report,
-        &decoded.a_pcm,
-        &decoded.b_samples_full,
-        &request,
-        &args.fingerprint_gap,
-        config.repair.fingerprint_diagnostics,
-        progress,
-    );
+    // 8g.4a validation shadow (opt-in, default OFF): `FINGERPRINT_FROM_DECODE=1` dumps the from-decode pipeline
+    // instead of the oracle, so a licensed-media run can produce a `from_decode` corpus to diff against the
+    // oracle corpus BEFORE the 8g.4b flip. Default path is unchanged (still the oracle). Removed at 8g.4b.
+    let from_decode = std::env::var("FINGERPRINT_FROM_DECODE")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let mut corpus = if from_decode {
+        progress.phase("  [FINGERPRINT_FROM_DECODE] dumping via the 8g from-decode pipeline (validation shadow)");
+        crate::application::gap_fingerprint::characterize_gaps_from_decode(
+            report,
+            &decoded.a_pcm,
+            &decoded.b_samples_full,
+            &request,
+            &args.fingerprint_gap,
+            config.repair.fingerprint_diagnostics,
+            progress,
+        )
+    } else {
+        characterize_gaps_with_gate(
+            report,
+            &decoded.a_pcm,
+            &decoded.b_samples_full,
+            &request,
+            &args.fingerprint_gap,
+            config.repair.fingerprint_diagnostics,
+            progress,
+        )
+    };
     // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
     corpus.source.scan_recipe.min_gap_ms =
         Some((config.repair.min_gap_secs() * 1000.0).round() as u64);

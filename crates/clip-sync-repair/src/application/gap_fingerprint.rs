@@ -1115,8 +1115,7 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
 /// Build the D/R tag payload from the shared [`RegionMeasurements`] (computed from decode) + the A-side levels
 /// (8g.3b). Mirrors [`tags_from_fingerprint`] via [`tags_from_fields`]; `structure`/`seams` are omitted
 /// (`None`) to match the `skip_baseline_placement` summary the dump uses — so from-decode tags equal the
-/// oracle's on that path by construction.
-#[allow(dead_code)] // wired into the from-decode dump at 8g.4
+/// oracle's on that path by construction. Used by the from-decode dump ([`characterize_gaps_from_decode`]).
 fn tags_from_measurements(
     m: &RegionMeasurements,
     levels: Option<crate::domain::gap_repair_spec::LevelTags>,
@@ -3010,6 +3009,158 @@ pub fn characterize_gaps_with_gate(
         fp.splice = m.splice;
         fp.residual = m.residual;
         fp.lag = m.lag;
+    }
+    corpus
+}
+
+/// Fingerprint dump computed **from decode via the shared projection** (Fingerprint-unification 8g.4a) — the
+/// behavior-preserving replacement for [`characterize_gaps_with_gate`]'s inline `GapFingerprint` build. Per
+/// gap: the summary (geometry/levels, already in `corpus`) + [`compute_region_measurements`] (8g.3a) → `m`,
+/// then a spec (verdict from `m.outcome.tier` = the fingerprint **`any_ok`** semantics; tags from
+/// [`tags_from_measurements`], 8g.3b) → [`spec_to_fingerprint_summary`]. Keeps fingerprint semantics — does NOT
+/// run the production patch gate (pre-flip review Finding 1). Gaps whose overlay setup is skipped (no B start /
+/// zero-length / empty window) keep their summary fingerprint, exactly as the oracle leaves them.
+///
+/// **SHADOW at 8g.4a** — validated by the old-vs-new decode differential (`decode_path_projection`), lean +
+/// diagnostics; the dump flips to it at 8g.4b. Lossy-by-projection on `silence`/`contour`/`anchors` (X, not
+/// read by `golden_baseline`) — a fidelity item for the diagnostics path (8g.5), not a decision change.
+pub fn characterize_gaps_from_decode(
+    report: &crate::domain::GapReport,
+    a_pcm: &clip_sync::MultiChannelPcm,
+    b_samples_full: &[f32],
+    request: &crate::application::PatchAudioRequest,
+    select: &[usize],
+    include_diagnostics: bool,
+    progress: &dyn clip_sync::ProgressReporter,
+) -> GapCorpus {
+    use crate::domain::gap_repair_spec::{
+        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict, LevelTags,
+    };
+
+    let sample_rate = a_pcm.sample_rate;
+    let channels = a_pcm.channels as usize;
+    let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
+    let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
+
+    let mut gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
+        request,
+        sample_rate,
+        channels,
+        report.silence_peak_fraction,
+    );
+    gate_cfg.measure_residual = true;
+    let rate = f64::from(sample_rate).max(1.0);
+    let ch = channels.max(1);
+    let b_total = b_samples_full.len() / ch;
+    let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
+    let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
+    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate).round().max(1.0) as usize;
+    let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
+    let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
+    let pad_tail = cfg.gap_signature_context_secs
+        + cfg.fill_length_slack_secs.max(cfg.fill_align_margin_secs)
+        + cfg.fill_border_search_secs
+        + cfg.fill_align_margin_secs;
+
+    let total_gaps = corpus.gaps.len() as u64;
+    for (gn, fp) in corpus.gaps.iter_mut().enumerate() {
+        progress.progress("fingerprint-gap", gn as u64 + 1, total_gaps);
+        let i = fp.index;
+        let gap = &report.gaps[i];
+        let Some(b_start) = gap.video_b_start_secs else { continue };
+        let refined = refine_gap_frames(
+            &a_pcm.samples,
+            ch,
+            (gap.video_a_start_secs * rate) as usize,
+            (gap.video_a_end_secs * rate) as usize,
+            cfg.silence_peak_fraction,
+            cfg.absolute_silence_rms,
+            max_refine_frames,
+        );
+        let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+        if gap_frames == 0 {
+            continue;
+        }
+        let gap_offset = b_start - gap.video_a_start_secs;
+        let b_end = gap.video_b_end_secs.unwrap_or(gap.video_a_end_secs);
+        let lo = (((b_start - pad_lead).max(0.0) * rate) as usize).min(b_total);
+        let hi = (((b_end + pad_tail) * rate).ceil() as usize).min(b_total);
+        if hi <= lo {
+            continue;
+        }
+        let b_slice = &b_samples_full[lo * ch..hi * ch];
+        let b_extract_start_secs = lo as f64 / rate;
+
+        let m = compute_region_measurements(RegionMeasureInput {
+            a_pcm,
+            ch,
+            b_slice,
+            b_extract_start_secs,
+            gap_offset,
+            refined,
+            gap_frames,
+            gate_cfg: &gate_cfg,
+            cfg: &cfg,
+            gap_floor_db: fp.levels.gap_floor_db,
+            include_diagnostics,
+            context_frames,
+            bin_frames,
+            search_radius_frames,
+            rate,
+            sample_rate,
+            progress,
+        });
+
+        // Decision spec: geometry + levels from the summary fp; verdict from `m.outcome` (any_ok); tags from
+        // the shared measurements. A placeholder strategy/reason carries only the `patch`/`skip` distinction the
+        // reader's `tier` axis needs (mirrors `fingerprint_to_spec`).
+        let levels = LevelTags {
+            a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
+            a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
+        };
+        let verdict = if m.outcome.tier == "skip" {
+            GapRepairVerdict::Skip {
+                cell: GapRepairCell::Decorrelated,
+                reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.0,
+                    post_correlation: 0.0,
+                    min_correlation: 0.0,
+                    best_attempt: None,
+                },
+            }
+        } else {
+            GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+                fill: Vec::new(),
+                pre_seam_r: 0.0,
+                post_seam_r: 0.0,
+                pre_lag: 0,
+                post_lag: 0,
+                trim_frames: 0,
+                residual: None,
+                confidence: crate::domain::gap_fill_fit::FillConfidence::High,
+            })
+        };
+        let spec = GapRepairSpec {
+            gap_index: fp.index,
+            a_start_secs: fp.geometry.a_start_secs,
+            a_end_secs: fp.geometry.a_end_secs,
+            gap_offset_secs: fp.geometry.fill_offset_secs.unwrap_or(gap_offset),
+            refined: RefinedGapFrames {
+                start_frame: (fp.geometry.a_refined_start_secs * rate).round() as usize,
+                end_frame: (fp.geometry.a_refined_end_secs * rate).round() as usize,
+            },
+            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            crossfade_secs: 0.0,
+            verdict,
+            tags_ctx: tags_from_measurements(&m, Some(levels)),
+        };
+        let x = FingerprintXSet {
+            seam_probe: m.seam_probe,
+            wide_envelope: m.wide_envelope,
+            b_levels: m.b_levels,
+            lag: m.lag,
+        };
+        *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x));
     }
     corpus
 }

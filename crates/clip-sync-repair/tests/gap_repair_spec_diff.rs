@@ -42,25 +42,60 @@ fn default_corpus_dir() -> PathBuf {
     repo_root().join("gap-files").join("re-anchor-dual-fit-on-nominal")
 }
 
+/// Parse a comma-separated env var of corpus dirs (relative entries resolve against the repo root).
+fn env_dirs(var: &str) -> Option<Vec<PathBuf>> {
+    let env = std::env::var(var).ok()?;
+    let dirs: Vec<PathBuf> = env
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let p = Path::new(s);
+            if p.is_absolute() { p.to_path_buf() } else { repo_root().join(p) }
+        })
+        .collect();
+    (!dirs.is_empty()).then_some(dirs)
+}
+
 /// Corpus roots to check: `GAP_FP_DIRS` (comma-separated; the same dirs a `--gap-fingerprints` run wrote), else
-/// the in-repo default. Relative entries resolve against the repo root. `None` ⇒ nothing to check (skip).
+/// the in-repo default. `None` ⇒ nothing to check (skip).
 fn corpus_roots() -> Option<Vec<PathBuf>> {
-    if let Ok(env) = std::env::var("GAP_FP_DIRS") {
-        let dirs: Vec<PathBuf> = env
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                let p = Path::new(s);
-                if p.is_absolute() { p.to_path_buf() } else { repo_root().join(p) }
-            })
-            .collect();
-        if !dirs.is_empty() {
-            return Some(dirs);
-        }
+    if let Some(dirs) = env_dirs("GAP_FP_DIRS") {
+        return Some(dirs);
     }
     let d = default_corpus_dir();
     d.is_dir().then(|| vec![d])
+}
+
+/// **8g.4a media gate — old-vs-new decode differential on licensed media** (the flip gate, reviewer point 4).
+/// Point the env vars at the **oracle** corpus (a normal `--gap-fingerprints` run) and the **from-decode**
+/// corpus (a `FINGERPRINT_FROM_DECODE=1` run) of the SAME media, and assert their `golden_baseline` is
+/// identical — run once lean, once with `--fingerprint-diagnostics`.
+///
+/// ```powershell
+/// clip-sync-repair <A> <B> ... --gap-fingerprints out_old
+/// $env:FINGERPRINT_FROM_DECODE="1"; clip-sync-repair <A> <B> ... --gap-fingerprints out_new; $env:FINGERPRINT_FROM_DECODE=$null
+/// $env:OLD_FP_DIRS="out_old"; $env:NEW_FP_DIRS="out_new"
+/// cargo test -p clip-sync-repair --features validation-tests --test gap_repair_spec_diff from_decode_vs_oracle_media -- --ignored
+/// ```
+#[test]
+#[ignore = "tier:validation — set OLD_FP_DIRS + NEW_FP_DIRS (oracle vs FINGERPRINT_FROM_DECODE corpora of the same media)"]
+fn from_decode_vs_oracle_media() {
+    let (Some(old_roots), Some(new_roots)) = (env_dirs("OLD_FP_DIRS"), env_dirs("NEW_FP_DIRS")) else {
+        eprintln!("skip: set OLD_FP_DIRS and NEW_FP_DIRS to the oracle and from-decode corpora of the same media");
+        return;
+    };
+    let old = analyze_dirs(&old_roots, drift_eps_from_env(), tail_secs_from_env()).golden_baseline();
+    let new = analyze_dirs(&new_roots, drift_eps_from_env(), tail_secs_from_env()).golden_baseline();
+    assert!(old.gap_count > 0, "no gaps under OLD_FP_DIRS {old_roots:?}");
+    eprintln!("from-decode media gate: {} oracle gap(s) vs {} from-decode", old.gap_count, new.gap_count);
+    let diffs = diff_baselines(&old, &new, TIER2_ABS_EPS);
+    assert!(
+        diffs.is_empty(),
+        "from-decode diverged from the oracle on {} decision-axis field(s):\n{}",
+        diffs.len(),
+        diffs.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
+    );
 }
 
 /// Re-project one pair dir's `corpus.json` into `dst/corpus.json`.
