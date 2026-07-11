@@ -50,3 +50,33 @@ fn from_decode_pipeline_matches_oracle_golden_baseline() {
         );
     }
 }
+
+/// **8g.4b — full-fidelity diff: real per-bracket rows + X-set survive the flip.** `golden_baseline`
+/// deliberately omits the per-bracket **rows** (only the counts are decision axes) and the diagnostic X-set
+/// (`seam_probe`/`wide_envelope`/diagnostic `lag`), so the differential above cannot see them. This asserts the
+/// from-decode dump reproduces the oracle's `brackets` rows (carried via `real_brackets` at 8g.4b — without it,
+/// they synthesize from counts and diverge on ~every row) **and** the full X-set, on the same synthetic PCM, in
+/// **both** modes. This is the media-free formalization of the 7-pair ad-hoc diff that gated the flip.
+#[test]
+fn from_decode_matches_oracle_full_fidelity_brackets_and_xset() {
+    use clip_sync_repair_fixtures::fingerprint_corpus_fixtures::{synth_ab_corpus, synth_ab_from_decode_corpus};
+    use serde_json::Value;
+
+    for diagnostics in [false, true] {
+        let oracle = synth_ab_corpus(diagnostics);
+        let from_decode = synth_ab_from_decode_corpus(diagnostics);
+        assert_eq!(oracle.gaps.len(), from_decode.gaps.len(), "gap count (diagnostics={diagnostics})");
+        for (o, n) in oracle.gaps.iter().zip(from_decode.gaps.iter()) {
+            let ov: Value = serde_json::to_value(o).expect("serialize oracle gap");
+            let nv: Value = serde_json::to_value(n).expect("serialize from-decode gap");
+            let idx = ov.get("index").and_then(Value::as_u64).unwrap_or(0);
+            for key in ["brackets", "seam_probe", "wide_envelope", "b_levels", "lag"] {
+                assert_eq!(
+                    ov.get(key),
+                    nv.get(key),
+                    "field `{key}` diverged (diagnostics={diagnostics}) at gap index {idx}",
+                );
+            }
+        }
+    }
+}

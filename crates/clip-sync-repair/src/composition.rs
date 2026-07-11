@@ -122,14 +122,16 @@ fn dump_gap_fingerprints(
     };
 
     if args.validate_from_decode {
-        // 8g.4a validation (transitional, removed at 8g.4b): dump BOTH pipelines from the SAME decode into
-        // `DIR/oracle` + `DIR/from_decode` (identical source-id ⇒ zero re-decode/code-version confound), for the
-        // source-id-aligned diff (`from_decode_vs_oracle` test) that gates the flip.
+        // A/B validation harness (retained through 8g.4b; removed with the oracle at 8g.6): dump BOTH pipelines
+        // from the SAME decode into `DIR/oracle` + `DIR/from_decode` (identical source-id ⇒ zero
+        // re-decode/code-version confound), for the source-id-aligned diff (`from_decode_vs_oracle` test).
         progress.phase("  [--validate-from-decode] dumping oracle + from-decode pipelines for comparison");
         dump("oracle", run(false))?;
         dump("from_decode", run(true))?;
     } else {
-        dump("", run(false))?;
+        // 8g.4b: the default dump is the from-decode pipeline (was `run(false)`, the per-bracket oracle). The
+        // oracle (`characterize_gaps_with_gate`) is retained as the differentials' reference until 8g.6.
+        dump("", run(true))?;
     }
     Ok(())
 }

@@ -704,13 +704,15 @@ pub struct FingerprintXSet {
 /// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors` are minimal placeholders (X, not
 /// read by the corpus reader); `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs`
 /// tier logic); uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
-/// (Tier-3, tolerated by the golden diff). `bracket` scores are synthesized to round-trip the stored
+/// (Tier-3, tolerated by the golden diff). `bracket` scores are the **real** per-bracket rows when
+/// `real_brackets` is `Some` (the from-decode dump, 8g.4b), else synthesized to round-trip the stored
 /// counts/best/closest through the corpus reader, not the original per-bracket detail. See §2.5.2a / 8e.
 pub fn spec_to_fingerprint_summary(
     spec: &GapRepairSpec,
     sample_rate: u32,
     channels: u16,
     x: Option<FingerprintXSet>,
+    real_brackets: Option<Vec<BracketInfo>>,
 ) -> GapFingerprint {
     let tags = &spec.tags_ctx;
     let rate = f64::from(sample_rate.max(1));
@@ -763,12 +765,17 @@ pub fn spec_to_fingerprint_summary(
         floor_post_db: r.floor_post_db,
         informative: r.informative,
     });
-    let brackets = synth_brackets(
-        gate.brackets_total,
-        gate.brackets_passing,
-        gate.best_bracket_seam,
-        gate.closest_failure_stage.as_deref(),
-    );
+    // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
+    // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
+    // recover per-bracket detail from stored tags).
+    let brackets = real_brackets.unwrap_or_else(|| {
+        synth_brackets(
+            gate.brackets_total,
+            gate.brackets_passing,
+            gate.best_bracket_seam,
+            gate.closest_failure_stage.as_deref(),
+        )
+    });
 
     let gap_frames = spec.refined.end_frame.saturating_sub(spec.refined.start_frame);
     let splice_dualfit = tags.seam_local.as_ref().map(|sl| SpliceDualfit {
@@ -3160,7 +3167,9 @@ pub fn characterize_gaps_from_decode(
             b_levels: m.b_levels,
             lag: m.lag,
         };
-        *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x));
+        // Carry the REAL per-bracket rows (8g.4b) so the flipped dump is byte-faithful to the oracle's
+        // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
+        *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), Some(m.brackets));
     }
     corpus
 }
@@ -3424,7 +3433,7 @@ mod tests {
             tags_ctx: tags,
         };
 
-        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None);
+        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, None);
 
         // outcome: a skip (tier is patch/skip, matching the scan path).
         let o = fp.outcome.as_ref().unwrap();

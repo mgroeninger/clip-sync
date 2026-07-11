@@ -22,7 +22,9 @@ pub fn project_corpus(orig: &GapCorpus) -> GapCorpus {
         .map(|fp| {
             let spec = fingerprint_to_spec(fp);
             let x = FingerprintXSet { b_levels: fp.b_levels.clone(), ..Default::default() };
-            spec_to_fingerprint_summary(&spec, fp.sample_rate, fp.channels, Some(x))
+            // `None` real_brackets: the spec (from stored tags) carries only bracket counts, not per-bracket
+            // rows, so synthesize. `golden_baseline` reads counts, not rows, so this is faithful for the diff.
+            spec_to_fingerprint_summary(&spec, fp.sample_rate, fp.channels, Some(x), None)
         })
         .collect();
     GapCorpus { source: orig.source.clone(), gaps }
