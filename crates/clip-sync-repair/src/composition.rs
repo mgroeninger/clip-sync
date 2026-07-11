@@ -97,44 +97,40 @@ fn dump_gap_fingerprints(
     let media_reader = SymphoniaMediaReader;
     let decoded = decode_ab(&media_reader, report, progress)?;
     let request = config.repair.patch_settings().into_request(report.clone());
-    // 8g.4a validation shadow (opt-in, default OFF): `FINGERPRINT_FROM_DECODE=1` dumps the from-decode pipeline
-    // instead of the oracle, so a licensed-media run can produce a `from_decode` corpus to diff against the
-    // oracle corpus BEFORE the 8g.4b flip. Default path is unchanged (still the oracle). Removed at 8g.4b.
-    let from_decode = std::env::var("FINGERPRINT_FROM_DECODE")
-        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    let mut corpus = if from_decode {
-        progress.phase("  [FINGERPRINT_FROM_DECODE] dumping via the 8g from-decode pipeline (validation shadow)");
-        crate::application::gap_fingerprint::characterize_gaps_from_decode(
-            report,
-            &decoded.a_pcm,
-            &decoded.b_samples_full,
-            &request,
-            &args.fingerprint_gap,
-            config.repair.fingerprint_diagnostics,
-            progress,
-        )
-    } else {
-        characterize_gaps_with_gate(
-            report,
-            &decoded.a_pcm,
-            &decoded.b_samples_full,
-            &request,
-            &args.fingerprint_gap,
-            config.repair.fingerprint_diagnostics,
-            progress,
-        )
-    };
-    // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
-    corpus.source.scan_recipe.min_gap_ms =
-        Some((config.repair.min_gap_secs() * 1000.0).round() as u64);
-    corpus.source.scan_recipe.absolute_silence_rms = Some(config.repair.absolute_silence_rms);
 
-    let n = crate::application::gap_fingerprint::write_corpus_dir(&corpus, dir)
-        .map_err(|e| RepairError::Config(format!("write gap corpus to {}: {e}", dir.display())))?;
-    progress.phase(&format!(
-        "wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}",
-        dir.display()
-    ));
+    // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
+    let complete_recipe = |corpus: &mut crate::application::gap_fingerprint::GapCorpus| {
+        corpus.source.scan_recipe.min_gap_ms =
+            Some((config.repair.min_gap_secs() * 1000.0).round() as u64);
+        corpus.source.scan_recipe.absolute_silence_rms = Some(config.repair.absolute_silence_rms);
+    };
+    let dump = |sub: &str, mut corpus: crate::application::gap_fingerprint::GapCorpus| -> Result<(), RepairError> {
+        complete_recipe(&mut corpus);
+        let out = if sub.is_empty() { dir.to_path_buf() } else { dir.join(sub) };
+        let n = crate::application::gap_fingerprint::write_corpus_dir(&corpus, &out)
+            .map_err(|e| RepairError::Config(format!("write gap corpus to {}: {e}", out.display())))?;
+        progress.phase(&format!("wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}", out.display()));
+        Ok(())
+    };
+    let run = |from_decode: bool| {
+        let f = if from_decode {
+            crate::application::gap_fingerprint::characterize_gaps_from_decode
+        } else {
+            characterize_gaps_with_gate
+        };
+        f(report, &decoded.a_pcm, &decoded.b_samples_full, &request, &args.fingerprint_gap, config.repair.fingerprint_diagnostics, progress)
+    };
+
+    if args.validate_from_decode {
+        // 8g.4a validation (transitional, removed at 8g.4b): dump BOTH pipelines from the SAME decode into
+        // `DIR/oracle` + `DIR/from_decode` (identical source-id ⇒ zero re-decode/code-version confound), for the
+        // source-id-aligned diff (`from_decode_vs_oracle` test) that gates the flip.
+        progress.phase("  [--validate-from-decode] dumping oracle + from-decode pipelines for comparison");
+        dump("oracle", run(false))?;
+        dump("from_decode", run(true))?;
+    } else {
+        dump("", run(false))?;
+    }
     Ok(())
 }
 

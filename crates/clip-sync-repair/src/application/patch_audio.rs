@@ -3299,8 +3299,8 @@ mod tests {
         let total = secs(3.0);
         let (g0, g1) = (secs(1.0), secs(2.0));
         let sine = |buf: &mut [f32], start: usize, end: usize, freq: f64| {
-            for f in start..end.min(total) {
-                buf[f] = (std::f64::consts::TAU * freq * (f as f64) / f64::from(rate)).sin() as f32 * 0.2;
+            for (f, slot) in buf.iter_mut().enumerate().take(end.min(total)).skip(start) {
+                *slot = (std::f64::consts::TAU * freq * (f as f64) / f64::from(rate)).sin() as f32 * 0.2;
             }
         };
         // A: content outside the gap, silent inside. B: content everywhere (fill available in the gap).

@@ -67,34 +67,61 @@ fn corpus_roots() -> Option<Vec<PathBuf>> {
     d.is_dir().then(|| vec![d])
 }
 
-/// **8g.4a media gate — old-vs-new decode differential on licensed media** (the flip gate, reviewer point 4).
-/// Point the env vars at the **oracle** corpus (a normal `--gap-fingerprints` run) and the **from-decode**
-/// corpus (a `FINGERPRINT_FROM_DECODE=1` run) of the SAME media, and assert their `golden_baseline` is
-/// identical — run once lean, once with `--fingerprint-diagnostics`.
+/// **8g.4a media gate — the from-decode-vs-oracle differential on licensed media** (the flip gate). Point
+/// `VALIDATE_FP_DIRS` at the `--gap-fingerprints DIR --validate-from-decode` output dir(s) — each holds
+/// `oracle/` + `from_decode/` produced from the SAME decode — and assert their `golden_baseline` matches. The
+/// two corpora are **aligned + verified by source-id** (the FNV digest of the decoded audio already in each
+/// `corpus.json`), so a `source-id` mismatch is a hard error ("different media"), and folder names don't
+/// matter. Run once lean, once with `--fingerprint-diagnostics`.
 ///
 /// ```powershell
-/// clip-sync-repair <A> <B> ... --gap-fingerprints out_old
-/// $env:FINGERPRINT_FROM_DECODE="1"; clip-sync-repair <A> <B> ... --gap-fingerprints out_new; $env:FINGERPRINT_FROM_DECODE=$null
-/// $env:OLD_FP_DIRS="out_old"; $env:NEW_FP_DIRS="out_new"
-/// cargo test -p clip-sync-repair --features validation-tests --test gap_repair_spec_diff from_decode_vs_oracle_media -- --ignored
+/// clip-sync-repair <A> <B> ... --gap-fingerprints val\p1 --validate-from-decode
+/// $env:VALIDATE_FP_DIRS = "val\p1"   # comma-separate several
+/// cargo test -p clip-sync-repair --features validation-tests --test gap_repair_spec_diff from_decode_vs_oracle -- --ignored --nocapture
 /// ```
 #[test]
-#[ignore = "tier:validation — set OLD_FP_DIRS + NEW_FP_DIRS (oracle vs FINGERPRINT_FROM_DECODE corpora of the same media)"]
-fn from_decode_vs_oracle_media() {
-    let (Some(old_roots), Some(new_roots)) = (env_dirs("OLD_FP_DIRS"), env_dirs("NEW_FP_DIRS")) else {
-        eprintln!("skip: set OLD_FP_DIRS and NEW_FP_DIRS to the oracle and from-decode corpora of the same media");
+#[ignore = "tier:validation — set VALIDATE_FP_DIRS to --validate-from-decode output dir(s)"]
+fn from_decode_vs_oracle() {
+    use clip_sync_repair_harness::corpus_projection::golden_baseline_of_corpus;
+
+    let Some(dirs) = env_dirs("VALIDATE_FP_DIRS") else {
+        eprintln!("skip: set VALIDATE_FP_DIRS to `--validate-from-decode` output dir(s) (each holds oracle/ + from_decode/)");
         return;
     };
-    let old = analyze_dirs(&old_roots, drift_eps_from_env(), tail_secs_from_env()).golden_baseline();
-    let new = analyze_dirs(&new_roots, drift_eps_from_env(), tail_secs_from_env()).golden_baseline();
-    assert!(old.gap_count > 0, "no gaps under OLD_FP_DIRS {old_roots:?}");
-    eprintln!("from-decode media gate: {} oracle gap(s) vs {} from-decode", old.gap_count, new.gap_count);
-    let diffs = diff_baselines(&old, &new, TIER2_ABS_EPS);
+
+    let read = |dir: &Path, sub: &str| -> GapCorpus {
+        let cj = dir.join(sub).join("corpus.json");
+        serde_json::from_str(&std::fs::read_to_string(&cj).unwrap_or_else(|e| panic!("read {}: {e}", cj.display())))
+            .unwrap_or_else(|e| panic!("parse {}: {e}", cj.display()))
+    };
+
+    let mut total = 0usize;
+    let mut all_diffs: Vec<String> = Vec::new();
+    for dir in &dirs {
+        let oracle = read(dir, "oracle");
+        let from_decode = read(dir, "from_decode");
+        // Same-media check (the "manifest hash verify"): the source-id is the digest of the decoded audio.
+        assert_eq!(
+            (&oracle.source.a_source.id, &oracle.source.b_source.id),
+            (&from_decode.source.a_source.id, &from_decode.source.b_source.id),
+            "{}: oracle vs from_decode source-id mismatch — different media?",
+            dir.display(),
+        );
+        total += oracle.gaps.len();
+        // Both re-key to the same one-pair label inside `golden_baseline_of_corpus`, so they align by index.
+        let d = diff_baselines(
+            &golden_baseline_of_corpus(&oracle),
+            &golden_baseline_of_corpus(&from_decode),
+            TIER2_ABS_EPS,
+        );
+        all_diffs.extend(d.into_iter().map(|m| format!("{}: {m}", dir.display())));
+    }
+    eprintln!("from-decode vs oracle: {} dir(s), {total} gap(s) checked", dirs.len());
     assert!(
-        diffs.is_empty(),
+        all_diffs.is_empty(),
         "from-decode diverged from the oracle on {} decision-axis field(s):\n{}",
-        diffs.len(),
-        diffs.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
+        all_diffs.len(),
+        all_diffs.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
     );
 }
 
