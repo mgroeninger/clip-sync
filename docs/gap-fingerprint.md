@@ -42,7 +42,7 @@ The dump characterizes **every selected gap at full detail** — it runs the **f
 short-circuit** like the production patch path. That per-bracket structure+seam search over the
 `--fill-border-search-secs` haystack is the dominant cost.
 
-Measured on a real 5.1 dump (licensed-pair, HE-AAC, 2026-07-11): **per-bracket oracle ≈ 82 % of wall-clock**
+Measured on a real 5.1 dump (a licensed HE-AAC 5.1 pair, 2026-07-11): **per-bracket oracle ≈ 82 % of wall-clock**
 (decode ≈ 12 %), **~8.4 s per bracket** score, 11–22 brackets per short skip gap. Cost scales with the
 **bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free).
 
@@ -98,7 +98,7 @@ program audio?" — distinct from "can we splice" (`splice_dualfit`) and "is B o
 
 **Conservative:** `skip` only when donor-occupied **and** A-quiet **and** `min(pre,post) ≥ min_seam` **and**
 same-source residual — any missing metric or unmet condition ⇒ `attempt_patch`. **Phase 0 is emit-only** (for
-licensed-pair tuning); the production plan-time skip (`--skip-equivalent-gaps`) is a later (v1) step.
+a licensed 5.1 pair tuning); the production plan-time skip (`--skip-equivalent-gaps`) is a later (v1) step.
 
 ## Lag fingerprint
 

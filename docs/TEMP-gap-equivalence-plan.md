@@ -3,8 +3,8 @@
 Status: **Phase 0 landed (2026-07-11)** — the cheap equivalence block (`domain/gap_equivalence.rs` policy +
 E1; `application/gap_equivalence.rs` compose over E1–E4 at nominal/lag-0) is built, unit + end-to-end tested,
 and emitted as the `equivalence` block on `--gap-fingerprints` (see [gap-fingerprint.md](gap-fingerprint.md)).
-**Remaining in Phase 0:** run on licensed-pair to tune thresholds (§9.1) — and confirm the redundant extras actually
-match at **lag 0** (our earlier `min_gap 1000ms` measurement found licensed-pair gaps are timing-**offset** ~150–200 ms;
+**Remaining in Phase 0:** run on a licensed 5.1 pair to tune thresholds (§9.1) — and confirm the redundant extras actually
+match at **lag 0** (our earlier `min_gap 1000ms` measurement found a licensed pair's gaps are timing-**offset** ~150–200 ms;
 if the sensitive-scan extras are offset too, the lag-0 read underfires — decide before v1). The **v1** plan-time
 gate + production skip are **not** started.
 
@@ -20,7 +20,7 @@ fill would be ~identity). Today `b_has_energy=true` marks them **repairable** an
 expensive patch path, often skipping later with weak seam scores. A **content-equivalence** gate
 would classify “B already matches A here” **before** patch and skip with an explicit reason.
 
-Real-world anchor: `licensed-pair-A.mkv` vs `licensed-pair-B.mkv` — 39 scan gaps vs 14 ffmpeg
+Real-world anchor: a licensed 5.1 A/B pair — 39 scan gaps vs 14 ffmpeg
 `silencedetect` hits at `d=0.5`; extras cluster around low-level dips where B has matching chase /
 room content at sync time.
 
@@ -125,7 +125,7 @@ Align → ScanGaps → [CheapEquivalenceBlock?] → build_gap_fill_plan → Patc
 - **Artifact reuse (required):** anything computed in the cheap block that later stages might need must be
   **stored on a per-gap artifact struct** and passed forward so characterize/patch does not re-decode or
   re-score the same windows (§5.3, §7.1).
-- **Phase 0:** emit the same block under `--gap-fingerprints` for licensed-pair tuning without enabling production skip.
+- **Phase 0:** emit the same block under `--gap-fingerprints` for a licensed 5.1 pair tuning without enabling production skip.
 
 ### 5.2 Per-gap inputs
 
@@ -378,7 +378,7 @@ the production gate will use (single source of truth).
 }
 ```
 
-Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so licensed-pair tuning does not require
+Emit under `--gap-fingerprints` even when `skip_equivalent_gaps=false` so a licensed 5.1 pair tuning does not require
 write mode. Fingerprint may still run heavier diagnostic fields (`seam_probe`, `splice_dualfit`, throat
 residual) **in parallel** for comparison during phase 0 — but the `equivalence` block must remain the cheap
 lag-0 + nominal-residual read.
@@ -401,14 +401,14 @@ lag-0 + nominal-residual read.
 
 ## 9. Validation corpus
 
-### 9.1 licensed-pair external row (primary)
+### 9.1 a licensed 5.1 pair external row (primary)
 
 Add `gap_corpus` **external** case (or harness golden) when media available:
 
 | File | Role |
 |------|------|
-| `licensed-pair-A.mkv` | A (reference) |
-| `licensed-pair-B.mkv` | B |
+| `the reference (A)` | A (reference) |
+| `the second recording (B)` | B |
 
 ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master.
 
@@ -436,7 +436,7 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 | Phase | Scope |
 |-------|-------|
-| **0 — Cheap block + fingerprint** | `measure_cheap_equivalence` + `CheapEquivalenceArtifacts`; `equivalence` block in `--gap-fingerprints`; tune on licensed-pair; no production skip |
+| **0 — Cheap block + fingerprint** | `measure_cheap_equivalence` + `CheapEquivalenceArtifacts`; `equivalence` block in `--gap-fingerprints`; tune on a licensed 5.1 pair; no production skip |
 | **v1** | `skip_equivalent_gaps`, plan-time skip, artifact cache into characterize, `AlreadyMatchesReference`, human + JSON output, synthetic tests |
 | **v1.5** | `RedundantScanDip` tier; interior bridge (E5); `--equivalence-min-seam` exposure |
 | **v2** | Batch equivalence in scan phase (reuse B silence map decode); optional `equivalence_mode: aggressive\|conservative` profile |
@@ -456,7 +456,7 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 - [x] Wire **same** function into `gap_fingerprint.rs` from-decode path (`equivalence` block on every gap)
 - [x] JSON schema — documented in [gap-fingerprint.md](gap-fingerprint.md) § `equivalence` *(the production
   gap-row `equivalence` in `json-output.md` is a v1 concern — no production output in Phase 0)*
-- [ ] Run on licensed-pair / second-recording; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
+- [ ] Run on a licensed A/B pair; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
 
 ### v1 (production gate)
 
@@ -487,7 +487,7 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 | **Plan** | Equivalence skip excluded from `regions`; `repairable_count` unchanged; `planned_count` reduced |
 | **Patch** | Skipped gap samples identical to input A in output |
 | **Fingerprint** | Equivalence block present; matches plan verdict when both run |
-| **External** | licensed-pair: zero ffmpeg anchors equivalence-skipped |
+| **External** | a licensed 5.1 pair: zero ffmpeg anchors equivalence-skipped |
 
 ---
 
@@ -521,4 +521,4 @@ When v1 ships:
 - Link from [pipeline.md](pipeline.md) fill-plan section.
 - Keep phase 0 / v1.5 notes here until implemented or archived.
 
-**Done means:** on licensed-pair sensitive scan, `skip_equivalent_gaps=true` removes ≥80% of non-ffmpeg extras from the fill plan without equivalence-skipping any ffmpeg anchor gap (manual verification + external corpus row).
+**Done means:** on a licensed 5.1 pair sensitive scan, `skip_equivalent_gaps=true` removes ≥80% of non-ffmpeg extras from the fill plan without equivalence-skipping any ffmpeg anchor gap (manual verification + external corpus row).
