@@ -6,14 +6,17 @@ residual work piled in: A3b `single_lag_alignment`, A6 residual, seam-scoring ad
 directory with a stable `crate::domain::policies::*` re-export facade. **Opportunistic** — do alongside
 seam/residual work, not as a standalone refactor.
 
-**Companion to the pipeline redesign.** This is the module-organization axis; the pipeline redesign
-([TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)) is the assembly axis — orthogonal,
-kept as separate plans. But the pipeline redesign is the **de facto driver**: it already spun out focused
-domain modules (`seam_local.rs`, `donor.rs`, `dual_fit.rs`) and its steps touch exactly the regions below, so
-its steps are this plan's concrete **triggers** (§5). **Rule: extract-when-you-touch, as a separate
-byte-preserving PR adjacent to the pipeline step — never bundled into a characterize/execute PR** (that would
-wreck the §4/C2 "diff proves no behavior change" guarantee). The pipeline plan tracks the trigger status in its
-§2.6 so this doesn't get forgotten mid-refactor.
+**Companion to the pipeline redesign.** This is the module-organization axis; the pipeline redesign was the
+assembly axis — orthogonal, kept as separate plans. **Status update (2026-07-11):** that redesign
+([archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)) is **closed** —
+its dump/fingerprint work landed, and it already spun out focused domain modules (`seam_local.rs`, `donor.rs`,
+`dual_fit.rs`). Its remaining P2/P3 **trigger** — the shared mono-downmix **Hoist** — moved to the successor
+[TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) (§2.1), which is **measure-first**:
+P2 (`silence.rs`) / P3 (`gap_borders.rs`) fire **only if** that production measurement shows the hoist is worth
+doing. P4 (`seam_scoring.rs`, trigger 6b) and P1 (`seam_residual.rs`, trigger A6) already fired independently
+and stay ready. **Rule (unchanged): extract-when-you-touch, as a separate byte-preserving PR adjacent to the
+perf step — never bundled into a behavior-change PR** (that would wreck the §4/C2 "diff proves no behavior
+change" guarantee). The production perf doc's §3 restates this ordering (extract owner, then hoist).
 
 Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (**shipped**
 — P1's trigger has fired; P1 is *ready* but not done), [archive/residual-gate-findings.md](archive/residual-gate-findings.md)

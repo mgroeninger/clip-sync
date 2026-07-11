@@ -6,7 +6,7 @@ dedicated cheap equivalence block, plan-time gate, and production skip are **not
 Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
 [gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
 [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [json-output.md](json-output.md),
-[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
+[TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
 
 Motivating use case: sensitive gap scan (`min_gap_ms=500`, `scan_block_ms=100`, …) finds many
 silent runs on A that ffmpeg also sees, but a large fraction are **not editorial dropouts** — A
@@ -193,7 +193,7 @@ pub struct CheapEquivalenceArtifacts {
 
 When a gap **passes** equivalence (→ `AttemptPatch`), pass `CheapEquivalenceArtifacts` into the existing
 characterize path (or a shared per-gap cache keyed by gap id) so border templates and B mono are not
-re-extracted. Align with [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.5
+re-extracted. Align with [TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) §2.5
 “characterize owns B access” — equivalence characterize is the **first** B touch at plan time.
 
 Decode strategy:

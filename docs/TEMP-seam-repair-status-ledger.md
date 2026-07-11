@@ -3,7 +3,7 @@
 **Purpose.** The working docs
 ([archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) — mechanism + measurement history,
 [gap-vocabulary.md](gap-vocabulary.md) — vocabulary (archived derivation: [archive/TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md)),
-[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) — pipeline perf/assembly, D12)
+[TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) — pipeline perf/assembly, D12)
 hold the claims/plans at every stage of proof. This ledger is the **index over them**: one row per claim,
 scored **Confidence × Importance × Target**, so we can see the critical path and what to incorporate. The
 **§4 wire spec** (dual-fit repair algorithm for A3) lives here; the dualfit plan doc is historical detail.
@@ -12,7 +12,7 @@ Update this when a claim's status changes.
 **Ledger status (2026-07-03):** Critical path **closed** (A1–A4 proven; A3, G5, D6, D7 shipped in code).
 This doc is a **closed proof index** + §4 wire-spec reference. **Active work:**
 [§F Production rollout](#f-production-rollout--remaining-work-2026-07-03),
-[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12 perf).
+[TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12 perf).
 Vocab P4 (wiring named cells into `gap_tags.rs`/reporting) is **parked**, not active — see §D.
 
 **Legend.** Confidence: `PROVEN` (data) · `SUPP` (strong, small n) · `DECIDED` (policy chosen, not yet in code) · `OPEN` · `REFUTED`.
@@ -52,8 +52,10 @@ The claims that gated a working repair. All rows below are **done** unless noted
 **Sequencing consequence (2026-07-03):** registration (A2) and dual-fit repair (A3) are **closed and
 validated** on the re-anchor rescan; golden baseline **frozen**; G5 program-quiet and `--dual-fit` are
 **shipped** in production (`patch_audio.rs`). **`diag_splice_dualfit` sim retired** (E-tombstone).
-**Next:** [§F Production rollout](#f-production-rollout--remaining-work-2026-07-03) → D12 perf (optional
-for calibration throughput, not repair correctness).
+**Next:** [§F Production rollout](#f-production-rollout--remaining-work-2026-07-03). D12 perf is **closed**
+(dump/fingerprint done; archived) — any further perf is production-path, measure-first, in
+[TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) (optional for throughput, not repair
+correctness).
 
 ---
 
@@ -158,13 +160,13 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 | D2 | **Decorrelated / different-content regime** | Untestable directly — this corpus is all same-master. But same-master **decoys** can stand in for different-content negatives (see **D8**: mine periodic/alias-suspect placements; construct level-matched substitution fills). Revisit with genuine different-content data when available. |
 | D3 | **Channel-scope / donor-displacement axes** (vocab §2b) | Surface in analyzer later; not decision-relevant for dual-fit. |
 | D4 | **Wire axis facts into `gap_tags.rs`**; reconcile `content_hint`/`seam_shape` with cells | Vocab **P4** (deferred, parked — not scheduled); types named in [gap-vocabulary.md](gap-vocabulary.md) (P3 done). W-tiers stay derived readouts until P4. If picked up, the code-touch point is `gap_tags.rs`'s tag emission, documented today in [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary — no other active TEMP plan touches this file. |
-| D5 | **Perf** (FFT lag, dedup search, decode reuse) | **Now owned by [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12).** FFT lag sweep scoped (~50–150×, `rustfft` present, gate on `fft≈naive` test) — full spec in **Capture parked → FFT lag sweep** below, migration ordering in the perf doc §3. |
+| D5 | **Perf** (FFT lag, dedup search, decode reuse) | **Folded into D12 (closed).** FFT lag sweep **landed** (`lag_correlation_curve_auto`); decode reuse + `skip_baseline_placement` dedup landed. History: [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md). Remaining production-path perf → [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md). |
 | D6 | **No regression on existing patches** (`--no-dual-fit` ⇒ unchanged) | **DONE (2026-07-02)** — `--no-dual-fit` restores bracket-only path; dual-fit default **on** (F1). Only reachable from bracket-exhausted skip returns, so patched gaps are untouched. |
 | D7 | **Audibility of the trim point** (splice at low-energy interior sounds clean) | **PASSED (2026-07-02)** — operator reviewed dual-fit fills on pairs 2–7; indistinguishable by ear. Pair 1 targets (1·g3/g5/g22) validated in-scan + golden baseline; optional media listen. Blip at `5·g4` is bracket-search crossfade, not dual-fit. |
 | D8 | **Decoy / wrong-placement safety** (a deliberately wrong B fill still fails the gate) — the corpus has no **wrong-content** negatives (all same-master). *(It DOES have no-content negatives — program-quiet + donor-BROKEN — which the donor gate catches, validated. D8 is only about the wrong-content/periodic-misregistration case.)* | **THEORETICAL — low priority (2026-07-02).** No false positive has been observed: all 9 targets are validated (donor-continuous, step-real, operator-confirmed spot checks). `gate_pass` being degenerate (31/32 pass) means the seam gate is *redundant* here — it is **not** evidence anything is leaking; the donor + step-real filters carry the discrimination. **A real alias gate is unneeded until a false positive appears.** The first labeled negative will come from **D7 (listening to the 9 fills)** or non-same-master deployment — build the gate *then*, calibrated against that example, not speculatively. Candidate discriminators when needed: wide-envelope concordance (B12), cross-scale lag agreement, 1 s `peak_z` (NOT the 250 ms `seam_z` — one-sided-dead gaps score it up to 41). **Construction** (when needed): **A fair decoy must pass structure but fail the seam** (else it tests nothing): a *too-different* decoy (cross-pair/noise/silence) fails structure trivially; a *matching-shoulders/wrong-interior* decoy is **not a fair test** — A's gap is empty, so B's interior is unverifiable from A (accepting it is a limit, not a gate bug). **Offset-perturbation doesn't work** — the structure/lag search self-corrects a metadata lie; you must change the *audio* so the correct answer isn't available. **Construction (two ways):** (A) **Mine** — periodic/repeated content yields structurally-similar-but-fine-wrong placements for free; the **alias-suspect cluster (pair 6)** *is* a set of natural decoys — offer a repeated-phrase location as a fill candidate and check the seam rejects. (B) **Construct** — on a known-good fillable gap, overwrite B's fill region (mapped span **and** shoulders) with a different, **active, level-matched** passage of the *same* B (single-master ⇒ true content is unique ⇒ search can't route around it); a correct gate flips fill→skip. **Make it a margin:** sweep decoy content-distance (near-repeat → distant) to map the seam's discrimination boundary = the reject-safety margin / headroom on the 0.35 floor. Start with mining (free); build substitution only for the parameterized margin. |
 | D9 | **Fingerprint diagnostic stubs** (F2/F3) | Gate path omits per-bracket `structure_*` and leaves `GateOutcome` vocabulary tags empty. Fine for diagnostics today. See **Capture parked**. |
 | D10 | **RMS outward-anchor as primary registration** | Pair-6 sweep: loudest ≠ most unique (6·g9 pre z 22→9, 6·g10 pre z 27→9 on sustained tones). `b_mapped` + centered lag already finds −131 ms. Keep `[outward-anchor]` in `diag_splice_timescale` as diagnostic only; if revived, select by **`peak_z` distinctiveness**, not RMS. |
-| D12 | **Pipeline performance & assembly redesign** (D12) | **Active — step 6 next.** Own doc: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md). §1 audit done; §2.5 `GapRepairSpec` characterize→execute split specified (2026-07-05); §4 golden harness partial (§4.7 Tier A done). **Next:** step 6 (6a–c) before step 8 hoists. A3/G5/FFT landed. |
+| D12 | **Pipeline performance & assembly redesign** (D12) | **SUBSTANTIALLY COMPLETE + CLOSED (2026-07-11).** The dump/fingerprint workstream landed: characterize→execute split (step 6), from-decode fingerprint unification (8g.4a/8g.4b), oracle deletion (8g.6); A3/G5/FFT-lag also landed. **8g.5** (per-bracket-oracle perf) **deferred** — refuted by measurement (dump-only cost; timing-offset gaps; correlation pre-filter invalid). Detail doc **archived**: [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (retained as audit + history). **Successor:** production-pipeline perf → [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) (the mis-filed Hoists / shared mono downmix, measure-first). |
 | D11 | **Donor-silent gaps = program-quiet, not fillable dropouts** | **DONE — analyzer (2026-07-03); production pre-gate removed (2026-07-03).** Analyzer: `program_quiet_skip()` / `addressable_dropout()` via `donor_interior_nominal`. Plan-time: `b_has_energy = false` → unfillable. Dual-fit declines program-quiet donors. Production patch no longer short-circuits on nominal silence alone (F2/I3 regression fix). Threshold `PROGRAM_QUIET_SILENCE_FRAC = 0.5` (C6). |
 
 ---
@@ -192,7 +194,7 @@ zero-move bracket in gate overlay.
 **Perf (2026-07-03).** Dominant scan cost: N × oracle bracket scoring (always on). Partial wins landed:
 `skip_baseline_placement` (summary dedup); X-set behind `--fingerprint-diagnostics`. **Still open (D12):**
 binned-RMS hoist, border extract sharing, FFT lag sweep (~50–150×). Fingerprint dump shares `decode_ab` with
-repair — it does **not** re-decode after repair. Details: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.4.
+repair — it does **not** re-decode after repair. Details: [TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) §2.4.
 
 **FFT lag sweep (`lag_correlation_curve`) — the biggest single win (~50–150×).** `lag_correlation_curve`
 (`gap_fingerprint.rs`) is naive `O(n·L)`: one 1 s Pearson (`n ≈ 48k`) at every integer lag over ±600 ms
@@ -273,7 +275,7 @@ throughput). Ordered by impact.
 | **F2** | **Operator docs** | **DONE (2026-07-03)** | [gap-repair-guide.md](gap-repair-guide.md) and [gap-fill-modes.md](gap-fill-modes.md) document dual-fit rescue (G6), G5 `ProgramQuiet` skip, W7/P8, and `--no-dual-fit`. |
 | **F3** | **CLI / JSON surfacing** | **DONE (2026-07-03)** | Skip reason `ProgramQuiet` documented as reserved (not production-emitted). Dual-fit + fingerprint flags in [README.md](../README.md), [cli-output.md](cli-output.md), `repair.toml`; `--fingerprint-gap` / `--fingerprint-diagnostics` require `--gap-fingerprints`. Dual-fit-rescued patches now carry a `dual_fit_used` marker (mirrors `anchor_seam_used`) distinguishing them from ordinary bracket-search fits: human status `patched (dual-fit pre→post)`, JSON `status.patched.dual_fit_used` / `tags.dual_fit_used`, verbose `dual_fit=true` — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. |
 | **F4** | **Bracket-search fill quality** | **OPEN — separate track** | `5·g4` boundary blips (crossfade at fill edge) — pre-existing bracket path, not A3. Worth a focused pass if operators hit audible seams on *patched* (non-dual-fit) gaps. |
-| **F5** | **D12 perf + assembly** | **OPEN — not blocking correctness** | Step 6 characterize→execute (`GapRepairSpec`, §2.5) **then** step 8 hoists + fingerprint unify ([TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §2.4–§2.5). Improves calibration turnaround (~1.7 h/pair) and removes prod/fingerprint oracle drift. |
+| **F5** | **D12 perf + assembly** | **DONE (dump/fingerprint) + CLOSED** | Step 6 characterize→execute + fingerprint unification (8g) landed — removed prod/fingerprint oracle drift. Detail archived: [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md). Remaining production-path perf (Hoists, measure-first) → [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md). |
 | **F6** | **D8 decoy / alias gate** | **PARKED** | Build only when a false positive appears (non-same-master or mined decoy). No observed leak on the 9-target corpus. |
 | **F7** | **Vocab P3** | **DONE (2026-07-03)** | Published [gap-vocabulary.md](gap-vocabulary.md) — five named cells + legacy W-tier appendix. P4 (wiring into analyzer/reporting tags, D4) remains deferred; does not change repair decisions. |
 
