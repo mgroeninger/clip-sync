@@ -1,7 +1,12 @@
 # Gap content equivalence (skip redundant fills) — plan (DRAFT)
 
-Status: **orchestration not started** — low-level comparison primitives are **landed** (§5.0); the
-dedicated cheap equivalence block, plan-time gate, and production skip are **not**.
+Status: **Phase 0 landed (2026-07-11)** — the cheap equivalence block (`domain/gap_equivalence.rs` policy +
+E1; `application/gap_equivalence.rs` compose over E1–E4 at nominal/lag-0) is built, unit + end-to-end tested,
+and emitted as the `equivalence` block on `--gap-fingerprints` (see [gap-fingerprint.md](gap-fingerprint.md)).
+**Remaining in Phase 0:** run on licensed-pair to tune thresholds (§9.1) — and confirm the redundant extras actually
+match at **lag 0** (our earlier `min_gap 1000ms` measurement found licensed-pair gaps are timing-**offset** ~150–200 ms;
+if the sensitive-scan extras are offset too, the lag-0 read underfires — decide before v1). The **v1** plan-time
+gate + production skip are **not** started.
 
 Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
 [gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
@@ -442,11 +447,15 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 ### Phase 0 (cheap block + fingerprint)
 
-- [ ] `domain/gap_equivalence.rs` — `CheapEquivalenceArtifacts`, `measure_cheap_equivalence` (E1 lag-0 +
-  E2 nominal `seam_chosen_and_floor` only) + unit tests (synthetic PCM)
-- [ ] `application/gap_equivalence.rs` — bounded A+B extract; populate artifact struct
-- [ ] Wire **same** function into `gap_fingerprint.rs` characterize path (not dual-fit proxy)
-- [ ] JSON schema + `json-output.md` § `equivalence`
+- [x] `domain/gap_equivalence.rs` — types (`GapEquivalenceParams`/`EquivalenceVerdict`/`…Disposition`/
+  `…SkipReason`/`CheapEquivalenceMetrics`) + §5.4 policy `equivalence_verdict` + E1 `nominal_seams` + unit tests
+  *(the `CheapEquivalenceArtifacts` PCM-cache is a v1 reuse concern, not built)*
+- [x] `application/gap_equivalence.rs` — `measure_gap_equivalence` composing E1–E4 at nominal/lag-0 + the
+  A↔B coordinate contract + end-to-end synthetic tests *(bounded reader extract is v1; Phase 0 runs on the
+  already-decoded dump buffers)*
+- [x] Wire **same** function into `gap_fingerprint.rs` from-decode path (`equivalence` block on every gap)
+- [x] JSON schema — documented in [gap-fingerprint.md](gap-fingerprint.md) § `equivalence` *(the production
+  gap-row `equivalence` in `json-output.md` is a v1 concern — no production output in Phase 0)*
 - [ ] Run on licensed-pair / second-recording; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
 
 ### v1 (production gate)

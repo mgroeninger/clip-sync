@@ -3,6 +3,7 @@ pub mod align_bridge;
 pub mod fit_routing;
 #[doc(hidden)]
 pub mod gate_oracle;
+pub mod gap_equivalence;
 pub mod gap_fingerprint;
 pub mod mux_bitrate;
 pub mod patch_audio;

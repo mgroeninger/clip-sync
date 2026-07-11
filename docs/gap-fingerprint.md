@@ -77,6 +77,28 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
 | `b_levels` | full, B present | symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
+| `equivalence` | B present | **cheap content-equivalence** (Phase 0) — is B already the same program audio as A at the **nominal** map (lag 0), so a fill would be a no-op? (see below) |
+
+### `equivalence` — is a fill redundant? (Phase 0)
+
+A cheap, nominal-map/lag-0 read that composes the *existing* seam-Pearson + same-source-residual + donor +
+A-RMS primitives (no new seam math, no bracket grid / dual-fit / oracle-throat search — plan
+[TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md) §5.3). It answers "would patching **change** the
+program audio?" — distinct from "can we splice" (`splice_dualfit`) and "is B occupied" (`donor_interior*`).
+
+| Field | Meaning |
+|-------|---------|
+| `disposition` | `skip` (redundant / identity), `attempt_patch` (inconclusive → patch), or `not_evaluated` |
+| `nominal_pre` / `nominal_post` | seam Pearson at the nominal map, **lag 0** (no shoulder search) |
+| `residual_headroom_db` | worst-side chosen-vs-floor residual headroom (≈0 at nominal; the signal is `residual_informative`) |
+| `residual_informative` | nominal floor cancels on every measured side ⇒ same-source at the nominal map |
+| `donor_silence_fraction` | B occupancy over the nominal span (occupied ⇒ not program-quiet) |
+| `a_gap_rms_db` | A gap interior RMS (confirms A is a real dropout, not a loud false-negative) |
+| `skip_reason` | `already_matches_reference` when `disposition = skip` |
+
+**Conservative:** `skip` only when donor-occupied **and** A-quiet **and** `min(pre,post) ≥ min_seam` **and**
+same-source residual — any missing metric or unmet condition ⇒ `attempt_patch`. **Phase 0 is emit-only** (for
+licensed-pair tuning); the production plan-time skip (`--skip-equivalent-gaps`) is a later (v1) step.
 
 ## Lag fingerprint
 

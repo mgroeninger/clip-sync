@@ -203,6 +203,12 @@ pub struct GapFingerprint {
     pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
+    /// Cheap content-equivalence read (Phase 0, `docs/TEMP-gap-equivalence-plan.md`): does B already carry
+    /// the same program audio as A at the **nominal** map (lag 0), so a fill would be a no-op? Composed from
+    /// the seam Pearson + same-source residual + donor + A-RMS at nominal — the cheap gate, NOT the dual-fit
+    /// / oracle-throat measurements. Emitted for tuning; production skip is a later (v1) step.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub equivalence: Option<crate::domain::gap_equivalence::EquivalenceVerdict>,
 }
 
 /// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
@@ -840,6 +846,8 @@ pub fn spec_to_fingerprint_summary(
             signature_mode: None,
             skip_reason,
         }),
+        // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
+        equivalence: None,
     }
 }
 
@@ -2508,6 +2516,7 @@ pub fn build_gap_fingerprint(
         wide_envelope: None,
         splice_dualfit: None,
         outcome: None,
+        equivalence: None,
     }
 }
 
@@ -3037,6 +3046,31 @@ pub fn characterize_gaps_from_decode(
         // Carry the REAL per-bracket rows (8g.4b) so the flipped dump is byte-faithful to the oracle's
         // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), Some(m.brackets));
+
+        // Cheap content-equivalence overlay (Phase 0, gap-equivalence plan §7.4) — emitted for tuning; no
+        // production skip yet. Cheap (O(seam)+O(gap), no bracket grid), so always computed on the dump.
+        let equiv_b_mono = crate::domain::policies::interleaved_to_mono(b_slice, ch);
+        let seam_window_frames = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+        let equiv = crate::application::gap_equivalence::measure_gap_equivalence(
+            &crate::application::gap_equivalence::GapEquivalenceInput {
+                a_samples: &a_pcm.samples,
+                channels: ch,
+                sample_rate,
+                b_mono: &equiv_b_mono,
+                b_extract_start_frame: lo,
+                b_nominal_start_frame: (b_start * rate).round() as usize,
+                refined,
+                gap_floor_db: f64::from(fp.levels.gap_floor_db),
+                seam_window_frames,
+                standoff_frames: (cfg.border_standoff_secs * rate).round() as usize,
+                silence_peak_fraction: cfg.silence_peak_fraction,
+                absolute_silence_rms: cfg.absolute_silence_rms,
+                max_lag_frames: gate_cfg.residual_max_lag_frames,
+                residual_floor_ok_db: gate_cfg.residual_floor_ok_db,
+                params: crate::domain::gap_equivalence::GapEquivalenceParams::default(),
+            },
+        );
+        fp.equivalence = Some(equiv);
     }
     corpus
 }
@@ -4043,6 +4077,7 @@ mod tests {
             donor_interior_nominal: None,
             b_levels: None,
             outcome: None,
+            equivalence: None,
         }
     }
 
@@ -4215,6 +4250,7 @@ mod tests {
                 signature_mode: Some("energy".into()),
                 skip_reason: Some("boundary correlation below threshold".into()),
             }),
+            equivalence: None,
         };
         let json = serde_json::to_string(&fp).expect("serialize");
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");
