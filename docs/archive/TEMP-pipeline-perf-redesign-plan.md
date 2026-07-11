@@ -1,5 +1,14 @@
 # Pipeline performance & assembly redesign — audit + plan
 
+> **⛔ CLOSED / ARCHIVED (2026-07-11).** The D12 dump/fingerprint workstream this doc drove is **complete**:
+> the characterize→execute split (step 6), the from-decode fingerprint unification (8g.4a/8g.4b), and the
+> oracle deletion (8g.6) all landed. **8g.5** (per-bracket-oracle perf) is **deferred** — refuted by
+> measurement (see the 8g.5 row). The remaining forward-looking item — **production**-pipeline perf (the
+> mis-filed Hoists / shared mono downmix, §3.1) — moved to its own successor doc:
+> [../TEMP-production-repair-perf-plan.md](../TEMP-production-repair-perf-plan.md). This doc is retained as the
+> **audit + history** record (its §1 audit and §1.3 cost hierarchy stay factually true; the measured dump
+> profile is also in [../gap-fingerprint.md](../gap-fingerprint.md) § Performance). No further edits expected.
+
 **Purpose.** The detect→gate→fingerprint pipeline grew organically to *explore* gap classification; it was
 never reviewed for throughput or assembly. This doc (1) **audits** what the pipeline does today — every gate,
 its minimum inputs, cost, and overlaps — then (2) proposes a **performant re-assembly** with an explicit
