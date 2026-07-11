@@ -95,11 +95,7 @@ fn dump_gap_fingerprints(
 ) -> Result<(), RepairError> {
     progress.phase("characterizing gaps for fingerprinting");
     let media_reader = SymphoniaMediaReader;
-    // 8g.5 spike timing (env-gated by FP_TIMING; REMOVE before merge).
-    let fp_timing = std::env::var("FP_TIMING").is_ok();
-    let decode_t0 = std::time::Instant::now();
     let decoded = decode_ab(&media_reader, report, progress)?;
-    let decode_elapsed = decode_t0.elapsed();
     let request = config.repair.patch_settings().into_request(report.clone());
 
     // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
@@ -135,25 +131,7 @@ fn dump_gap_fingerprints(
     } else {
         // 8g.4b: the default dump is the from-decode pipeline (was `run(false)`, the per-bracket oracle). The
         // oracle (`characterize_gaps_with_gate`) is retained as the differentials' reference until 8g.6.
-        crate::application::gap_fingerprint::reset_oracle_timing();
-        let char_t0 = std::time::Instant::now();
-        let corpus = run(true);
-        let char_elapsed = char_t0.elapsed();
-        if fp_timing {
-            let (oracle_us, oracle_calls) = crate::application::gap_fingerprint::oracle_timing_snapshot();
-            let gaps = corpus.gaps.len();
-            eprintln!(
-                "[FP_TIMING] decode={:.2}s  characterize={:.2}s  per-bracket-oracle={:.2}s ({} calls over {} gaps)  oracle/characterize={:.0}%  oracle/total={:.0}%",
-                decode_elapsed.as_secs_f64(),
-                char_elapsed.as_secs_f64(),
-                oracle_us as f64 / 1e6,
-                oracle_calls,
-                gaps,
-                100.0 * (oracle_us as f64 / 1e6) / char_elapsed.as_secs_f64().max(1e-9),
-                100.0 * (oracle_us as f64 / 1e6) / (decode_elapsed + char_elapsed).as_secs_f64().max(1e-9),
-            );
-        }
-        dump("", corpus)?;
+        dump("", run(true))?;
     }
     Ok(())
 }

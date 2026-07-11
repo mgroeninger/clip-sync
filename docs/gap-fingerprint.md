@@ -39,6 +39,24 @@ if `--mux` is set, fingerprinting is **skipped** (with a warning if `--gap-finge
 passed). `--gap-fingerprints` therefore runs on a scan-only / `--wav` run. *(Note: `--gap-fingerprints`
 with `--wav` currently runs both and decodes A/B twice — fine, but not free.)*
 
+## Performance
+
+The dump characterizes **every selected gap at full detail** — it runs the **full per-bracket oracle**
+(`oracle_score_fit_candidate` over all feasible brackets, `gap_fingerprint.rs`), with **no routing or
+short-circuit** like the production patch path. That per-bracket structure+seam search over the
+`--fill-border-search-secs` haystack is the dominant cost.
+
+Measured on a real 5.1 dump (licensed-pair, HE-AAC, 2026-07-11): **per-bracket oracle ≈ 82 % of wall-clock**
+(decode ≈ 12 %), **~8.4 s per bracket** score, 11–22 brackets per short skip gap. Cost scales with the
+**bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free).
+
+Why it resisted a cheap speedup: on the licensed corpus, the expensive gaps are **timing-offset skips**
+(same audio shifted ~150–200 ms, lag-corr ≥ 0.98) that score every bracket only to fail the lag-0
+`waveform_floor` seam. A correlation-based pre-filter can't reject them (correlation is *high*), and the
+gate seam sits at a structure-search-chosen placement a fixed probe can't predict — so the fingerprint
+perf work (`TEMP-pipeline-perf-redesign-plan.md` §2.5.4 sub-step **8g.5**) was **deferred** after two
+approaches were refuted by measurement. Full analysis + cost hierarchy: that plan's §1.3 + 8g.5 row.
+
 ## Shape
 
 `GapCorpus { source: SourceMeta, gaps: [GapFingerprint] }`, serialized as JSON. Per gap:

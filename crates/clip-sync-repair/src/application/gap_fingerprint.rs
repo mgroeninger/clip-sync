@@ -2638,25 +2638,6 @@ struct RegionMeasureInput<'a> {
     progress: &'a dyn clip_sync::ProgressReporter,
 }
 
-// 8g.5 spike instrumentation (env-gated, REMOVE before merge): cumulative wall-clock + call count for the
-// per-bracket `oracle_score_fit_candidate` sweep — the §1.3 dominant cost 8g.5 wants to gate. Read/reset via
-// the accessors below; `dump_gap_fingerprints` prints them when `FP_TIMING` is set.
-pub(crate) static ORACLE_SCORE_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub(crate) static ORACLE_SCORE_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// (8g.5 spike) Snapshot `(micros, calls)` of the per-bracket oracle sweep since the last reset.
-pub fn oracle_timing_snapshot() -> (u64, u64) {
-    use std::sync::atomic::Ordering::Relaxed;
-    (ORACLE_SCORE_US.load(Relaxed), ORACLE_SCORE_CALLS.load(Relaxed))
-}
-
-/// (8g.5 spike) Reset the per-bracket oracle timing accumulators.
-pub fn reset_oracle_timing() {
-    use std::sync::atomic::Ordering::Relaxed;
-    ORACLE_SCORE_US.store(0, Relaxed);
-    ORACLE_SCORE_CALLS.store(0, Relaxed);
-}
-
 /// Compute one gap's gate-overlay measurements from decode. **Byte-neutral extraction of
 /// [`characterize_gaps_with_gate`]'s per-gap loop body (8g.3a)** — the caller assigns the returned fields onto
 /// `fp` exactly as the inline loop did.
@@ -2713,7 +2694,6 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     let bracket_total = brackets.len() as u64;
     for (bn, br) in brackets.iter().enumerate() {
         progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
-        let _oracle_t0 = std::time::Instant::now();
         let (seam_pre, seam_post, stage) =
             match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
                 Ok((pre, post, _, _, structure_start_frame)) => {
@@ -2728,9 +2708,6 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
                     (pre, post, Some(stage))
                 }
             };
-        // 8g.5 spike timing (env-gated, removed before merge): cumulative per-bracket oracle cost + call count.
-        ORACLE_SCORE_US.fetch_add(_oracle_t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
-        ORACLE_SCORE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if br.refined == refined {
             throat_seam = Some((seam_pre, seam_post));
         }
