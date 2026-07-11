@@ -660,10 +660,10 @@ impl GapRow {
     }
 }
 
-/// The dual-fit **step-real margin**: the step is *necessary* (a real splice, not a registration artifact)
-/// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at
-/// least this much — i.e. the step **materially improves** the seam. The earlier `post@pre < 0.35` floor was
-/// wrong: it flagged the step spurious whenever the constant offset merely *cleared* the gate floor, dropping
+// The dual-fit **step-real margin**: the step is *necessary* (a real splice, not a registration artifact)
+// only when placing the post seam at its own lag beats placing it at the pre lag (step forced to 0) by at
+// least this much — i.e. the step **materially improves** the seam. The earlier `post@pre < 0.35` floor was
+// wrong: it flagged the step spurious whenever the constant offset merely *cleared* the gate floor, dropping
 // `DUALFIT_STEP_REAL_MARGIN` (0.15) — the step-is-real margin — now lives canonically in
 // `clip_sync_repair::domain::dual_fit` (imported at the top; single source of truth, no drift). Rationale:
 // a true artifact reads `post_own ≈ post@pre` (Δ ≈ 0); 7·g4 barely-real drops (`post@pre 0.393`, `post_own
