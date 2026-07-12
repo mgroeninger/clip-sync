@@ -630,6 +630,10 @@ struct GapScanJson {
     overlap: Option<clip_sync::TimelineOverlapReport>,
     alignment: AlignmentReport,
     gaps: Vec<Gap>,
+    /// Per-gap silence-character classification (advisory), index-parallel to `gaps`. Omitted when the
+    /// scan did not populate it. See `docs/TEMP-gap-equivalence-plan.md`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    gap_equivalence: Vec<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
     gap_offset_agreement: Option<crate::domain::gap::GapOffsetAgreement>,
     #[serde(alias = "scan_window_secs")]
     decode_chunk_secs: u64,
@@ -649,6 +653,7 @@ impl GapScanJson {
             overlap: alignment_detail.start_overlap.map(Into::into),
             alignment: AlignmentReport::from(alignment_detail),
             gaps: report.gaps.clone(),
+            gap_equivalence: report.gap_equivalence.clone(),
             gap_offset_agreement: report.gap_offset_agreement.clone(),
             decode_chunk_secs: report.decode_chunk_secs,
             scan_block_ms: report.scan_block_ms,
@@ -791,6 +796,7 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
         GapFillSkipReason::TrackLayoutMismatch => "track layout mismatch",
         GapFillSkipReason::TrackCompatibilityUnavailable => "track compatibility unavailable",
         GapFillSkipReason::OutsideReferenceCoverage => "outside clip coverage",
+        GapFillSkipReason::AlreadyMatchesReference => "already matches reference (equivalent silence)",
     }
 }
 
@@ -940,6 +946,7 @@ mod tests {
                     b_has_energy: false,
                 },
             ],
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: Some(GapOffsetAgreement {
                 silence_based_offset_secs: 12.31,
                 alignment_offset_secs: 12.34,
@@ -1057,6 +1064,7 @@ mod tests {
                 video_b_end_secs: Some(72.5),
                 b_has_energy: true,
             }],
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
             scan_block_ms: 250,
@@ -1246,6 +1254,7 @@ mod tests {
                 video_b_end_secs: None,
                 b_has_energy: false,
             }],
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
             scan_block_ms: 250,

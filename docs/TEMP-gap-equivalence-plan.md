@@ -1,10 +1,11 @@
 # Gap content equivalence (skip redundant fills) — plan (DRAFT)
 
-Status: **REDESIGNED to a silence-character gate (2026-07-11) — Phase 0 built + media-validated.** The original
-seam/lag "does B match A at nominal" approach (§5 below) was **refuted on real media**: two independent
-recordings **drift** (~150–200 ms residual lag per gap even after alignment), so nothing matches at lag 0 and
-the seam read was useless (0/14 matchable gaps matched at lag 0). Operator ground truth then showed the actual
-discriminator is the **silence character**, not seam correlation:
+Status: **REDESIGNED to a silence-character gate (2026-07-11) — Phase 0 built + media-validated; v1
+re-architected to scan-time measurement (2026-07-12).** The original seam/lag "does B match A at nominal"
+approach (§5 below) was **refuted on real media**: two independent recordings **drift** (~150–200 ms residual
+lag per gap even after alignment), so nothing matches at lag 0 and the seam read was useless (0/14 matchable
+gaps matched at lag 0). Operator ground truth then showed the actual discriminator is the **silence
+character**, not seam correlation:
 
 - **A-side:** A's gap RMS **relative to the recording's own noise floor** — a true dropout sits **≥35 dB below**
   it (signal died); a genuine quiet passage sits **at** it (room tone). Self-calibrating (no absolute dB).
@@ -15,9 +16,53 @@ discriminator is the **silence character**, not seam correlation:
 drop) · `not_evaluated`. Tunable (`dropout_margin_db≈35`, `donor_silence_thresh≈0.5`), **off by default**;
 emitted as the `equivalence` block on `--gap-fingerprints` ([gap-fingerprint.md](gap-fingerprint.md)).
 **Validated:** classifies all 15 gaps of a licensed pair to operator ground truth (8 repairable→keep,
-4 mutual-silence→drop, intro/tail→drop). **Remaining:** dump one more pair to confirm the A-side threshold
-generalizes; then **v1** = the production plan-time drop (config flags + `build_gap_fill_plan` hook). **§4–§14
-below describe the superseded seam approach — kept for history; the silence gate replaces §5's algorithm.**
+4 mutual-silence→drop, intro/tail→drop).
+
+## Current v1 design (2026-07-12): measure at scan time, classify at plan time
+
+The redesign moved the gate's inputs from seam correlation to **A noise floor + B donor-silence**, and those
+are only produced by decoding PCM. That broke the original §5 architecture (a "cheap block" that runs *before*
+`build_gap_fill_plan`): in the production write path the plan is built **before** any decode, so the gate can't
+run there. Rather than resurrect a bespoke pre-plan decode or bolt on a post-decode reclassification pass, v1
+measures the two signals **where the PCM already streams — the gap scan.**
+
+**Key facts that make this cheap and correct** (verified in code, 2026-07-12):
+
+- `SilenceRunScanner::feed` (`domain/policies.rs`) already blocks the PCM and computes per-block **peak + RMS**
+  via `is_silent_interleaved` — then throws the RMS away, keeping only a silent/not-silent boolean and the
+  `SilentRun` intervals.
+- The scan **already decodes the full A timeline** sequentially (`scan_interleaved_buckets`), and **already
+  scans the full B timeline** (`scan_silence_intervals`) whenever B opens and alignment produced an offset —
+  this is **not** gated on `scan_both` (which only controls the mutual-silence cross-check).
+- `scan_both` defaults **on**; B's silence map is built on every normal aligned run today.
+
+So both audio inputs the gate needs are already flowing through the scanner. **v1 retains a lightweight
+per-block RMS/dB timeline (250 ms scan blocks) for A and B**, and derives per gap:
+
+- **A noise floor** = median dB of A's blocks in a context window around the gap, **excluding** blocks inside
+  the gap (the scan-block analogue of the fingerprint's `level_profile` noise floor).
+- **A gap RMS** = aggregate RMS across the gap's own blocks (the dropout-vs-room-tone A-side signal).
+- **`donor_silence_fraction`** = fraction of B's blocks over the nominal mapped span below the gap floor (the
+  scan-block analogue of `donor_interior_at`).
+
+These three scalars are attached to the report (a `Vec<GapEquivalence>` parallel to `GapReport::gaps`), so:
+
+- **Classification lives in `build_gap_fill_plan`** — reads the report, no decode dependency, calls the same
+  `classify_gap_equivalence` the fingerprint uses (the decision is single-source; only the *measurement* is
+  scan-block-native rather than the fingerprint's finer bins).
+- **Additive + advisory-for-free:** the signals are always computed and emitted (JSON gap row + human table),
+  so **scan-only** mode shows the classification with no write and no `--gap-fingerprints` needed.
+- **`skip_equivalent_gaps` (off by default) gates only the *drop*:** when set, a gap whose verdict `drops()`
+  (`shared_silence` / `ambient_quiet`) is moved from `regions` to `skipped(AlreadyMatchesReference)` at plan
+  time, so the expensive decode/characterize/patch path is never entered for it. When unset, the classification
+  is reported but every gap still flows to patch (zero behavior change).
+
+**Granularity tradeoff (accepted):** the production gate reads 250 ms scan blocks; the Phase-0 fingerprint reads
+finer bins on a full decode. The gate is self-calibrating on a ~35 dB relative margin, so coarseness is very
+unlikely to flip a classification — but production may disagree with the fingerprint's `equivalence` block on a
+genuinely borderline gap. The scanner's retained-bin size is kept a parameter so we can drop to 50 ms for
+fingerprint parity if a borderline gap ever shows daylight. **§4–§14 below describe the superseded seam
+approach — kept for history; this section + the silence gate replace §5's algorithm and §5.1's placement.**
 
 Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
 [gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
@@ -302,25 +347,33 @@ JSON gap row (additive):
 
 ## 6. CLI and config (v1)
 
+> **Superseded by the scan-time design.** The `equivalence_min_seam` / `equivalence_residual_headroom_db`
+> knobs belonged to the refuted seam approach and are **not** part of v1. The silence-character gate is tuned
+> by `dropout_margin_db` and `donor_silence_thresh` (defaults 35 dB / 0.5, from `GapEquivalenceParams`).
+
 ### Flags
 
 ```text
---skip-equivalent-gaps     Enable equivalence gate at fill-plan time [default: off]
---equivalence-min-seam <N> Nominal min(pre,post) to skip [default: 0.35]
+--skip-equivalent-gaps     Drop already-equivalent gaps from the fill plan [default: off]
 ```
+
+The classification itself is **always computed and reported** (additive to the scan report); the flag only
+controls whether dropping classes are removed from the plan. Threshold overrides (`--dropout-margin-db`,
+`--donor-silence-thresh`) may be exposed later; v1 ships the defaults.
 
 TOML (`[repair]`):
 
 ```toml
 skip_equivalent_gaps = true
-equivalence_min_seam = 0.35
-# equivalence_residual_headroom_db = 6.0  # default: same as residual_headroom_margin_db
+# dropout_margin_db = 35.0        # A is a dropout when a_gap_rms_db < noise_floor_db − this
+# donor_silence_thresh = 0.5      # B occupied when donor_silence_fraction < this
 ```
 
 ### Interaction with scan knobs
 
-Equivalence does **not** change scan thresholds. Document that sensitive scan + `skip_equivalent_gaps`
-is the intended pair for “find everything ffmpeg sees, patch only real dropouts.”
+Equivalence does **not** change scan thresholds. Sensitive scan + `skip_equivalent_gaps` is the intended pair
+for “find everything ffmpeg sees, patch only real dropouts.” Because the gate reads the scan's own per-block
+RMS, `scan_block_ms` sets the equivalence measurement granularity (250 ms default).
 
 ---
 
@@ -447,10 +500,10 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 | Phase | Scope |
 |-------|-------|
-| **0 — Cheap block + fingerprint** | `measure_cheap_equivalence` + `CheapEquivalenceArtifacts`; `equivalence` block in `--gap-fingerprints`; tune on a licensed 5.1 pair; no production skip |
-| **v1** | `skip_equivalent_gaps`, plan-time skip, artifact cache into characterize, `AlreadyMatchesReference`, human + JSON output, synthetic tests |
-| **v1.5** | `RedundantScanDip` tier; interior bridge (E5); `--equivalence-min-seam` exposure |
-| **v2** | Batch equivalence in scan phase (reuse B silence map decode); optional `equivalence_mode: aggressive\|conservative` profile |
+| **0 — Fingerprint classifier** | `classify_gap_equivalence` (silence-character) + `equivalence` block in `--gap-fingerprints`; tune on a licensed 5.1 pair; no production skip. **Done.** |
+| **v1 — scan-time gate** | Scanner retains per-block RMS timeline (A + B); `scan_gaps` derives per-gap `GapEquivalence`; additive to `GapReport` (+ advisory in scan-only human/JSON); `skip_equivalent_gaps` gates the plan-time drop; `GapFillSkipReason::AlreadyMatchesReference`; domain + integration tests |
+| **v1.5** | Optional 50 ms retained-bin for fingerprint parity; `--dropout-margin-db` / `--donor-silence-thresh` exposure; per-channel (non-mono) refinement |
+| **v2** | Content-based equivalence for non-silent A (“A and B both have audio and sound the same”); `equivalence_mode: aggressive\|conservative` profile |
 
 ---
 
@@ -469,16 +522,19 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
   gap-row `equivalence` in `json-output.md` is a v1 concern — no production output in Phase 0)*
 - [ ] Run on a licensed A/B pair; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
 
-### v1 (production gate)
+### v1 (scan-time gate)
 
-- [ ] `RepairConfig`: `skip_equivalent_gaps`, `equivalence_min_seam`, `equivalence_residual_headroom_db`
-- [ ] `Args` + `cli/mod.rs` overrides
-- [ ] `GapFillSkipReason::AlreadyMatchesReference` + formatters / `gap_tags` / `PlanKind`
-- [ ] `run_repair.rs` — cheap block **before** `build_gap_fill_plan`; artifact cache for non-skipped gaps
-- [ ] `characterize_region` / `patch_audio` — consume cached `CheapEquivalenceArtifacts` (no re-extract of saved windows)
-- [ ] `build_gap_fill_plan` hook + domain tests
-- [ ] Human report + JSON gap fields
-- [ ] Integration: synthetic same-master skip; chaotic seam still patches; verify no double-decode on patch path
+- [ ] `domain/policies.rs` `SilenceRunScanner` — retain a lightweight per-block RMS/dB timeline (opt-in flag;
+  on for A + B in scan) with `(start_secs, end_secs, rms_db)` per 250 ms block; `finish` returns it alongside runs
+- [ ] `domain/gap_equivalence.rs` — `GapEquivalence` signals struct + `derive_gap_equivalence` (context noise
+  floor, gap RMS, donor-silence-fraction from block timelines) reusing `classify_gap_equivalence`
+- [ ] `application/scan_gaps.rs` — capture A + B block timelines; build `Vec<GapEquivalence>` parallel to `gaps`
+- [ ] `domain/gap.rs` `GapReport` — additive `gap_equivalence: Vec<GapEquivalence>` (index-parallel to `gaps`)
+- [ ] `RepairConfig` / `Args` / `cli/mod.rs` — `skip_equivalent_gaps` (off by default)
+- [ ] `GapFillSkipReason::AlreadyMatchesReference` + `format_*` / `gap_tags` / `PlanKind`
+- [ ] `build_gap_fill_plan` hook — when `skip_equivalent_gaps` and `verdict.drops()`, skip with `AlreadyMatchesReference`; domain tests
+- [ ] Human report + JSON gap fields (advisory, always emitted)
+- [ ] Integration: synthetic same-master/mutual-silence dropped when flag on; still patched when flag off
 - [ ] Docs: `gap-scan.md` § equivalence, `gap-repair-guide.md`, `pipeline.md` §3 paragraph
 
 ### v1.5

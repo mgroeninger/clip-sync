@@ -39,7 +39,11 @@ pub struct GapFillPlan {
 /// The query-reference mapped-region gate is read from [`GapReport::limit_fill_to_mapped_region`]
 /// (the single source of truth, set when the report is built) so the plan can never disagree with
 /// [`GapReport::repairable_count`].
-pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan {
+pub fn build_gap_fill_plan(
+    report: &GapReport,
+    crossfade_ms: u64,
+    skip_equivalent_gaps: bool,
+) -> GapFillPlan {
     let crossfade_secs = crossfade_ms as f64 / 1000.0;
     let limit_fill_to_mapped_region = report.limit_fill_to_mapped_region;
 
@@ -74,7 +78,7 @@ pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan
     let mut regions = Vec::new();
     let mut skipped = Vec::new();
 
-    for g in &report.gaps {
+    for (index, g) in report.gaps.iter().enumerate() {
         if !g.is_fillable() {
             skipped.push(GapFillSkipped {
                 a_start_secs: g.video_a_start_secs,
@@ -89,6 +93,20 @@ pub fn build_gap_fill_plan(report: &GapReport, crossfade_ms: u64) -> GapFillPlan
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
                 reason: GapFillSkipReason::OutsideReferenceCoverage,
+            });
+            continue;
+        }
+
+        // Equivalence gate (lowest precedence — after fillable + coverage, per plan §4): drop gaps whose
+        // silence is already equivalent to B's (mutual/ambient silence), so the decode/patch path is never
+        // entered for them. Only when `skip_equivalent_gaps`; the classification is advisory otherwise.
+        if skip_equivalent_gaps
+            && report.gap_equivalence_at(index).is_some_and(|v| v.drop)
+        {
+            skipped.push(GapFillSkipped {
+                a_start_secs: g.video_a_start_secs,
+                a_end_secs: g.video_a_end_secs,
+                reason: GapFillSkipReason::AlreadyMatchesReference,
             });
             continue;
         }
@@ -252,6 +270,7 @@ mod tests {
             track_compatibility: compat,
             alignment: make_alignment(Some(0.0)),
             gaps,
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
             scan_block_ms: 250,
@@ -267,7 +286,7 @@ mod tests {
         assert_eq!(report.fillable_count(), 1);
         assert_eq!(report.repairable_count(), 0);
         assert!(!report.patch_allowed());
-        let plan = build_gap_fill_plan(&report, 10);
+        let plan = build_gap_fill_plan(&report, 10, false);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -279,7 +298,7 @@ mod tests {
     #[test]
     fn build_gap_fill_plan_empty_when_no_compatibility() {
         let report = base_report(None, vec![fillable_gap(0.0, 3.0)]);
-        let plan = build_gap_fill_plan(&report, 10);
+        let plan = build_gap_fill_plan(&report, 10, false);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -301,7 +320,7 @@ mod tests {
             },
         ];
         let report = base_report(Some(stereo_identical()), gaps);
-        let plan = build_gap_fill_plan(&report, 10);
+        let plan = build_gap_fill_plan(&report, 10, false);
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 3.0).abs() < 0.001);
         assert!((plan.regions[0].a_end_secs - 6.0).abs() < 0.001);
@@ -326,7 +345,7 @@ mod tests {
             video_b_end_secs: 10.0,
             shared_length_secs: 10.0,
         });
-        let plan = build_gap_fill_plan(&report, 0);
+        let plan = build_gap_fill_plan(&report, 0, false);
         assert_eq!(plan.regions.len(), 2);
         assert!(plan.skipped.is_empty());
     }
@@ -347,7 +366,7 @@ mod tests {
         report.alignment.query_reference_mode = true;
         assert_eq!(report.repairable_count(), 1);
 
-        let plan = build_gap_fill_plan(&report, 0);
+        let plan = build_gap_fill_plan(&report, 0, false);
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 1.0).abs() < 0.001);
         assert_eq!(plan.skipped.len(), 1);
@@ -358,8 +377,62 @@ mod tests {
 
         // With the mapped-region gate disabled, both gaps are planned.
         report.limit_fill_to_mapped_region = false;
-        let plan_all = build_gap_fill_plan(&report, 0);
+        let plan_all = build_gap_fill_plan(&report, 0, false);
         assert_eq!(plan_all.regions.len(), 2);
+    }
+
+    #[test]
+    fn equivalence_drops_gap_only_when_flag_enabled() {
+        use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
+
+        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+        // Two fillable gaps; the first classifies as shared silence (drop), the second as a repairable
+        // dropout (keep). Index-parallel to `gaps`.
+        let mut report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(3.0, 6.0), fillable_gap(20.0, 23.0)],
+        );
+        report.gap_equivalence = vec![
+            classify_gap_equivalence(Some(-108.0), Some(-46.0), Some(1.0), &on), // shared_silence → drop
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on), // repairable → keep
+        ];
+        assert!(report.gap_equivalence[0].drop && !report.gap_equivalence[1].drop);
+
+        // Flag off: classification is advisory only — both gaps still planned.
+        let plan_off = build_gap_fill_plan(&report, 0, false);
+        assert_eq!(plan_off.regions.len(), 2);
+        assert!(plan_off.skipped.is_empty());
+
+        // Flag on: the dropping gap is skipped as AlreadyMatchesReference; the other is still planned.
+        let plan_on = build_gap_fill_plan(&report, 0, true);
+        assert_eq!(plan_on.regions.len(), 1);
+        assert!((plan_on.regions[0].a_start_secs - 20.0).abs() < 1e-9);
+        assert_eq!(plan_on.skipped.len(), 1);
+        assert_eq!(plan_on.skipped[0].reason, GapFillSkipReason::AlreadyMatchesReference);
+        assert!((plan_on.skipped[0].a_start_secs - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn equivalence_never_overrides_not_fillable() {
+        use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
+
+        // An unfillable gap (no B energy) whose (hypothetical) verdict says keep must still be NotFillable —
+        // equivalence is lowest precedence and only ever *drops* fillable gaps.
+        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+        let mut report = base_report(
+            Some(stereo_identical()),
+            vec![Gap {
+                video_a_start_secs: 10.0,
+                video_a_end_secs: 13.0,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
+                b_has_energy: false,
+            }],
+        );
+        report.gap_equivalence = vec![classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on)];
+        let plan = build_gap_fill_plan(&report, 0, true);
+        assert!(plan.regions.is_empty());
+        assert_eq!(plan.skipped[0].reason, GapFillSkipReason::NotFillable);
     }
 
     #[test]
@@ -404,7 +477,7 @@ mod tests {
                 },
             ],
         );
-        let plan = build_gap_fill_plan(&report, 0);
+        let plan = build_gap_fill_plan(&report, 0, false);
         let line = super::format_align_fill_regions_phase(&plan);
         assert!(line.contains("Skipping 1 gap(s) at fill plan (1 unfillable)"));
         assert!(line.contains("aligning 1 fill region(s)"));

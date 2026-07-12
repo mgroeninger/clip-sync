@@ -8,6 +8,21 @@ pub struct SilentRun {
     pub end_secs: f64,
 }
 
+/// One analysis block's RMS level (dBFS) on a media timeline — the lightweight per-block timeline the
+/// gap-equivalence gate reads (`docs/TEMP-gap-equivalence-plan.md`). Retained only when the scanner is
+/// built [`SilenceRunScanner::retain_block_levels`]; the scan already computes the RMS, so this just keeps
+/// it instead of discarding it. `rms_db` is floored at [`BLOCK_LEVEL_FLOOR_DB`] (never `-inf`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockLevel {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub rms_db: f64,
+}
+
+/// dBFS a fully-silent analysis block floors to — same convention as the fingerprint's `level_profile`
+/// (`SILENCE_FLOOR_DB`), so a scan-derived noise floor is on the same scale as the fingerprint's.
+pub const BLOCK_LEVEL_FLOOR_DB: f64 = -120.0;
+
 /// Accumulates silent runs by classifying PCM in fixed-duration analysis blocks.
 pub struct SilenceRunScanner {
     block_secs: f64,
@@ -23,6 +38,9 @@ pub struct SilenceRunScanner {
     /// the output interval (avoiding boundary bloat past actual silence).
     silent_tail: Option<f64>,
     runs: Vec<SilentRun>,
+    /// When `true`, [`feed`](Self::feed) retains a per-block [`BlockLevel`] timeline in `levels`.
+    retain_levels: bool,
+    levels: Vec<BlockLevel>,
 }
 
 impl SilenceRunScanner {
@@ -43,7 +61,16 @@ impl SilenceRunScanner {
             run_start: None,
             silent_tail: None,
             runs: Vec::new(),
+            retain_levels: false,
+            levels: Vec::new(),
         }
+    }
+
+    /// Opt in to retaining a per-block [`BlockLevel`] RMS timeline (the gap-equivalence signal source).
+    /// Off by default so the existing scan callers pay nothing; the gap scan turns it on for A and B.
+    pub fn retain_block_levels(mut self) -> Self {
+        self.retain_levels = true;
+        self
     }
 
     /// Classify `pcm` (starting at `timeline_start_secs` on the file timeline) into blocks.
@@ -71,6 +98,14 @@ impl SilenceRunScanner {
             let block_start = offset_frames * channels;
             let block_end = end_frames * channels;
             let block = &pcm.samples()[block_start..block_end];
+
+            if self.retain_levels {
+                self.levels.push(BlockLevel {
+                    start_secs: block_start_secs,
+                    end_secs: block_end_secs,
+                    rms_db: block_rms_db(block),
+                });
+            }
 
             if is_silent_interleaved(
                 block,
@@ -103,6 +138,14 @@ impl SilenceRunScanner {
     pub fn finish(mut self) -> Vec<SilentRun> {
         self.close_open_run();
         self.runs
+    }
+
+    /// Close any open run and return both the detected intervals and the retained per-block level timeline
+    /// (empty unless built with [`retain_block_levels`](Self::retain_block_levels)). Used by the gap scan,
+    /// which needs the levels to derive per-gap equivalence signals.
+    pub fn finish_with_levels(mut self) -> (Vec<SilentRun>, Vec<BlockLevel>) {
+        self.close_open_run();
+        (self.runs, self.levels)
     }
 
     /// Break an open silent run when decoded PCM has a timeline hole (e.g. skipped decode chunk).
@@ -214,6 +257,18 @@ fn rms_f32(samples: &[f32]) -> f32 {
 /// RMS of interleaved (multi-channel) f32 samples.
 pub fn rms_interleaved(samples: &[f32]) -> f32 {
     rms_f32(samples)
+}
+
+/// One analysis block's overall RMS in dBFS, floored at [`BLOCK_LEVEL_FLOOR_DB`] (a silent block reads the
+/// floor, not `-inf`). Downmix-agnostic: the RMS is taken over all interleaved samples, matching the
+/// scan's own `is_silent` energy.
+fn block_rms_db(block: &[f32]) -> f64 {
+    let rms = f64::from(rms_f32(block));
+    if rms <= 1e-9 {
+        BLOCK_LEVEL_FLOOR_DB
+    } else {
+        20.0 * rms.log10()
+    }
 }
 
 /// Compute a gain factor to match `b_segment_rms` to `a_border_rms`.
@@ -2347,6 +2402,38 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert!((runs[0].start_secs - 5.0).abs() < block_secs);
         assert!((runs[0].end_secs - 8.0).abs() < block_secs);
+    }
+
+    #[test]
+    fn retain_block_levels_records_a_db_timeline() {
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        // 1 s of sine (loud) then 1 s of digital silence.
+        let mut samples = sine_samples(rate, 1.0);
+        samples.extend(std::iter::repeat_n(0.0f32, rate as usize));
+        let pcm = mono_pcm(rate, samples);
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0).retain_block_levels();
+        scanner.feed(&pcm, 0.0);
+        let (_runs, levels) = scanner.finish_with_levels();
+
+        // ~2 s / 0.25 s ⇒ 8 full blocks plus a tiny trailing partial (block frames don't divide evenly).
+        assert!(levels.len() >= 8, "one block per 0.25 s: {}", levels.len());
+        // First block is loud; a mid-silence block reads the floor exactly.
+        assert!(levels[0].rms_db > -30.0, "loud block: {:?}", levels[0]);
+        assert_eq!(levels[6].rms_db, BLOCK_LEVEL_FLOOR_DB, "silent block floors: {:?}", levels[6]);
+        assert!((levels[0].start_secs - 0.0).abs() < 1e-9);
+        assert_eq!(levels.last().unwrap().rms_db, BLOCK_LEVEL_FLOOR_DB, "tail is silent");
+    }
+
+    #[test]
+    fn levels_empty_unless_retained() {
+        let rate = 11_025u32;
+        let pcm = mono_pcm(rate, sine_samples(rate, 1.0));
+        let mut scanner = SilenceRunScanner::new(0.25, 0.01, 1.0, 0, 0.0);
+        scanner.feed(&pcm, 0.0);
+        let (_runs, levels) = scanner.finish_with_levels();
+        assert!(levels.is_empty(), "retain not requested ⇒ no timeline");
     }
 
     #[test]

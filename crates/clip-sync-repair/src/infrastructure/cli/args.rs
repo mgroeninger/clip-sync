@@ -83,6 +83,11 @@ pub struct Args {
     #[arg(long, overrides_with = "scan_both")]
     pub no_scan_both: bool,
 
+    /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan,
+    /// before decode/patch. The classification is always reported; this only removes them [default: off].
+    #[arg(long)]
+    pub skip_equivalent_gaps: bool,
+
     /// Write patched audio to a WAV file (implies write mode).
     #[arg(long, value_name = "PATH")]
     pub wav: Option<PathBuf>,

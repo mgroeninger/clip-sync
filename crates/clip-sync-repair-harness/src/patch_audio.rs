@@ -192,6 +192,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         track_compatibility: Some(compat),
         alignment: make_alignment(0.0),
         gaps: vec![default_sine_gap()],
+        gap_equivalence: Vec::new(),
         gap_offset_agreement: None,
         decode_chunk_secs: 60,
         scan_block_ms: 250,
@@ -252,6 +253,7 @@ pub fn patch_request_with_options(
     options: PatchTestOptions,
 ) -> PatchAudioRequest {
     PatchAudioRequest {
+        skip_equivalent_gaps: false,
         anchor_seam_mode: AnchorSeamMode::Auto,
         anchor_seam_min_prominence: 0.0,
         anchor_seam_min_match_pearson: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_PEARSON,

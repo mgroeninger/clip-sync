@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::domain::{AudioTimelineSkew, ScanAlignment};
 
+use crate::domain::gap_equivalence::GapEquivalenceVerdict;
 use crate::domain::track_match::TrackCompatibility;
 
 /// Diagnostic comparison of the Chromaprint alignment offset vs the silence-structure-derived
@@ -63,6 +64,10 @@ pub struct GapReport {
     pub track_compatibility: Option<TrackCompatibility>,
     pub alignment: ScanAlignment,
     pub gaps: Vec<Gap>,
+    /// Per-gap silence-character classification (`docs/TEMP-gap-equivalence-plan.md`), **index-parallel to
+    /// `gaps`**. Always populated by the scan (additive/advisory); empty on reports built before the gate or
+    /// by test/legacy constructors. Consumed by `build_gap_fill_plan` only when `skip_equivalent_gaps` is set.
+    pub gap_equivalence: Vec<GapEquivalenceVerdict>,
     /// Present when `scan_both` was enabled and both A and B had silence intervals to compare.
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
     /// Decode chunk size used during sequential scan (seconds).
@@ -122,6 +127,11 @@ impl GapReport {
             overlap.video_a_start_secs,
             overlap.video_a_end_secs,
         )
+    }
+
+    /// The equivalence verdict for the gap at `index` (index-parallel to `gaps`), when the scan populated it.
+    pub fn gap_equivalence_at(&self, index: usize) -> Option<&GapEquivalenceVerdict> {
+        self.gap_equivalence.get(index)
     }
 
     fn is_gap_repairable(&self, gap: &Gap) -> bool {

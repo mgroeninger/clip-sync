@@ -36,6 +36,9 @@ pub enum GapFillSkipReason {
     TrackLayoutMismatch,
     TrackCompatibilityUnavailable,
     OutsideReferenceCoverage,
+    /// Gap-equivalence gate: A's silence is already equivalent to B's (mutual/ambient silence — nothing to
+    /// repair), so patching would be a no-op. Only produced when `skip_equivalent_gaps` is enabled.
+    AlreadyMatchesReference,
 }
 
 /// Which fit-joint placement produced a seam Pearson score.

@@ -184,6 +184,7 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
         .execute(
             PatchAudioRequest {
                 report,
+                skip_equivalent_gaps: false,
                 normalize_fill: false,
                 normalize_window_secs: 5.0,
                 max_fill_gain_db: 12.0,
@@ -321,7 +322,7 @@ fn repair_query_gap_inside_region_fillable() {
         report.alignment.start_overlap
     );
 
-    let plan = build_gap_fill_plan(report, 10);
+    let plan = build_gap_fill_plan(report, 10, false);
     assert!(
         plan.regions
             .iter()
@@ -482,7 +483,7 @@ fn repair_query_gap_outside_region_skipped() {
         .expect("gap outside mapped region should still be reported");
     assert!(report.gap_outside_reference_coverage(outside_gap));
 
-    let plan = build_gap_fill_plan(&report, 10);
+    let plan = build_gap_fill_plan(&report, 10, false);
     assert!(
         !plan
             .regions

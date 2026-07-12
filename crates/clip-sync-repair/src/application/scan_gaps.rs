@@ -153,7 +153,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             min_gap_secs,
             silence_hold_blocks,
             absolute_silence_rms,
-        );
+        )
+        .retain_block_levels();
         let mut last_fed_end_secs: Option<f64> = None;
 
         let mut scan_a = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
@@ -193,7 +194,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Step 5: scan B's native timeline sequentially to build its silence map.
         // Used for both per-gap energy lookup (replaces per-gap seeks) and the cross-check.
         // Only meaningful when we have a B session and an alignment offset.
-        let b_intervals: Vec<SilenceInterval> =
+        let (b_intervals, b_levels): (Vec<SilenceInterval>, Vec<policies::BlockLevel>) =
             match (&mut b_session, offset_secs) {
                 (Some((session_b, track_b)), Some(_)) => self.scan_silence_intervals(
                     session_b,
@@ -205,13 +206,15 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                         request.min_gap_secs,
                         silence_hold_blocks,
                         absolute_silence_rms,
-                    ),
+                    )
+                    .retain_block_levels(),
                 ),
-                _ => vec![],
+                _ => (vec![], vec![]),
             };
 
+        let (a_runs, a_levels) = scanner_a.finish_with_levels();
         let mut gaps = Vec::new();
-        for run in scanner_a.finish() {
+        for run in a_runs {
             let pos = run.start_secs;
             let end = run.end_secs;
             let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
@@ -231,6 +234,32 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 b_has_energy,
             });
         }
+
+        // Gap-equivalence classification (advisory; `docs/TEMP-gap-equivalence-plan.md`): derive the
+        // silence-character signals from the scan's own per-block level timelines (A noise floor + gap RMS,
+        // B donor-silence) and classify each gap. Always computed and reported; the `skip_equivalent_gaps`
+        // drop happens later in `build_gap_fill_plan`. Index-parallel to `gaps`.
+        let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
+        let gap_equivalence: Vec<_> = gaps
+            .iter()
+            .map(|g| {
+                let b_mapped = g
+                    .video_b_start_secs
+                    .zip(g.video_b_end_secs)
+                    .filter(|_| !b_levels.is_empty());
+                crate::domain::gap_equivalence::derive_gap_equivalence(
+                    &a_levels,
+                    g.video_a_start_secs,
+                    g.video_a_end_secs,
+                    (!b_levels.is_empty()).then_some(b_levels.as_slice()),
+                    b_mapped,
+                    &equivalence_params,
+                )
+            })
+            .collect();
 
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
         // Use co-occurring quiet on both timelines; exclude A-only dropouts (b_has_energy).
@@ -266,6 +295,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             track_compatibility,
             alignment: scan_alignment,
             gaps,
+            gap_equivalence,
             gap_offset_agreement,
             decode_chunk_secs: request.decode_chunk_secs,
             scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
@@ -293,7 +323,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         track: &AudioTrack,
         decode_chunk_secs: f64,
         mut scanner: policies::SilenceRunScanner,
-    ) -> Vec<SilenceInterval> {
+    ) -> (Vec<SilenceInterval>, Vec<policies::BlockLevel>) {
         let progress = self.progress;
         let mut last_fed_end_secs: Option<f64> = None;
 
@@ -308,36 +338,27 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             Ok(())
         };
 
+        // A decode error still returns whatever was scanned so far (report-only safe); either way we
+        // return the runs plus the retained per-block level timeline (empty unless the scanner retains it).
         let mut b_timeline_skew = None;
-        if session
-            .scan_interleaved_buckets(
-                track,
-                decode_chunk_secs,
-                progress,
-                "scan-b",
-                &mut on_bucket,
-                &mut b_timeline_skew,
-            )
-            .is_err()
-        {
-            return scanner
-                .finish()
-                .into_iter()
-                .map(|run| SilenceInterval {
-                    start_secs: run.start_secs,
-                    end_secs: run.end_secs,
-                })
-                .collect();
-        }
+        let _ = session.scan_interleaved_buckets(
+            track,
+            decode_chunk_secs,
+            progress,
+            "scan-b",
+            &mut on_bucket,
+            &mut b_timeline_skew,
+        );
 
-        scanner
-            .finish()
+        let (runs, levels) = scanner.finish_with_levels();
+        let intervals = runs
             .into_iter()
             .map(|run| SilenceInterval {
                 start_secs: run.start_secs,
                 end_secs: run.end_secs,
             })
-            .collect()
+            .collect();
+        (intervals, levels)
     }
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
@@ -917,6 +938,7 @@ mod tests {
                     b_has_energy: false,
                 },
             ],
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
             scan_block_ms: 250,

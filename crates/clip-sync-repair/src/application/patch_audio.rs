@@ -63,6 +63,9 @@ pub struct PatchAudioResult {
 
 pub struct PatchAudioRequest {
     pub report: GapReport,
+    /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan before decode/patch
+    /// (`docs/TEMP-gap-equivalence-plan.md`). Off by default.
+    pub skip_equivalent_gaps: bool,
     pub normalize_fill: bool,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
@@ -172,6 +175,8 @@ pub struct PatchAudioRequest {
 /// Patch parameters without the scan report — filled in after gap scan.
 #[derive(Clone)]
 pub struct PatchRequestSettings {
+    /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan (off by default).
+    pub skip_equivalent_gaps: bool,
     pub normalize_fill: bool,
     /// A3 dual-fit repair fallback for bracket-exhausted skips (off by default).
     pub dual_fit: bool,
@@ -233,6 +238,7 @@ impl PatchRequestSettings {
     pub fn into_request(self, report: GapReport) -> PatchAudioRequest {
         PatchAudioRequest {
             report,
+            skip_equivalent_gaps: self.skip_equivalent_gaps,
             normalize_fill: self.normalize_fill,
             normalize_window_secs: self.normalize_window_secs,
             max_fill_gain_db: self.max_fill_gain_db,
@@ -324,8 +330,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         request: PatchAudioRequest,
         crossfade_ms: u64,
     ) -> Result<PatchAudioResult, RepairError> {
-        // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy).
-        let plan = build_gap_fill_plan(&request.report, crossfade_ms);
+        // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy). The equivalence
+        // gate drops already-equivalent gaps here (when enabled) so they never reach decode/patch.
+        let plan = build_gap_fill_plan(&request.report, crossfade_ms, request.skip_equivalent_gaps);
 
         if plan.regions.is_empty() {
             self.progress
@@ -3340,6 +3347,7 @@ mod tests {
                 video_b_end_secs: Some(g1 as f64 / f64::from(rate)),
                 b_has_energy: true,
             }],
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 30,
             scan_block_ms: 20,
@@ -3677,6 +3685,7 @@ mod tests {
             track_compatibility: None,
             alignment,
             gaps: Vec::new(),
+            gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
             scan_block_ms: 250,

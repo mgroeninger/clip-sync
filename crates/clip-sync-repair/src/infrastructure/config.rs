@@ -58,6 +58,11 @@ pub struct RepairConfig {
     /// Also scan B's native timeline for silence to produce `gap_offset_agreement`.
     #[serde(default = "default_true")]
     pub scan_both: bool,
+    /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan at
+    /// plan time, before decode/patch (`docs/TEMP-gap-equivalence-plan.md`). Off by default: the
+    /// classification is always reported, but only this flag removes dropping gaps from the plan.
+    #[serde(default)]
+    pub skip_equivalent_gaps: bool,
     /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.
     #[serde(default = "default_gap_offset_tolerance_secs")]
     pub gap_offset_tolerance_secs: f64,
@@ -426,6 +431,7 @@ impl Default for RepairConfig {
             silence_hold_ms: default_silence_hold_ms(),
             absolute_silence_rms: default_absolute_silence_rms(),
             scan_both: default_true(),
+            skip_equivalent_gaps: false,
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
             fill_align_margin_secs: default_fill_align_margin_secs(),
@@ -555,6 +561,7 @@ impl RepairConfig {
 
     pub fn patch_settings(&self) -> PatchRequestSettings {
         PatchRequestSettings {
+            skip_equivalent_gaps: self.skip_equivalent_gaps,
             normalize_fill: self.normalize_fill,
             dual_fit: self.dual_fit,
             normalize_window_secs: self.normalize_window_secs,

@@ -40,6 +40,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     } else if args.no_scan_both {
         config.repair.scan_both = false;
     }
+    if args.skip_equivalent_gaps {
+        config.repair.skip_equivalent_gaps = true;
+    }
     if args.dual_fit {
         config.repair.dual_fit = true;
     } else if args.no_dual_fit {
