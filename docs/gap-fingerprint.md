@@ -77,28 +77,29 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
 | `b_levels` | full, B present | symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
-| `equivalence` | B present | **cheap content-equivalence** (Phase 0) — is B already the same program audio as A at the **nominal** map (lag 0), so a fill would be a no-op? (see below) |
+| `equivalence` | B present | **gap-equivalence class** — does this gap need patching? (silence-character; see below) |
 
-### `equivalence` — is a fill redundant? (Phase 0)
+### `equivalence` — does this gap need patching?
 
-A cheap, nominal-map/lag-0 read that composes the *existing* seam-Pearson + same-source-residual + donor +
-A-RMS primitives (no new seam math, no bracket grid / dual-fit / oracle-throat search — plan
-[TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md) §5.3). It answers "would patching **change** the
-program audio?" — distinct from "can we splice" (`splice_dualfit`) and "is B occupied" (`donor_interior*`).
+Classifies each scanned gap from its **silence character** (no seam/lag math — that failed on drifting
+recordings, plan [TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md)). Two signals, both already in the
+fingerprint: A's gap RMS **relative to the recording's own noise floor** (a dropout sits far below it; room tone
+sits at it — self-calibrating), and donor silence at nominal (is B occupied).
 
 | Field | Meaning |
 |-------|---------|
-| `disposition` | `skip` (redundant / identity), `attempt_patch` (inconclusive → patch), or `not_evaluated` |
-| `nominal_pre` / `nominal_post` | seam Pearson at the nominal map, **lag 0** (no shoulder search) |
-| `residual_headroom_db` | worst-side chosen-vs-floor residual headroom (≈0 at nominal; the signal is `residual_informative`) |
-| `residual_informative` | nominal floor cancels on every measured side ⇒ same-source at the nominal map |
-| `donor_silence_fraction` | B occupancy over the nominal span (occupied ⇒ not program-quiet) |
-| `a_gap_rms_db` | A gap interior RMS (confirms A is a real dropout, not a loud false-negative) |
-| `skip_reason` | `already_matches_reference` when `disposition = skip` |
+| `class` | `repairable_dropout` (keep) · `shared_silence` / `ambient_quiet` (drop) · `not_evaluated` |
+| `drop` | whether `class` resolves to "remove from fill plan" (the two silence classes) |
+| `a_gap_rms_db` | A gap interior RMS (dBFS) |
+| `noise_floor_db` | the recording's noise floor (A `levels.noise_floor_db`) |
+| `a_below_noise_db` | `a_gap_rms_db − noise_floor_db` — the self-calibrated dropout signal (dropout ≲ −`dropout_margin_db`) |
+| `donor_silence_fraction` | B occupancy over the nominal span (occupied ⇒ `< donor_silence_thresh`) |
 
-**Conservative:** `skip` only when donor-occupied **and** A-quiet **and** `min(pre,post) ≥ min_seam` **and**
-same-source residual — any missing metric or unmet condition ⇒ `attempt_patch`. **Phase 0 is emit-only** (for
-a licensed 5.1 pair tuning); the production plan-time skip (`--skip-equivalent-gaps`) is a later (v1) step.
+**Classes:** `repairable_dropout` = A's signal died (≥ `dropout_margin_db` below the noise floor) **and** B
+occupied → **keep**; `shared_silence` = B silent → nothing to fill → **drop**; `ambient_quiet` = A is only room
+tone (not a dropout) though B has content → genuine quiet → **drop**. Thresholds (`dropout_margin_db ≈ 35`,
+`donor_silence_thresh ≈ 0.5`) are tunable; the gate is **off by default** and the dump is **emit-only** (the
+production plan-time drop is a later v1 step).
 
 ## Lag fingerprint
 

@@ -1,336 +1,182 @@
-//! Cheap gap content-equivalence (Phase 0) — is B already the **same program audio** as A at the nominal
-//! map, so a fill would be a no-op? Plan: `docs/TEMP-gap-equivalence-plan.md`.
+//! Gap content-equivalence gate — "does this gap actually need patching?" (`docs/TEMP-gap-equivalence-plan.md`).
 //!
-//! This module is the **composer + policy** over EXISTING primitives (seam Pearson, same-source residual,
-//! donor interior) — it introduces **no** new correlation/residual math (plan §5.0 implementer rule). It owns
-//! the pure metric→verdict **policy** (§5.4) and the **E1** nominal-seam read (lag 0, no shoulder search).
-//! The coordinate-sensitive residual (E2), donor (E3), A-RMS (E4), and the bounded PCM extract are assembled
-//! by the application layer, which then calls [`equivalence_verdict`].
+//! **Silence-character classification.** A scanned silent run in A is worth repairing only when A's signal
+//! genuinely *died* (a dropout) **and** B carries the missing content. The two signals that decide it, both
+//! already in the fingerprint:
 //!
-//! **Increment 1 (this file):** types + policy + E1. The application wiring (extract + E2/E3/E4 + fingerprint
-//! emission) is the paired next increment where the A↔B coordinate contract for the residual is designed.
+//! - **A-side (`a_rms` vs the recording's `noise_floor_db`):** a true dropout sits **far below** A's own noise
+//!   floor (the signal is gone); a genuine quiet passage sits **at** the noise floor (room tone). Measuring
+//!   *relative to the noise floor* makes the threshold **self-calibrating** — no hard-coded absolute dB.
+//! - **B-side (`donor_silence_fraction`):** if B is silent at the nominal span there is nothing to fill with.
+//!
+//! Empirically (licensed media): the two silence signals separate cleanly (dropouts ≥35 dB below noise floor,
+//! `donor_silence` bimodal at ~0 vs ~1) where the seam/lag approach failed — the recordings drift, so "B matches
+//! A" is never a lag-0 match. This gate replaces that approach.
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::donor::{DonorInterior, PROGRAM_QUIET_SILENCE_FRAC};
-use crate::domain::policies::{fill_seam_correlations, SeamPlacement, SeamResidualVerdict, SeamTemplates};
-
-/// Policy thresholds for the cheap equivalence gate (§5.4 / §6).
+/// Tunable thresholds for the equivalence gate (all overridable; gate is **off by default**).
 #[derive(Debug, Clone, Copy)]
 pub struct GapEquivalenceParams {
-    /// **E1** — minimum `min(pre,post)` nominal seam Pearson to consider a skip
-    /// (default `0.35`, matching `min_fill_correlation`).
-    pub min_seam: f64,
-    /// **E2** — max worst-side chosen-vs-floor residual headroom (dB) to accept same-source
-    /// (default = `DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB`).
-    pub residual_headroom_db: f64,
-    /// **E3** — donor `silence_fraction` must be **strictly below** this for the donor to count as
-    /// *occupied* (default `PROGRAM_QUIET_SILENCE_FRAC`; at/above ⇒ program-quiet, not equivalence).
-    pub max_donor_silence_fraction: f64,
-    /// **E4** — A gap RMS must be **at or below** this (dB) to confirm A is a real dropout, not a loud
-    /// scan false-negative. Application should set this from the scan silence floor; the default is a
-    /// conservative placeholder.
-    pub a_quiet_floor_db: f64,
+    /// Master on/off. When `false`, every gap classifies `NotEvaluated` (keep) — zero behavior change.
+    pub enabled: bool,
+    /// A counts as a **dropout** when `a_rms_db < noise_floor_db − dropout_margin_db` (default `35.0`).
+    /// Relative to the recording's own noise floor, so it self-calibrates across noisy/clean sources.
+    pub dropout_margin_db: f64,
+    /// B counts as **occupied** when `donor_silence_fraction < donor_silence_thresh` (default `0.5`, the
+    /// program-quiet valley); at/above ⇒ B silent ⇒ nothing to fill.
+    pub donor_silence_thresh: f64,
 }
 
 impl Default for GapEquivalenceParams {
     fn default() -> Self {
-        Self {
-            min_seam: 0.35,
-            residual_headroom_db: crate::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
-            max_donor_silence_fraction: PROGRAM_QUIET_SILENCE_FRAC,
-            a_quiet_floor_db: -45.0,
-        }
+        Self { enabled: false, dropout_margin_db: 35.0, donor_silence_thresh: 0.5 }
     }
 }
 
-/// Plan-time disposition (§5.4).
+/// Vocabulary for the gate — the reason a gap does or doesn't need patching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EquivalenceDisposition {
-    /// Metrics say patch would be redundant / identity → plan-time skip.
-    Skip,
-    /// Metrics inconclusive or contradictory → attempt patch (the conservative default).
-    AttemptPatch,
-    /// Equivalence not evaluated (disabled, no B map, out of coverage). Set upstream, never by the policy.
+pub enum GapEquivalenceClass {
+    /// A's signal died (RMS ≥ `dropout_margin_db` below the recording's noise floor) **and** B carries content
+    /// — a real dropout with a fill source. **Keep** (needs patching).
+    RepairableDropout,
+    /// B is silent at the nominal span (`donor_silence ≥ thresh`) — nothing to fill with, patching can't help.
+    /// **Drop.** (Both "A dropped out but the donor is also dead" and "quiet in both" land here.)
+    SharedSilence,
+    /// A is only ambient room tone (near its own noise floor), not a signal failure, though B has content — a
+    /// genuine quiet passage, not a dropout. **Drop** (don't inject content into intentional quiet).
+    AmbientQuiet,
+    /// Gate disabled or a required signal missing — **keep** (no decision made).
     NotEvaluated,
 }
 
-/// Reason attached to an equivalence skip (§5.5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EquivalenceSkipReason {
-    /// Residual-confirmed: B already carries the same program audio at the nominal map.
-    AlreadyMatchesReference,
-    /// v1.5 weaker tier for scan false-positive low-level dips (not produced in v1).
-    RedundantScanDip,
+impl GapEquivalenceClass {
+    /// Whether this gap should be dropped from the fill plan (no patching needed).
+    pub fn drops(self) -> bool {
+        matches!(self, Self::SharedSilence | Self::AmbientQuiet)
+    }
 }
 
-/// The four cheap measurements (§5.3) the policy consumes. `None` = not measured / decode failure ⇒ the
-/// policy falls through to `AttemptPatch` (conservative).
-#[derive(Debug, Clone, Default)]
-pub struct CheapEquivalenceMetrics {
-    /// **E1** nominal pre/post seam Pearson at lag 0 ([`nominal_seams`]).
-    pub nominal_pre: Option<f64>,
-    pub nominal_post: Option<f64>,
-    /// **E2** same-source residual at the nominal throat (application-computed with the A↔B delta).
-    pub residual: Option<SeamResidualVerdict>,
-    /// **E3** donor interior at the nominal span.
-    pub donor: Option<DonorInterior>,
-    /// **E4** A gap interior RMS (dB).
-    pub a_gap_rms_db: Option<f64>,
-}
-
-/// Serializable verdict (§5.5) — the metrics readout plus the policy disposition.
+/// The gate's per-gap readout: the class + the signals it was derived from (for tuning + reporting).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EquivalenceVerdict {
-    pub disposition: EquivalenceDisposition,
-    pub nominal_pre: Option<f64>,
-    pub nominal_post: Option<f64>,
-    pub residual_headroom_db: Option<f64>,
-    pub residual_informative: bool,
-    pub donor_silence_fraction: Option<f64>,
+pub struct GapEquivalenceVerdict {
+    pub class: GapEquivalenceClass,
+    /// `class.drops()` — surfaced so consumers don't re-derive it.
+    pub drop: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub a_gap_rms_db: Option<f64>,
-    pub skip_reason: Option<EquivalenceSkipReason>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub noise_floor_db: Option<f64>,
+    /// `a_gap_rms_db − noise_floor_db` — how far below the noise floor A's gap sits (the self-calibrated signal).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_below_noise_db: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_silence_fraction: Option<f64>,
 }
 
-impl EquivalenceVerdict {
-    /// The upstream "not evaluated" verdict (disabled / no B map / out of coverage) — no metrics.
-    pub fn not_evaluated() -> Self {
+impl GapEquivalenceVerdict {
+    fn of(class: GapEquivalenceClass, a: Option<f64>, nf: Option<f64>, ds: Option<f64>) -> Self {
         Self {
-            disposition: EquivalenceDisposition::NotEvaluated,
-            nominal_pre: None,
-            nominal_post: None,
-            residual_headroom_db: None,
-            residual_informative: false,
-            donor_silence_fraction: None,
-            a_gap_rms_db: None,
-            skip_reason: None,
+            class,
+            drop: class.drops(),
+            a_gap_rms_db: a,
+            noise_floor_db: nf,
+            a_below_noise_db: match (a, nf) {
+                (Some(a), Some(nf)) => Some(a - nf),
+                _ => None,
+            },
+            donor_silence_fraction: ds,
         }
     }
 }
 
-/// **§5.4 conservative policy.** Returns `Skip` (`AlreadyMatchesReference`) **only** when all four hold;
-/// any missing metric or unmet condition ⇒ `AttemptPatch`. Never returns `NotEvaluated` (that is decided
-/// upstream, before evaluation). Pure over the metrics — no I/O, no measurement.
+/// Classify one gap from its silence signals. Pure — no I/O, no measurement.
 ///
-/// 1. **E3 occupied** — donor `continuous` and `silence_fraction < max_donor_silence_fraction`.
-/// 2. **E4 quiet A** — `a_gap_rms_db <= a_quiet_floor_db` (A is a real dropout).
-/// 3. **E1 strong seams** — `min(pre, post) >= min_seam`.
-/// 4. **E2 same-source** — residual `informative` and `worst_headroom_db() <= residual_headroom_db`.
-pub fn equivalence_verdict(
-    metrics: &CheapEquivalenceMetrics,
+/// - `NotEvaluated` when the gate is off or any signal is missing.
+/// - `SharedSilence` when B is silent (nothing to fill).
+/// - `RepairableDropout` when A's signal died (below the noise floor by the margin) and B is occupied.
+/// - `AmbientQuiet` when B is occupied but A is only room tone (not a dropout).
+pub fn classify_gap_equivalence(
+    a_gap_rms_db: Option<f64>,
+    noise_floor_db: Option<f64>,
+    donor_silence_fraction: Option<f64>,
     params: &GapEquivalenceParams,
-) -> EquivalenceVerdict {
-    let residual_headroom_db = metrics
-        .residual
-        .as_ref()
-        .map(SeamResidualVerdict::worst_headroom_db)
-        .filter(|h| h.is_finite());
-    let residual_informative = metrics.residual.as_ref().is_some_and(|r| r.informative);
-    let donor_silence_fraction = metrics.donor.as_ref().map(|d| d.silence_fraction);
-
-    // Condition 3 — E1 strong seams (both sides scored, min above floor).
-    let seams_ok = matches!(
-        (metrics.nominal_pre, metrics.nominal_post),
-        (Some(pre), Some(post)) if pre.min(post) >= params.min_seam
-    );
-    // Condition 1 — E3 donor occupied (continuous, not program-quiet).
-    let donor_ok = metrics
-        .donor
-        .as_ref()
-        .is_some_and(|d| d.continuous && d.silence_fraction < params.max_donor_silence_fraction);
-    // Condition 2 — E4 A is a real dropout.
-    let a_quiet_ok = metrics.a_gap_rms_db.is_some_and(|rms| rms <= params.a_quiet_floor_db);
-    // Condition 4 — E2 same-source (floor cancels; chosen no worse than floor by more than the margin).
-    let residual_ok =
-        residual_informative && residual_headroom_db.is_some_and(|h| h <= params.residual_headroom_db);
-
-    let disposition = if donor_ok && a_quiet_ok && seams_ok && residual_ok {
-        EquivalenceDisposition::Skip
-    } else {
-        EquivalenceDisposition::AttemptPatch
-    };
-    let skip_reason =
-        (disposition == EquivalenceDisposition::Skip).then_some(EquivalenceSkipReason::AlreadyMatchesReference);
-
-    EquivalenceVerdict {
-        disposition,
-        nominal_pre: metrics.nominal_pre,
-        nominal_post: metrics.nominal_post,
-        residual_headroom_db,
-        residual_informative,
-        donor_silence_fraction,
-        a_gap_rms_db: metrics.a_gap_rms_db,
-        skip_reason,
+) -> GapEquivalenceVerdict {
+    if !params.enabled {
+        return GapEquivalenceVerdict::of(GapEquivalenceClass::NotEvaluated, a_gap_rms_db, noise_floor_db, donor_silence_fraction);
     }
-}
-
-/// **E1** — nominal seam Pearson at **lag 0** (no shoulder search), mono-only. Reuses
-/// [`fill_seam_correlations`] with deliberately-empty per-channel templates (metrics use the mono downmix,
-/// §5.2). Returns `(pre, post)`; a side is `None` when it has no scorable window (mirrors the internal
-/// scorability guards of `fill_seam_correlations`, so `None` ⟺ the primitive would return its `0.0`
-/// placeholder rather than a real correlation).
-///
-/// - `a_pre` / `a_post`: A border templates (from `border_templates_for_gap`, mono).
-/// - `b_mono`: the nominal B extract (seam margins + gap), downmixed.
-/// - `b_mapped_start`: the fill start (nominal gap start) index within `b_mono`.
-pub fn nominal_seams(
-    a_pre: &[f64],
-    a_post: &[f64],
-    b_mono: &[f64],
-    b_mapped_start: usize,
-    gap_frames: usize,
-    pre_window: usize,
-    post_window: usize,
-) -> (Option<f64>, Option<f64>) {
-    let templates = SeamTemplates {
-        a_pre,
-        a_post,
-        a_pre_ch: &[],
-        a_post_ch: &[],
-        b_mono,
-        b_ch: &[],
+    let (Some(a), Some(nf), Some(ds)) = (a_gap_rms_db, noise_floor_db, donor_silence_fraction) else {
+        return GapEquivalenceVerdict::of(GapEquivalenceClass::NotEvaluated, a_gap_rms_db, noise_floor_db, donor_silence_fraction);
     };
-    let placement = SeamPlacement { start: b_mapped_start, gap_frames, pre_window, post_window };
-    let (pre, post) = fill_seam_correlations(&templates, placement);
-
-    let pre_scorable =
-        pre_window > 0 && !a_pre.is_empty() && b_mapped_start >= pre_window && b_mapped_start <= b_mono.len();
-    let post_scorable =
-        post_window > 0 && !a_post.is_empty() && b_mapped_start + gap_frames + post_window <= b_mono.len();
-
-    (pre_scorable.then_some(pre), post_scorable.then_some(post))
+    let is_dropout = a < nf - params.dropout_margin_db;
+    let b_occupied = ds < params.donor_silence_thresh;
+    let class = match (is_dropout, b_occupied) {
+        (true, true) => GapEquivalenceClass::RepairableDropout,
+        (_, false) => GapEquivalenceClass::SharedSilence,
+        (false, true) => GapEquivalenceClass::AmbientQuiet,
+    };
+    GapEquivalenceVerdict::of(class, a_gap_rms_db, noise_floor_db, donor_silence_fraction)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{SeamFloorProbe, SeamFloorSource};
+    use GapEquivalenceClass::*;
 
-    /// Build a residual verdict from per-side (chosen_db, floor_db) with a chosen `informative`.
-    /// `informative` is derived by `from_parts_with_placement` from the floor probes vs floor-ok, so we
-    /// pick floor `residual_db` accordingly: ≤ -15 (DEFAULT_RESIDUAL_FLOOR_OK_DB) ⇒ informative.
-    fn residual(chosen_db: f64, floor_db: f64) -> SeamResidualVerdict {
-        let probe = |db: f64| SeamFloorProbe { source: SeamFloorSource::Border, residual_db: db, gain: 1.0, best_lag: 0 };
-        SeamResidualVerdict::from_parts_with_placement(
-            &probe(chosen_db),
-            &probe(chosen_db),
-            &probe(floor_db),
-            &probe(floor_db),
-            crate::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
-            0,
-            0,
-        )
+    fn on() -> GapEquivalenceParams {
+        GapEquivalenceParams { enabled: true, ..Default::default() }
     }
 
-    fn donor(silence_fraction: f64, continuous: bool) -> DonorInterior {
-        DonorInterior { rms_db: -20.0, silence_fraction, longest_silence_ms: 0.0, continuous }
+    fn class(a: f64, nf: f64, ds: f64) -> GapEquivalenceClass {
+        classify_gap_equivalence(Some(a), Some(nf), Some(ds), &on()).class
     }
 
-    /// All four conditions satisfied → Skip (same-master: strong seams, occupied donor, quiet A, floor cancels).
+    /// The four measured licensed-media cases (noise floor ~−45 to −70; margin 35, donor thresh 0.5).
     #[test]
-    fn same_master_skips() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: Some(0.98),
-            nominal_post: Some(0.95),
-            residual: Some(residual(-30.0, -30.0)), // floor cancels (informative), chosen == floor (headroom 0)
-            donor: Some(donor(0.05, true)),
-            a_gap_rms_db: Some(-60.0),
-        };
-        let v = equivalence_verdict(&m, &GapEquivalenceParams::default());
-        assert_eq!(v.disposition, EquivalenceDisposition::Skip);
-        assert_eq!(v.skip_reason, Some(EquivalenceSkipReason::AlreadyMatchesReference));
-        assert!(v.residual_informative);
+    fn measured_cases_classify_as_ground_truth() {
+        // Repairable dropout: a_rms −106, noise_floor −47 ⇒ 59 dB below; donor 0.0.
+        assert_eq!(class(-106.0, -47.0, 0.0), RepairableDropout);
+        // Mutual silence: a_rms −81, noise_floor −71 ⇒ 10 dB below (not a dropout); donor 0.92 (B silent).
+        assert_eq!(class(-81.0, -71.0, 0.92), SharedSilence);
+        // Deep A but B dead (intro/tail): a_rms −108, noise_floor −46 ⇒ dropout, but donor 1.0 ⇒ nothing to fill.
+        assert_eq!(class(-108.0, -46.0, 1.0), SharedSilence);
     }
 
-    /// Weak seams (decorrelated / timing-offset at lag 0) → AttemptPatch even if donor+A+residual look ok.
+    /// Ambient A with an occupied donor is a genuine quiet passage → drop (not a dropout).
     #[test]
-    fn weak_seams_attempt_patch() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: Some(0.10),
-            nominal_post: Some(0.12),
-            residual: Some(residual(-30.0, -30.0)),
-            donor: Some(donor(0.05, true)),
-            a_gap_rms_db: Some(-60.0),
-        };
-        let v = equivalence_verdict(&m, &GapEquivalenceParams::default());
-        assert_eq!(v.disposition, EquivalenceDisposition::AttemptPatch);
-        assert_eq!(v.skip_reason, None);
+    fn ambient_with_occupied_donor_is_quiet_passage() {
+        assert_eq!(class(-80.0, -70.0, 0.0), AmbientQuiet); // only 10 dB below floor
+        assert!(AmbientQuiet.drops());
     }
 
-    /// Residual not informative (floor doesn't cancel = different source) → AttemptPatch despite strong seams.
+    /// The margin is self-calibrating: the same 40 dB drop is a dropout under both a low and a high noise floor.
     #[test]
-    fn uninformative_residual_attempt_patch() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: Some(0.98),
-            nominal_post: Some(0.95),
-            residual: Some(residual(-5.0, -5.0)), // floor -5 > -15 ⇒ not informative
-            donor: Some(donor(0.05, true)),
-            a_gap_rms_db: Some(-60.0),
-        };
-        let v = equivalence_verdict(&m, &GapEquivalenceParams::default());
-        assert!(!v.residual_informative);
-        assert_eq!(v.disposition, EquivalenceDisposition::AttemptPatch);
+    fn margin_is_relative_to_noise_floor() {
+        assert_eq!(class(-100.0, -60.0, 0.0), RepairableDropout); // 40 dB below a −60 floor
+        assert_eq!(class(-120.0, -80.0, 0.0), RepairableDropout); // 40 dB below a −80 floor
+        assert_eq!(class(-90.0, -60.0, 0.0), AmbientQuiet); // only 30 dB below ⇒ not a dropout
     }
 
-    /// Program-quiet donor (mostly silent) → AttemptPatch (that is unfillable territory, not equivalence).
     #[test]
-    fn program_quiet_donor_attempt_patch() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: Some(0.98),
-            nominal_post: Some(0.95),
-            residual: Some(residual(-30.0, -30.0)),
-            donor: Some(donor(0.9, false)),
-            a_gap_rms_db: Some(-60.0),
-        };
-        assert_eq!(
-            equivalence_verdict(&m, &GapEquivalenceParams::default()).disposition,
-            EquivalenceDisposition::AttemptPatch
-        );
+    fn drops_only_the_two_silence_classes() {
+        assert!(!RepairableDropout.drops());
+        assert!(!NotEvaluated.drops());
+        assert!(SharedSilence.drops());
+        assert!(AmbientQuiet.drops());
     }
 
-    /// Loud A (scan false-negative, not a real dropout) → AttemptPatch.
     #[test]
-    fn loud_a_attempt_patch() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: Some(0.98),
-            nominal_post: Some(0.95),
-            residual: Some(residual(-30.0, -30.0)),
-            donor: Some(donor(0.05, true)),
-            a_gap_rms_db: Some(-10.0), // above the -45 quiet floor
-        };
-        assert_eq!(
-            equivalence_verdict(&m, &GapEquivalenceParams::default()).disposition,
-            EquivalenceDisposition::AttemptPatch
-        );
+    fn disabled_or_missing_signal_is_not_evaluated() {
+        assert_eq!(classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &GapEquivalenceParams::default()).class, NotEvaluated);
+        assert_eq!(classify_gap_equivalence(None, Some(-47.0), Some(0.0), &on()).class, NotEvaluated);
+        assert_eq!(classify_gap_equivalence(Some(-106.0), Some(-47.0), None, &on()).class, NotEvaluated);
     }
 
-    /// Any missing metric (decode failure) → AttemptPatch (conservative).
     #[test]
-    fn missing_metric_attempt_patch() {
-        let m = CheapEquivalenceMetrics {
-            nominal_pre: None,
-            nominal_post: Some(0.95),
-            residual: Some(residual(-30.0, -30.0)),
-            donor: Some(donor(0.05, true)),
-            a_gap_rms_db: Some(-60.0),
-        };
-        assert_eq!(
-            equivalence_verdict(&m, &GapEquivalenceParams::default()).disposition,
-            EquivalenceDisposition::AttemptPatch
-        );
-    }
-
-    /// E1 scorability: a placement with no room for the pre window returns `None` (not a spurious 0.0).
-    #[test]
-    fn nominal_seams_reports_unscorable_side_as_none() {
-        let a_pre = vec![0.1_f64; 100];
-        let a_post = vec![0.1_f64; 100];
-        let b_mono = vec![0.1_f64; 500];
-        // start (10) < pre_window (50) ⇒ pre unscorable; post has room.
-        let (pre, post) = nominal_seams(&a_pre, &a_post, &b_mono, 10, 50, 50, 50);
-        assert_eq!(pre, None, "pre window doesn't fit before start ⇒ None");
-        assert!(post.is_some(), "post window fits ⇒ Some");
+    fn verdict_reports_a_below_noise() {
+        let v = classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on());
+        assert_eq!(v.a_below_noise_db, Some(-59.0));
+        assert!(v.drop == false && v.class == RepairableDropout);
     }
 }

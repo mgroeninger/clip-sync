@@ -1,12 +1,23 @@
 # Gap content equivalence (skip redundant fills) — plan (DRAFT)
 
-Status: **Phase 0 landed (2026-07-11)** — the cheap equivalence block (`domain/gap_equivalence.rs` policy +
-E1; `application/gap_equivalence.rs` compose over E1–E4 at nominal/lag-0) is built, unit + end-to-end tested,
-and emitted as the `equivalence` block on `--gap-fingerprints` (see [gap-fingerprint.md](gap-fingerprint.md)).
-**Remaining in Phase 0:** run on a licensed 5.1 pair to tune thresholds (§9.1) — and confirm the redundant extras actually
-match at **lag 0** (our earlier `min_gap 1000ms` measurement found a licensed pair's gaps are timing-**offset** ~150–200 ms;
-if the sensitive-scan extras are offset too, the lag-0 read underfires — decide before v1). The **v1** plan-time
-gate + production skip are **not** started.
+Status: **REDESIGNED to a silence-character gate (2026-07-11) — Phase 0 built + media-validated.** The original
+seam/lag "does B match A at nominal" approach (§5 below) was **refuted on real media**: two independent
+recordings **drift** (~150–200 ms residual lag per gap even after alignment), so nothing matches at lag 0 and
+the seam read was useless (0/14 matchable gaps matched at lag 0). Operator ground truth then showed the actual
+discriminator is the **silence character**, not seam correlation:
+
+- **A-side:** A's gap RMS **relative to the recording's own noise floor** — a true dropout sits **≥35 dB below**
+  it (signal died); a genuine quiet passage sits **at** it (room tone). Self-calibrating (no absolute dB).
+- **B-side:** `donor_silence_fraction` (bimodal ~0 vs ~1 corpus-wide) — is B occupied.
+
+**Vocabulary + gate (`domain/gap_equivalence.rs`, `classify_gap_equivalence`):** `repairable_dropout`
+(dropout ∧ B occupied → keep) · `shared_silence` (B silent → drop) · `ambient_quiet` (room tone ∧ B occupied →
+drop) · `not_evaluated`. Tunable (`dropout_margin_db≈35`, `donor_silence_thresh≈0.5`), **off by default**;
+emitted as the `equivalence` block on `--gap-fingerprints` ([gap-fingerprint.md](gap-fingerprint.md)).
+**Validated:** classifies all 15 gaps of a licensed pair to operator ground truth (8 repairable→keep,
+4 mutual-silence→drop, intro/tail→drop). **Remaining:** dump one more pair to confirm the A-side threshold
+generalizes; then **v1** = the production plan-time drop (config flags + `build_gap_fill_plan` hook). **§4–§14
+below describe the superseded seam approach — kept for history; the silence gate replaces §5's algorithm.**
 
 Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
 [gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),

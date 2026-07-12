@@ -203,12 +203,12 @@ pub struct GapFingerprint {
     pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
-    /// Cheap content-equivalence read (Phase 0, `docs/TEMP-gap-equivalence-plan.md`): does B already carry
-    /// the same program audio as A at the **nominal** map (lag 0), so a fill would be a no-op? Composed from
-    /// the seam Pearson + same-source residual + donor + A-RMS at nominal — the cheap gate, NOT the dual-fit
-    /// / oracle-throat measurements. Emitted for tuning; production skip is a later (v1) step.
+    /// Gap-equivalence classification (`docs/TEMP-gap-equivalence-plan.md`): does this gap need patching?
+    /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
+    /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
+    /// silence. Emitted for tuning/categorizing; the production plan-time drop is a later (v1) step.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub equivalence: Option<crate::domain::gap_equivalence::EquivalenceVerdict>,
+    pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
 }
 
 /// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
@@ -3047,27 +3047,19 @@ pub fn characterize_gaps_from_decode(
         // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), Some(m.brackets));
 
-        // Cheap content-equivalence overlay (Phase 0, gap-equivalence plan §7.4) — emitted for tuning; no
-        // production skip yet. Cheap (O(seam)+O(gap), no bracket grid), so always computed on the dump.
-        let equiv_b_mono = crate::domain::policies::interleaved_to_mono(b_slice, ch);
-        let seam_window_frames = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+        // Gap-equivalence classification overlay (gap-equivalence plan §7.4) — emitted for tuning/categorizing.
+        // Silence-character signals: A gap RMS vs the recording's noise floor + donor silence at nominal.
+        // `enabled: true` here so the dump always classifies (it never drops gaps — that's the v1 plan-time gate).
         let equiv = crate::application::gap_equivalence::measure_gap_equivalence(
-            &crate::application::gap_equivalence::GapEquivalenceInput {
-                a_samples: &a_pcm.samples,
-                channels: ch,
-                sample_rate,
-                b_mono: &equiv_b_mono,
-                b_extract_start_frame: lo,
-                b_nominal_start_frame: (b_start * rate).round() as usize,
-                refined,
-                gap_floor_db: f64::from(fp.levels.gap_floor_db),
-                seam_window_frames,
-                standoff_frames: (cfg.border_standoff_secs * rate).round() as usize,
-                silence_peak_fraction: cfg.silence_peak_fraction,
-                absolute_silence_rms: cfg.absolute_silence_rms,
-                max_lag_frames: gate_cfg.residual_max_lag_frames,
-                residual_floor_ok_db: gate_cfg.residual_floor_ok_db,
-                params: crate::domain::gap_equivalence::GapEquivalenceParams::default(),
+            &a_pcm.samples,
+            ch,
+            refined.start_frame,
+            refined.end_frame,
+            f64::from(fp.levels.noise_floor_db),
+            fp.donor_interior_nominal.as_ref().map(|d| d.silence_fraction),
+            &crate::domain::gap_equivalence::GapEquivalenceParams {
+                enabled: true,
+                ..Default::default()
             },
         );
         fp.equivalence = Some(equiv);
