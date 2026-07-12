@@ -584,7 +584,9 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 When v1 ships:
 
 - Mark status **v1 done**; move operator contract into [gap-repair-guide.md](gap-repair-guide.md) and [gap-scan.md](gap-scan.md).
-- Add **Already-equivalent** cell to [gap-vocabulary.md](gap-vocabulary.md).
+- [x] Reconcile the silence-character cells into [gap-vocabulary.md](gap-vocabulary.md) § *Silence-character
+  pre-gate* — `shared_silence` documented as the plan-time detection of the **Program-quiet** cell,
+  `ambient_quiet` as a new cell, `repairable_dropout` as a keep (not a skip cell).
 - Link from [pipeline.md](pipeline.md) fill-plan section.
 - Keep phase 0 / v1.5 notes here until implemented or archived.
 

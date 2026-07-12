@@ -224,7 +224,12 @@ pub fn format_unified_gap_report(
         let gap = &report.gaps[i];
         let patch_outcome = patch.and_then(|summary| summary.gaps.get(i));
         let priority = gap_display_priority(patch_outcome);
-        let status = format_unified_gap_status(gap, report, patch_outcome, show_diagnostics);
+        let mut status = format_unified_gap_status(gap, report, patch_outcome, show_diagnostics);
+        // Scan-only: append the silence-character classification (advisory). In patch mode the disposition
+        // is already reflected in the patch/skip status, so we don't duplicate it there.
+        if patch_outcome.is_none() {
+            status.push_str(&format_gap_equivalence_suffix(report, i));
+        }
         out.push_str(&format!(
             "  {:<3} {:<20} {:<8} {status}\n",
             format_gap_row_index(priority, i + 1),
@@ -234,6 +239,18 @@ pub fn format_unified_gap_report(
     }
 
     out
+}
+
+/// Compact human tag for a gap's silence-character classification (advisory column on the scan table).
+/// Empty for `not_evaluated` / unclassified gaps so the table stays clean when the gate has no opinion.
+fn format_gap_equivalence_suffix(report: &GapReport, index: usize) -> String {
+    use crate::domain::gap_equivalence::GapEquivalenceClass::*;
+    match report.gap_equivalence_at(index).map(|v| v.class) {
+        Some(SharedSilence) => "  [equiv: shared-silence → drop]".into(),
+        Some(AmbientQuiet) => "  [equiv: ambient-quiet → drop]".into(),
+        Some(RepairableDropout) => "  [equiv: dropout]".into(),
+        _ => String::new(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1072,6 +1089,35 @@ mod tests {
             limit_fill_to_mapped_region: true,
             audio_timeline_skew: None,
         }
+    }
+
+    #[test]
+    fn scan_table_shows_equivalence_classification() {
+        use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
+        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+
+        let mut report = minimal_report();
+        // One shared-silence gap (drop) — the single gap in `minimal_report`.
+        report.gap_equivalence =
+            vec![classify_gap_equivalence(Some(-108.0), Some(-46.0), Some(1.0), &on)];
+
+        // Scan-only (no patch summary): the advisory tag appears.
+        let text = super::format_unified_gap_report(&report, None, false);
+        assert!(
+            text.contains("[equiv: shared-silence → drop]"),
+            "scan table should show the classification:\n{text}"
+        );
+
+        // Repairable dropout renders its own tag.
+        report.gap_equivalence =
+            vec![classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on)];
+        let text = super::format_unified_gap_report(&report, None, false);
+        assert!(text.contains("[equiv: dropout]"), "{text}");
+
+        // Not-evaluated (empty) ⇒ no tag, table stays clean.
+        report.gap_equivalence = Vec::new();
+        let text = super::format_unified_gap_report(&report, None, false);
+        assert!(!text.contains("[equiv:"), "{text}");
     }
 
     /// Regenerate `tests/fixtures/full_surface_repair.json` after an intentional contract change:

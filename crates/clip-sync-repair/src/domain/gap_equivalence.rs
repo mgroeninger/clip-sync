@@ -41,18 +41,24 @@ impl Default for GapEquivalenceParams {
     }
 }
 
-/// Vocabulary for the gate — the reason a gap does or doesn't need patching.
+/// Vocabulary for the gate — the reason a gap does or doesn't need patching. These are the
+/// **scan-time silence-character cells** in [`docs/gap-vocabulary.md`] (§ *Silence-character pre-gate*),
+/// a pre-filter that runs before the seam/donor cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapEquivalenceClass {
     /// A's signal died (RMS ≥ `dropout_margin_db` below the recording's noise floor) **and** B carries content
-    /// — a real dropout with a fill source. **Keep** (needs patching).
+    /// — a real dropout with a fill source. **Keep** — *not a skip cell*: the gap proceeds into the normal
+    /// seam/donor cells (Bracket-patch / Silence-splice / …).
     RepairableDropout,
     /// B is silent at the nominal span (`donor_silence ≥ thresh`) — nothing to fill with, patching can't help.
-    /// **Drop.** (Both "A dropped out but the donor is also dead" and "quiet in both" land here.)
+    /// **Drop.** (Both "A dropped out but the donor is also dead" and "quiet in both" land here.) This is the
+    /// **plan-time detection of the Program-quiet cell** — the same disposition the patch path skips as
+    /// `GapPatchSkipReason::ProgramQuiet`, surfaced before decode as `GapFillSkipReason::AlreadyMatchesReference`.
     SharedSilence,
     /// A is only ambient room tone (near its own noise floor), not a signal failure, though B has content — a
-    /// genuine quiet passage, not a dropout. **Drop** (don't inject content into intentional quiet).
+    /// genuine quiet passage, not a dropout. **Drop** (don't inject content into intentional quiet). A cell with
+    /// no seam/donor counterpart — decided on A's own character, not B's donor state.
     AmbientQuiet,
     /// Gate disabled or a required signal missing — **keep** (no decision made).
     NotEvaluated,
@@ -279,7 +285,7 @@ mod tests {
     fn verdict_reports_a_below_noise() {
         let v = classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on());
         assert_eq!(v.a_below_noise_db, Some(-59.0));
-        assert!(v.drop == false && v.class == RepairableDropout);
+        assert!(!v.drop && v.class == RepairableDropout);
     }
 
     // --- derive_gap_equivalence (scan-block timelines → signals → classification) --------------------

@@ -50,7 +50,8 @@ post-rescue outcome, not a separate gap type.*
 at the *same program time*, before any lag search). Can look identical to silence-splice at the seam —
 `1·g19` scores 0.998 on both seams yet its donor interior is dead — so donor occupancy, not seam score,
 is what tells the two apart; skip is permanent here, not a search-radius problem. *Old guide: **W5**,
-un-rescued (stayed `symmetric_weak`/dead zone).*
+un-rescued (stayed `symmetric_weak`/dead zone).* The scan-time equivalence gate detects this **same
+disposition earlier** as `shared_silence` (§ Silence-character pre-gate) — a plan-time drop before decode.
 
 **No-placement** (n=5, e.g. 1·g0, 4·g0, 7·g0) — structure/anchor search found no candidate at all;
 never reached seam scoring, so there's nothing to name at a finer grain. *Old guide: **W6**
@@ -90,6 +91,36 @@ definite skip with no judgment: B window empty / segment out of range / zero-len
 (geometry mismatch, `OutsideReferenceCoverage`), filtered before per-gap scoring. Pair-level aborts
 (`TrackLayoutMismatch`, `TrackCompatibilityUnavailable`) are **not** cells — they abort the whole pair, with no
 per-gap action to reconcile.
+
+## Silence-character pre-gate (scan-time equivalence)
+
+The cells above classify a gap *after* it enters the seam/donor measurement space. The **equivalence gate**
+(`domain/gap_equivalence.rs`; `--skip-equivalent-gaps`; [TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md))
+runs earlier — at **scan time**, on two cheap per-block signals — and answers a *prior* question: **is this
+scanned silent run even a dropout worth repairing?** It reads one **new axis** crossed with an existing one:
+
+| Axis | Question | Placement |
+|------|----------|-----------|
+| A silence character | Did A's signal **die** (gap RMS ≥ `dropout_margin_db` below A's *own* noise floor), or is it room tone **at** the floor? | A gap interior vs A context (250 ms scan blocks) |
+| Donor — nominal | Is B occupied at the same program time? | nominal `b_mapped`, no lag (**reuses** the Donor—nominal axis) |
+
+**Cells (`GapEquivalenceClass`, emitted on the scan report + `--gap-fingerprints`):**
+
+- **`repairable_dropout`** — A died ∧ B occupied → **keep**. *Not a skip cell*: the gap proceeds into the
+  seam/donor cells above (Bracket-patch / Silence-splice / Program-quiet / …) exactly as it does today.
+- **`shared_silence`** — B silent at nominal → **drop**. This is the **plan-time detection of the
+  Program-quiet cell** — same disposition, same Donor—nominal read — surfaced *before decode* as
+  `GapFillSkipReason::AlreadyMatchesReference` rather than *after characterize* as
+  `GapPatchSkipReason::ProgramQuiet`. Both "A dropped out but B is also dead" and "quiet in both" land here.
+- **`ambient_quiet`** — B occupied but A is only room tone (not a dropout) → **drop**. A **new cell** with no
+  seam/donor counterpart: the scan false-positived an intentional quiet passage as a gap, so there is nothing
+  to repair even though B has content. Decided on A's own character, not B's donor state.
+- **`not_evaluated`** — the gate is off or a signal is missing → **keep** (no decision made).
+
+Only `shared_silence` and `ambient_quiet` drop (`GapEquivalenceClass::drops()`), and the drop is applied at
+plan time **only** when `--skip-equivalent-gaps` is set, at **lowest precedence** — `NotFillable`, coverage,
+and track blocks win (§ Unfillable). The classification is always computed and reported (advisory), so a plain
+scan (`--json`, no `--mux`/`--wav`) shows it with the flag off.
 
 ## Derived readouts (not primitives)
 
