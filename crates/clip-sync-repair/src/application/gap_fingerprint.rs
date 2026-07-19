@@ -206,9 +206,16 @@ pub struct GapFingerprint {
     /// Gap-equivalence classification (`docs/TEMP-gap-equivalence-plan.md`): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
-    /// silence. Emitted for tuning/categorizing; the production plan-time drop is a later (v1) step.
+    /// silence. This is the **fine reference**: sample-level A RMS + fine-bin noise floor + 50 ms donor bins,
+    /// on the full decode. Emitted for tuning/categorizing; the production plan-time drop is a later (v1) step.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
+    /// The **coarse production** equivalence verdict for the same gap — the 250 ms scan-block gate the scan
+    /// report carries (`GapReport::gap_equivalence`), copied in so one `--gap-fingerprints` run holds both
+    /// granularities per gap for calibration (the `equivalence-calibration` tool diffs `equivalence` vs this).
+    /// `None` when the scan did not classify the gap.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scan_equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
 }
 
 /// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
@@ -848,6 +855,7 @@ pub fn spec_to_fingerprint_summary(
         }),
         // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
         equivalence: None,
+        scan_equivalence: None,
     }
 }
 
@@ -2517,6 +2525,7 @@ pub fn build_gap_fingerprint(
         splice_dualfit: None,
         outcome: None,
         equivalence: None,
+        scan_equivalence: None,
     }
 }
 
@@ -3063,6 +3072,9 @@ pub fn characterize_gaps_from_decode(
             },
         );
         fp.equivalence = Some(equiv);
+        // Copy in the coarse 250 ms scan-block verdict (index-parallel to report gaps) so the corpus holds
+        // both granularities per gap — the calibration diff reads them from `corpus.json` alone.
+        fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
     }
     corpus
 }
@@ -4071,6 +4083,7 @@ mod tests {
             b_levels: None,
             outcome: None,
             equivalence: None,
+            scan_equivalence: None,
         }
     }
 
@@ -4244,6 +4257,7 @@ mod tests {
                 skip_reason: Some("boundary correlation below threshold".into()),
             }),
             equivalence: None,
+            scan_equivalence: None,
         };
         let json = serde_json::to_string(&fp).expect("serialize");
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");

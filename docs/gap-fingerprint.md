@@ -77,7 +77,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
 | `b_levels` | full, B present | symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
-| `equivalence` | B present | **gap-equivalence class** — does this gap need patching? (silence-character; see below) |
+| `equivalence` | B present | **gap-equivalence class (fine)** — does this gap need patching? (silence-character; see below) |
+| `scan_equivalence` | scan classified | the **coarse 250 ms production** verdict for the same gap (`GapReport::gap_equivalence`), copied in so one dump holds both granularities for calibration |
 
 ### `equivalence` — does this gap need patching?
 
@@ -100,6 +101,14 @@ occupied → **keep**; `shared_silence` = B silent → nothing to fill → **dro
 tone (not a dropout) though B has content → genuine quiet → **drop**. Thresholds (`dropout_margin_db ≈ 35`,
 `donor_silence_thresh ≈ 0.5`) are tunable; the gate is **off by default** and the dump is **emit-only** (the
 production plan-time drop is a later v1 step).
+
+**`equivalence` vs `scan_equivalence` (fine vs coarse):** `equivalence` is the **fine reference** —
+sample-level A gap RMS, fine-bin noise floor, 50 ms donor bins, on the full decode. `scan_equivalence` is the
+**coarse production** verdict the scan gate actually uses (250 ms scan blocks). They feed the same classifier
+and normally agree; a single `--gap-fingerprints DIR` run carries both per gap so the **`equivalence-calibration`**
+tool can diff them (`equivalence-calibration DIR`) and flag any gap where the coarse gate *drops* a gap the fine
+reference would *keep* (the only unsafe divergence). See [gap-vocabulary.md](gap-vocabulary.md)
+§ *Silence-character pre-gate*.
 
 ## Lag fingerprint
 

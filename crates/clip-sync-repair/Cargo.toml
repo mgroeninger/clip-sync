@@ -16,6 +16,11 @@ path = "src/lib.rs"
 name = "clip-sync-repair"
 path = "src/main.rs"
 
+# Calibration/dev tool: diff the 250 ms scan equivalence gate against the fine-bin fingerprint reference.
+[[bin]]
+name = "equivalence-calibration"
+path = "src/bin/equivalence_calibration.rs"
+
 [features]
 default = []
 ffmpeg-mux = []
