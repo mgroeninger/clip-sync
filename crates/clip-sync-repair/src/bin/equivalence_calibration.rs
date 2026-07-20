@@ -1,15 +1,15 @@
-//! `equivalence-calibration` — diff the **coarse production scan gate** (250 ms scan blocks) against the
-//! **fine `--gap-fingerprints` reference** (sample-level A RMS + fine-bin noise floor + 50 ms donor bins),
-//! per gap. Both paths feed the same `classify_gap_equivalence`; they differ only in measurement
-//! granularity. This tool quantifies where the cheap production path disagrees with the fine reference on
-//! real media — especially the one dangerous direction: **scan says *drop* but the reference says *keep***
-//! (a potential false drop / unrepaired hole).
+//! `equivalence-calibration` — diff the **coarse production scan gate** (the scan-block equivalence gate)
+//! against the **fine `--gap-fingerprints` reference** (sample-level A RMS + fine-bin noise floor + 50 ms
+//! donor bins), per gap. Both paths feed the same `classify_gap_equivalence`; they differ only in
+//! measurement granularity. This tool quantifies where the cheap production path disagrees with the fine
+//! reference on real media — especially the one dangerous direction: **scan says *drop* but the reference
+//! says *keep*** (a potential false drop / unrepaired hole).
 //!
-//! A single `--gap-fingerprints DIR` run now carries **both** verdicts per gap (`equivalence` = fine,
-//! `scan_equivalence` = coarse), so this tool reads just that one corpus:
+//! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = fine,
+//! `scan_equivalence` = coarse). Two modes, auto-detected from the argument:
 //!
-//!   clip-sync-repair A B --gap-fingerprints out_dir
-//!   equivalence-calibration out_dir            # (or out_dir/corpus.json)
+//!   equivalence-calibration out_dir            # ONE corpus (dir or dir/corpus.json) → per-gap table
+//!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
 //!
 //! Exit code 1 if any **dangerous** divergence exists (scan drops, reference keeps), else 0 — so it can gate CI.
 //! See `docs/TEMP-gap-equivalence-plan.md` § *Granularity tradeoff* and `docs/gap-vocabulary.md`
@@ -25,10 +25,11 @@ use clip_sync_repair::application::gap_fingerprint::GapCorpus;
 use clip_sync_repair::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
 
 #[derive(Parser)]
-#[command(about = "Diff the 250 ms scan equivalence gate against the fine-bin fingerprint reference")]
+#[command(about = "Diff the scan-block equivalence gate against the fine-bin fingerprint reference")]
 struct Args {
-    /// `--gap-fingerprints` output: either the corpus directory or its `corpus.json` directly.
-    corpus: PathBuf,
+    /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
+    /// of numbered corpora for a one-line-per-pair roll-up.
+    path: PathBuf,
 }
 
 /// The per-gap comparison outcome between the coarse scan verdict and the fine reference verdict.
@@ -53,6 +54,58 @@ fn pair_verdict(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> P
     } else {
         PairVerdict::SafeDiverge
     }
+}
+
+/// Tallies across a corpus (or a roll-up total).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Summary {
+    compared: usize,
+    divergent: usize,
+    dangerous: usize,
+    unpaired: usize,
+}
+
+impl Summary {
+    fn add(&mut self, o: Summary) {
+        self.compared += o.compared;
+        self.divergent += o.divergent;
+        self.dangerous += o.dangerous;
+        self.unpaired += o.unpaired;
+    }
+}
+
+/// Tally `(scan, reference)` verdict pairs. `None` on either side ⇒ unpaired (not compared).
+fn summarize<'a>(
+    pairs: impl Iterator<Item = (Option<&'a GapEquivalenceVerdict>, Option<&'a GapEquivalenceVerdict>)>,
+) -> Summary {
+    let mut s = Summary::default();
+    for (scan, refv) in pairs {
+        match (scan, refv) {
+            (Some(scanv), Some(refv)) => {
+                s.compared += 1;
+                match pair_verdict(scanv, refv) {
+                    PairVerdict::Agree => {}
+                    PairVerdict::SafeDiverge => s.divergent += 1,
+                    PairVerdict::Dangerous => {
+                        s.divergent += 1;
+                        s.dangerous += 1;
+                    }
+                }
+            }
+            _ => s.unpaired += 1,
+        }
+    }
+    s
+}
+
+/// `(scan, reference)` verdict pairs for a corpus, in gap order.
+fn corpus_pairs(
+    corpus: &GapCorpus,
+) -> impl Iterator<Item = (Option<&GapEquivalenceVerdict>, Option<&GapEquivalenceVerdict>)> {
+    corpus
+        .gaps
+        .iter()
+        .map(|fp| (fp.scan_equivalence.as_ref(), fp.equivalence.as_ref()))
 }
 
 fn class_label(c: GapEquivalenceClass) -> &'static str {
@@ -91,54 +144,22 @@ fn signal_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
     parts.join("  ")
 }
 
-/// Resolve the corpus path: a directory ⇒ `<dir>/corpus.json`, else the path itself.
-fn corpus_json_path(p: &Path) -> PathBuf {
-    if p.is_dir() {
-        p.join("corpus.json")
-    } else {
-        p.to_path_buf()
-    }
-}
-
-fn main() -> ExitCode {
-    let args = Args::parse();
-    let path = corpus_json_path(&args.corpus);
-
-    let corpus: GapCorpus = match load(&path) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("error: reading corpus {}: {e}", path.display());
-            return ExitCode::from(2);
-        }
-    };
-
+/// Print the per-gap table for one corpus and return its tally.
+fn print_detail(corpus: &GapCorpus) -> Summary {
+    let block_ms = corpus.source.scan_recipe.scan_block_ms.unwrap_or(250);
     println!(
-        "  gap  range                scan(250ms)      ref(fine)        Δ(ref−scan)                verdict"
+        "  {:<4} {:<20} {:<16} {:<16} {:<26} verdict",
+        "gap", "range", format!("scan({block_ms}ms)"), "ref(fine)", "Δ(ref−scan)",
     );
-
-    let (mut compared, mut divergent, mut dangerous, mut unpaired) = (0usize, 0usize, 0usize, 0usize);
-
     for fp in &corpus.gaps {
-        // fine = the fingerprint `equivalence`; coarse = the copied-in `scan_equivalence`.
         let (Some(refv), Some(scanv)) = (fp.equivalence.as_ref(), fp.scan_equivalence.as_ref()) else {
-            unpaired += 1;
             continue;
         };
-        compared += 1;
-
         let verdict = match pair_verdict(scanv, refv) {
             PairVerdict::Agree => "ok",
-            PairVerdict::SafeDiverge => {
-                divergent += 1;
-                "diverge (safe)"
-            }
-            PairVerdict::Dangerous => {
-                divergent += 1;
-                dangerous += 1;
-                "⚠ DANGEROUS (scan drops, ref keeps)"
-            }
+            PairVerdict::SafeDiverge => "diverge (safe)",
+            PairVerdict::Dangerous => "⚠ DANGEROUS (scan drops, ref keeps)",
         };
-
         println!(
             "  {:<4} {:<20} {:<16} {:<16} {:<26} {verdict}",
             fp.index + 1,
@@ -148,20 +169,122 @@ fn main() -> ExitCode {
             signal_deltas(scanv, refv),
         );
     }
-
+    let s = summarize(corpus_pairs(corpus));
     println!(
-        "\n{compared} gaps compared · {divergent} divergent · {dangerous} dangerous (scan-drop / ref-keep)"
+        "\n{} gaps compared · {} divergent · {} dangerous (scan-drop / ref-keep)",
+        s.compared, s.divergent, s.dangerous
     );
-    if unpaired > 0 {
+    if s.unpaired > 0 {
+        println!("note: {} gap(s) lacked both verdicts (characterize a full corpus — no --fingerprint-gap subset)", s.unpaired);
+    }
+    s
+}
+
+/// Roll up every numbered corpus under `parent` (immediate subdirs containing `corpus.json`).
+fn print_rollup(parent: &Path) -> ExitCode {
+    let mut dirs: Vec<PathBuf> = match std::fs::read_dir(parent) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir() && p.join("corpus.json").is_file())
+            .collect(),
+        Err(e) => {
+            eprintln!("error: reading {}: {e}", parent.display());
+            return ExitCode::from(2);
+        }
+    };
+    if dirs.is_empty() {
+        eprintln!("no corpora found under {} (expected numbered subdirs each with corpus.json)", parent.display());
+        return ExitCode::from(2);
+    }
+    // Numeric-aware order (1, 2, …, 10) with a lexical fallback.
+    dirs.sort_by_key(|p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        (name.parse::<u64>().unwrap_or(u64::MAX), name)
+    });
+
+    println!("  {:<16} {:<6} {:<5} {:<8} {:<8} verdict", "pair", "gaps", "cmp", "diverg", "danger");
+    let mut total = Summary::default();
+    let mut read_errors = 0usize;
+    for d in &dirs {
+        let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let corpus: GapCorpus = match load(&d.join("corpus.json")) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("  {name:<16} (read error: {e})");
+                read_errors += 1;
+                continue;
+            }
+        };
+        let s = summarize(corpus_pairs(&corpus));
+        total.add(s);
+        let verdict = if s.dangerous > 0 {
+            "⚠ DANGEROUS"
+        } else if s.divergent > 0 {
+            "ok (safe diverge)"
+        } else {
+            "ok"
+        };
         println!(
-            "note: {unpaired} gap(s) lacked both verdicts (characterize a full corpus — no --fingerprint-gap subset — so scan_equivalence is present)"
+            "  {name:<16} {:<6} {:<5} {:<8} {:<8} {verdict}",
+            corpus.gaps.len(),
+            s.compared,
+            s.divergent,
+            s.dangerous,
         );
     }
+    println!(
+        "  {:<16} {:<6} {:<5} {:<8} {:<8} {}",
+        "TOTAL",
+        "",
+        total.compared,
+        total.divergent,
+        total.dangerous,
+        if total.dangerous > 0 { "⚠ DANGEROUS" } else { "ok" },
+    );
+    println!(
+        "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (scan-drop / ref-keep)",
+        dirs.len() - read_errors,
+        total.compared,
+        total.divergent,
+        total.dangerous,
+    );
 
-    if dangerous > 0 {
+    if total.dangerous > 0 {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn main() -> ExitCode {
+    let args = Args::parse();
+    let p = &args.path;
+
+    // Single-corpus if the arg is a corpus.json file or a dir directly holding one; else roll up its subdirs.
+    let direct = if p.is_file() {
+        Some(p.clone())
+    } else if p.join("corpus.json").is_file() {
+        Some(p.join("corpus.json"))
+    } else {
+        None
+    };
+
+    match direct {
+        Some(path) => match load::<GapCorpus>(&path) {
+            Ok(corpus) => {
+                let s = print_detail(&corpus);
+                if s.dangerous > 0 {
+                    ExitCode::FAILURE
+                } else {
+                    ExitCode::SUCCESS
+                }
+            }
+            Err(e) => {
+                eprintln!("error: reading corpus {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => print_rollup(p),
     }
 }
 
@@ -196,20 +319,17 @@ mod tests {
 
     #[test]
     fn scan_drops_but_reference_keeps_is_dangerous() {
-        // Coarse path dropped (shared_silence); fine reference keeps (dropout) → false-drop risk.
         assert_eq!(pair_verdict(&shared(), &dropout()), PairVerdict::Dangerous);
         assert_eq!(pair_verdict(&ambient(), &dropout()), PairVerdict::Dangerous);
     }
 
     #[test]
     fn scan_keeps_but_reference_drops_is_safe() {
-        // Coarse path kept; fine reference would drop → only a missed optimization.
         assert_eq!(pair_verdict(&dropout(), &shared()), PairVerdict::SafeDiverge);
     }
 
     #[test]
     fn both_drop_different_classes_is_safe() {
-        // shared_silence vs ambient_quiet: classes differ but both drop → not dangerous.
         assert_eq!(pair_verdict(&shared(), &ambient()), PairVerdict::SafeDiverge);
     }
 
@@ -218,5 +338,30 @@ mod tests {
         assert_eq!(hms(0.0), "0:00.0");
         assert_eq!(hms(61.5), "1:01.5");
         assert_eq!(hms(3661.2), "1:01:01.2");
+    }
+
+    #[test]
+    fn summarize_counts_agree_safe_dangerous_and_unpaired() {
+        let (d, sh, am) = (dropout(), shared(), ambient());
+        let pairs = vec![
+            (Some(&d), Some(&d)),   // agree
+            (Some(&sh), Some(&sh)), // agree
+            (Some(&d), Some(&sh)),  // safe diverge (scan keeps, ref drops)
+            (Some(&sh), Some(&d)),  // dangerous (scan drops, ref keeps)
+            (Some(&am), Some(&d)),  // dangerous
+            (None, Some(&d)),       // unpaired
+        ];
+        let s = summarize(pairs.into_iter());
+        assert_eq!(s.compared, 5);
+        assert_eq!(s.divergent, 3); // 1 safe + 2 dangerous
+        assert_eq!(s.dangerous, 2);
+        assert_eq!(s.unpaired, 1);
+    }
+
+    #[test]
+    fn summary_add_accumulates() {
+        let mut a = Summary { compared: 3, divergent: 1, dangerous: 0, unpaired: 0 };
+        a.add(Summary { compared: 2, divergent: 1, dangerous: 1, unpaired: 1 });
+        assert_eq!(a, Summary { compared: 5, divergent: 2, dangerous: 1, unpaired: 1 });
     }
 }
