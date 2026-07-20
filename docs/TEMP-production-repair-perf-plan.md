@@ -1,9 +1,12 @@
-# Production repair pipeline performance — plan (DRAFT)
+# Production repair pipeline performance — plan
 
-**Status:** not started; **measure-first** (2026-07-11). Successor to the archived
-[archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12), whose
-dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what that
-one didn't: the **production repair path** end-users actually run.
+**Status:** **§0 measured (2026-07-20) — plan PIVOTED.** The first instrumented production run **refuted the
+original candidate (§2.1 mono-downmix hoist: 0.006% of runtime)** and located the real cost: **`char_gate_search`
+= 93% of wall-clock**, concentrated in the **anchor/dual-fit rescue gaps** (92–595 s each). Active work is now
+**[§2.3 — decompose `evaluate_seam_gate` (Level C)](#23-level-c--decompose-evaluate_seam_gate-active)**. Successor
+to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
+whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
+that one didn't: the **production repair path** end-users actually run.
 
 **Scope.** Performance of the production repair pipeline —
 `PatchAudio::execute` → `prepare_region_patch` / `characterize_region` → `execute_region_spec` → `splice_into_a`.
@@ -34,7 +37,7 @@ media pair — the same method used for the dump. **Bucket anchored-retry separa
 per-gap characterize baseline. Only then decide whether any optimization here is worth it. If the measured
 production redundancy is negligible, **close this doc** rather than optimizing a non-cost.
 
-**Instrumentation status (2026-07-20): LANDED — the run is pending on a licensed pair.** The production path
+**Instrumentation status (2026-07-20): LANDED + RUN COMPLETE.** The production path
 already carried `tracing` spans over the coarse buckets; two changes complete the §0 surface:
 
 - **Level A** (`infrastructure/logging/mod.rs`) — setting `CLIP_SYNC_SPAN_TIMING` switches the fmt subscriber
@@ -62,21 +65,37 @@ no timings emit. **Reading busy time:** an `.entered()` parent span's `time.busy
 a bucket's exclusive cost = its own busy minus its children's busy (e.g. characterize-other = `characterize` −
 Σ `char_*`). Anchored-retry buckets appear as `char_*` spans whose parent is `patch_anchored_retry`.
 
-**Measurement output shape** — fill this table from the first licensed-pair run; use it to rank candidates
-(§2) and to decide whether to close the doc:
+**Measured results (2026-07-20).** Pair: licensed media (equiv-coarse-vs-fine pair 2, `9405b3bf`) — 2 h,
+6ch/48 kHz, default profile (`--mux` only ⇒ `fit_boundary_search = baseline_only`, `fill_offset_mode =
+Recommended`). The scan-time equivalence gate dropped 17 of 26 gaps before the plan, so **9 gaps reached
+`execute`**. Total repair **1872 s**.
 
-| Bucket | Span(s) to sum | Notes |
-|--------|----------------|-------|
-| **Decode** | `decode_a`, `decode_b`, `resample` | Already shared; expect small % |
-| **Characterize — gate search** | `char_gate_search` | Dominant candidate on lean `fit` |
-| **Characterize — downmix** | `char_dual_fit_input` (+ `char_b_extract`) | §2.1 hoist target |
-| **Characterize — borders/RMS** | `char_geometry` | Cheap tier; confirm before optimizing |
-| **Characterize — other** | `characterize` − Σ `char_*` | Refine/signature/misc remainder |
-| **Characterize — anchored-retry** | `char_*` spans parented by `patch_anchored_retry` | Exclude from per-gap baseline |
-| **Execute** | `patch_gap` (wraps `execute_region_spec`) | Should be thin post step 6 |
-| **Splice / crossfade** | `patch_splice` | End of pipeline |
+| Bucket | Span(s) summed | Time | Share |
+|--------|----------------|------|-------|
+| **Characterize — gate search** | `char_gate_search` | **1746.2 s** | **93.3%** |
+| Decode | `patch_decode_a` + `patch_decode_b` | 120.9 s | 6.5% |
+| Characterize — downmix (§2.1 target) | `char_dual_fit_input` | 0.10 s | 0.006% |
+| Characterize — b-extract | `char_b_extract` | ~0 | ~0 |
+| Characterize — borders/RMS | `char_geometry` | ~0 | ~0 |
+| Execute + splice | `patch_gap` + `patch_splice` | 0.008 s | ~0 |
 
-Percent columns are TBD until measured; do not import the dump's 82%/12% split.
+**The cost is per-gap and rescue-path-bound.** Base patch/marginal gaps take ~22–23 s of gate search; the five
+**anchor/dual-fit rescue** gaps take far more — 92 s, 207 s, 377 s (anchor), 384 s, **595 s** (dual-fit) — i.e.
+**95% of all gate-search time lives in 5 of 9 gaps**, up to **27× the base gate**. `char_dual_fit_input` (the
+dual-fit *input* downmix) is cheap; the expense is inside `evaluate_seam_gate` *itself* when a gap doesn't find
+an easy winner and falls into the exhaustive search (anchor-seam bracket search / boundary haystack).
+
+**Conclusions:**
+
+1. **§2.1 (downmix hoist) is REFUTED** — its target redundancy is 0.006% of runtime. Killed (see §2.1).
+2. **The real cost — `char_gate_search` on rescue gaps — was declared out-of-scope by the old §2.2** ("production
+   routes to a winner"). Measurement refutes that for the rescue path. **New active candidate: §2.3** — decompose
+   `evaluate_seam_gate` to localize the 595 s.
+3. Decode (6.5%), execute, splice: all negligible — do not optimize.
+
+The run recipe above stands for the §2.3 re-run (with the deeper sub-spans added). No `patch_anchored_retry`
+spans appeared — default `Recommended` offset mode does not run the anchored-retry pass, so that bucket is empty
+on this profile.
 
 ---
 
@@ -98,59 +117,65 @@ is pursued **only** through them (no bespoke fast paths, no scan/prod drift):
 
 ---
 
-## 2. Candidate work (all gated on §0 measurement)
+## 2. Candidate work
 
-### 2.1 Hoist the shared per-side mono downmix
+### 2.1 Hoist the shared per-side mono downmix — ~~candidate~~ **REFUTED (2026-07-20)**
 
-Re-homed from the archived plan's §3 step 8 / §3.1 (it was mis-filed there — §3.1 targets
-`characterize_region`'s shared context, which is the **production** path). The code-grounded feasibility from
-that analysis carries over unchanged:
+**Killed by the §0 measurement.** The redundancy this targeted — `char_dual_fit_input` + `char_b_extract` +
+`char_geometry`, the repeated per-gap downmix/extract — measured **~0.1 s of 1872 s (0.006%)**. Per §0's own
+rule ("if the measured production redundancy is negligible, close it rather than optimize a non-cost"), this is
+not worth doing. The feasibility analysis was sound (the mono downmix *is* byte-identically shareable) — the
+opportunity is simply too small. Do **not** re-propose without new measurement showing the downmix is material.
+*(This is the second production-perf intuition refuted by measurement; cf. the dump's 8g.5 correlation
+pre-filter. Measure before optimizing.)* The §0 caveat foresaw this: "on the production path several of the
+dump's downmix consumers do not run … it may be too small to bother." It was.
 
-- **What is NOT shareable (do not attempt):** "one max-radius border template, slice for all consumers" is
-  **not byte-preservable** — the peak-relative trim threshold (`trim_low_energy_*`) and the `border_frames`-
-  bounded silence walk both couple to the radius, and consumers pass genuinely different `GapBorderSpec`
-  (`border_frames`/standoff/floor all differ). Rejected.
-- **What IS shareable, byte-identical:** the **mono downmix**. `interleaved_to_mono` is a pure per-frame mean,
-  so `mono(samples)[a..b] == mono(samples[a..b])` — every consumer's sub-slice equals the slice of one shared
-  wide per-gap downmix. The real redundancy is **A/B being re-downmixed repeatedly per gap** (nominal donor,
-  aligned donor, borders, levels each re-downmix their span). One shared downmix in `characterize_region`'s
-  context removes that with no threshold/phase hazard. The per-consumer shaping on top (silence walk, peak-trim,
-  phase-anchored chunk binning) is **not** shareable but is O(border)/O(span) cheap and does not need to be.
-- **Production-specific caveat:** on the production path several of the dump's downmix consumers do **not** run
-  (`seam_probe`/`wide_envelope`/diagnostic `lag` are dump-only X-set). So the production redundancy is
-  **narrower** than the dump's — which is exactly why §0's measurement matters: it may be too small to bother.
+### 2.2 (obsolete framing) — "production routes to a winner"
 
-### 2.2 Others (surfaced by measurement, not assumed)
+The old §2.2 asserted the dump's per-bracket enumeration is *not* a production cost because "production routes to
+a winner," and told us not to carry gate-search cost here. **The §0 measurement refutes that for the rescue
+path:** a gap that finds no easy winner falls into an exhaustive `evaluate_seam_gate` search costing up to 595 s.
+The gate search *is* the production cost. Superseded by §2.3.
 
-The dump's dominant cost (per-bracket oracle enumeration) is **not** a production cost — production routes to a
-winner. So do not carry it here. Any further production candidate must come from the §0 measurement, not from
-the dump's §1.3 hierarchy.
+### 2.3 Level C — decompose `evaluate_seam_gate` **(ACTIVE)**
+
+**The measured target.** `char_gate_search` is 93% of wall-clock and 27× more expensive on the 5 rescue gaps
+than the 4 base gaps. Before optimizing anything, **localize where a rescue gap spends its 595 s** — the same
+measure-first discipline that just killed §2.1. This is one function deeper than the Level-B spans: add
+sub-spans *inside* `evaluate_seam_gate` (`application/patch_region.rs`) around its stages so a re-run of the §0
+recipe attributes the rescue-gap cost:
+
+- **structure match** — `build_gap_signature` / structure-tier scoring over the signature context.
+- **bracket / waveform search** — the feasible-bracket scoring over the `fill_border_search_secs` haystack
+  (even lean `baseline_only` sweeps the haystack per placement).
+- **anchor-seam bracket search** — the editorial-anchor rescue (`max_anchors_per_side` × `max_anchor_bracket_secs`
+  placements, each scored over the haystack). **Prime suspect:** gap 7 (the *anchor* rescue) alone cost 377 s.
+- **residual / floor** — least-squares cancellation per selected channel.
+- **FFT lag sweep** — already `lag_correlation_curve_auto`; confirm the anchor/bracket search actually routes
+  through it and isn't running a naive `O(n·L)` sweep per placement (the likely 595 s culprit — many placements
+  × wide haystack × 6 channels).
+
+**Only after** that second measurement points at a specific stage do we pick an optimization — and it must still
+obey §1 (shared-object path, no bespoke fast path, byte-parity via `patch_audio_integration`). Likely shapes
+(unconfirmed until measured): reuse one FFT-accelerated lag curve across the anchor-seam placements instead of
+recomputing per placement; hoist the per-channel border correlation inputs; bound the anchor-seam haystack. Do
+not build any of these before the Level-C run.
+
+**Cohort note:** the rescue-gap cost only appears when gaps actually reach the anchor/dual-fit rescue — pick a
+§0 pair with rescue targets (pair 2 has 2 dual-fit + 1 anchor; pair 1/7 have 3 dual-fit each). A pair of only
+plain patches would hide the dominant cost.
 
 ---
 
-## 3. Interaction with the policies module split
+## 3. Interaction with the policies module split — **resolved: no trigger**
 
-The §2.1 downmix hoist touches `domain/policies.rs`'s **silence** (binned-RMS) and **gap_borders** (extract)
-regions — the exact regions [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) phases
-**P2** (`silence.rs`) and **P3** (`gap_borders.rs`) cover. The archived pipeline plan's §2.6 trigger table is
-**closed**; **P2/P3 live status for this workstream is tracked here** (§3 ordering below), not in the archive.
-
-**Decision — do NOT complete the policies split as a prerequisite.** That plan's own sequencing makes P2/P3
-**triggered by** the step-8 hoist ("the hoist *needs* this owner — decomposition = the perf motion"), under its
-**extract-when-you-touch** rule: each extraction lands as a **separate byte-preserving PR adjacent to** the
-hoist, **never bundled** into the hoist's behavior change (bundling would wreck the "diff proves no behavior
-change" guarantee).
-
-So the ordering is **interleaved, gated on §0**:
-
-1. Measure production (§0). If the hoist isn't worth it → **stop**; leave the policies split fully opportunistic
-   (P1/P4 triggers already fired independently; P2/P3 stay pending with no perf forcing them).
-2. If the hoist is worth it → for each region it touches: **first** land the policies extraction (P2 `silence.rs`
-   / P3 `gap_borders.rs`) as a standalone byte-preserving PR (fast gate: `cargo build --all-targets` + clippy +
-   `pr-repair` tier), **then** land the downmix hoist against the new single owner.
-
-P4 (`seam_scoring.rs`) trigger was 6b (already passed) — "ready" and independent of this perf work; not required
-for the downmix hoist.
+The policies-split phases **P2** (`silence.rs`) / **P3** (`gap_borders.rs`) were only ever going to be *triggered
+by* the §2.1 downmix hoist (extract-when-you-touch: land the extraction as a byte-preserving PR adjacent to the
+hoist). **§2.1 is refuted (§0), so its §3-step-1 branch fires: "if the hoist isn't worth it → stop; leave the
+policies split fully opportunistic."** P2/P3 stay **pending with no perf forcing them**; P1/P4 already fired
+independently. If §2.3 eventually optimizes a stage that lives in `silence.rs`/`gap_borders.rs`, the same
+extract-when-you-touch rule applies then — but §2.3's likely targets are in `patch_region.rs` /
+`seam_local.rs` (the gate/anchor-seam/lag search), which is P4 territory (already extracted), not P2/P3.
 
 ---
 
@@ -162,16 +187,20 @@ for the downmix hoist.
   all brackets).
 - **Dump/fingerprint performance** — complete + archived.
 - **Bespoke production fast paths / parallel code** — perf only via the shared-object path (§1).
+- **Mono-downmix hoist (old §2.1)** — REFUTED by §0 (0.006%). Do not re-propose without new measurement.
 
 ---
 
 ## 5. Validation
 
-- **Measure-first (§0):** production timing on a licensed media pair, before and after any change.
-- **Byte-parity:** `patch_audio_integration` (production byte-parity) must stay green through any hoist — a
-  shared downmix must be byte-identical, so patched PCM cannot change.
+- **Measure-first (§0):** production timing on a licensed media pair, before and after any change. §2.3 repeats
+  this: land the `evaluate_seam_gate` sub-spans (instrumentation-only, byte-neutral), **re-run** the §0 recipe,
+  and only then choose a stage to optimize.
+- **Byte-parity:** `patch_audio_integration` (production byte-parity) must stay green through any change — a
+  perf optimization must be byte-identical, so patched PCM cannot change. (The Level-A/B instrumentation already
+  passed this: 26/26, 2026-07-20.)
 - **Policy extractions:** byte-preserving per the policies-split plan's fast gate (compile + clippy +
-  `pr-repair`), each as its own PR.
+  `pr-repair`), each as its own PR — *if* §2.3 ever touches a P2/P3 region (see §3).
 
 ---
 

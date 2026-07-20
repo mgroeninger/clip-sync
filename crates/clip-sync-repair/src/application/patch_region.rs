@@ -955,7 +955,13 @@ fn evaluate_seam_gate_fit_joint(
         step,
         haystack_secs: fit_haystack_secs(params),
     };
-    let cache = FitHaystackCache::build(params);
+    // Perf instrumentation (Level C, TEMP-production-repair-perf-plan.md §2.3): split the gate-search cost
+    // (`char_gate_search`) into cache build / baseline score / anchor-seam search / grid. Emits only when
+    // `CLIP_SYNC_SPAN_TIMING` is set (Level A). These nest under `char_gate_search`.
+    let cache = {
+        let _s = tracing::info_span!("gate_cache_build").entered();
+        FitHaystackCache::build(params)
+    };
     let mut source = AudioFitSource {
         params,
         cache: &cache,
@@ -980,18 +986,21 @@ fn evaluate_seam_gate_fit_joint_core(
     let mut recorded_failure: Option<SeamGateFailure> = None;
     let mut best_waveform: Option<SeamScoreAttempt> = None;
 
-    record_fit_joint_candidate_to_pool(
-        FitJointPoolState {
-            pool: &mut pool,
-            recorded_failure: &mut recorded_failure,
-            best_waveform: &mut best_waveform,
-        },
-        baseline,
-        baseline,
-        source,
-        false,
-        SeamScoreSource::Baseline,
-    );
+    {
+        let _s = tracing::info_span!("gate_baseline_score").entered();
+        record_fit_joint_candidate_to_pool(
+            FitJointPoolState {
+                pool: &mut pool,
+                recorded_failure: &mut recorded_failure,
+                best_waveform: &mut best_waveform,
+            },
+            baseline,
+            baseline,
+            source,
+            false,
+            SeamScoreSource::Baseline,
+        );
+    }
 
     // E1: a High baseline short-circuits in any mode (residual confirmed by `try_finalize_high…`).
     if pool
@@ -1028,21 +1037,25 @@ fn evaluate_seam_gate_fit_joint_core(
 
     let (baseline_pre, baseline_post) = baseline_seam_scores(pool.first(), &recorded_failure);
 
-    if let Some(outcome) = try_anchor_seam_joint_search(
-        &mut FitJointPoolState {
-            pool: &mut pool,
-            recorded_failure: &mut recorded_failure,
-            best_waveform: &mut best_waveform,
-        },
-        &AnchorSeamJointSearchCtx {
-            baseline,
-            baseline_pre,
-            baseline_post,
-            fit_boundary_search: config.fit_boundary_search,
-            haystack_secs: config.haystack_secs,
-        },
-        source,
-    )? {
+    let anchor_result = {
+        let _s = tracing::info_span!("gate_anchor_search").entered();
+        try_anchor_seam_joint_search(
+            &mut FitJointPoolState {
+                pool: &mut pool,
+                recorded_failure: &mut recorded_failure,
+                best_waveform: &mut best_waveform,
+            },
+            &AnchorSeamJointSearchCtx {
+                baseline,
+                baseline_pre,
+                baseline_post,
+                fit_boundary_search: config.fit_boundary_search,
+                haystack_secs: config.haystack_secs,
+            },
+            source,
+        )
+    };
+    if let Some(outcome) = anchor_result? {
         return Ok(outcome);
     }
 
@@ -1062,38 +1075,41 @@ fn evaluate_seam_gate_fit_joint_core(
     let grid_cells =
         count_joint_boundary_grid_cells(baseline, config.start_min, config.end_max, config.step);
 
-    let mut try_start = baseline.start_frame;
-    while try_start >= config.start_min {
-        let mut try_end = baseline.end_frame;
-        while try_end <= config.end_max {
-            if try_end > try_start
-                && (try_start != baseline.start_frame || try_end != baseline.end_frame)
-            {
-                record_fit_joint_candidate_to_pool(
-                    FitJointPoolState {
-                        pool: &mut pool,
-                        recorded_failure: &mut recorded_failure,
-                        best_waveform: &mut best_waveform,
-                    },
-                    RefinedGapFrames {
-                        start_frame: try_start,
-                        end_frame: try_end,
-                    },
-                    baseline,
-                    source,
-                    false,
-                    SeamScoreSource::Grid,
-                );
+    {
+        let _s = tracing::info_span!("gate_grid").entered();
+        let mut try_start = baseline.start_frame;
+        while try_start >= config.start_min {
+            let mut try_end = baseline.end_frame;
+            while try_end <= config.end_max {
+                if try_end > try_start
+                    && (try_start != baseline.start_frame || try_end != baseline.end_frame)
+                {
+                    record_fit_joint_candidate_to_pool(
+                        FitJointPoolState {
+                            pool: &mut pool,
+                            recorded_failure: &mut recorded_failure,
+                            best_waveform: &mut best_waveform,
+                        },
+                        RefinedGapFrames {
+                            start_frame: try_start,
+                            end_frame: try_end,
+                        },
+                        baseline,
+                        source,
+                        false,
+                        SeamScoreSource::Grid,
+                    );
+                }
+                if try_end >= config.end_max {
+                    break;
+                }
+                try_end = (try_end + config.step).min(config.end_max);
             }
-            if try_end >= config.end_max {
+            if try_start <= config.start_min {
                 break;
             }
-            try_end = (try_end + config.step).min(config.end_max);
+            try_start = try_start.saturating_sub(config.step).max(config.start_min);
         }
-        if try_start <= config.start_min {
-            break;
-        }
-        try_start = try_start.saturating_sub(config.step).max(config.start_min);
     }
 
     // E6: best Pearson-High over the full grid (residual confirmed).
