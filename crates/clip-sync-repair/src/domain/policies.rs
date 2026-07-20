@@ -1207,6 +1207,25 @@ pub fn fill_seam_correlations(
     templates: &SeamTemplates<'_>,
     placement: SeamPlacement,
 ) -> (f64, f64) {
+    let score_channels = seam_score_channel_indices(templates.a_pre_ch, templates.a_post_ch);
+    fill_seam_correlations_with_channels(templates, placement, &score_channels)
+}
+
+/// Placement-invariant seam channel selection for a template set. Precompute once per search and pass to
+/// [`fill_seam_correlations_with_channels`] so the per-candidate loop does not recompute it (perf lever 2,
+/// TEMP-production-repair-perf-plan.md §2.3).
+pub(crate) fn seam_score_channels(templates: &SeamTemplates<'_>) -> Vec<usize> {
+    seam_score_channel_indices(templates.a_pre_ch, templates.a_post_ch)
+}
+
+/// [`fill_seam_correlations`] with the channel selection already computed. The selection depends only on
+/// the A-side templates (not the placement), so the unified search hoists it out of the candidate loop.
+/// Byte-identical to `fill_seam_correlations` when `score_channels == seam_score_channels(templates)`.
+pub(crate) fn fill_seam_correlations_with_channels(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
+    score_channels: &[usize],
+) -> (f64, f64) {
     let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
     let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
     let use_channels = b_ch.len() > 1
@@ -1242,10 +1261,9 @@ pub fn fill_seam_correlations(
         return (pre, post);
     }
 
-    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
     let mut pre_scores = Vec::with_capacity(score_channels.len());
     let mut post_scores = Vec::with_capacity(score_channels.len());
-    for &ch in &score_channels {
+    for &ch in score_channels {
         if score_pre && a_pre_ch[ch].len() >= pre_window && start <= b_ch[ch].len() {
             pre_scores.push(seam_pearson(
                 &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],

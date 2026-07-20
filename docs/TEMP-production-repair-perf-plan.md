@@ -5,9 +5,11 @@ original candidate (§2.1 mono-downmix hoist: 0.006% of runtime)** and located t
 = 93% of wall-clock**, decomposed (§2.3) into a **flat ~22 s per-bracket score** run once (baseline) + **k times**
 (anchor-seam rescue, `gate_anchor_search` = 88% of gate search). Active target: **speed the per-bracket score** —
 code review (§2.3) shows it is **not** a full-haystack sweep but a windowed coarse+refine search whose per-candidate
-seam correlations are recomputed naively with no cross-candidate reuse (plus a placement-invariant channel
-selection redundantly re-run in the hot loop). See
-**[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)**. Successor
+seam correlations are recomputed naively with no cross-candidate reuse. **Lever 2 (hoist placement-invariant
+channel selection) LANDED — measured −31% on the unified search** (byte-parity 26/26); **lever 1 (cross-candidate
+reuse via prefix-sum/FFT) is next** —
+FFT is calibration-safe on our corpus and will be scoped to the production search, leaving the dump/golden
+untouched (§2.4). See **[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)** / §2.4. Successor
 to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
 whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
 that one didn't: the **production repair path** end-users actually run.
@@ -191,8 +193,14 @@ imprecise; corrected here.** Traced `match_gap_fill_unified_in_b_with_timeline` 
    the seam Pearson numerator/denominator across adjacent candidate starts, or compute the coarse-grid correlations
    in one FFT pass (`lag_correlation_curve_auto` reused as the shared primitive), instead of an independent Pearson
    per candidate.
-2. **Hoist `seam_score_channel_indices` out of the per-candidate loop** (placement-invariant; compute once per
-   bracket). Small, isolated, byte-neutral — a good first PR.
+2. **Hoist `seam_score_channel_indices` out of the per-candidate loop** — **LANDED + MEASURED (2026-07-20).** The
+   unified search now computes `seam_score_channels(templates)` once and threads it through
+   `fill_seam_correlations_with_channels` (`policies.rs`, `gap_fill_fit.rs`); byte-parity `patch_audio_integration`
+   26/26. **Measured `perf_4.log` vs `perf_3.log` (same pair/profile): −31% on `bracket_unified_search`** (20.7 s →
+   14.3 s/bracket), `char_gate_search` 1739 s → 1212 s. **Far bigger than the "few %" predicted from code-reading**
+   — `seam_score_channel_indices` scans **all** channels' full templates to select the (few) it scores, so the
+   per-candidate *selection* was scanning more than the *scoring* it gated. Measure-first: the code estimate
+   undershot ~10×.
 3. **Bound `k` (anchor-bracket count) and/or the 10 s search window (secondary — rescue gaps only).** `k` reached
    ~26 on gap 22; the 10 s `fill_border_search_secs` sets the ±480 k window width. Only helps rescue gaps.
 
@@ -220,6 +228,43 @@ lever 1's approach (prefix-sum vs FFT coarse grid) needs disambiguating first.
 **Cohort note:** the rescue-gap cost only appears when gaps reach the anchor/dual-fit rescue — pick a pair with
 rescue targets (pair 2 has 2 dual-fit + 1 anchor; pair 1/7 have 3 dual-fit each). A plain-patch-only pair would
 hide the dominant cost.
+
+### 2.4 Lever 1 — FFT/prefix-sum calibration-safety + fingerprint-dump scoping
+
+Lever 1 (cross-candidate reuse) will introduce FFT into the correlation path. Two questions decided **before**
+any lever-1 code:
+
+**(a) Will FFT skew our findings? — NO (checked against the corpus, 2026-07-20).** f64 FFT carries ~**1e-10**
+relative error, so a finding could only flip if a value sat within ~1e-10 of its threshold. Scanning
+**equiv-coarse-vs-fine** (all 8 pairs) for the smallest margin of every correlation-derived gate to its
+threshold:
+
+| Finding (correlation-derived) | Threshold | Closest value in corpus | Headroom vs 1e-10 |
+|-------------------------------|-----------|-------------------------|-------------------|
+| `prominence` (uniqueness tiebreaker) | 0.15 | **3.9e-4** | ~4×10⁶ |
+| `step_real` (`post_r − post_global_r`) | 0.15 | 1.5e-2 | ~1×10⁸ |
+| `peak_z` (uniqueness, primary) | 12 | 2.8e-2 | ~3×10⁸ |
+| `gate_pass` (`min(seam_r)`) | 0.35 | 7.9e-2 | ~8×10⁸ |
+
+The tightest value in the entire corpus (`prominence` at 3.9e-4) is **six orders of magnitude** above FFT's
+noise. Three independent reasons it is safe: (1) margins dwarf the error (table); (2) the **scan-time
+equivalence gate** — the whole point of equiv-coarse-vs-fine — is **silence-character (RMS/donor-silence), not
+correlation**, so FFT cannot touch it at all (its margins 0.10 dB / 0.05 are moot); (3) the search already
+tie-breaks at `SCORE_TIE_EPSILON = 1e-9` (`gap_fill_fit.rs`) using deterministic **position**, and 1e-9 > 1e-10,
+so FFT cannot even flip a near-tie argmax (the discrete-jump case) — the positional rule dominates the wobble
+zone. Standard belt-and-suspenders regardless: gate lever 1 behind a `fft_curve ≈ naive_curve` regression test
+within tight ε (as the archived FFT-lag-sweep note already prescribes).
+
+**(b) The fingerprint-dump caveat — and our decision: scope FFT to the production search only.** The committed
+corpus/golden (`equiv-coarse-vs-fine`, `re-anchor-dual-fit-on-nominal.golden.json`) are **exact-float
+snapshots**. If lever 1's FFT lands in a primitive **shared** with the dump/oracle path, re-generating them
+would drift the stored numbers at ~1e-10 — **no verdict changes**, but an exact-match golden diff would break on
+the last digits, forcing a re-freeze. **Decision (2026-07-20): scope the FFT change to the production unified
+search only** (the `match_gap_fill_unified_in_b` candidate loop), leaving the dump's oracle path — and thus the
+committed corpus/golden — **byte-untouched**. This is also consistent with §1 (this doc owns the production path,
+not the dump) and §0-scope. **Only** gate-and-re-freeze instead if a concrete reason forces the FFT into a
+genuinely shared primitive (e.g. the dump path turns out to need the same speedup and single-impl/no-drift
+outweighs the re-freeze cost); absent that, prefer the scoped change and no golden churn.
 
 ---
 
@@ -253,8 +298,13 @@ extract-when-you-touch rule applies then — but §2.3's likely targets are in `
   this: land the `evaluate_seam_gate` sub-spans (instrumentation-only, byte-neutral), **re-run** the §0 recipe,
   and only then choose a stage to optimize.
 - **Byte-parity:** `patch_audio_integration` (production byte-parity) must stay green through any change — a
-  perf optimization must be byte-identical, so patched PCM cannot change. (The Level-A/B instrumentation already
-  passed this: 26/26, 2026-07-20.)
+  perf optimization must be byte-identical, so patched PCM cannot change. (Passed at every step so far: Level-A/B,
+  Level-C, Level-D, and lever 2 — all 26/26, 2026-07-20.)
+- **Lever 1 FFT is *not* byte-identical** (it changes the numeric path at ~1e-10), so it is the one exception to
+  strict byte-parity. Gate it two ways: (1) a `fft_curve ≈ naive_curve` regression test within tight ε; (2)
+  **scope it to the production search only so the fingerprint dump / committed corpus / golden are untouched**
+  (§2.4) — no golden re-freeze. Calibration-safety on the corpus is verified (§2.4a): tightest threshold margin
+  is 3.9e-4, ~4×10⁶ above FFT's error, and the equivalence gate is non-correlation so it is FFT-immune.
 - **Policy extractions:** byte-preserving per the policies-split plan's fast gate (compile + clippy +
   `pr-repair`), each as its own PR — *if* §2.3 ever touches a P2/P3 region (see §3).
 

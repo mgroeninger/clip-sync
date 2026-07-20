@@ -13,9 +13,9 @@ use crate::domain::gap_structure::{
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
-    fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations_interleaved,
-    interleaved_to_mono, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
-    SpliceSeamContext,
+    fill_repeat_correlations, fill_seam_correlations, fill_seam_correlations_with_channels,
+    fill_splice_seam_correlations_interleaved, interleaved_to_mono, seam_score_channels,
+    BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates, SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -231,6 +231,8 @@ struct UnifiedSearchCtx<'a> {
     anchor_prior: Option<AnchorSearchPrior>,
     nominal_start: usize,
     nominal_end: usize,
+    /// Placement-invariant seam channel selection, hoisted out of the per-candidate loop (perf lever 2).
+    score_channels: &'a [usize],
 }
 
 fn fill_bracket_placement(
@@ -350,7 +352,11 @@ fn unified_fit_score_with_repeat(
     score
 }
 
-pub(crate) fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> f64 {
+pub(crate) fn waveform_min_at_start(
+    ctx: &WaveformSeamContext<'_>,
+    start: usize,
+    score_channels: &[usize],
+) -> f64 {
     if !placement_in_bounds(
         start,
         ctx.gap_frames,
@@ -360,7 +366,7 @@ pub(crate) fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize)
     ) {
         return f64::NEG_INFINITY;
     }
-    let (pre, post) = fill_seam_correlations(
+    let (pre, post) = fill_seam_correlations_with_channels(
         ctx.templates,
         SeamPlacement {
             start,
@@ -368,6 +374,7 @@ pub(crate) fn waveform_min_at_start(ctx: &WaveformSeamContext<'_>, start: usize)
             pre_window: ctx.pre_window,
             post_window: ctx.post_window,
         },
+        score_channels,
     );
     pre.min(post)
 }
@@ -450,6 +457,10 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         return None;
     }
 
+    // Perf lever 2 (TEMP-production-repair-perf-plan.md §2.3): the seam channel selection depends only on
+    // the A-side templates, not the placement, so compute it once here instead of per candidate inside
+    // `fill_seam_correlations`.
+    let score_channels = seam_score_channels(input.waveform.templates);
     let search = UnifiedSearchCtx {
         timeline: structure_timeline,
         waveform: input.waveform,
@@ -458,6 +469,7 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         anchor_prior,
         nominal_start: input.nominal_fill_start,
         nominal_end: input.nominal_fill_end,
+        score_channels: &score_channels,
     };
 
     let (mut best_start, _) = unified_search_best_fill_start(
@@ -477,7 +489,8 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     best_start = polished_start;
     best_end = best_start + matched_fill_len;
 
-    let (wave_pre, wave_post) = waveform_seams_at_start(input.waveform, best_start);
+    let (wave_pre, wave_post) =
+        waveform_seams_at_start(input.waveform, best_start, &score_channels);
 
     let fill_frames = best_end.saturating_sub(best_start);
     if fill_frames == 0 {
@@ -512,7 +525,11 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     })
 }
 
-fn waveform_seams_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> (f64, f64) {
+fn waveform_seams_at_start(
+    ctx: &WaveformSeamContext<'_>,
+    start: usize,
+    score_channels: &[usize],
+) -> (f64, f64) {
     if !placement_in_bounds(
         start,
         ctx.gap_frames,
@@ -522,7 +539,7 @@ fn waveform_seams_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> (f64,
     ) {
         return (f64::NEG_INFINITY, f64::NEG_INFINITY);
     }
-    fill_seam_correlations(
+    fill_seam_correlations_with_channels(
         ctx.templates,
         SeamPlacement {
             start,
@@ -530,6 +547,7 @@ fn waveform_seams_at_start(ctx: &WaveformSeamContext<'_>, start: usize) -> (f64,
             pre_window: ctx.pre_window,
             post_window: ctx.post_window,
         },
+        score_channels,
     )
 }
 
@@ -548,6 +566,7 @@ fn unified_search_best_fill_start(
         anchor_prior,
         nominal_start,
         nominal_end,
+        score_channels,
     } = *ctx;
     let search_min = nominal_start.saturating_sub(params.search_radius_frames);
     let search_max = (nominal_start + params.search_radius_frames).min(total_frames);
@@ -567,7 +586,7 @@ fn unified_search_best_fill_start(
         }
         let pre_score = score_pre_for_signature(signature, timeline, start, params);
         let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let wave_min = waveform_min_at_start(waveform, start);
+        let wave_min = waveform_min_at_start(waveform, start, score_channels);
         let score = unified_fit_score_with_repeat(
             UnifiedFitCandidate {
                 structure_pre: pre_score,
@@ -625,6 +644,7 @@ fn unified_search_best_fill_end(
         params,
         weights,
         nominal_end,
+        score_channels,
         ..
     } = *ctx;
     let end_min = fill_start
@@ -656,7 +676,7 @@ fn unified_search_best_fill_end(
         }
         let pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
         let post_score = score_post_for_signature(signature, timeline, end, params);
-        let wave_min = waveform_min_at_start(waveform, fill_start);
+        let wave_min = waveform_min_at_start(waveform, fill_start, score_channels);
         let score = unified_fit_score_with_repeat(
             UnifiedFitCandidate {
                 structure_pre: pre_score,
@@ -713,6 +733,7 @@ fn unified_fine_polish_start(
         anchor_prior,
         nominal_start,
         nominal_end,
+        score_channels,
     } = *ctx;
     if params.max_fine_adjustment_frames == 0 {
         return start;
@@ -733,7 +754,7 @@ fn unified_fine_polish_start(
         let candidate_end = candidate + fill_len;
         let pre_score = score_pre_for_signature(signature, timeline, candidate, params);
         let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let wave_min = waveform_min_at_start(waveform, candidate);
+        let wave_min = waveform_min_at_start(waveform, candidate, score_channels);
         let score = unified_fit_score_with_repeat(
             UnifiedFitCandidate {
                 structure_pre: pre_score,
