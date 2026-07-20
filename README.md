@@ -163,14 +163,16 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--format <human\|json>` | `human` | Output format |
 | `--clip-length <DUR>` | `15m` | Length of each alignment clip window (min: `1m`) |
 | `--num-clips <N>` | `2` | Number of alignment clip windows per video |
-| `--min-gap-ms <MS>` | `1000` | Minimum silent gap duration to report |
+| `--min-gap-ms <MS>` | `500` | Minimum silent gap duration to report (sensitive default) |
 | `--silence-fraction <F>` | `0.01` | Silence threshold as a fraction of peak amplitude |
 | `--decode-chunk-secs <SECS>` | `10` | Decode chunk size for sequential scan (alias: `--scan-window-secs`) |
-| `--scan-block-ms <MS>` | `250` | Analysis block size for silence detection |
+| `--scan-block-ms <MS>` | `100` | Analysis block size for silence detection (also the equivalence gate's granularity) |
 | `--silence-hold-ms <MS>` | `500` | Non-silent time to absorb before closing a silence run (`hold = hold_ms / block_ms`) |
 | `--absolute-silence-rms <N>` | `33` | Absolute RMS floor for silence (0–32767 scale; `0` disables) |
 | `--scan-both` | on | Scan B's timeline for silence (bidirectional agreement) |
 | `--no-scan-both` | — | Disable bidirectional silence scan |
+| `--skip-equivalent-gaps` | on | Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan before patch |
+| `--no-skip-equivalent-gaps` | — | Patch every scanned gap regardless of silence character |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
@@ -510,13 +512,14 @@ level = "warn"
 progress = "auto"   # auto | verbose | quiet — overridden by -v / -q
 
 [repair]
-min_gap_ms = 1000
+min_gap_ms = 500
 silence_peak_fraction = 0.01
-scan_block_ms = 250
+scan_block_ms = 100
 decode_chunk_secs = 10
 silence_hold_ms = 500
 absolute_silence_rms = 33.0
 scan_both = true
+skip_equivalent_gaps = true          # drop mutual/ambient-silence gaps (false or --no-skip-equivalent-gaps to patch all)
 gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only: true or --no-structure-trust

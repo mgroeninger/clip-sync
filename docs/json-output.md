@@ -170,6 +170,7 @@ Top-level object: **RepairJsonOutput**.
 | `overlap` | [TimelineOverlap](#timelineoverlap) \| null | always | From the alignment start clip; `null` when alignment failed |
 | `alignment` | [AlignmentReport](#analyzer-report-clip-sync) | always | Embedded analyzer report (same contract as above) |
 | `gaps` | array of [Gap](#gap) | always | Silent regions detected in A |
+| `gap_equivalence` | array of [GapEquivalenceVerdict](#gapequivalenceverdict) | when non-empty | Per-gap silence-character classification (advisory), index-parallel to `gaps`; input to the `skip_equivalent_gaps` drop |
 | `gap_offset_agreement` | [GapOffsetAgreement](#gapoffsetagreement) \| null | always | Present when `scan_both` ran and both files had silence intervals |
 | `decode_chunk_secs` | integer | always | Decode chunk size used during sequential scan |
 | `scan_block_ms` | integer | always | Analysis block size for silence-run detection |
@@ -268,7 +269,22 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 
 **GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"` | `"program_quiet"` (reserved — not emitted by production patch; D11 program-quiet is an analyzer/plan-time label, see [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet (D11)), or object forms `{"correlation_below_threshold": {"pre_correlation", "post_correlation", "min_correlation", "best_attempt"?}}` (`best_attempt`: `{pre_correlation, post_correlation, source}` when a later placement beat the reported scores) | `{"residual_headroom_exceeded": {"pre_correlation", "post_correlation", "headroom_db", "floor_pre_db", "floor_post_db", "margin_db"}}`.
 
-**GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"` | `"outside_reference_coverage"`.
+**GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"` | `"outside_reference_coverage"` | `"already_matches_reference"` (the `skip_equivalent_gaps` equivalence drop — mutual/ambient silence, nothing to repair).
+
+### GapEquivalenceVerdict
+
+Per-gap silence-character classification (advisory; scan report `gap_equivalence[]` and the `equivalence` /
+`scan_equivalence` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](gap-vocabulary.md)
+§ Silence-character pre-gate.
+
+| Field | Type | Presence | Notes |
+|-------|------|----------|-------|
+| `class` | string | always | `repairable_dropout` (keep) · `shared_silence` / `ambient_quiet` (drop) · `not_evaluated` |
+| `drop` | bool | always | Whether `class` resolves to "remove from fill plan" (the two silence classes) |
+| `a_gap_rms_db` | number | when measured | A gap-interior RMS (dBFS) |
+| `noise_floor_db` | number | when measured | Recording's own noise floor (self-calibrating reference) |
+| `a_below_noise_db` | number | when both present | `a_gap_rms_db − noise_floor_db` — the dropout signal (dropout ≲ −`dropout_margin_db`) |
+| `donor_silence_fraction` | number | when B mapped | B occupancy over the nominal span (occupied ⇒ `< donor_silence_thresh`) |
 
 ---
 

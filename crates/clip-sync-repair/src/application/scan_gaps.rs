@@ -235,7 +235,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             });
         }
 
-        // Gap-equivalence classification (advisory; `docs/TEMP-gap-equivalence-plan.md`): derive the
+        // Gap-equivalence classification (advisory; `docs/gap-vocabulary.md` § Silence-character pre-gate): derive the
         // silence-character signals from the scan's own per-block level timelines (A noise floor + gap RMS,
         // B donor-silence) and classify each gap. Always computed and reported; the `skip_equivalent_gaps`
         // drop happens later in `build_gap_fill_plan`. Index-parallel to `gaps`.

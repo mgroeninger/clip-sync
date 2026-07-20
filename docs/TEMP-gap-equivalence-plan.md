@@ -1,7 +1,10 @@
 # Gap content equivalence (skip redundant fills) — plan (DRAFT)
 
-Status: **REDESIGNED to a silence-character gate (2026-07-11) — Phase 0 built + media-validated; v1
-re-architected to scan-time measurement (2026-07-12).** The original seam/lag "does B match A at nominal"
+Status: **v1 SHIPPED + defaults flipped (2026-07-20).** After corpus validation (8 pairs, 121 gaps, 0 divergent
+/ 0 dangerous vs the fine fingerprint reference, operator ear-verified), `skip_equivalent_gaps` is now **on by
+default** and the scan recipe is **sensitive by default** (`min_gap_ms=500`, `scan_block_ms=100`). Disable the
+drop with `--no-skip-equivalent-gaps`. History: silence-character redesign (2026-07-11, Phase 0 built +
+media-validated); v1 re-architected to scan-time measurement (2026-07-12). The original seam/lag "does B match A at nominal"
 approach (§5 below) was **refuted on real media**: two independent recordings **drift** (~150–200 ms residual
 lag per gap even after alignment), so nothing matches at lag 0 and the seam read was useless (0/14 matchable
 gaps matched at lag 0). Operator ground truth then showed the actual discriminator is the **silence
@@ -354,7 +357,8 @@ JSON gap row (additive):
 ### Flags
 
 ```text
---skip-equivalent-gaps     Drop already-equivalent gaps from the fill plan [default: off]
+--skip-equivalent-gaps      Drop already-equivalent gaps from the fill plan [default: ON]
+--no-skip-equivalent-gaps   Patch every scanned gap regardless of silence character
 ```
 
 The classification itself is **always computed and reported** (additive to the scan report); the flag only
@@ -522,20 +526,21 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
   gap-row `equivalence` in `json-output.md` is a v1 concern — no production output in Phase 0)*
 - [ ] Run on a licensed A/B pair; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
 
-### v1 (scan-time gate)
+### v1 (scan-time gate) — **SHIPPED 2026-07-20**
 
-- [ ] `domain/policies.rs` `SilenceRunScanner` — retain a lightweight per-block RMS/dB timeline (opt-in flag;
-  on for A + B in scan) with `(start_secs, end_secs, rms_db)` per 250 ms block; `finish` returns it alongside runs
-- [ ] `domain/gap_equivalence.rs` — `GapEquivalence` signals struct + `derive_gap_equivalence` (context noise
-  floor, gap RMS, donor-silence-fraction from block timelines) reusing `classify_gap_equivalence`
-- [ ] `application/scan_gaps.rs` — capture A + B block timelines; build `Vec<GapEquivalence>` parallel to `gaps`
-- [ ] `domain/gap.rs` `GapReport` — additive `gap_equivalence: Vec<GapEquivalence>` (index-parallel to `gaps`)
-- [ ] `RepairConfig` / `Args` / `cli/mod.rs` — `skip_equivalent_gaps` (off by default)
-- [ ] `GapFillSkipReason::AlreadyMatchesReference` + `format_*` / `gap_tags` / `PlanKind`
-- [ ] `build_gap_fill_plan` hook — when `skip_equivalent_gaps` and `verdict.drops()`, skip with `AlreadyMatchesReference`; domain tests
-- [ ] Human report + JSON gap fields (advisory, always emitted)
-- [ ] Integration: synthetic same-master/mutual-silence dropped when flag on; still patched when flag off
-- [ ] Docs: `gap-scan.md` § equivalence, `gap-repair-guide.md`, `pipeline.md` §3 paragraph
+- [x] `domain/policies.rs` `SilenceRunScanner` — retain a lightweight per-block RMS/dB timeline (`retain_block_levels()`;
+  on for A + B in scan) as `BlockLevel { start_secs, end_secs, rms_db }`; `finish_with_levels` returns it alongside runs
+- [x] `domain/gap_equivalence.rs` — `derive_gap_equivalence` (context noise floor, gap RMS, donor-silence-fraction
+  from block timelines) reusing `classify_gap_equivalence`
+- [x] `application/scan_gaps.rs` — capture A + B block timelines; build `Vec<GapEquivalenceVerdict>` parallel to `gaps`
+- [x] `domain/gap.rs` `GapReport` — additive `gap_equivalence: Vec<GapEquivalenceVerdict>` (index-parallel to `gaps`)
+- [x] `RepairConfig` / `Args` / `cli/mod.rs` — `skip_equivalent_gaps` (**on by default**; `--no-skip-equivalent-gaps` disables)
+- [x] `GapFillSkipReason::AlreadyMatchesReference` + `format_*` / `gap_tags` / `PlanKind`
+- [x] `build_gap_fill_plan` hook — when `skip_equivalent_gaps` and `verdict.drop`, skip with `AlreadyMatchesReference`; domain tests
+- [x] Human report (scan-table `[equiv: …]` column) + JSON gap field (`gap_equivalence`, advisory, always emitted)
+- [x] Integration: media-validated corpus-wide — 8 pairs / 121 gaps / 0 divergent vs the fine fingerprint reference
+  (`equivalence-calibration` tool; `scan_equivalence` block added to `GapFingerprint`)
+- [x] Docs: `gap-scan.md`, `gap-repair-guide.md`, `pipeline.md`, `json-output.md`, `gap-vocabulary.md`, `README.md`
 
 ### v1.5
 

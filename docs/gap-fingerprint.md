@@ -83,9 +83,9 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 ### `equivalence` — does this gap need patching?
 
 Classifies each scanned gap from its **silence character** (no seam/lag math — that failed on drifting
-recordings, plan [TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md)). Two signals, both already in the
-fingerprint: A's gap RMS **relative to the recording's own noise floor** (a dropout sits far below it; room tone
-sits at it — self-calibrating), and donor silence at nominal (is B occupied).
+recordings). Two signals, both already in the fingerprint: A's gap RMS **relative to the recording's own noise
+floor** (a dropout sits far below it; room tone sits at it — self-calibrating), and donor silence at nominal
+(is B occupied). Vocabulary + gate: [gap-vocabulary.md](gap-vocabulary.md) § Silence-character pre-gate.
 
 | Field | Meaning |
 |-------|---------|

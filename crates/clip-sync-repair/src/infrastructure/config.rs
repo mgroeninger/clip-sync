@@ -59,9 +59,10 @@ pub struct RepairConfig {
     #[serde(default = "default_true")]
     pub scan_both: bool,
     /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan at
-    /// plan time, before decode/patch (`docs/TEMP-gap-equivalence-plan.md`). Off by default: the
-    /// classification is always reported, but only this flag removes dropping gaps from the plan.
-    #[serde(default)]
+    /// plan time, before decode/patch (`docs/gap-vocabulary.md` § Silence-character pre-gate). **On by default** (2026-07-20)
+    /// after media validation (8 pairs, 121 gaps, 0 divergent vs the fine fingerprint reference). Disable
+    /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
+    #[serde(default = "default_true")]
     pub skip_equivalent_gaps: bool,
     /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.
     #[serde(default = "default_gap_offset_tolerance_secs")]
@@ -253,13 +254,18 @@ pub struct RepairConfig {
 }
 
 fn default_min_gap_ms() -> u64 {
-    1_000
+    // Sensitive scan default (2026-07-20): catches sub-second dropouts ffmpeg `silencedetect` sees. The
+    // scan-time equivalence gate (`skip_equivalent_gaps`) drops the mutual/ambient-silence extras this
+    // surfaces, so "find everything, patch only real dropouts" is the default pairing.
+    500
 }
 fn default_silence_peak_fraction() -> f32 {
     0.01
 }
 fn default_scan_block_ms() -> u64 {
-    250
+    // 100 ms analysis blocks (sensitive default) — finer silence-run resolution and the equivalence gate's
+    // measurement granularity. Media-validated identical to the fine fingerprint reference (8 pairs, 121 gaps).
+    100
 }
 fn default_decode_chunk_secs() -> u64 {
     10
@@ -431,7 +437,7 @@ impl Default for RepairConfig {
             silence_hold_ms: default_silence_hold_ms(),
             absolute_silence_rms: default_absolute_silence_rms(),
             scan_both: default_true(),
-            skip_equivalent_gaps: false,
+            skip_equivalent_gaps: true,
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
             fill_align_margin_secs: default_fill_align_margin_secs(),

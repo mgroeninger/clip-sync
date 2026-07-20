@@ -203,7 +203,7 @@ pub struct GapFingerprint {
     pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
-    /// Gap-equivalence classification (`docs/TEMP-gap-equivalence-plan.md`): does this gap need patching?
+    /// Gap-equivalence classification (`docs/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
     /// silence. This is the **fine reference**: sample-level A RMS + fine-bin noise floor + 50 ms donor bins,

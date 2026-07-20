@@ -33,8 +33,8 @@ Scan (silence on A)
 
 | Stage | Question | Outcomes in report |
 |-------|----------|-------------------|
-| **Scan** | Is A silent for ≥ `min_gap_ms` (default 1 s)? | Omitted if too short |
-| **Plan** | Is B mapped and energetic? Tracks OK? In query coverage? | `unfillable`, `not planned: …` |
+| **Scan** | Is A silent for ≥ `min_gap_ms` (default 0.5 s)? | Omitted if too short |
+| **Plan** | Is B mapped and energetic? Tracks OK? In query coverage? Silence equivalent in both? | `unfillable`, `not planned: …` |
 | **Patch — bracket** | Structure finds B bracket? Waveform tier OK? | `patched`, `skipped: …` |
 | **Patch — G6** | Dual-fit rescue (default on) after scored gate skip? | May upgrade skip → `patched` |
 
@@ -236,7 +236,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | Tag | Values | Source layer | In report today |
 |-----|--------|--------------|-----------------|
 | `plan_kind` | `below_scan_floor`, `unfillable`, `not_planned`, `fillable` | Plan (P0–P5) | Status column / omitted |
-| `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable` | Plan (P1–P4) | `unfillable`, `not planned: …` |
+| `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable`, `already_matches_reference` | Plan (P1–P4) | `unfillable`, `not planned: …` |
 | `patch_tier` | `high`, `marginal`, `anchor_trusted`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | Gap table ` [tier · seam]` suffix; `patched`, `!`, `patched (anchor …)`, `skipped: …` |
 | `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Gap table suffix (`post-strong`, `weak both sides`, …); `-v` `gap tags:` |
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |

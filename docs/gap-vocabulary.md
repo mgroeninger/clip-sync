@@ -95,9 +95,9 @@ per-gap action to reconcile.
 ## Silence-character pre-gate (scan-time equivalence)
 
 The cells above classify a gap *after* it enters the seam/donor measurement space. The **equivalence gate**
-(`domain/gap_equivalence.rs`; `--skip-equivalent-gaps`; [TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md))
-runs earlier — at **scan time**, on two cheap per-block signals — and answers a *prior* question: **is this
-scanned silent run even a dropout worth repairing?** It reads one **new axis** crossed with an existing one:
+(`domain/gap_equivalence.rs`; `--skip-equivalent-gaps`, on by default) runs earlier — at **scan time**, on two
+cheap per-block signals — and answers a *prior* question: **is this scanned silent run even a dropout worth
+repairing?** It reads one **new axis** crossed with an existing one:
 
 | Axis | Question | Placement |
 |------|----------|-----------|

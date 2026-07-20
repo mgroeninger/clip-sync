@@ -1,4 +1,4 @@
-//! Gap content-equivalence gate — "does this gap actually need patching?" (`docs/TEMP-gap-equivalence-plan.md`).
+//! Gap content-equivalence gate — "does this gap actually need patching?" (`docs/gap-vocabulary.md` § Silence-character pre-gate).
 //!
 //! **Silence-character classification.** A scanned silent run in A is worth repairing only when A's signal
 //! genuinely *died* (a dropout) **and** B carries the missing content. The two signals that decide it, both
@@ -163,7 +163,7 @@ fn median_db(mut vals: Vec<f64>) -> Option<f64> {
 }
 
 /// Derive the per-gap silence-character signals from the scan's per-block level timelines and classify
-/// (`docs/TEMP-gap-equivalence-plan.md` § *Current v1 design*). All three signals are the scan-block
+/// (`docs/gap-scan.md`; vocabulary in `docs/gap-vocabulary.md` § Silence-character pre-gate). All three signals are the scan-block
 /// analogues of the fingerprint's finer-bin reads:
 ///
 /// - **noise floor** — median dB of A blocks in `±`[`EQUIVALENCE_CONTEXT_SECS`] around the gap, **excluding**

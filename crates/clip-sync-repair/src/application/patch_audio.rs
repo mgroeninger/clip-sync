@@ -64,7 +64,7 @@ pub struct PatchAudioResult {
 pub struct PatchAudioRequest {
     pub report: GapReport,
     /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan before decode/patch
-    /// (`docs/TEMP-gap-equivalence-plan.md`). Off by default.
+    /// (`docs/gap-vocabulary.md` § Silence-character pre-gate). Off by default.
     pub skip_equivalent_gaps: bool,
     pub normalize_fill: bool,
     pub normalize_window_secs: f64,

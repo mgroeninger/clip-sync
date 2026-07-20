@@ -49,7 +49,7 @@ pub struct Args {
     #[arg(long, value_parser = parse_duration)]
     pub clip_length: Option<std::time::Duration>,
 
-    /// Override: minimum gap duration to report (ms) [default: 1000].
+    /// Override: minimum gap duration to report (ms) [default: 500].
     #[arg(long, value_name = "MS")]
     pub min_gap_ms: Option<u64>,
 
@@ -61,7 +61,7 @@ pub struct Args {
     #[arg(long, value_name = "SECS", alias = "scan-window-secs")]
     pub decode_chunk_secs: Option<u64>,
 
-    /// Override: analysis block size for silence detection (ms) [default: 250].
+    /// Override: analysis block size for silence detection (ms) [default: 100].
     #[arg(long, value_name = "MS")]
     pub scan_block_ms: Option<u64>,
 
@@ -84,9 +84,13 @@ pub struct Args {
     pub no_scan_both: bool,
 
     /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan,
-    /// before decode/patch. The classification is always reported; this only removes them [default: off].
-    #[arg(long)]
+    /// before decode/patch. The classification is always reported; this only removes them [default: enabled].
+    #[arg(long, overrides_with = "no_skip_equivalent_gaps")]
     pub skip_equivalent_gaps: bool,
+
+    /// Patch every scanned gap regardless of silence character (disable the equivalence drop).
+    #[arg(long, overrides_with = "skip_equivalent_gaps")]
+    pub no_skip_equivalent_gaps: bool,
 
     /// Write patched audio to a WAV file (implies write mode).
     #[arg(long, value_name = "PATH")]

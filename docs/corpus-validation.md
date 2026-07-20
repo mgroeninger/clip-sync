@@ -184,7 +184,7 @@ Included in `cargo test -p clip-sync corpus_generated -- --ignored`. Fields: `al
 
 ## Gap fill / repair patch (`fill_mode = fit`)
 
-Shipped with [fill-fitting plan](TEMP-fill-fitting-plan.md) (phases A–D, 2026-06-20). Exercises **patch** after alignment — not gap scan or offset discovery.
+Shipped 2026-06-20 (fill-fitting, phases A–D). Exercises **patch** after alignment — not gap scan or offset discovery.
 
 | Layer | Tier | Generator / fixture | Asserts |
 |-------|------|---------------------|---------|

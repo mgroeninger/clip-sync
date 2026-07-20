@@ -648,7 +648,7 @@ struct GapScanJson {
     alignment: AlignmentReport,
     gaps: Vec<Gap>,
     /// Per-gap silence-character classification (advisory), index-parallel to `gaps`. Omitted when the
-    /// scan did not populate it. See `docs/TEMP-gap-equivalence-plan.md`.
+    /// scan did not populate it. See `docs/gap-vocabulary.md` § Silence-character pre-gate.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     gap_equivalence: Vec<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
     gap_offset_agreement: Option<crate::domain::gap::GapOffsetAgreement>,

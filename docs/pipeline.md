@@ -53,10 +53,10 @@ Fingerprints (chromaprint) of clip windows from each file are matched to find th
 
 ## 2. Scan gaps
 
-A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 1000) where the level stays below the silence floor (`absolute_silence_rms`, default 33 + `silence_peak_fraction`, default 0.01), measured in `scan_block_ms` blocks (250) with `silence_hold_ms` (500) bridging brief dips. For each detected gap, the aligned position on B is checked for energy (`scan_both`): a gap B can fill is **`fillable`**; one where B is also silent (or out of B's coverage) is **`unfillable`**. Output is a `GapReport` with each gap classified and timestamped on the decoded-sample clock.
+A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) where the level stays below the silence floor (`absolute_silence_rms`, default 33 + `silence_peak_fraction`, default 0.01), measured in `scan_block_ms` blocks (100) with `silence_hold_ms` (500) bridging brief dips. For each detected gap, the aligned position on B is checked for energy (`scan_both`): a gap B can fill is **`fillable`**; one where B is also silent (or out of B's coverage) is **`unfillable`**. The scan also classifies each gap's **silence character** from its per-block levels (`gap_equivalence`; [gap-vocabulary.md](gap-vocabulary.md) § Silence-character pre-gate) — the input to the fill-plan equivalence drop (§3). Output is a `GapReport` with each gap classified and timestamped on the decoded-sample clock.
 
 - **Reference:** [gap-scan.md](gap-scan.md) — detection, B mapping, bidirectional cross-check, output.
-- **Config:** `min_gap_ms`, `absolute_silence_rms`, `silence_peak_fraction`, `scan_block_ms`, `silence_hold_ms`, `scan_both`, `gap_offset_tolerance_secs`.
+- **Config:** `min_gap_ms`, `absolute_silence_rms`, `silence_peak_fraction`, `scan_block_ms`, `silence_hold_ms`, `scan_both`, `skip_equivalent_gaps`, `gap_offset_tolerance_secs`.
 - **Code:** `application/scan_gaps.rs`. Scan-corpus validation: [corpus-validation.md](corpus-validation.md), [`tests/gap_corpus/README.md`](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 
 ## 3. Fill plan
@@ -71,8 +71,10 @@ For each fillable gap, the **B offset map** translates A's gap time to a nominal
 
 Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). See [gap-fill-modes.md](gap-fill-modes.md) § Patch anchors and README § Gap patching pipeline (1).
 
-- **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`.
-- **Code:** `application/patch_audio.rs`.
+**Equivalence drop (`skip_equivalent_gaps`, on by default).** After the fillable/coverage gates, a gap whose scan-time silence-character verdict `drops()` (mutual/ambient silence — nothing to repair) is removed from the plan as `already_matches_reference`, so it never reaches decode/patch. Lowest precedence (`not_fillable`, coverage, and track blocks win). Disable with `--no-skip-equivalent-gaps`. See [gap-vocabulary.md](gap-vocabulary.md) § Silence-character pre-gate for the classification and [gap-scan.md](gap-scan.md) for how the signals are measured.
+
+- **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`.
+- **Code:** `application/patch_audio.rs`, `domain/gap_fill.rs`.
 
 ## 4. Per-gap patch
 

@@ -12,15 +12,19 @@ Source: `application/scan_gaps.rs`; silence/energy helpers in `domain` (`b_has_e
 
 A's audio is decoded in chunks (`decode_chunk_secs`) and scanned for **silent runs**:
 
-1. **Block level** — the timeline is measured in `scan_block_secs` blocks (default 0.25 s = 250 ms).
+1. **Block level** — the timeline is measured in `scan_block_secs` blocks (default 0.1 s = 100 ms).
 2. **Silence floor** — a block counts as silent when its level is below the floor: peak under `silence_peak_fraction` of full scale (default 0.01 = 1 %), with `absolute_silence_rms` as an additional RMS floor (default **33** in production, ~−60 dBFS). The RMS floor is what lets a near-silent low-level dropout count as a gap even if it isn't digital zero.
 3. **Hold** — `silence_hold_blocks` (config `silence_hold_ms`, default 500 ms) bridges brief blips so a single non-silent block doesn't split one dropout into two.
-4. **Minimum length** — a run must be ≥ `min_gap_secs` (default 1.0 s) to be reported as a gap. Shorter dips are ignored.
+4. **Minimum length** — a run must be ≥ `min_gap_secs` (default 0.5 s) to be reported as a gap. Shorter dips are ignored.
+
+The default recipe is **sensitive** (2026-07-20): `min_gap_ms=500`, `scan_block_ms=100` — it catches sub-second
+dropouts, and the scan-time equivalence gate (`skip_equivalent_gaps`, **on by default**) drops the
+mutual/ambient-silence extras that surfaces so only real dropouts reach patch.
 
 The scan summary line echoes the active parameters:
 
 ```text
-Gap scan: 6 silent run(s) ≥1000ms — block 250ms, silence 1.0% peak, hold 500ms, decode 10s chunks, scan-both on, rms floor 33
+Gap scan: 6 silent run(s) ≥500ms — block 100ms, silence 1.0% peak, hold 500ms, decode 10s chunks, scan-both on, rms floor 33
 ```
 
 ## Mapping to B and fillability
@@ -60,12 +64,13 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `min_gap_ms` | 1000 | Minimum silent-run length to report |
-| `scan_block_ms` | 250 | Measurement block |
+| `min_gap_ms` | 500 | Minimum silent-run length to report (sensitive default) |
+| `scan_block_ms` | 100 | Measurement block (also the equivalence gate's granularity) |
 | `silence_peak_fraction` | 0.01 | Peak silence threshold (fraction of full scale) |
 | `absolute_silence_rms` | 33.0 | Additional RMS floor (~−60 dBFS) |
 | `silence_hold_ms` | 500 | Bridge brief non-silent blips |
 | `scan_both` | true | Scan B too for the mutual-silence cross-check |
+| `skip_equivalent_gaps` | true | Drop mutual/ambient-silence gaps from the fill plan (`--no-skip-equivalent-gaps` to disable) |
 | `gap_offset_tolerance_secs` | 0.5 | Tolerance for A↔B silence agreement |
 | `limit_fill_to_mapped_region` | true | Gaps outside B coverage are unfillable |
 | `decode_chunk_secs` | 10 | A decode chunk size |

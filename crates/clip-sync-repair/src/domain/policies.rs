@@ -9,7 +9,7 @@ pub struct SilentRun {
 }
 
 /// One analysis block's RMS level (dBFS) on a media timeline — the lightweight per-block timeline the
-/// gap-equivalence gate reads (`docs/TEMP-gap-equivalence-plan.md`). Retained only when the scanner is
+/// gap-equivalence gate reads (`docs/gap-scan.md`). Retained only when the scanner is
 /// built [`SilenceRunScanner::retain_block_levels`]; the scan already computes the RMS, so this just keeps
 /// it instead of discarding it. `rms_db` is floored at [`BLOCK_LEVEL_FLOOR_DB`] (never `-inf`).
 #[derive(Debug, Clone, Copy, PartialEq)]
