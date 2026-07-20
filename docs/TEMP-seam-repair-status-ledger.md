@@ -6,11 +6,13 @@
 [TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) — pipeline perf/assembly, D12)
 hold the claims/plans at every stage of proof. This ledger is the **index over them**: one row per claim,
 scored **Confidence × Importance × Target**, so we can see the critical path and what to incorporate. The
-**§4 wire spec** (dual-fit repair algorithm for A3) lives here; the dualfit plan doc is historical detail.
-Update this when a claim's status changes.
+**dual-fit repair algorithm** (A3) is now canonically documented in
+[seam-scoring.md](seam-scoring.md) § 6 — Dual-fit repair; §4 below is a pointer to it, retained for the A3
+proof trail. Update this when a claim's status changes.
 
 **Ledger status (2026-07-03):** Critical path **closed** (A1–A4 proven; A3, G5, D6, D7 shipped in code).
-This doc is a **closed proof index** + §4 wire-spec reference. **Active work:**
+This doc is a **closed proof index**; the dual-fit wire spec has moved to its permanent home
+([seam-scoring.md](seam-scoring.md) § 6). **Active work:**
 [§F Production rollout](#f-production-rollout--remaining-work-2026-07-03),
 [TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12 perf).
 Vocab P4 (wiring named cells into `gap_tags.rs`/reporting) is **parked**, not active — see §D.
@@ -61,60 +63,21 @@ correctness).
 
 ## §4. Dual-fit repair — wire spec (A3, **shipped**)
 
-Condensed from [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) §4.
-**Implemented** in production (`domain/dual_fit.rs`, `patch_audio.rs::skip_or_dual_fit`); **default on**
-(`RepairConfig.dual_fit = true`, `--no-dual-fit` opt-out). Viability was proven in-scan via `GapFingerprint.splice_dualfit`; this section is the
-algorithm reference, not a build checklist.
+The canonical dual-fit repair wire spec (mechanism · 5-step algorithm · wiring notes) now lives in
+**[seam-scoring.md](seam-scoring.md) § 6 — Dual-fit repair** (2026-07-20). It was relocated out of this TEMP
+ledger so the algorithm has a durable home once this doc is archived. Related durable docs:
 
-**Mechanism.** At a repair gap, A has a quiet/silent hole between two un-stretched shoulders. Each shoulder
-registers against B at its **own lag**; the lags differ by a **step** (`splice.step_ms`). A single rigid donor
-shift cannot satisfy both seams. Dual-fit places each shoulder independently, then reconciles the step with a
-**trim or pad at the lowest-energy interior sample** of the fill — a pure length edit, not a within-side warp
-(B7/B11).
-
-**Algorithm (per gap):**
-
-1. **Detect** — run only on gaps that **`dualfit_target()`** selects (analyzer: `gap_fingerprint_corpus.rs`):
-   `skip` ∧ bracket-exhausted ∧ `splice_dualfit.gate_pass` ∧ **`step_is_real()`** (`post_own − post@pre ≥
-   `DUALFIT_STEP_REAL_MARGIN` 0.15` — the step materially improves the seam, not merely clears the floor) ∧
-   `donor_interior.continuous` ∧ ¬program-quiet. **Do not** run on gaps that already patch (≥1 bracket passes)
-   or on `dualfit_candidate()`/uniqueness (does not predict placement seam viability). **Measured scope
-   (re-anchor rescan, 2026-07-02): 9 gaps — 1·g3, 1·g5, 1·g22, 2·g1, 2·g2, 5·g6, 7·g2, 7·g3, 7·g4** (all
-   `seam_z` 9.3–21.9). Note (P2): `gate_pass` is degenerate post-±600, so the effective gates are step-real ∧
-   donor-occupancy.
-2. **Fit each seam at its SEAM-LOCAL lag, re-anchored on NOMINAL `b_mapped`** — search each shoulder
-   ±`SEAM_LOCAL_SEARCH_MS` (600 ms, the `baseline_lag` range) around the nominal geometry anchor (pre butts at
-   `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak; the seam **defines its own
-   placement**. **Do NOT anchor on the gross 1 s `baseline_lag`:** it can lock onto distant content and clip a
-   live seam — `2·g1` (gross pre −24 ms, seam +4.4 ms → 0.982) and especially `7·g3` (gross pre **−319 ms**,
-   seam **+18 ms** → the ±100 ms gross-anchored window missed it entirely). `b_pre`/`b_post` are the
-   nominal-anchored seam peaks; `splice_dualfit.pre/post_seam_z` (whole-curve z-score) is the alias guard
-   against the wide search locking onto a far periodic rival — **not** the ±30 ms prominence (which over-flags
-   correct-but-periodic content, `5·g6`).
-3. **Reconcile the step** — extract the B bridge `[b_pre .. b_post]`; `trim_frames = bridge_frames − gap_frames`
-   (= the step in samples; C7 tautological). Trim or pad `|trim_frames|` at the **lowest-RMS interior sample**
-   of the fill region (smallest audible splice). Interior edit only — shoulders stay at their own lags.
-4. **Validate with the unchanged gate** — score pre/post seams against B at the **seam-local-refined**
-   placements (step 2), using `fill_seam_search_secs` (default 250 ms) and the existing `min_fill_correlation`
-   / `fill_absolute_floor` thresholds. A bad length edit must fail exactly as a bad shift does today —
-   **strict gate, no loosening**. This is the property the (seam-local-fixed) `splice_dualfit` measures at
-   capture time, so `splice_dualfit.gate_pass` predicts this validation.
-5. **Reject** to skip (as today) if post-reconciliation validation fails, the step was edge-pinned (GIGO), or
-   donor continuity is false. Gate-pass alone is not sufficient — donor-BROKEN gaps (e.g. 1·g19: seams 0.998
-   but B interior silent) must stay skipped (D11).
-
-**Wiring notes.**
-
-- **Default on** — `RepairConfig.dual_fit = true`; `--no-dual-fit` ⇒ bracket-search path unchanged (D6).
-- **Production path** — `skip_or_dual_fit` → `try_dual_fit` → re-validate assembled fill with unchanged gate
-  floors; `StructureAlignmentFailed` excluded (no bracket scored).
-- **G5 program-quiet (D11)** — analyzer label via `donor_interior_nominal` / `program_quiet()`; dual-fit
-  declines program-quiet donors inside `try_dual_fit`. **Not** a production pre-gate skip (2026-07-03).
-- **Pre-wire proof** — read `dualfit_viability_text()` / `splice_dualfit` in corpus JSON; offline
-  `diag_splice_dualfit` is **retired** (E-tombstone — decode drifted from scan).
-- **Schema reference** — field semantics in [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit.
-- **Historical detail** — corpus tables, measurement rationale, and the retired offline sim live in
+- **Algorithm / wire spec** — [seam-scoring.md](seam-scoring.md) § 6.
+- **Measurement fields** (`splice_dualfit`, `baseline_lag`, `splice`, `donor_interior`) —
+  [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements.
+- **Operator / mode view** — [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue (G6).
+- **Classification tag** — [gap-repair-guide.md](gap-repair-guide.md) § Dual-fit rescue (W7).
+- **Historical detail** (corpus tables, measurement rationale, retired offline sim) —
   [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md).
+
+**Measured scope (unchanged, re-anchor rescan 2026-07-02): 9 A3 targets** — 1·g3, 1·g5, 1·g22, 2·g1, 2·g2,
+5·g6, 7·g2, 7·g3, 7·g4. Effective gates: step-real ∧ donor-occupancy ∧ ¬program-quiet (`gate_pass` degenerate
+post-±600 — ledger P2). Golden baseline frozen.
 
 ---
 
@@ -129,7 +92,7 @@ shift cannot satisfy both seams. Dual-fit places each shoulder independently, th
 | B4 | Level/SNR on **energy-weighted downmix** (straight mono `/N` buries 5.1 center 13–15 dB) | PROVEN | CAP (schema) | Frozen; schema done, corpus partial (as B3). |
 | B5 | **Correlation on mono** (representation doesn't matter — Pearson scale-invariant) | PROVEN | CAP (schema) | Simplifies: no per-channel correlation. Schema done. |
 | B6 | **F1 placement** — register at the gate's own throat, not a divergent `place_on_b` | PROVEN | PIPE (done) | Done via `gate_structure_align`. Quiet-gap registration is separate — **`b_mapped`** (B13/A2). |
-| B11 | **Dual-fit ≠ what bracket search already does** — the winning bracket's boundary move is *not* the throat step (5·g3: +72 ms step vs 2600 ms `move_frames`; 0/18 patched gaps have `\|step\|` within 20 ms of a bracket delta) | PROVEN | PIPE | Confirms dual-fit is a distinct operation (interior length edit), not a re-run of anchor/boundary search. Scopes §4. |
+| B11 | **Dual-fit ≠ what bracket search already does** — the winning bracket's boundary move is *not* the throat step (5·g3: +72 ms step vs 2600 ms `move_frames`; 0/18 patched gaps have `\|step\|` within 20 ms of a bracket delta) | PROVEN | PIPE | Confirms dual-fit is a distinct operation (interior length edit), not a re-run of anchor/boundary search. Scopes the wire spec ([seam-scoring.md](seam-scoring.md) § 6). |
 | B12 | **Wide-envelope lag concordance** — 100 ms-bin envelope peak lag agrees with the fine-waveform lag | SUPP (pair 1) | CAP (schema) | Secondary registration confirmer; populate at `b_mapped` post A2. |
 | B7 | **Content is un-stretched within a side** (both shoulders align at a single lag each) | SUPP | — | The premise that makes reconciliation a **pure trim/pad**, not a warp (A3). |
 | B8 | Registration = **offset + step**, not clip drift (per-file slope ≈ 0; 18/19 have `|step|>2 ms`) | PROVEN | VOCAB | Registration axis; drop drift/skew framing. |
@@ -259,8 +222,8 @@ authoritative map. Key traps:
 5·g6, 7·g2, 7·g3, 7·g4. Effective gates on this corpus: **step-real ∧ donor-occupancy ∧ ¬program-quiet**
 (`gate_pass` degenerate post-±600 — ledger P2). Golden baseline frozen.
 
-**Repair algorithm:** §4 below; **implemented** (dual-fit default on). **G5 program-quiet** always on in
-production (not flag-gated).
+**Repair algorithm:** [seam-scoring.md](seam-scoring.md) § 6 (canonical wire spec; §4 above is a pointer);
+**implemented** (dual-fit default on). **G5 program-quiet** always on in production (not flag-gated).
 
 ---
 

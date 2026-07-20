@@ -164,8 +164,10 @@ program time ⇒ nothing to fill, not a dropout; ledger D11). Both carry `rms_db
 
 ### `splice_dualfit` — would a length-reconciled fill pass the gate?
 
-The offline dual-fit simulation computed on the scan's own decode. Each shoulder is placed at its own
-`baseline_lag`; the pre/post seams are scored at lag 0 against the **unchanged** gate thresholds:
+The **offline predictor** of the dual-fit repair (the repair algorithm itself is
+[seam-scoring.md](seam-scoring.md) § 6 — Dual-fit repair). Computed on the scan's own decode: each shoulder
+is placed at its own `baseline_lag`; the pre/post seams are scored at lag 0 against the **unchanged** gate
+thresholds:
 
 - `pre_seam_r` / `post_seam_r` and **`gate_pass`** — do both clear `min_fill_correlation` and
   `fill_absolute_floor`?

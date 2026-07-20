@@ -95,6 +95,24 @@ The `pre`/`post` pair also maps to a **`seam_shape`** tag (`balanced`, `asymmetr
 
 ---
 
+## 6. Dual-fit repair — reconciling a length step across the seam
+
+**Canonical wire spec** for the dual-fit rescue (operator/mode view: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue (G6); classification tag: [gap-repair-guide.md](gap-repair-guide.md) § Dual-fit rescue (W7)). **Implemented** in production — `domain/dual_fit.rs` (shared scan + production primitive) and `application/patch_audio.rs::skip_or_dual_fit → try_dual_fit`; **default on** (`RepairConfig.dual_fit = true`, `--no-dual-fit` opt-out). The offline predictor of this repair is the fingerprint's `splice_dualfit` field — [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements.
+
+**Mechanism.** At a repair gap, A has a quiet/silent hole between two un-stretched shoulders. Each shoulder registers against B at its **own lag**; the lags differ by a **step** (`splice.step_ms`). A single rigid donor shift cannot satisfy both seams — one seam is always off by the step. Dual-fit places each shoulder independently, then reconciles the step with a **trim or pad at the lowest-energy interior sample** of the fill — a pure length edit, not a within-side warp (the content is un-stretched within each side).
+
+**Algorithm (per gap):**
+
+1. **Detect** — run only on gaps that `dualfit_target()` selects (analyzer `gap_fingerprint_corpus.rs`): `skip` ∧ **bracket-exhausted** (`StructureAlignmentFailed` excluded — no bracket was ever scored) ∧ `splice_dualfit.gate_pass` ∧ **`step_is_real()`** (`post_own − post@pre ≥ DUALFIT_STEP_REAL_MARGIN` 0.15 — the step materially improves the seam, not merely clears the floor) ∧ `donor_interior.continuous` ∧ ¬program-quiet. **Do not** run on gaps that already patch (≥1 bracket passes) or on uniqueness (`dualfit_candidate`) — it does not predict placement seam viability. On the re-anchor corpus this scopes to **9 gaps** (1·g3, 1·g5, 1·g22, 2·g1, 2·g2, 5·g6, 7·g2, 7·g3, 7·g4). Note: post-±600 ms search `gate_pass` is degenerate (nearly every gap passes), so the load-bearing gates are **step-real ∧ donor-occupancy**.
+2. **Fit each seam at its seam-local lag, re-anchored on nominal `b_mapped`** — search each shoulder ±`SEAM_LOCAL_SEARCH_MS` (600 ms, the `baseline_lag` range) around the nominal geometry anchor (pre butts at `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak; the seam **defines its own placement**. **Do NOT anchor on the gross 1 s `baseline_lag`** — it can lock onto distant content and clip a live seam (e.g. `7·g3`: gross pre −319 ms vs seam +18 ms, which a gross-anchored ±100 ms window missed entirely). `splice_dualfit.pre/post_seam_z` (whole-curve z-score) is the alias guard against the wide search locking onto a far periodic rival — **not** the ±30 ms prominence (which over-flags correct-but-periodic content).
+3. **Reconcile the step** — extract the B bridge `[b_pre .. b_post]`; `trim_frames = bridge_frames − gap_frames` (= the step in samples). Trim or pad `|trim_frames|` at the **lowest-RMS interior sample** of the fill region (smallest audible splice). Interior edit only — shoulders stay at their own lags.
+4. **Validate with the unchanged gate** — score pre/post seams against B at the seam-local-refined placements (step 2), using `fill_seam_search_secs` (250 ms, §4) and the existing `min_fill_correlation` / `fill_absolute_floor` thresholds (§5). A bad length edit must fail exactly as a bad shift does today — **strict gate, no loosening**. Production re-scores the assembled/trimmed fill with the real `fill_splice_seam_correlations_interleaved` + `classify_fill_waveform_confidence` (the same primitives every other fill path uses), falling back to the skip on failure — it does **not** trust an assumed confidence.
+5. **Reject** to skip (as today) if post-reconciliation validation fails, the step was `edge_pinned` (GIGO), or donor continuity is false. Gate-pass alone is not sufficient — donor-BROKEN gaps (seams align but the gap interior is silent, e.g. 1·g19: seams 0.998 yet B interior silent) must stay skipped: filling them inserts silence.
+
+**Why it is a distinct operation** (not a re-run of bracket search): the winning bracket's boundary move is *not* the throat step — no patched gap has `|step|` within 20 ms of a bracket delta. Dual-fit is an interior length edit, not another anchor/boundary search.
+
+---
+
 ## Diagnostics
 
 Per-gap seam detail (channels selected and per-channel correlations at the winning placement) logs at **debug** from `evaluate_seam_gate`:
@@ -136,6 +154,7 @@ A companion `fill residual channel breakdown` line (same debug target) reports `
 | Per-channel debug diagnostics | `policies::seam_channel_diagnostics` |
 | Fit waveform tiers | `domain/gap_fill_fit.rs::classify_fill_waveform_confidence`, `fit_mode_waveform_floor_passes` |
 | Structure gate / gate-mode waveform gate | `application/patch_region.rs::structure_passes_gate`, `seams_pass_correlation_gate` |
+| Dual-fit repair (§6) | `domain/dual_fit.rs`, `application/patch_audio.rs::skip_or_dual_fit`, `try_dual_fit` |
 
 ---
 
@@ -149,5 +168,6 @@ Seam scoring is **phase 4, step 4d** of the repair pipeline (after structure mat
 
 - [gap-repair-guide.md](gap-repair-guide.md) — reading a run; tiers, seam shapes, vocabulary
 - [gap-fill-modes.md](gap-fill-modes.md) — `fit` vs `gate`, flag interactions, multichannel seams, performance
+- [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements — the `splice_dualfit` predictor and registration fields behind §6
 - [cli-output.md](cli-output.md) — repair gap outcome report layout
 - [README.md](../README.md) § Gap patching pipeline
