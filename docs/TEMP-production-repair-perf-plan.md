@@ -1,9 +1,13 @@
 # Production repair pipeline performance — plan
 
-**Status:** **§0 measured (2026-07-20) — plan PIVOTED.** The first instrumented production run **refuted the
+**Status:** **§0 + Level-C measured (2026-07-20) — plan PIVOTED.** The instrumented production run **refuted the
 original candidate (§2.1 mono-downmix hoist: 0.006% of runtime)** and located the real cost: **`char_gate_search`
-= 93% of wall-clock**, concentrated in the **anchor/dual-fit rescue gaps** (92–595 s each). Active work is now
-**[§2.3 — decompose `evaluate_seam_gate` (Level C)](#23-level-c--decompose-evaluate_seam_gate-active)**. Successor
+= 93% of wall-clock**, decomposed (§2.3) into a **flat ~22 s per-bracket score** run once (baseline) + **k times**
+(anchor-seam rescue, `gate_anchor_search` = 88% of gate search). Active target: **speed the per-bracket score** —
+code review (§2.3) shows it is **not** a full-haystack sweep but a windowed coarse+refine search whose per-candidate
+seam correlations are recomputed naively with no cross-candidate reuse (plus a placement-invariant channel
+selection redundantly re-run in the hot loop). See
+**[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)**. Successor
 to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
 whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
 that one didn't: the **production repair path** end-users actually run.
@@ -137,33 +141,85 @@ a winner," and told us not to carry gate-search cost here. **The §0 measurement
 path:** a gap that finds no easy winner falls into an exhaustive `evaluate_seam_gate` search costing up to 595 s.
 The gate search *is* the production cost. Superseded by §2.3.
 
-### 2.3 Level C — decompose `evaluate_seam_gate` **(ACTIVE)**
+### 2.3 Level C — decompose `evaluate_seam_gate` **(MEASURED 2026-07-20)**
 
-**The measured target.** `char_gate_search` is 93% of wall-clock and 27× more expensive on the 5 rescue gaps
-than the 4 base gaps. Before optimizing anything, **localize where a rescue gap spends its 595 s** — the same
-measure-first discipline that just killed §2.1. This is one function deeper than the Level-B spans: add
-sub-spans *inside* `evaluate_seam_gate` (`application/patch_region.rs`) around its stages so a re-run of the §0
-recipe attributes the rescue-gap cost:
+Sub-spans landed inside `evaluate_seam_gate` (`application/patch_region.rs`, nested under `char_gate_search`,
+gated by `CLIP_SYNC_SPAN_TIMING`): `gate_cache_build` (`FitHaystackCache::build`), `gate_baseline_score`
+(baseline bracket), `gate_anchor_search` (`try_anchor_seam_joint_search`), `gate_grid` (boundary grid — empty on
+`baseline_only`). Byte-parity held (`patch_audio_integration` 26/26). Re-run on the same pair 2 (`perf_2.log`):
 
-- **structure match** — `build_gap_signature` / structure-tier scoring over the signature context.
-- **bracket / waveform search** — the feasible-bracket scoring over the `fill_border_search_secs` haystack
-  (even lean `baseline_only` sweeps the haystack per placement).
-- **anchor-seam bracket search** — the editorial-anchor rescue (`max_anchors_per_side` × `max_anchor_bracket_secs`
-  placements, each scored over the haystack). **Prime suspect:** gap 7 (the *anchor* rescue) alone cost 377 s.
-- **residual / floor** — least-squares cancellation per selected channel.
-- **FFT lag sweep** — already `lag_correlation_curve_auto`; confirm the anchor/bracket search actually routes
-  through it and isn't running a naive `O(n·L)` sweep per placement (the likely 595 s culprit — many placements
-  × wide haystack × 6 channels).
+| Sub-span | n | Total | Share of gate search |
+|----------|---|-------|----------------------|
+| **`gate_anchor_search`** | 5 | **1575.8 s** | **88.5%** |
+| `gate_baseline_score` | 9 | 201.8 s | 11.3% |
+| `gate_cache_build` | 9 | 0.5 s | 0.03% |
+| `gate_grid` | 0 | — | (baseline_only) |
 
-**Only after** that second measurement points at a specific stage do we pick an optimization — and it must still
-obey §1 (shared-object path, no bespoke fast path, byte-parity via `patch_audio_integration`). Likely shapes
-(unconfirmed until measured): reuse one FFT-accelerated lag curve across the anchor-seam placements instead of
-recomputing per placement; hoist the per-channel border correlation inputs; bound the anchor-seam haystack. Do
-not build any of these before the Level-C run.
+Per gap (`gate total` / `baseline` / `anchor`, seconds): base patch/marginal gaps 3·17·18·24 = ~23 / ~22 / — ;
+rescue gaps 19 = 93 / 23 / 70 · 21 = 210 / 21 / 189 · 7 (anchor) = 386 / 20 / 365 · 6 = 397 / 23 / 374 · 22 =
+601 / 23 / **578**.
 
-**Cohort note:** the rescue-gap cost only appears when gaps actually reach the anchor/dual-fit rescue — pick a
-§0 pair with rescue targets (pair 2 has 2 dual-fit + 1 anchor; pair 1/7 have 3 dual-fit each). A pair of only
-plain patches would hide the dominant cost.
+**The unifying cause — a ~22 s per-bracket score.** `gate_baseline_score` is a **flat ~22 s on every gap** (one
+baseline bracket), and `gate_anchor_search` is that same primitive run **k times** (one per anchor bracket): gap
+22's 578 s ÷ 22 s ≈ **26 anchor brackets**; gap 19's 70 s ≈ 3. So the whole cost is
+`(1 baseline + k anchor) × ~22 s/bracket`. `gate_cache_build` (the shared B-downmix prep, i.e. the old §2.1
+territory) is confirmed negligible.
+
+**Code review of the ~22 s per-bracket score (2026-07-20) — the "naive `O(n·L)` haystack sweep" framing was
+imprecise; corrected here.** Traced `match_gap_fill_unified_in_b_with_timeline` → `unified_search_best_fill_start`/
+`_end` → `waveform_min_at_start` → `fill_seam_correlations`:
+
+- **NOT a full-haystack lag sweep.** The search is **windowed** to ±`search_radius_frames` (=`fill_border_search_secs`
+  × sr = **10 s × 48 k = ±480 k frames** on the default profile), and **coarse-stepped with a ~2000-candidate cap**
+  (`search_coarse_step`) + a bounded integer refine + a ≤128-frame fine polish. `fill_seam_correlations` does no
+  internal lag slide — it is one fixed-placement Pearson. So there is already an algorithmic bound; there is **no
+  single big sweep to FFT away.**
+- **But it IS naive and un-shared per candidate.** At each of the ~thousands of candidates (coarse + integer refine,
+  for **both** the start and end searches) it recomputes, from scratch, a fresh `seam_pearson` over the pre/post
+  windows **per selected channel** plus the structure `score_pre/post_for_signature`. **No FFT, no prefix-sum /
+  running-correlation reuse across adjacent candidates, no memoization.**
+- **Concrete redundancy:** `fill_seam_correlations` re-runs `seam_score_channel_indices(a_pre_ch, a_post_ch)`
+  (`policies.rs`) inside the per-candidate loop, but that A-side channel selection is **placement-invariant** — it
+  does not depend on `start` or B. Pure hot-loop waste.
+- **The real multiplier is `k` brackets, not the sweep.** This bounded-but-naive search runs once per baseline
+  bracket and once per anchor bracket, so `gate_anchor_search` = `k × (borders + signature + thousands of naive
+  correlations)`. The 88 % is bracket-count × per-search cost.
+
+**Levers, re-ranked to the actual code (do NOT "FFT the haystack" — there is no full sweep):**
+
+1. **Cross-candidate reuse in the coarse/refine correlation loop (primary — collapses BOTH buckets).** Prefix-sum
+   the seam Pearson numerator/denominator across adjacent candidate starts, or compute the coarse-grid correlations
+   in one FFT pass (`lag_correlation_curve_auto` reused as the shared primitive), instead of an independent Pearson
+   per candidate.
+2. **Hoist `seam_score_channel_indices` out of the per-candidate loop** (placement-invariant; compute once per
+   bracket). Small, isolated, byte-neutral — a good first PR.
+3. **Bound `k` (anchor-bracket count) and/or the 10 s search window (secondary — rescue gaps only).** `k` reached
+   ~26 on gap 22; the 10 s `fill_border_search_secs` sets the ±480 k window width. Only helps rescue gaps.
+
+**Level-D result (`perf_3.log`, 2026-07-20) — CONFIRMED.** Of the per-bracket score (82 brackets = 9 baseline +
+73 anchor):
+
+| Sub-span | n | Total | Mean | Share of per-bracket |
+|----------|---|-------|------|----------------------|
+| **`bracket_unified_search`** (`match_gap_fill_unified_in_b_with_timeline`) | 82 | **1698.9 s** | **20.7 s** | **99.9%** |
+| `bracket_signature` (`build_gap_signature`) | 82 | 0.57 s | 6.9 ms | 0.03% |
+| `bracket_borders` (template build) | 82 | 0.28 s | 3.4 ms | 0.02% |
+
+The windowed unified search is **97.7% of `char_gate_search`** and **91% of total wall-clock** (82 × 20.7 s =
+1699 s). Border build and signature are noise; residual is not in this path. **Measurement chain closed:**
+`char_gate_search` (93% of run) → `gate_anchor_search` (88%, k brackets) → `bracket_unified_search` (99.9% of each
+bracket). The target is a single function, and the code review (above) already explains the slowness.
+
+**Optimization is now unblocked** — pick from levers 1–3 (cross-candidate reuse; hoist channel selection; bound
+`k`/window). Any change: §1 shared-object path, byte-parity via `patch_audio_integration`. **Lever 2 (hoist the
+placement-invariant `seam_score_channel_indices` out of `fill_seam_correlations`'s per-candidate loop) is
+correct regardless of the others and is the smallest, isolated first PR.** A Level-E split *inside*
+`match_gap_fill_unified_in_b_with_timeline` (candidate count vs per-candidate correlation) is only needed if
+lever 1's approach (prefix-sum vs FFT coarse grid) needs disambiguating first.
+
+**Cohort note:** the rescue-gap cost only appears when gaps reach the anchor/dual-fit rescue — pick a pair with
+rescue targets (pair 2 has 2 dual-fit + 1 anchor; pair 1/7 have 3 dual-fit each). A plain-patch-only pair would
+hide the dominant cost.
 
 ---
 

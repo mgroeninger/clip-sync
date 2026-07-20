@@ -1417,13 +1417,24 @@ fn gate_structure_align(
     }
 
     let border_spec = gap_border_spec(params, refined);
-    let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.cfg.channels, &border_spec);
-    let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
-        &params.geom.a_pcm.samples,
-        params.cfg.channels,
-        &border_spec,
-    );
+    // Perf instrumentation (Level D, TEMP-production-repair-perf-plan.md §2.3): split one bracket score into
+    // borders / signature / unified haystack search. Nests under `gate_baseline_score` / `gate_anchor_search`.
+    // Emits only when `CLIP_SYNC_SPAN_TIMING` is set (Level A).
+    let ((a_pre_border, a_post_border), (a_pre_ch, a_post_ch)) = {
+        let _s = tracing::info_span!("bracket_borders").entered();
+        (
+            policies::border_templates_for_gap(
+                &params.geom.a_pcm.samples,
+                params.cfg.channels,
+                &border_spec,
+            ),
+            policies::border_templates_per_channel_for_gap(
+                &params.geom.a_pcm.samples,
+                params.cfg.channels,
+                &border_spec,
+            ),
+        )
+    };
 
     let gap_secs = gap_frames as f64 / params.cfg.sample_rate as f64;
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
@@ -1450,15 +1461,18 @@ fn gate_structure_align(
         absolute_silence_rms: params.cfg.absolute_silence_rms,
     };
 
-    let signature = build_gap_signature(
-        &params.geom.a_pcm.samples,
-        params.cfg.channels,
-        refined.start_frame,
-        refined.end_frame,
-        params.cfg.context_frames,
-        &structure_params,
-        params.cfg.gap_signature_mode,
-    );
+    let signature = {
+        let _s = tracing::info_span!("bracket_signature").entered();
+        build_gap_signature(
+            &params.geom.a_pcm.samples,
+            params.cfg.channels,
+            refined.start_frame,
+            refined.end_frame,
+            params.cfg.context_frames,
+            &structure_params,
+            params.cfg.gap_signature_mode,
+        )
+    };
 
     let max_seam = params.geom.seam_gate_frames;
     let min_seam = (max_seam / 4).max(1);
@@ -1522,13 +1536,16 @@ fn gate_structure_align(
         nominal_fill_start: offset_nominal_start,
         nominal_fill_end: gap_end_in_haystack,
     };
-    let unified = match_gap_fill_unified_in_b_with_timeline(
-        &search_input,
-        &structure_params,
-        weights,
-        &structure_timeline,
-        params.geom.anchor_search_prior,
-    )
+    let unified = {
+        let _s = tracing::info_span!("bracket_unified_search").entered();
+        match_gap_fill_unified_in_b_with_timeline(
+            &search_input,
+            &structure_params,
+            weights,
+            &structure_timeline,
+            params.geom.anchor_search_prior,
+        )
+    }
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;
 
     // Per-gap seam diagnostics (RUST_LOG=debug): which channels were scored and their
