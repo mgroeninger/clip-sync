@@ -2329,6 +2329,14 @@ fn characterize_region(
         global_a_rms,
         silence_peak_fraction,
     } = ctx;
+
+    // Perf instrumentation (Level B, TEMP-production-repair-perf-plan.md §0): time the whole characterize
+    // pass per gap; the `char_*` child spans below split the shared-object rebuilds (b-extract / geometry /
+    // dual-fit downmix) from the gate search. Emits only when `CLIP_SYNC_SPAN_TIMING` is set (Level A). This
+    // span nests under `patch_audio` (pass 1) or `patch_anchored_retry` (the retry pass), so anchored-retry
+    // characterize time stays bucketed separately per §0.
+    let _characterize_span = tracing::info_span!("characterize").entered();
+
     let normalize_window_secs = request.normalize_window_secs;
     let margin_secs = request.fill_align_margin_secs;
     let border_search_secs = request.fill_border_search_secs;
@@ -2506,13 +2514,17 @@ fn characterize_region(
     );
     let seam_gate_frames =
         seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
-    let b_samples = match slice_b_segment(
-        b_samples_full,
-        channels,
-        sample_rate,
-        b_extract_start_secs,
-        b_extract_end_secs,
-    ) {
+    let b_extract_result = {
+        let _s = tracing::info_span!("char_b_extract").entered();
+        slice_b_segment(
+            b_samples_full,
+            channels,
+            sample_rate,
+            b_extract_start_secs,
+            b_extract_end_secs,
+        )
+    };
+    let b_samples = match b_extract_result {
         Some(samples) => samples,
         None => {
             let reason = GapPatchSkipReason::BExtractFailed;
@@ -2554,16 +2566,19 @@ fn characterize_region(
         search_radius_frames,
         sample_rate,
     );
-    let geom = derive_seam_gate_geometry(
-        &cfg,
-        a_pcm,
-        b_samples,
-        b_extract_start_secs,
-        refined_b_start_secs,
-        refined_b_end_secs,
-        gap_frames,
-        anchor_search_prior,
-    );
+    let geom = {
+        let _s = tracing::info_span!("char_geometry").entered();
+        derive_seam_gate_geometry(
+            &cfg,
+            a_pcm,
+            b_samples,
+            b_extract_start_secs,
+            refined_b_start_secs,
+            refined_b_end_secs,
+            gap_frames,
+            anchor_search_prior,
+        )
+    };
     let seam_params = SeamGateParams { cfg: &cfg, geom };
 
     // A3: build the dual-fit fallback input once (only when `--dual-fit` is on), before the gate can mutate
@@ -2571,6 +2586,7 @@ fn characterize_region(
     let dual_fit_input = request
         .dual_fit
         .then(|| {
+            let _s = tracing::info_span!("char_dual_fit_input").entered();
             build_dual_fit_input(
                 &a_pcm.samples,
                 b_samples,
@@ -2598,7 +2614,11 @@ fn characterize_region(
         b_mapped_start_frame: dual_fit_input.as_ref().map(|d| d.b_mapped_start).unwrap_or(0),
     };
 
-    let gate_outcome = match evaluate_seam_gate(refined, &seam_params) {
+    let gate_result = {
+        let _s = tracing::info_span!("char_gate_search").entered();
+        evaluate_seam_gate(refined, &seam_params)
+    };
+    let gate_outcome = match gate_result {
         Ok(outcome) => outcome,
         Err(fail)
             if request.fill_mode == crate::domain::FillMode::Gate

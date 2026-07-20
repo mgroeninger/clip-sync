@@ -62,8 +62,21 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
 
     use crate::application::error::ConfigError;
 
+    use tracing_subscriber::fmt::format::FmtSpan;
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(default_env_filter(config.level)));
+
+    // Perf instrumentation (Level A, TEMP-production-repair-perf-plan.md §0): when `CLIP_SYNC_SPAN_TIMING`
+    // is set, emit a line on every span close carrying `time.busy` / `time.idle`, so a licensed-pair repair
+    // run can be bucketed by span name (`decode_*` / `characterize` / `char_gate_search` / `patch_gap` /
+    // `patch_splice`). Off by default — no change to normal output. Combine with e.g.
+    // `RUST_LOG=clip_sync_repair=info` and a `--release` build.
+    let span_events = if std::env::var_os("CLIP_SYNC_SPAN_TIMING").is_some() {
+        FmtSpan::CLOSE
+    } else {
+        FmtSpan::NONE
+    };
 
     if let Some(path) = &config.log_file {
         let file = std::fs::OpenOptions::new()
@@ -79,9 +92,14 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
 
         tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(
                 tracing_subscriber::fmt::layer()
+                    .with_span_events(span_events.clone())
+                    .with_writer(std::io::stderr),
+            )
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_span_events(span_events)
                     .with_writer(file)
                     .with_ansi(false),
             )
@@ -90,6 +108,7 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
+            .with_span_events(span_events)
             .with_writer(std::io::stderr)
             .try_init()
             .ok();

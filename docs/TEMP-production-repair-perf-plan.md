@@ -34,18 +34,47 @@ media pair — the same method used for the dump. **Bucket anchored-retry separa
 per-gap characterize baseline. Only then decide whether any optimization here is worth it. If the measured
 production redundancy is negligible, **close this doc** rather than optimizing a non-cost.
 
+**Instrumentation status (2026-07-20): LANDED — the run is pending on a licensed pair.** The production path
+already carried `tracing` spans over the coarse buckets; two changes complete the §0 surface:
+
+- **Level A** (`infrastructure/logging/mod.rs`) — setting `CLIP_SYNC_SPAN_TIMING` switches the fmt subscriber
+  to `FmtSpan::CLOSE`, so every span emits `time.busy` / `time.idle` on close. Off by default (no change to
+  normal output).
+- **Level B** (`application/patch_audio.rs::characterize_region`) — a per-gap `characterize` span plus child
+  spans `char_b_extract` (B span slice), `char_geometry` (border/RMS/geometry rebuild), `char_dual_fit_input`
+  (dual-fit downmix), `char_gate_search` (structure + bracket/waveform + residual). These nest under
+  `patch_audio` (pass 1) or `patch_anchored_retry` (retry pass), so anchored-retry stays bucketed separately.
+
+**Running the instrumented pass** (operator, licensed media — no audio lives in-repo):
+
+```powershell
+$env:CLIP_SYNC_SPAN_TIMING = "1"
+$env:RUST_LOG = "clip_sync_repair=info"
+cargo run --release --features clip-sync/default-tracing -p clip-sync-repair -- `
+  A.mkv B.m4v --mux out.mkv 2>perf.log
+# then aggregate perf.log by span name (sum time.busy per span: decode_a/decode_b, characterize,
+# char_gate_search, char_b_extract, char_geometry, char_dual_fit_input, patch_gap, patch_splice)
+```
+
+**Non-negotiables:** `--release` (debug timings are meaningless); the real repair path (`--mux`/`--wav`),
+**never** `--gap-fingerprints` (that is the dump path §0 rejects); and `CLIP_SYNC_SPAN_TIMING` must be set or
+no timings emit. **Reading busy time:** an `.entered()` parent span's `time.busy` *includes* its children, so
+a bucket's exclusive cost = its own busy minus its children's busy (e.g. characterize-other = `characterize` −
+Σ `char_*`). Anchored-retry buckets appear as `char_*` spans whose parent is `patch_anchored_retry`.
+
 **Measurement output shape** — fill this table from the first licensed-pair run; use it to rank candidates
 (§2) and to decide whether to close the doc:
 
-| Bucket | What to time | Notes |
-|--------|--------------|-------|
-| **Decode** | `decode_ab` (once per execute) | Already shared; expect small % |
-| **Characterize — gate search** | structure + bracket/waveform + residual per gap | Dominant candidate on lean `fit` |
-| **Characterize — downmix** | repeated `interleaved_to_mono` / span extracts per gap | §2.1 hoist target |
-| **Characterize — borders/RMS** | border rebuilds, binned-RMS, donor interior | Cheap tier; confirm before optimizing |
-| **Characterize — anchored-retry** | second-pass `prepare_region_patch` on failed gaps only | Exclude from per-gap baseline |
-| **Execute** | `execute_region_spec` + splice per gap | Should be thin post step 6 |
-| **Splice / crossfade** | `splice_into_a` | End of pipeline |
+| Bucket | Span(s) to sum | Notes |
+|--------|----------------|-------|
+| **Decode** | `decode_a`, `decode_b`, `resample` | Already shared; expect small % |
+| **Characterize — gate search** | `char_gate_search` | Dominant candidate on lean `fit` |
+| **Characterize — downmix** | `char_dual_fit_input` (+ `char_b_extract`) | §2.1 hoist target |
+| **Characterize — borders/RMS** | `char_geometry` | Cheap tier; confirm before optimizing |
+| **Characterize — other** | `characterize` − Σ `char_*` | Refine/signature/misc remainder |
+| **Characterize — anchored-retry** | `char_*` spans parented by `patch_anchored_retry` | Exclude from per-gap baseline |
+| **Execute** | `patch_gap` (wraps `execute_region_spec`) | Should be thin post step 6 |
+| **Splice / crossfade** | `patch_splice` | End of pipeline |
 
 Percent columns are TBD until measured; do not import the dump's 82%/12% split.
 
