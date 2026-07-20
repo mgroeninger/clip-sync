@@ -42,7 +42,7 @@ bracket).*
 **Silence-splice** (n=9, e.g. 2·g1, 7·g3, 7·g4) — bracket search exhausted (no lag-0 placement), but
 each shoulder registers cleanly at its *own* lag, the lags disagree by a real step, and B is occupied
 across the hole. This is the dual-fit addressable set (`dualfit_target()`); repair = independent
-per-seam fit + length reconciliation ([ledger §4](TEMP-seam-repair-status-ledger.md#4-dual-fit-repair--wire-spec-a3-shipped)).
+per-seam fit + length reconciliation ([gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue (G6)).
 *Old guide: throat **W5** skip; after rescue the gap becomes **W7** (`patch_tier=high`) — W7 is a
 post-rescue outcome, not a separate gap type.*
 

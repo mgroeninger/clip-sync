@@ -1,4 +1,13 @@
-# Gap content equivalence (skip redundant fills) — plan (DRAFT)
+# Gap content equivalence (skip redundant fills) — plan (ARCHIVED — v1 shipped 2026-07-20)
+
+> **Archived historical record.** v1 shipped and validated; this plan is frozen. Current behavior lives in the
+> permanent docs — [gap-vocabulary.md](../gap-vocabulary.md) § Silence-character pre-gate (classification),
+> [gap-scan.md](../gap-scan.md) (measurement), [pipeline.md](../pipeline.md) § Fill plan (the drop),
+> [gap-fingerprint.md](../gap-fingerprint.md) § equivalence (fine reference), [json-output.md](../json-output.md).
+> **§1–§14 below describe the superseded seam/lag approach — never built; kept only for history.** The remaining
+> future work is the **reactive v1.5 backlog** in §10/§11 (threshold-flag exposure, per-channel, optional 50 ms
+> parity bin — all deferred; the 100 ms gate needs none of them on the validation corpus). `RedundantScanDip` and
+> the interior-bridge (E5) were dropped as obsolete seam-approach artifacts (superseded by `ambient_quiet`).
 
 Status: **v1 SHIPPED + defaults flipped (2026-07-20).** After corpus validation (8 pairs, 121 gaps, 0 divergent
 / 0 dangerous vs the fine fingerprint reference, operator ear-verified), `skip_equivalent_gaps` is now **on by
@@ -67,10 +76,10 @@ genuinely borderline gap. The scanner's retained-bin size is kept a parameter so
 fingerprint parity if a borderline gap ever shows daylight. **§4–§14 below describe the superseded seam
 approach — kept for history; this section + the silence gate replace §5's algorithm and §5.1's placement.**
 
-Companions: [gap-scan.md](gap-scan.md), [pipeline.md](pipeline.md) § Fill plan,
-[gap-vocabulary.md](gap-vocabulary.md), [seam-scoring.md](seam-scoring.md),
-[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [json-output.md](json-output.md),
-[TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
+Companions: [gap-scan.md](../gap-scan.md), [pipeline.md](../pipeline.md) § Fill plan,
+[gap-vocabulary.md](../gap-vocabulary.md), [seam-scoring.md](../seam-scoring.md),
+[TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md), [json-output.md](../json-output.md),
+[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
 
 Motivating use case: sensitive gap scan (`min_gap_ms=500`, `scan_block_ms=100`, …) finds many
 silent runs on A that ffmpeg also sees, but a large fraction are **not editorial dropouts** — A
@@ -524,7 +533,8 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 - [x] Wire **same** function into `gap_fingerprint.rs` from-decode path (`equivalence` block on every gap)
 - [x] JSON schema — documented in [gap-fingerprint.md](gap-fingerprint.md) § `equivalence` *(the production
   gap-row `equivalence` in `json-output.md` is a v1 concern — no production output in Phase 0)*
-- [ ] Run on a licensed A/B pair; spreadsheet: gap #, ffmpeg?, cheap equivalence metrics vs dual-fit/oracle (sanity)
+- [x] Run on a licensed A/B pair; per-gap coarse-vs-fine comparison — done as the `equivalence-calibration`
+  corpus (8 pairs / 121 gaps, 0 divergent), superseding the dual-fit/oracle spreadsheet idea
 
 ### v1 (scan-time gate) — **SHIPPED 2026-07-20**
 
@@ -542,10 +552,16 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
   (`equivalence-calibration` tool; `scan_equivalence` block added to `GapFingerprint`)
 - [x] Docs: `gap-scan.md`, `gap-repair-guide.md`, `pipeline.md`, `json-output.md`, `gap-vocabulary.md`, `README.md`
 
-### v1.5
+### v1.5 (reactive — build only on demonstrated need)
 
-- [ ] `RedundantScanDip` reason + config flag
-- [ ] Interior bridge correlation (E5)
+- [ ] `--dropout-margin-db` / `--donor-silence-thresh` exposure (defaults 35 dB / 0.5 held across the corpus)
+- [ ] Per-channel (non-mono) refinement (no channel-masked miss observed)
+- [ ] Optional 50 ms retained-bin for fingerprint parity (not needed: 100 ms was 0-divergent across 121 gaps)
+
+**Dropped as obsolete:** `RedundantScanDip` and the interior-bridge correlation (E5) were **seam-approach**
+artifacts (they relied on nominal seam Pearson / envelope correlation, the refuted primitives). Their intent —
+skipping low-level scan dips where B matches — is already covered by the **`ambient_quiet`** class in the
+shipped silence-character gate. Do not build.
 
 ---
 
@@ -584,15 +600,15 @@ ffmpeg ground truth: 14 silences at `noise=-60dB:d=0.5` on the licensed A master
 
 ---
 
-## 15. Promotion / done criteria
+## 15. Promotion / done criteria — **all met (2026-07-20)**
 
-When v1 ships:
-
-- Mark status **v1 done**; move operator contract into [gap-repair-guide.md](gap-repair-guide.md) and [gap-scan.md](gap-scan.md).
+- [x] Mark status **v1 done**; operator contract moved into [gap-repair-guide.md](gap-repair-guide.md) and [gap-scan.md](gap-scan.md).
 - [x] Reconcile the silence-character cells into [gap-vocabulary.md](gap-vocabulary.md) § *Silence-character
   pre-gate* — `shared_silence` documented as the plan-time detection of the **Program-quiet** cell,
   `ambient_quiet` as a new cell, `repairable_dropout` as a keep (not a skip cell).
-- Link from [pipeline.md](pipeline.md) fill-plan section.
-- Keep phase 0 / v1.5 notes here until implemented or archived.
+- [x] Linked from [pipeline.md](pipeline.md) § Fill plan.
+- [x] This plan archived; **v1.5 backlog** (§10/§11) is the only remaining scope.
 
-**Done means:** on a licensed 5.1 pair sensitive scan, `skip_equivalent_gaps=true` removes ≥80% of non-ffmpeg extras from the fill plan without equivalence-skipping any ffmpeg anchor gap (manual verification + external corpus row).
+**Done means:** on a licensed 5.1 pair sensitive scan, `skip_equivalent_gaps=true` removes non-ffmpeg extras
+from the fill plan without equivalence-skipping any real dropout. **Result:** corpus-wide 8 pairs / 121 gaps,
+0 divergent / 0 dangerous vs the fine fingerprint reference; operator ear-verified the drops on the primary pair.
