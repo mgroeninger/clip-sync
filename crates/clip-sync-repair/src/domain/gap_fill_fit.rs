@@ -681,6 +681,12 @@ fn unified_search_best_fill_end(
     let mut best_end = nominal_end.clamp(end_min, end_max);
     let mut best_score = f64::NEG_INFINITY;
 
+    // Lever 1 (byte-identical cross-candidate reuse, TEMP-production-repair-perf-plan.md §2.5): in the END
+    // search the pre seam and the waveform seam are anchored at the FIXED `fill_start`, so they are constant
+    // across every `end` candidate. Compute them once here instead of per candidate — removes one full
+    // per-channel Pearson (`waveform_min_at_start`) per end candidate. Value is identical, so byte-parity holds.
+    let const_pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
+    let const_wave_min = waveform_min_at_start(waveform, fill_start, score_channels);
     let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
         if end < end_min || end > end_max || end + post_span > total_frames {
             return;
@@ -693,14 +699,12 @@ fn unified_search_best_fill_end(
         if fill_len < min_fill || fill_len > max_fill {
             return;
         }
-        let pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
         let post_score = score_post_for_signature(signature, timeline, end, params);
-        let wave_min = waveform_min_at_start(waveform, fill_start, score_channels);
         let score = unified_fit_score_with_repeat(
             UnifiedFitCandidate {
-                structure_pre: pre_score,
+                structure_pre: const_pre_score,
                 structure_post: post_score,
-                wave_min,
+                wave_min: const_wave_min,
                 placement: fill_bracket_placement(fill_start, end, fill_start, nominal_end),
             },
             params,

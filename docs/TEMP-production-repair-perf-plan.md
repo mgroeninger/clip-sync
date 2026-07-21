@@ -290,6 +290,75 @@ not the dump) and §0-scope. **Only** gate-and-re-freeze instead if a concrete r
 genuinely shared primitive (e.g. the dump path turns out to need the same speedup and single-impl/no-drift
 outweighs the re-freeze cost); absent that, prefer the scoped change and no golden churn.
 
+### 2.5 Lever 1 — implementation design (FFT search + exact re-score belt) **(APPROVED 2026-07-20)**
+
+**Goal: byte-identical output, not merely ε-close.** The FFT is used only to *find where to look*; the final
+placement, confidence tier, and reported pre/post scores all come from an **exact naive re-score** at the chosen
+placement. Identical placement → identical splice → identical PCM, so `patch_audio_integration` (byte-parity)
+*validates* lever 1 — the same guarantee that anchored levers 2/3.
+
+**Scope of the FFT (bounds any placement drift to sub-ms, by design):**
+- **Coarse pass stays naive.** It is 4.8% of the search (Level E) and sparse (FFT doesn't help a stepped grid).
+  Keeping it naive means the coarse winner that *anchors the refine window* is **bit-identical to today** ⇒ no
+  gross (±`coarse_step` ≈ 50 ms) relocation is possible. FFT can only ever move a placement *within* the refine
+  band.
+- **Refine + fine-polish use FFT.** These are the dense contiguous integer bands (95% of cost). Compute the
+  pre/post seam cross-correlation over the ±`coarse_step` band once per search, **per selected channel**, via the
+  existing `lag_correlation_curve_auto` (FFT numerator + prefix-sum denominator — do not hand-roll). The candidate
+  loop then does the cheap structure-score + penalty + a **lookup** into the precomputed correlations instead of
+  a fresh `fill_seam_correlations` per candidate.
+
+**Exact re-score belt (always on — NOT a flag):**
+- After the FFT search picks a winner, re-score the **near-tie cluster** (every candidate FFT rates within
+  ~(FFT-error + `SCORE_TIE_EPSILON`) of the top — almost always 1, occasionally a few adjacent frames) with the
+  **exact naive `fill_seam_correlations` over the full seam window** (same window, ~250 ms × ch — the window does
+  **not** shrink; only the *count* of naive evaluations drops from ~800k to ≈1), and make the final
+  placement/tier/reported-score decision on those exact values with the unchanged tie-break. This is what makes
+  the path byte-identical; it is intrinsic, not optional (there is no legitimate "FFT without re-score" in
+  production — it would buy sub-ms drift for ~no speed, since the re-score is ≈1 candidate's cost vs the ~4,800
+  the FFT replaced).
+
+**Handling a re-score discrepancy (the belt doubles as a free runtime correctness monitor):**
+- **Near-tie (≤ ~1e-10, within `SCORE_TIE_EPSILON`):** the belt simply picks the exact-naive winner. Not a
+  problem — the belt working as designed; byte-identical result; no logging.
+- **Large discrepancy (exact vs FFT value at the winner > a tight threshold, e.g. 1e-6 — far above 1e-10, far
+  below any signal):** this can only be an **FFT porting bug** (lag convention / edge mask / normalization — the
+  classic traps). Two layers: **(1) test-time (primary):** a `fft_curve ≈ naive_curve` ε test + a
+  **placement-diff test** (naive vs FFT `start_frame`/`end_frame` on the corpus) fail the build before ship;
+  **(2) runtime (self-healing):** since the winner is re-scored anyway, compare exact-vs-FFT for free — on a
+  divergence beyond threshold, **fall back to the full naive search for that one gap** (correct, unaccelerated)
+  and emit a `warn`. Per-gap, not an abort. A latent FFT bug therefore degrades a gap to "slow but correct,"
+  never "wrong placement."
+
+**CLI / defaulting:**
+- **Re-score:** always on, **no flag** (it is the correctness mechanism, and nearly free).
+- **FFT:** behind a hidden/advanced opt-out **`--no-fft-seam-search`** (A/B tool + escape hatch for pathological
+  media outside the 8-pair corpus). **Default ON iff byte-parity (`patch_audio_integration`) passes** — a
+  provably-output-neutral speedup has no downside and a default-off perf feature helps nobody. If only bounded
+  sub-ms drift is achievable (not bit-identical), instead default **OFF** (opt-in) until a real-media run confirms
+  no audible change — the conservative fallback, mirroring the dual-fit ship-behind-flag precedent.
+
+**Validation order:** (1) `fft_curve ≈ naive_curve` unit ε test; (2) placement-diff test on the corpus;
+(3) `patch_audio_integration` byte-parity; (4) re-run §0 recipe for the measured speedup. Only after (3) is green
+does the default flip on.
+
+**Implementation progress (2026-07-20):**
+
+- **Part A — end-search hoist: LANDED, byte-identical (byte-parity 26/26).** In `unified_search_best_fill_end`,
+  the pre seam and waveform seam are anchored at the FIXED `fill_start`, so they are constant across every `end`
+  candidate — hoisted out of the per-candidate loop (`const_pre_score` / `const_wave_min`). Same value ⇒ no
+  flag, no re-score, byte-parity-validated. Covers the entire end-search half of the refine as pure
+  cross-candidate reuse. (Start search still needs the FFT — its seams genuinely slide with `start`.)
+- **Part B foundation — band-correlation helper: LANDED + equivalence-tested.**
+  `seam_local.rs::seam_correlation_over_bases(a, b, base_lo, base_hi)` returns the dense per-base seam Pearson
+  over a contiguous band in one `lag_correlation_curve_auto` pass (entry `i` ↔ base `base_lo + i`), equal to
+  `seam_pearson` per placement within ε ≤ 1e-8 on both auto branches (`seam_correlation_over_bases_matches_naive`).
+- **Part B remaining:** (1) wire the helper into the start-search refine + fine-polish — precompute pre/post
+  bands per selected channel, `best_channel_correlation`-combine + mono fallback to match
+  `fill_seam_correlations_with_channels` exactly, candidate loop looks up `wave_min`; (2) exact re-score belt at
+  the winner + near-tie cluster; (3) runtime discrepancy → per-gap naive fallback + `warn`; (4)
+  `--no-fft-seam-search` plumbing; (5) placement-diff test; (6) byte-parity + licensed-media perf run.
+
 ---
 
 ## 3. Interaction with the policies module split — **resolved: no trigger**

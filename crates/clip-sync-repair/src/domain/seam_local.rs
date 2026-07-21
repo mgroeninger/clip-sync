@@ -127,6 +127,33 @@ pub fn lag_correlation_curve_auto(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec
     }
 }
 
+/// **Lever 1 foundation** (TEMP-production-repair-perf-plan.md §2.5): the seam correlation of a fixed template
+/// `a` (length `n`) against every contiguous window `b[base..base + n]` for `base` in `[base_lo, base_hi]`,
+/// returned as a dense `Vec<f64>` where entry `i` corresponds to `base = base_lo + i`. Each entry equals
+/// `normalized_correlation(a, &b[base..base + n])` — the exact value `seam_pearson` / `fill_seam_correlations`
+/// compute per candidate — obtained in **one** FFT-accelerated `lag_correlation_curve_auto` pass rather than a
+/// fresh Pearson per candidate start. Naive-equal within ε ≤ 1e-8 (`seam_correlation_over_bases_matches_naive`,
+/// resting on `fft_curve_matches_naive_*`).
+///
+/// Returns empty when `n == 0`, `base_hi < base_lo`, or `base_hi + n > b.len()`; the caller scores any
+/// out-of-band start with the naive per-placement path (and treats an out-of-bounds seam window as `0.0`, as
+/// `fill_seam_correlations` does).
+pub fn seam_correlation_over_bases(a: &[f64], b: &[f64], base_lo: usize, base_hi: usize) -> Vec<f64> {
+    let n = a.len();
+    if n == 0 || base_hi < base_lo || base_hi + n > b.len() {
+        return Vec::new();
+    }
+    // `b_ctx` is exactly `band + n` long, so `lag_correlation_curve_auto(max_lag = band)` yields entries for
+    // base `0..=band` only (every larger base is edge-masked away), dense and ascending — entry `i` is the
+    // window starting at `base_lo + i`.
+    let band = (base_hi - base_lo) as i64;
+    let b_ctx = &b[base_lo..base_hi + n];
+    lag_correlation_curve_auto(a, b_ctx, band)
+        .into_iter()
+        .map(|(_lag, r)| r)
+        .collect()
+}
+
 /// Best `(peak_r, peak_lag_frames, peak_z)` of one seam over a ±`max_lag` search around `anchor_start` (the
 /// start of the seam's B window; `lag 0` aligns `a_seam` at `anchor_start`). `max_lag` auto-clamps to the
 /// available B context (0 ⇒ a plain lag-0 score). `peak_z` = the peak's whole-curve z-score (the
@@ -220,6 +247,43 @@ mod tests {
                 (r_n - r_f).abs()
             );
         }
+    }
+
+    #[test]
+    fn seam_correlation_over_bases_matches_naive() {
+        // The band helper must reproduce `seam_pearson`'s per-placement Pearson (= normalized_correlation) at
+        // every base, on BOTH branches of lag_correlation_curve_auto: below the FFT crossover (naive) and
+        // above it (fft). This pins the base indexing (entry i ↔ base_lo + i) and the FFT equivalence together.
+        for (n, extra, label) in [(64usize, 400usize, "naive"), (256usize, 9000usize, "fft")] {
+            let a = noise(0xBEEF ^ n as u64, n, 1.0);
+            let b = noise(0x1357 ^ extra as u64, n + extra, 1.0);
+            let base_lo = 5usize;
+            let base_hi = extra - 3; // in-band; leaves room for the n-length window at base_hi
+            // Sanity: this case actually exercises the intended branch.
+            let over_crossover = (n as u64) * (2 * (base_hi - base_lo) as u64 + 1) > FFT_CROSSOVER_OPS;
+            assert_eq!(over_crossover, label == "fft", "{label}: wrong auto branch for the test size");
+
+            let band = seam_correlation_over_bases(&a, &b, base_lo, base_hi);
+            assert_eq!(band.len(), base_hi - base_lo + 1, "{label}: dense band length");
+            for i in (0..band.len()).step_by((band.len() / 50).max(1)) {
+                let base = base_lo + i;
+                let naive = normalized_correlation(&a, &b[base..base + n]);
+                assert!(
+                    (band[i] - naive).abs() < FFT_EPS,
+                    "{label} base {base}: band {} vs naive {} (Δ={})",
+                    band[i],
+                    naive,
+                    (band[i] - naive).abs()
+                );
+            }
+        }
+
+        // Out-of-band / degenerate inputs return empty (caller falls back to the naive per-placement path).
+        let a = noise(1, 32, 1.0);
+        let b = noise(2, 100, 1.0);
+        assert!(seam_correlation_over_bases(&a, &b, 80, 80).is_empty(), "base_hi + n past b.len()");
+        assert!(seam_correlation_over_bases(&a, &b, 5, 4).is_empty(), "base_hi < base_lo");
+        assert!(seam_correlation_over_bases(&[], &b, 0, 0).is_empty(), "empty template");
     }
 
     #[test]
