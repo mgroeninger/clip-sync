@@ -48,6 +48,8 @@ pub struct PatchTestOptions {
     pub gap_end_extend_max_ms: u64,
     pub gap_end_extend_step_ms: u64,
     pub fill_repeat_penalty_weight: f64,
+    /// Match production default (`RepairConfig.fft_seam_search`); lever 1 FFT seam band.
+    pub fft_seam_search: bool,
     pub fill_anchor_retry_marginal: bool,
     pub min_structure_match_score: f32,
     pub min_border_discovery_secs: f64,
@@ -84,6 +86,8 @@ impl Default for PatchTestOptions {
             gap_end_extend_max_ms: 500,
             gap_end_extend_step_ms: 20,
             fill_repeat_penalty_weight: 0.4,
+            fft_seam_search: clip_sync_repair::infrastructure::config::RepairConfig::default()
+                .fft_seam_search,
             fill_anchor_retry_marginal: false,
             min_structure_match_score: 0.55,
             min_border_discovery_secs: 2.0,
@@ -296,6 +300,7 @@ pub fn patch_request_with_options(
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
         fill_repeat_penalty_weight: options.fill_repeat_penalty_weight,
+        fft_seam_search: options.fft_seam_search,
         fill_anchor_min_correlation: min_fill_correlation,
         fill_anchor_exclude_structure_trusted: true,
         fill_anchor_max_adjustment_frac: 0.9,

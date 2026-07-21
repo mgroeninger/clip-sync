@@ -134,6 +134,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(w) = args.fill_repeat_penalty_weight {
         config.repair.fill_repeat_penalty_weight = w;
     }
+    if args.no_fft_seam_search {
+        config.repair.fft_seam_search = false;
+    }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;
     }

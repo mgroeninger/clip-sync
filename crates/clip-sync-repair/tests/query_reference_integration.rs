@@ -219,6 +219,7 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 fill_marginal_margin: 0.08,
                 fill_absolute_floor: 0.12,
                 fill_repeat_penalty_weight: 0.0,
+                fft_seam_search: true,
                 fill_anchor_min_correlation: 0.35,
                 fill_anchor_exclude_structure_trusted: true,
                 fill_anchor_max_adjustment_frac: 0.9,

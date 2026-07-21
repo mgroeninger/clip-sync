@@ -165,6 +165,12 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub fill_repeat_penalty_weight: Option<f64>,
 
+    /// Disable the FFT-accelerated seam search and use the exact naive per-candidate correlation
+    /// (`fill_mode = fit` only). The FFT path is on by default and output-neutral up to a sub-ms near-tie;
+    /// this opt-out trades speed for a bit-identical-to-naive search on pathological media.
+    #[arg(long)]
+    pub no_fft_seam_search: bool,
+
     /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
     /// [default: 0.35].
     #[arg(long, value_name = "SECS")]

@@ -1320,8 +1320,7 @@ pub(crate) fn fill_seam_correlations_with_channels(
 /// naive channel set would vary per start) or a band does not fit; the caller then scores that band the naive
 /// per-candidate way. This keeps the FFT path to the interior where it provably matches naive — correctness is
 /// further guaranteed downstream by the exact re-score of the winning placement.
-// Tested foundation for lever 1 Part B; wired into the unified-search refine in the next step (§2.5).
-#[allow(dead_code)]
+// Wired into the unified start-search refine (`gap_fill_fit::build_wave_min_band`), §2.5 Part B.
 pub(crate) fn fill_seam_correlations_band(
     templates: &SeamTemplates<'_>,
     gap_frames: usize,
@@ -1440,7 +1439,7 @@ pub(crate) fn fill_seam_correlations_band(
 /// [`fill_seam_correlations_with_channels`]: `0.0` for all starts when the seam is not scored or the template
 /// is shorter than the window (naive `seam_pearson` returns 0.0 on unequal lengths); else the FFT band. `tail`
 /// selects the pre-side tail vs the post-side head of `a`.
-#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 fn mono_seam_band(
     score: bool,
     a: &[f64],
@@ -1461,7 +1460,6 @@ fn mono_seam_band(
 
 /// Per-start combine matching `fill_seam_correlations_with_channels`: with selected channels, take the best
 /// (max) channel score; with none, fall back to the mono band when the seam is scored, else `0.0`.
-#[allow(dead_code)]
 fn combine_seam_band(width: usize, score: bool, mono: &[f64], ch_bands: &[Vec<f64>]) -> Vec<f64> {
     (0..width)
         .map(|i| {

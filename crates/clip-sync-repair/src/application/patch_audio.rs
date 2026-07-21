@@ -135,6 +135,8 @@ pub struct PatchAudioRequest {
     pub fill_absolute_floor: f32,
     /// Fit mode repeat-at-seam penalty weight (Phase D; 0 = off).
     pub fill_repeat_penalty_weight: f64,
+    /// Lever 1 (§2.5): FFT seam band in the unified start-search refine (perf; on by default).
+    pub fft_seam_search: bool,
     /// Minimum seam score for a pass-1 patch to become an offset anchor.
     pub fill_anchor_min_correlation: f32,
     /// Exclude structure-trusted gate patches from the anchor table.
@@ -213,6 +215,7 @@ pub struct PatchRequestSettings {
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
     pub fill_repeat_penalty_weight: f64,
+    pub fft_seam_search: bool,
     pub fill_anchor_min_correlation: f32,
     pub fill_anchor_exclude_structure_trusted: bool,
     pub fill_anchor_max_adjustment_frac: f64,
@@ -273,6 +276,7 @@ impl PatchRequestSettings {
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,
             fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
+            fft_seam_search: self.fft_seam_search,
             fill_anchor_min_correlation: self.fill_anchor_min_correlation,
             fill_anchor_exclude_structure_trusted: self.fill_anchor_exclude_structure_trusted,
             fill_anchor_max_adjustment_frac: self.fill_anchor_max_adjustment_frac,
@@ -3109,6 +3113,7 @@ impl SeamGateConfig {
             fill_marginal_margin: request.fill_marginal_margin,
             fill_absolute_floor: request.fill_absolute_floor,
             fill_repeat_penalty_weight: request.fill_repeat_penalty_weight,
+            fft_seam_search: request.fft_seam_search,
             gap_end_extend_on_post_seam_fail: request.gap_end_extend_on_post_seam_fail,
             gap_start_extend_on_pre_seam_fail: request.gap_start_extend_on_pre_seam_fail,
             gap_signature_mode: request.gap_signature_mode,

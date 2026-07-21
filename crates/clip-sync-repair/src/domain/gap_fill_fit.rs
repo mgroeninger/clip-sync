@@ -13,13 +13,18 @@ use crate::domain::gap_structure::{
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
-    fill_repeat_correlations, fill_seam_correlations, fill_seam_correlations_with_channels,
-    fill_splice_seam_correlations_interleaved, interleaved_to_mono, seam_score_channels,
-    BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates, SpliceSeamContext,
+    fill_repeat_correlations, fill_seam_correlations, fill_seam_correlations_band,
+    fill_seam_correlations_with_channels, fill_splice_seam_correlations_interleaved,
+    interleaved_to_mono, seam_score_channels, BorderSeamTemplates, FillAlignment, SeamPlacement,
+    SeamTemplates, SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
 const LATE_START_PENALTY: f64 = 0.08;
+/// Lever 1 belt threshold (§2.5): max |naive − FFT| seam value at the chosen winner before we treat the FFT
+/// band as buggy and fall back to the naive refine for that gap. f64 FFT round-trip noise is ~1e-10; a real
+/// porting bug diverges far more, so 1e-6 sits well above the noise and far below any signal.
+const FFT_SEAM_DISCREPANCY_TOL: f64 = 1e-6;
 const REPEAT_CORR_THRESHOLD: f64 = 0.55;
 const REPEAT_SEAM_WEAK: f64 = 0.45;
 const REPEAT_SUM_CEILING: f64 = 1.1;
@@ -233,6 +238,12 @@ struct UnifiedSearchCtx<'a> {
     nominal_end: usize,
     /// Placement-invariant seam channel selection, hoisted out of the per-candidate loop (perf lever 2).
     score_channels: &'a [usize],
+    /// Lever 1 (§2.5): route the dense start-search *refine* seam correlations through the FFT band
+    /// (`fill_seam_correlations_band`) instead of a per-candidate naive Pearson. Coarse stays naive; the FFT
+    /// winner is verified against an exact naive re-score (belt) with a per-gap naive fallback on divergence.
+    /// Off ⇒ byte-identical to pre-lever-1. Scoped to the production path only (the dump/oracle keeps naive,
+    /// §2.4), so the public `match_gap_fill_unified_in_b` always passes `false`.
+    use_fft_seam_search: bool,
 }
 
 fn fill_bracket_placement(
@@ -379,6 +390,30 @@ pub(crate) fn waveform_min_at_start(
     pre.min(post)
 }
 
+/// Lever 1 (§2.5): precompute `waveform_min_at_start` (= `pre.min(post)`) for every start in `[lo, hi]` via one
+/// FFT band pass per channel ([`fill_seam_correlations_band`]), instead of a naive per-candidate Pearson.
+/// Returns `None` when the band evaluator declines (a non-uniform band-edge case where the naive channel set
+/// would vary per start) — the caller then scores that range the naive way. The `placement_in_bounds`
+/// NEG_INFINITY gate that `waveform_min_at_start` applies is intentionally NOT applied here (the band value is
+/// the raw `pre.min(post)`); the caller re-applies that gate at lookup so entries mirror the naive call exactly.
+fn build_wave_min_band(
+    ctx: &WaveformSeamContext<'_>,
+    score_channels: &[usize],
+    lo: usize,
+    hi: usize,
+) -> Option<Vec<f64>> {
+    let pairs = fill_seam_correlations_band(
+        ctx.templates,
+        ctx.gap_frames,
+        ctx.pre_window,
+        ctx.post_window,
+        score_channels,
+        lo,
+        hi,
+    )?;
+    Some(pairs.into_iter().map(|(pre, post)| pre.min(post)).collect())
+}
+
 /// Result of unified structure+waveform search (Phase B).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnifiedFillMatch {
@@ -421,22 +456,28 @@ pub fn match_gap_fill_unified_in_b(
             StructureTimeline::Energy(&energy_timeline)
         }
     };
+    // Public entry (dump/fixtures) always keeps the naive seam correlation so the committed corpus/golden stay
+    // byte-exact (§2.4). Only the production caller opts into the FFT band, via `_with_timeline`.
     match_gap_fill_unified_in_b_with_timeline(
         input,
         params,
         weights,
         &structure_timeline,
         None,
+        false,
     )
 }
 
 /// Like [`match_gap_fill_unified_in_b`] but reuses a pre-built structure timeline (joint grid perf).
+/// `use_fft_seam_search` routes the dense start-search refine through the FFT seam band (lever 1, §2.5);
+/// `false` is byte-identical to the pre-lever-1 naive search.
 pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     input: &UnifiedFillSearchInput<'_>,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
     structure_timeline: &StructureTimeline<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
+    use_fft_seam_search: bool,
 ) -> Option<UnifiedFillMatch> {
     if input.signature.is_empty() || params.gap_frames == 0 || params.bin_frames == 0 {
         return None;
@@ -470,6 +511,7 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         nominal_start: input.nominal_fill_start,
         nominal_end: input.nominal_fill_end,
         score_channels: &score_channels,
+        use_fft_seam_search,
     };
 
     let (mut best_start, _) = unified_search_best_fill_start(
@@ -567,6 +609,7 @@ fn unified_search_best_fill_start(
         nominal_start,
         nominal_end,
         score_channels,
+        use_fft_seam_search,
     } = *ctx;
     let search_min = nominal_start.saturating_sub(params.search_radius_frames);
     let search_max = (nominal_start + params.search_radius_frames).min(total_frames);
@@ -576,54 +619,68 @@ fn unified_search_best_fill_start(
     let mut best_start = nominal_start;
     let mut best_score = f64::NEG_INFINITY;
 
-    let consider = |start: usize, best_start: &mut usize, best_score: &mut f64| {
-        if start < pre_span || start > search_max {
-            return;
-        }
-        let candidate_end = (start + params.gap_frames).min(total_frames);
-        if candidate_end + post_span > total_frames {
-            return;
-        }
-        let pre_score = score_pre_for_signature(signature, timeline, start, params);
-        let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let wave_min = waveform_min_at_start(waveform, start, score_channels);
-        let score = unified_fit_score_with_repeat(
-            UnifiedFitCandidate {
-                structure_pre: pre_score,
-                structure_post: post_score,
-                wave_min,
-                placement: fill_bracket_placement(start, candidate_end, nominal_start, nominal_end),
-            },
-            params,
-            weights,
-            waveform,
-            anchor_prior,
-        );
-        let better = score > *best_score + SCORE_TIE_EPSILON
-            || (score >= *best_score - SCORE_TIE_EPSILON
-                && prefer_start(start, *best_start, nominal_start));
-        if better {
-            *best_score = score;
-            *best_start = start;
-        }
-    };
+    // `consider` takes the waveform seam min as `precomputed_wave`: `None` ⇒ compute it naively in-line (the
+    // pre-lever-1 behaviour, exact), `Some(w)` ⇒ use the FFT-band value the refine loop looked up. Passing
+    // `None` everywhere is byte-identical to the old closure, so the flag-off path is unchanged.
+    let consider =
+        |start: usize, precomputed_wave: Option<f64>, best_start: &mut usize, best_score: &mut f64| {
+            if start < pre_span || start > search_max {
+                return;
+            }
+            let candidate_end = (start + params.gap_frames).min(total_frames);
+            if candidate_end + post_span > total_frames {
+                return;
+            }
+            let pre_score = score_pre_for_signature(signature, timeline, start, params);
+            let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
+            let wave_min = precomputed_wave
+                .unwrap_or_else(|| waveform_min_at_start(waveform, start, score_channels));
+            let score = unified_fit_score_with_repeat(
+                UnifiedFitCandidate {
+                    structure_pre: pre_score,
+                    structure_post: post_score,
+                    wave_min,
+                    placement: fill_bracket_placement(
+                        start,
+                        candidate_end,
+                        nominal_start,
+                        nominal_end,
+                    ),
+                },
+                params,
+                weights,
+                waveform,
+                anchor_prior,
+            );
+            let better = score > *best_score + SCORE_TIE_EPSILON
+                || (score >= *best_score - SCORE_TIE_EPSILON
+                    && prefer_start(start, *best_start, nominal_start));
+            if better {
+                *best_score = score;
+                *best_start = start;
+            }
+        };
 
     // Perf instrumentation (Level E, TEMP-production-repair-perf-plan.md §2.3/§2.4): split each unified search
     // into the SPARSE coarse pass vs the DENSE integer refine — the distribution that decides prefix-sum vs FFT
     // for lever 1. `candidates` records attempts per phase (per-candidate cost = busy / candidates). Names are
     // shared with the end search so aggregation sums coarse-vs-refine across both. Emits only under
     // CLIP_SYNC_SPAN_TIMING (Level A); nests under `bracket_unified_search`.
+    //
+    // Lever 1 (§2.5): the coarse pass stays NAIVE — it is sparse (4.8%, Level E) and, crucially, keeping it
+    // naive means the coarse winner that anchors the refine window is bit-identical to today, so the FFT can
+    // only ever move a placement *within* the ±coarse_step refine band, never relocate it grossly.
     let coarse_span = tracing::info_span!("unified_coarse", candidates = tracing::field::Empty);
     let mut coarse_n = 0u64;
     {
         let _e = coarse_span.enter();
         if nominal_start >= pre_span {
-            consider(nominal_start, &mut best_start, &mut best_score);
+            consider(nominal_start, None, &mut best_start, &mut best_score);
             coarse_n += 1;
         }
         let mut start = search_min;
         while start <= search_max {
-            consider(start, &mut best_start, &mut best_score);
+            consider(start, None, &mut best_start, &mut best_score);
             coarse_n += 1;
             start = start.saturating_add(coarse_step);
         }
@@ -634,18 +691,83 @@ fn unified_search_best_fill_start(
         return None;
     }
 
+    // Snapshot the coarse winner so the FFT belt can redo the refine naively from the same seed on divergence.
+    let coarse_best_start = best_start;
+    let coarse_best_score = best_score;
+
     let refine_min = best_start.saturating_sub(coarse_step).max(search_min);
     let refine_max = (best_start + coarse_step).min(search_max);
+
+    // Lever 1 (§2.5): precompute the dense refine band's `waveform_min_at_start` in one FFT pass per channel.
+    // `None` ⇒ the band evaluator declined (non-uniform band edge) or the flag is off ⇒ fall back to naive.
+    let wave_band = if use_fft_seam_search {
+        build_wave_min_band(waveform, score_channels, refine_min, refine_max)
+    } else {
+        None
+    };
     let refine_span = tracing::info_span!("unified_refine", candidates = tracing::field::Empty);
     let mut refine_n = 0u64;
     {
         let _e = refine_span.enter();
         for start in refine_min..=refine_max {
-            consider(start, &mut best_start, &mut best_score);
+            // Band lookup mirrors `waveform_min_at_start` exactly: apply its `placement_in_bounds`
+            // NEG_INFINITY gate on top of the band value (the band itself does not gate). Out of band ⇒ naive.
+            let precomputed = wave_band.as_ref().map(|band| {
+                if placement_in_bounds(
+                    start,
+                    waveform.gap_frames,
+                    waveform.pre_window,
+                    waveform.post_window,
+                    waveform.b_total_frames,
+                ) {
+                    band[start - refine_min]
+                } else {
+                    f64::NEG_INFINITY
+                }
+            });
+            consider(start, precomputed, &mut best_start, &mut best_score);
             refine_n += 1;
         }
     }
     refine_span.record("candidates", refine_n);
+
+    // Exact re-score belt + runtime monitor (§2.5): the FFT band only *finds where to look*; verify the chosen
+    // winner's band value against an exact naive re-score. A divergence beyond FFT noise (≫ 1e-10) can only be
+    // an FFT porting bug (lag convention / edge mask / normalization), so degrade THIS gap to the exact naive
+    // refine — correct, unaccelerated — and warn, rather than shipping a bad placement. (The winner's *reported*
+    // seam/structure scores are already re-derived naively downstream in
+    // `match_gap_fill_unified_in_b_with_timeline`, so no separate reported-value re-score is needed here.)
+    if wave_band.is_some() {
+        let naive_wm = waveform_min_at_start(waveform, best_start, score_channels);
+        let band_wm = wave_band.as_ref().map_or(f64::NEG_INFINITY, |band| {
+            if placement_in_bounds(
+                best_start,
+                waveform.gap_frames,
+                waveform.pre_window,
+                waveform.post_window,
+                waveform.b_total_frames,
+            ) {
+                band[best_start - refine_min]
+            } else {
+                f64::NEG_INFINITY
+            }
+        });
+        let both_neg_inf = naive_wm == f64::NEG_INFINITY && band_wm == f64::NEG_INFINITY;
+        if !both_neg_inf && (naive_wm - band_wm).abs() > FFT_SEAM_DISCREPANCY_TOL {
+            tracing::warn!(
+                best_start,
+                naive_wm,
+                band_wm,
+                delta = (naive_wm - band_wm).abs(),
+                "fft seam band diverged from naive at the winner — falling back to naive refine for this gap"
+            );
+            best_start = coarse_best_start;
+            best_score = coarse_best_score;
+            for start in refine_min..=refine_max {
+                consider(start, None, &mut best_start, &mut best_score);
+            }
+        }
+    }
 
     Some((best_start, best_score))
 }
@@ -772,6 +894,8 @@ fn unified_fine_polish_start(
         nominal_start,
         nominal_end,
         score_channels,
+        // Fine polish stays naive this PR (Level E: 2.5% of the search); FFT covers the refine. See §2.5.
+        use_fft_seam_search: _,
     } = *ctx;
     if params.max_fine_adjustment_frames == 0 {
         return start;
@@ -1563,6 +1687,125 @@ mod tests {
     fn waveform_search_step_is_one_for_small_radius() {
         assert_eq!(waveform_search_step(100), 1);
         assert!(waveform_search_step(10_000) > 1);
+    }
+
+    /// Lever 1 (§2.5) placement-diff: the FFT seam band (flag ON) must pick the SAME fill placement as the
+    /// naive search (flag OFF). This is the integration-level guard the plan requires before the production
+    /// default may flip on — it exercises the whole refine band + `placement_in_bounds` gate + belt path, not
+    /// just the band evaluator (which its own unit test covers). Broadband noise ⇒ a single sharp seam peak.
+    #[test]
+    fn fft_seam_search_matches_naive_placement() {
+        let mut seed = 0x00C0_FFEE_1234_5678u64;
+        let mut rng = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+
+        let bin_frames = 20usize;
+        let gap_frames = 200usize;
+        let pre_window = 96usize;
+        let post_window = 96usize;
+        let true_start = 1500usize;
+        let total = 3000usize;
+
+        // Loud broadband B everywhere ⇒ every timeline bin active ⇒ uniform structure score, so the waveform
+        // seam term (the FFT-affected one) decides the placement. Plant A's borders so the pre seam ends at
+        // `true_start` and the post seam starts at `true_start + gap_frames` — a unique correlation peak.
+        let mut b_mono: Vec<f64> = (0..total).map(|_| rng() * 0.5).collect();
+        let a_pre: Vec<f64> = (0..pre_window).map(|_| rng()).collect();
+        let a_post: Vec<f64> = (0..post_window).map(|_| rng()).collect();
+        b_mono[true_start - pre_window..true_start].copy_from_slice(&a_pre);
+        b_mono[true_start + gap_frames..true_start + gap_frames + post_window]
+            .copy_from_slice(&a_post);
+
+        let b_samples: Vec<f32> = b_mono.iter().map(|&x| x as f32).collect();
+        let b_ch = vec![b_mono.clone()];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            b_total_frames: total,
+            repeat_window_frames: bin_frames,
+            repeat_penalty_weight: 0.0,
+        };
+        let params = StructureMatchParams {
+            gap_frames,
+            bin_frames,
+            search_radius_frames: 500,
+            fill_length_slack_frames: 40,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights {
+            structure_weight: 0.1,
+            waveform_weight: 0.9,
+            ..Default::default()
+        };
+        let signature = GapSignature::Bool(GapContextSignature {
+            pre_bins: vec![true; 8],
+            post_bins: vec![true; 8],
+        });
+        let timeline = gap_structure::ActivityTimeline::build(
+            &b_samples,
+            1,
+            total,
+            bin_frames,
+            params.silence_peak_fraction,
+            params.absolute_silence_rms,
+        );
+        let structure_timeline = StructureTimeline::Bool(&timeline);
+        let input = UnifiedFillSearchInput {
+            signature: &signature,
+            b_samples: &b_samples,
+            channels: 1,
+            waveform: &waveform,
+            // Start off-true so the search genuinely has to move into the refine band.
+            nominal_fill_start: true_start - 40,
+            nominal_fill_end: true_start - 40 + gap_frames,
+        };
+
+        let naive = match_gap_fill_unified_in_b_with_timeline(
+            &input,
+            &params,
+            weights,
+            &structure_timeline,
+            None,
+            false,
+        )
+        .expect("naive search finds a fill");
+        let fft = match_gap_fill_unified_in_b_with_timeline(
+            &input,
+            &params,
+            weights,
+            &structure_timeline,
+            None,
+            true,
+        )
+        .expect("fft search finds a fill");
+
+        assert_eq!(
+            naive.alignment.start_frame, fft.alignment.start_frame,
+            "FFT seam band must pick the same placement as naive (naive={}, fft={})",
+            naive.alignment.start_frame, fft.alignment.start_frame,
+        );
+        assert!(
+            naive.alignment.start_frame.abs_diff(true_start) <= bin_frames,
+            "search located the planted fill: start={} true={}",
+            naive.alignment.start_frame,
+            true_start,
+        );
     }
 
     #[test]

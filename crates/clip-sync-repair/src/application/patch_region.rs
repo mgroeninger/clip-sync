@@ -101,6 +101,8 @@ pub struct SeamGateConfig {
     pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
     pub fill_repeat_penalty_weight: f64,
+    /// Lever 1 (§2.5): FFT seam band in the unified start-search refine (perf; on by default).
+    pub fft_seam_search: bool,
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
     pub gap_signature_mode: GapSignatureMode,
@@ -1544,6 +1546,10 @@ fn gate_structure_align(
             weights,
             &structure_timeline,
             params.geom.anchor_search_prior,
+            // Lever 1 FFT seam band (§2.5): on by default (`RepairConfig.fft_seam_search`); `--no-fft-seam-search`
+            // opts out to the exact naive search. Output-neutral up to a sub-ms near-tie (exact naive re-score +
+            // placement-diff test guard); the flag-OFF path stays byte-identical to pre-lever-1.
+            params.cfg.fft_seam_search,
         )
     }
     .ok_or(SeamGateFailure::StructureAlignmentFailed)?;

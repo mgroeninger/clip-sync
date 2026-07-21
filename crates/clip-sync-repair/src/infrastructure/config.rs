@@ -179,6 +179,11 @@ pub struct RepairConfig {
     /// Fit mode: penalize high A-border vs B-fill repeat correlation when seams are weak (Phase D).
     #[serde(default = "default_fill_repeat_penalty_weight")]
     pub fill_repeat_penalty_weight: f64,
+    /// Lever 1 (TEMP-production-repair-perf-plan.md §2.5): FFT-accelerated seam band in the production unified
+    /// start-search refine (perf only; output-neutral up to a sub-ms near-tie, guarded by the exact naive
+    /// re-score + placement-diff test). On by default; `--no-fft-seam-search` opts out to the exact naive search.
+    #[serde(default = "default_true")]
+    pub fft_seam_search: bool,
     /// Minimum `min(pre, post)` for a pass-1 patch to become an offset anchor (`anchored_retry`).
     #[serde(default = "default_fill_anchor_min_correlation")]
     pub fill_anchor_min_correlation: f32,
@@ -473,6 +478,7 @@ impl Default for RepairConfig {
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
             fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
+            fft_seam_search: true,
             fill_anchor_min_correlation: default_fill_anchor_min_correlation(),
             fill_anchor_exclude_structure_trusted: true,
             fill_anchor_max_adjustment_frac: default_fill_anchor_max_adjustment_frac(),
@@ -603,6 +609,7 @@ impl RepairConfig {
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,
             fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
+            fft_seam_search: self.fft_seam_search,
             fill_anchor_min_correlation: self.fill_anchor_min_correlation,
             fill_anchor_exclude_structure_trusted: self.fill_anchor_exclude_structure_trusted,
             fill_anchor_max_adjustment_frac: self.fill_anchor_max_adjustment_frac,

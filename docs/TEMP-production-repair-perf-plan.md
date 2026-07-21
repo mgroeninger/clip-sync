@@ -358,19 +358,106 @@ does the default flip on.
   `fill_seam_correlations_with_channels` exactly (`use_channels` / bounds / per-channel `best_channel_correlation`
   / mono fallback), returning `None` on any non-uniform band-edge case (caller falls back to naive there). Matches
   the per-start naive call within ε on both the multichannel and mono paths, FFT branch exercised
-  (`fill_seam_correlations_band_matches_per_start`). Currently `#[allow(dead_code)]` — pending wiring (below).
-  **Confirmed prerequisite:** `clip_sync::…::normalized_correlation` (band path) and
-  `metrics::normalized_correlation` (`seam_pearson` path) are byte-for-byte identical, so band == naive exactly on
-  the naive branch; the evaluator test also now *guards* against future drift between the two copies.
-- **Part B remaining (the search integration — its own focused piece):** (1) refactor the start-search `consider`
-  to inject `wave_min`, precompute the refine/fine-polish band (fall back to naive on `None`), candidate loop looks
-  up `wave_min`; (2) **re-score the winner** with exact naive `fill_seam_correlations` → exact score/tier/reported
-  values (the FFT winner's *true* fit is provably within 2ε of optimal, so accept its placement + exact re-score);
-  (3) runtime discrepancy → per-gap naive fallback + `warn`; (4) flag (default OFF for validation — byte-parity
-  with the flag off proves the default path is unchanged; flip on after placement-diff + licensed-media validate);
-  (5) placement-diff test; (6) licensed-media perf run. **Validation note:** because the FFT winner may differ
-  from naive by a sub-ms near-tie (not bit-identical), byte-parity gates only the *flag-off* path; the flag-on path
-  is gated by placement-diff + real-media, per §2.5's conservative branch.
+  (`fill_seam_correlations_band_matches_per_start`). Wired into the start-search refine (Part B, below), so the
+  `#[allow(dead_code)]` is now removed. **Confirmed prerequisite:** `clip_sync::…::normalized_correlation` (band
+  path) and `metrics::normalized_correlation` (`seam_pearson` path) are byte-for-byte identical, so band == naive
+  exactly on the naive branch; the evaluator test also now *guards* against future drift between the two copies.
+- **Part B — start-search integration: LANDED behind a flag (default OFF), byte-parity 26/26, placement-diff green.**
+  `unified_search_best_fill_start` now: (1) `consider` takes the `wave_min` as `Option<f64>` — `None` computes it
+  naively in-line (byte-identical to before), `Some` uses a value the refine looked up; the **coarse pass stays
+  naive** (its winner anchors the refine window bit-identically, so the FFT can only move a placement *within* the
+  ±`coarse_step` band); (2) the refine precomputes `build_wave_min_band` (one `fill_seam_correlations_band` FFT
+  pass; `None` ⇒ non-uniform band edge ⇒ naive fallback for the whole refine), and the candidate loop looks up
+  `wave_min`, re-applying `waveform_min_at_start`'s `placement_in_bounds` NEG_∞ gate on top of the band value;
+  (3) **belt + runtime monitor:** the FFT only *finds where to look* — the winner's band value is checked against
+  an exact naive re-score, and a divergence > `FFT_SEAM_DISCREPANCY_TOL` (1e-6, ≫ 1e-10 FFT noise) can only be a
+  porting bug, so that **one gap** degrades to the exact naive refine + a `warn` (per-gap, never an abort). No
+  separate reported-value re-score is needed — `match_gap_fill_unified_in_b_with_timeline` already re-derives the
+  winner's reported seam/structure scores naively downstream. (4) **Flag: `use_fft_seam_search` threaded through
+  `_with_timeline`; wired end-to-end and DEFAULT ON.** `RepairConfig.fft_seam_search` (serde `default_true`) →
+  `PatchRequestSettings` → `PatchAudioRequest` → `SeamGateConfig::from_repair` → the search; CLI **`--no-fft-seam-search`**
+  is the opt-out. The public `match_gap_fill_unified_in_b` (dump/fixtures) always passes `false`, so the corpus/
+  golden stay byte-exact (§2.4). (5) **Placement-diff test** `fft_seam_search_matches_naive_placement` (flag on vs
+  off → same `alignment.start_frame`). **Fine polish left naive this PR** (Level E: 2.5% of the search) — trivial
+  follow-up if wanted.
+- **Lever 1b (NEW finding, 2026-07-21; CONFIRMED by `perf_6.log`) — the FFT band alone delivers only ~16%, not
+  ~92%; the repeat penalty is active by default and re-incurs the lever-2 cost per candidate.** The band replaces
+  only `waveform_min_at_start`.
+  - **Measured (`perf_6.log` vs `perf_5.log`, same pair 2, FFT default-ON):** `char_gate_search` 1259.7 s →
+    1062.3 s (**−15.7%**); `unified_refine` 1121.9 s → 936.3 s (**−16.5%**, per-candidate 1425 µs → 1189 µs);
+    `bracket_unified_search` 14.8 → 12.5 s. **No correctness drift:** 0 `fft seam band diverged` warns (belt never
+    fired), the marginal-seam WARNs are digit-identical across runs (gap 17 `pre=0.37 post=0.28`, gap 18 `0.28/0.28`,
+    gap 24 `0.29/0.35`), 23/26 repairable + 9 regions in both. **Sharper still:** `perf_5` predates Part A (end
+    hoist), so this −16.5% folds in *both* the entire end-search waveform removal (exact) *and* the start FFT band —
+    i.e. essentially the whole `waveform_min_at_start` seam correlation is gone from the refine, and it still moved
+    only ~16%. So that seam correlation was ~16% of the per-candidate refine; the other **~83% is the repeat
+    penalty**. **Verdict: default-ON stays (clean + a real −16%); the residual is 1b's target.** But `unified_fit_score_with_repeat` also calls `repeat_penalty_at_placement`
+  **unconditionally** for every finite candidate when `repeat_penalty_weight > 0 ∧ waveform_weight > 0` — and the
+  production default is `fill_repeat_penalty_weight = 0.4` (config default; test `…defaults_repeat_penalty_weight`)
+  with `fill_fit_waveform_weight = 0.65`, so it *is* on. Each call runs `fill_repeat_correlations` (2 **mono**
+  `seam_pearson` over the repeat window — cheap) **+** `fill_seam_correlations` (`gap_fill_fit.rs:315`), and that
+  second call is the expensive, redundant one:
+    - It is **`fill_seam_correlations_with_channels` under the hood** (`policies.rs:1207`) — the *same*
+      multichannel best-channel seam correlation the main loop already computed for this candidate (`wave_min =
+      pre_seam.min(post_seam)`), so its `(pre_seam, post_seam)` is **byte-identically already known**.
+    - **Lever-2 regression:** the plain `fill_seam_correlations` wrapper re-runs `seam_score_channel_indices`
+      **per candidate** — the exact all-channel selection scan **lever 2 hoisted out of the main loop** (which
+      lever 2 measured as the dominant per-candidate cost, undershooting ~10×). The main search now threads the
+      hoisted `score_channels`; the repeat-penalty path does **not**, so it silently pays the pre-lever-2 cost on
+      every candidate. This — not the mono repeat Pearsons — is the likely bulk of the residual in `perf_6`.
+
+  **Next optimization (its own piece), ordered by cost/benefit:** (a) **free + byte-identical, do first:** thread
+  the band's already-computed `(pre_seam, post_seam)` **and** the hoisted `score_channels` into the penalty →
+  drops the `fill_seam_correlations` call entirely (redundant value) *and* removes the re-incurred lever-2 channel
+  scan; (b) `fill_repeat_correlations` is another contiguous-in-`start` band → the same
+  `seam_correlation_over_bases` primitive collapses it; (c) partial short-circuit via the **known seam values**
+  (not `wave_min` alone): `wave_min` gates only 2 of the 3 nonzero branches (both need `wave_min < 0.45`); the
+  third, `asymmetric_post_dup`, is `wave_min`-independent, so a full early-return-0 needs `wave_min ≥ 0.45` **and**
+  the asymmetric branch excluded (`post_seam − pre_seam ≤ 0.35`, checkable from the seam values (a) already
+  supplies). Do NOT re-scope lever 1 for this — land it, measure, then size 1b against the measured residual.
+- **Lever 1c (NEW finding, 2026-07-21) — cheap pre-gates run AFTER expensive work; two more compute-before-guard
+  sites found in the same audit as 1b.** Same principle as 1b (do the cheap gate first), at two other cost centers:
+
+  - **#2 — the anchor-bracket search runs a full unified search on EVERY bracket before the viability gate
+    (`patch_region.rs`, `evaluate_seam_gate_fit_candidate`). Highest structural upside — it multiplies by `k`**
+    (the bracket count that made gap 22 = 578 s / ~26 brackets). Order per anchor bracket: (1) `gate_structure_align`
+    (`:1628`) = the **full `bracket_unified_search`** (99.9% of a bracket, Level D); (2) `structure_passes_gate`
+    (`:1646`, cheap — but genuinely needs the search's structure scores, so it *can't* precede it); (3)
+    `anchor_bracket_both_matchable_at_gate` (`:1666`) — an **FFT-xcorr viability check that can reject the bracket
+    outright**, run **after** the full search. So a bracket that fails matchability paid for a complete unified
+    search first. Where 1b speeds *each* bracket, this removes *doomed* brackets — it attacks the `k` in
+    `gate_anchor_search = k × per-bracket`. **NOT a free reorder (needs validation):** the gate keys on the
+    *searched* placement (`alignment.start_frame`), so it can't be hoisted verbatim. Brackets are already
+    pre-filtered by `list_anchor_candidates_a` (matchable anchors) → `list_feasible_anchor_brackets` (geometry
+    only); the open question is whether a **cheap matchability proxy at the bracket's NOMINAL placement** is a
+    provable *superset* filter (rejects only brackets the searched-placement gate would also reject) that can run
+    before the search to cut `k`. Design change, gated on that superset argument + placement/byte validation —
+    **size it after `perf_6` shows how much `k`-bound cost remains post-lever-1.**
+  - **#3 — `try_dual_fit`: the content-existence gate runs dead last, after two FFT seam searches (`dual_fit.rs`).**
+    Per-gap (rescue path only, so smaller), but a clean mechanical, byte-identical reorder. Order: `seam_local_peak`
+    pre (`:104`) + post (`:114`) = two ±600 ms FFT lag searches **first**; then `gate_pass` (`:134`), `step_real`
+    (`:157`), `donor_interior_at` (`:172`), and finally **`program_quiet_at_nominal` (`:188`)** — the "is the nominal
+    donor span even non-silent (content to fill)?" check — **last**. `program_quiet_at_nominal` depends only on
+    `b_mono` + nominal geometry (`b_mapped_start`, `gap_frames`), **none** of the seam peaks, so hoist it to the top
+    to reject a program-quiet gap before paying for the two FFT searches. Secondary nit: `gate_pass` needs both
+    peaks, but if the *pre* peak already falls below the floor, `smin` fails regardless of post — a first-peak
+    early-out skips the second `seam_local_peak`.
+
+  **Ranking (updated after `perf_6`):** **1b(a) is now the priority** — the measurement shows ~83% of the refine
+  is the repeat penalty, whose `fill_seam_correlations` re-incurs the lever-2 channel scan (which lever 2 measured
+  at ~31% of a bracket); 1b(a) drops it free/byte-identical and should recover a chunk comparable to or larger than
+  the FFT itself. #3 is a mechanical byte-identical reorder (do opportunistically). #2 is the big-but-risky
+  `k`-reduction — size it only after 1b lands and re-measures the residual.
+- **Part B — (6) licensed-media perf run: DONE (`perf_6.log`, 2026-07-21).** FFT default-ON on pair 2 measured
+  **−15.7% on `char_gate_search`** (−16.5% on the refine) with **zero correctness drift** (see the 1b measurement
+  block above: no divergence warns, digit-identical seam WARNs, 23/26 + 9 regions). Partial win exactly as 1b
+  predicted; the residual is the repeat penalty → **1b(a) next**. **Validation note:** the FFT winner *may* differ
+  from naive by a sub-ms near-tie (not
+  guaranteed bit-identical), so byte-parity strictly gates only the flag-off path — **but in practice
+  `patch_audio_integration` is now GREEN 26/26 with the flag ON by default** (harness mirrors the production
+  default), i.e. no fixture surfaced a near-tie divergence, and it ran in 333 s vs 394 s naive (uncontrolled, but
+  a real speedup). The flag-ON path is thus gated by the placement-diff test (✓) + integration 26/26 (✓); the
+  licensed-media run remains the last confirmation of the *magnitude* + no audible change.
 
 **Follow-up hygiene (not part of lever 1):** `clip_sync::…::offset_refinement::normalized_correlation` and
 `crate::domain::metrics::normalized_correlation` are exact duplicates. Consider consolidating to a shared numeric
