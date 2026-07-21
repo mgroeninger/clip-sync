@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/corpus-validation.md](docs/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/archive/*` and git history.
 
-Last updated: 2026-07-05.
+Last updated: 2026-07-21.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/TEMP-*.md`; archive when shipped.
 
-**Next:** optional [Hexagonal L1/L2](#hexagonal-layer-purity); [Repair R6](#repair-r6-follow-ups).
+**Next:** [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,27 +17,17 @@ Last updated: 2026-07-05.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-pipeline-perf-redesign-plan.md](docs/TEMP-pipeline-perf-redesign-plan.md) | Pipeline perf + assembly: `GapRepairSpec` characterize→execute split (§2.5), hoists, golden harness (D12) |
-| [fill-fitting-plan.md](docs/archive/fill-fitting-plan.md) | Gap fill gate → fit (shipped; optional Phase D follow-ups in backlog) |
-
-**Recently shipped:** [residual / floor gate](docs/archive/residual-gate-wiring-plan.md) (2026-06-26) — default `residual_gate = veto`; unified lag radius; `apply_residual_to_confidence`; per-channel floor (`seam_chosen_and_floor_multichannel`); lazy residual finalize; `residual_band` / `donor_relation` reporting; AAC/Vorbis calibration; validity contract C1a+C2–C4 (`tests/residual_gate_catalog/`). Prior: [residual channel alignment](docs/archive/residual-channel-alignment-plan.md) (2026-06-26) — residual/floor follows Pearson energy-selected channels (`selected_seam_channels`, `seam_chosen_and_floor_multichannel`, `shared_alignment_lag`); gate inputs (`worst_headroom_db`, `informative`) live on channel-aligned measurements with default `residual_gate = veto`; multichannel corpus/oracle fixtures + Pearson/residual selection parity tests. Prior: [energy-signature gap structure matching](docs/archive/energy-signature-plan.md) (2026-06-25) — gated log-RMS energy envelope as the `fit`-path structure tier (`gap_signature_mode = auto` default), `GapSignature { Bool, Energy }`, flat-envelope fallback, `--gap-signature-mode` / `--gap-signature-context-secs` flags, corpus tuning **EC-1–EC-6** + mode-coupled `nominal_bias`; Phase 4 FFT/landmarks closed won't-do, adaptive context parked (see Repair R6 follow-ups). Prior: f32 internal PCM + source-driven output bit depth (2026-06-25) — `MultiChannelPcm.samples` is now normalized `Vec<f32>` throughout the repair/write path; `WavPatchedAudioWriter` and the ffmpeg mux pipe resolve output depth from `source_bit_depth` (`Int24 | Int32 | Float32 → 24-bit int WAV / s24le pipe`; lossy / 16-bit stays 16-bit); `MonoPcmClip` (chromaprint) remains `Vec<i16>`. Prior: energy-aware seam channel selection (2026-06-23) — `fill_seam_correlations` / splice scorer now follow the channel(s) carrying signal (within ~20 dB of the loudest) instead of hardcoded front L/R, so center-dominant 5.1 mixes are scored on the center channel; previously front-L/R noise produced ~0 pre/post seams and made fit mode skip patchable gaps (`policies.rs`, `seam_score_channel_indices`). Prior: [energy signature production corpus](docs/archive/energy-corpus-plan.md) (2026-06-23) — F1/F2/F3-long + F4-decoy synthetic fixtures, mode matrix, **EC-1–EC-6**, mode-coupled `fill_fit_energy_nominal_bias_scale`, committed scan→patch CI smoke (Phase F profile→synthesize dropped as not decision-relevant). Prior: [patch-anchor offset map](docs/archive/patch-anchor-offset-plan.md) (2026-06-22) — `anchored_retry` two-pass offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade.
+| [TEMP-gap-selection-plan.md](docs/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
+| [TEMP-nway-donor-alignment-plan.md](docs/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
+| [TEMP-policies-module-split-plan.md](docs/TEMP-policies-module-split-plan.md) | `policies.rs` module split — draft, not started |
 
 ## Open work
 
-### Hexagonal layer purity
+### Build hygiene
 
-From architecture audit (2026-06-22). Dependency rule: **domain ← application ← infrastructure**; domain/application must not depend on `clap`, Symphonia, Chromaprint, or misplaced infra helpers.
-
-| # | Priority | Item | Status | Direction |
-|---|----------|------|--------|-----------|
-| H1 | High | Mux bitrate policy in repair `infrastructure/` | **Shipped** | `application/mux_bitrate.rs`; infra keeps ffmpeg subprocess only |
-| H2 | High | `clap::ValueEnum` on repair domain enums | **Shipped** | `FromStr` on `FillMode`, `FillOffsetMode`, `GapSignatureMode`; CLI `value_parser!` |
-| M1 | Medium | `GapReport` embeds lib report DTOs | **Shipped** (verified 2026-06-22) | `GapReport.alignment` is `clip_sync::AlignmentResult`; top-level `overlap` removed (use `alignment.start_overlap`); `GapScanJson` in infra maps to `AlignmentReport` + `TimelineOverlapReport` for JSON/human output |
-| M2 | Medium | Lib application → infrastructure leaks | **Shipped** | `ExtractionProgressScope` → `application/`; `ClipRepetitionDetector` port + `ChromaprintClipRepetitionDetector` adapter |
-| L1 | Low | `run_align` typed on `AppConfig` | **Shipped** | `run_align` takes `&AlignConfig` + paths; `infrastructure/cli` maps `AppConfig` at composition root |
-| L2 | Low | Composition root in `infrastructure/cli` | **Shipped** | `composition.rs` in each binary crate wires adapters; `run_repair` orchestrates scan/patch; CLI modules are args/overrides/output only |
-
-**Refs:** [PLAN.md](PLAN.md) § Hexagonal architecture; [layer-purity-plan](docs/archive/layer-purity-plan.md) (lib DSP ports, shipped 2026-06-11)
+| Item | Direction |
+|------|-----------|
+| Gate the `equivalence-calibration` executable | The `[[bin]] equivalence-calibration` (`crates/clip-sync-repair/Cargo.toml`, `src/bin/equivalence_calibration.rs`) is a dev/calibration tool but builds unconditionally on every `cargo build`, pulling into release artifacts. Put it behind a `calibration` (or similar) feature via `required-features` on the `[[bin]]` target so a default build skips it; document the flag alongside the other calibration/validation features |
 
 ---
 
@@ -59,8 +49,7 @@ From [archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md)
 ### Residual gate follow-ups
 
 From [archive/residual-gate-findings.md](docs/archive/residual-gate-findings.md) and
-[archive/residual-gate-wiring-plan.md](docs/archive/residual-gate-wiring-plan.md). **Shipped:**
-default `veto`, C1a+C2–C4 contract. Test inventory:
+[archive/residual-gate-wiring-plan.md](docs/archive/residual-gate-wiring-plan.md). Test inventory:
 [`residual_gate_catalog/`](crates/clip-sync-repair/tests/residual_gate_catalog/).
 
 | Item | Priority | Direction |
