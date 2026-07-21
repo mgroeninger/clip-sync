@@ -1,17 +1,14 @@
 # Production repair pipeline performance — plan
 
-**Status:** **§0 + Level-C measured (2026-07-20) — plan PIVOTED.** The instrumented production run **refuted the
-original candidate (§2.1 mono-downmix hoist: 0.006% of runtime)** and located the real cost: **`char_gate_search`
-= 93% of wall-clock**, decomposed (§2.3) into a **flat ~22 s per-bracket score** run once (baseline) + **k times**
-(anchor-seam rescue, `gate_anchor_search` = 88% of gate search). Active target: **speed the per-bracket score** —
-code review (§2.3) shows it is **not** a full-haystack sweep but a windowed coarse+refine search whose per-candidate
-seam correlations are recomputed naively with no cross-candidate reuse. **Lever 2 (hoist placement-invariant
-channel selection) LANDED — measured −31% on the unified search** (byte-parity 26/26); **lever 1 (cross-candidate
-reuse) is next** —
-Level-E (§2.3) confirms it is **FFT** (95% of the search is a dense integer-lag refine): route the refine seam
-correlation through `lag_correlation_curve_auto`. FFT is calibration-safe on our corpus and will be scoped to
-the production search, leaving the dump/golden untouched (§2.4). See
-**[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)** / §2.4. Successor
+**Status:** **Gate search 5.3× faster and byte-clean (2026-07-21) — `char_gate_search` 1746 s → 330 s on pair 2.**
+§0+Level-C located the cost (`char_gate_search` = 93% of wall-clock, the per-bracket unified search). Three levers
+landed, each byte-validated (`patch_audio_integration` 26/26): **lever 2** (hoist placement-invariant channel
+selection) −31%; **lever 1** (FFT seam band in the start-search refine, default-ON, `--no-fft-seam-search` opt-out)
+a further −16%; **lever 1b(a)** (stop the repeat penalty recomputing the seam correlation it already had — which
+was also re-incurring lever 2's channel scan per candidate) **−69% on top** — the dominant lever, per-candidate
+refine 1189 µs → ~330 µs. See §2.5. **Remaining (optional):** the residual is now `gate_anchor_search` = 89% of the
+(much smaller) gate search — the **#2 `k`-reduction** (§2.5 lever 1c) is the only lever with material headroom left;
+per-candidate work is at a ~330 µs floor. Successor
 to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
 whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
 that one didn't: the **production repair path** end-users actually run.
@@ -406,10 +403,22 @@ does the default flip on.
       hoisted `score_channels`; the repeat-penalty path does **not**, so it silently pays the pre-lever-2 cost on
       every candidate. This — not the mono repeat Pearsons — is the likely bulk of the residual in `perf_6`.
 
-  **Next optimization (its own piece), ordered by cost/benefit:** (a) **free + byte-identical, do first:** thread
-  the band's already-computed `(pre_seam, post_seam)` **and** the hoisted `score_channels` into the penalty →
-  drops the `fill_seam_correlations` call entirely (redundant value) *and* removes the re-incurred lever-2 channel
-  scan; (b) `fill_repeat_correlations` is another contiguous-in-`start` band → the same
+  **Next optimization (its own piece), ordered by cost/benefit:** (a) **LANDED 2026-07-21 — free + byte-identical.**
+  `repeat_penalty_at_placement` now takes `(pre_seam, post_seam)` instead of recomputing them: `UnifiedFitCandidate`
+  carries `wave_pre`/`wave_post` (score term stays `min`), sourced from `waveform_seams_at_start` (naive path —
+  byte-identical to the old `fill_seam_correlations` under the same hoisted `score_channels`) or the FFT band
+  (`build_wave_seam_band` now returns the `(pre,post)` pairs it already had). Drops the penalty's
+  `fill_seam_correlations` call — the redundant seam recompute *and* its re-incurred lever-2 channel scan — on every
+  candidate (also hoisted constant in the end search). **`patch_audio_integration` 26/26 green** with FFT default-ON.
+  **MEASURED (`perf_7.log`, pair 2, 2026-07-21):** `char_gate_search` **1062.3 s → 329.8 s (−69.0% on top of the
+  FFT; −73.8% vs naive `perf_5`)**; `unified_refine` 936.3 → 259.7 s; per-candidate refine **1189 µs → ~330 µs**.
+  The FFT bought −16%; **1b(a) bought a further −69%** — it was the real lever. It also cut the *naive* phases
+  (`unified_coarse` −64%, `unified_fine_polish` −62%) because the redundant seam recompute lived in *every*
+  candidate's scoring, not just the FFT'd refine — confirming the channel-scan-in-penalty was ~72% of per-candidate
+  cost. **Zero correctness drift:** 0 divergence warns, marginal-seam WARNs digit-identical (gap 17 `0.37/0.28`, 18
+  `0.28/0.28`, 24 `0.29/0.35`), 23/26 + 9 regions. Against §0's baseline, `char_gate_search` went **1746 s → 330 s
+  (5.3×)**, byte-clean.
+  (b) `fill_repeat_correlations` is another contiguous-in-`start` band → the same
   `seam_correlation_over_bases` primitive collapses it; (c) partial short-circuit via the **known seam values**
   (not `wave_min` alone): `wave_min` gates only 2 of the 3 nonzero branches (both need `wave_min < 0.45`); the
   third, `asymmetric_post_dup`, is `wave_min`-independent, so a full early-return-0 needs `wave_min ≥ 0.45` **and**
@@ -443,11 +452,15 @@ does the default flip on.
     peaks, but if the *pre* peak already falls below the floor, `smin` fails regardless of post — a first-peak
     early-out skips the second `seam_local_peak`.
 
-  **Ranking (updated after `perf_6`):** **1b(a) is now the priority** — the measurement shows ~83% of the refine
-  is the repeat penalty, whose `fill_seam_correlations` re-incurs the lever-2 channel scan (which lever 2 measured
-  at ~31% of a bracket); 1b(a) drops it free/byte-identical and should recover a chunk comparable to or larger than
-  the FFT itself. #3 is a mechanical byte-identical reorder (do opportunistically). #2 is the big-but-risky
-  `k`-reduction — size it only after 1b lands and re-measures the residual.
+  **Ranking (updated after `perf_7`, 2026-07-21):** **1b(a) LANDED and measured −69%** — the dominant remaining
+  cost has now shifted. Of the 329.8 s `char_gate_search`, **`gate_anchor_search` = 293.6 s (89%)** — still `k`
+  brackets, but each bracket is now cheap (`bracket_unified_search` 291.7 s / 82 = **3.56 s/bracket**, was 14.8 s).
+  So **#2 (cut `k`) is now the highest-value remaining lever** — it multiplies a now-small per-bracket cost, but `k`
+  reached ~26 on gap 22, and the per-bracket search no longer dominates. 1b(b) (band `fill_repeat_correlations`)
+  and 1b(c) (short-circuit) target the ~330 µs/candidate residual — **diminishing returns; likely not worth it**
+  unless a `perf_7` sub-span split shows `fill_repeat_correlations` is a large share of that 330 µs. #3 stays an
+  opportunistic reorder. **Recommendation: stop here or pursue #2** — 1b(a) already took the gate search 5.3× off
+  §0's baseline; further per-candidate work is small change against a 330 µs floor.
 - **Part B — (6) licensed-media perf run: DONE (`perf_6.log`, 2026-07-21).** FFT default-ON on pair 2 measured
   **−15.7% on `char_gate_search`** (−16.5% on the refine) with **zero correctness drift** (see the 1b measurement
   block above: no divergence warns, digit-identical seam WARNs, 23/26 + 9 regions). Partial win exactly as 1b

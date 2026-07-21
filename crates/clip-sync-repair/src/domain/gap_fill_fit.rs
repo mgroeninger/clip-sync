@@ -293,14 +293,24 @@ pub fn unified_fit_score(
     score
 }
 
+/// Lever 1b(a) (TEMP-production-repair-perf-plan.md §2.5): the pre/post seam correlations are passed in — the
+/// caller already computed them (`wave_min = pre_seam.min(post_seam)`) via `waveform_seams_at_start` (naive) or
+/// the FFT band, so recomputing them here with a fresh `fill_seam_correlations` (which also re-ran the hoisted
+/// `seam_score_channel_indices` scan per candidate — undoing lever 2) is pure waste. Only the repeat-window
+/// correlation, which is a *different* window, is still computed here (lever 1b(b) can band it later). Values are
+/// byte-identical to the old `fill_seam_correlations` on the naive path (same `fill_seam_correlations_with_channels`
+/// under the hood, same channel selection); on the FFT path they are the band's ε-approximation, consistent with
+/// the `wave_min` the score already used.
 fn repeat_penalty_at_placement(
     ctx: &WaveformSeamContext<'_>,
     start: usize,
-    wave_min: f64,
+    pre_seam: f64,
+    post_seam: f64,
 ) -> f64 {
     if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
         return 0.0;
     }
+    let wave_min = pre_seam.min(post_seam);
     let placement = SeamPlacement {
         start,
         gap_frames: ctx.gap_frames,
@@ -312,7 +322,6 @@ fn repeat_penalty_at_placement(
         placement,
         ctx.repeat_window_frames,
     );
-    let (pre_seam, post_seam) = fill_seam_correlations(ctx.templates, placement);
     let repeat_max = repeat_pre.max(repeat_post);
     let repeat_sum = repeat_pre + repeat_post;
     let asymmetric_post_dup = repeat_post > REPEAT_CORR_THRESHOLD
@@ -332,7 +341,10 @@ fn repeat_penalty_at_placement(
 struct UnifiedFitCandidate {
     structure_pre: f64,
     structure_post: f64,
-    wave_min: f64,
+    /// The two seam correlations (`wave_min = wave_pre.min(wave_post)` is the waveform score term). Carried
+    /// separately so `repeat_penalty_at_placement` reuses them instead of recomputing (lever 1b(a)).
+    wave_pre: f64,
+    wave_post: f64,
     placement: FillBracketPlacement,
 }
 
@@ -346,7 +358,7 @@ fn unified_fit_score_with_repeat(
     let mut score = unified_fit_score(
         candidate.structure_pre,
         candidate.structure_post,
-        candidate.wave_min,
+        candidate.wave_pre.min(candidate.wave_post),
         candidate.placement,
         params,
         weights,
@@ -358,7 +370,12 @@ fn unified_fit_score_with_repeat(
     if wf > 0.0 && score.is_finite() {
         score -= waveform.repeat_penalty_weight
             * wf
-            * repeat_penalty_at_placement(waveform, candidate.placement.start, candidate.wave_min);
+            * repeat_penalty_at_placement(
+                waveform,
+                candidate.placement.start,
+                candidate.wave_pre,
+                candidate.wave_post,
+            );
     }
     score
 }
@@ -390,19 +407,20 @@ pub(crate) fn waveform_min_at_start(
     pre.min(post)
 }
 
-/// Lever 1 (§2.5): precompute `waveform_min_at_start` (= `pre.min(post)`) for every start in `[lo, hi]` via one
-/// FFT band pass per channel ([`fill_seam_correlations_band`]), instead of a naive per-candidate Pearson.
-/// Returns `None` when the band evaluator declines (a non-uniform band-edge case where the naive channel set
-/// would vary per start) — the caller then scores that range the naive way. The `placement_in_bounds`
-/// NEG_INFINITY gate that `waveform_min_at_start` applies is intentionally NOT applied here (the band value is
-/// the raw `pre.min(post)`); the caller re-applies that gate at lookup so entries mirror the naive call exactly.
-fn build_wave_min_band(
+/// Lever 1 (§2.5): precompute the `(pre_seam, post_seam)` correlations that `waveform_seams_at_start` returns
+/// (the score's waveform term is `pre.min(post)`) for every start in `[lo, hi]` via one FFT band pass per channel
+/// ([`fill_seam_correlations_band`]), instead of a naive per-candidate Pearson. Returns `None` when the band
+/// evaluator declines (a non-uniform band-edge case where the naive channel set would vary per start) — the
+/// caller then scores that range the naive way. The `placement_in_bounds` NEG_INFINITY gate that
+/// `waveform_seams_at_start` applies is intentionally NOT applied here; the caller re-applies it at lookup so
+/// entries mirror the naive call exactly. Threaded pre/post also feed `repeat_penalty_at_placement` (lever 1b(a)).
+fn build_wave_seam_band(
     ctx: &WaveformSeamContext<'_>,
     score_channels: &[usize],
     lo: usize,
     hi: usize,
-) -> Option<Vec<f64>> {
-    let pairs = fill_seam_correlations_band(
+) -> Option<Vec<(f64, f64)>> {
+    fill_seam_correlations_band(
         ctx.templates,
         ctx.gap_frames,
         ctx.pre_window,
@@ -410,8 +428,7 @@ fn build_wave_min_band(
         score_channels,
         lo,
         hi,
-    )?;
-    Some(pairs.into_iter().map(|(pre, post)| pre.min(post)).collect())
+    )
 }
 
 /// Result of unified structure+waveform search (Phase B).
@@ -619,39 +636,43 @@ fn unified_search_best_fill_start(
     let mut best_start = nominal_start;
     let mut best_score = f64::NEG_INFINITY;
 
-    // `consider` takes the waveform seam min as `precomputed_wave`: `None` ⇒ compute it naively in-line (the
-    // pre-lever-1 behaviour, exact), `Some(w)` ⇒ use the FFT-band value the refine loop looked up. Passing
-    // `None` everywhere is byte-identical to the old closure, so the flag-off path is unchanged.
-    let consider =
-        |start: usize, precomputed_wave: Option<f64>, best_start: &mut usize, best_score: &mut f64| {
-            if start < pre_span || start > search_max {
-                return;
-            }
-            let candidate_end = (start + params.gap_frames).min(total_frames);
-            if candidate_end + post_span > total_frames {
-                return;
-            }
-            let pre_score = score_pre_for_signature(signature, timeline, start, params);
-            let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-            let wave_min = precomputed_wave
-                .unwrap_or_else(|| waveform_min_at_start(waveform, start, score_channels));
-            let score = unified_fit_score_with_repeat(
-                UnifiedFitCandidate {
-                    structure_pre: pre_score,
-                    structure_post: post_score,
-                    wave_min,
-                    placement: fill_bracket_placement(
-                        start,
-                        candidate_end,
-                        nominal_start,
-                        nominal_end,
-                    ),
-                },
-                params,
-                weights,
-                waveform,
-                anchor_prior,
-            );
+    // `consider` takes the `(pre_seam, post_seam)` correlations as `precomputed_wave`: `None` ⇒ compute them
+    // naively in-line (the pre-lever-1 behaviour, exact), `Some((pre, post))` ⇒ use the FFT-band values the
+    // refine loop looked up. Passing `None` everywhere is byte-identical to the old closure, so the flag-off path
+    // is unchanged. The pair (not just the min) also feeds `repeat_penalty_at_placement` (lever 1b(a)).
+    let consider = |start: usize,
+                    precomputed_wave: Option<(f64, f64)>,
+                    best_start: &mut usize,
+                    best_score: &mut f64| {
+        if start < pre_span || start > search_max {
+            return;
+        }
+        let candidate_end = (start + params.gap_frames).min(total_frames);
+        if candidate_end + post_span > total_frames {
+            return;
+        }
+        let pre_score = score_pre_for_signature(signature, timeline, start, params);
+        let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
+        let (wave_pre, wave_post) = precomputed_wave
+            .unwrap_or_else(|| waveform_seams_at_start(waveform, start, score_channels));
+        let score = unified_fit_score_with_repeat(
+            UnifiedFitCandidate {
+                structure_pre: pre_score,
+                structure_post: post_score,
+                wave_pre,
+                wave_post,
+                placement: fill_bracket_placement(
+                    start,
+                    candidate_end,
+                    nominal_start,
+                    nominal_end,
+                ),
+            },
+            params,
+            weights,
+            waveform,
+            anchor_prior,
+        );
             let better = score > *best_score + SCORE_TIE_EPSILON
                 || (score >= *best_score - SCORE_TIE_EPSILON
                     && prefer_start(start, *best_start, nominal_start));
@@ -698,10 +719,10 @@ fn unified_search_best_fill_start(
     let refine_min = best_start.saturating_sub(coarse_step).max(search_min);
     let refine_max = (best_start + coarse_step).min(search_max);
 
-    // Lever 1 (§2.5): precompute the dense refine band's `waveform_min_at_start` in one FFT pass per channel.
+    // Lever 1 (§2.5): precompute the dense refine band's `(pre_seam, post_seam)` in one FFT pass per channel.
     // `None` ⇒ the band evaluator declined (non-uniform band edge) or the flag is off ⇒ fall back to naive.
     let wave_band = if use_fft_seam_search {
-        build_wave_min_band(waveform, score_channels, refine_min, refine_max)
+        build_wave_seam_band(waveform, score_channels, refine_min, refine_max)
     } else {
         None
     };
@@ -710,8 +731,8 @@ fn unified_search_best_fill_start(
     {
         let _e = refine_span.enter();
         for start in refine_min..=refine_max {
-            // Band lookup mirrors `waveform_min_at_start` exactly: apply its `placement_in_bounds`
-            // NEG_INFINITY gate on top of the band value (the band itself does not gate). Out of band ⇒ naive.
+            // Band lookup mirrors `waveform_seams_at_start` exactly: apply its `placement_in_bounds`
+            // NEG_INFINITY gate on top of the band pair (the band itself does not gate). Out of band ⇒ naive.
             let precomputed = wave_band.as_ref().map(|band| {
                 if placement_in_bounds(
                     start,
@@ -722,7 +743,7 @@ fn unified_search_best_fill_start(
                 ) {
                     band[start - refine_min]
                 } else {
-                    f64::NEG_INFINITY
+                    (f64::NEG_INFINITY, f64::NEG_INFINITY)
                 }
             });
             consider(start, precomputed, &mut best_start, &mut best_score);
@@ -747,7 +768,8 @@ fn unified_search_best_fill_start(
                 waveform.post_window,
                 waveform.b_total_frames,
             ) {
-                band[best_start - refine_min]
+                let (pre, post) = band[best_start - refine_min];
+                pre.min(post)
             } else {
                 f64::NEG_INFINITY
             }
@@ -804,11 +826,13 @@ fn unified_search_best_fill_end(
     let mut best_score = f64::NEG_INFINITY;
 
     // Lever 1 (byte-identical cross-candidate reuse, TEMP-production-repair-perf-plan.md §2.5): in the END
-    // search the pre seam and the waveform seam are anchored at the FIXED `fill_start`, so they are constant
-    // across every `end` candidate. Compute them once here instead of per candidate — removes one full
-    // per-channel Pearson (`waveform_min_at_start`) per end candidate. Value is identical, so byte-parity holds.
+    // search the pre seam and the waveform seams are anchored at the FIXED `fill_start`, so they are constant
+    // across every `end` candidate. Compute them once here instead of per candidate — removes the per-channel
+    // Pearson (`waveform_seams_at_start`) *and* the repeat penalty's seam reuse per end candidate. Also constant:
+    // the repeat penalty itself keys only on `fill_start` — but `end` moves its window, so it is not hoisted here.
     let const_pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
-    let const_wave_min = waveform_min_at_start(waveform, fill_start, score_channels);
+    let (const_wave_pre, const_wave_post) =
+        waveform_seams_at_start(waveform, fill_start, score_channels);
     let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
         if end < end_min || end > end_max || end + post_span > total_frames {
             return;
@@ -826,7 +850,8 @@ fn unified_search_best_fill_end(
             UnifiedFitCandidate {
                 structure_pre: const_pre_score,
                 structure_post: post_score,
-                wave_min: const_wave_min,
+                wave_pre: const_wave_pre,
+                wave_post: const_wave_post,
                 placement: fill_bracket_placement(fill_start, end, fill_start, nominal_end),
             },
             params,
@@ -921,12 +946,13 @@ fn unified_fine_polish_start(
         let candidate_end = candidate + fill_len;
         let pre_score = score_pre_for_signature(signature, timeline, candidate, params);
         let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let wave_min = waveform_min_at_start(waveform, candidate, score_channels);
+        let (wave_pre, wave_post) = waveform_seams_at_start(waveform, candidate, score_channels);
         let score = unified_fit_score_with_repeat(
             UnifiedFitCandidate {
                 structure_pre: pre_score,
                 structure_post: post_score,
-                wave_min,
+                wave_pre,
+                wave_post,
                 placement: fill_bracket_placement(
                     candidate,
                     candidate_end,
@@ -1536,10 +1562,13 @@ mod tests {
         nominal_start: usize,
         nominal_end: usize,
     ) -> UnifiedFitCandidate {
+        // Symmetric seams (pre == post == wave_min) for the score tests; the repeat-penalty tests still exercise
+        // the weak-seam branch via `wave_min < REPEAT_SEAM_WEAK` + a high `repeat_max` from real templates.
         UnifiedFitCandidate {
             structure_pre,
             structure_post,
-            wave_min,
+            wave_pre: wave_min,
+            wave_post: wave_min,
             placement: fill_bracket_placement(start, end, nominal_start, nominal_end),
         }
     }
