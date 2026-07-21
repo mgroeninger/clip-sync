@@ -7,8 +7,10 @@ use clap::Parser;
 use clip_sync::{ProgressReporter, SymphoniaMediaReader};
 
 use crate::application::error::RepairError;
+#[cfg(feature = "calibration")]
 use crate::application::patch_audio::decode_ab;
 use crate::application::run_repair::{PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair};
+#[cfg(feature = "calibration")]
 use crate::domain::GapReport;
 use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
@@ -68,6 +70,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     )?;
     let outcome = run_repair_with_defaults(input, &progress)?;
 
+    #[cfg(feature = "calibration")]
     if let Some(dir) = args.gap_fingerprints.clone() {
         // Repair takes priority: a real repair (--mux) wins over the fingerprint diagnostic.
         if args.mux.is_some() {
@@ -85,6 +88,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
 /// Diagnostic: decode A/B (shared `decode_ab`), characterize each gap, and write a licensing-safe
 /// corpus directory (`corpus.json` + per-gap files + `manifest.json`). Gaps named via
 /// `--fingerprint-gap` get full detail (per-bracket gate `failure_stage` + lag); the rest summary.
+#[cfg(feature = "calibration")]
 fn dump_gap_fingerprints(
     args: &Args,
     config: &RepairAppConfig,

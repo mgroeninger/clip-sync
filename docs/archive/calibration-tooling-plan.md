@@ -1,6 +1,17 @@
-# Calibration tooling gate — plan (DRAFT)
+# Calibration tooling gate — plan (SHIPPED)
 
-Status: **draft / not started** (2026-07-21).
+Status: **shipped** (2026-07-21). Implemented as steps below, with one revision to Step 4: the promoted
+stats tool lives in **`clip-sync-repair-harness`** (`gap-fingerprint-stats` bin), **not** as a subcommand
+of `equivalence-calibration`. Reason: `analyze_dirs` lives in the harness, which depends on
+`clip-sync-repair`; a `[[bin]]` inside `clip-sync-repair` importing the harness would be a package-level
+cycle (Cargo rejects it), and the `gap_fingerprint_corpus` module is shared by other harness modules
+(`corpus_projection`, `gap_repair_spec_projection`, `golden_baseline`) + validation tests, so moving it into
+the lib would ripple through the validation tier. Hosting the bin in the harness is zero code movement.
+The `calibration` feature is mirrored on both crates. The corpus **writer** cluster in
+`application/gap_fingerprint.rs` (`write_corpus_dir` + private helpers `detail_tier_str`, `lag_verdict_str`,
+`hms`, `entry_verdict`, `entry_filename`, `ManifestEntry`, `Manifest`) is gated
+`#[cfg(any(feature = "calibration", test))]` — it was reachable only from the now-gated dump path, plus one
+unit test.
 
 Fold the gap-fingerprint **calibration workflow** behind one `calibration` cargo feature so it stops
 leaking into the production binary and the test tier. Tracked in [BACKLOG.md](../BACKLOG.md)

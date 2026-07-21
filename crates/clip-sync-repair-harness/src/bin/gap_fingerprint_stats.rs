@@ -1,19 +1,19 @@
-//! Cross-corpus gap-fingerprint analyzer (P0 prevalence scan).
+//! `gap-fingerprint-stats` — cross-corpus gap-fingerprint analyzer (the P0 prevalence scan).
 //! See `docs/TEMP-w5-timing-offset-rescue-plan.md` §5 P0 and `gap_fingerprint_corpus.rs`.
 //!
-//! Tier: **diagnostic** (`diagnostic-tests`). Reads `--gap-fingerprints` output dirs and tallies lag
-//! verdicts + gate outcomes across every A/B pair — the numbers P0 needs (how many `timing_offset`
-//! gaps the gate skipped, constant vs drift).
+//! Reads one or more `--gap-fingerprints` output dirs and tallies lag verdicts + gate outcomes across
+//! every A/B pair — the numbers P0 needs (how many `timing_offset` gaps the gate skipped, constant vs
+//! drift). Point it at the parent holding numbered corpora (`1/`..`N/`) or a list of specific dirs.
 //!
-//! Run (point at the parent holding `1/`..`7/`, or a comma-separated list of dirs):
+//! Run (gated behind the `calibration` feature):
 //! ```powershell
-//! $env:GAP_FP_DIRS = "gap-files"            # auto-discovers gap-files/1 .. gap-files/6
-//! # optional: $env:GAP_FP_DRIFT_EPS_MS = "1.0"; $env:GAP_FP_CSV = "1"
-//! cargo test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_corpus -- --nocapture
+//! cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- gap-files
+//! #   optional env: GAP_FP_DRIFT_EPS_MS=1.0  GAP_FP_CSV=1  GAP_FP_GOLDEN=<path>
 //! ```
 //! Relative dirs resolve against the **repo root** (not the crate dir).
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clip_sync_repair_harness::gap_fingerprint_corpus::{
     analyze_dirs, drift_eps_from_env, tail_secs_from_env,
@@ -34,27 +34,35 @@ fn resolve(dir: &str) -> PathBuf {
     }
 }
 
-#[test]
-fn diag_fingerprint_corpus() {
-    let Ok(dirs_env) = std::env::var("GAP_FP_DIRS") else {
-        eprintln!(
-            "skip: set GAP_FP_DIRS to one or more --gap-fingerprints output dirs (comma-separated).\n\
-             e.g. GAP_FP_DIRS=gap-files  (auto-discovers gap-files/1 .. gap-files/N)"
-        );
-        return;
-    };
-    let dirs: Vec<PathBuf> = dirs_env
-        .split(',')
-        .filter(|s| !s.trim().is_empty())
-        .map(resolve)
+fn main() -> ExitCode {
+    // Positional args: one or more --gap-fingerprints output dirs (a parent of numbered corpora, or a
+    // list of specific dirs). Also accepts a single comma-separated argument for back-compat with the
+    // old GAP_FP_DIRS env form.
+    let dirs: Vec<PathBuf> = std::env::args()
+        .skip(1)
+        .flat_map(|a| {
+            a.split(',')
+                .filter(|s| !s.trim().is_empty())
+                .map(resolve)
+                .collect::<Vec<_>>()
+        })
         .collect();
-    assert!(!dirs.is_empty(), "GAP_FP_DIRS resolved to no dirs");
+
+    if dirs.is_empty() {
+        eprintln!(
+            "usage: gap-fingerprint-stats <dir>... \n\
+             pass one or more --gap-fingerprints output dirs (e.g. `gap-files` auto-discovers \
+             gap-files/1 .. gap-files/N).\n\
+             optional env: GAP_FP_DRIFT_EPS_MS, GAP_FP_CSV=1, GAP_FP_GOLDEN=<path>"
+        );
+        return ExitCode::from(2);
+    }
 
     let report = analyze_dirs(&dirs, drift_eps_from_env(), tail_secs_from_env());
-    assert!(
-        report.total_gaps() > 0,
-        "no gaps found under {dirs:?} — did the scans finish writing corpus.json?"
-    );
+    if report.total_gaps() == 0 {
+        eprintln!("no gaps found under {dirs:?} — did the scans finish writing corpus.json?");
+        return ExitCode::from(2);
+    }
 
     print!("{}", report.legend_text());
     print!("{}", report.summary_text());
@@ -82,4 +90,6 @@ fn diag_fingerprint_corpus() {
             Err(e) => eprintln!("failed to write golden baseline {path}: {e}"),
         }
     }
+
+    ExitCode::SUCCESS
 }

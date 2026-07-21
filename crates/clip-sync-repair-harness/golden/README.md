@@ -29,9 +29,8 @@ regime would need a real alias gate (`seam_z`/wide-env). Parked at D8.
 ## Regenerate
 
 ```
-GAP_FP_DIRS=gap-files/<corpus> \
 GAP_FP_GOLDEN=crates/clip-sync-repair-harness/golden/<corpus>.golden.json \
-  cargo test -p clip-sync-repair --features diagnostic-tests --test diag_fingerprint_corpus -- --nocapture
+  cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- gap-files/<corpus>
 ```
 
 For analyzer depth (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`), pass

@@ -72,7 +72,8 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
 | `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_fingerprint_corpus`, `seam_residual_oracle` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` integration binaries |
+| `calibration` | no | Gap-fingerprint calibration workflow: the `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` producer flags + corpus writer, the `equivalence-calibration` bin (`clip-sync-repair`), and the `gap-fingerprint-stats` bin (`clip-sync-repair-harness`). Off by default so the diagnostic surface stays out of the production binary |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](error-mapping.md)).
 
@@ -149,11 +150,15 @@ validation changes.
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_fingerprint_corpus`, `seam_residual_oracle` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` |
+| `calibration` | `equivalence-calibration` + `gap-fingerprint-stats` bins (not tests) |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
 cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_matrix -- --nocapture
+# Calibration bins (not part of any test tier):
+cargo run -p clip-sync-repair --features calibration --bin equivalence-calibration -- gap-files/equiv
+cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- gap-files
 ```
 
 **Phase 3.5 (`clip-sync-repair-harness`):** shared integration runners live in the workspace
@@ -208,8 +213,11 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
 | `diag_w5_anchor_rescue` | diagnostic | `diagnostic-tests` | no | W5 anchor-rescue single-cell scores (nominal/baseline + per-bracket gate CSV) |
 | `diag_w5_timing_offset` | diagnostic | `diagnostic-tests` | no | W5 timing-offset recoverability grid (`offset × drift` lag CSV); slow gate-probe row `#[ignore]` |
-| `diag_fingerprint_corpus` | diagnostic | `diagnostic-tests` | no | Cross-corpus `--gap-fingerprints` analyzer (P0 prevalence); reads `GAP_FP_DIRS`, tallies verdicts / constant-vs-drift; skips if unset |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
+
+The cross-corpus `--gap-fingerprints` analyzer (former `diag_fingerprint_corpus` test, P0 prevalence) is now
+the `gap-fingerprint-stats` bin under the `calibration` feature (`clip-sync-repair-harness`), taking corpus
+dirs as CLI args instead of the `GAP_FP_DIRS` env var.
 
 † `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored
 mux e2e rows run in `.\scripts\test-tier.ps1 -Tier validation` when ffmpeg is on PATH.

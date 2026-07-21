@@ -26,18 +26,21 @@ pub struct Args {
 
     /// Diagnostic: after scan, write a licensing-safe gap-fingerprint corpus into DIR
     /// (`corpus.json` with all gaps + one self-contained JSON per gap + `manifest.json`).
+    #[cfg(feature = "calibration")]
     #[arg(long, value_name = "DIR")]
     pub gap_fingerprints: Option<PathBuf>,
 
     /// Gap index (repeatable). When given, characterize ONLY these gaps; omit to characterize ALL
     /// gaps. Each characterized gap gets full detail (per-bracket scores + lag). Use the normal repair
     /// gap table to pick which gaps are worth characterizing. Only meaningful with --gap-fingerprints.
+    #[cfg(feature = "calibration")]
     #[arg(long, value_name = "IDX")]
     pub fingerprint_gap: Vec<usize>,
 
     /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,
     /// `wide_envelope`, diagnostic `lag`, `b_levels`). Slower; needed for analyzer seam-probe reports
     /// [default: off — decision/repair fields only].
+    #[cfg(feature = "calibration")]
     #[arg(long)]
     pub fingerprint_diagnostics: bool,
 
@@ -475,11 +478,18 @@ mod tests {
             "[default: info]",
             "[default: enabled]",
             "[default: disabled]",
-            "gap-fingerprints",
-            "fingerprint-diagnostics",
             "no-dual-fit",
             "[default: on]",
         ] {
+            assert!(
+                help.contains(needle),
+                "help missing {needle:?}:\n{help}"
+            );
+        }
+
+        // The calibration producer flags are only present when the `calibration` feature is on.
+        #[cfg(feature = "calibration")]
+        for needle in ["gap-fingerprints", "fingerprint-diagnostics"] {
             assert!(
                 help.contains(needle),
                 "help missing {needle:?}:\n{help}"

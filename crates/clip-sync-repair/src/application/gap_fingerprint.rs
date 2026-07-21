@@ -3158,6 +3158,7 @@ pub fn characterize_gaps(
     }
 }
 
+#[cfg(any(feature = "calibration", test))]
 fn detail_tier_str(t: DetailTier) -> &'static str {
     match t {
         DetailTier::Summary => "summary",
@@ -3165,6 +3166,7 @@ fn detail_tier_str(t: DetailTier) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "calibration", test))]
 fn lag_verdict_str(v: LagVerdict) -> &'static str {
     match v {
         LagVerdict::TimingOffset => "timing_offset",
@@ -3173,12 +3175,14 @@ fn lag_verdict_str(v: LagVerdict) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "calibration", test))]
 fn hms(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
     format!("{:02}-{:02}-{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
 /// Headline tag for a gap's filename: the lag verdict if measured, else the gate outcome, else `na`.
+#[cfg(any(feature = "calibration", test))]
 fn entry_verdict(gap: &GapFingerprint) -> String {
     gap.lag
         .as_ref()
@@ -3189,6 +3193,7 @@ fn entry_verdict(gap: &GapFingerprint) -> String {
 }
 
 /// `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>.json` — non-leaking, sortable, classifiable.
+#[cfg(any(feature = "calibration", test))]
 fn entry_filename(source: &SourceMeta, gap: &GapFingerprint) -> String {
     let a8: String = source.a_source.id.chars().take(8).collect();
     let b4: String = source.b_source.id.chars().take(4).collect();
@@ -3201,6 +3206,7 @@ fn entry_filename(source: &SourceMeta, gap: &GapFingerprint) -> String {
     )
 }
 
+#[cfg(any(feature = "calibration", test))]
 #[derive(Serialize)]
 struct ManifestEntry {
     file: String,
@@ -3213,6 +3219,7 @@ struct ManifestEntry {
     lag_verdict: Option<String>,
 }
 
+#[cfg(any(feature = "calibration", test))]
 #[derive(Serialize)]
 struct Manifest<'a> {
     a_id: &'a str,
@@ -3225,6 +3232,7 @@ struct Manifest<'a> {
 /// Write a self-contained corpus directory: the combined `corpus.json` (all gaps), one single-gap
 /// [`GapCorpus`] JSON **per gap**, and a non-identifying `manifest.json`. Returns the gap count. No
 /// titles/paths anywhere.
+#[cfg(any(feature = "calibration", test))]
 pub(crate) fn write_corpus_dir(
     corpus: &GapCorpus,
     dir: &std::path::Path,

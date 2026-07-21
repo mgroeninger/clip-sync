@@ -9,6 +9,18 @@ description = "Shared integration/validation runners for clip-sync-repair tier b
 name = "clip_sync_repair_harness"
 path = "src/lib.rs"
 
+# Cross-corpus gap-fingerprint prevalence/mechanism stats over `--gap-fingerprints` output dirs.
+# Gated behind `calibration` so this workspace member's bin stays out of default `cargo build`.
+[[bin]]
+name = "gap-fingerprint-stats"
+path = "src/bin/gap_fingerprint_stats.rs"
+required-features = ["calibration"]
+
+[features]
+# Enables the gap-fingerprint calibration tooling (the `gap-fingerprint-stats` bin). Mirrors the
+# `calibration` feature on `clip-sync-repair`.
+calibration = []
+
 [dependencies]
 clip-sync-repair = { path = "../clip-sync-repair" }
 clip-sync-repair-fixtures = { path = "../clip-sync-repair-fixtures" }

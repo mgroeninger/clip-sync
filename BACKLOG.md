@@ -20,20 +20,8 @@ Last updated: 2026-07-21.
 | [TEMP-gap-selection-plan.md](docs/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-policies-module-split-plan.md](docs/TEMP-policies-module-split-plan.md) | `policies.rs` module split — draft, not started |
-| [TEMP-calibration-tooling-plan.md](docs/TEMP-calibration-tooling-plan.md) | Gate the gap-fingerprint calibration workflow (bin + diagnostic flags + stats test→bin) behind a `calibration` feature — draft, not started |
 
 ## Open work
-
-### Build hygiene / calibration tooling
-
-The gap-fingerprint calibration workflow (produce a corpus → analyze it) currently leaks into the production binary and into the test tier. Fold it behind one `calibration` feature. See [TEMP-calibration-tooling-plan.md](docs/TEMP-calibration-tooling-plan.md).
-
-| Item | Direction |
-|------|-----------|
-| Gate the calibration workflow behind a `calibration` feature | The `[[bin]] equivalence-calibration` (`crates/clip-sync-repair/Cargo.toml`, `src/bin/equivalence_calibration.rs`) builds unconditionally on every `cargo build`. Gate it via `required-features` **and** feature-gate the diagnostic CLI flags that feed it — `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` (`cli/args.rs:27-42`) plus their wiring in `cli/mod.rs` and `composition.rs` — since they are one workflow (generate corpus → diff with the tool). **Caveat:** the `application/gap_fingerprint.rs` schema/builder (`GapCorpus`, `FileSource`) stays compiled — the gated bin imports it and committed corpus fixtures / golden tests depend on it; only the CLI entry points and the executable move behind the gate. Document alongside the other calibration/validation features |
-| Promote `diag_fingerprint_corpus` from a `#[test]` to a calibration bin | `tests/diag_fingerprint_corpus.rs` is a stats tool wearing a test costume: no assertions, "skips" when `GAP_FP_DIRS` is unset, exists only to read `--gap-fingerprints` output dirs and print lag/timing-offset prevalence tables/CSV (env-driven: `GAP_FP_DIRS`, `GAP_FP_DRIFT_EPS_MS`, `GAP_FP_CSV`). The real logic already lives in `harness::gap_fingerprint_corpus::analyze_dirs`, so the move is thin — make it a `[[bin]]` under the `calibration` feature, either a subcommand of `equivalence-calibration` (both read the same corpus) or a sibling `gap-fingerprint-stats`. Parallel (out of scope here): `tests/calibrate_anchor_prominence.rs` is the same pattern for a different signal |
-
----
 
 ### Repair R6 follow-ups
 

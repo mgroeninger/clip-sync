@@ -17,9 +17,11 @@ name = "clip-sync-repair"
 path = "src/main.rs"
 
 # Calibration/dev tool: diff the 250 ms scan equivalence gate against the fine-bin fingerprint reference.
+# Gated behind `calibration` so it stays out of default `cargo build` / release artifacts.
 [[bin]]
 name = "equivalence-calibration"
 path = "src/bin/equivalence_calibration.rs"
+required-features = ["calibration"]
 
 [features]
 default = []
@@ -29,6 +31,9 @@ ac3 = ["clip-sync/ac3"]
 ffmpeg-tests = ["clip-sync/ffmpeg-tests"]
 validation-tests = []
 diagnostic-tests = []
+# Gap-fingerprint calibration workflow (producer flags + equivalence-calibration bin). Off by default so
+# the diagnostic corpus-fingerprint surface stays out of the production binary and default build.
+calibration = []
 
 [dependencies]
 clip-sync = { path = "../clip-sync" }
@@ -193,11 +198,6 @@ required-features = ["diagnostic-tests"]
 [[test]]
 name = "diag_w5_timing_offset"
 path = "tests/diag_w5_timing_offset.rs"
-required-features = ["diagnostic-tests"]
-
-[[test]]
-name = "diag_fingerprint_corpus"
-path = "tests/diag_fingerprint_corpus.rs"
 required-features = ["diagnostic-tests"]
 
 [[test]]

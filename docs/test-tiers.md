@@ -221,7 +221,7 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 | `.\scripts\fetch_corpus_sources.ps1` | `validate_floor_oracle` |
 | `CLIP_SYNC_CORPUS` | alignment external corpus (`validation`) |
 | `CLIP_SYNC_GAP_CORPUS` | `gap_corpus_external` (`validation`) |
-| `GAP_FP_DIRS` | `diag_fingerprint_corpus` (diagnostic; skips if unset) |
+| `GAP_FP_DIRS` | `gap_repair_spec_diff`, `golden_baseline_invariance` (validation; skip if unset). The former `diag_fingerprint_corpus` reader is now the `gap-fingerprint-stats` bin (`calibration` feature) taking dirs as CLI args |
 | Local `gap-files/re-anchor-dual-fit-on-nominal` | `golden_baseline_corpus_invariance` (`validation`, `#[ignore]`) |
 
 ---

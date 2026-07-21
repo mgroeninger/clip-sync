@@ -50,6 +50,7 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     } else if args.no_dual_fit {
         config.repair.dual_fit = false;
     }
+    #[cfg(feature = "calibration")]
     if args.fingerprint_diagnostics {
         config.repair.fingerprint_diagnostics = true;
     }
@@ -234,16 +235,22 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
 }
 
 /// `--fingerprint-gap` and `--fingerprint-diagnostics` only apply when dumping a corpus.
+/// The flags exist only under the `calibration` feature, so this is a no-op otherwise.
 pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
-    if args.gap_fingerprints.is_some() {
-        return Ok(());
+    #[cfg(feature = "calibration")]
+    {
+        if args.gap_fingerprints.is_some() {
+            return Ok(());
+        }
+        if !args.fingerprint_gap.is_empty() {
+            return Err("--fingerprint-gap requires --gap-fingerprints DIR".into());
+        }
+        if args.fingerprint_diagnostics {
+            return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
+        }
     }
-    if !args.fingerprint_gap.is_empty() {
-        return Err("--fingerprint-gap requires --gap-fingerprints DIR".into());
-    }
-    if args.fingerprint_diagnostics {
-        return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
-    }
+    #[cfg(not(feature = "calibration"))]
+    let _ = args;
     Ok(())
 }
 
@@ -462,6 +469,7 @@ mod cli_override_tests {
         );
     }
 
+    #[cfg(feature = "calibration")]
     #[test]
     fn fingerprint_gap_without_dump_dir_is_rejected() {
         use clap::Parser;
@@ -477,6 +485,7 @@ mod cli_override_tests {
         assert!(err.contains("--gap-fingerprints"));
     }
 
+    #[cfg(feature = "calibration")]
     #[test]
     fn fingerprint_diagnostics_without_dump_dir_is_rejected() {
         use clap::Parser;
@@ -491,6 +500,7 @@ mod cli_override_tests {
         assert!(err.contains("--gap-fingerprints"));
     }
 
+    #[cfg(feature = "calibration")]
     #[test]
     fn fingerprint_flags_ok_with_dump_dir() {
         use clap::Parser;
