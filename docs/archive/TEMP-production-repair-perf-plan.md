@@ -9,18 +9,18 @@ was also re-incurring lever 2's channel scan per candidate) **−69% on top** �
 refine 1189 µs → ~330 µs. See §2.5. **Remaining (optional):** the residual is now `gate_anchor_search` = 89% of the
 (much smaller) gate search — the **#2 `k`-reduction** (§2.5 lever 1c) is the only lever with material headroom left;
 per-candidate work is at a ~330 µs floor. Successor
-to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
+to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) (D12),
 whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
 that one didn't: the **production repair path** end-users actually run.
 
 **Scope.** Performance of the production repair pipeline —
 `PatchAudio::execute` → `prepare_region_patch` / `characterize_region` → `execute_region_spec` → `splice_into_a`.
 **Out of scope:** the diagnostic `--gap-fingerprints` dump (`characterize_gaps_from_decode`) — that path is done
-and its perf profile is captured in [gap-fingerprint.md](gap-fingerprint.md) § Performance.
+and its perf profile is captured in [gap-fingerprint.md](../gap-fingerprint.md) § Performance.
 
 **Structural frame (already landed).** Gap **identification** and **repair** are split and stay split:
 **`characterize_region`** runs the gate, dual-fit, and seam reconciliation and emits a typed **`GapRepairSpec`**
-(verdict + `GapRepairCell` rooted in [gap-vocabulary.md](gap-vocabulary.md)); **`execute_region_spec`** is
+(verdict + `GapRepairCell` rooted in [gap-vocabulary.md](../gap-vocabulary.md)); **`execute_region_spec`** is
 fill-only and produces **`RegionPatch`** PCM from that spec with no re-gating. Production does not consume
 fingerprint JSON — the spec *is* the analysis output. This doc optimizes **shared compute inside characterize**
 only; it does not merge the phases, add a parallel fast path, or extend the measurement surface.
@@ -115,7 +115,7 @@ is pursued **only** through them (no bespoke fast paths, no scan/prod drift):
   (which the D12 step-6 characterize→execute split already established).
 - **Shared primitives, no drift** — `domain/{seam_local,donor,dual_fit}` are already single-impl (scan +
   production) ✓; the typed handoff is `GapRepairSpec` / `GapRepairCell` (rooted in
-  [gap-vocabulary.md](gap-vocabulary.md) cells, not an ad-hoc score). Any new shared object is expressed in that
+  [gap-vocabulary.md](../gap-vocabulary.md) cells, not an ad-hoc score). Any new shared object is expressed in that
   vocabulary and flows through the existing `characterize_region → execute_region_spec` path — not a parallel
   one.
 - **FFT lag sweep** — already landed (`lag_correlation_curve_auto`, `domain/seam_local.rs`).
@@ -495,7 +495,7 @@ extract-when-you-touch rule applies then — but §2.3's likely targets are in `
 
 - **Per-bracket-oracle gating (dump 8g.5)** — DUMP-only cost, **deferred** after two approaches were refuted by
   measurement (reclassification/short-circuit; correlation pre-filter). See the archived plan's 8g.5 row +
-  [gap-fingerprint.md](gap-fingerprint.md) § Performance. Not a production concern (production doesn't enumerate
+  [gap-fingerprint.md](../gap-fingerprint.md) § Performance. Not a production concern (production doesn't enumerate
   all brackets).
 - **Dump/fingerprint performance** — complete + archived.
 - **Bespoke production fast paths / parallel code** — perf only via the shared-object path (§1).
@@ -523,9 +523,9 @@ extract-when-you-touch rule applies then — but §2.3's likely targets are in `
 
 ## 6. References
 
-- [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) — predecessor
+- [archive/TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) — predecessor
   (audit §1, cost hierarchy §1.3, characterize→execute §2.5, 8g fingerprint unification, §3.1 hoist
   feasibility). The durable audit history.
-- [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — P2/P3 triggers for the hoist.
-- [gap-fingerprint.md](gap-fingerprint.md) § Performance — the dump-path profile (why 82%/12% is dump-only).
-- [gap-vocabulary.md](gap-vocabulary.md) — the cell vocabulary the shared objects are rooted in.
+- [TEMP-policies-module-split-plan.md](../TEMP-policies-module-split-plan.md) — P2/P3 triggers for the hoist.
+- [gap-fingerprint.md](../gap-fingerprint.md) § Performance — the dump-path profile (why 82%/12% is dump-only).
+- [gap-vocabulary.md](../gap-vocabulary.md) — the cell vocabulary the shared objects are rooted in.

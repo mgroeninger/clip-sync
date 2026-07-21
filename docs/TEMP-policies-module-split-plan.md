@@ -11,7 +11,7 @@ assembly axis — orthogonal, kept as separate plans. **Status update (2026-07-1
 ([archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)) is **closed** —
 its dump/fingerprint work landed, and it already spun out focused domain modules (`seam_local.rs`, `donor.rs`,
 `dual_fit.rs`). Its remaining P2/P3 **trigger** — the shared mono-downmix **Hoist** — moved to the successor
-[TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) (§2.1), which is **measure-first**:
+[TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) (§2.1), which is **measure-first**:
 P2 (`silence.rs`) / P3 (`gap_borders.rs`) fire **only if** that production measurement shows the hoist is worth
 doing. P4 (`seam_scoring.rs`, trigger 6b) and P1 (`seam_residual.rs`, trigger A6) already fired independently
 and stay ready. **Rule (unchanged): extract-when-you-touch, as a separate byte-preserving PR adjacent to the

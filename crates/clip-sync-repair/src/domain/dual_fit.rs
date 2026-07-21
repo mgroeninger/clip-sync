@@ -185,6 +185,12 @@ pub fn try_dual_fit(
         );
         return None;
     }
+    // Readability note (archive/TEMP-production-repair-perf-plan.md §2.5 lever 1c #3): this content-existence
+    // gate — "is the nominal donor span even non-silent, i.e. is there anything to fill?" — depends only on
+    // `b_mono` + nominal geometry, none of the seam peaks above, so it could be hoisted ahead of the two
+    // `seam_local_peak` searches (cheap gate first). Left here deliberately: dual-fit is a per-gap rescue path
+    // (not a hot loop), so the reorder is a readability nicety, not a measured win — do it only when next
+    // touching this function, and keep the accept/reject decision identical.
     if program_quiet_at_nominal(b_mono, b_mapped_start, p.gap_frames, p.a_gap_floor_db, p.sample_rate) {
         tracing::debug!("dual_fit: declined — nominal donor span is program-quiet");
         return None;

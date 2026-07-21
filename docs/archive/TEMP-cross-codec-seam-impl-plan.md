@@ -8,7 +8,7 @@ simply fell outside `seam_probe`'s ±25 ms window, so `recovered_r` looked dead 
 looked special. At the ±200 ms `baseline_lag` they are ordinary **silence-splices**. The real direction is
 [TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) (independent per-seam fit + length
 reconciliation, validated by the existing gate — no loosening; **archived** — wire spec now in
-[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §4). **Retained:** `domain/seam_robust.rs` and the
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §4). **Retained:** `domain/seam_robust.rs` and the
 R2/R4 fingerprint fields stay as **diagnostics**. NOTE: a genuine one-sided-dead gap in a future pair (e.g.
 the 7th fileset) does **not** revive this plan — that signals genuinely-different content, where an R2/R4-high
 "loosen the validator" rule is the dangerous false-accept; re-examine via the retained R2/R4 diagnostics, not

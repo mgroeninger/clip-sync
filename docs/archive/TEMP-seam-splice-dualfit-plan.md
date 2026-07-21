@@ -1,7 +1,7 @@
 # Seam-splice / dual-seam independent fit — findings + plan (DRAFT)
 
 Status: **ARCHIVED — capture + viability proof done; §4 production repair unbuilt (A3).** Do not update this
-doc for status or next steps. **Live index:** [TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md)
+doc for status or next steps. **Live index:** [TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md)
 (claim rows + **§4 wire spec** for A3). **Schema:** [gap-fingerprint.md](../gap-fingerprint.md) § Registration &
 dual-fit. **Retained in code:** `baseline_lag`/`splice`/`donor_interior`/`splice_dualfit` capture,
 `dualfit_target()` analyzer predicate, `diag_splice_timescale` (§3.6 experiments). **`diag_splice_dualfit` sim
@@ -413,7 +413,7 @@ primary cohort's bracket-exhausted skips.
 ## 5. Status / next
 
 **Next-steps are maintained in one place — the ledger's critical path:**
-[TEMP-seam-repair-status-ledger.md](../TEMP-seam-repair-status-ledger.md) §A. This doc no longer keeps a
+[TEMP-seam-repair-status-ledger.md](TEMP-seam-repair-status-ledger.md) §A. This doc no longer keeps a
 separate checklist (that fragmentation is how the outward-anchor idea kept getting dropped).
 
 Done here (detail): analyzer `splice_text`/`SpliceDiag`/`both_sides_recoverable`/`dualfit_scope_text`; full

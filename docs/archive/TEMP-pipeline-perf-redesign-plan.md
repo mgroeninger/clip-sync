@@ -5,7 +5,7 @@
 > oracle deletion (8g.6) all landed. **8g.5** (per-bracket-oracle perf) is **deferred** — refuted by
 > measurement (see the 8g.5 row). The remaining forward-looking item — **production**-pipeline perf (the
 > mis-filed Hoists / shared mono downmix, §3.1) — moved to its own successor doc:
-> [../TEMP-production-repair-perf-plan.md](../TEMP-production-repair-perf-plan.md). This doc is retained as the
+> [../TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md). This doc is retained as the
 > **audit + history** record (its §1 audit and §1.3 cost hierarchy stay factually true; the measured dump
 > profile is also in [../gap-fingerprint.md](../gap-fingerprint.md) § Performance). No further edits expected.
 
