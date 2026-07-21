@@ -5,6 +5,17 @@
 //! the three corpus archetypes (orchestral / restaurant ambience / interview) so a production default
 //! for `anchor_seam_min_prominence` (today `0.0`) can be chosen with evidence.
 //!
+//! This is a **calibration probe, not a pass/fail test**: it has no assertions — it decodes corpus
+//! media, injects gaps, measures prominences, and prints a CSV for a human to read. The real logic
+//! lives in `clip_sync_repair_harness::anchor_prominence`.
+//!
+//! **Status: finding settled — kept for re-runs, not pending work.** This probe already ran and
+//! *refuted* raising the default above `0.0` (real anchors measured ≤0.073; a 0.10 floor would disable
+//! anchor rescue), so `anchor_seam_min_prominence` stays `0.0`. It is retained (gated + `#[ignore]`, so
+//! it never runs in a normal build) only to re-measure **if anchor detection itself changes**. Do not
+//! mistake it for queued work, and do not promote it to a bin — the `validation-tests` tier is the
+//! right home for an on-demand, corpus-dependent calibration probe.
+//!
 //! PR: **no**.
 //! Run: `cargo test -p clip-sync-repair --features validation-tests --test calibrate_anchor_prominence -- --ignored --nocapture`
 

@@ -20,14 +20,18 @@ Last updated: 2026-07-21.
 | [TEMP-gap-selection-plan.md](docs/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-policies-module-split-plan.md](docs/TEMP-policies-module-split-plan.md) | `policies.rs` module split — draft, not started |
+| [TEMP-calibration-tooling-plan.md](docs/TEMP-calibration-tooling-plan.md) | Gate the gap-fingerprint calibration workflow (bin + diagnostic flags + stats test→bin) behind a `calibration` feature — draft, not started |
 
 ## Open work
 
-### Build hygiene
+### Build hygiene / calibration tooling
+
+The gap-fingerprint calibration workflow (produce a corpus → analyze it) currently leaks into the production binary and into the test tier. Fold it behind one `calibration` feature. See [TEMP-calibration-tooling-plan.md](docs/TEMP-calibration-tooling-plan.md).
 
 | Item | Direction |
 |------|-----------|
-| Gate the `equivalence-calibration` executable | The `[[bin]] equivalence-calibration` (`crates/clip-sync-repair/Cargo.toml`, `src/bin/equivalence_calibration.rs`) is a dev/calibration tool but builds unconditionally on every `cargo build`, pulling into release artifacts. Put it behind a `calibration` (or similar) feature via `required-features` on the `[[bin]]` target so a default build skips it; document the flag alongside the other calibration/validation features |
+| Gate the calibration workflow behind a `calibration` feature | The `[[bin]] equivalence-calibration` (`crates/clip-sync-repair/Cargo.toml`, `src/bin/equivalence_calibration.rs`) builds unconditionally on every `cargo build`. Gate it via `required-features` **and** feature-gate the diagnostic CLI flags that feed it — `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` (`cli/args.rs:27-42`) plus their wiring in `cli/mod.rs` and `composition.rs` — since they are one workflow (generate corpus → diff with the tool). **Caveat:** the `application/gap_fingerprint.rs` schema/builder (`GapCorpus`, `FileSource`) stays compiled — the gated bin imports it and committed corpus fixtures / golden tests depend on it; only the CLI entry points and the executable move behind the gate. Document alongside the other calibration/validation features |
+| Promote `diag_fingerprint_corpus` from a `#[test]` to a calibration bin | `tests/diag_fingerprint_corpus.rs` is a stats tool wearing a test costume: no assertions, "skips" when `GAP_FP_DIRS` is unset, exists only to read `--gap-fingerprints` output dirs and print lag/timing-offset prevalence tables/CSV (env-driven: `GAP_FP_DIRS`, `GAP_FP_DRIFT_EPS_MS`, `GAP_FP_CSV`). The real logic already lives in `harness::gap_fingerprint_corpus::analyze_dirs`, so the move is thin — make it a `[[bin]]` under the `calibration` feature, either a subcommand of `equivalence-calibration` (both read the same corpus) or a sibling `gap-fingerprint-stats`. Parallel (out of scope here): `tests/calibrate_anchor_prominence.rs` is the same pattern for a different signal |
 
 ---
 
@@ -75,7 +79,6 @@ From [archive/residual-gate-findings.md](docs/archive/residual-gate-findings.md)
 | [Skip overlapping end fingerprint](#skip-overlapping-end-fingerprint) | Omit end clip when `T_anchor − L` overlaps start window |
 | [Weighted drift in repair warning](#weighted-drift-in-repair-warning) | Down-rank end clip in instability synthesis when end confidence is low |
 | [Memory / PCM cloning](#memory-use-and-pcm-cloning-on-long-clips) | `Cow` / in-place prep when painful; parallel A/B decode when needed |
-| [Log file appender](#log-file-appender) | `tracing-appender` in `logging/mod.rs` |
 | [Committed test fixtures](#committed-test-fixtures) | Optional committed MP3; committed verify deferred — see [tests/corpus/README.md](tests/corpus/README.md) |
 | [Verification cost knob](#verification-cost-knob) | `validation.max_verification_secs` — only on demonstrated friction |
 | [Test tier follow-ups](docs/test-tier-remainder.md) | `clip-sync` ignore cleanup (~1 h), optional `pr-repair-extended` / SP on PR, Phase 2b binary split — see [test-tier-remainder.md](docs/test-tier-remainder.md) |
@@ -85,12 +88,6 @@ From [archive/residual-gate-findings.md](docs/archive/residual-gate-findings.md)
 15-minute default clips; full PCM in memory per extracted window; no streaming fingerprint API yet. **Decided (2026-06-11):** future streaming should reuse `scan_*_buckets` callbacks; `MediaSession: Send` allows one session per thread when parallel decode lands — see [PLAN.md](PLAN.md) § Media session semantics and [archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md).
 
 **Refs:** `application/align_videos.rs`, `domain/pcm_preparation.rs`
-
-#### Log file appender
-
-`--log-file` parsed but not implemented.
-
-**Refs:** `infrastructure/logging/mod.rs`
 
 #### Committed test fixtures
 
