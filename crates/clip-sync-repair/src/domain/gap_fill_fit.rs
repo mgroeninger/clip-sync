@@ -608,15 +608,27 @@ fn unified_search_best_fill_start(
         }
     };
 
-    if nominal_start >= pre_span {
-        consider(nominal_start, &mut best_start, &mut best_score);
+    // Perf instrumentation (Level E, TEMP-production-repair-perf-plan.md §2.3/§2.4): split each unified search
+    // into the SPARSE coarse pass vs the DENSE integer refine — the distribution that decides prefix-sum vs FFT
+    // for lever 1. `candidates` records attempts per phase (per-candidate cost = busy / candidates). Names are
+    // shared with the end search so aggregation sums coarse-vs-refine across both. Emits only under
+    // CLIP_SYNC_SPAN_TIMING (Level A); nests under `bracket_unified_search`.
+    let coarse_span = tracing::info_span!("unified_coarse", candidates = tracing::field::Empty);
+    let mut coarse_n = 0u64;
+    {
+        let _e = coarse_span.enter();
+        if nominal_start >= pre_span {
+            consider(nominal_start, &mut best_start, &mut best_score);
+            coarse_n += 1;
+        }
+        let mut start = search_min;
+        while start <= search_max {
+            consider(start, &mut best_start, &mut best_score);
+            coarse_n += 1;
+            start = start.saturating_add(coarse_step);
+        }
     }
-
-    let mut start = search_min;
-    while start <= search_max {
-        consider(start, &mut best_start, &mut best_score);
-        start = start.saturating_add(coarse_step);
-    }
+    coarse_span.record("candidates", coarse_n);
 
     if !best_score.is_finite() {
         return None;
@@ -624,9 +636,16 @@ fn unified_search_best_fill_start(
 
     let refine_min = best_start.saturating_sub(coarse_step).max(search_min);
     let refine_max = (best_start + coarse_step).min(search_max);
-    for start in refine_min..=refine_max {
-        consider(start, &mut best_start, &mut best_score);
+    let refine_span = tracing::info_span!("unified_refine", candidates = tracing::field::Empty);
+    let mut refine_n = 0u64;
+    {
+        let _e = refine_span.enter();
+        for start in refine_min..=refine_max {
+            consider(start, &mut best_start, &mut best_score);
+            refine_n += 1;
+        }
     }
+    refine_span.record("candidates", refine_n);
 
     Some((best_start, best_score))
 }
@@ -698,13 +717,21 @@ fn unified_search_best_fill_end(
         }
     };
 
-    consider(best_end, &mut best_end, &mut best_score);
-
-    let mut end = end_min;
-    while end <= end_max {
-        consider(end, &mut best_end, &mut best_score);
-        end = end.saturating_add(coarse_step);
+    // Level E (see start search): coarse (sparse) vs refine (dense) split, shared span names.
+    let coarse_span = tracing::info_span!("unified_coarse", candidates = tracing::field::Empty);
+    let mut coarse_n = 0u64;
+    {
+        let _e = coarse_span.enter();
+        consider(best_end, &mut best_end, &mut best_score);
+        coarse_n += 1;
+        let mut end = end_min;
+        while end <= end_max {
+            consider(end, &mut best_end, &mut best_score);
+            coarse_n += 1;
+            end = end.saturating_add(coarse_step);
+        }
     }
+    coarse_span.record("candidates", coarse_n);
 
     if !best_score.is_finite() {
         return None;
@@ -712,9 +739,16 @@ fn unified_search_best_fill_end(
 
     let refine_min = best_end.saturating_sub(coarse_step).max(end_min);
     let refine_max = (best_end + coarse_step).min(end_max);
-    for end in refine_min..=refine_max {
-        consider(end, &mut best_end, &mut best_score);
+    let refine_span = tracing::info_span!("unified_refine", candidates = tracing::field::Empty);
+    let mut refine_n = 0u64;
+    {
+        let _e = refine_span.enter();
+        for end in refine_min..=refine_max {
+            consider(end, &mut best_end, &mut best_score);
+            refine_n += 1;
+        }
     }
+    refine_span.record("candidates", refine_n);
 
     Some((best_end, best_score))
 }
@@ -743,9 +777,14 @@ fn unified_fine_polish_start(
     let mut best_start = start;
     let mut best_score = f64::NEG_INFINITY;
 
+    // Level E: the fine polish is a small DENSE integer window (±max_fine_adjustment_frames).
+    let polish_span = tracing::info_span!("unified_fine_polish", candidates = tracing::field::Empty);
+    let mut polish_n = 0u64;
+    let polish_guard = polish_span.enter();
     for delta in -(params.max_fine_adjustment_frames as i64)
         ..=(params.max_fine_adjustment_frames as i64)
     {
+        polish_n += 1;
         let candidate = start as i64 + delta;
         if candidate < 0 {
             continue;
@@ -780,6 +819,8 @@ fn unified_fine_polish_start(
             best_start = candidate;
         }
     }
+    drop(polish_guard);
+    polish_span.record("candidates", polish_n);
 
     best_start
 }

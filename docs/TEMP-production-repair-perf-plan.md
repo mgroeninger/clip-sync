@@ -7,9 +7,11 @@ original candidate (§2.1 mono-downmix hoist: 0.006% of runtime)** and located t
 code review (§2.3) shows it is **not** a full-haystack sweep but a windowed coarse+refine search whose per-candidate
 seam correlations are recomputed naively with no cross-candidate reuse. **Lever 2 (hoist placement-invariant
 channel selection) LANDED — measured −31% on the unified search** (byte-parity 26/26); **lever 1 (cross-candidate
-reuse via prefix-sum/FFT) is next** —
-FFT is calibration-safe on our corpus and will be scoped to the production search, leaving the dump/golden
-untouched (§2.4). See **[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)** / §2.4. Successor
+reuse) is next** —
+Level-E (§2.3) confirms it is **FFT** (95% of the search is a dense integer-lag refine): route the refine seam
+correlation through `lag_correlation_curve_auto`. FFT is calibration-safe on our corpus and will be scoped to
+the production search, leaving the dump/golden untouched (§2.4). See
+**[§2.3](#23-level-c--decompose-evaluate_seam_gate-measured-2026-07-20)** / §2.4. Successor
 to the archived [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) (D12),
 whose dump/fingerprint + characterize→execute + oracle-unification work is **complete**. This doc owns only what
 that one didn't: the **production repair path** end-users actually run.
@@ -228,6 +230,28 @@ lever 1's approach (prefix-sum vs FFT coarse grid) needs disambiguating first.
 **Cohort note:** the rescue-gap cost only appears when gaps reach the anchor/dual-fit rescue — pick a pair with
 rescue targets (pair 2 has 2 dual-fit + 1 anchor; pair 1/7 have 3 dual-fit each). A plain-patch-only pair would
 hide the dominant cost.
+
+**Level-E result (`perf_5.log` post-rebuild, 2026-07-20) — lever 1 is FFT, decisively.** Phase spans
+`unified_coarse` / `unified_refine` / `unified_fine_polish` inside the unified search (with a `candidates` count
+field), byte-parity 26/26. Split of the 1211 s `bracket_unified_search`:
+
+| Phase | Density | Time | Share | Candidates | µs/cand |
+|-------|---------|------|-------|------------|---------|
+| **`unified_refine`** | **dense (integer step)** | **1121.9 s** | **92.6%** | 787,364 | 1425 |
+| `unified_coarse` | sparse (`coarse_step`) | 58.5 s | 4.8% | 49,528 | 1181 |
+| `unified_fine_polish` | dense | 30.4 s | 2.5% | 21,074 | 1444 |
+
+Phases sum to 100% of the search (all time is candidate loops). **Dense (refine + polish) = 95.2%**; each refine
+pass is **~4,800 contiguous integer candidates** (±`coarse_step`, `coarse_step` ≈ 2,400 frames / 50 ms), each a
+full per-channel Pearson (~1.4 ms). **This is the textbook FFT case** — one transform computes the whole
+±`coarse_step` band of `Σ aᵢ·bᵢ` in O(M log M) vs ~4,800 independent O(W) Pearsons. Prefix-sum-only leaves the
+numerator untouched and is relegated to the 4.8% sparse coarse pass (FFT overkill there).
+
+**Lever 1 implementation shape (confirmed by measurement):** route the **refine + fine-polish** seam correlation
+through an FFT lag curve over the ±`coarse_step` band — per channel, pre and post seams — then the candidate
+loop does cheap structure-score + penalty lookups against the precomputed correlations. Reuse
+`lag_correlation_curve_auto` (already FFT-numerator + prefix-sum-denominator); do **not** hand-roll. The coarse
+pass can keep direct dot products (or a light prefix-sum normalization) — it is 4.8%, not worth FFT.
 
 ### 2.4 Lever 1 — FFT/prefix-sum calibration-safety + fingerprint-dump scoping
 
