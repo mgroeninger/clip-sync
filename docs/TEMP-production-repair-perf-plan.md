@@ -349,15 +349,33 @@ does the default flip on.
   candidate — hoisted out of the per-candidate loop (`const_pre_score` / `const_wave_min`). Same value ⇒ no
   flag, no re-score, byte-parity-validated. Covers the entire end-search half of the refine as pure
   cross-candidate reuse. (Start search still needs the FFT — its seams genuinely slide with `start`.)
-- **Part B foundation — band-correlation helper: LANDED + equivalence-tested.**
+- **Part B foundation 1 — band primitive: LANDED + equivalence-tested.**
   `seam_local.rs::seam_correlation_over_bases(a, b, base_lo, base_hi)` returns the dense per-base seam Pearson
   over a contiguous band in one `lag_correlation_curve_auto` pass (entry `i` ↔ base `base_lo + i`), equal to
   `seam_pearson` per placement within ε ≤ 1e-8 on both auto branches (`seam_correlation_over_bases_matches_naive`).
-- **Part B remaining:** (1) wire the helper into the start-search refine + fine-polish — precompute pre/post
-  bands per selected channel, `best_channel_correlation`-combine + mono fallback to match
-  `fill_seam_correlations_with_channels` exactly, candidate loop looks up `wave_min`; (2) exact re-score belt at
-  the winner + near-tie cluster; (3) runtime discrepancy → per-gap naive fallback + `warn`; (4)
-  `--no-fft-seam-search` plumbing; (5) placement-diff test; (6) byte-parity + licensed-media perf run.
+- **Part B foundation 2 — band evaluator: LANDED + equivalence-tested.**
+  `policies.rs::fill_seam_correlations_band(...)` precomputes `(pre, post)` for every start in a band, mirroring
+  `fill_seam_correlations_with_channels` exactly (`use_channels` / bounds / per-channel `best_channel_correlation`
+  / mono fallback), returning `None` on any non-uniform band-edge case (caller falls back to naive there). Matches
+  the per-start naive call within ε on both the multichannel and mono paths, FFT branch exercised
+  (`fill_seam_correlations_band_matches_per_start`). Currently `#[allow(dead_code)]` — pending wiring (below).
+  **Confirmed prerequisite:** `clip_sync::…::normalized_correlation` (band path) and
+  `metrics::normalized_correlation` (`seam_pearson` path) are byte-for-byte identical, so band == naive exactly on
+  the naive branch; the evaluator test also now *guards* against future drift between the two copies.
+- **Part B remaining (the search integration — its own focused piece):** (1) refactor the start-search `consider`
+  to inject `wave_min`, precompute the refine/fine-polish band (fall back to naive on `None`), candidate loop looks
+  up `wave_min`; (2) **re-score the winner** with exact naive `fill_seam_correlations` → exact score/tier/reported
+  values (the FFT winner's *true* fit is provably within 2ε of optimal, so accept its placement + exact re-score);
+  (3) runtime discrepancy → per-gap naive fallback + `warn`; (4) flag (default OFF for validation — byte-parity
+  with the flag off proves the default path is unchanged; flip on after placement-diff + licensed-media validate);
+  (5) placement-diff test; (6) licensed-media perf run. **Validation note:** because the FFT winner may differ
+  from naive by a sub-ms near-tie (not bit-identical), byte-parity gates only the *flag-off* path; the flag-on path
+  is gated by placement-diff + real-media, per §2.5's conservative branch.
+
+**Follow-up hygiene (not part of lever 1):** `clip_sync::…::offset_refinement::normalized_correlation` and
+`crate::domain::metrics::normalized_correlation` are exact duplicates. Consider consolidating to a shared numeric
+home (low priority — the band evaluator test now guards drift; `metrics` is intentionally dependency-free, so this
+is a `clip_sync`-side move, not a bundle-into-perf change).
 
 ---
 

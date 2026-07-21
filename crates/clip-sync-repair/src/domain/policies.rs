@@ -1,5 +1,6 @@
 use crate::domain::metrics::normalized_correlation;
 use crate::domain::pcm::InterleavedSamples;
+use crate::domain::seam_local::seam_correlation_over_bases;
 
 /// A contiguous silent region on a media timeline (seconds).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1309,6 +1310,174 @@ pub(crate) fn fill_seam_correlations_with_channels(
     (pre, post)
 }
 
+/// Lever 1 (TEMP-production-repair-perf-plan.md §2.5): precompute `(pre, post)` seam correlations for **every**
+/// `start` in `[start_lo, start_hi]` (inclusive) in one FFT band pass per channel, mirroring
+/// [`fill_seam_correlations_with_channels`] exactly — `use_channels` / bounds / per-channel selection /
+/// `best_channel_correlation` / mono fallback are all reproduced. Entry `i` corresponds to `start_lo + i` and
+/// equals the per-start call within FFT ε (≤ 1e-8; naive-exact below the FFT crossover).
+///
+/// Returns `None` when any start-dependent bound is **not uniform** across the band (a band-edge case where the
+/// naive channel set would vary per start) or a band does not fit; the caller then scores that band the naive
+/// per-candidate way. This keeps the FFT path to the interior where it provably matches naive — correctness is
+/// further guaranteed downstream by the exact re-score of the winning placement.
+// Tested foundation for lever 1 Part B; wired into the unified-search refine in the next step (§2.5).
+#[allow(dead_code)]
+pub(crate) fn fill_seam_correlations_band(
+    templates: &SeamTemplates<'_>,
+    gap_frames: usize,
+    pre_window: usize,
+    post_window: usize,
+    score_channels: &[usize],
+    start_lo: usize,
+    start_hi: usize,
+) -> Option<Vec<(f64, f64)>> {
+    if start_hi < start_lo {
+        return None;
+    }
+    let width = start_hi - start_lo + 1;
+    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+
+    let use_channels = b_ch.len() > 1
+        && a_pre_ch.len() == b_ch.len()
+        && a_post_ch.len() == b_ch.len()
+        && a_pre_ch.iter().any(|ch| !ch.is_empty());
+
+    // --- PRE side. `score_pre`'s start-dependent parts (start >= pre_window, start <= b_mono.len()) are
+    // monotonic in `start`, so they are uniform across the band iff they agree at both ends. ---
+    let pre_ok_lo = start_lo >= pre_window && start_lo <= b_mono.len();
+    let pre_ok_hi = start_hi >= pre_window && start_hi <= b_mono.len();
+    if pre_ok_lo != pre_ok_hi {
+        return None;
+    }
+    let score_pre = pre_window > 0 && !a_pre.is_empty() && pre_ok_lo;
+    let mono_pre = mono_seam_band(
+        score_pre,
+        a_pre,
+        b_mono,
+        pre_window,
+        start_lo.saturating_sub(pre_window),
+        start_hi.saturating_sub(pre_window),
+        true,
+        width,
+    )?;
+    let mut pre_ch_bands: Vec<Vec<f64>> = Vec::new();
+    if use_channels && score_pre {
+        for &ch in score_channels {
+            if a_pre_ch[ch].len() < pre_window {
+                continue; // permanently excluded (start-independent) — matches naive
+            }
+            let lo_ok = start_lo <= b_ch[ch].len();
+            let hi_ok = start_hi <= b_ch[ch].len();
+            if lo_ok != hi_ok {
+                return None; // channel would be scored for some starts, skipped for others
+            }
+            if !hi_ok {
+                continue;
+            }
+            let band = seam_correlation_over_bases(
+                &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],
+                &b_ch[ch],
+                start_lo - pre_window,
+                start_hi - pre_window,
+            );
+            if band.len() != width {
+                return None;
+            }
+            pre_ch_bands.push(band);
+        }
+    }
+
+    // --- POST side. ---
+    let post_ok_lo = start_lo + gap_frames + post_window <= b_mono.len();
+    let post_ok_hi = start_hi + gap_frames + post_window <= b_mono.len();
+    if post_ok_lo != post_ok_hi {
+        return None;
+    }
+    let score_post = post_window > 0 && !a_post.is_empty() && post_ok_lo;
+    let mono_post = mono_seam_band(
+        score_post,
+        a_post,
+        b_mono,
+        post_window,
+        start_lo + gap_frames,
+        start_hi + gap_frames,
+        false,
+        width,
+    )?;
+    let mut post_ch_bands: Vec<Vec<f64>> = Vec::new();
+    if use_channels && score_post {
+        for &ch in score_channels {
+            if a_post_ch[ch].len() < post_window {
+                continue;
+            }
+            let lo_ok = start_lo + gap_frames + post_window <= b_ch[ch].len();
+            let hi_ok = start_hi + gap_frames + post_window <= b_ch[ch].len();
+            if lo_ok != hi_ok {
+                return None;
+            }
+            if !hi_ok {
+                continue;
+            }
+            let band = seam_correlation_over_bases(
+                &a_post_ch[ch][..post_window],
+                &b_ch[ch],
+                start_lo + gap_frames,
+                start_hi + gap_frames,
+            );
+            if band.len() != width {
+                return None;
+            }
+            post_ch_bands.push(band);
+        }
+    }
+
+    let pre = combine_seam_band(width, score_pre, &mono_pre, &pre_ch_bands);
+    let post = combine_seam_band(width, score_post, &mono_post, &post_ch_bands);
+    Some(pre.into_iter().zip(post).collect())
+}
+
+/// The mono seam correlation over a band, matching the mono branch / fallback of
+/// [`fill_seam_correlations_with_channels`]: `0.0` for all starts when the seam is not scored or the template
+/// is shorter than the window (naive `seam_pearson` returns 0.0 on unequal lengths); else the FFT band. `tail`
+/// selects the pre-side tail vs the post-side head of `a`.
+#[allow(dead_code)]
+fn mono_seam_band(
+    score: bool,
+    a: &[f64],
+    b_mono: &[f64],
+    window: usize,
+    base_lo: usize,
+    base_hi: usize,
+    tail: bool,
+    width: usize,
+) -> Option<Vec<f64>> {
+    if !score || a.len() < window {
+        return Some(vec![0.0; width]);
+    }
+    let template: &[f64] = if tail { &a[a.len() - window..] } else { &a[..window] };
+    let band = seam_correlation_over_bases(template, b_mono, base_lo, base_hi);
+    (band.len() == width).then_some(band)
+}
+
+/// Per-start combine matching `fill_seam_correlations_with_channels`: with selected channels, take the best
+/// (max) channel score; with none, fall back to the mono band when the seam is scored, else `0.0`.
+#[allow(dead_code)]
+fn combine_seam_band(width: usize, score: bool, mono: &[f64], ch_bands: &[Vec<f64>]) -> Vec<f64> {
+    (0..width)
+        .map(|i| {
+            if ch_bands.is_empty() {
+                if score {
+                    mono[i]
+                } else {
+                    0.0
+                }
+            } else {
+                ch_bands.iter().map(|b| b[i]).fold(f64::NEG_INFINITY, f64::max)
+            }
+        })
+        .collect()
+}
+
 /// Per-channel seam diagnostics at a placement, for debug logging of multichannel scoring.
 #[derive(Debug, Clone)]
 pub struct SeamChannelDiagnostics {
@@ -2345,6 +2514,88 @@ pub fn apply_seam_crossfade(
 mod tests {
     use super::*;
     use crate::domain::pcm::InterleavedPcm;
+
+    fn det_noise(seed: u64, n: usize) -> Vec<f64> {
+        let mut s = seed | 1;
+        (0..n)
+            .map(|_| {
+                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((s >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+            })
+            .collect()
+    }
+
+    /// The FFT band evaluator must reproduce the per-start naive `fill_seam_correlations_with_channels` at
+    /// every start in the band, within FFT ε — for both the multichannel (best-of-selected) and mono paths.
+    /// Sized so the pre band crosses the FFT crossover (exercises the accelerated branch end-to-end).
+    #[test]
+    fn fill_seam_correlations_band_matches_per_start() {
+        let (pre_window, post_window, gap_frames) = (200usize, 220usize, 120usize);
+        let total_b = 8000usize;
+        let (start_lo, start_hi) = (1000usize, 6000usize); // interior; pre band width 5001 ⇒ FFT branch
+
+        // --- multichannel (use_channels = true, score a subset) ---
+        let nch = 3usize;
+        let a_pre_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(100 + c as u64, 256)).collect();
+        let a_post_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(200 + c as u64, 256)).collect();
+        let b_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(300 + c as u64, total_b)).collect();
+        let a_pre = det_noise(1, 256);
+        let a_post = det_noise(2, 256);
+        let b_mono = det_noise(3, total_b);
+        let score_channels = vec![0usize, 2usize];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let band = fill_seam_correlations_band(
+            &templates, gap_frames, pre_window, post_window, &score_channels, start_lo, start_hi,
+        )
+        .expect("band applies for interior starts");
+        assert_eq!(band.len(), start_hi - start_lo + 1);
+        for (i, &(pre, post)) in band.iter().enumerate() {
+            let (npre, npost) = fill_seam_correlations_with_channels(
+                &templates,
+                SeamPlacement { start: start_lo + i, gap_frames, pre_window, post_window },
+                &score_channels,
+            );
+            assert!(
+                (pre - npre).abs() < 1e-8 && (post - npost).abs() < 1e-8,
+                "mc start {}: pre {pre} vs {npre}, post {post} vs {npost}",
+                start_lo + i
+            );
+        }
+
+        // --- mono (use_channels = false: no per-channel templates) ---
+        let empty: Vec<Vec<f64>> = Vec::new();
+        let mono_templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &empty,
+            a_post_ch: &empty,
+            b_mono: &b_mono,
+            b_ch: &empty,
+        };
+        let mband = fill_seam_correlations_band(
+            &mono_templates, gap_frames, pre_window, post_window, &[], start_lo, start_hi,
+        )
+        .expect("mono band applies");
+        for (i, &(pre, post)) in mband.iter().enumerate() {
+            let (npre, npost) = fill_seam_correlations_with_channels(
+                &mono_templates,
+                SeamPlacement { start: start_lo + i, gap_frames, pre_window, post_window },
+                &[],
+            );
+            assert!(
+                (pre - npre).abs() < 1e-8 && (post - npost).abs() < 1e-8,
+                "mono start {}: pre {pre} vs {npre}, post {post} vs {npost}",
+                start_lo + i
+            );
+        }
+    }
 
     fn mono_pcm(rate: u32, samples: Vec<f32>) -> InterleavedPcm {
         InterleavedPcm {
