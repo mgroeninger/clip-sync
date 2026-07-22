@@ -22,7 +22,7 @@ use symphonia::core::{codec_profile, support_audio_codec};
 use tracing::warn;
 
 use super::adts::construct_adts_header;
-use super::meta::{M4AInfo, M4AType, M4A_TYPES, map_to_channels, sample_rate_index};
+use super::meta::{M4AInfo, M4AType, m4a_type_from_index, map_to_channels, sample_rate_index};
 
 type Result<T> = symphonia::core::errors::Result<T>;
 
@@ -106,7 +106,7 @@ impl AacDecoder {
         let sample_rate = stream_info.aacSampleRate as u32;
 
         self.m4a_info = M4AInfo {
-            otype: M4A_TYPES[stream_info.aot as usize],
+            otype: m4a_type_from_index(stream_info.aot as usize),
             channels,
             sample_rate,
             sample_rate_index: sample_rate_index(sample_rate),

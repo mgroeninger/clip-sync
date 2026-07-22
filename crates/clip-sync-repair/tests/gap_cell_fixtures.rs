@@ -116,6 +116,14 @@ fn each_fixture_matches_its_declared_cell() {
             }
             GapCellType::RepairableDropout => {
                 assert_equivalence_class(fx, GapEquivalenceClass::RepairableDropout);
+                // Orthogonality (plan data note): equivalence class and seam disposition are independent —
+                // this real dropout is *also* a dual-fit target. Pin it so the orthogonality can't silently
+                // regress (the golden freezes it, but nothing else asserts it live).
+                assert!(
+                    row_of(fx).dualfit_target(),
+                    "{}: this repairable_dropout is also a dual-fit target (orthogonal axes)",
+                    ctx()
+                );
             }
             GapCellType::SharedSilence => {
                 assert_equivalence_class(fx, GapEquivalenceClass::SharedSilence);
@@ -124,8 +132,8 @@ fn each_fixture_matches_its_declared_cell() {
                 assert_equivalence_class(fx, GapEquivalenceClass::AmbientQuiet);
             }
             GapCellType::Decorrelated => {
-                // Donor is occupied (unlike program-quiet) but the seams recover at NO lag, so — unlike a
-                // silence-splice — it is not a dual-fit target. The third action-distinct skip.
+                // Donor is occupied (unlike program-quiet) but the seams recover at NO lag on any peak layer,
+                // so — unlike a silence-splice — it is not a dual-fit target. The third action-distinct skip.
                 let r = row_of(fx);
                 assert!(!r.patched(), "{}: decorrelated is a skip", ctx());
                 assert_eq!(
@@ -140,33 +148,49 @@ fn each_fixture_matches_its_declared_cell() {
                     "{}: donor is occupied (distinguishes decorrelated from program-quiet)",
                     ctx()
                 );
-                assert!(!r.dualfit_target(), "{}: seams recover at no lag ⇒ not a dual-fit target", ctx());
-            }
-            GapCellType::ResidualVeto => {
-                // Seams PASS the waveform gate, but least-squares cancellation shows B ≠ A ⇒ reasoned skip.
-                let r = row_of(fx);
-                assert!(!r.patched(), "{}: residual veto is a skip", ctx());
-                assert_eq!(r.residual_informative, Some(true), "{}: expected an informative residual", ctx());
-                match r.residual_headroom_db {
-                    Some(h) => assert!(
-                        h > 6.0,
-                        "{}: residual headroom {h:.1} dB should exceed the veto margin",
+                // Teeth: the seams genuinely don't recover — pin the mechanism, not just the outcome.
+                assert_eq!(
+                    r.dualfit_pass,
+                    Some(false),
+                    "{}: seam gate must NOT pass (that's why it's not a target)",
+                    ctx()
+                );
+                assert!(
+                    !r.both_sides_recoverable(),
+                    "{}: neither shoulder recovers a unique peak",
+                    ctx()
+                );
+                for (side, pk) in [("pre", r.peak_r_pre), ("post", r.peak_r_post)] {
+                    assert!(
+                        pk.is_some_and(|v| v < 0.5),
+                        "{}: {side} gross peak {pk:?} should be low (seams don't recover)",
                         ctx()
-                    ),
-                    None => panic!("{}: expected a residual headroom reading", ctx()),
+                    );
                 }
+                assert!(!r.dualfit_target(), "{}: seams recover at no lag ⇒ not a dual-fit target", ctx());
             }
             GapCellType::TailGeometryMismatch => {
                 // A length-mismatch tail: filtered before per-gap scoring, excluded from the matched denom.
                 let r = row_of(fx);
                 assert_eq!(r.kind, GapKind::Tail, "{}: expected GapKind::Tail", ctx());
+                assert!(
+                    r.duration_secs.is_some_and(|d| d >= 30.0),
+                    "{}: tail duration {:?} must be ≥ the tail cutoff",
+                    ctx(),
+                    r.duration_secs
+                );
+                assert_eq!(r.brackets_total, 0, "{}: a tail is filtered before seam scoring (unscored)", ctx());
+                assert!(!r.dualfit_target(), "{}: a tail is not a dual-fit target", ctx());
             }
-            GapCellType::Unfillable => {
-                // Not fingerprint-representable: unfillable gaps (BExtractFailed / AlignedSegmentOutOfRange /
-                // ZeroLengthGap) fail at plan/execution time and never get characterized — only gate /
-                // correlation skips reach a fingerprint. Covered by `GapPatchSkipReason` unit tests + the
-                // pipeline, not a curated fixture; no manifest entry should declare this type.
-                panic!("{}: unfillable is a plan-time cell, not a curated fingerprint fixture", ctx());
+            // Not fingerprint-representable — the dump path sets `outcome.tier` from seam scoring (`any_ok`,
+            // gap_fingerprint.rs), never from residual gating or plan/execution failures, so neither cell can
+            // appear as an honest characterized gap. The residual-gate *decision* (headroom → veto verdict) is
+            // tested at score/region level (`validate_residual_gate` F4 cases, `seam_residual_oracle`,
+            // `measure_dual_fit_residual_verdict`); the end-to-end pipeline veto is the **optional/unproved
+            // C1b** item (`tests/residual_gate_catalog/README.md`). `unfillable` is covered by
+            // `GapPatchSkipReason` unit tests. No manifest entry should declare either type.
+            GapCellType::ResidualVeto | GapCellType::Unfillable => {
+                panic!("{}: not a fingerprint-representable cell — must not have a curated fixture", ctx());
             }
         }
     }

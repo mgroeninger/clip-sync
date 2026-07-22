@@ -27,11 +27,7 @@ impl M4AInfo {
             _ => unreachable!(),
         };
 
-        if otypeidx >= M4A_TYPES.len() {
-            Ok(M4AType::Unknown)
-        } else {
-            Ok(M4A_TYPES[otypeidx])
-        }
+        Ok(m4a_type_from_index(otypeidx))
     }
 
     fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
@@ -170,6 +166,12 @@ pub(super) const M4A_TYPES: &[M4AType] = &[
     M4AType::SMRMain,
 ];
 
+/// Bounds-checked lookup: FDK can report audio object types (e.g. USAC = 42)
+/// beyond this table, so out-of-range indices map to `Unknown` instead of panicking.
+pub(super) fn m4a_type_from_index(index: usize) -> M4AType {
+    M4A_TYPES.get(index).copied().unwrap_or(M4AType::Unknown)
+}
+
 const AAC_SAMPLE_RATES: [u32; 16] = [
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350, 0, 0,
     0,
@@ -198,4 +200,18 @@ pub(super) fn map_to_channels(num_channels: u8) -> Option<Channels> {
     };
 
     Some(channels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m4a_type_from_index_maps_out_of_range_to_unknown() {
+        assert_eq!(m4a_type_from_index(2), M4AType::Lc);
+        // FDK reports AOT values beyond the table (e.g. USAC = 42); these must
+        // not panic.
+        assert_eq!(m4a_type_from_index(42), M4AType::Unknown);
+        assert_eq!(m4a_type_from_index(usize::MAX), M4AType::Unknown);
+    }
 }

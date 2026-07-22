@@ -90,7 +90,13 @@ fn trim_ffmpeg_stderr(stderr: &str) -> String {
     if message.len() <= MAX_LEN {
         message
     } else {
-        format!("{}…", &message[message.len() - MAX_LEN..])
+        // ffmpeg stderr can contain multibyte characters (e.g. non-ASCII file
+        // names); advance to a char boundary so the slice cannot panic.
+        let mut start = message.len() - MAX_LEN;
+        while !message.is_char_boundary(start) {
+            start += 1;
+        }
+        format!("{}…", &message[start..])
     }
 }
 
@@ -472,6 +478,16 @@ Error: no video stream\n";
         let trimmed = trim_ffmpeg_stderr(stderr);
         assert!(trimmed.contains("no video stream"));
         assert!(!trimmed.contains("ffmpeg version"));
+    }
+
+    #[test]
+    fn trim_ffmpeg_stderr_truncates_on_char_boundary() {
+        // A long line of multibyte characters must not panic when the 500-byte
+        // truncation point lands mid-character.
+        let stderr = "é".repeat(600);
+        let trimmed = trim_ffmpeg_stderr(&stderr);
+        assert!(trimmed.ends_with('…'));
+        assert!(trimmed.len() <= 500 + '…'.len_utf8());
     }
 
     #[test]
