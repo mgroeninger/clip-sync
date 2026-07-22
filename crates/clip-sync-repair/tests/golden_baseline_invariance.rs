@@ -1,5 +1,5 @@
 //! Perf §4 decision-invariance — re-analyze the curated per-gap-type fixtures and diff against the frozen
-//! golden snapshot (`docs/TEMP-gap-fixture-corpus-plan.md`).
+//! golden snapshot (gap cells: `docs/gap-vocabulary.md`).
 //!
 //! Tier: **pr-repair** — media-free (the committed fixtures + committed golden are the input), so no
 //! `#[ignore]`, no `gap-files/`, no `validation-tests` feature. (Was `gap-files/re-anchor`-dependent until

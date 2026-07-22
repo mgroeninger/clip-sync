@@ -2,9 +2,9 @@
 
 `curated.golden.json` is the reference snapshot future perf refactors are diffed against: per gap, the D/R
 axis coordinates (prefixed by placement) + derived verdicts. Built by `baseline_from_rows` from the analyzer's
-own predicate methods, so it can't drift from the decision logic. See
-[docs/TEMP-pipeline-perf-redesign-plan.md](../../../docs/TEMP-pipeline-perf-redesign-plan.md) §4 and
-[docs/TEMP-gap-fixture-corpus-plan.md](../../../../docs/TEMP-gap-fixture-corpus-plan.md).
+own predicate methods, so it can't drift from the decision logic. It snapshots the curated per-gap-type
+fixtures — gap cells in [docs/gap-vocabulary.md](../../../../docs/gap-vocabulary.md),
+fixture-library format in [docs/gap-fingerprint.md](../../../../docs/gap-fingerprint.md) § Source identity.
 
 ## `curated.golden.json` — self-hosting
 

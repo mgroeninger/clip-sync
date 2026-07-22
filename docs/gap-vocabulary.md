@@ -4,8 +4,8 @@ A gap is a point in a small measurement space — how A's kept content meets B's
 seam(s). Its **type** is the cell that point falls into; patch/skip is a function of the cell, not a
 single conflated score. This doc names the cells we **see and reconcile to an action** — a patch, or a
 *reasoned* skip. The cells are exercised by a committed set of per-gap-**type** fixtures — one representative
-each, media-free — under `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/`
-([TEMP-gap-fixture-corpus-plan.md](TEMP-gap-fixture-corpus-plan.md)), which superseded the original derivation
+each, media-free — under `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/` (format:
+[gap-fingerprint.md](gap-fingerprint.md) § Source identity), which superseded the original derivation
 corpus (`re-anchor-dual-fit-on-nominal`, ephemeral and now retired). Every core cell has a fixture, plus a
 hand-built synthetic **Decorrelated** and a real **Tail**; **Residual-veto** and the **Unfillable** family are
 **not fingerprint-representable** (the dump sets outcome from seam scoring, never from residual gating or

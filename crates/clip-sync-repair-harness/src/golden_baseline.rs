@@ -98,8 +98,8 @@ fn record_from_row(r: &GapRow) -> GoldenRecord {
 }
 
 /// Build a golden snapshot from an explicit set of analyzed rows (every row included, in order). The
-/// per-gap-fixture path (`docs/TEMP-gap-fixture-corpus-plan.md`) uses this to snapshot a curated set whose
-/// rows carry unique `pair` labels; [`baseline_from_report`] feeds it the corpus's matched rows.
+/// curated per-gap-type fixture path uses this to snapshot a set whose rows carry unique `pair` labels;
+/// [`baseline_from_report`] feeds it the corpus's matched rows.
 pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> GoldenBaseline {
     let gaps: Vec<GoldenRecord> = rows.into_iter().map(record_from_row).collect();
     GoldenBaseline {

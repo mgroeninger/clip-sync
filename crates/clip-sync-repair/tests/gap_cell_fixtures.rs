@@ -1,5 +1,5 @@
-//! **Phase 2** of the gap-fixture-corpus plan (`docs/TEMP-gap-fixture-corpus-plan.md`): the per-gap-**type**
-//! classification contract. For every curated fixture (`clip_sync_repair_fixtures::gap_cell_fixtures`), run
+//! The per-gap-**type** classification contract (gap cells defined in `docs/gap-vocabulary.md`). For every
+//! curated fixture (`clip_sync_repair_fixtures::gap_cell_fixtures`), run
 //! the **live** classifiers on it and assert the result matches its declared cell — media-independent, so it
 //! runs on every PR (no feature gate).
 //!

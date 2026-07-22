@@ -1,5 +1,5 @@
 //! **8f differential** — the fingerprint projection preserves every decision axis, checked on the curated
-//! per-gap-type fixture set (`docs/TEMP-gap-fixture-corpus-plan.md`).
+//! per-gap-type fixture set (gap cells: `docs/gap-vocabulary.md`).
 //!
 //! Tier: **pr-repair** — media-free (the committed fixtures are the input), so no `#[ignore]`, no corpus on
 //! disk, no `validation-tests` feature. (Was a `gap-files/`-dependent validation test until Phase 3.)

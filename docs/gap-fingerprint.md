@@ -206,9 +206,8 @@ single-gap `GapCorpus`. A `manifest.json` indexes them (ids, times, tiers, verdi
 
 The **committed** instance of this library is the curated per-gap-**type** fixture set at
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/` — one representative single-gap `GapCorpus`
-per gap cell, the media-free input for the gap-classification tests
-([TEMP-gap-fixture-corpus-plan.md](TEMP-gap-fixture-corpus-plan.md); cells in
-[gap-vocabulary.md](gap-vocabulary.md)).
+per gap cell (see [gap-vocabulary.md](gap-vocabulary.md)), the media-free input for the gap-classification
+tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`).
 
 **Licensing guardrail:** the only place the real `id → title/path` mapping should live is a
 **git-ignored** local file (e.g. `corpus/.sources.local.toml`). Keep it out of the committed corpus.

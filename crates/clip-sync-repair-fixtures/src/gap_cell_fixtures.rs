@@ -6,8 +6,8 @@
 //! cell** without touching the ephemeral `gap-files/` corpus.
 //!
 //! Licensing-safe: the fixtures are the non-identifying fingerprint projection (hashed source ids, numbers
-//! only — no samples, no titles/paths). Background + taxonomy: `docs/TEMP-gap-fixture-corpus-plan.md`,
-//! `docs/gap-vocabulary.md`.
+//! only — no samples, no titles/paths). Gap cells: `docs/gap-vocabulary.md`; fixture-library format:
+//! `docs/gap-fingerprint.md` § Source identity.
 
 use std::path::{Path, PathBuf};
 
@@ -101,8 +101,8 @@ impl GapCellType {
     }
 }
 
-/// Where a fixture was harvested from — recorded because the source `gap-files/` corpus is ephemeral and may
-/// be deleted (see `docs/TEMP-gap-fixture-corpus-plan.md` § Problem).
+/// Where a fixture was harvested from — recorded because the source `gap-files/` corpus is gitignored and
+/// ephemeral (derived from licensed media), so it may be deleted at any time.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FixtureProvenance {
     /// Source corpus directory name under `gap-files/` (e.g. `re-anchor-dual-fit-on-nominal`).

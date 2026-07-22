@@ -1972,9 +1972,9 @@ fn curated_row_label(file: &str) -> &str {
     file.strip_suffix(".json").unwrap_or(file)
 }
 
-/// Analyzed rows for the committed curated per-gap-**type** fixtures
-/// (`docs/TEMP-gap-fixture-corpus-plan.md`). Each row is labelled by its fixture file stem, so golden keys are
-/// unique despite colliding source-gap indices. Media-free — reads the committed fixture bytes directly.
+/// Analyzed rows for the committed curated per-gap-**type** fixtures (gap cells: `docs/gap-vocabulary.md`).
+/// Each row is labelled by its fixture file stem, so golden keys are unique despite colliding source-gap
+/// indices. Media-free — reads the committed fixture bytes directly.
 pub fn curated_gap_cell_rows() -> Vec<GapRow> {
     use clip_sync_repair_fixtures::gap_cell_fixtures::{curated_fixtures_dir, load_gap_cell_fixtures};
     let dir = curated_fixtures_dir();
