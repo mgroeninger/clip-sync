@@ -68,7 +68,6 @@ try {
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration',
-            '--test', 'golden_baseline_smoke',
             '--test', 'gap_cell_fixtures',
             '--test', 'golden_baseline_invariance',
             '--test', 'gap_repair_spec_diff'
@@ -85,7 +84,6 @@ try {
         }
 
         Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
-        Invoke-CargoTest @('-p', 'clip-sync-repair-fixtures', '--lib')
     }
 
     function Invoke-RepairPrRepairExtended {

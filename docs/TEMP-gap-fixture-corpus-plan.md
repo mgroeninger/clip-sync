@@ -1,6 +1,6 @@
 # Gap-type fixture corpus — plan (DRAFT)
 
-Status: **draft / Phases 0–3 done** (2026-07-21).
+Status: **draft / Phases 0–4 done; only Phase 5 (synthetics) open** (2026-07-22).
 
 Replace the fragile dependency on the ephemeral, licensed-media-derived `gap-files/` corpus with a curated,
 committed set of **per-gap-type fingerprint fixtures** — one self-contained JSON per gap *cell*, so the
@@ -99,9 +99,14 @@ bracket-patch) will grow to 2–3 members each once the harness is in place.
   tier — note `gap_repair_spec_diff` never actually ran in CI before). No test depends on `gap-files/` any
   more. *(Data note: `repairable_dropout·g1` is legitimately also a dual-fit target — equivalence class and
   seam disposition are orthogonal; the golden records both.)*
-- **Phase 4 — Retire re-anchor.** Recast `assert_footguns` onto the Phase-2 expectations; drop the re-anchor
-  golden + all `gap-files/` default-path references from tests and docs (`golden_baseline_smoke`,
-  `test-tier.ps1`, `test-tiers.md`, `golden/README.md`, the `dual_fit.rs` comment). Fragility gone.
+- **Phase 4 — Retire re-anchor. ✅ DONE (2026-07-22).** The `assert_footguns` guards were recast as Phase-2
+  per-type assertions (added the missing "seams PASS the gate yet donor-dead" premise — `dualfit_pass ==
+  Some(true)` — to the program-quiet arm), and the frozen target set is now pinned by `curated.golden.json`.
+  Deleted: `golden_baseline_smoke.rs` + its `[[test]]` entry, `assert_footguns` + `EXPECTED_TARGETS`
+  (harness), `re-anchor-dual-fit-on-nominal.golden.json`. Updated: `test-tier.ps1`, `test-tiers.md`,
+  `golden/README.md`, `development.md`, the `dual_fit.rs` comment. **Fragility gone** — no test references
+  `gap-files/` or the re-anchor golden. (`analyze_dirs` stays: it still powers the `gap-fingerprint-stats`
+  calibration bin, `corpus_projection` / `decode_path_projection`, and its own unit tests.)
 - **Phase 5 — Synthetic cells.** Hand-build `decorrelated`, `residual_veto`, `tail_geometry_mismatch`,
   `unfillable` (reuse `residual_gate_catalog` / the synthetic `synth_ab_from_decode_corpus` generator where
   possible). Completes coverage of the n=0 production cells.

@@ -12,7 +12,7 @@
 //! cargo test -p clip-sync-repair --test golden_baseline_invariance
 //! Remove-Item Env:\CURATED_GOLDEN_REGEN
 //! ```
-//! The corpus-free footgun smoke test still lives in `golden_baseline_smoke.rs`.
+//! The per-type classification footguns live in `gap_cell_fixtures.rs` (Phase 2).
 
 use std::path::{Path, PathBuf};
 

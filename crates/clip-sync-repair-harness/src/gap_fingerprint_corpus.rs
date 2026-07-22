@@ -1965,8 +1965,15 @@ fn curated_single_row(bytes: &[u8], pair: &str) -> GapRow {
     rows.pop().unwrap()
 }
 
+/// The golden row label for a fixture: its filename stem (e.g. `01_bracket_patch_clean`). Unique by
+/// construction, so keys stay distinct even when several fixtures share a cell type *and* a source-gap index
+/// (the Phase-5 multiple-per-type case) — a bare cell-type label would collide there.
+fn curated_row_label(file: &str) -> &str {
+    file.strip_suffix(".json").unwrap_or(file)
+}
+
 /// Analyzed rows for the committed curated per-gap-**type** fixtures
-/// (`docs/TEMP-gap-fixture-corpus-plan.md`). Each row is labelled by its cell type, so golden keys are
+/// (`docs/TEMP-gap-fixture-corpus-plan.md`). Each row is labelled by its fixture file stem, so golden keys are
 /// unique despite colliding source-gap indices. Media-free — reads the committed fixture bytes directly.
 pub fn curated_gap_cell_rows() -> Vec<GapRow> {
     use clip_sync_repair_fixtures::gap_cell_fixtures::{curated_fixtures_dir, load_gap_cell_fixtures};
@@ -1976,7 +1983,7 @@ pub fn curated_gap_cell_rows() -> Vec<GapRow> {
         .map(|fx| {
             let path = dir.join(&fx.file);
             let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-            curated_single_row(&bytes, fx.cell_type.as_str())
+            curated_single_row(&bytes, curated_row_label(&fx.file))
         })
         .collect()
 }
@@ -1990,7 +1997,7 @@ pub fn curated_gap_cell_projected_rows() -> Vec<GapRow> {
         .map(|fx| {
             let projected = crate::corpus_projection::project_corpus(&fx.corpus);
             let bytes = serde_json::to_vec(&projected).expect("serialize projected curated corpus");
-            curated_single_row(&bytes, fx.cell_type.as_str())
+            curated_single_row(&bytes, curated_row_label(&fx.file))
         })
         .collect()
 }

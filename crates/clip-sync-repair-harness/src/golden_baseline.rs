@@ -231,78 +231,11 @@ fn diff_f64_opt(key: &str, field: &str, exp: Option<f64>, act: Option<f64>, eps:
     }
 }
 
-/// §4.4 footgun guards — pin post-fix behavior so refactors cannot silently revert placement fixes.
-pub fn assert_footguns(baseline: &GoldenBaseline) -> Result<(), String> {
-    let mut errs = Vec::new();
-    let find = |pair_suffix: &str, index: usize| -> Option<&GoldenRecord> {
-        baseline.gaps.iter().find(|g| g.pair.ends_with(pair_suffix) && g.index == index)
-    };
-
-    // Seam-local placement: 2·g1 gross vs seam-local diverge; pre_seam_r must be live at seam-local peak.
-    if let Some(g) = find("/2", 1) {
-        if !g.dualfit_target {
-            errs.push("2·g1: expected dualfit_target=true".into());
-        }
-        if g.gate_pass != Some(true) {
-            errs.push(format!("2·g1: expected gate_pass=true, got {:?}", g.gate_pass));
-        }
-        match g.seamlocal_pre_seam_r {
-            Some(r) if r > 0.9 => {}
-            r => errs.push(format!("2·g1: seamlocal_pre_seam_r should be ~0.98, got {r:?}")),
-        }
-    } else {
-        errs.push("2·g1: missing from baseline".into());
-    }
-
-    // Donor gate necessity: 1·g19 has gate_pass but donor BROKEN → not a dual-fit target.
-    if let Some(g) = find("/1", 19) {
-        if g.gate_pass != Some(true) {
-            errs.push(format!("1·g19: expected gate_pass=true, got {:?}", g.gate_pass));
-        }
-        if g.aligned_donor_continuous != Some(false) {
-            errs.push(format!(
-                "1·g19: expected aligned_donor_continuous=false, got {:?}",
-                g.aligned_donor_continuous
-            ));
-        }
-        if g.dualfit_target {
-            errs.push("1·g19: donor-BROKEN gap must not be dualfit_target".into());
-        }
-    } else {
-        errs.push("1·g19: missing from baseline".into());
-    }
-
-    // Frozen target set (9 gaps).
-    const EXPECTED_TARGETS: &[&str] = &[
-        "re-anchor-dual-fit-on-nominal/1·g3",
-        "re-anchor-dual-fit-on-nominal/1·g5",
-        "re-anchor-dual-fit-on-nominal/1·g22",
-        "re-anchor-dual-fit-on-nominal/2·g1",
-        "re-anchor-dual-fit-on-nominal/2·g2",
-        "re-anchor-dual-fit-on-nominal/5·g6",
-        "re-anchor-dual-fit-on-nominal/7·g2",
-        "re-anchor-dual-fit-on-nominal/7·g3",
-        "re-anchor-dual-fit-on-nominal/7·g4",
-    ];
-    if baseline.dualfit_targets.len() != EXPECTED_TARGETS.len() {
-        errs.push(format!(
-            "dualfit_targets count: expected {} got {}",
-            EXPECTED_TARGETS.len(),
-            baseline.dualfit_targets.len()
-        ));
-    }
-    for t in EXPECTED_TARGETS {
-        if !baseline.dualfit_targets.iter().any(|x| x == t) {
-            errs.push(format!("dualfit_targets missing {t}"));
-        }
-    }
-
-    if errs.is_empty() {
-        Ok(())
-    } else {
-        Err(errs.join("\n"))
-    }
-}
+// The §4.4 footgun guards that lived here (`assert_footguns`, keyed to specific re-anchor gaps) were
+// retired in Phase 4 of the gap-fixture-corpus plan: their semantics now live as per-**type** assertions on
+// committed, media-independent fixtures in `clip-sync-repair/tests/gap_cell_fixtures.rs` (silence-splice IS a
+// dual-fit target; program-quiet with passing seams is NOT), and the frozen target set is pinned by
+// `curated.golden.json` via `golden_baseline_invariance`.
 
 #[cfg(test)]
 mod tests {

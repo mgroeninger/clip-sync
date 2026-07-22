@@ -20,7 +20,7 @@ Last updated: 2026-07-21.
 | [TEMP-gap-selection-plan.md](docs/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-policies-module-split-plan.md](docs/TEMP-policies-module-split-plan.md) | `policies.rs` module split — draft, not started |
-| [TEMP-gap-fixture-corpus-plan.md](docs/TEMP-gap-fixture-corpus-plan.md) | Curated per-gap-type fixture corpus to replace the ephemeral `gap-files/` dependency — **Phases 0–3 done** (fixtures + loader + per-type test + self-hosting golden; no test needs `gap-files/`), Phases 4–5 open |
+| [TEMP-gap-fixture-corpus-plan.md](docs/TEMP-gap-fixture-corpus-plan.md) | Curated per-gap-type fixture corpus replacing the ephemeral `gap-files/` dependency — **Phases 0–4 done** (fixtures + loader + per-type test + self-hosting golden; re-anchor retired, no test needs `gap-files/`). Only Phase 5 (synthetic cells: decorrelated, residual_veto, tail, unfillable) open |
 
 ## Open work
 

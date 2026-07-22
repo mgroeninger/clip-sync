@@ -93,9 +93,17 @@ fn each_fixture_matches_its_declared_cell() {
                 assert!(r.bracket_exhausted(), "{}: expected bracket-exhausted", ctx());
             }
             GapCellType::ProgramQuiet => {
-                // Footgun B: high seam correlation yet a dead donor => NOT a dual-fit target.
+                // Footgun B: the seams PASS the gate (high correlation — looks patchable) yet the donor is
+                // dead, so it must be excluded by donor state, not by seam score. The `dualfit_pass` premise
+                // is the teeth: without it the "not a target" assertion could pass on a trivially-bad gap.
                 let r = row_of(fx);
                 assert_eq!(r.program_quiet(), Some(true), "{}: expected program_quiet()", ctx());
+                assert_eq!(
+                    r.dualfit_pass,
+                    Some(true),
+                    "{}: footgun premise — seams must PASS the gate (high corr), so exclusion is donor-driven",
+                    ctx()
+                );
                 assert!(!r.dualfit_target(), "{}: program-quiet must not be a dual-fit target", ctx());
                 assert!(!r.patched(), "{}: program-quiet is a skip", ctx());
             }

@@ -200,8 +200,9 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `oracle_energy` | integration (oracle label) | — | yes (fast rows) | SD01–SD08 (`u1_`–`u8_`); EC03/EC06 domain; EC01/EC02 `#[ignore]` |
 | `seam_residual_corpus` | integration | — | yes | Seam score oracles; F4 headroom placement |
 | `anchor_seam_oracle` | integration | — | **no** | Editorial anchor seam A1–A5b + **A6 domain** + F4 regression; **integration** tier (+ A6 pipeline `#[ignore]` in diagnostic) |
-| `golden_baseline_smoke` | integration | — | yes | §4 golden footguns (frozen JSON pins; no corpus) |
-| `golden_baseline_invariance` | validation | `validation-tests` | no | Live corpus vs golden diff (`#[ignore]` without local `gap-files`) |
+| `gap_cell_fixtures` | integration | — | yes | Per-gap-**type** classification contract on committed curated fixtures (footguns; media-free) |
+| `golden_baseline_invariance` | integration | — | yes | Curated fixtures vs self-hosting `curated.golden.json` (media-free; `CURATED_GOLDEN_REGEN=1` to rebase) |
+| `gap_repair_spec_diff` | integration | — | yes | Projection-fidelity differential over the curated fixtures (media-free) |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |

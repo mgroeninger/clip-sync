@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn declines_donor_broken_bridge() {
-        // Real-corpus class (14/62 gaps in the re-anchor-dual-fit-on-nominal golden set, e.g. pair
+        // Real-corpus class (14/62 gaps observed on the re-anchor corpus, e.g. pair
         // 1·g4/g7/g9…/g21 and pair 6·g1/g3/g6…g11): both shoulders re-fit at their seam-local lag with
         // high correlation (~0.9-1.0) and the step is genuinely real (a rigid single-lag map decorrelates
         // the post seam), yet the ALIGNED bridge between the seam-local placements has its own internal
