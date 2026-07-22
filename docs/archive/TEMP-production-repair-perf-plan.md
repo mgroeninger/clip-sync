@@ -461,11 +461,32 @@ does the default flip on.
     `bracket_unified_search` cost) + `a_start_secs`. It evaluates BOTH gate arms unconditionally (so it catches
     matchability-doomed brackets that the normal short-circuit rejects on structure first). **Emission-only, off by
     default → byte-neutral** (`patch_audio_integration` unaffected; `patch_region` lib tests green). Roll up across
-    licensed pairs with `scripts/measure-anchor-brackets.ps1` (`-Manifest label⇥A⇥B` to run+aggregate, or `-Logs DIR`
-    to aggregate captured logs; mirrors the `equivalence_calibration` multi-pair roll-up since `SourceMeta` carries no
-    media paths). **Recoverable = `reject_matchability_only + reject_both` search time / total anchor-search time = the
-    ceiling.** Decision rule baked into the script: <10% ceiling ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate.
-    **Next: run it on the licensed pairs and read the ceiling.**
+    licensed pairs with `scripts/measure-anchor-brackets.ps1` (`-Manifest label,A,B` CSV/TSV to run+aggregate, or
+    `-Logs DIR` to aggregate captured logs; mirrors the `equivalence_calibration` multi-pair roll-up since `SourceMeta`
+    carries no media paths). **The harness runs `--gap-fingerprints DIR` (calibration feature), NOT full repair** — the
+    fingerprint per-gap loop scores every anchor bracket through the SAME `evaluate_seam_gate_fit_candidate` production
+    uses (`compute_region_measurements` → `oracle_score_fit_candidate(..., anchor=true)`), so the instrumentation fires,
+    but WITHOUT the mux/write step. One pass per pair therefore yields BOTH the licensing-safe extended corpus AND the
+    per-bracket perf log. **Recoverable = `reject_matchability_only + reject_both` / total = the ceiling.** The
+    **deterministic decision metric is the bracket-COUNT fraction** (each bracket ≈ one constant-cost unified search, so
+    count% ≈ time%, and unlike wall-clock `search_us` it reproduces across runs — so one run per pair suffices to size
+    the ceiling; a re-run that disagrees means source/params changed). `search_us` is advisory. Decision rule baked into
+    the script: <10% ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate. **Next: run it on the licensed pairs and read
+    the ceiling.**
+
+    **Phase 2 — realized-speedup harness (DEFERRED to the pre-gate PR, do NOT build early).** Sizing the ceiling
+    (above) is phase 1 and needs no persistence: the count-fraction is deterministic and already recoverable from the
+    persisted per-pair `.log`s + the corpus's `SourceMeta` stamp. Measuring the *realized* speedup is a separate job that
+    only becomes possible once the pre-gate exists, because a speedup is pre-gate-ON vs pre-gate-OFF wall-clock **on the
+    same build** — today's OFF baseline is stale by then and can't be a comparand, so persisting a summary now saves zero
+    future runs. When the pre-gate lands, add to the SAME binary (no forked tool — the shared `compute_region_measurements`
+    gate loop must stay numerically identical): (1) a `--gate-perf-only` mode = run the per-bracket gate loop + emit
+    `bracket_stats`, but SKIP the Tier-3 diagnostics and SKIP the corpus write (avoids the ~18% non-search fingerprint
+    overhead + I/O on repeat iterations; note a perf run still must decode + rebuild geometry — it CANNOT replay from
+    `corpus.json`, which is numbers-only); (2) the pre-gate on/off flag; (3) a persisted `bracket-stats-summary.json`
+    **stamped with `(a_source.id, b_source.id, ScanRecipe)` from `SourceMeta` + the on/off flag** — comparability by
+    content hash, not timestamp/filename, so the roll-up refuses to average samples whose stamp differs. That is the
+    correct multi-iteration, same-source-guaranteed A/B harness, and the pre-gate PR is the first moment it is usable.
   - **#3 — `try_dual_fit`: the content-existence gate runs dead last, after two FFT seam searches (`dual_fit.rs`).**
     Per-gap (rescue path only, so smaller), but a clean mechanical, byte-identical reorder. Order: `seam_local_peak`
     pre (`:104`) + post (`:114`) = two ±600 ms FFT lag searches **first**; then `gate_pass` (`:134`), `step_real`

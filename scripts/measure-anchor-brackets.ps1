@@ -7,47 +7,68 @@
 # (structure-doomed, which still needs the search). Multi-pair because k and the matchability/structure
 # split are content-dependent; one pair can't size the lever.
 #
-# Data source: the `CLIP_SYNC_BRACKET_STATS` instrumentation in patch_region.rs emits one
-# `bracket_stats`-target event per scored anchor bracket:
+# HOW IT RUNS THE MEASUREMENT: a `--gap-fingerprints DIR` run scores every anchor bracket through the SAME
+# `evaluate_seam_gate_fit_candidate` production uses (via `oracle_score_fit_candidate(..., anchor=true)`),
+# but WITHOUT the mux/write step — so it produces the per-bracket perf data AND a licensing-safe extended
+# corpus (`corpus.json` + per-gap JSON + `manifest.json`) in a single pass over each pair. With
+# `CLIP_SYNC_BRACKET_STATS=1` the gate emits one `bracket_stats` event per scored bracket, categorized by
+# BOTH arms (unlike the corpus's own first-failing `failure_stage`, which can't separate matchability-doomed
+# from structure-doomed):
 #     ... INFO bracket_stats: anchor bracket a_start_secs=<f> category="<cat>" search_us=<u> ...
 # categories: pass_arms | reject_structure_only | reject_matchability_only | reject_both | no_placement
 # Recoverable = reject_matchability_only + reject_both (the matchability arm the pre-gate targets).
 #
 # Two modes:
-#   Run pairs from a manifest, then roll up:
-#     ./scripts/measure-anchor-brackets.ps1 -Manifest pairs.tsv -BinArgs "--wav {out} --fill-mode fit"
+#   Run pairs from a manifest (builds the corpus under -CorpusRoot AND rolls up perf):
+#     ./scripts/measure-anchor-brackets.ps1 -Manifest pairs.csv -CorpusRoot ./corpus-out
 #   Roll up logs you already captured (skip the runs):
 #     ./scripts/measure-anchor-brackets.ps1 -Logs perf_logs/
 #
-# Manifest format (TSV, '#' comments and blank lines ignored): one pair per line
-#     label <TAB> path/to/A.mkv <TAB> path/to/B.mkv [<TAB> extra per-pair repair args]
+# Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header row
+#     label , path/to/A.mkv , path/to/B.mkv [, extra per-pair scan args]
+# Delimiter is auto-picked from the extension (.tsv => tab, else comma); override with -Delimiter.
+# Fields may be quoted ("C:\my movies\a.mkv") so paths with spaces/commas are fine.
 #
-# -BinArgs is the shared repair recipe (match the recipe your perf_N runs used). The token `{out}` in
-# -BinArgs is replaced per pair with a throwaway output path under -OutDir (deleted after parsing). If
-# -BinArgs contains no `{out}`, no output substitution happens (you own the write flag).
+# -ScanArgs is a shared scan recipe appended to every pair (e.g. "--min-gap-ms 500"); per-pair `extra`
+# from the manifest is appended after it. No output/mux flags are involved — the fingerprint run never
+# writes patched audio, only the corpus dir.
 
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(ParameterSetName = 'Run', Mandatory = $true)]
     [string]$Manifest,
 
-    # Shared repair args appended after `A B`. Use `{out}` for the per-pair throwaway output path.
+    # Shared scan-recipe args appended after `A B --gap-fingerprints DIR` for every pair (match your
+    # production recipe). Per-pair `extra` from the manifest is appended after these.
     [Parameter(ParameterSetName = 'Run')]
-    [string]$BinArgs = '--wav {out} --fill-mode fit',
+    [string]$ScanArgs = '',
+
+    # Where the per-pair fingerprint corpora are written (persisted — this is the extended corpus). Each
+    # pair gets a subdir named for its label.
+    [Parameter(ParameterSetName = 'Run')]
+    [string]$CorpusRoot = (Join-Path (Get-Location) 'anchor-bracket-corpus'),
 
     # Roll up existing logs instead of running. A directory (all *.log) or a glob.
     [Parameter(ParameterSetName = 'Logs', Mandatory = $true)]
     [string]$Logs,
 
-    # Where per-pair logs + throwaway outputs go (Run mode).
+    # Where per-pair logs go (Run mode).
     [Parameter(ParameterSetName = 'Run')]
     [string]$OutDir = (Join-Path $env:TEMP 'clip-sync-anchor-bracket-stats'),
 
-    # Keep the throwaway repair outputs (Run mode) instead of deleting them.
-    [switch]$KeepOutputs,
+    # Manifest delimiter: 'auto' (by extension), 'comma', or 'tab'.
+    [Parameter(ParameterSetName = 'Run')]
+    [ValidateSet('auto', 'comma', 'tab')]
+    [string]$Delimiter = 'auto',
 
     # cargo build/run profile.
-    [string]$Profile = 'release'
+    [string]$CargoProfile = 'release',
+
+    # cargo features to build with. MUST include `calibration` (enables --gap-fingerprints). Codec
+    # decoders are opt-in: real MKV/MP4 movie audio is usually AC-3/E-AC-3 (`ac3`) or HE-AAC (`he-aac`);
+    # without them tracks demux but come back non-decodable ("no decodable audio tracks"). `ffmpeg-mux` is
+    # NOT needed here (the fingerprint run never muxes). Matches docs/development.md minus ffmpeg-mux.
+    [string]$Features = 'calibration,ac3,he-aac'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,39 +144,47 @@ $logFiles = [System.Collections.Generic.List[object]]::new()
 if ($PSCmdlet.ParameterSetName -eq 'Run') {
     if (-not (Test-Path $Manifest)) { throw "manifest not found: $Manifest" }
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $CorpusRoot | Out-Null
 
-    Write-Host "Building clip-sync-repair ($Profile)..." -ForegroundColor Cyan
-    $profileFlag = if ($Profile -eq 'release') { '--release' } else { "--profile=$Profile" }
-    & cargo build $profileFlag -p clip-sync-repair --bin clip-sync-repair
+    Write-Host "Building clip-sync-repair ($CargoProfile, --features $Features)..." -ForegroundColor Cyan
+    $profileFlag = if ($CargoProfile -eq 'release') { '--release' } else { "--profile=$CargoProfile" }
+    & cargo build $profileFlag --features $Features -p clip-sync-repair --bin clip-sync-repair
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-    $exe = Join-Path $RepoRoot "target/$Profile/clip-sync-repair.exe"
-    if (-not (Test-Path $exe)) { $exe = Join-Path $RepoRoot "target/$Profile/clip-sync-repair" }
-    if (-not (Test-Path $exe)) { throw "repair binary not found at target/$Profile/" }
+    $exe = Join-Path $RepoRoot "target/$CargoProfile/clip-sync-repair.exe"
+    if (-not (Test-Path $exe)) { $exe = Join-Path $RepoRoot "target/$CargoProfile/clip-sync-repair" }
+    if (-not (Test-Path $exe)) { throw "repair binary not found at target/$CargoProfile/" }
 
-    $lineNo = 0
-    foreach ($raw in Get-Content $Manifest) {
-        $lineNo++
-        $line = $raw.Trim()
-        if ($line -eq '' -or $line.StartsWith('#')) { continue }
-        $cols = $line -split "`t"
-        if ($cols.Count -lt 3) { Write-Warning "manifest line ${lineNo}: need label<TAB>A<TAB>B, got '$line'"; continue }
-        $label = $cols[0].Trim()
-        $aPath = $cols[1].Trim()
-        $bPath = $cols[2].Trim()
-        $extra = if ($cols.Count -gt 3) { $cols[3].Trim() } else { '' }
+    $delimChar = switch ($Delimiter) {
+        'tab' { "`t" }
+        'comma' { ',' }
+        default { if ([IO.Path]::GetExtension($Manifest) -eq '.tsv') { "`t" } else { ',' } }
+    }
+    # Strip comments/blank lines, then let ConvertFrom-Csv handle quoting (paths with spaces/commas).
+    $rows = Get-Content $Manifest |
+        Where-Object { $_.Trim() -ne '' -and -not $_.Trim().StartsWith('#') } |
+        ConvertFrom-Csv -Delimiter $delimChar -Header 'label', 'a', 'b', 'extra'
+    foreach ($row in $rows) {
+        $label = ("$($row.label)").Trim()
+        $aPath = ("$($row.a)").Trim()
+        $bPath = ("$($row.b)").Trim()
+        $extra = ("$($row.extra)").Trim()
+        if ($label -eq '' -or $aPath -eq '' -or $bPath -eq '') {
+            Write-Warning "manifest row skipped (need label,A,B): '$($row.label),$($row.a),$($row.b)'"; continue
+        }
         foreach ($p in @($aPath, $bPath)) {
             if (-not (Test-Path $p)) { throw "pair '$label': media not found: $p" }
         }
 
-        $out = Join-Path $OutDir "$label.out.wav"
+        $corpus = Join-Path $CorpusRoot $label
         $log = Join-Path $OutDir "$label.log"
-        $resolvedArgs = $BinArgs.Replace('{out}', $out)
 
-        # A B <shared args> <per-pair extra>, split on whitespace (paths are quoted below via the array form).
-        $argList = @($aPath, $bPath) + ($resolvedArgs -split '\s+' | Where-Object { $_ -ne '' })
+        # A B --gap-fingerprints <corpus> <shared scan args> <per-pair extra>. No mux/write flag: the
+        # fingerprint run only writes the corpus dir. Paths are passed via the array form (space-safe).
+        $argList = @($aPath, $bPath, '--gap-fingerprints', $corpus)
+        if ($ScanArgs -ne '') { $argList += ($ScanArgs -split '\s+' | Where-Object { $_ -ne '' }) }
         if ($extra -ne '') { $argList += ($extra -split '\s+' | Where-Object { $_ -ne '' }) }
 
-        Write-Host "[$label] running..." -ForegroundColor Cyan
+        Write-Host "[$label] fingerprinting (corpus -> $corpus)..." -ForegroundColor Cyan
         $env:CLIP_SYNC_BRACKET_STATS = '1'
         $env:RUST_LOG = 'warn,bracket_stats=info'
         # Stderr carries the tracing events; capture both streams to the pair log.
@@ -163,7 +192,6 @@ if ($PSCmdlet.ParameterSetName -eq 'Run') {
         $rc = $LASTEXITCODE
         Remove-Item Env:\CLIP_SYNC_BRACKET_STATS -ErrorAction SilentlyContinue
         if ($rc -ne 0) { Write-Warning "[$label] exited $rc (log kept at $log)" }
-        if (-not $KeepOutputs) { Remove-Item -Force -ErrorAction SilentlyContinue $out }
 
         $logFiles.Add([pscustomobject]@{ Path = $log; Label = $label })
     }
@@ -199,10 +227,17 @@ Write-Host ('-' * 96)
 Write-TallyRow -T $grand -GrandTotalUs $grand.TotalUs
 Write-Host ''
 
+# Deterministic bracket-count share of the recoverable arm — the licensing-safe ceiling proxy (each
+# bracket runs one ~constant-cost unified search, so count-fraction ~ time-fraction, and it reproduces
+# across runs unlike wall-clock search_us).
+$recovN = $grand.CatN.reject_matchability_only + $grand.CatN.reject_both
+$recovNPct = if ($grand.Brackets -gt 0) { 100.0 * $recovN / $grand.Brackets } else { 0.0 }
 $recovUs = $grand.Cat.reject_matchability_only + $grand.Cat.reject_both
 $recovPct = if ($grand.TotalUs -gt 0) { 100.0 * $recovUs / $grand.TotalUs } else { 0.0 }
-Write-Host ("Ceiling: lever #2 can remove at most {0:N1}% of anchor-bracket search time across {1} pair(s)." -f $recovPct, $tallies.Count)
-if ($recovPct -lt 10.0) {
+Write-Host ("Ceiling (by time):     lever #2 can remove at most {0:N1}% of anchor-bracket search time." -f $recovPct)
+Write-Host ("Ceiling (by bracket #): {0} of {1} brackets are matchability-doomed = {2:N1}% (deterministic proxy)." -f $recovN, $grand.Brackets, $recovNPct)
+Write-Host ("Across {0} pair(s)." -f $tallies.Count)
+if ($recovNPct -lt 10.0) {
     Write-Host "  -> Low ceiling: most brackets are structure-doomed, not matchability-doomed. Favor 'stop here'." -ForegroundColor Yellow
 } else {
     Write-Host "  -> Material ceiling: proceed to design/implement the matchability pre-gate (perf-plan §2.5 #2)." -ForegroundColor Green
