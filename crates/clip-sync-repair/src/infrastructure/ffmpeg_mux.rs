@@ -14,6 +14,20 @@ use clip_sync::resolve_output_bit_depth;
 
 use crate::infrastructure::pcm::{validate_pcm_layout, write_pcm_le};
 
+/// Format a filesystem path for ffmpeg/ffprobe so it is always treated as a
+/// local file — never as a URL/protocol (`concat:`, `http:`, …) — and so an
+/// output name that starts with `-` is not parsed as an option.
+///
+/// On Windows, separators are normalized to `/` (the form ffmpeg's `file:`
+/// protocol expects alongside drive letters, e.g. `file:C:/Videos/a.mp4`).
+fn ffmpeg_path_arg(path: &Path) -> String {
+    let mut s = path.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        s = s.replace('\\', "/");
+    }
+    format!("file:{s}")
+}
+
 /// Build ffmpeg argv for remuxing `source_video` with replacement audio from stdin (`pipe:0`).
 pub fn build_ffmpeg_mux_args(
     source_video: &Path,
@@ -28,7 +42,7 @@ pub fn build_ffmpeg_mux_args(
         "-loglevel".into(),
         "error".into(),
         "-i".into(),
-        source_video.display().to_string(),
+        ffmpeg_path_arg(source_video),
         "-f".into(),
         pcm_format.into(),
         "-ar".into(),
@@ -60,7 +74,7 @@ pub fn build_ffmpeg_mux_args(
         }
     }
 
-    args.push(output.display().to_string());
+    args.push(ffmpeg_path_arg(output));
     args
 }
 
@@ -108,6 +122,7 @@ fn parse_progress_out_time_ms(line: &str) -> Option<u64> {
 }
 
 fn probe_media_duration_ms(path: &Path) -> Option<u64> {
+    let file_arg = ffmpeg_path_arg(path);
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -116,7 +131,7 @@ fn probe_media_duration_ms(path: &Path) -> Option<u64> {
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            path.to_str()?,
+            &file_arg,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -369,7 +384,7 @@ mod tests {
                 "-loglevel",
                 "error",
                 "-i",
-                "video_a.mp4",
+                "file:video_a.mp4",
                 "-f",
                 "s16le",
                 "-ar",
@@ -391,8 +406,33 @@ mod tests {
                 "-shortest",
                 "-movflags",
                 "+faststart",
-                "repaired.mp4",
+                "file:repaired.mp4",
             ]
+        );
+    }
+
+    #[test]
+    fn ffmpeg_path_arg_forces_file_protocol() {
+        assert_eq!(ffmpeg_path_arg(Path::new("video.mp4")), "file:video.mp4");
+        // Protocol-looking names must not reach ffmpeg as bare URLs.
+        assert_eq!(
+            ffmpeg_path_arg(Path::new("concat:a.mp4|b.mp4")),
+            "file:concat:a.mp4|b.mp4"
+        );
+        assert_eq!(
+            ffmpeg_path_arg(Path::new("http://example.com/x.mp4")),
+            "file:http://example.com/x.mp4"
+        );
+        // Leading '-' must not be parsed as an ffmpeg option.
+        assert_eq!(ffmpeg_path_arg(Path::new("-out.mp4")), "file:-out.mp4");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ffmpeg_path_arg_normalizes_windows_separators() {
+        assert_eq!(
+            ffmpeg_path_arg(Path::new(r"C:\Videos\a.mp4")),
+            "file:C:/Videos/a.mp4"
         );
     }
 
@@ -445,7 +485,7 @@ mod tests {
         );
 
         assert!(!args.contains(&"-movflags".to_string()));
-        assert_eq!(args.last().map(String::as_str), Some("out.mkv"));
+        assert_eq!(args.last().map(String::as_str), Some("file:out.mkv"));
     }
 
     #[test]

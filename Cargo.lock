@@ -145,7 +145,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clip-sync"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cross_correlate",
  "fdk-aac",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "clip-sync-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "clip-sync",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "clip-sync-repair"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "clip-sync",
@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "clip-sync-repair-fixtures"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clip-sync",
  "clip-sync-repair",
@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "clip-sync-repair-harness"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clip-sync",
  "clip-sync-repair",
