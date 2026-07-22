@@ -42,9 +42,13 @@ pub enum GapCellType {
     Decorrelated,
     /// Synthetic (Phase 5): seams pass but least-squares cancellation shows B ≠ A (anti-echo veto).
     ResidualVeto,
-    /// Synthetic (Phase 5): length-mismatch tail, filtered before per-gap scoring.
+    /// Real fixture (Phase 5): length-mismatch tail (`duration ≥ tail cutoff`), filtered before per-gap
+    /// scoring — `GapKind::Tail`, excluded from the matched denominator.
     TailGeometryMismatch,
-    /// Synthetic (Phase 5): structural non-fill (B window empty / out of range / zero length).
+    /// **Not fingerprint-representable** — retained for taxonomy completeness only. Unfillable gaps
+    /// (`BExtractFailed` / `AlignedSegmentOutOfRange` / `ZeroLengthGap`) fail at plan/execution time and
+    /// never get characterized, so there is no curated fixture; covered by `GapPatchSkipReason` unit tests
+    /// and the pipeline instead.
     Unfillable,
 }
 

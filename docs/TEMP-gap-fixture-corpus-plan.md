@@ -1,6 +1,6 @@
 # Gap-type fixture corpus — plan (DRAFT)
 
-Status: **draft / Phases 0–4 done; only Phase 5 (synthetics) open** (2026-07-22).
+Status: **all phases done (0–5)** (2026-07-22). Ready to archive once committed.
 
 Replace the fragile dependency on the ephemeral, licensed-media-derived `gap-files/` corpus with a curated,
 committed set of **per-gap-type fingerprint fixtures** — one self-contained JSON per gap *cell*, so the
@@ -42,10 +42,10 @@ actually emits — `GapEquivalenceClass` (`domain/gap_equivalence.rs`), `GapPatc
 | 6 | `repairable_dropout` | class=repairable_dropout, drop=F | equiv 1·g1 | A died ∧ B occupied ⇒ keep → proceeds into seam cells |
 | 7 | `shared_silence` | class=shared_silence, drop=T | equiv 1·g0 | B silent at nominal ⇒ plan-time drop (program-quiet disposition) |
 | 8 | `ambient_quiet` | class=ambient_quiet, drop=T | equiv 2·g19 | New cell: A is room tone, decided on A's character not donor |
-| 9 | `decorrelated` | lag=decorrelated, bare correlation-skip, donor occupied | **synthetic** | B has *different* content; skips at any lag, no rescue |
-| 10 | `residual_veto` | skip=ResidualHeadroomExceeded | **synthetic** (or `residual_gate_catalog`) | Seams pass but B≠A cancellation ⇒ anti-echo veto |
-| 11 | `tail_geometry_mismatch` | filtered pre-scoring | **synthetic** | Length-mismatch tail, excluded from matched denominator |
-| 12 | `unfillable` (1–2) | BExtractFailed / ZeroLengthGap | **synthetic** | Structural non-fill, no judgment |
+| 9 | `tail_geometry_mismatch` | `GapKind::Tail` (duration ≥ cutoff) | **real** (re-anchor 6·g14, 363 s) | Filtered pre-scoring, excluded from matched denominator |
+| 10 | `decorrelated` | lag=decorrelated, donor occupied, not a target | **synthetic** (from 03) | B has *different* content; skips at any lag, no rescue |
+| 11 | `residual_veto` | seams pass, residual headroom > margin, informative | **synthetic** (from 01) | Seams pass but B≠A cancellation ⇒ anti-echo veto |
+| — | `unfillable` | BExtractFailed / ZeroLengthGap | **not representable** | Plan/execution-time failure — never characterized; covered by unit tests, not a fixture |
 
 **Real vs synthetic (evidence-backed):** #1–8 have clean real members and are extracted in Phase 0.
 #9 `decorrelated` is genuinely **n=0** in both corpora — the one decorrelated-*lag* candidate (equiv 5·g2)
@@ -107,11 +107,16 @@ bracket-patch) will grow to 2–3 members each once the harness is in place.
   `golden/README.md`, `development.md`, the `dual_fit.rs` comment. **Fragility gone** — no test references
   `gap-files/` or the re-anchor golden. (`analyze_dirs` stays: it still powers the `gap-fingerprint-stats`
   calibration bin, `corpus_projection` / `decode_path_projection`, and its own unit tests.)
-- **Phase 5 — Synthetic cells.** Hand-build `decorrelated`, `residual_veto`, `tail_geometry_mismatch`,
-  `unfillable` (reuse `residual_gate_catalog` / the synthetic `synth_ab_from_decode_corpus` generator where
-  possible). Completes coverage of the n=0 production cells.
+- **Phase 5 — Remaining cells. ✅ DONE (2026-07-22).** Added `09_tail_geometry_mismatch` (**real** — the
+  re-anchor corpus, still on disk, has 7 `duration ≥ 30 s` tails; extracted the 363 s one), plus
+  **synthetic** `10_decorrelated` (from `03`: verdict → decorrelated, `gate_pass` → false, seams collapsed)
+  and `11_residual_veto` (from `01`: skip + informative residual with 11 dB headroom). Phase-2 arms assert
+  each; golden regenerated to 11 gaps. **`unfillable` was found to be not fingerprint-representable** — those
+  gaps fail at plan/execution time and never get characterized (only gate/correlation skips reach a
+  fingerprint), so it is documented as a taxonomy entry with no fixture (covered by `GapPatchSkipReason` unit
+  tests). *Finding: the plan's original "4 synthetics" was imprecise — tail is real, unfillable is unrepresentable.*
 
-Each phase lands independently and leaves the tree green; re-anchor stays wired until Phase 4 flips over.
+Each phase landed independently and left the tree green; re-anchor stayed wired until Phase 4 flipped over.
 
 ## Out of scope
 

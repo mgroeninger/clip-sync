@@ -18,7 +18,7 @@ use clip_sync_repair::domain::gap_equivalence::{
 use clip_sync_repair_fixtures::gap_cell_fixtures::{
     curated_fixtures_dir, load_gap_cell_fixtures, GapCellFixture, GapCellType,
 };
-use clip_sync_repair_harness::gap_fingerprint_corpus::{gap_rows_from_corpus_json, GapRow};
+use clip_sync_repair_harness::gap_fingerprint_corpus::{gap_rows_from_corpus_json, GapKind, GapRow};
 
 /// Build the analyzer `GapRow` for a fixture from its **committed** JSON bytes (not a re-serialization), so
 /// the contract is checked against the exact artifact that ships.
@@ -123,12 +123,50 @@ fn each_fixture_matches_its_declared_cell() {
             GapCellType::AmbientQuiet => {
                 assert_equivalence_class(fx, GapEquivalenceClass::AmbientQuiet);
             }
-            // Synthetic-only cells (Phase 5): no real fixture is committed yet, so none should appear here.
-            GapCellType::Decorrelated
-            | GapCellType::ResidualVeto
-            | GapCellType::TailGeometryMismatch
-            | GapCellType::Unfillable => {
-                panic!("{}: synthetic-only cell has no committed fixture yet (Phase 5)", ctx());
+            GapCellType::Decorrelated => {
+                // Donor is occupied (unlike program-quiet) but the seams recover at NO lag, so — unlike a
+                // silence-splice — it is not a dual-fit target. The third action-distinct skip.
+                let r = row_of(fx);
+                assert!(!r.patched(), "{}: decorrelated is a skip", ctx());
+                assert_eq!(
+                    r.verdict.as_deref(),
+                    Some("decorrelated"),
+                    "{}: expected a decorrelated lag verdict",
+                    ctx()
+                );
+                assert_ne!(
+                    r.program_quiet(),
+                    Some(true),
+                    "{}: donor is occupied (distinguishes decorrelated from program-quiet)",
+                    ctx()
+                );
+                assert!(!r.dualfit_target(), "{}: seams recover at no lag ⇒ not a dual-fit target", ctx());
+            }
+            GapCellType::ResidualVeto => {
+                // Seams PASS the waveform gate, but least-squares cancellation shows B ≠ A ⇒ reasoned skip.
+                let r = row_of(fx);
+                assert!(!r.patched(), "{}: residual veto is a skip", ctx());
+                assert_eq!(r.residual_informative, Some(true), "{}: expected an informative residual", ctx());
+                match r.residual_headroom_db {
+                    Some(h) => assert!(
+                        h > 6.0,
+                        "{}: residual headroom {h:.1} dB should exceed the veto margin",
+                        ctx()
+                    ),
+                    None => panic!("{}: expected a residual headroom reading", ctx()),
+                }
+            }
+            GapCellType::TailGeometryMismatch => {
+                // A length-mismatch tail: filtered before per-gap scoring, excluded from the matched denom.
+                let r = row_of(fx);
+                assert_eq!(r.kind, GapKind::Tail, "{}: expected GapKind::Tail", ctx());
+            }
+            GapCellType::Unfillable => {
+                // Not fingerprint-representable: unfillable gaps (BExtractFailed / AlignedSegmentOutOfRange /
+                // ZeroLengthGap) fail at plan/execution time and never get characterized — only gate /
+                // correlation skips reach a fingerprint. Covered by `GapPatchSkipReason` unit tests + the
+                // pipeline, not a curated fixture; no manifest entry should declare this type.
+                panic!("{}: unfillable is a plan-time cell, not a curated fingerprint fixture", ctx());
             }
         }
     }

@@ -88,6 +88,39 @@
         "gap_index": 19,
         "original_filename": "9405b3bf_ca4a_t01-45-51_g019_full_skip.json"
       }
+    },
+    {
+      "file": "09_tail_geometry_mismatch.json",
+      "type": "tail_geometry_mismatch",
+      "expected": "kind=Tail: duration 363s >= tail cutoff; filtered before per-gap scoring, excluded from matched denominator.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "6",
+        "gap_index": 14,
+        "original_filename": "52d74759_62b8_t01-53-57_g014_full_skip.json"
+      }
+    },
+    {
+      "file": "10_decorrelated.json",
+      "type": "decorrelated",
+      "expected": "SYNTHETIC (n=0 in real data): skip, donor occupied, seams recover at NO lag (verdict=decorrelated) => NOT a dual-fit target. Derived from 03_silence_splice by flipping verdict->decorrelated and gate_pass->false.",
+      "provenance": {
+        "corpus": "synthetic",
+        "pair": "derived-from",
+        "gap_index": 3,
+        "original_filename": "03_silence_splice_dualfit_target.json"
+      }
+    },
+    {
+      "file": "11_residual_veto.json",
+      "type": "residual_veto",
+      "expected": "SYNTHETIC (n=0 in real data): seams PASS the gate yet least-squares cancellation shows B!=A (residual headroom 11 dB > margin, informative) => reasoned skip. Derived from 01_bracket_patch_clean.",
+      "provenance": {
+        "corpus": "synthetic",
+        "pair": "derived-from",
+        "gap_index": 6,
+        "original_filename": "01_bracket_patch_clean.json"
+      }
     }
   ]
 }
