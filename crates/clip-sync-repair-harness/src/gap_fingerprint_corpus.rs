@@ -1940,6 +1940,23 @@ uniqueness_margin,residual_headroom_db,residual_informative,skew\n",
     }
 }
 
+/// Build the analyzed [`GapRow`]s from one corpus's JSON bytes — the same minimal-projection parse
+/// `analyze_dirs` uses, exposed for per-gap fixture tests that hold a single `corpus.json` (or a curated
+/// single-gap fixture) rather than a directory tree. `pair` labels the rows (diagnostics only).
+pub fn gap_rows_from_corpus_json(
+    bytes: &[u8],
+    pair: &str,
+    drift_eps_ms: f64,
+    tail_secs: f64,
+) -> Result<Vec<GapRow>, serde_json::Error> {
+    let cf: CorpusFile = serde_json::from_slice(bytes)?;
+    Ok(cf
+        .gaps
+        .iter()
+        .map(|g| gap_row(pair, &cf.source, g, drift_eps_ms, tail_secs))
+        .collect())
+}
+
 /// Convenience: env knob for the constant/drift split (`GAP_FP_DRIFT_EPS_MS`, default 1.0 ms).
 pub fn drift_eps_from_env() -> f64 {
     std::env::var("GAP_FP_DRIFT_EPS_MS")

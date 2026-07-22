@@ -68,7 +68,8 @@ try {
             '--test', 'oracle_energy',
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration',
-            '--test', 'golden_baseline_smoke'
+            '--test', 'golden_baseline_smoke',
+            '--test', 'gap_cell_fixtures'
         )
 
         if (Test-FfmpegOnPath) {
@@ -82,6 +83,7 @@ try {
         }
 
         Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
+        Invoke-CargoTest @('-p', 'clip-sync-repair-fixtures', '--lib')
     }
 
     function Invoke-RepairPrRepairExtended {

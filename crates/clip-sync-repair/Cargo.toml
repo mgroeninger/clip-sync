@@ -89,6 +89,10 @@ name = "integration_gap_corpus"
 path = "tests/integration_gap_corpus.rs"
 
 [[test]]
+name = "gap_cell_fixtures"
+path = "tests/gap_cell_fixtures.rs"
+
+[[test]]
 name = "integration_floor_oracle_smoke"
 path = "tests/integration_floor_oracle_smoke.rs"
 

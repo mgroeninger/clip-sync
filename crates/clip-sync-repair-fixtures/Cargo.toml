@@ -14,5 +14,6 @@ clip-sync = { path = "../clip-sync" }
 clip-sync-repair = { path = "../clip-sync-repair" }
 hound = "3"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tempfile = "3"
 toml = "0.8"

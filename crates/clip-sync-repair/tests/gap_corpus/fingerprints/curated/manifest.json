@@ -1,0 +1,93 @@
+{
+  "note": "Curated one-representative-per-cell gap fingerprint fixtures. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/TEMP-gap-fixture-corpus-plan.md.",
+  "fixtures": [
+    {
+      "file": "01_bracket_patch_clean.json",
+      "type": "bracket_patch_clean",
+      "expected": "patched; both seams pass at lag 0, donor occupied (dNom=0.0, dAlign=true). Normal path.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "1",
+        "gap_index": 6,
+        "original_filename": "68686c7f_fd11_t00-40-13_g006_full_timing_offset.json"
+      }
+    },
+    {
+      "file": "02_bracket_patch_donor_broken.json",
+      "type": "bracket_patch_donor_broken",
+      "expected": "patched despite donor BROKEN (dNom=1.0, dAlign=false). Footgun: donor state must NOT block a bracket-cleared patch.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "1",
+        "gap_index": 1,
+        "original_filename": "68686c7f_fd11_t00-10-43_g001_full_patch.json"
+      }
+    },
+    {
+      "file": "03_silence_splice_dualfit_target.json",
+      "type": "silence_splice_dualfit_target",
+      "expected": "bracket-exhausted skip; shoulders register at own lag, donor bridges (dNom=0.0, dAlign=true), lag=timing_offset => dual-fit target.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "7",
+        "gap_index": 3,
+        "original_filename": "4972bf22_e9be_t00-59-17_g003_full_timing_offset.json"
+      }
+    },
+    {
+      "file": "04_program_quiet.json",
+      "type": "program_quiet",
+      "expected": "skip; seams ~0.998 yet donor DEAD (dNom=0.97, dAlign=false). Footgun: high seam score + dead donor => NOT a dual-fit target.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "1",
+        "gap_index": 19,
+        "original_filename": "68686c7f_fd11_t01-06-46_g019_full_timing_offset.json"
+      }
+    },
+    {
+      "file": "05_no_placement.json",
+      "type": "no_placement",
+      "expected": "skip; structure/anchor search found no candidate (no splice_dualfit). Never reached seam scoring.",
+      "provenance": {
+        "corpus": "re-anchor-dual-fit-on-nominal",
+        "pair": "4",
+        "gap_index": 0,
+        "original_filename": "9e5c71b3_ce14_t00-00-00_g000_full_skip.json"
+      }
+    },
+    {
+      "file": "06_repairable_dropout.json",
+      "type": "repairable_dropout",
+      "expected": "equivalence class=repairable_dropout (drop=false): A died AND B occupied => keep, proceeds into seam cells.",
+      "provenance": {
+        "corpus": "equiv-coarse-vs-fine",
+        "pair": "1",
+        "gap_index": 1,
+        "original_filename": "5db9a41c_24c3_t00-04-00_g001_full_timing_offset.json"
+      }
+    },
+    {
+      "file": "07_shared_silence.json",
+      "type": "shared_silence",
+      "expected": "equivalence class=shared_silence (drop=true): B silent at nominal => plan-time drop (program-quiet disposition).",
+      "provenance": {
+        "corpus": "equiv-coarse-vs-fine",
+        "pair": "1",
+        "gap_index": 0,
+        "original_filename": "5db9a41c_24c3_t00-00-00_g000_full_skip.json"
+      }
+    },
+    {
+      "file": "08_ambient_quiet.json",
+      "type": "ambient_quiet",
+      "expected": "equivalence class=ambient_quiet (drop=true): B occupied but A is room tone; decided on A's character, not donor. Sole real member.",
+      "provenance": {
+        "corpus": "equiv-coarse-vs-fine",
+        "pair": "2",
+        "gap_index": 19,
+        "original_filename": "9405b3bf_ca4a_t01-45-51_g019_full_skip.json"
+      }
+    }
+  ]
+}
