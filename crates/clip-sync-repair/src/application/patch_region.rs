@@ -1608,6 +1608,51 @@ pub(crate) fn oracle_throat_structure_frame(
         .map(|g| g.unified.alignment.start_frame)
 }
 
+/// Measurement harness (perf-plan §2.5 lever 1c #2 — "cut `k`"): when `CLIP_SYNC_BRACKET_STATS` is set,
+/// every scored **anchor** bracket emits a `bracket_stats`-target event tagging *why* it was rejected
+/// (or that it passed both arms) plus the time its full `bracket_unified_search` cost. Lets a licensed-
+/// media roll-up split `gate_anchor_search` time into **recoverable** (matchability-doomed → a nominal-
+/// window matchability pre-gate could skip the search) vs **not** (structure-doomed → still needs it),
+/// sizing lever #2's ceiling before any behavior-changing code. Off by default; emission only — the
+/// scored candidate is unchanged, so output stays byte-identical. See
+/// `docs/archive/TEMP-production-repair-perf-plan.md` § lever 1c and `scripts/measure-anchor-brackets.ps1`.
+fn anchor_bracket_stats_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CLIP_SYNC_BRACKET_STATS").is_some())
+}
+
+/// Rejection category for a scored anchor bracket. `match_ok` is the arm lever #2's pre-gate targets:
+/// `false` ⇒ the bracket's full search is recoverable (a matchability pre-gate would skip it).
+fn anchor_bracket_category(structure_ok: bool, match_ok: bool) -> &'static str {
+    match (structure_ok, match_ok) {
+        (true, true) => "pass_arms",
+        (false, true) => "reject_structure_only",
+        (true, false) => "reject_matchability_only",
+        (false, false) => "reject_both",
+    }
+}
+
+fn emit_anchor_bracket_stat(
+    baseline: RefinedGapFrames,
+    params: &SeamGateParams<'_>,
+    category: &str,
+    structure_pre: Option<f64>,
+    structure_post: Option<f64>,
+    elapsed: std::time::Duration,
+) {
+    let a_start_secs = baseline.start_frame as f64 / params.cfg.sample_rate.max(1) as f64;
+    tracing::info!(
+        target: "bracket_stats",
+        a_start_secs,
+        category,
+        search_us = elapsed.as_micros() as u64,
+        structure_pre = structure_pre.unwrap_or(f64::NAN),
+        structure_post = structure_post.unwrap_or(f64::NAN),
+        "anchor bracket"
+    );
+}
+
 fn evaluate_seam_gate_fit_candidate(
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
@@ -1615,6 +1660,11 @@ fn evaluate_seam_gate_fit_candidate(
     cache: &FitHaystackCache,
     anchor_seam_bracket: bool,
 ) -> SeamGateScore {
+    // Measurement-only (perf-plan lever 1c #2): time the full bracket search so a rejected bracket can be
+    // billed to its rejection cause. `stats_timer` is `None` unless `CLIP_SYNC_BRACKET_STATS` is set, so the
+    // normal path is untouched (no clock read, no emission).
+    let stats_timer =
+        (anchor_seam_bracket && anchor_bracket_stats_enabled()).then(std::time::Instant::now);
     let GateStructureAlign {
         a_pre_border,
         a_post_border,
@@ -1625,7 +1675,16 @@ fn evaluate_seam_gate_fit_candidate(
         waveform_gate_frames,
         post_gate_frames,
         unified,
-    } = gate_structure_align(refined, baseline, params, cache, anchor_seam_bracket)?;
+    } = match gate_structure_align(refined, baseline, params, cache, anchor_seam_bracket) {
+        Ok(align) => align,
+        Err(err) => {
+            if let Some(timer) = stats_timer {
+                // No placement — the pre-gate can't recover these (no searched geometry to matchability-test).
+                emit_anchor_bracket_stat(baseline, params, "no_placement", None, None, timer.elapsed());
+            }
+            return Err(err);
+        }
+    };
     let templates = policies::SeamTemplates {
         a_pre: &a_pre_border,
         a_post: &a_post_border,
@@ -1642,6 +1701,41 @@ fn evaluate_seam_gate_fit_candidate(
     // Residual/floor is probed once at selection (`finalize_fit_outcome_residual`), never per scored
     // candidate — keeping the grid/anchor cold path cheap. Scored candidates carry no verdict.
     let residual: Option<policies::SeamResidualVerdict> = None;
+
+    // Measurement-only (perf-plan lever 1c #2): evaluate BOTH gate arms unconditionally and record the
+    // rejection cause + search cost. Unlike the normal short-circuit below, this runs matchability even on
+    // structure-failing brackets, so the roll-up can count every bracket a matchability pre-gate would skip.
+    // Pure side-effect (emission) — the returned candidate is unchanged.
+    if let Some(timer) = stats_timer {
+        let structure_ok = structure_passes_gate(
+            structure_pre,
+            structure_post,
+            params.cfg.min_structure_match_score,
+            gap_secs,
+            params.cfg.short_gap_mean_correlation_secs,
+        );
+        let placement = policies::SeamPlacement {
+            start: alignment.start_frame,
+            gap_frames,
+            pre_window: waveform_gate_frames,
+            post_window: post_gate_frames,
+        };
+        let match_ok = anchor_bracket_both_matchable_at_gate(
+            &templates,
+            placement,
+            waveform_gate_frames,
+            post_gate_frames,
+            params,
+        );
+        emit_anchor_bracket_stat(
+            baseline,
+            params,
+            anchor_bracket_category(structure_ok, match_ok),
+            Some(structure_pre),
+            Some(structure_post),
+            timer.elapsed(),
+        );
+    }
 
     if !structure_passes_gate(
         structure_pre,

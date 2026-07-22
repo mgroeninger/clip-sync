@@ -442,6 +442,30 @@ does the default flip on.
     provable *superset* filter (rejects only brackets the searched-placement gate would also reject) that can run
     before the search to cut `k`. Design change, gated on that superset argument + placement/byte validation —
     **size it after `perf_6` shows how much `k`-bound cost remains post-lever-1.**
+
+    **Superset proof (2026-07-22):** `anchor_bracket_both_matchable_at_gate` is NOT a standalone xcorr peak — it is
+    a **seam-Pearson threshold at the *searched* placement** (`matchability_at_anchor` → `fill_seam_correlations`),
+    with the GCC-PHAT xcorr used only as a fallback inside the narrow `[min_pearson − xcorr_ambiguous_band, min_pearson)`
+    band. So `matchable-at-p ⟹ pre_pearson(p) ≥ min_pearson − xcorr_ambiguous_band` (below that band there is no xcorr
+    rescue and Pearson alone fails). Both sides must be matchable at the searched placement, and the searched placement
+    lies in the search window, so: **reject the bracket iff `max_over_window(pre_pearson) < (min_pearson − xcorr_ambiguous_band)`
+    OR the post analog.** This skips only brackets the real gate would also reject → pool identical → output
+    byte-identical. The windowed max-Pearson is exactly what lever-1's `fill_seam_correlations_band` (FFT) computes —
+    one FFT band per side per bracket vs the full unified search. (`{pre-gate skip} ⊆ {searched-matchability reject}`,
+    so the searched-placement matchability reject-time is the pre-gate's exact ceiling upper bound.)
+
+    **Measurement harness (2026-07-22, IMPLEMENTED — sizes the ceiling before any behavior change):** env-gated
+    `CLIP_SYNC_BRACKET_STATS` in `evaluate_seam_gate_fit_candidate` (`patch_region.rs`) emits, per scored anchor
+    bracket, a `bracket_stats`-target event: `category` (`pass_arms` / `reject_structure_only` /
+    `reject_matchability_only` / `reject_both` / `no_placement`) + `search_us` (the bracket's full
+    `bracket_unified_search` cost) + `a_start_secs`. It evaluates BOTH gate arms unconditionally (so it catches
+    matchability-doomed brackets that the normal short-circuit rejects on structure first). **Emission-only, off by
+    default → byte-neutral** (`patch_audio_integration` unaffected; `patch_region` lib tests green). Roll up across
+    licensed pairs with `scripts/measure-anchor-brackets.ps1` (`-Manifest label⇥A⇥B` to run+aggregate, or `-Logs DIR`
+    to aggregate captured logs; mirrors the `equivalence_calibration` multi-pair roll-up since `SourceMeta` carries no
+    media paths). **Recoverable = `reject_matchability_only + reject_both` search time / total anchor-search time = the
+    ceiling.** Decision rule baked into the script: <10% ceiling ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate.
+    **Next: run it on the licensed pairs and read the ceiling.**
   - **#3 — `try_dual_fit`: the content-existence gate runs dead last, after two FFT seam searches (`dual_fit.rs`).**
     Per-gap (rescue path only, so smaller), but a clean mechanical, byte-identical reorder. Order: `seam_local_peak`
     pre (`:104`) + post (`:114`) = two ±600 ms FFT lag searches **first**; then `gate_pass` (`:134`), `step_real`
