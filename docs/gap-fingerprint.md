@@ -199,10 +199,16 @@ different result). So identity is **per file**, not per logical source:
   entries are known-comparable.
 - **No paths or titles** appear anywhere in the committed output.
 
-**Library file names** (from `--fingerprint-corpus-dir`):
+**Library file names** (from `--gap-fingerprints`):
 `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>.json` — opaque-id prefixed, sorted by A start time,
 tagged by tier and lag/outcome verdict (e.g. `…_full_timing_offset.json`). Each file is a complete
 single-gap `GapCorpus`. A `manifest.json` indexes them (ids, times, tiers, verdicts).
+
+The **committed** instance of this library is the curated per-gap-**type** fixture set at
+`crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/` — one representative single-gap `GapCorpus`
+per gap cell, the media-free input for the gap-classification tests
+([TEMP-gap-fixture-corpus-plan.md](TEMP-gap-fixture-corpus-plan.md); cells in
+[gap-vocabulary.md](gap-vocabulary.md)).
 
 **Licensing guardrail:** the only place the real `id → title/path` mapping should live is a
 **git-ignored** local file (e.g. `corpus/.sources.local.toml`). Keep it out of the committed corpus.

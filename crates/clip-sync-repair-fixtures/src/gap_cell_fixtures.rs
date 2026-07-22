@@ -17,8 +17,10 @@ use serde::Deserialize;
 /// The gap **cell** a fixture represents — a `docs/gap-vocabulary.md` cell crossed with the classifier the
 /// analyzer emits (`GapEquivalenceClass` / `GapPatchSkipReason` / `LagVerdict` / `dualfit_target()`).
 ///
-/// Synthetic-only cells (genuinely `n=0` in every real corpus — see the plan's taxonomy) are included so
-/// the enum is a complete taxonomy; they receive hand-built fixtures in Phase 5.
+/// The enum is the complete taxonomy. Not every cell has a curated fixture: `Decorrelated` is a hand-built
+/// synthetic; `ResidualVeto` and `Unfillable` are **not fingerprint-representable** (the dump never emits
+/// them as characterized skips) and are covered by other tests — see their variant docs and
+/// `is_fingerprint_representable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapCellType {
@@ -38,21 +40,48 @@ pub enum GapCellType {
     SharedSilence,
     /// Scan-time equivalence: A is room tone (not a dropout) → drop, decided on A's character.
     AmbientQuiet,
-    /// Synthetic (Phase 5): donor occupied but seams recover at no lag — B has different content.
+    /// Synthetic fixture: donor occupied but seams recover at no lag on any peak layer — B has different
+    /// content; verdict=decorrelated, gate does not pass ⇒ not a dual-fit target.
     Decorrelated,
-    /// Synthetic (Phase 5): seams pass but least-squares cancellation shows B ≠ A (anti-echo veto).
+    /// **Not fingerprint-representable** — taxonomy entry only, no curated fixture. The dump sets
+    /// `outcome.tier` from seam scoring (`any_ok`), never from residual gating, so a residual veto (seams
+    /// pass, but least-squares cancellation shows B ≠ A) never appears as a characterized skip. The gate
+    /// *decision* is tested at score/region level (`validate_residual_gate` F4 cases, `seam_residual_oracle`);
+    /// the end-to-end pipeline veto is the optional/unproved **C1b** item (`tests/residual_gate_catalog/`).
     ResidualVeto,
-    /// Real fixture (Phase 5): length-mismatch tail (`duration ≥ tail cutoff`), filtered before per-gap
-    /// scoring — `GapKind::Tail`, excluded from the matched denominator.
+    /// Real fixture: length-mismatch tail (`duration ≥ tail cutoff`), filtered before per-gap scoring —
+    /// `GapKind::Tail`, excluded from the matched denominator.
     TailGeometryMismatch,
-    /// **Not fingerprint-representable** — retained for taxonomy completeness only. Unfillable gaps
+    /// **Not fingerprint-representable** — taxonomy entry only, no curated fixture. Unfillable gaps
     /// (`BExtractFailed` / `AlignedSegmentOutOfRange` / `ZeroLengthGap`) fail at plan/execution time and
-    /// never get characterized, so there is no curated fixture; covered by `GapPatchSkipReason` unit tests
-    /// and the pipeline instead.
+    /// never get characterized; covered by `GapPatchSkipReason` unit tests and the pipeline instead.
     Unfillable,
 }
 
 impl GapCellType {
+    /// Every cell in the taxonomy (the source of truth for "is a representable cell missing a fixture?").
+    pub const ALL: &'static [GapCellType] = &[
+        GapCellType::BracketPatchClean,
+        GapCellType::BracketPatchDonorBroken,
+        GapCellType::SilenceSpliceDualfitTarget,
+        GapCellType::ProgramQuiet,
+        GapCellType::NoPlacement,
+        GapCellType::RepairableDropout,
+        GapCellType::SharedSilence,
+        GapCellType::AmbientQuiet,
+        GapCellType::Decorrelated,
+        GapCellType::ResidualVeto,
+        GapCellType::TailGeometryMismatch,
+        GapCellType::Unfillable,
+    ];
+
+    /// Whether this cell can appear as a characterized fingerprint — i.e. it must have a curated fixture.
+    /// `ResidualVeto` and `Unfillable` are dispositions the dump never emits as a characterized skip (see
+    /// their variant docs), so they are covered by other tests, not a fixture.
+    pub fn is_fingerprint_representable(self) -> bool {
+        !matches!(self, GapCellType::ResidualVeto | GapCellType::Unfillable)
+    }
+
     /// The snake_case identifier, matching the `type` field in `manifest.json`.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -179,18 +208,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// The cells with a real member committed in Phase 0 — a stable subset the loader must always surface.
-    const PHASE0_REAL_CELLS: &[GapCellType] = &[
-        GapCellType::BracketPatchClean,
-        GapCellType::BracketPatchDonorBroken,
-        GapCellType::SilenceSpliceDualfitTarget,
-        GapCellType::ProgramQuiet,
-        GapCellType::NoPlacement,
-        GapCellType::RepairableDropout,
-        GapCellType::SharedSilence,
-        GapCellType::AmbientQuiet,
-    ];
-
     #[test]
     fn loads_every_curated_fixture_as_single_gap() {
         let fixtures = load_gap_cell_fixtures();
@@ -202,12 +219,22 @@ mod tests {
         }
     }
 
+    /// Every **representable** cell must have a fixture, and no non-representable cell may (so a taxonomy
+    /// member can't silently vanish, and `residual_veto`/`unfillable` can't sneak in a fabricated fixture).
     #[test]
-    fn every_phase0_cell_is_present() {
+    fn representable_cells_have_a_fixture_and_others_do_not() {
         let present: BTreeSet<&str> =
             load_gap_cell_fixtures().iter().map(|f| f.cell_type.as_str()).collect();
-        for cell in PHASE0_REAL_CELLS {
-            assert!(present.contains(cell.as_str()), "missing Phase 0 cell {}", cell.as_str());
+        for &cell in GapCellType::ALL {
+            if cell.is_fingerprint_representable() {
+                assert!(present.contains(cell.as_str()), "missing representable cell {}", cell.as_str());
+            } else {
+                assert!(
+                    !present.contains(cell.as_str()),
+                    "non-representable cell {} must not have a curated fixture",
+                    cell.as_str()
+                );
+            }
         }
     }
 

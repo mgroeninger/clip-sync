@@ -811,10 +811,10 @@
       },
       "splice": {
         "step_ms": 343.5338773276587,
-        "pre_peak_r": 0.9901179195709291,
-        "post_peak_r": 0.9983584121439244,
-        "pre_peak_z": 16.391895580663046,
-        "post_peak_z": 11.050230899772759,
+        "pre_peak_r": 0.18,
+        "post_peak_r": 0.16,
+        "pre_peak_z": 1.1,
+        "post_peak_z": 1.0,
         "edge_pinned": false
       },
       "wide_envelope": {

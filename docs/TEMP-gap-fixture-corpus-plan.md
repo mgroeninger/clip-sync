@@ -43,14 +43,17 @@ actually emits — `GapEquivalenceClass` (`domain/gap_equivalence.rs`), `GapPatc
 | 7 | `shared_silence` | class=shared_silence, drop=T | equiv 1·g0 | B silent at nominal ⇒ plan-time drop (program-quiet disposition) |
 | 8 | `ambient_quiet` | class=ambient_quiet, drop=T | equiv 2·g19 | New cell: A is room tone, decided on A's character not donor |
 | 9 | `tail_geometry_mismatch` | `GapKind::Tail` (duration ≥ cutoff) | **real** (re-anchor 6·g14, 363 s) | Filtered pre-scoring, excluded from matched denominator |
-| 10 | `decorrelated` | lag=decorrelated, donor occupied, not a target | **synthetic** (from 03) | B has *different* content; skips at any lag, no rescue |
-| 11 | `residual_veto` | seams pass, residual headroom > margin, informative | **synthetic** (from 01) | Seams pass but B≠A cancellation ⇒ anti-echo veto |
-| — | `unfillable` | BExtractFailed / ZeroLengthGap | **not representable** | Plan/execution-time failure — never characterized; covered by unit tests, not a fixture |
+| 10 | `decorrelated` | lag=decorrelated, donor occupied, every peak layer collapsed, not a target | **synthetic** (from 03) | B has *different* content; skips at any lag, no rescue |
+| — | `residual_veto` | seams pass, residual headroom > margin | **not representable** | Veto is a downstream patch action; dump reads `tier=patch`. Gate decision tested at score/region level; end-to-end veto is the optional/unproved **C1b** item |
+| — | `unfillable` | BExtractFailed / ZeroLengthGap | **not representable** | Plan/execution-time failure — never characterized; covered by `GapPatchSkipReason` unit tests |
 
-**Real vs synthetic (evidence-backed):** #1–8 have clean real members and are extracted in Phase 0.
-#9 `decorrelated` is genuinely **n=0** in both corpora — the one decorrelated-*lag* candidate (equiv 5·g2)
-resolves to `tier=patch`, not a decorrelated-skip, confirming the vocab doc. #10–12 are also n=0. All four
-become hand-built synthetics (Phase 5).
+**Real vs synthetic (evidence-backed):** #1–8 have clean real members (Phase 0); #9 `tail` is real
+(re-anchor still on disk, 7 tails). #10 `decorrelated` is genuinely **n=0** (the one decorrelated-*lag*
+candidate, equiv 5·g2, resolves to `tier=patch`), so it is a hand-built synthetic. **`residual_veto` and
+`unfillable` are not fingerprint-representable** — the dump sets `outcome.tier` from seam scoring (`any_ok`,
+`gap_fingerprint.rs`), never from residual gating or plan/execution failures, so neither ever appears as a
+characterized skip. (An earlier Phase-5 draft shipped a fabricated skip-tier `residual_veto` fixture; a review
+found it internally inconsistent — `tier=skip` with passing brackets can't occur — and it was dropped.)
 
 **Excluded (decided):** `not_evaluated` (degenerate — gate off); pair-level aborts `TrackLayoutMismatch` /
 `TrackCompatibilityUnavailable` (abort the whole pair, no per-gap cell); `5·g0` bracket-exhausted-gate-
@@ -75,9 +78,11 @@ bracket-patch) will grow to 2–3 members each once the harness is in place.
   corpus/pair/gap-index/original-filename, expected assertion). All parse as single-gap `GapCorpus`; tracked
   (not gitignored); leak-scanned clean. This preserves the raw material against `gap-files/` deletion.
 - **Phase 1 — Loader. ✅ DONE (2026-07-21).** `clip_sync_repair_fixtures::gap_cell_fixtures` reads
-  `manifest.json` + the JSONs and exposes typed records: `GapCellType` (complete taxonomy enum incl. the four
-  synthetic-only cells), `GapCellFixture { cell_type, file, expected, provenance, corpus }` with a `.gap()`
-  accessor, and `load_gap_cell_fixtures()`. Path resolved from the crate manifest dir (CWD-independent).
+  `manifest.json` + the JSONs and exposes typed records: `GapCellType` (complete taxonomy enum, with
+  `GapCellType::ALL` + `is_fingerprint_representable()` distinguishing the representable cells from the
+  `residual_veto`/`unfillable` taxonomy-only entries), `GapCellFixture { cell_type, file, expected, provenance,
+  corpus }` with a `.gap()` accessor, and `load_gap_cell_fixtures()`. Path resolved from the crate manifest dir
+  (CWD-independent).
   3 loader unit tests: every fixture loads single-gap with matching index; all Phase-0 cells present;
   manifest ↔ on-disk `.json` files agree. Extends the existing committed fixture precedent
   (`tests/gap_corpus/fingerprints/g003_timing_offset.json`).
@@ -107,14 +112,18 @@ bracket-patch) will grow to 2–3 members each once the harness is in place.
   `golden/README.md`, `development.md`, the `dual_fit.rs` comment. **Fragility gone** — no test references
   `gap-files/` or the re-anchor golden. (`analyze_dirs` stays: it still powers the `gap-fingerprint-stats`
   calibration bin, `corpus_projection` / `decode_path_projection`, and its own unit tests.)
-- **Phase 5 — Remaining cells. ✅ DONE (2026-07-22).** Added `09_tail_geometry_mismatch` (**real** — the
-  re-anchor corpus, still on disk, has 7 `duration ≥ 30 s` tails; extracted the 363 s one), plus
-  **synthetic** `10_decorrelated` (from `03`: verdict → decorrelated, `gate_pass` → false, seams collapsed)
-  and `11_residual_veto` (from `01`: skip + informative residual with 11 dB headroom). Phase-2 arms assert
-  each; golden regenerated to 11 gaps. **`unfillable` was found to be not fingerprint-representable** — those
-  gaps fail at plan/execution time and never get characterized (only gate/correlation skips reach a
-  fingerprint), so it is documented as a taxonomy entry with no fixture (covered by `GapPatchSkipReason` unit
-  tests). *Finding: the plan's original "4 synthetics" was imprecise — tail is real, unfillable is unrepresentable.*
+- **Phase 5 — Remaining cells. ✅ DONE (2026-07-22, revised after review).** Added `09_tail_geometry_mismatch`
+  (**real** — the re-anchor corpus, still on disk, has 7 `duration ≥ 30 s` tails; extracted the 363 s one) and
+  the **synthetic** `10_decorrelated` (from `03`, with **every** peak layer — `splice`, `baseline_lag`,
+  `dualfit` — collapsed so no lag recovers; `gate_pass=false`). Phase-2 arms assert each with teeth
+  (`dualfit_pass==Some(false)`, `!both_sides_recoverable()`, low gross peaks; tail: `kind==Tail`,
+  `duration≥cutoff`, `brackets_total==0`). Golden regenerated to **10 gaps**. **`residual_veto` and
+  `unfillable` are not fingerprint-representable** and carry no fixture — the dump sets `outcome.tier` from
+  seam scoring (`any_ok`), never from residual gating or plan/execution failures. The loader
+  (`is_fingerprint_representable`) + a presence test enforce that no fixture declares them.
+  *Finding (review): the plan's original "4 synthetics" was wrong — tail is real, decorrelated is the only
+  synthetic, and residual_veto/unfillable are unrepresentable. An earlier draft's fabricated skip-tier
+  `residual_veto` fixture was internally inconsistent (`tier=skip` with passing brackets) and was dropped.*
 
 Each phase landed independently and left the tree green; re-anchor stayed wired until Phase 4 flipped over.
 

@@ -179,7 +179,6 @@ Add `-Tier diagnostic` when regenerating CSVs or golden surfaces.
 | `validate_floor_oracle` | **~4 h** (7 tests; `source_gap_oracle_floor_csv` alone ~35 min) |
 | `validate_residual_gate` | ~4 min |
 | `validate_patch_audio` | ~1–2 min |
-| `golden_baseline_invariance` (`--ignored`) | seconds (needs local `gap-files/…`) |
 | `integration_gap_corpus` ignored rows | ~2–5 min |
 | `cli_mux_integration` ignored mux e2e | ~1 min |
 

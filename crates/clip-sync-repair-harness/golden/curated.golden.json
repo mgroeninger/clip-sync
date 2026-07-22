@@ -1,6 +1,6 @@
 {
   "schema": "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/*continuous/edge_pinned/brackets_*) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_* continuous) assert WITHIN ε. Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = measurement placement.",
-  "gap_count": 11,
+  "gap_count": 10,
   "dualfit_targets": [
     "03_silence_splice_dualfit_target·g3",
     "06_repairable_dropout·g1"
@@ -337,10 +337,10 @@
       "brackets_passing": 0,
       "gross_frac_lag_pre_ms": -318.8707925684753,
       "gross_frac_lag_post_ms": 24.663084759183388,
-      "gross_peak_r_pre": 0.9901179195709292,
-      "gross_peak_r_post": 0.9983584121439244,
+      "gross_peak_r_pre": 0.18,
+      "gross_peak_r_post": 0.16,
       "gross_step_ms": 343.5338773276587,
-      "gross_uniqueness_z": 11.05023089977276,
+      "gross_uniqueness_z": 1.0,
       "gross_uniqueness_prom": 0.2231997560869472,
       "seamlocal_pre_seam_r": 0.2,
       "seamlocal_post_seam_r": 0.18,
@@ -355,41 +355,6 @@
       "a_noise_floor_db": -63.622856,
       "b_gap_floor_db": -51.13928,
       "b_noise_floor_db": -63.140644
-    },
-    {
-      "pair": "11_residual_veto",
-      "index": 6,
-      "tier": "skip",
-      "patched": false,
-      "dualfit_target": false,
-      "program_quiet_skip": false,
-      "bracket_exhausted": false,
-      "gate_pass": true,
-      "step_edge_pinned": false,
-      "aligned_donor_continuous": true,
-      "nominal_donor_continuous": true,
-      "brackets_total": 22,
-      "brackets_passing": 10,
-      "gross_frac_lag_pre_ms": 49.18789742450933,
-      "gross_frac_lag_post_ms": 83.93700597518581,
-      "gross_peak_r_pre": 0.9898428659036892,
-      "gross_peak_r_post": 0.9803234388858194,
-      "gross_step_ms": 34.74910855067648,
-      "gross_uniqueness_z": 18.34636395450462,
-      "gross_uniqueness_prom": 0.3735017969256267,
-      "seamlocal_pre_seam_r": 0.9924338291990428,
-      "seamlocal_post_seam_r": 0.924076747964334,
-      "seamlocal_post_global_r": -0.18527287638058212,
-      "seamlocal_seam_prom": 0.09458619786200562,
-      "nominal_donor_silence": 0.0,
-      "aligned_donor_silence": 0.0,
-      "aligned_donor_rms_db": -51.04192352294922,
-      "throat_residual_headroom_db": 11.0,
-      "throat_structure_min": 0.983557487212901,
-      "a_gap_floor_db": -97.63065,
-      "a_noise_floor_db": -53.176735,
-      "b_gap_floor_db": -46.751205,
-      "b_noise_floor_db": -53.51866
     }
   ]
 }

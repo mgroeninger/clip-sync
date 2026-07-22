@@ -3,11 +3,14 @@
 A gap is a point in a small measurement space — how A's kept content meets B's donor content at the
 seam(s). Its **type** is the cell that point falls into; patch/skip is a function of the cell, not a
 single conflated score. This doc names the cells we **see and reconcile to an action** — a patch, or a
-*reasoned* skip. The re-anchor corpus (`gap-files/re-anchor-dual-fit-on-nominal`, 62 matched gaps) is narrow
-and nowhere near complete, so it exercises only the core cells; three more — **Decorrelated**,
-**Residual-veto**, and the **Unfillable** family — are real production dispositions (from the source
-classifier `GapPatchSkipReason`) named here even though the re-anchor golden has no member. Background and
-derivation: [TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md).
+*reasoned* skip. The cells are exercised by a committed set of per-gap-**type** fixtures — one representative
+each, media-free — under `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/`
+([TEMP-gap-fixture-corpus-plan.md](TEMP-gap-fixture-corpus-plan.md)), which superseded the original derivation
+corpus (`re-anchor-dual-fit-on-nominal`, ephemeral and now retired). Every core cell has a fixture, plus a
+hand-built synthetic **Decorrelated** and a real **Tail**; **Residual-veto** and the **Unfillable** family are
+**not fingerprint-representable** (the dump sets outcome from seam scoring, never from residual gating or
+plan/execution failures) and are covered by other tests. Background and derivation:
+[TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md).
 
 ## Axes (read before the cells)
 
@@ -67,27 +70,38 @@ among the 32 bracket-exhausted skips in §7g, outside the nine silence-splice ta
 characterize→execute pipeline seams are always measured, so this pre-measurement variant disappears — a gap
 here resolves to **Decorrelated** (below) once its seams are scored.*
 
-## Wider-production cells (not in the re-anchor corpus)
+## Wider-production cells (no real member)
 
-These are real dispositions the source classifier emits (`GapPatchSkipReason`) but that the narrow re-anchor
-corpus happens not to contain (**n=0** here). They are named because each **reconciles to an action** — a
-reasoned skip — and wider production data does produce them. Fixtures are hand-built until real media supplies
-a member.
+These are real dispositions the source classifier emits (`GapPatchSkipReason`) but that no available corpus
+contains (**n=0**). They are named because each **reconciles to an action** — a reasoned skip — and wider
+production data does produce them. **Decorrelated** has a **hand-built synthetic** curated fixture (donor
+occupied, every peak layer collapsed so no lag recovers). **Residual-veto** and the **Unfillable** family are
+**not fingerprint-representable** — the dump path sets `outcome.tier` from seam scoring (`any_ok`), never from
+residual gating or plan/execution failures, so neither ever appears as a characterized skip; they are covered
+by the residual-gate and `GapPatchSkipReason` tests instead (see below).
 
 **Decorrelated** (n=0 on re-anchor) — bracket search exhausted, donor is **occupied**, but the seams do not
 recover at *any* lag: B has genuinely *different* content across the hole (not a registration offset). Distinct
 from silence-splice (seams recover at their own lag) and from program-quiet (donor is occupied, not silent).
 Source: a bare `CorrelationBelowThreshold` skip with no dual-fit rescue. Action: reasoned skip.
 
-**Residual-veto** (n=0 on re-anchor) — the seams **pass** the waveform gate, but least-squares cancellation at
+**Residual-veto** — the seams **pass** the waveform gate, but least-squares cancellation at
 the throat shows B ≠ A (echo / repeat / a similar-but-different source that merely correlates). The residual
 gate (G4, and dual-fit's A6 shoulder check) is the reconciliation; a false same-source is *correctly* rejected.
 Source: `ResidualHeadroomExceeded`. Action: reasoned skip. Distinct from every seam-correlation cell — it is
-the cell the residual confirm exists to catch.
+the cell the residual confirm exists to catch. **Not fingerprint-representable:** the veto is a downstream
+patch-pipeline action, and the dump sets `outcome.tier` from seam scoring only (a residual-vetoed gap's
+fingerprint still reads `tier=patch`), so there is no curated fixture. The gate *decision* is tested at
+score/region level (`validate_residual_gate` F4 cases, `seam_residual_oracle`); the **end-to-end pipeline
+veto** — a gap surfacing `ResidualHeadroomExceeded` as its skip reason — is the optional, still-unproved
+**C1b** item (`tests/residual_gate_catalog/README.md`; residual-gate follow-ups in [BACKLOG.md](../BACKLOG.md)).
 
-**Unfillable** (family; n=0 per-gap on re-anchor) — the gap structurally cannot be filled, so the action is a
+**Unfillable** (family) — the gap structurally cannot be filled, so the action is a
 definite skip with no judgment: B window empty / segment out of range / zero-length (`BExtractFailed`,
-`AlignedSegmentOutOfRange`, `ZeroLengthGap`). **Tail** (above) is the plan-time arm of the same family
+`AlignedSegmentOutOfRange`, `ZeroLengthGap`). These fail at plan/execution time and **never get
+characterized** — only gate/correlation skips reach a fingerprint — so this family is **not
+fingerprint-representable** and has no curated fixture; it is covered by `GapPatchSkipReason` unit tests
+instead. **Tail** (above) is the plan-time arm of the same family
 (geometry mismatch, `OutsideReferenceCoverage`), filtered before per-gap scoring. Pair-level aborts
 (`TrackLayoutMismatch`, `TrackCompatibilityUnavailable`) are **not** cells — they abort the whole pair, with no
 per-gap action to reconcile.

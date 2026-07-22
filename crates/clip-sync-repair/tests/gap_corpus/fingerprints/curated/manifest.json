@@ -103,23 +103,12 @@
     {
       "file": "10_decorrelated.json",
       "type": "decorrelated",
-      "expected": "SYNTHETIC (n=0 in real data): skip, donor occupied, seams recover at NO lag (verdict=decorrelated) => NOT a dual-fit target. Derived from 03_silence_splice by flipping verdict->decorrelated and gate_pass->false.",
+      "expected": "SYNTHETIC (n=0 in real data): skip, donor occupied, seams recover at NO lag on EVERY peak layer (splice/baseline_lag/dualfit all collapsed), verdict=decorrelated, gate_pass=false => not a dual-fit target, !both_sides_recoverable. From 03_silence_splice.",
       "provenance": {
         "corpus": "synthetic",
         "pair": "derived-from",
         "gap_index": 3,
         "original_filename": "03_silence_splice_dualfit_target.json"
-      }
-    },
-    {
-      "file": "11_residual_veto.json",
-      "type": "residual_veto",
-      "expected": "SYNTHETIC (n=0 in real data): seams PASS the gate yet least-squares cancellation shows B!=A (residual headroom 11 dB > margin, informative) => reasoned skip. Derived from 01_bracket_patch_clean.",
-      "provenance": {
-        "corpus": "synthetic",
-        "pair": "derived-from",
-        "gap_index": 6,
-        "original_filename": "01_bracket_patch_clean.json"
       }
     }
   ]
