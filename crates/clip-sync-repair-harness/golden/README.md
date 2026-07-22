@@ -6,7 +6,26 @@ verdicts. Emitted by `CorpusReport::golden_json()` (reuses the analyzer's own
 predicate methods, so it can't drift from the decision logic). See
 [docs/TEMP-pipeline-perf-redesign-plan.md](../../../docs/TEMP-pipeline-perf-redesign-plan.md) §4.
 
-## Current reference: `re-anchor-dual-fit-on-nominal.golden.json` — **FROZEN**
+## Current reference: `curated.golden.json` — self-hosting
+
+The **committed per-gap-type fixtures** (`crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/`)
+are snapshotted here by `golden_baseline_invariance` (pr-repair, media-free). One row per curated cell,
+keyed by cell type (not `pair·gap`). Regenerate after an intentional analyzer change:
+
+```powershell
+$env:CURATED_GOLDEN_REGEN = "1"
+cargo test -p clip-sync-repair --test golden_baseline_invariance
+Remove-Item Env:\CURATED_GOLDEN_REGEN
+```
+
+No external media is needed — the golden is reproduced *from* the committed fixtures. See
+[docs/TEMP-gap-fixture-corpus-plan.md](../../../../docs/TEMP-gap-fixture-corpus-plan.md).
+
+## Legacy reference: `re-anchor-dual-fit-on-nominal.golden.json` — **FROZEN** (retiring in Phase 4)
+
+Still used by `golden_baseline_smoke` + `assert_footguns` until Phase 4 recasts those onto the curated set.
+Its source `gap-files/` corpus is gone (ephemeral, unrecoverable), so this golden cannot be regenerated —
+the `## Regenerate` command below applies only while that corpus exists.
 
 Captured on the **nominal-reanchored** `splice_dualfit` (commit `2622c7a`) + the
 corrected `step_is_real` predicate (`b099b83`). 62 matched gaps; **9 dual-fit

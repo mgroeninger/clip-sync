@@ -69,7 +69,9 @@ try {
             '--test', 'seam_residual_corpus',
             '--test', 'wav_bit_depth_integration',
             '--test', 'golden_baseline_smoke',
-            '--test', 'gap_cell_fixtures'
+            '--test', 'gap_cell_fixtures',
+            '--test', 'golden_baseline_invariance',
+            '--test', 'gap_repair_spec_diff'
         )
 
         if (Test-FfmpegOnPath) {
@@ -126,20 +128,14 @@ try {
         if (-not (Test-FfmpegOnPath)) {
             Write-Warning 'validation tier: ffmpeg recommended on PATH for floor_oracle / codec rows'
         }
+        # golden_baseline_invariance + gap_repair_spec_diff moved to pr-repair (media-free curated
+        # fixtures) in Phase 3 of the gap-fixture-corpus plan.
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--features', 'validation-tests',
-            '--test', 'golden_baseline_invariance',
             '--test', 'validate_floor_oracle',
             '--test', 'validate_residual_gate',
             '--test', 'validate_patch_audio'
-        )
-        Invoke-CargoTest @(
-            '-p', 'clip-sync-repair',
-            '--features', 'validation-tests',
-            '--test', 'golden_baseline_invariance',
-            'golden_baseline_corpus_invariance',
-            '--', '--ignored'
         )
         # Patch-timing rows: release-calibrated budgets; debug is ~10–20× slower.
         foreach ($gapFilter in @('gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing')) {

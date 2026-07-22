@@ -1,96 +1,62 @@
-//! Perf §4 decision-invariance harness — compare live corpus analysis against the frozen golden baseline.
+//! Perf §4 decision-invariance — re-analyze the curated per-gap-type fixtures and diff against the frozen
+//! golden snapshot (`docs/TEMP-gap-fixture-corpus-plan.md`).
 //!
-//! Tier: **validation** (needs `gap-files/re-anchor-dual-fit-on-nominal` on disk).
+//! Tier: **pr-repair** — media-free (the committed fixtures + committed golden are the input), so no
+//! `#[ignore]`, no `gap-files/`, no `validation-tests` feature. (Was `gap-files/re-anchor`-dependent until
+//! Phase 3.)
 //!
+//! The golden is **self-hosting**: it is regenerated *from* the committed fixtures, so no external media is
+//! ever needed to reproduce it. Regenerate after an intentional analyzer change with:
 //! ```powershell
-//! .\scripts\test-tier.ps1 -Tier validation
-//! # or ad hoc:
-//! cargo test -p clip-sync-repair --features validation-tests --test golden_baseline_invariance
+//! $env:CURATED_GOLDEN_REGEN = "1"
+//! cargo test -p clip-sync-repair --test golden_baseline_invariance
+//! Remove-Item Env:\CURATED_GOLDEN_REGEN
 //! ```
-//!
-//! The corpus-free footgun smoke test lives in `golden_baseline_smoke.rs` (§4.7 A1) so it can run
-//! in `pr-repair` without the `validation-tests` feature.
+//! The corpus-free footgun smoke test still lives in `golden_baseline_smoke.rs`.
 
 use std::path::{Path, PathBuf};
 
-use clip_sync_repair_harness::gap_fingerprint_corpus::{
-    analyze_dirs, drift_eps_from_env, tail_secs_from_env,
+use clip_sync_repair_harness::gap_fingerprint_corpus::curated_gap_cell_rows;
+use clip_sync_repair_harness::golden_baseline::{
+    baseline_from_rows, diff_baselines, parse_golden_baseline, TIER2_ABS_EPS,
 };
-use clip_sync_repair_harness::golden_baseline::{diff_baselines, parse_golden_baseline, TIER2_ABS_EPS};
 
-const GOLDEN_JSON: &str = include_str!(
-    "../../clip-sync-repair-harness/golden/re-anchor-dual-fit-on-nominal.golden.json"
-);
-
-fn repo_root() -> PathBuf {
+/// Committed golden, alongside the other golden baselines in the harness crate.
+fn golden_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..")
+        .join("clip-sync-repair-harness")
+        .join("golden")
+        .join("curated.golden.json")
 }
 
-fn default_corpus_dir() -> PathBuf {
-    repo_root().join("gap-files").join("re-anchor-dual-fit-on-nominal")
-}
-
-fn corpus_dirs() -> Option<Vec<PathBuf>> {
-    if let Ok(dirs_env) = std::env::var("GAP_FP_DIRS") {
-        let dirs: Vec<PathBuf> = dirs_env
-            .split(',')
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| {
-                let p = Path::new(s.trim());
-                if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    repo_root().join(p)
-                }
-            })
-            .collect();
-        if !dirs.is_empty() {
-            return Some(dirs);
-        }
-    }
-    let default = default_corpus_dir();
-    if default.is_dir() {
-        return Some(vec![default]);
-    }
-    None
-}
-
-/// Round-trip: re-analyze corpus.json dirs and diff against the frozen golden snapshot.
 #[test]
-#[ignore = "tier:validation — needs gap-files/re-anchor-dual-fit-on-nominal; test-tier.ps1 -Tier validation"]
-fn golden_baseline_corpus_invariance() {
-    let Some(dirs) = corpus_dirs() else {
-        eprintln!(
-            "skip: corpus not found — set GAP_FP_DIRS or place fingerprints at {}",
-            default_corpus_dir().display()
-        );
+fn curated_golden_baseline_invariance() {
+    let live = baseline_from_rows(&curated_gap_cell_rows());
+    assert!(live.gap_count > 0, "no curated fixtures analyzed");
+    let path = golden_path();
+
+    if std::env::var("CURATED_GOLDEN_REGEN").as_deref() == Ok("1") {
+        let json = serde_json::to_string_pretty(&live).expect("serialize golden");
+        std::fs::write(&path, json).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+        eprintln!("regenerated {}", path.display());
         return;
-    };
-
-    let expected = parse_golden_baseline(GOLDEN_JSON).expect("parse frozen golden JSON");
-    let report = analyze_dirs(&dirs, drift_eps_from_env(), tail_secs_from_env());
-    assert!(
-        report.total_gaps() > 0,
-        "no gaps under {dirs:?} — did the fingerprint scan finish?"
-    );
-
-    let actual = report.golden_baseline();
-    let diffs = diff_baselines(&expected, &actual, TIER2_ABS_EPS);
-    if !diffs.is_empty() {
-        let preview: Vec<_> = diffs.iter().take(20).cloned().collect();
-        let more = diffs.len().saturating_sub(20);
-        panic!(
-            "golden baseline drift ({} mismatch{}):\n{}\n{}",
-            diffs.len(),
-            if diffs.len() == 1 { "" } else { "es" },
-            preview.join("\n"),
-            if more > 0 {
-                format!("… and {more} more")
-            } else {
-                String::new()
-            }
-        );
     }
+
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "read {} ({e}) — first-time generation: run with CURATED_GOLDEN_REGEN=1",
+            path.display()
+        )
+    });
+    let expected = parse_golden_baseline(&committed).expect("parse frozen curated golden JSON");
+
+    let diffs = diff_baselines(&expected, &live, TIER2_ABS_EPS);
+    assert!(
+        diffs.is_empty(),
+        "curated golden baseline drift ({} mismatch{}):\n{}\nregenerate with CURATED_GOLDEN_REGEN=1 if intended",
+        diffs.len(),
+        if diffs.len() == 1 { "" } else { "es" },
+        diffs.iter().take(20).cloned().collect::<Vec<_>>().join("\n"),
+    );
 }

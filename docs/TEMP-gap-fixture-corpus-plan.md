@@ -1,6 +1,6 @@
 # Gap-type fixture corpus — plan (DRAFT)
 
-Status: **draft / Phases 0–2 done** (2026-07-21).
+Status: **draft / Phases 0–3 done** (2026-07-21).
 
 Replace the fragile dependency on the ephemeral, licensed-media-derived `gap-files/` corpus with a curated,
 committed set of **per-gap-type fingerprint fixtures** — one self-contained JSON per gap *cell*, so the
@@ -89,9 +89,16 @@ bracket-patch) will grow to 2–3 members each once the harness is in place.
   signals. Both vocabulary footguns are pinned (silence-splice **is** a target; program-quiet is **not**).
   Reads the committed bytes directly (no re-serialization round-trip). Media-independent replacement for
   `assert_footguns`' index-coupled semantics.
-- **Phase 3 — Re-home the golden.** Regenerate the aggregate golden *from the committed set* (self-hosting —
-  reproducible with zero external media). Repoint `golden_baseline_invariance` + `gap_repair_spec_diff` at
-  the committed set.
+- **Phase 3 — Re-home the golden. ✅ DONE (2026-07-21).** New harness `curated_gap_cell_rows()` /
+  `curated_gap_cell_projected_rows()` build one analyzer `GapRow` per committed fixture (labelled by cell
+  type, so keys are unique despite colliding source indices), and `baseline_from_rows()` (extracted from
+  `baseline_from_report`) snapshots them. `golden_baseline_invariance` now diffs the live analysis against a
+  **self-hosting** `curated.golden.json` (regenerated *from* the fixtures via `CURATED_GOLDEN_REGEN=1`, zero
+  external media); `gap_repair_spec_diff` runs the projection-fidelity differential over the curated set. Both
+  are now **media-free pr-repair** tests (dropped `#[ignore]` + `validation-tests`; wired into the pr-repair
+  tier — note `gap_repair_spec_diff` never actually ran in CI before). No test depends on `gap-files/` any
+  more. *(Data note: `repairable_dropout·g1` is legitimately also a dual-fit target — equivalence class and
+  seam disposition are orthogonal; the golden records both.)*
 - **Phase 4 — Retire re-anchor.** Recast `assert_footguns` onto the Phase-2 expectations; drop the re-anchor
   golden + all `gap-files/` default-path references from tests and docs (`golden_baseline_smoke`,
   `test-tier.ps1`, `test-tiers.md`, `golden/README.md`, the `dual_fit.rs` comment). Fragility gone.

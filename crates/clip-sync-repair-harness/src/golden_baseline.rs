@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gap_fingerprint_corpus::CorpusReport;
+use crate::gap_fingerprint_corpus::{CorpusReport, GapRow};
 
 /// Tier-2 continuous-field tolerance. FFT refactors may drift at ~1e-10; identical corpus replays are exact.
 pub const TIER2_ABS_EPS: f64 = 1e-9;
@@ -58,47 +58,50 @@ pub struct GoldenRecord {
     pub b_noise_floor_db: Option<f64>,
 }
 
-/// Build the golden snapshot from an analyzed corpus (reuses analyzer predicates).
-pub fn baseline_from_report(report: &CorpusReport) -> GoldenBaseline {
-    let gaps: Vec<GoldenRecord> = report
-        .matched()
-        .iter()
-        .map(|r| GoldenRecord {
-            pair: r.pair.clone(),
-            index: r.index,
-            tier: r.outcome_tier.clone(),
-            patched: r.patched(),
-            dualfit_target: r.dualfit_target(),
-            program_quiet_skip: r.program_quiet_skip(),
-            bracket_exhausted: r.bracket_exhausted(),
-            gate_pass: r.dualfit_pass,
-            step_edge_pinned: r.step_edge_pinned(),
-            aligned_donor_continuous: r.donor_continuous,
-            nominal_donor_continuous: r.donor_nominal_cont,
-            brackets_total: r.brackets_total,
-            brackets_passing: r.brackets_passing,
-            gross_frac_lag_pre_ms: r.frac_lag_pre_ms,
-            gross_frac_lag_post_ms: r.frac_lag_post_ms,
-            gross_peak_r_pre: r.peak_r_pre,
-            gross_peak_r_post: r.peak_r_post,
-            gross_step_ms: r.seam_step_ms(),
-            gross_uniqueness_z: r.uniqueness_z,
-            gross_uniqueness_prom: r.uniqueness_prom,
-            seamlocal_pre_seam_r: r.dualfit_pre_r,
-            seamlocal_post_seam_r: r.dualfit_post_r,
-            seamlocal_post_global_r: r.dualfit_post_global_r,
-            seamlocal_seam_prom: r.dualfit_seam_prom,
-            nominal_donor_silence: r.donor_nominal_silence,
-            aligned_donor_silence: r.donor_aligned_silence,
-            aligned_donor_rms_db: r.donor_rms_db,
-            throat_residual_headroom_db: r.residual_headroom_db,
-            throat_structure_min: r.structure_min,
-            a_gap_floor_db: r.a_gap_floor_db,
-            a_noise_floor_db: r.a_noise_floor_db,
-            b_gap_floor_db: r.b_gap_floor_db,
-            b_noise_floor_db: r.b_noise_floor_db,
-        })
-        .collect();
+/// One gap's golden record, from its analyzed [`GapRow`] (reuses the analyzer predicates).
+fn record_from_row(r: &GapRow) -> GoldenRecord {
+    GoldenRecord {
+        pair: r.pair.clone(),
+        index: r.index,
+        tier: r.outcome_tier.clone(),
+        patched: r.patched(),
+        dualfit_target: r.dualfit_target(),
+        program_quiet_skip: r.program_quiet_skip(),
+        bracket_exhausted: r.bracket_exhausted(),
+        gate_pass: r.dualfit_pass,
+        step_edge_pinned: r.step_edge_pinned(),
+        aligned_donor_continuous: r.donor_continuous,
+        nominal_donor_continuous: r.donor_nominal_cont,
+        brackets_total: r.brackets_total,
+        brackets_passing: r.brackets_passing,
+        gross_frac_lag_pre_ms: r.frac_lag_pre_ms,
+        gross_frac_lag_post_ms: r.frac_lag_post_ms,
+        gross_peak_r_pre: r.peak_r_pre,
+        gross_peak_r_post: r.peak_r_post,
+        gross_step_ms: r.seam_step_ms(),
+        gross_uniqueness_z: r.uniqueness_z,
+        gross_uniqueness_prom: r.uniqueness_prom,
+        seamlocal_pre_seam_r: r.dualfit_pre_r,
+        seamlocal_post_seam_r: r.dualfit_post_r,
+        seamlocal_post_global_r: r.dualfit_post_global_r,
+        seamlocal_seam_prom: r.dualfit_seam_prom,
+        nominal_donor_silence: r.donor_nominal_silence,
+        aligned_donor_silence: r.donor_aligned_silence,
+        aligned_donor_rms_db: r.donor_rms_db,
+        throat_residual_headroom_db: r.residual_headroom_db,
+        throat_structure_min: r.structure_min,
+        a_gap_floor_db: r.a_gap_floor_db,
+        a_noise_floor_db: r.a_noise_floor_db,
+        b_gap_floor_db: r.b_gap_floor_db,
+        b_noise_floor_db: r.b_noise_floor_db,
+    }
+}
+
+/// Build a golden snapshot from an explicit set of analyzed rows (every row included, in order). The
+/// per-gap-fixture path (`docs/TEMP-gap-fixture-corpus-plan.md`) uses this to snapshot a curated set whose
+/// rows carry unique `pair` labels; [`baseline_from_report`] feeds it the corpus's matched rows.
+pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> GoldenBaseline {
+    let gaps: Vec<GoldenRecord> = rows.into_iter().map(record_from_row).collect();
     GoldenBaseline {
         schema: "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/\
                  *continuous/edge_pinned/brackets_*) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/\
@@ -113,6 +116,11 @@ pub fn baseline_from_report(report: &CorpusReport) -> GoldenBaseline {
             .collect(),
         gaps,
     }
+}
+
+/// Build the golden snapshot from an analyzed corpus (its matched rows).
+pub fn baseline_from_report(report: &CorpusReport) -> GoldenBaseline {
+    baseline_from_rows(report.matched())
 }
 
 pub fn parse_golden_baseline(json: &str) -> Result<GoldenBaseline, serde_json::Error> {

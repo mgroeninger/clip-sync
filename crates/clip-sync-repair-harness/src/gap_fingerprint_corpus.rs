@@ -1957,6 +1957,44 @@ pub fn gap_rows_from_corpus_json(
         .collect())
 }
 
+/// Analyze one curated fixture's JSON bytes into its single [`GapRow`], labelled `pair`.
+fn curated_single_row(bytes: &[u8], pair: &str) -> GapRow {
+    let mut rows = gap_rows_from_corpus_json(bytes, pair, DEFAULT_DRIFT_EPS_MS, DEFAULT_TAIL_SECS)
+        .expect("parse curated fixture into rows");
+    assert_eq!(rows.len(), 1, "curated fixture {pair} must be single-gap");
+    rows.pop().unwrap()
+}
+
+/// Analyzed rows for the committed curated per-gap-**type** fixtures
+/// (`docs/TEMP-gap-fixture-corpus-plan.md`). Each row is labelled by its cell type, so golden keys are
+/// unique despite colliding source-gap indices. Media-free — reads the committed fixture bytes directly.
+pub fn curated_gap_cell_rows() -> Vec<GapRow> {
+    use clip_sync_repair_fixtures::gap_cell_fixtures::{curated_fixtures_dir, load_gap_cell_fixtures};
+    let dir = curated_fixtures_dir();
+    load_gap_cell_fixtures()
+        .into_iter()
+        .map(|fx| {
+            let path = dir.join(&fx.file);
+            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            curated_single_row(&bytes, fx.cell_type.as_str())
+        })
+        .collect()
+}
+
+/// As [`curated_gap_cell_rows`] but each fixture is first pushed through the tags→fingerprint projection
+/// ([`crate::corpus_projection::project_corpus`]) — the projection-fidelity input (Phase 3 spec-diff).
+pub fn curated_gap_cell_projected_rows() -> Vec<GapRow> {
+    use clip_sync_repair_fixtures::gap_cell_fixtures::load_gap_cell_fixtures;
+    load_gap_cell_fixtures()
+        .into_iter()
+        .map(|fx| {
+            let projected = crate::corpus_projection::project_corpus(&fx.corpus);
+            let bytes = serde_json::to_vec(&projected).expect("serialize projected curated corpus");
+            curated_single_row(&bytes, fx.cell_type.as_str())
+        })
+        .collect()
+}
+
 /// Convenience: env knob for the constant/drift split (`GAP_FP_DRIFT_EPS_MS`, default 1.0 ms).
 pub fn drift_eps_from_env() -> f64 {
     std::env::var("GAP_FP_DRIFT_EPS_MS")

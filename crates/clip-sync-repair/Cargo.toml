@@ -158,12 +158,10 @@ path = "tests/golden_baseline_smoke.rs"
 [[test]]
 name = "golden_baseline_invariance"
 path = "tests/golden_baseline_invariance.rs"
-required-features = ["validation-tests"]
 
 [[test]]
 name = "gap_repair_spec_diff"
 path = "tests/gap_repair_spec_diff.rs"
-required-features = ["validation-tests"]
 
 [[test]]
 name = "decode_path_projection"

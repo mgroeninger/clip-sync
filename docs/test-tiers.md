@@ -221,8 +221,10 @@ cargo clippy -p clip-sync-repair --all-targets --features validation-tests,diagn
 | `.\scripts\fetch_corpus_sources.ps1` | `validate_floor_oracle` |
 | `CLIP_SYNC_CORPUS` | alignment external corpus (`validation`) |
 | `CLIP_SYNC_GAP_CORPUS` | `gap_corpus_external` (`validation`) |
-| `GAP_FP_DIRS` | `gap_repair_spec_diff`, `golden_baseline_invariance` (validation; skip if unset). The former `diag_fingerprint_corpus` reader is now the `gap-fingerprint-stats` bin (`calibration` feature) taking dirs as CLI args |
-| Local `gap-files/re-anchor-dual-fit-on-nominal` | `golden_baseline_corpus_invariance` (`validation`, `#[ignore]`) |
+
+`golden_baseline_invariance` and `gap_repair_spec_diff` no longer need any external corpus — since Phase 3 of
+the gap-fixture-corpus plan they run on committed curated fixtures (`pr-repair`, media-free). The
+`gap-fingerprint-stats` calibration bin still takes `gap-files/` dirs as CLI args, but no test does.
 
 ---
 
