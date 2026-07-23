@@ -14,7 +14,7 @@ pub(super) fn construct_adts_header(
     sample_freq_index: u8,
     channel_config: u8,
     num_bytes: u64,
-) -> symphonia::core::errors::Result<Vec<u8>> {
+) -> symphonia::core::errors::Result<[u8; 7]> {
     // ADTS profile is 2 bits (AOT − 1 for Main/LC/SSR/LTP). HE-AAC reports
     // SBR/PS from FDK after the first frame; those wrap as LC in ADTS.
     let adts_object_type = match object_type {
@@ -81,7 +81,7 @@ pub(super) fn construct_adts_header(
     byte6 = (byte6 << 6) | 0b111111;
     byte6 <<= 2;
 
-    Ok(vec![byte0, byte1, byte2, byte3, byte4, byte5, byte6])
+    Ok([byte0, byte1, byte2, byte3, byte4, byte5, byte6])
 }
 
 #[cfg(test)]

@@ -16,7 +16,6 @@ use symphonia::core::codecs::audio::{
 };
 use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia::core::errors::{Error, unsupported_error};
-use symphonia::core::io::FiniteStream;
 use symphonia::core::packet::PacketRef;
 use symphonia::core::{codec_profile, support_audio_codec};
 use tracing::warn;
@@ -45,6 +44,10 @@ pub struct AacDecoder {
     m4a_info: M4AInfo,
     m4a_info_validated: bool,
     pcm: [i16; MAX_SAMPLES],
+    /// Reusable ADTS header + access-unit payload for [`Decoder::fill`].
+    /// FDK requires one contiguous `&[u8]`; capacity is kept across packets (and
+    /// across `reset()`), so steady-state decode avoids per-packet heap allocs.
+    adts_scratch: Vec<u8>,
 }
 
 impl fmt::Debug for AacDecoder {
@@ -98,6 +101,7 @@ impl AacDecoder {
             m4a_info,
             m4a_info_validated: false,
             pcm: [0; MAX_SAMPLES],
+            adts_scratch: Vec::new(),
         })
     }
 
@@ -158,15 +162,21 @@ impl AudioDecoder for AacDecoder {
 
     fn decode_ref(&mut self, packet: &PacketRef) -> Result<GenericAudioBufferRef<'_>> {
         let mut reader = packet.as_buf_reader();
+        let payload = reader.read_buf_bytes_available_ref();
         let adts_header = construct_adts_header(
             self.m4a_info.otype,
             self.m4a_info.sample_rate_index,
             self.m4a_info.channels,
-            reader.byte_len(),
+            payload.len() as u64,
         )?;
 
+        self.adts_scratch.clear();
+        self.adts_scratch.reserve(adts_header.len() + payload.len());
+        self.adts_scratch.extend_from_slice(&adts_header);
+        self.adts_scratch.extend_from_slice(payload);
+
         self.decoder
-            .fill(&[&adts_header, reader.read_buf_bytes_available_ref()].concat())
+            .fill(&self.adts_scratch)
             .map_err(|e| Error::DecodeError(e.message()))?;
 
         match self.decoder.decode_frame(&mut self.pcm) {
