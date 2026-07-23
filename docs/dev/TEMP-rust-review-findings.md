@@ -415,7 +415,7 @@ remaining flat fields was organization rather than correctness.
   guards `e02dfad`).
 - `SeamGateConfig` (53 `pub` fields — a near-twin of settings, not a projection) **deleted**;
   `SeamGateParams` borrows `&PatchRequestSettings` alongside a 13-field `SeamGateDerived` that is
-  frame math only (`894d353`).
+  frame math only (`abb4bd2`).
 - Both surviving `PatchRequestSettings` literals (harness `patch_request_with_options`,
   `query_reference_integration`) seeded from `..RepairConfig::default().patch_settings()`
   (`47cef0e`) — this also closes **M-HARNESS item 1**.
@@ -443,12 +443,16 @@ first. Then split `gap_fingerprint` into schema / measure / project, and harness
 `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
 `clip-sync`.
 
+**Progress (2026-07-23):** policies **P1** landed — residual/floor measurement is
+`domain/policies/seam_residual.rs` behind the `policies::*` facade. Remaining policies
+phases P2–P5 (silence / borders / scoring / delete monolith shell) still open.
+
 **Test:** `-Tier pr` after each split.
 
 | File | ~Lines |
 |------|--------|
 | `gap_fingerprint.rs` | 4,000 |
-| `policies.rs` | 3,900 |
+| `policies/` (`mod.rs` + `seam_residual.rs`) | ~2,800 + ~1,600 |
 | `patch_audio.rs` | 3,600 |
 | `align_videos.rs` | 2,900 |
 | harness `gap_fingerprint_corpus.rs` | 2,300 |

@@ -33,14 +33,14 @@ Three hand-maintained conversion lists became one. Patch policy has exactly one 
 | Phase | Work | Commit |
 |-------|------|--------|
 | **P0** | Embed `PatchRequestSettings` in `PatchAudioRequest` (`report` + `settings` + `measure_residual`), read-only `Deref`, **no `DerefMut`**. `into_request` 56 lines → 4. | `92571bc`, guards in `e02dfad` |
-| **P1** | Delete the `SeamGateConfig` near-twin. `SeamGateParams` now holds `&PatchRequestSettings` + owned `SeamGateDerived` (frames, rate/channels, `silence_peak_fraction`, `measure_residual`, `anchor_matchability`) + geom. | `894d353` (2026-06-26) |
+| **P1** | Delete the `SeamGateConfig` near-twin. `SeamGateParams` now holds `&PatchRequestSettings` + owned `SeamGateDerived` (frames, rate/channels, `silence_peak_fraction`, `measure_residual`, `anchor_matchability`) + geom. | `abb4bd2` |
 | **P3 step 1** | Seed both surviving `PatchRequestSettings` literals — harness `patch_request_with_options` and `query_reference_integration` — from `..RepairConfig::default().patch_settings()`. Value-identical to the prior hand-written literals; kills the "new knob drifts unseen" mechanism. | `47cef0e` |
 | **P5** | `gate_mode_ignores_fill_fit_knobs`: perturbing all five `fill_fit_*` knobs leaves Gate-mode PCM byte-identical. Documents the mode coupling and fails loudly if a fit knob leaks into the Gate path. | `c97e6e1` |
 
-P1 shipped a month before the plan named it, during a seam-gate refactor. The plan's
-copy-cost gate for P1 ("measure whether a 53-field `Copy` struct is copied per-bracket") was
-answered by the types: the hot path was already behind `&`, so P1 was duplication cleanup with
-no perf component.
+`SeamGateConfig` was itself only a month old — introduced by `894d353` (2026-06-26) as part of a
+seam-gate parameter refactor, then grown into a near-twin of settings. The plan's copy-cost gate
+for P1 ("measure whether a 53-field `Copy` struct is copied per-bracket") was answered by the
+types: the hot path was already behind `&`, so P1 was duplication cleanup with no perf component.
 
 ## 3. Standing invariants (check these in review)
 
