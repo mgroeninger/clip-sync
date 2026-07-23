@@ -845,6 +845,56 @@ fn patch_audio_fills_gap_in_stereo_wav() {
     );
 }
 
+/// Config-bundles plan P5 (§6.4.4): the five `fill_fit_*` knobs are dead under `fill_mode: Gate`
+/// (they are only read on the Fit candidate path). Perturbing them must leave Gate-mode PCM
+/// byte-identical — documents the coupling and fails if a fit knob later leaks into Gate.
+#[test]
+fn gate_mode_ignores_fill_fit_knobs() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+    let report = make_report(
+        fixture.path_a,
+        fixture.path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+
+    let gate = PatchTestOptions {
+        fill_mode: FillMode::Gate,
+        ..Default::default()
+    };
+
+    let baseline = patch_request_with_options(report.clone(), false, 5.0, 0.35, gate.clone());
+    assert_eq!(baseline.fill_mode, FillMode::Gate);
+
+    let mut perturbed = patch_request_with_options(report, false, 5.0, 0.35, gate);
+    perturbed.settings.fill_fit_structure_weight = 0.99;
+    perturbed.settings.fill_fit_waveform_weight = 0.01;
+    perturbed.settings.fill_fit_nominal_bias_scale = 50.0;
+    perturbed.settings.fill_fit_energy_nominal_bias_scale = 50.0;
+    perturbed.settings.fill_fit_late_start_penalty_scale = 50.0;
+
+    let baseline_result = run_patch(baseline, 10);
+    let perturbed_result = run_patch(perturbed, 10);
+
+    assert_eq!(
+        baseline_result.summary.patched_count, 1,
+        "baseline Gate patch should succeed: {:?}",
+        baseline_result.summary.gaps
+    );
+    assert_eq!(
+        perturbed_result.summary.patched_count, 1,
+        "perturbed Gate patch should succeed: {:?}",
+        perturbed_result.summary.gaps
+    );
+
+    let baseline_pcm = expect_pcm(&baseline_result);
+    let perturbed_pcm = expect_pcm(&perturbed_result);
+    assert_eq!(
+        baseline_pcm.samples, perturbed_pcm.samples,
+        "fill_fit_* knobs must not change Gate-mode PCM"
+    );
+}
+
 #[test]
 fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
     let temp = tempfile::tempdir().expect("tempdir");
