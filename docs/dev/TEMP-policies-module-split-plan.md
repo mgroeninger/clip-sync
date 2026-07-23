@@ -1,9 +1,12 @@
 # `policies.rs` module split — plan (DRAFT)
 
-Status: **draft / not started** (refreshed **2026-07-23** from current source). Split
-`crates/clip-sync-repair/src/domain/policies.rs` (**4,291 lines** — production ≈ 2,590 + tests ≈
-1,701) into a `policies/` directory with a stable `crate::domain::policies::*` re-export facade.
-**Opportunistic** — do alongside seam/residual/scoring work, not as a standalone mega-refactor.
+Status: **in progress** — **P1 done 2026-07-23** (`policies/seam_residual.rs` + facade);
+P2–P5 remaining. Refreshed layout below still describes the pre-P1 monolith for
+orientation; live tree is `domain/policies/{mod.rs,seam_residual.rs}`.
+
+Split the repair policies surface into a `policies/` directory with a stable
+`crate::domain::policies::*` re-export facade. **Opportunistic** — do alongside
+seam/residual/scoring work, not as a standalone mega-refactor.
 
 **M-MOD context.** This plan is the **policies slice** of P2 finding
 [M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open) (oversized modules). M-MOD also
@@ -27,13 +30,14 @@ Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channe
 
 ## 1. Problem (one paragraph)
 
-`domain/policies.rs` is still the repair crate's largest domain file (~2,590 lines of production code
-+ ~1,701 lines of `#[cfg(test)]`). It bundles silence scanning, gap-border refinement, Pearson seam
-scoring (including the FFT band evaluator), residual/floor cancellation, and splice crossfade into
-one translation unit. Sibling concerns already live in separate modules (`gap_structure.rs`,
-`gap_energy.rs`, `gap_seam_extend.rs`, `residual_gate.rs`, `seam_local.rs`, `dual_fit.rs`, …). A
-monolith increases review noise, merge conflicts, and navigation cost without matching the crate's
-one-concern-per-module convention.
+Pre-P1, `domain/policies.rs` was the repair crate's largest domain file (~2,590 lines of
+production code + ~1,701 lines of `#[cfg(test)]`). It bundled silence scanning, gap-border
+refinement, Pearson seam scoring (including the FFT band evaluator), residual/floor
+cancellation, and splice crossfade into one translation unit. Sibling concerns already live
+in separate modules (`gap_structure.rs`, `gap_energy.rs`, `gap_seam_extend.rs`,
+`residual_gate.rs`, `seam_local.rs`, `dual_fit.rs`, …). **P1 removed the residual/floor
+region** into `policies/seam_residual.rs`; silence / borders / scoring / splice remain in
+`policies/mod.rs` until later phases.
 
 ## 2. Non-goals
 
@@ -93,18 +97,18 @@ imports remain in `gap_structure.rs` / `gap_energy.rs` (`FillAlignment`, `is_sil
 ```text
 domain/
   policies/
-    mod.rs              # re-exports entire public API (stable facade); no unit tests here
-    silence.rs          # SilenceRunScanner, is_silent*, rms_*, compute_fill_gain
+    mod.rs              # facade + remaining silence/borders/scoring/splice (+ their tests)
+    seam_residual.rs    # DONE (P1) — floor probe, seam_chosen_and_floor*, SeamResidualVerdict
+                        # + colocated #[cfg(test)]
+    silence.rs          # (P2) SilenceRunScanner, is_silent*, rms_*, compute_fill_gain
                         # + #[cfg(test)] mod tests { … } at bottom of this file
-    gap_borders.rs      # refine_gap_frames, GapBorderSpec, border_templates_*,
+    gap_borders.rs      # (P3) refine_gap_frames, GapBorderSpec, border_templates_*,
                         # selected_seam_channels / loudest_seam_channel
                         # + colocated #[cfg(test)]
-    seam_scoring.rs     # SeamTemplates, fill_seam_*, fill_repeat_*, splice scoring,
+    seam_scoring.rs     # (P4) SeamTemplates, fill_seam_*, fill_repeat_*, splice scoring,
                         # fill_seam_correlations_band, seam_channel_diagnostics
                         # + colocated #[cfg(test)]
-    seam_residual.rs    # floor probe, seam_chosen_and_floor*, SeamResidualVerdict
-                        # + colocated #[cfg(test)]
-    seam_splice.rs      # apply_seam_crossfade, effective_seam_crossfade_frames,
+    seam_splice.rs      # (P4) apply_seam_crossfade, effective_seam_crossfade_frames,
                         # trim_low_energy_* + colocated #[cfg(test)] (if any)
 ```
 
@@ -158,7 +162,7 @@ never bundled into a behavior-change PR.
 | Phase | Module | Trigger / driver | Status | Notes |
 |-------|--------|------------------|--------|-------|
 | **P0** | — | — | — | No change; monolith until a phase below is pulled. |
-| **P1** | `seam_residual.rs` | Residual channel alignment **shipped**; residual still hot | **Ready** (not done) | Highest value; pairs with `residual_gate.rs`. Anchors: `lsq_residual_ratio` @1642, `seam_chosen_and_floor` @2031, `SeamResidualVerdict` @2260. |
+| **P1** | `seam_residual.rs` | Residual channel alignment **shipped**; residual still hot | **Done (2026-07-23)** | Extracted to `policies/seam_residual.rs` with colocated unit tests; `mod.rs` re-exports public API. Parent keeps `pub(crate)` `seam_pearson` / `interleaved_channel_timeline_f64` until P4. |
 | **P2** | `silence.rs` | Opportunistic (downmix hoist **refuted**) | Pending / no forcing function | Small, clear boundary. Extract when silence/RMS is touched or when clearing M-MOD. |
 | **P3** | `gap_borders.rs` | Opportunistic (same as P2) | Pending / no forcing function | `FillAlignment`, `RefinedGapFrames`, templates, `selected_seam_channels`. |
 | **P4** | `seam_scoring.rs` (+ `seam_splice.rs`) | Characterize→execute **6b landed**; scoring still grows (FFT band) | **Ready** (not done) | Largest block (~850 lines prod). Split scoring vs ~120-line splice if still large after move. |
