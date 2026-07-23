@@ -78,7 +78,7 @@ threaded. Remaining open defects cluster in:
 | 2 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
 | 3 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
 | 4 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 5 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 5 | L-* / M-DEAD | P3 | Dead pregate + unused `slide_template_scores`; CLI hygiene | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
@@ -337,8 +337,9 @@ alone.
 
 **Perf note:** Do **not** conflate this with repair's blessed gate-search FFT work
 (`char_gate_search` / `TEMP-production-repair-perf-plan.md`). That is a different call
-site and already landed large wins; remaining repair perf → **M-CLONE** (+ delete
-M-DEAD pregate symbols).
+site and already landed large wins; remaining repair perf → **M-CLONE**. Follow-up
+hygiene for the unused `slide_template_scores` method → **M-DEAD §2** (do not restore
+PHAT into discover).
 
 ### M-CLONE. Hot-path allocation — **open** (next blessed perf step)
 
@@ -397,13 +398,53 @@ first. Then split `gap_fingerprint` into schema / measure / project, and harness
 | M-FRAMES | Inconsistent floor vs `.round()` in secs→frames | Standardize on `.round()` (match siblings that already do) |
 | M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) |
 | M-HOUND | String-match on `hound::Error` Display | Match enum variants |
-| M-DEAD | Unused pregate symbols in `gap_anchor_seam` (2 `dead_code` warnings) | **Delete.** The anchor pre-gate was measured NO-GO and dropped (2026-07-23) — 0/~4939 brackets doomed vs a 46% ceiling. The "wire it up" option is off the table; remove the dead pregate symbols. See `archive/TEMP-anchor-pregate-plan.md` §7 and the `anchor-pregate-greenlit` memory. |
+| M-DEAD | Dead symbols after dropped/unwound features | **Delete in a hygiene PR** — two independent bites below |
+
+### M-DEAD. Dead symbols — **open** (batch with P3)
+
+**1. Anchor pre-gate symbols** (`gap_anchor_seam.rs`, 2 `dead_code` warnings)
+
+The anchor pre-gate was measured NO-GO and dropped (2026-07-23) — 0/~4939 brackets
+doomed vs a 46% ceiling. The "wire it up" option is off the table; remove the dead
+pregate symbols. See `archive/TEMP-anchor-pregate-plan.md` §7 and the
+`anchor-pregate-greenlit` memory.
+
+**2. `PcmCorrelator::slide_template_scores`** (zero production callers after M-FFT)
+
+Discover used to call this (GCC-PHAT); Jul 6 switched discover to Pearson and M-FFT
+removed the unused arg. The trait method + helpers remain with **no production
+callers** — only trait defs, adapters, and fakes. Safe mechanical delete; **no
+behavior change**. Keep `PcmCorrelator` itself (`cross_correlate_lag` /
+`segment_similarity` still live).
+
+**How to remove `slide_template_scores`:**
+
+| File | Change |
+|------|--------|
+| `clip-sync/.../application/ports.rs` | Drop method from trait (+ its rustdoc) |
+| `clip-sync/.../infrastructure/correlation.rs` | Drop method impl + `gcc_phat_slide_scores`; keep `gcc_phat_correlation` / `fft_cross_correlation` / `rustfft` (still used by `segment_similarity`); fix module docs |
+| `clip-sync/.../testing/fakes.rs` | Drop `FakePcmCorrelator` stub |
+| `clip-sync/.../offset_verification.rs` | Drop `SequencePcmCorrelator` stub |
+| `clip-sync-repair/.../domain/ports.rs` | Drop method |
+| `clip-sync-repair/.../infrastructure/correlation.rs` | Drop forwarder |
+| `offset_refinement.rs` + this ledger | Soften “don’t restore `slide_template_scores`” wording (method gone) |
+
+**Not required:** discover/Pearson changes, threshold retune, corpus work, new tests
+beyond deleting stubs.
+
+**Risks:** public trait break for any out-of-tree `PcmCorrelator` implementor
+(`clip_sync` exports the trait) — in-workspace only today. Re-adding a slide method
+later (PHAT or FFT-Pearson) is cheap if profiling ever wants it on the port.
+
+**Test:** `cargo test -p clip-sync --lib` + repair paths that compile against the
+correlator port (~15–30 min hygiene bite).
 
 ---
 
 ## P3 — Hygiene (selected)
 
-Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
+Batch in a cleanup PR whenever touching CLI / `Cargo.toml`. Prefer bundling
+**M-DEAD** (pregate + `slide_template_scores`) in the same PR.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
@@ -413,7 +454,8 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 | L-EXIT | Redundant `NoAudioTracks` exit-code arm | Distinct code or delete the specific arm |
 | L-MSG | Fingerprinter "greater than 1001" vs check `< MIN` | Align message with the check ("at least") |
 | L-PUBLISH | CLI missing `publish = false` | Match sibling internal crates |
-| M-DEAD / L-pregate | Dead pregate symbols (pre-gate dropped NO-GO 2026-07-23) | **Delete** — see M-DEAD above |
+| M-DEAD / L-pregate | Dead pregate symbols (pre-gate dropped NO-GO 2026-07-23) | **Delete** — see M-DEAD §1 |
+| M-DEAD / L-slide | Unused `PcmCorrelator::slide_template_scores` (no production callers) | **Delete** — see M-DEAD §2 (file checklist + keep `segment_similarity` FFT path) |
 
 ---
 
@@ -437,11 +479,12 @@ are the remaining ways to get silently wrong audio.
 2. ~~**M-SILENT** remainder (unknown TOML keys + `align_videos` warn)~~ — **done 2026-07-23** (only optional report flags deferred)
 3. ~~**M-FFT**~~ (done 2026-07-23) — unused discover correlator *arg* removed; port kept;
    Pearson discover unchanged. Next: **M-CLONE** planner (user-visible speed on
-   repair/align hot paths). Also **delete** the dead pregate symbols (M-DEAD). Anchor
-   pre-gate was NO-GO (2026-07-23); repair gate-search FFT already landed separately —
-   do not reopen discover PHAT.
+   repair/align hot paths). Anchor pre-gate was NO-GO (2026-07-23); repair
+   gate-search FFT already landed separately — do not reopen discover PHAT.
 4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work
-5. **P3** cleanup whenever touching CLI / manifests
+5. **P3** / **M-DEAD** cleanup whenever convenient — dead pregate symbols + unused
+   `slide_template_scores` (see M-DEAD checklist); also CLI broken-pipe / quiet /
+   verbose / unused deps / publish flag
 6. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
 
 ### Milestone checklist
@@ -454,7 +497,8 @@ are the remaining ways to get silently wrong audio.
    `PcmCorrelator` for lag refine; leave Pearson. **Perf (P2 M-CLONE)** — stop cloning;
    reuse planner (next).
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.
-7. **P3 hygiene** — CLI broken-pipe, quiet/verbose, unused deps, publish flag.
+7. **P3 / M-DEAD hygiene** — dead pregate + unused `slide_template_scores` (M-DEAD §1–§2);
+   CLI broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---
 
