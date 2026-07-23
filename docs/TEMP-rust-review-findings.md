@@ -10,9 +10,11 @@
 > M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT (warn sites). **M-HE fixed**
 > (2026-07-23): extract sinks + coarse search now rebase to the decoded rate.
 > **M-FDK-RESET fixed + regression-tested** (2026-07-23): `reset()` now recreates the
-> FDK decoder; verified red→green with an in-process HE-AAC SBR fixture. Still open:
-> M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report flags / unknown TOML
-> keys / `align_videos` `Ok(None)`).
+> FDK decoder; verified red→green with an in-process HE-AAC SBR fixture.
+> **M-AC3-DRAIN fixed + unit-tested** (2026-07-23): `decode_ref` now drains every frame
+> a packet produces (extracted into a testable `drain_packet` helper). Still open:
+> non-mechanical M-SILENT pieces (report flags / unknown TOML keys /
+> `align_videos` `Ok(None)`).
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -59,6 +61,7 @@ threaded. Remaining open defects cluster in:
 | **M-SILENT** *(partial)* | `warn!` on B-scan failure; `debug!` on coarse-query prepare/fp/align errors; corpus JSON parse/read warnings | code review |
 | **M-HE** | Extract sinks gate `metadata_ready` on a new `rate_validated` flag so the first decoded packet always reaches `on_first_decode`, which rebases `target_samples`/`target_frames` to the decoded rate and `warn!`s on hint mismatch; `locate_query` coarse search sizes `l_samples`/`stride` from the first bucket's decoded rate, not the probe hint | `extract_loop::tests::{mono_first_decode_rebases_window_math_when_decoded_rate_exceeds_hint, mono_first_decode_preserves_rate_when_hint_matches_decoded, interleaved_first_decode_rebases_target_frames_when_decoded_rate_exceeds_hint}`; `-Tier pr` green |
 | **M-FDK-RESET** | `AacDecoder::reset()` recreates `Decoder::new(Transport::Adts)` + clears `m4a_info_validated` (fdk-aac 0.8 has no flush API), so post-seek frames no longer inherit pre-seek SBR/overlap state; ADTS header is rebuilt per-packet from base-rate `m4a_info`, so first post-reset frame re-configures cleanly | `extract_window_regression::fdk_reset_backward_seek_reprimes_to_identical_steady_state` — **verified red→green** (pre-fix: 5261 divergent steady-state samples; fixed: 0). Runs on **stock ffmpeg** via an in-process FDK-encoder HE-AAC fixture (see below). Full `he-aac,ffmpeg-tests,test-utils` suite green (341 pass). |
+| **M-AC3-DRAIN** | `decode_ref` drains **every** frame per packet: send-and-drain extracted into a free `drain_packet(&mut dyn OxideDecoder, &Packet, &mut Vec<i16>)` that loops `receive_frame` to `NeedMore`, accumulating interleaved S16 into a reusable `pcm_scratch` (no per-packet alloc). Channel count taken from frame 0; a mismatch across frames is a hard `DecodeError`; empty frames skipped; buffer `grow_capacity`s so many-substream packets can't overflow `render_uninit` | `oxideav_ac3::decoder::tests::{drain_packet_accumulates_every_frame_until_needmore, drain_packet_returns_zero_when_decoder_still_buffering, drain_packet_skips_empty_frames, drain_packet_rejects_inconsistent_channel_count}` via a scripted mock decoder; full `ac3,ffmpeg-tests` lib suite green (333 pass, incl. real `probe_and_extract_eac3_surround_mp4` + AC-3 chirp decode) |
 
 ---
 
@@ -66,16 +69,16 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
-| 2 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
-| 3 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
-| 4 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
-| 6 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 7 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 8 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 9 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 1 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
+| 2 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
+| 3 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 4 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
+| 5 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 6 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
+| 7 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
 
-*(M-HE fixed 2026-07-23 — see Fixed (P1) table.)*
+*(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — see Fixed (P1) table. All codec
+P1s are now closed.)*
 
 ---
 
@@ -239,16 +242,34 @@ SBR, non-silent PCM); the dead `write_he_aac_mp4_fixture` builder was deleted. T
 `Encoder` wrapper is stereo-max (`EncoderHandle::alloc(0, 2)`), so surround still needs a
 libfdk-enabled ffmpeg and continues to skip.
 
-### M-AC3-DRAIN. Single `receive_frame` per packet — **open**
+### M-AC3-DRAIN. Single `receive_frame` per packet — **fixed + unit-tested 2026-07-23**
 
 **File:** `oxideav_ac3/decoder.rs`
 
-**Recommendation:** After `send_packet`, loop `receive_frame` until `NeedMore`,
-appending PCM into the output buffer (respect `BUF_CAPACITY`). Initialize
-channel layout on frame 0 only. Do not leave frames stranded for the next packet.
+Was: `decode_ref` called `send_packet` then exactly one `receive_frame`, so any
+additional frames a packet produced were stranded until the next packet — silently
+dropping audio and skewing sample counts on E-AC-3 (independent + dependent
+substreams carried in one container packet).
 
-**Test:** E-AC-3 / multi-block AC-3 fixture if available; otherwise a unit test with
-a mock decoder that returns 2 frames then `NeedMore`.
+Fix: the send-and-drain was extracted into a free, testable helper
+`drain_packet(&mut dyn OxideDecoder, &Packet, &mut Vec<i16>) -> Result<(samples, n_ch)>`
+that loops `receive_frame` until `NeedMore`, accumulating interleaved S16 into a
+reusable `pcm_scratch` field on the decoder (no per-packet allocation — pairs with
+M-CLONE #3). Channel count is fixed by the first non-empty frame; a differing count
+on a later frame is a hard `DecodeError` rather than a mis-interleave; zero-sample
+frames are skipped; a decode-nothing packet returns an empty buffer (unchanged
+contract). `decode_ref` then `grow_capacity`s the output buffer to the drained total
+before `render_uninit` (which panics past capacity), so a many-substream packet
+cannot overflow the preallocated `BUF_CAPACITY`. Channel-layout lazy-init still
+happens once, now keyed off the drained `n_ch`.
+
+**Verified:** four unit tests drive `drain_packet` with a scripted mock decoder
+(`ScriptedDecoder`) — multi-frame accumulation (the exact stranding case), still-
+buffering `NeedMore` → `(0,0)` with scratch cleared, empty-frame skip, and the
+channel-count-mismatch hard error. Full `-p clip-sync --features ac3,ffmpeg-tests
+--lib` green (333 pass), which exercises the real `decode_ref` drain path via
+`probe_and_extract_eac3_surround_mp4` (genuine E-AC-3 5.1) and the AC-3 chirp decode
+characterization. Clippy clean on `--features ac3`.
 
 ### M-SILENT. Remaining swallowed-error sites — **partially open**
 
@@ -389,7 +410,7 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 Do **not** start M-CFG or large module splits until the codec P1s are done — those
 are the remaining ways to get silently wrong audio.
 
-1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → **M-AC3-DRAIN** (+ FDK buffer reuse M-CLONE #3)
+1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → ~~**M-AC3-DRAIN**~~ (done + unit-tested 2026-07-23; reusable `pcm_scratch` covers M-CLONE #3 for AC-3). **All codec P1s closed.**
 2. **M-SILENT** remainder (unknown TOML keys + `align_videos` warn) — half-day
 3. **M-FFT** then **M-CLONE** planner (user-visible speed). M-FFT is now the
    blessed perf lever after the anchor pre-gate was dropped NO-GO (2026-07-23) —
@@ -403,7 +424,7 @@ are the remaining ways to get silently wrong audio.
 
 1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**.
 2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
-3. **Codec follow-ups (P1 M-AC3-DRAIN)** — drain AC-3 frames. *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder both done 2026-07-23; M-FDK-RESET now has a verified red→green backward-seek regression test running on stock ffmpeg.)*
+3. ~~**Codec follow-ups (P1 M-AC3-DRAIN)**~~ — **done 2026-07-23**: drain all AC-3/E-AC-3 frames per packet (`drain_packet` helper + 4 unit tests; real E-AC-3 surround path green). *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder also done 2026-07-23; M-FDK-RESET has a verified red→green backward-seek regression test running on stock ffmpeg.)* **All codec P1s closed.**
 4. **Observability remainder (P1 M-SILENT)** — unknown TOML keys; `align_videos` `Ok(None)` logging; optional report flags.
 5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.
