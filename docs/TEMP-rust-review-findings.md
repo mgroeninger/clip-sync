@@ -7,9 +7,12 @@
 >
 > **P0 status:** All five P0 items **fixed** (2026-07-23).
 > **P1 status:** Mechanical P1s **fixed** (2026-07-23): M-CLI, M-NaN, M-MUX,
-> M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT (warn sites). Still open:
-> M-HE, M-FDK-RESET, M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report
+> M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT (warn sites). **M-HE fixed**
+> (2026-07-23): extract sinks + coarse search now rebase to the decoded rate. Still
+> open: M-FDK-RESET, M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report
 > flags / unknown TOML keys / `align_videos` `Ok(None)`).
+> **Recommendations** for each remaining item (approach, tests, sequencing) are
+> in the P1–P3 sections and **Suggested sequencing** below.
 >
 > **Context:** Default `cargo clippy --workspace --all-targets` nearly clean
 > (2 `dead_code` warnings in `gap_anchor_seam.rs`). Pedantic clippy produces
@@ -52,6 +55,7 @@ threaded. Remaining open defects cluster in:
 | **M-HARNESS-CAST** | `gap_interior_peak_max: u16` (no `i16 as u16` wrap) | harness compile + floor_oracle tests |
 | **M-RESAMPLE** | Clear `decoded_sample_count` after rubato/linear resample | rubato unit tests |
 | **M-SILENT** *(partial)* | `warn!` on B-scan failure; `debug!` on coarse-query prepare/fp/align errors; corpus JSON parse/read warnings | code review |
+| **M-HE** | Extract sinks gate `metadata_ready` on a new `rate_validated` flag so the first decoded packet always reaches `on_first_decode`, which rebases `target_samples`/`target_frames` to the decoded rate and `warn!`s on hint mismatch; `locate_query` coarse search sizes `l_samples`/`stride` from the first bucket's decoded rate, not the probe hint | `extract_loop::tests::{mono_first_decode_rebases_window_math_when_decoded_rate_exceeds_hint, mono_first_decode_preserves_rate_when_hint_matches_decoded, interleaved_first_decode_rebases_target_frames_when_decoded_rate_exceeds_hint}`; `-Tier pr` green |
 
 ---
 
@@ -59,16 +63,17 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-HE | P1 | HE-AAC container rate trusted; SBR mismatch | `extract_loop.rs` |
-| 2 | M-FDK-RESET | P1 | FDK `reset()` is empty no-op after seeks | `fdk_aac/decoder.rs` |
-| 3 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
-| 4 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
-| 5 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search | `offset_refinement.rs:238` |
-| 6 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
-| 7 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 8 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 9 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 10 | L-* | P3 | Dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 1 | M-FDK-RESET | P1 | FDK `reset()` is empty no-op after seeks | `fdk_aac/decoder.rs` |
+| 2 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
+| 3 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
+| 4 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
+| 5 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 6 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
+| 7 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 8 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
+| 9 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+
+*(M-HE fixed 2026-07-23 — see Fixed (P1) table.)*
 
 ---
 
@@ -112,95 +117,141 @@ Per-side clamp: `best_start.min(side.samples.len())` before slicing.
 
 ## P1 — Silent wrong behavior / user-intent override
 
-### M-CLI. CLI profile stomps explicit TOML overrides
+### Fixed in this tranche *(see table above)*
 
-**File:** `crates/clip-sync-repair/src/infrastructure/cli/mod.rs:13–16`
+M-CLI, M-NaN, M-MUX, M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT warn/debug
+sites — **done 2026-07-23**.
 
-TOML load computes a `RepairProfileFieldMask` so explicit fields survive a profile
-bundle. CLI `--quick`/`--full` applies the bundle with
-`RepairProfileFieldMask::default()` (empty) and overwrites every bundle-controlled
-field the user set in TOML.
+### M-HE. Container sample-rate hint trusted; HE-AAC / SBR mismatch — **fixed 2026-07-23**
 
-**Fix:** thread the mask from `load_repair_app_config` into `apply_cli_overrides`.
+**Files:** `extract_loop.rs`, `locate_query.rs`.
 
-### M-NaN. Config validation accepts NaN
+Was: the container hint seeded `resolved_rate`, and `metadata_ready` gated on
+`resolved_rate.is_some()`, so `on_first_decode` (the only place the decoded rate was
+read) never ran when a hint was present. With `he-aac` the container rate is often
+half the decoder output, corrupting seconds↔samples for the whole extract / query.
 
-**File:** `crates/clip-sync-repair/src/infrastructure/config.rs` (~642–873)
+Fix: both `MonoExtractSink` and `InterleavedExtractSink` gained a `rate_validated`
+flag; `metadata_ready` now gates on it (plus channels for interleaved), so the first
+decoded packet always reaches `on_first_decode`. There the decoded rate is compared
+to the hint — on mismatch it `warn!`s and rebases `target_samples` / `target_frames`
+(and hence all downstream window math, which reads `resolved_rate`) to the decoded
+rate. `locate_query::coarse_search` now derives `l_samples` / `stride_samples` lazily
+from the first bucket's decoded `sample_rate` instead of `reference_track.sample_rate`
+(the probe hint), and `warn!`s on mismatch. The pre-decode packet-skip path
+(`packet_window_pos`) still uses the hint, which is safe: it scales PTS and window
+bounds by the same rate, so the Before/Within/Past decision is rate-invariant.
 
-Most checks are `if field < 0.0` / `<= 0.0` — both false for NaN. Only three
-`anchor_seam_*` fields use `is_finite()`. A NaN threshold silently disables gates.
+**Verified:** targeted unit tests in `extract_loop::tests` drive `reset_attempt`
+(hint) → `on_first_decode` (decoded rate) directly and assert the mismatch case
+rebases `target_units` and only then flips `metadata_ready` — for both the mono and
+interleaved sinks — plus a hint-matches-decoded control. Full `-Tier pr` green;
+`cargo test -p clip-sync --lib --features he-aac,test-utils` (327 pass, incl.
+`sample_count_tolerance_allows_he_aac_end_boundary_gap`). Existing HE-AAC ffmpeg
+fixtures cover the integration path under `--features he-aac,ffmpeg-tests`.
 
-**Fix:** `!field.is_finite() || …` on every float check (or a field table loop).
+### M-FDK-RESET. FDK `reset()` empty after seeks — **open**
 
-### M-HE. Container sample-rate hint trusted; HE-AAC / SBR mismatch
+**File:** `fdk_aac/decoder.rs` (confirmed: `reset(&mut self) {}` at line 139; the
+`NeedReset` arm in `extract_loop.rs` calls `decoder.reset()` after seeks, so it is
+reachable).
 
-**Files:** `extract_loop.rs` (hint short-circuits first-decode validation);
-`locate_query.rs` (mixes hint-rate and decoded-rate in stride math).
+**Recommendation:** Implement `reset()` via FDK flush/clear **if `fdk-aac` 0.8
+exposes one on `Decoder`** — but do not assume it does. Robust fallback that needs
+no upstream API: recreate the decoder (`self.decoder = Decoder::new(Transport::Adts)`)
+and set `m4a_info_validated = false` inside `reset()`. That guarantees SBR/overlap
+state is cleared without betting on a flush API. Optionally keep a reusable
+ADTS+payload `Vec` on `self` to remove per-packet allocs (pairs with M-CLONE’s FDK
+slice).
 
-With `he-aac`, container rate is often half the decoder output. Wrong rate
-corrupts seconds↔samples for the whole extract / query search.
+**Test:** seek backward then extract the same window twice; post-seek samples must
+not retain pre-seek SBR/overlap state. Needs `he-aac` + a small MP4 fixture.
 
-**Fix:** always cross-check first decoded packet rate; derive window/stride from
-bucket rate on first callback.
+### M-AC3-DRAIN. Single `receive_frame` per packet — **open**
 
-### M-MUX. Partial mux output left on disk
+**File:** `oxideav_ac3/decoder.rs`
 
-**File:** `crates/clip-sync-repair/src/infrastructure/ffmpeg_mux.rs`
+**Recommendation:** After `send_packet`, loop `receive_frame` until `NeedMore`,
+appending PCM into the output buffer (respect `BUF_CAPACITY`). Initialize
+channel layout on frame 0 only. Do not leave frames stranded for the next packet.
 
-On ffmpeg failure (or stdin write fail mid-stream), `-y` leaves a truncated
-output that looks like a good file. Also probes duration via `ffprobe` twice.
+**Test:** E-AC-3 / multi-block AC-3 fixture if available; otherwise a unit test with
+a mock decoder that returns 2 frames then `NeedMore`.
 
-**Fix:** mux to a temp path, rename on success; probe once and pass the value.
+### M-SILENT. Remaining swallowed-error sites — **partially open**
 
-### M-SILENT. Swallowed errors without signal
+| Site | Status | Recommendation |
+|------|--------|----------------|
+| `locate_query` prepare/fp/align | **done** (`debug!`) | — |
+| `scan_gaps` B-side scan | **done** (`warn!`) | — |
+| Harness `read_corpus_json` | **done** (warn on read/parse) | Optional later: hard-fail parse in measurement bins |
+| `align_videos` `Ok(None)` | **open** | Keep fallback; `tracing::warn!` the suppressed probe/extent error (same pattern as B-scan). No report-schema change required for v1 |
+| CLI unknown TOML keys | **open** | Pre-pass: walk `toml::Table` against known key sets for `[repair]` / `[clip]` / `[alignment]`; `warn!` / `eprintln!` unknowns. Do not require `deny_unknown_fields` with `flatten` |
+| Report flags (e.g. `b_scan_truncated`) | **open / optional** | Only if operators need machine-readable signal beyond logs |
 
-| Site | Behavior |
-|------|----------|
-| `locate_query.rs:307–309` | Three nested `if let Ok` discard prepare/fingerprint/align errors → "no match" |
-| `scan_gaps.rs:348–355` | B-side scan `let _ = …` → later gaps `b_has_energy = false` with no warn |
-| `align_videos.rs` (`resolve_mode` / extent) | Probe failures → `Ok(None)` → wrong alignment mode |
-| Harness `read_corpus_json` | Parse error indistinguishable from missing file |
-| CLI config `#[serde(flatten)]` | Typos silently get defaults (`deny_unknown_fields` blocked) |
+**Test:** unit for unknown-key warning; existing align/scan tests for warn-only paths.
 
-**Fix:** `tracing::warn!` + report flags at each site; treat parse errors as hard
-failures in measurement tools; warn unknown TOML keys via a pre-pass table.
+### M-RESAMPLE. Group delay (count clear done) — **partially open**
 
-### Related P1 items
+**Recommendation:** Prefer the cheap correct option: when one side is already at
+the target rate, still run **both** through the same resample path (or document
+that refined offsets are only valid when both sides resample). Full delay
+query/trim is more work for little gain if paths are normalized.
 
-| ID | Issue | Fix |
-|----|-------|-----|
-| M-RESAMPLE | `decoded_sample_count` not scaled after rubato; group delay uncompensated | Scale or clear count; trim delay or always resample both sides |
-| M-HARNESS-CAST | `i16 as u16` on `gap_interior_peak_max` wraps negatives → check always passes | Use `u16` / `try_from` at load |
-| M-FDK-RESET | FDK `reset()` is empty no-op after seeks | Call FDK flush; reuse packet buffers on `self` |
-| M-AC3-DRAIN | Single `receive_frame` per packet | Drain until `NeedMore` |
+**Test:** asymmetric case (one at target rate, one not) — offset bias should shrink.
 
 ---
 
 ## P2 — Performance / maintainability
 
-### M-FFT. Injected correlator ignored
+### M-FFT. Injected correlator ignored — **open (now the blessed perf lever)**
 
-**File:** `offset_refinement.rs:238` — `_correlator: &dyn PcmCorrelator` unused;
-hand-rolled O(n·m) Pearson. Tests annotated "slow: minutes".
+**File:** `offset_refinement.rs:238`
 
-**Fix:** wire `slide_template_scores` or delete the dead parameter.
+**Status note (2026-07-23):** The anchor pre-gate (lever #2, cut k) was measured
+**NO-GO** and dropped — 0/~4939 brackets doomed over the full 17-pair fingerprint
+run vs a 46% ceiling. Perf effort has been redirected to **FFT-ing the per-bracket
+score sweep** (see `production-perf-gate-search-dominates`: `char_gate_search` ≈93%,
+per-bracket score × k brackets is the hot path). That work overlaps directly with
+this item, so M-FFT is no longer just P2 hygiene — it is the actively-blessed
+perf direction and should be the first perf step once the codec P1s land.
 
-### M-CLONE. Hot-path allocation
+**Recommendation:** Wire `_correlator.slide_template_scores` (or equivalent) into
+`pcm_search_near_offset` — FFT the haystack sweep rather than the naive O(n·m) loop.
+Prefer **wire** over delete — the port is already injected. Keep the naive path
+behind `cfg(test)` as an equivalence oracle (pattern used elsewhere).
 
-- Full multi-MB clip clones per iteration (`align_videos.rs:684–690`)
-- `FftPlanner` rebuilt every correlation (`correlation.rs:69`)
-- FDK decode: two `Vec` allocs per packet
+**Test:** existing slow refine tests should get faster; add a short equivalence
+test at small N.
 
-**Fix:** `Cow`/refs for truncate; store planner in correlator; reusable buffers.
+### M-CLONE. Hot-path allocation — **open**
 
-### M-CFG. Four-layer config field copying
+Three independent PR-sized bites:
 
-`RepairConfig` → `PatchRequestSettings` → `PatchAudioRequest` → `SeamGateConfig`
-(~50 knobs hand-copied). Missed copy compiles and silently uses a default.
+1. `truncate_padded_tail` / alignment loop → borrow or allocate only when truncating.
+2. `FftCorrelator` holds `Mutex<FftPlanner<f64>>` (or thread-local).
+3. FDK reusable buffers (pairs with M-FDK-RESET).
 
-**Fix:** shared sub-structs (`SeamGateParams`, `FillSearchParams`) embedded by value.
+**Test:** existing align/refine corpus; no behavior change expected.
 
-### M-MOD. Oversized modules
+### M-CFG. Four-layer config field copying — **open**
+
+**Recommendation:** Do not rewrite all four layers at once. Extract 1–2 shared
+bundles first (`SeamGateParams`, `FillSearchParams`), embed by value in
+`RepairConfig` and the patch request, delete the hand copies for those fields
+only. Repeat. Pair with any new knob you add anyway.
+
+**Test:** config roundtrip + one patch integration smoke.
+
+### M-MOD. Oversized modules — **open**
+
+**Recommendation:** Follow existing plan: [`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md)
+first. Then split `gap_fingerprint` into schema / measure / project, and harness
+`gap_fingerprint_corpus` into schema / analysis / report. Pure moves +
+`pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
+`clip-sync`.
+
+**Test:** `-Tier pr` after each split.
 
 | File | ~Lines |
 |------|--------|
@@ -210,41 +261,43 @@ hand-rolled O(n·m) Pearson. Tests annotated "slow: minutes".
 | `align_videos.rs` | 2,900 |
 | harness `gap_fingerprint_corpus.rs` | 2,300 |
 
-Also: repair `lib.rs` is four bare `pub mod` (vs curated `clip-sync` facade).
+### M-HARNESS. Drift from production — **open**
 
-### M-HARNESS. Drift from production
+**Recommended order:**
 
-- ~30 production defaults re-hardcoded as literals
-- Seam window formula collapsed to a constant while claiming production fidelity
-- `NeverCalledAligner` / alignment builders duplicated 3–4×
-- Floor vs dual-fit oracle validators already diverged on the H6 clamp
-- Unescaped CSV fields in calibration renderers
+1. `PatchTestOptions` from `RepairConfig::default()` with overrides only
+2. One shared `gap_interior_range` / oracle validator (H6 clamp already on floor path)
+3. One exported `NeverCalledAligner` + alignment builder in fixtures
+4. `csv` crate or RFC 4180 quoting for calibration CSV
+5. Delete the collapsed window formula or call production’s window helper
 
-**Fix:** build options from `RepairConfig::default()`; share production helpers;
-one exported stub/builder; RFC 4180 CSV / `csv` crate.
+**Test:** harness lib + oracle smoke already in PR.
 
 ### Other P2
 
-| ID | Issue |
-|----|-------|
-| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps — prefer gap index |
-| M-FRAMES | Inconsistent floor vs `.round()` in secs→frames |
-| M-EPS | `f64::EPSILON` used as wall-clock time tolerance |
-| M-HOUND | String-match on `hound::Error` Display instead of enum variants |
-| M-DEAD | `anchor_bracket_matchability_doomed` + `MATCHABILITY_PREGATE_EPSILON` unused (clippy); align with `TEMP-anchor-pregate-plan.md` — wire or remove |
+| ID | Issue | Recommendation |
+|----|-------|----------------|
+| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index (report is index-parallel elsewhere) |
+| M-FRAMES | Inconsistent floor vs `.round()` in secs→frames | Standardize on `.round()` (match siblings that already do) |
+| M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) |
+| M-HOUND | String-match on `hound::Error` Display | Match enum variants |
+| M-DEAD | Unused pregate symbols in `gap_anchor_seam` (2 `dead_code` warnings) | **Delete.** The anchor pre-gate was measured NO-GO and dropped (2026-07-23) — 0/~4939 brackets doomed vs a 46% ceiling. The "wire it up" option is off the table; remove the dead pregate symbols. See `archive/TEMP-anchor-pregate-plan.md` §7 and the `anchor-pregate-greenlit` memory. |
 
 ---
 
 ## P3 — Hygiene (selected)
 
-| ID | Issue |
-|----|-------|
-| L-CLI-DEP | Unused `thiserror` in `clip-sync-cli` |
-| L-PIPE | `println!` panics on broken pipe |
-| L-QV | `--quiet --verbose` compose incoherently |
-| L-EXIT | Redundant `NoAudioTracks` exit-code arm |
-| L-MSG | Fingerprinter error text "greater than 1001" vs check `< MIN` |
-| L-PUBLISH | CLI missing `publish = false` unlike sibling internal crates |
+Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
+
+| ID | Issue | Recommendation |
+|----|-------|----------------|
+| L-CLI-DEP | Unused `thiserror` in `clip-sync-cli` | Remove from `Cargo.toml` |
+| L-PIPE | `println!` panics on broken pipe | `writeln!(stdout)`; treat `BrokenPipe` as success |
+| L-QV | `--quiet --verbose` compose incoherently | clap `conflicts_with`, or a single verbosity enum |
+| L-EXIT | Redundant `NoAudioTracks` exit-code arm | Distinct code or delete the specific arm |
+| L-MSG | Fingerprinter "greater than 1001" vs check `< MIN` | Align message with the check ("at least") |
+| L-PUBLISH | CLI missing `publish = false` | Match sibling internal crates |
+| M-DEAD / L-pregate | Dead pregate symbols (pre-gate dropped NO-GO 2026-07-23) | **Delete** — see M-DEAD above |
 
 ---
 
@@ -259,15 +312,30 @@ one exported stub/builder; RFC 4180 CSV / `csv` crate.
 
 ---
 
-## Suggested milestones
+## Suggested sequencing
+
+Do **not** start M-CFG or large module splits until the codec P1s are done — those
+are the remaining ways to get silently wrong audio.
+
+1. ~~**M-HE**~~ (done 2026-07-23) → **M-FDK-RESET** (+ buffer reuse) → **M-AC3-DRAIN**
+2. **M-SILENT** remainder (unknown TOML keys + `align_videos` warn) — half-day
+3. **M-FFT** then **M-CLONE** planner (user-visible speed). M-FFT is now the
+   blessed perf lever after the anchor pre-gate was dropped NO-GO (2026-07-23) —
+   FFT the per-bracket score sweep. Also **delete** the dead pregate symbols
+   (M-DEAD) as part of this cleanup.
+4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work
+5. **P3** cleanup whenever touching CLI / manifests
+6. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
+
+### Milestone checklist
 
 1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**.
 2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
-3. **Codec follow-ups (P1 M-HE / M-FDK-RESET / M-AC3-DRAIN)** — HE-AAC rate cross-check; FDK flush; drain AC-3 frames.
-4. **Observability remainder (P1 M-SILENT)** — report flags; unknown TOML keys; `align_videos` `Ok(None)` logging.
+3. **Codec follow-ups (P1 M-FDK-RESET / M-AC3-DRAIN)** — FDK flush/recreate; drain AC-3 frames. *(M-HE HE-AAC rate cross-check done 2026-07-23.)*
+4. **Observability remainder (P1 M-SILENT)** — unknown TOML keys; `align_videos` `Ok(None)` logging; optional report flags.
 5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
-6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — can land incrementally alongside
-   feature work; see also `TEMP-policies-module-split-plan.md`.
+6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.
+7. **P3 hygiene** — CLI broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---
 
@@ -275,7 +343,6 @@ one exported stub/builder; RFC 4180 CSV / `csv` crate.
 
 Review date: 2026-07-23. Findings synthesized from a full-workspace read-only
 pass (clippy default + pedantic sample, `cargo test --workspace`, and targeted
-source verification of every P0 item). Earlier chat-only detail lived only in
-agent transcripts and was never checked into the repo — this file is the
-canonical ledger going forward. Update **status** columns (or move rows to a
-"Fixed" section) as items land; archive when the open set is closed.
+source verification of every P0 item). Recommendations for remaining work added
+2026-07-23. This file is the canonical ledger — update Fixed tables and the
+priority list as items land; archive when the open set is closed.

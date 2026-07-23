@@ -254,9 +254,12 @@ fn coarse_search<RS: MediaSession>(
     deps: &LocateQueryDeps<'_>,
     progress: &dyn ProgressReporter,
 ) -> Result<Vec<Candidate>, AlignmentError> {
-    let rate = reference_track.sample_rate;
-    let l_samples = secs_to_samples(params.l_secs, rate);
-    let stride_samples = secs_to_samples(params.stride_secs, rate) as u64;
+    // The container/probe hint may disagree with the decoded rate (HE-AAC/SBR
+    // advertises half the decoder output rate). The ring holds *decoded* samples,
+    // so the window length (`l_samples`) and stride must be sized from the decoded
+    // rate — sizing them from the hint would collect the wrong span of audio and
+    // misplace every candidate (M-HE). Derive both lazily from the first bucket.
+    let hint_rate = reference_track.sample_rate;
 
     let prep = PcmPreparationOptions {
         normalize_loudness: true,
@@ -268,7 +271,10 @@ fn coarse_search<RS: MediaSession>(
     let mut ring_start_index: u64 = 0;
     let mut next_score_index: u64 = 0;
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut sample_rate: u32 = rate;
+    let mut sample_rate: u32 = hint_rate;
+    let mut l_samples: usize = 0;
+    let mut stride_samples: u64 = 0;
+    let mut window_dims_ready = false;
 
     reference
         .scan_mono_buckets(
@@ -278,6 +284,18 @@ fn coarse_search<RS: MediaSession>(
             "query-coarse",
             &mut |bucket| {
                 sample_rate = bucket.pcm.sample_rate;
+                if !window_dims_ready {
+                    l_samples = secs_to_samples(params.l_secs, sample_rate);
+                    stride_samples = secs_to_samples(params.stride_secs, sample_rate) as u64;
+                    if sample_rate != hint_rate {
+                        tracing::warn!(
+                            container_rate = hint_rate,
+                            decoded_rate = sample_rate,
+                            "query coarse search: sample-rate hint disagrees with decoded rate; sizing window from decoded rate"
+                        );
+                    }
+                    window_dims_ready = true;
+                }
                 ring.extend(bucket.pcm.samples.iter().copied());
                 trim_front(&mut ring, &mut ring_start_index, next_score_index);
 

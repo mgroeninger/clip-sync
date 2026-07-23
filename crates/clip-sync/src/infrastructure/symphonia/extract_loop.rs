@@ -529,11 +529,21 @@ pub(super) struct MonoExtractSink {
     mono_samples: Vec<i16>,
     resolved_rate: Option<u32>,
     target_samples: Option<usize>,
+    /// True once the *decoded* rate has been observed and reconciled against the
+    /// container hint. `metadata_ready` gates on this (not on `resolved_rate`) so
+    /// the first decoded packet always reaches `on_first_decode` — otherwise a
+    /// hint-seeded `resolved_rate` short-circuits the decoded-rate check (M-HE).
+    rate_validated: bool,
 }
 
 impl MonoExtractSink {
     pub(super) fn new() -> Self {
-        Self { mono_samples: Vec::new(), resolved_rate: None, target_samples: None }
+        Self {
+            mono_samples: Vec::new(),
+            resolved_rate: None,
+            target_samples: None,
+            rate_validated: false,
+        }
     }
 }
 
@@ -549,6 +559,7 @@ impl ExtractSink for MonoExtractSink {
         seek_start_secs: f64,
     ) {
         self.resolved_rate = sample_rate_hint;
+        self.rate_validated = false;
         self.target_samples = self.resolved_rate.map(|rate| {
             let (start, end) = window_sample_bounds(window, rate);
             end.saturating_sub(start) as usize
@@ -587,7 +598,23 @@ impl ExtractSink for MonoExtractSink {
                 decode_failed(track_index, "missing sample rate"),
             ));
         }
+        // The container hint may disagree with the authoritative decoded rate:
+        // HE-AAC (SBR) typically advertises half the decoder output rate. Trusting
+        // the hint corrupts seconds<->samples for the whole extract, so always
+        // rebase to the decoded rate here (M-HE).
+        if let Some(hint) = self.resolved_rate {
+            if hint != rate {
+                warn!(
+                    path = %path.display(),
+                    track = track_index,
+                    container_rate = hint,
+                    decoded_rate = rate,
+                    "sample-rate hint disagrees with decoded rate; rebasing window math to decoded rate"
+                );
+            }
+        }
         self.resolved_rate = Some(rate);
+        self.rate_validated = true;
         let (start_sample, end_sample) = window_sample_bounds(window, rate);
         let expected = end_sample.saturating_sub(start_sample) as usize;
         if expected == 0 {
@@ -613,7 +640,7 @@ impl ExtractSink for MonoExtractSink {
     }
 
     fn metadata_ready(&self) -> bool {
-        self.resolved_rate.is_some()
+        self.rate_validated
     }
 
     fn resolved_rate(&self) -> Option<u32> {
@@ -800,6 +827,10 @@ pub(super) struct InterleavedExtractSink {
     channels: Option<usize>,
     resolved_rate: Option<u32>,
     target_frames: Option<usize>,
+    /// See `MonoExtractSink::rate_validated` — gates `metadata_ready` so the first
+    /// decoded packet always reconciles the container hint against the decoded rate
+    /// (M-HE).
+    rate_validated: bool,
 }
 
 impl InterleavedExtractSink {
@@ -811,6 +842,7 @@ impl InterleavedExtractSink {
             channels: None,
             resolved_rate: None,
             target_frames: None,
+            rate_validated: false,
         }
     }
 }
@@ -827,6 +859,7 @@ impl ExtractSink for InterleavedExtractSink {
         _seek_start_secs: f64,
     ) {
         self.resolved_rate = sample_rate_hint;
+        self.rate_validated = false;
         self.target_frames = self.resolved_rate.map(|rate| {
             let (start, end) = window_sample_bounds(window, rate);
             end.saturating_sub(start) as usize
@@ -856,6 +889,25 @@ impl ExtractSink for InterleavedExtractSink {
         path: &Path,
         track_index: u32,
     ) -> Result<(), MediaError> {
+        // Rebase to the authoritative decoded rate when the container hint
+        // disagrees (HE-AAC/SBR reports half the decoder output rate) — trusting
+        // the hint corrupts seconds<->frames for the whole extract (M-HE).
+        if rate != 0 {
+            if let Some(hint) = self.resolved_rate {
+                if hint != rate {
+                    warn!(
+                        path = %path.display(),
+                        track = track_index,
+                        container_rate = hint,
+                        decoded_rate = rate,
+                        "sample-rate hint disagrees with decoded rate; rebasing window math to decoded rate"
+                    );
+                    let (start, end) = window_sample_bounds(window, rate);
+                    self.target_frames = Some(end.saturating_sub(start) as usize);
+                }
+            }
+            self.resolved_rate = Some(rate);
+        }
         if self.resolved_rate.is_none() {
             if rate == 0 {
                 return Err(fail_media(
@@ -878,6 +930,7 @@ impl ExtractSink for InterleavedExtractSink {
             }
             self.target_frames = Some(expected);
         }
+        self.rate_validated = true;
 
         if self.channels.is_none() {
             let ch = channels.max(1);
@@ -899,7 +952,7 @@ impl ExtractSink for InterleavedExtractSink {
     }
 
     fn metadata_ready(&self) -> bool {
-        self.resolved_rate.is_some() && self.channels.is_some()
+        self.rate_validated && self.channels.is_some()
     }
 
     fn resolved_rate(&self) -> Option<u32> {
@@ -1082,5 +1135,92 @@ impl ExtractSink for InterleavedExtractSink {
             compressed_bytes: Some(ctx.compressed_bytes),
             source_bit_depth: ctx.track.bit_depth,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ClipLabel;
+
+    fn one_second_window() -> ClipWindow {
+        ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Interior)
+    }
+
+    // M-HE: with a container rate hint, `metadata_ready` must stay false until the
+    // first decoded packet is observed, and a decoded rate that differs from the
+    // hint (HE-AAC/SBR reports half the decoder output) must rebase the window math
+    // to the decoded rate — otherwise seconds<->samples are corrupted for the whole
+    // extract.
+    #[test]
+    fn mono_first_decode_rebases_window_math_when_decoded_rate_exceeds_hint() {
+        let window = one_second_window();
+        let path = Path::new("clip.m4a");
+        let mut sink = MonoExtractSink::new();
+
+        sink.reset_attempt(Some(24_000), &window, path, 0, 0.0);
+        // Hint-seeded state: rate is provisional and the decoded rate has not been
+        // validated yet, so the driver must still call `on_first_decode`.
+        assert_eq!(sink.resolved_rate(), Some(24_000));
+        assert_eq!(sink.target_units(), Some(24_000));
+        assert!(!sink.metadata_ready(), "hint alone must not satisfy metadata_ready");
+
+        // First decoded packet reports the true (doubled) rate.
+        sink.on_first_decode(48_000, 1, &window, path, 0).unwrap();
+
+        assert_eq!(sink.resolved_rate(), Some(48_000), "rate must rebase to decoded");
+        assert_eq!(
+            sink.target_units(),
+            Some(48_000),
+            "one-second window must re-size to the decoded rate"
+        );
+        assert!(sink.metadata_ready(), "ready once the decoded rate is validated");
+    }
+
+    #[test]
+    fn mono_first_decode_preserves_rate_when_hint_matches_decoded() {
+        let window = one_second_window();
+        let path = Path::new("clip.m4a");
+        let mut sink = MonoExtractSink::new();
+
+        sink.reset_attempt(Some(48_000), &window, path, 0, 0.0);
+        sink.on_first_decode(48_000, 1, &window, path, 0).unwrap();
+
+        assert_eq!(sink.resolved_rate(), Some(48_000));
+        assert_eq!(sink.target_units(), Some(48_000));
+        assert!(sink.metadata_ready());
+    }
+
+    #[test]
+    fn interleaved_first_decode_rebases_target_frames_when_decoded_rate_exceeds_hint() {
+        let window = one_second_window();
+        let path = Path::new("clip.m4a");
+        let track = AudioTrack {
+            index: 0,
+            codec: "aac".into(),
+            channels: 2,
+            sample_rate: 24_000,
+            duration: None,
+            decodable: true,
+            bit_depth: None,
+        };
+        let mut sink = InterleavedExtractSink::new(&track);
+
+        sink.reset_attempt(Some(24_000), &window, path, 0, 0.0);
+        assert_eq!(sink.resolved_rate(), Some(24_000));
+        assert_eq!(sink.target_units(), Some(24_000));
+        // Channels come from the container hint, but the decoded rate is still
+        // unvalidated, so metadata is not yet ready.
+        assert!(!sink.metadata_ready(), "hint alone must not satisfy metadata_ready");
+
+        sink.on_first_decode(48_000, 2, &window, path, 0).unwrap();
+
+        assert_eq!(sink.resolved_rate(), Some(48_000), "rate must rebase to decoded");
+        assert_eq!(
+            sink.target_units(),
+            Some(48_000),
+            "one-second window must re-size to the decoded rate"
+        );
+        assert!(sink.metadata_ready(), "ready once the decoded rate is validated");
     }
 }
