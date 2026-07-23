@@ -28,6 +28,17 @@ fn ffmpeg_path_arg(path: &Path) -> String {
     format!("file:{s}")
 }
 
+/// Temp-file suffix for atomic mux: keep the final container extension so ffmpeg
+/// can infer the muxer (and so `-movflags +faststart` still applies for MP4).
+///
+/// A bare `.partial` suffix fails with "Unable to choose an output format".
+fn mux_partial_suffix(final_output: &Path) -> String {
+    match final_output.extension().and_then(|e| e.to_str()) {
+        Some(ext) if !ext.is_empty() => format!(".partial.{ext}"),
+        _ => ".partial".into(),
+    }
+}
+
 /// Build ffmpeg argv for remuxing `source_video` with replacement audio from stdin (`pipe:0`).
 pub fn build_ffmpeg_mux_args(
     source_video: &Path,
@@ -310,10 +321,12 @@ impl MediaMuxer for FfmpegMediaMuxer {
 
         // Mux to a sibling temp path, then rename on success so a failed run
         // never leaves a truncated `-y` output that looks like a good file.
+        // Suffix must end with the final container extension (e.g. `.partial.mp4`)
+        // so ffmpeg can choose a muxer without an explicit `-f`.
         let parent = output.parent().filter(|p| !p.as_os_str().is_empty());
         let tmp = tempfile::Builder::new()
             .prefix("clip-sync-mux-")
-            .suffix(".partial")
+            .suffix(&mux_partial_suffix(output))
             .tempfile_in(parent.unwrap_or_else(|| Path::new(".")))
             .map_err(|err| RepairError::Mux(format!("failed to create mux temp file: {err}")))?;
         let tmp_path = tmp.path().to_path_buf();
@@ -454,6 +467,35 @@ mod tests {
         );
         // Leading '-' must not be parsed as an ffmpeg option.
         assert_eq!(ffmpeg_path_arg(Path::new("-out.mp4")), "file:-out.mp4");
+    }
+
+    #[test]
+    fn mux_partial_suffix_preserves_container_extension() {
+        assert_eq!(mux_partial_suffix(Path::new("repaired.mp4")), ".partial.mp4");
+        assert_eq!(mux_partial_suffix(Path::new("out.MKV")), ".partial.MKV");
+        assert_eq!(mux_partial_suffix(Path::new("noext")), ".partial");
+    }
+
+    #[test]
+    fn ffmpeg_arg_construction_partial_mp4_keeps_faststart() {
+        // Temp paths end in `.partial.mp4`; Path::extension is still `mp4`.
+        let args = build_ffmpeg_mux_args(
+            Path::new("a.mp4"),
+            Path::new("clip-sync-mux-XXXX.partial.mp4"),
+            &MuxOptions {
+                video_codec: "copy".into(),
+                audio_codec: "aac".into(),
+                audio_bitrate: None,
+            },
+            48_000,
+            2,
+            "s16le",
+        );
+        assert!(args.contains(&"-movflags".to_string()));
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("file:clip-sync-mux-XXXX.partial.mp4")
+        );
     }
 
     #[cfg(windows)]
