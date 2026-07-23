@@ -78,6 +78,13 @@ impl SilenceRunScanner {
     ///
     /// Silence requires every channel in a block to pass [`is_silent_interleaved`] (ffmpeg
     /// `silencedetect` default: all channels quiet simultaneously).
+    ///
+    /// Run boundaries are refined to sub-block precision at the frame level: the blocks that
+    /// straddle a silence's onset/offset read non-silent (their peak comes from the loud
+    /// shoulder), so a pure block-quantized run undercounts the true silent span by up to ~2
+    /// blocks — enough to push a genuine `≥ min_gap_secs` dropout under the emit threshold in
+    /// [`close_open_run`]. Frame-level edge walks (bounded to the adjacent straddling block) fix
+    /// this without buffering, so `min_gap_secs` is tested against the true extent.
     pub fn feed<P: InterleavedSamples>(&mut self, pcm: &P, timeline_start_secs: f64) {
         if self.block_secs <= 0.0 || pcm.samples().is_empty() {
             return;
@@ -116,11 +123,55 @@ impl SilenceRunScanner {
             ) {
                 self.held_count = 0;
                 if self.run_start.is_none() {
-                    self.run_start = Some(block_start_secs);
+                    // Sub-block leading-edge refinement: a block straddling the silence onset
+                    // takes its peak from the loud shoulder and reads non-silent, so `run_start`
+                    // lands up to one block *late*. Walk backward through the preceding block's
+                    // trailing silent frames (bounded — that block has ≥1 non-silent frame, or it
+                    // would already be in the run) so the run starts at the true onset, not the
+                    // block edge. Only refinable within this bucket; a run that opens on the first
+                    // block of a bucket falls back to the block edge (prior samples are gone).
+                    let mut edge = offset_frames;
+                    while edge > 0
+                        && is_silent_frame(
+                            pcm.samples(),
+                            channels,
+                            edge - 1,
+                            self.silence_peak_fraction,
+                            self.absolute_rms_floor,
+                        )
+                    {
+                        edge -= 1;
+                    }
+                    self.run_start =
+                        Some(timeline_start_secs + edge as f64 / f64::from(rate));
                 }
                 // Advance the confirmed-silent boundary past any previously held blocks.
                 self.silent_tail = Some(block_end_secs);
             } else if self.run_start.is_some() {
+                // Sub-block trailing-edge refinement: the block that closes a run straddles the
+                // silence offset, so `silent_tail` (last fully-silent block end) lands up to one
+                // block *early*. On the first non-silent block after silence (`held_count == 0`),
+                // walk forward through its leading silent frames and extend `silent_tail` to the
+                // true offset. Bounded — this block has ≥1 non-silent frame. If the run later
+                // continues, a subsequent silent block overwrites `silent_tail` with its own end.
+                if self.held_count == 0 {
+                    let mut edge = offset_frames;
+                    while edge < end_frames
+                        && is_silent_frame(
+                            pcm.samples(),
+                            channels,
+                            edge,
+                            self.silence_peak_fraction,
+                            self.absolute_rms_floor,
+                        )
+                    {
+                        edge += 1;
+                    }
+                    if edge > offset_frames {
+                        self.silent_tail =
+                            Some(timeline_start_secs + edge as f64 / f64::from(rate));
+                    }
+                }
                 // In an active run: absorb up to `hold_blocks` consecutive non-silent blocks
                 // without updating `silent_tail` — gap boundaries stay tight.
                 if self.held_count < self.hold_blocks {
@@ -2734,6 +2785,36 @@ mod tests {
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
         assert!(scanner.finish().is_empty());
+    }
+
+    #[test]
+    fn silence_run_scanner_detects_sub_block_margin_gap() {
+        // Regression: a 543 ms silence at 100 ms blocks / min_gap 500 ms. The silence starts and
+        // ends mid-block, so only 4 blocks are *fully* silent (400 ms) — block-quantized detection
+        // undercounts to < min_gap and drops the gap (the pair-16 1:28:31 miss ffmpeg's
+        // silencedetect=noise=-60dB:d=0.5 catches). Sub-block edge refinement recovers the true
+        // 543 ms span so the run clears min_gap.
+        let rate = 48_000u32;
+        let block_secs = 0.1;
+        let min_gap = 0.5;
+
+        // 2.05 s sine → 0.543 s of exact zeros → 2.0 s sine. The 2.05 s lead pushes the silence
+        // onset to mid-block (block 20), and the 543 ms length ends mid-block (block 25).
+        let mut samples = sine_samples(rate, 2.05);
+        let silence_frames = (rate as f64 * 0.543).round() as usize;
+        samples.extend(vec![0.0f32; silence_frames]);
+        samples.extend(sine_samples(rate, 2.0));
+        let pcm = mono_pcm(rate, samples);
+
+        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, min_gap, 0, 0.0);
+        scanner.feed(&pcm, 0.0);
+        let runs = scanner.finish();
+
+        assert_eq!(runs.len(), 1, "sub-block-margin silence should be detected, not dropped");
+        let dur = runs[0].end_secs - runs[0].start_secs;
+        assert!(dur >= min_gap, "refined span {dur}s must clear min_gap {min_gap}s");
+        assert!((runs[0].start_secs - 2.05).abs() < 0.001, "start {} ≈ 2.05", runs[0].start_secs);
+        assert!((dur - 0.543).abs() < 0.001, "duration {dur} ≈ 0.543");
     }
 
     #[test]
