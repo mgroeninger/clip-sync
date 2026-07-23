@@ -79,7 +79,7 @@ threaded. Remaining open defects cluster in:
 | 1 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
 | 2 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
 | 3 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 4 | M-CLONE | P2 | Optional alloc hygiene (#3 FDK done; #1 open; #2 defer) | align / (planner) |
+| 4 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 5 | L-* / M-DEAD | P3 | Dead pregate + unused `slide_template_scores`; CLI hygiene | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
@@ -347,13 +347,12 @@ site and already landed large wins; remaining *material* repair wall-time → **
 ### M-CLONE. Optional alloc hygiene — **partially open** (not the next repair perf milestone)
 
 Three **independent** PR-sized bites. Do not bundle. Corpus green proves *safety*, not
-*worth it* — ship remaining #1 as cheap hygiene; defer #2 until a profile shows the
-path. Reviewed 2026-07-23 against source:
+*worth it*. #2 deferred until a profile shows the path. Reviewed 2026-07-23 against source:
 
-1. **Align full-clip clones** (`align_videos` + `truncate_padded_tail`) — **open.**
-   Every window clones both `MonoPcmClip`s; `prepare_clip_for_fingerprint` clones
-   again. Truncate itself is cheap. Analyzer path only (not repair). Fix: borrow /
-   allocate only when End needs a real truncate.
+1. **Align full-clip clones** — **done 2026-07-23.** `truncate_padded_tail` takes
+   `&MonoPcmClip` → `Cow` (allocates only when padding must be dropped). Align loop
+   borrows End/non-End refs into `select_aligned_subclip_pair` / prepare; no redundant
+   pre-clone. Extracted `raw_clips` stay owned for repetition re-align.
 2. **`FftPlanner` on `FftCorrelator`** — **defer.** `FftPlanner::new()` is only in the
    GCC-PHAT path (`segment_similarity` / unused `slide_template_scores`). Lag refine uses
    the `cross_correlate` crate (no planner). Production `segment_similarity` runs only
@@ -367,12 +366,29 @@ path. Reviewed 2026-07-23 against source:
    survives `reset()`. AC-3 half already landed via `pcm_scratch` under M-AC3-DRAIN.
    Feature-gated `he-aac` only.
 
+**Verified (#1):** `truncate_padded_tail_*` (borrow vs owned) +
+`application::align_videos::tests` green.
+
 **Verified (#3):** `he-aac,ffmpeg-tests,test-utils` lib suite green (346 pass / 15
 ignored), including all `construct_adts_header_*` unit tests and
 `fdk_reset_backward_seek_reprimes_to_identical_steady_state`.
 
-**Test (remaining):** (1) existing align / end-clip truncate tests; (2) GCC-PHAT score
-identity + repair integration if ever opened.
+**Test (remaining #2):** GCC-PHAT score identity + repair integration if ever opened.
+
+**Do not (prepare-clone stretch):** Changing `prepare_clip_for_fingerprint` to take
+owned `MonoPcmClip` (or dropping its internal clone) is **not** a worthwhile follow-up
+to #1. Align’s common path must keep borrowing `raw_clips` for repetition re-align, so
+by-value prepare would just `.clone()` at the call site. Defaults are
+`normalize_loudness` + `trim_silence` **on**; after the prepare clone,
+`trim_trailing_silence` / `peak_normalize` often allocate again — owning into prepare
+without rewriting those helpers does not remove the dominant allocs. Most other callers
+(`offset_verification`, `locate_query`, tests) also prefer `&`.
+
+**If ever reopened (profile-gated only):** Rewrite `trim_trailing_silence` /
+`peak_normalize` to mutate `&mut MonoPcmClip` (or take `Cow<'_, MonoPcmClip>`), *then*
+consider `prepare_clip_for_fingerprint(Cow<'_, MonoPcmClip>, …)`. Do not flip prepare’s
+API on its own; only pursue after a profile shows prepare/trim/normalize allocs matter
+on a realistic align/query workload.
 
 ### M-CFG. Four-layer config field copying — **open**
 
@@ -510,8 +526,8 @@ are the remaining ways to get silently wrong audio.
    gate-search FFT already landed separately — do not reopen discover PHAT.
 4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work.
    Material repair wall-time (if pursued) → lever 1c, not M-CLONE.
-5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ (done 2026-07-23) → **#1 align
-   clones** next; **#2 planner deferred** until profiled (see M-CLONE section).
+5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
+   (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
 6. **P3** / **M-DEAD** cleanup whenever convenient — dead pregate symbols + unused
    `slide_template_scores` (see M-DEAD checklist); also CLI broken-pipe / quiet /
    verbose / unused deps / publish flag
@@ -528,8 +544,8 @@ are the remaining ways to get silently wrong audio.
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see
    `TEMP-repair-config-bundles-plan.md` (M-CFG) and
    `TEMP-policies-module-split-plan.md` (M-MOD policies slice).
-7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ (done 2026-07-23) → #1 align
-   clones; #2 planner only if profiled.
+7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
+   (done 2026-07-23); #2 planner only if profiled.
 8. **P3 / M-DEAD hygiene** — dead pregate + unused `slide_template_scores` (M-DEAD §1–§2);
    CLI broken-pipe, quiet/verbose, unused deps, publish flag.
 

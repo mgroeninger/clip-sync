@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -436,14 +437,20 @@ pub fn should_use_query_mode(
 }
 
 /// Drop silence padding appended when a tail extract ended before the planned window end.
-pub fn truncate_padded_tail(mut clip: MonoPcmClip) -> MonoPcmClip {
-    if let Some(decoded) = clip.decoded_sample_count {
-        if decoded < clip.samples.len() {
-            clip.samples.truncate(decoded);
+///
+/// Returns [`Cow::Borrowed`] when no sample truncate is needed (including non-padded clips),
+/// so callers can avoid a full PCM clone. Allocates only when `decoded_sample_count` marks
+/// a shorter decoded region than `samples.len()`.
+pub fn truncate_padded_tail(clip: &MonoPcmClip) -> Cow<'_, MonoPcmClip> {
+    match clip.decoded_sample_count {
+        Some(decoded) if decoded < clip.samples.len() => {
+            let mut owned = clip.clone();
+            owned.samples.truncate(decoded);
+            owned.decoded_sample_count = None;
+            Cow::Owned(owned)
         }
-        clip.decoded_sample_count = None;
+        _ => Cow::Borrowed(clip),
     }
-    clip
 }
 
 /// Whether a hold-out extract decoded enough samples for the requested segment length.
@@ -889,6 +896,8 @@ fn shift_clip_window_on_a(window: ClipWindow, region_a_start: f64) -> ClipWindow
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
     use crate::domain::audio_track::AudioTrack;
 
@@ -1231,9 +1240,39 @@ mod tests {
             decode_error_skips: 0,
             decoded_sample_count: Some(80),
         };
-        let trimmed = truncate_padded_tail(clip);
+        let trimmed = truncate_padded_tail(&clip);
+        assert!(matches!(trimmed, Cow::Owned(_)));
         assert_eq!(trimmed.samples.len(), 80);
         assert!(trimmed.decoded_sample_count.is_none());
+        // Source clip unchanged (borrow path must not mutate in place).
+        assert_eq!(clip.samples.len(), 100);
+        assert_eq!(clip.decoded_sample_count, Some(80));
+    }
+
+    #[test]
+    fn truncate_padded_tail_borrows_when_no_padding() {
+        let clip = MonoPcmClip {
+            sample_rate: 48_000,
+            samples: vec![1; 100],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let trimmed = truncate_padded_tail(&clip);
+        assert!(matches!(trimmed, Cow::Borrowed(_)));
+        assert_eq!(trimmed.samples.len(), 100);
+    }
+
+    #[test]
+    fn truncate_padded_tail_borrows_when_decoded_covers_buffer() {
+        let clip = MonoPcmClip {
+            sample_rate: 48_000,
+            samples: vec![1; 100],
+            decode_error_skips: 0,
+            decoded_sample_count: Some(100),
+        };
+        let trimmed = truncate_padded_tail(&clip);
+        assert!(matches!(trimmed, Cow::Borrowed(_)));
+        assert_eq!(trimmed.samples.len(), 100);
     }
 
     #[test]

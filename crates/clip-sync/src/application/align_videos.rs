@@ -695,25 +695,25 @@ where
             let end_clip_unreliable = window.label == ClipLabel::End
                 && (extracted_a.end_clip_unreliable || extracted_b.end_clip_unreliable);
 
-            let (raw_a, raw_b) = if window.label == ClipLabel::End {
-                (
-                    truncate_padded_tail(raw_a.clone()),
-                    truncate_padded_tail(raw_b.clone()),
-                )
-            } else {
-                (raw_a.clone(), raw_b.clone())
-            };
+            let truncated_a = (window.label == ClipLabel::End).then(|| truncate_padded_tail(raw_a));
+            let truncated_b = (window.label == ClipLabel::End).then(|| truncate_padded_tail(raw_b));
+            let raw_a = truncated_a.as_deref().unwrap_or(raw_a);
+            let raw_b = truncated_b.as_deref().unwrap_or(raw_b);
 
+            // When sliding, select allocates subclips. Otherwise prepare from the borrowed
+            // (or truncated) refs — one clone inside prepare, not a redundant pre-clone.
+            let slid;
             let (clip_a, clip_b) = if config.clip.window_slide_secs > 0 {
-                select_aligned_subclip_pair(&raw_a, &raw_b, window.duration())
+                slid = select_aligned_subclip_pair(raw_a, raw_b, window.duration());
+                (&slid.0, &slid.1)
             } else {
                 (raw_a, raw_b)
             };
 
             let source_duration_a = clip_a.duration_secs();
             let source_duration_b = clip_b.duration_secs();
-            let prepared_a = prepare_clip_for_fingerprint(&clip_a, prep_options);
-            let prepared_b = prepare_clip_for_fingerprint(&clip_b, prep_options);
+            let prepared_a = prepare_clip_for_fingerprint(clip_a, prep_options);
+            let prepared_b = prepare_clip_for_fingerprint(clip_b, prep_options);
 
             if is_skippable_prepare_error(&prepared_a) || is_skippable_prepare_error(&prepared_b)
             {
