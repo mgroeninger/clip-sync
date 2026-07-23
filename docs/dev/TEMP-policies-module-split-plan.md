@@ -1,38 +1,39 @@
 # `policies.rs` module split — plan (DRAFT)
 
-Status: **draft / not started** (refreshed 2026-07-07). Split
-`crates/clip-sync-repair/src/domain/policies.rs` (**now 3,827 lines** — grew from ~2,800 as dual-fit /
-residual work piled in: A3b `single_lag_alignment`, A6 residual, seam-scoring additions) into a `policies/`
-directory with a stable `crate::domain::policies::*` re-export facade. **Opportunistic** — do alongside
-seam/residual work, not as a standalone refactor.
+Status: **draft / not started** (refreshed **2026-07-23** from current source). Split
+`crates/clip-sync-repair/src/domain/policies.rs` (**4,291 lines** — production ≈ 2,590 + tests ≈
+1,701) into a `policies/` directory with a stable `crate::domain::policies::*` re-export facade.
+**Opportunistic** — do alongside seam/residual/scoring work, not as a standalone mega-refactor.
 
-**Companion to the pipeline redesign.** This is the module-organization axis; the pipeline redesign was the
-assembly axis — orthogonal, kept as separate plans. **Status update (2026-07-11):** that redesign
-([archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)) is **closed** —
-its dump/fingerprint work landed, and it already spun out focused domain modules (`seam_local.rs`, `donor.rs`,
-`dual_fit.rs`). Its remaining P2/P3 **trigger** — the shared mono-downmix **Hoist** — moved to the successor
-[TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) (§2.1), which is **measure-first**:
-P2 (`silence.rs`) / P3 (`gap_borders.rs`) fire **only if** that production measurement shows the hoist is worth
-doing. P4 (`seam_scoring.rs`, trigger 6b) and P1 (`seam_residual.rs`, trigger A6) already fired independently
-and stay ready. **Rule (unchanged): extract-when-you-touch, as a separate byte-preserving PR adjacent to the
-perf step — never bundled into a behavior-change PR** (that would wreck the §4/C2 "diff proves no behavior
-change" guarantee). The production perf doc's §3 restates this ordering (extract owner, then hoist).
+**M-MOD context.** This plan is the **policies slice** of P2 finding
+[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open) (oversized modules). M-MOD also
+calls for later splits of `gap_fingerprint` and harness `gap_fingerprint_corpus`; those are **out of
+scope** here. Do policies first when tackling M-MOD.
 
-Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) (**shipped**
-— P1's trigger has fired; P1 is *ready* but not done), [archive/residual-gate-findings.md](archive/residual-gate-findings.md)
-(L12 prototype retirement), [gap-fill-modes.md](../gap-fill-modes.md) § Multichannel seams.
+**Companion history (do not re-open as triggers).** The pipeline redesign
+([archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)) is
+**closed** — it spun out focused domain modules (`seam_local.rs`, `donor.rs`, `dual_fit.rs`) and
+landed characterize→execute (6b). Its successor
+([archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md)) **refuted**
+the shared mono-downmix hoist (§2.1, 2026-07-20) and therefore **removed the perf trigger** for
+P2/P3 extractions. Rule (unchanged): **extract-when-you-touch**, as a **separate byte-preserving PR**
+adjacent to any behavior/perf change — never bundle a split into a behavior-change PR.
+
+Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md)
+(**shipped** — P1 trigger fired), [archive/residual-gate-findings.md](archive/residual-gate-findings.md)
+(L12 prototype **already deleted**), [gap-fill-modes.md](../gap-fill-modes.md) § Multichannel seams.
 
 ---
 
 ## 1. Problem (one paragraph)
 
-`domain/policies.rs` is the repair crate's largest domain file (~2,800 lines; ~1,900 lines of
-production code + ~920 lines of `#[cfg(test)]`). It bundles silence scanning, gap-border refinement,
-Pearson seam scoring, residual/floor cancellation, and splice crossfade into one translation unit.
-Sibling concerns already live in separate modules (`gap_structure.rs`, `gap_energy.rs`,
-`gap_seam_extend.rs`, `residual_gate.rs`). Residual and seam work is active; a monolith increases
-review noise, merge conflicts, and navigation cost without matching the crate's one-concern-per-module
-convention.
+`domain/policies.rs` is still the repair crate's largest domain file (~2,590 lines of production code
++ ~1,701 lines of `#[cfg(test)]`). It bundles silence scanning, gap-border refinement, Pearson seam
+scoring (including the FFT band evaluator), residual/floor cancellation, and splice crossfade into
+one translation unit. Sibling concerns already live in separate modules (`gap_structure.rs`,
+`gap_energy.rs`, `gap_seam_extend.rs`, `residual_gate.rs`, `seam_local.rs`, `dual_fit.rs`, …). A
+monolith increases review noise, merge conflicts, and navigation cost without matching the crate's
+one-concern-per-module convention.
 
 ## 2. Non-goals
 
@@ -40,35 +41,47 @@ convention.
   re-exports; no repo-wide import sweep unless we explicitly choose a breaking change later.
 - **Changing behavior** — pure move/split; zero functional diff, tests green before/after.
 - **Splitting `clip-sync` (lib) `policies.rs`** — analyzer hexagon is out of scope.
+- **M-MOD siblings** — `gap_fingerprint.rs`, harness `gap_fingerprint_corpus.rs`, `patch_audio.rs`,
+  `align_videos.rs` are separate M-MOD bites; not this plan.
 - **Arbitrary line-count targets** — avoid three ~900-line files with tangled `pub(crate)` helpers;
   boundaries follow cohesion, not math.
-- **Blocking residual channel alignment** — channel work can land first; this plan sequences
-  extraction so alignment can pull `seam_residual` out when touched.
+- **Waiting on a perf hoist** — §2.1 downmix hoist is dead; do not block P2/P3 on it.
 
-## 3. Current layout (re-derived 2026-07-07)
+## 3. Current layout (re-derived 2026-07-23)
 
 | Region | Lines (approx.) | Anchor | Primary consumers |
 |--------|-----------------|--------|-------------------|
-| Silence + RMS | 1–305 | `SilenceRunScanner` @12 | `scan_gaps.rs`, `gap_energy.rs` |
-| Gap refine + borders | 306–643 | `refine_gap_frames` @306 | `patch_region.rs`, `patch_audio.rs`, harnesses |
-| Seam Pearson scoring | 644–1,710 | `SeamTemplates` @644, `fill_splice_seam_correlations_interleaved` @975 | `patch_region.rs`, `gap_fill_fit.rs` |
-| Seam residual / floor | 1,711–2,196 | `seam_chosen_and_floor` @1711, `SeamResidualVerdict` @1940 | `patch_region.rs`, `gap_fill_fit.rs`, corpus tests |
-| Splice / crossfade | 2,197–2,270 | `apply_seam_crossfade` @2197 | `patch_audio.rs` |
-| `#[cfg(test)]` | 2,271–3,827 | — | — |
+| Silence + RMS + fill gain | 1–367 | `SilenceRunScanner` @37, `is_silent*` @262, `compute_fill_gain` @358 | `scan_gaps.rs`, `gap_energy.rs` |
+| Gap refine + borders + channel select | 370–778 | `FillAlignment` @370, `refine_gap_frames` @442, `GapBorderSpec` @527, `selected_seam_channels` @754 | `patch_region.rs`, `patch_audio.rs`, harnesses |
+| Seam Pearson scoring | 780–1630 | `SeamTemplates` @780, `fill_splice_seam_correlations*` @996/@1111, `fill_seam_correlations*` @1287+, `fill_seam_correlations_band` @1404, `seam_channel_diagnostics` @1572 | `patch_region.rs`, `gap_fill_fit.rs` |
+| Seam residual / floor | 1632–2471 | `lsq_residual_ratio` @1642, `SeamFloorProbe` @1744, `seam_chosen_and_floor*` @2031/@2075, `SeamResidualVerdict` @2260 | `patch_region.rs`, corpus tests |
+| Splice / crossfade | 2473–2589 | `trim_low_energy_*` @2473, `apply_seam_crossfade` @2517 | `patch_audio.rs` |
+| `#[cfg(test)]` | 2591–4291 | — | — |
 
-Production ≈ 2,270 lines, tests ≈ 1,557. The **seam-scoring region roughly doubled** (was 538–1,248 ≈ 710
-lines; now 644–1,710 ≈ 1,066) — the dual-fit seam work (A3b `single_lag_alignment`, per-channel splice
-scoring). Line numbers shift with every seam/residual PR; re-derive the anchors at extraction time rather than
-trusting these.
+Production ≈ 2,590 lines, tests ≈ 1,701. Notable growth since the 2026-07-07 refresh: multichannel
+residual (`seam_chosen_and_floor_multichannel`), FFT seam band evaluator
+(`fill_seam_correlations_band` + colocated regression), and more residual/floor tests. Line numbers
+shift with every seam/residual PR — **re-derive anchors at extraction time**.
 
-**Already extracted / adjacent modules:** `residual_gate.rs` (86 lines) — `ResidualGateMode`, lag/frame
-helpers, thresholds (config/mode only; measurement primitives remain in `policies.rs`). The pipeline redesign
-also created **new** focused primitives — `seam_local.rs` (355), `donor.rs` (133), `dual_fit.rs` (448) — not
-carved *from* policies but demonstrating the one-concern-per-module target this plan finishes.
+**Cross-cutting note:** `effective_seam_crossfade_frames` (@939) lives amid scoring but is shared by
+splice scoring and `apply_seam_crossfade`. Prefer `seam_splice.rs` (or a one-line re-export from
+`seam_scoring`) so both sides have one owner.
 
-**Import pattern today:** application code uses `crate::domain::policies::{self, …}` and
-`policies::fn_name` (~25 references in `patch_region.rs` alone). `gap_structure.rs` and
-`gap_energy.rs` import narrow slices (`FillAlignment`, `is_silent_frame`).
+**Already extracted / adjacent modules (sizes as of refresh):**
+
+| Module | ~Lines | Role |
+|--------|--------|------|
+| `residual_gate.rs` | 74 | Config surface: `ResidualGateMode`, lag/headroom defaults |
+| `seam_local.rs` | 383 | Local seam search (not carved from policies) |
+| `donor.rs` | 121 | Donor selection helpers |
+| `dual_fit.rs` | 436 | Dual-fit rescue |
+| `gap_structure.rs` | 626 | Gap structure |
+| `gap_energy.rs` | 309 | Energy / silence consumers of policies |
+| `pcm.rs` | 29 | Shared PCM types |
+
+**Import pattern today:** application/domain code uses `crate::domain::policies::{…}` and
+`policies::fn_name` heavily (`patch_region.rs` ≈ 47 `policies::` refs; `patch_audio.rs` ≈ 35). Narrow
+imports remain in `gap_structure.rs` / `gap_energy.rs` (`FillAlignment`, `is_silent_frame`, …).
 
 ## 4. Proposed structure
 
@@ -76,14 +89,20 @@ carved *from* policies but demonstrating the one-concern-per-module target this 
 domain/
   policies/
     mod.rs              # re-exports entire public API (stable facade)
-    silence.rs          # SilenceRunScanner, is_silent*, rms_*
-    gap_borders.rs      # refine_gap_frames, GapBorderSpec, border_templates_*, interleaved_to_*
-    seam_scoring.rs     # SeamTemplates, fill_seam_*, repeat/splice Pearson, channel diagnostics
-    seam_residual.rs    # floor probe, seam_chosen_and_floor, SeamResidualVerdict, informative
-    seam_splice.rs      # apply_seam_crossfade, effective_seam_crossfade, trim_low_energy_*
+    silence.rs          # SilenceRunScanner, is_silent*, rms_*, compute_fill_gain
+    gap_borders.rs      # refine_gap_frames, GapBorderSpec, border_templates_*,
+                        # selected_seam_channels / loudest_seam_channel
+    seam_scoring.rs     # SeamTemplates, fill_seam_*, fill_repeat_*, splice scoring,
+                        # fill_seam_correlations_band, seam_channel_diagnostics
+    seam_residual.rs    # floor probe, seam_chosen_and_floor*, SeamResidualVerdict
+    seam_splice.rs      # apply_seam_crossfade, effective_seam_crossfade_frames,
+                        # trim_low_energy_*
 ```
 
 Each submodule owns its `#[cfg(test)] mod tests { … }` block (move tests with the code they cover).
+Rough test homes from current names: scanner/RMS → `silence`; `refine_gap_*` / `border_*` →
+`gap_borders`; `fill_seam_*` / `fill_repeat_*` / splice correlation → `seam_scoring`;
+`seam_residual_*` / `seam_floor_*` / `residual_verdict_*` → `seam_residual`.
 
 ### 4a. `mod.rs` facade
 
@@ -102,91 +121,87 @@ phase 1.
   submodule that owns them; sibling submodules import via `super::` or `crate::domain::policies::…`
   as needed.
 - Prefer **minimal cross-submodule coupling**: `seam_residual` may call `gap_borders::mono_window` or
-  duplicate-free shared `pcm.rs` only if a third shared helper file is justified (defer until a second
-  consumer appears).
+  a shared helper only if a third consumer appears (defer a `pcm`-style shared file until then).
 
 ### 4c. Relationship to `residual_gate.rs`
 
-Keep `residual_gate.rs` as the **config surface** (`ResidualGateMode`, `residual_max_lag_frames`).
-Move **measurement primitives** (`SeamFloorProbe`, `seam_chosen_and_floor`, `SeamResidualVerdict`,
-`floor_probe_informative`) into `policies/seam_residual.rs`. `DEFAULT_RESIDUAL_FLOOR_OK_DB` can
-live in `seam_residual.rs` or `residual_gate.rs` — pick one home; re-export from `mod.rs`.
+Keep `residual_gate.rs` as the **config surface** (`ResidualGateMode`, `residual_max_lag_frames`,
+defaults). Measurement primitives stay in `policies/seam_residual.rs`.
+`DEFAULT_RESIDUAL_FLOOR_OK_DB` (@2224 today) lives with the measurement types in `seam_residual.rs`
+(or re-export from `mod.rs`); do not move gate mode enums into policies.
 
-### 4d. Retire prototype path (optional, same PR as `seam_residual` extract)
+### 4d. Prototype path — **done**
 
-[archive/residual-gate-findings.md](archive/residual-gate-findings.md) **L12**: `seam_residual_diagnostics` /
-`SeamResidual` are test-only. When extracting `seam_residual.rs`, either delete the prototype or
-move it to `seam_residual.rs` behind `#[cfg(test)]` with a one-line doc comment. Do not leave dead
-`floor_db` / `frac_lag` fields on the hot path (L9, L10).
+[archive/residual-gate-findings.md](archive/residual-gate-findings.md) **L12**:
+`seam_residual_diagnostics` / `SeamResidual` were deleted. No further prototype cleanup is required
+when extracting `seam_residual.rs`.
 
 ## 5. Extraction order (phasing)
 
-Triggers are now **anchored to pipeline-redesign steps** (the de facto driver). Each extraction lands as a
-**separate byte-preserving PR adjacent to** its trigger step — see the pipeline plan §2.6 for the live status
-table that keeps these visible during the refactor.
+Triggers are **status**, not schedules. Each extraction lands as a **separate byte-preserving PR** —
+never bundled into a behavior-change PR.
 
-| Phase | Module | Pipeline trigger step | Status | Notes |
-|-------|--------|----------------------|--------|-------|
-| **P0** | — | — | — | No change; monolith until a step below touches its region. |
-| **P1** | `seam_residual.rs` | A6 residual (**landed**) / residual cleanup | **Ready** (trigger fired, not done) | Highest value; pairs with `residual_gate.rs`; retire L12 prototype. `seam_chosen_and_floor` @1711, `SeamResidualVerdict` @1940. |
-| **P2** | `silence.rs` | **Step 8** hoist (binned-RMS single owner) | Pending step 8 | Independent of seam; small, clear boundary. The hoist *needs* this owner — decomposition = the perf motion. |
-| **P3** | `gap_borders.rs` | **Step 8** hoist (border-extract single owner) | Pending step 8 | `FillAlignment`, `RefinedGapFrames`, templates. Same motion as P2. |
-| **P4** | `seam_scoring.rs` (+ `seam_splice.rs`) | **6b** (seam scoring consolidates into characterize; #4 reconciliation) | Pending 6b | Largest block (~1,066 lines); split scoring vs the ~73-line splice only if still large. |
+| Phase | Module | Trigger / driver | Status | Notes |
+|-------|--------|------------------|--------|-------|
+| **P0** | — | — | — | No change; monolith until a phase below is pulled. |
+| **P1** | `seam_residual.rs` | Residual channel alignment **shipped**; residual still hot | **Ready** (not done) | Highest value; pairs with `residual_gate.rs`. Anchors: `lsq_residual_ratio` @1642, `seam_chosen_and_floor` @2031, `SeamResidualVerdict` @2260. |
+| **P2** | `silence.rs` | Opportunistic (downmix hoist **refuted**) | Pending / no forcing function | Small, clear boundary. Extract when silence/RMS is touched or when clearing M-MOD. |
+| **P3** | `gap_borders.rs` | Opportunistic (same as P2) | Pending / no forcing function | `FillAlignment`, `RefinedGapFrames`, templates, `selected_seam_channels`. |
+| **P4** | `seam_scoring.rs` (+ `seam_splice.rs`) | Characterize→execute **6b landed**; scoring still grows (FFT band) | **Ready** (not done) | Largest block (~850 lines prod). Split scoring vs ~120-line splice if still large after move. |
 | **P5** | Delete `policies.rs` | After P1–P4 | — | `mod.rs` only; verify `pub use` list matches pre-split API. |
 
-**Do not** execute P1–P5 as a single “split the file” PR, and **do not** bundle any Pn into its trigger step's
-PR — phased, standalone, byte-preserving landings keep both the split *and* the pipeline diff reviewable.
+**Do not** execute P1–P5 as a single “split the file” PR. Prefer P1 or P4 first when residual or
+scoring is already being touched; P2/P3 can wait until convenience or a full M-MOD pass.
 
 ## 6. Verification
 
 **Principle: a pure module move cannot change behavior** — it is the same code in different files. So the
-failure modes are entirely **compile-time** (an incomplete re-export facade, a `super::`/`pub(crate)`
-visibility slip, a colocated test that loses access to a private item) or **clippy** — all caught in
-**seconds-to-minutes**. The hours-long media/behavior tiers test outcomes a move literally cannot alter, so
-they are **not** the gate here. (The old "full lib + integration green" line assumed a fast suite; the
-integration/`validation` tiers now take hours and are unnecessary for a byte-preserving split.)
+failure modes are entirely **compile-time** (incomplete re-export facade, `super::`/`pub(crate)`
+visibility slip, colocated test losing a private item) or **clippy** — all caught in
+**seconds-to-minutes**. Hours-long media/behavior tiers are **not** the gate here.
 
 **Fast gate — run per phase (P1–P5):**
 
 - `cargo build -p clip-sync-repair --all-targets` — **the dominant check**: every re-export resolves and all
-  test/bench targets still compile. A missing `pub use` or a moved-test visibility break fails here.
-- `cargo clippy -p clip-sync-repair --all-targets` — clean (catches new module-level lint triggers).
-- `.\scripts\test-tier.ps1 -Tier pr-repair` — lib unit tests + golden footguns (fast; the CI-default surface).
-  This runs the colocated `#[cfg(test)]` blocks that moved with each region.
+  test/bench targets still compile.
+- `cargo clippy -p clip-sync-repair --all-targets` — clean.
+- `.\scripts\test-tier.ps1 -Tier pr-repair` — lib unit tests + golden footguns (fast; CI-default surface).
 - **Facade checklist:** `grep '^pub ' domain/policies.rs` (pre-move) → assert every symbol is re-exported from
-  `policies/mod.rs` (post-move). This is the pre-delete guard (§7 risk 1).
+  `policies/mod.rs` (post-move). Pre-delete guard for P5.
 
 **Belt-and-suspenders — once, at P5 (final `mod.rs`-only delete):**
 
-- `.\scripts\test-tier.ps1 -Tier integration` — confirms the assembled binaries still link/run. One run at the
-  end, not per phase.
+- `.\scripts\test-tier.ps1 -Tier integration` — assembled binaries still link/run. One run at the end.
 - Optional `cargo doc -p clip-sync-repair --no-deps` — public rustdoc unchanged for `policies::*`.
 
-**Not required for a module split:** `-Tier validation` (ffmpeg + fetched corpus, **hours**, media-behavior).
-A split that would change a `validation` outcome is by definition not a pure move — if one is ever needed, the
-phase is doing more than moving code and must be re-scoped. Reserve `validation` for the *pipeline* steps that
-touch behavior, per that plan's §4 harness — not for these extractions.
+**Not required for a module split:** `-Tier validation` (ffmpeg + fetched corpus, **hours**). A split
+that would change a `validation` outcome is by definition not a pure move — re-scope that phase.
 
 ## 7. Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Missed re-export → compile errors in tests/corpus | `mod.rs` checklist generated from `grep '^pub '` on old file before delete |
-| Circular imports between submodules | Extract `silence` first (no seam deps); `seam_residual` depends on borders helpers only |
-| Test module path churn | Move tests with code; run `seam_residual_*` / `seam_floor_*` / border tests after each phase |
+| Missed re-export → compile errors in tests/corpus | `mod.rs` checklist from `grep '^pub '` on old file before delete |
+| Circular imports between submodules | Extract `silence` first when doing P2/P3 together; `seam_residual` depends on border helpers only |
+| Test module path churn | Move tests with code; run residual / floor / border / band tests after each phase |
 | Facade hides new code location | Submodule names in file paths; optional one-line module docs at top of each file |
+| Moving `effective_seam_crossfade_frames` / channel-select helpers | Decide owner at extract time; keep facade re-exports so callers do not care |
 
 ## 8. Success criteria
 
-- No production file in `domain/` exceeds ~1,000 lines of non-test code (tests colocated per module).
-- `patch_region.rs` imports unchanged at the `policies::` path.
-- Residual channel alignment lands in `seam_residual.rs`, not back into a monolith.
+- No production file under `domain/policies/` exceeds ~1,000 lines of non-test code (tests colocated).
+- `patch_region.rs` / `patch_audio.rs` imports unchanged at the `policies::` path.
+- Further residual/scoring work lands in `seam_residual.rs` / `seam_scoring.rs`, not back into a monolith.
+- M-MOD policies row closable after P5; fingerprint/corpus splits remain separate.
 
 ---
 
 ## Related
 
-- [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) — shipped; P1 trigger for `seam_residual.rs` split
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD** (this plan is step 1)
+- [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md) — shipped; P1 trigger
 - [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) — gate wiring (orthogonal)
-- [archive/residual-gate-findings.md](archive/residual-gate-findings.md) — L9–L13 smells to clean during P1
+- [archive/residual-gate-findings.md](archive/residual-gate-findings.md) — L12 prototype deleted
+- [archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) — §2.1 hoist
+  refuted; P2/P3 fully opportunistic (§3)
 - `crates/clip-sync-repair/src/domain/policies.rs` — current monolith
