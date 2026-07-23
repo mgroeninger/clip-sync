@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use symphonia::core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
     layouts,
@@ -23,7 +25,10 @@ const AC3_FRAME_SAMPLES: usize = 1536;
 const BUF_CAPACITY: usize = AC3_FRAME_SAMPLES * 6;
 
 pub struct Ac3Decoder {
-    inner: Box<dyn OxideDecoder>,
+    /// `oxideav_core::Decoder` is `Send` but not `Sync`. Symphonia's
+    /// `AudioDecoder` requires `Send + Sync`; a `Mutex` makes shared
+    /// references sound without an `unsafe impl Sync`.
+    inner: Mutex<Box<dyn OxideDecoder>>,
     codec_params: AudioCodecParameters,
     sample_rate: u32,
     /// Populated on first decoded frame; `None` at probe time when the container
@@ -32,10 +37,6 @@ pub struct Ac3Decoder {
     /// Returned by `last_decoded` before the first frame is decoded.
     empty_buf: AudioBuffer<i16>,
 }
-
-// oxideav_core::Decoder requires only Send; all Symphonia decode methods take &mut self
-// (no shared-reference access is possible), so Sync is safe to assert here.
-unsafe impl Sync for Ac3Decoder {}
 
 impl Ac3Decoder {
     fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
@@ -72,7 +73,13 @@ impl Ac3Decoder {
             0,
         );
 
-        Ok(Self { inner, codec_params: params.clone(), sample_rate, buf, empty_buf })
+        Ok(Self {
+            inner: Mutex::new(inner),
+            codec_params: params.clone(),
+            sample_rate,
+            buf,
+            empty_buf,
+        })
     }
 }
 
@@ -117,13 +124,19 @@ impl AudioDecoder for Ac3Decoder {
             data,
         );
 
-        self.inner
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::DecodeError("ac3: decoder mutex poisoned"))?;
+
+        inner
             .send_packet(&oxideav_packet)
             .map_err(|_| Error::DecodeError("ac3: send_packet failed"))?;
 
-        let audio_frame = match self.inner.receive_frame() {
+        let audio_frame = match inner.receive_frame() {
             Ok(oxideav_core::Frame::Audio(f)) => f,
             Err(oxideav_core::Error::NeedMore) => {
+                drop(inner);
                 if let Some(ref mut b) = self.buf {
                     b.clear();
                     return Ok(b.as_generic_audio_buffer_ref());
@@ -133,6 +146,7 @@ impl AudioDecoder for Ac3Decoder {
             Ok(_) => return Err(Error::DecodeError("ac3: non-audio frame from decoder")),
             Err(_) => return Err(Error::DecodeError("ac3: receive_frame failed")),
         };
+        drop(inner);
 
         // AudioFrame.data[0] holds interleaved S16 samples in native byte order.
         let bytes = audio_frame.data.first().map(Vec::as_slice).unwrap_or(&[]);

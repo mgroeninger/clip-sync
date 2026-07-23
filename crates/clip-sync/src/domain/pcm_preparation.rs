@@ -61,18 +61,22 @@ pub fn select_aligned_subclip_pair(
     }
 
     let best_start = find_peak_subclip_start(&left.samples, target_samples);
+    // Peak is chosen from `left` only; clamp per side so a shorter `right`
+    // (tail truncation / decode shortfall) cannot panic on the slice.
+    let left_start = best_start.min(left.samples.len());
+    let right_start = best_start.min(right.samples.len());
     let left_end = (best_start + target_samples).min(left.samples.len());
     let right_end = (best_start + target_samples).min(right.samples.len());
 
     let left_clip = MonoPcmClip {
         sample_rate: left.sample_rate,
-        samples: left.samples[best_start..left_end].to_vec(),
+        samples: left.samples[left_start..left_end].to_vec(),
         decode_error_skips: left.decode_error_skips,
         decoded_sample_count: None,
     };
     let right_clip = MonoPcmClip {
         sample_rate: right.sample_rate,
-        samples: right.samples[best_start..right_end].to_vec(),
+        samples: right.samples[right_start..right_end].to_vec(),
         decode_error_skips: right.decode_error_skips,
         decoded_sample_count: None,
     };
@@ -307,6 +311,32 @@ mod tests {
         assert_eq!(left_clip.samples.len(), 1_000);
         assert_eq!(right_clip.samples.len(), 1_000);
         assert!(left_clip.samples.iter().any(|s| *s > 1_000));
+    }
+
+    #[test]
+    fn aligned_subclip_pair_clamps_when_right_shorter_than_peak_start() {
+        // Left peak near the end; right is truncated short of that peak start.
+        // Must not panic; right slice is empty (start clamped to len).
+        let mut left_samples = vec![10_i16; 4_000];
+        for sample in &mut left_samples[3_000..4_000] {
+            *sample = 8_000;
+        }
+        let left = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: left_samples,
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let right = MonoPcmClip {
+            sample_rate: 1_000,
+            samples: vec![7_i16; 500],
+            decode_error_skips: 0,
+            decoded_sample_count: None,
+        };
+        let (left_clip, right_clip) =
+            select_aligned_subclip_pair(&left, &right, Duration::from_secs(1));
+        assert!(!left_clip.samples.is_empty());
+        assert!(right_clip.samples.is_empty());
     }
 
     #[test]

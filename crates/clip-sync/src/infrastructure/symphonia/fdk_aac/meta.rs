@@ -33,10 +33,8 @@ impl M4AInfo {
     fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
         match bs.read_bits_leq32(4)? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
-            _ => {
-                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
-                Ok(srate)
-            }
+            // ISO 14496-3: samplingFrequencyIndex == 0x0f → 24-bit explicit rate.
+            _ => Ok(bs.read_bits_leq32(24)?),
         }
     }
 
@@ -54,7 +52,13 @@ impl M4AInfo {
 
         self.otype = Self::read_object_type(&mut bs)?;
         self.sample_rate = Self::read_sampling_frequency(&mut bs)?;
-        self.sample_rate_index = sample_rate_index(self.sample_rate);
+        // Prefer a defined table index so ADTS headers stay valid. Escape-rate
+        // streams whose Hz is not in the table cannot be wrapped as ADTS.
+        self.sample_rate_index = sample_rate_index(self.sample_rate).ok_or_else(|| {
+            symphonia::core::errors::Error::DecodeError(
+                "aac: sample rate has no ADTS table index",
+            )
+        })?;
 
         validate!(self.sample_rate > 0);
 
@@ -177,11 +181,17 @@ const AAC_SAMPLE_RATES: [u32; 16] = [
     0,
 ];
 
-pub(super) fn sample_rate_index(sample_rate: u32) -> u8 {
+/// Map a sample rate to the AAC/ADTS table index.
+///
+/// Returns `None` when the rate is not one of the defined table entries (0..=12
+/// with a non-zero rate). Callers must not invent index 0 (96 kHz) for unknown
+/// rates — that silently corrupts ADTS headers.
+pub(super) fn sample_rate_index(sample_rate: u32) -> Option<u8> {
     AAC_SAMPLE_RATES
         .iter()
-        .position(|s| *s == sample_rate)
-        .unwrap_or_default() as u8
+        .enumerate()
+        .find(|(_, rate)| **rate == sample_rate && **rate > 0)
+        .map(|(index, _)| index as u8)
 }
 
 const AAC_CHANNELS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 8];
@@ -213,5 +223,109 @@ mod tests {
         // not panic.
         assert_eq!(m4a_type_from_index(42), M4AType::Unknown);
         assert_eq!(m4a_type_from_index(usize::MAX), M4AType::Unknown);
+    }
+
+    #[test]
+    fn sample_rate_index_maps_table_rates_and_rejects_unknown() {
+        assert_eq!(sample_rate_index(48_000), Some(3));
+        assert_eq!(sample_rate_index(44_100), Some(4));
+        // Must not silently map to index 0 (96 kHz).
+        assert_eq!(sample_rate_index(50_000), None);
+        assert_eq!(sample_rate_index(0), None);
+    }
+
+    #[test]
+    fn read_asc_explicit_sample_rate_parses_24_bit_frequency() {
+        // Build ASC: AAC LC + escape sample-rate index + explicit 48000 Hz + stereo.
+        let mut bits = BitWriter::new();
+        bits.write(5, 2); // LC
+        bits.write(4, 15); // escape
+        bits.write(24, 48_000);
+        bits.write(4, 2); // stereo
+        bits.write(1, 0); // frameLengthFlag
+        bits.write(1, 0); // dependsOnCoreCoder
+        bits.write(1, 0); // extensionFlag
+        let asc = bits.into_bytes();
+
+        let mut info = M4AInfo::default();
+        info.read(&asc).expect("parse ASC with escape rate");
+        assert_eq!(info.otype, M4AType::Lc);
+        assert_eq!(info.sample_rate, 48_000);
+        assert_eq!(info.sample_rate_index, 3);
+        assert_eq!(info.channels, 2);
+        assert_eq!(info.samples, 1024);
+    }
+
+    #[test]
+    fn read_asc_explicit_non_table_rate_errors() {
+        let mut bits = BitWriter::new();
+        bits.write(5, 2); // LC
+        bits.write(4, 15); // escape
+        bits.write(24, 50_000); // not in AAC table
+        bits.write(4, 2);
+        bits.write(1, 0);
+        bits.write(1, 0);
+        bits.write(1, 0);
+        let asc = bits.into_bytes();
+
+        let mut info = M4AInfo::default();
+        let err = info.read(&asc).expect_err("non-table escape rate");
+        assert!(err.to_string().contains("sample rate"));
+    }
+
+    #[test]
+    fn read_asc_table_index_still_works() {
+        let mut bits = BitWriter::new();
+        bits.write(5, 2); // LC
+        bits.write(4, 3); // 48 kHz table index
+        bits.write(4, 2); // stereo
+        bits.write(1, 0);
+        bits.write(1, 0);
+        bits.write(1, 0);
+        let asc = bits.into_bytes();
+
+        let mut info = M4AInfo::default();
+        info.read(&asc).expect("parse standard ASC");
+        assert_eq!(info.sample_rate, 48_000);
+        assert_eq!(info.sample_rate_index, 3);
+        assert_eq!(info.channels, 2);
+    }
+
+    /// Tiny MSB-first bit packer for ASC test fixtures.
+    struct BitWriter {
+        bytes: Vec<u8>,
+        bit: u8,
+        cur: u8,
+    }
+
+    impl BitWriter {
+        fn new() -> Self {
+            Self {
+                bytes: Vec::new(),
+                bit: 0,
+                cur: 0,
+            }
+        }
+
+        fn write(&mut self, nbits: u32, value: u32) {
+            for i in (0..nbits).rev() {
+                let bit = ((value >> i) & 1) as u8;
+                self.cur = (self.cur << 1) | bit;
+                self.bit += 1;
+                if self.bit == 8 {
+                    self.bytes.push(self.cur);
+                    self.cur = 0;
+                    self.bit = 0;
+                }
+            }
+        }
+
+        fn into_bytes(mut self) -> Vec<u8> {
+            if self.bit > 0 {
+                self.cur <<= 8 - self.bit;
+                self.bytes.push(self.cur);
+            }
+            self.bytes
+        }
     }
 }

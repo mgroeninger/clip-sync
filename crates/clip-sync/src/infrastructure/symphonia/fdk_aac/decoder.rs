@@ -78,7 +78,9 @@ impl AacDecoder {
         } else {
             m4a_info.otype = M4AType::Lc;
             m4a_info.sample_rate = params.sample_rate.unwrap_or_default();
-            m4a_info.sample_rate_index = sample_rate_index(m4a_info.sample_rate);
+            m4a_info.sample_rate_index = sample_rate_index(m4a_info.sample_rate).ok_or_else(|| {
+                Error::DecodeError("aac: sample rate has no ADTS table index")
+            })?;
 
             m4a_info.channels = if let Some(channels) = &params.channels {
                 channels.count() as u8
@@ -104,12 +106,15 @@ impl AacDecoder {
         let capacity = self.decoder.decoded_frame_size();
         let channels = stream_info.numChannels as u8;
         let sample_rate = stream_info.aacSampleRate as u32;
+        let sample_rate_index = sample_rate_index(sample_rate).ok_or(Error::DecodeError(
+            "aac: sample rate has no ADTS table index",
+        ))?;
 
         self.m4a_info = M4AInfo {
             otype: m4a_type_from_index(stream_info.aot as usize),
             channels,
             sample_rate,
-            sample_rate_index: sample_rate_index(sample_rate),
+            sample_rate_index,
             samples: capacity / channels.max(1) as usize,
         };
 
@@ -151,7 +156,7 @@ impl AudioDecoder for AacDecoder {
             self.m4a_info.sample_rate_index,
             self.m4a_info.channels,
             reader.byte_len(),
-        );
+        )?;
 
         self.decoder
             .fill(&[&adts_header, reader.read_buf_bytes_available_ref()].concat())

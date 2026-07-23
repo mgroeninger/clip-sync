@@ -554,13 +554,8 @@ pub fn validate_built_oracle(
     let gap_start = built.meta.gap_start_frame;
     let gap_end = built.meta.gap_end_frame;
     let edge = secs_to_frames(defaults.gap_interior_edge_secs, rate);
-    let interior_start = gap_start.saturating_add(edge);
-    let interior_end = gap_end.saturating_sub(edge);
-    if interior_start >= interior_end {
-        return Err(format!(
-            "gap too short for interior check: {gap_start}..{gap_end}"
-        ));
-    }
+    let (interior_start, interior_end) =
+        gap_interior_range(gap_start, gap_end, edge, samples_a.len())?;
     let peak = samples_a[interior_start..interior_end]
         .iter()
         .map(|s| s.unsigned_abs())
@@ -583,6 +578,26 @@ pub fn format_label(format: FloorOracleFormat) -> &'static str {
         FloorOracleFormat::Mp4Aac => "mp4_aac",
         FloorOracleFormat::Vorbis => "vorbis",
     }
+}
+
+/// Inclusive-exclusive interior sample range for the post-encode silence check.
+///
+/// Clamps `end` to `sample_len` so a short decode round-trip returns `Err`
+/// instead of panicking on the slice.
+pub(crate) fn gap_interior_range(
+    gap_start: usize,
+    gap_end: usize,
+    edge: usize,
+    sample_len: usize,
+) -> Result<(usize, usize), String> {
+    let interior_start = gap_start.saturating_add(edge);
+    let interior_end = gap_end.saturating_sub(edge).min(sample_len);
+    if interior_start >= interior_end {
+        return Err(format!(
+            "gap too short for interior check: {gap_start}..{gap_end}"
+        ));
+    }
+    Ok((interior_start, interior_end))
 }
 
 #[cfg(test)]
@@ -624,5 +639,24 @@ mod tests {
         let manifest = load_manifest(&repair_root);
         assert!(manifest.version >= 1);
         assert!(!manifest.case.is_empty());
+    }
+
+    #[test]
+    fn gap_interior_range_clamps_to_sample_len_instead_of_panicking() {
+        // Without the .min(sample_len) clamp, end=490 would panic on a 200-sample buffer.
+        // With the clamp, the range stays in-bounds and is usable.
+        let (start, end) = gap_interior_range(100, 500, 10, 200).expect("clamped ok");
+        assert_eq!(start, 110);
+        assert_eq!(end, 200);
+        // Empty after clamp (decoded shorter than interior_start) → descriptive Err.
+        let err = gap_interior_range(100, 500, 10, 100).expect_err("too short");
+        assert!(err.contains("gap too short"));
+    }
+
+    #[test]
+    fn gap_interior_range_ok_when_buffer_covers_gap() {
+        let (start, end) = gap_interior_range(100, 500, 10, 500).expect("ok");
+        assert_eq!(start, 110);
+        assert_eq!(end, 490);
     }
 }
