@@ -286,7 +286,7 @@ fn off_no_regression_baseline() {
 /// patch outright (`dual_fit` never engages — no skip to fall through from); the forced-Pearson-skip
 /// arm does reach the G6 branch but has no real step between shoulders, so `try_dual_fit` declines
 /// and the outcome is unchanged either way. `dual_fit = true` vs `false` must produce identical
-/// gating and PCM in all three cases. Closes perf-plan `docs/TEMP-pipeline-perf-redesign-plan.md`
+/// gating and PCM in all three cases. Closes perf-plan `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md`
 /// §4.7 backlog item **C2**.
 #[test]
 fn dual_fit_flag_is_noop_when_bracket_search_already_decides() {

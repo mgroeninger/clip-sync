@@ -1,6 +1,6 @@
 # clip-sync test corpus (Tier B)
 
-Small committed audio fixtures for manifest-driven integration tests. See [docs/corpus-validation.md](../../docs/corpus-validation.md) and [docs/corpus-matrix.md](../../docs/corpus-matrix.md).
+Small committed audio fixtures for manifest-driven integration tests. See [docs/dev/corpus-validation.md](../../docs/dev/corpus-validation.md) and [docs/dev/corpus-matrix.md](../../docs/dev/corpus-matrix.md).
 
 ## Size budget
 
@@ -10,7 +10,7 @@ Keep total committed fixtures under **5 MB**. Current clips are 20–30 s mono 1
 
 Committed WAVs are **30 s**; default `clip_length` is **60 s**, so `verify_offset` cannot run on Tier-B files (hold-out is skipped). **Accepted coverage:** generated manifest cases `verify_offset_pass` (120 s WAV) and `mkv_tail_decodable_extent_gap` (ffmpeg). A committed ~75 s verify pair would add **~3.2 MB** and exceed the 5 MB cap without removing or extending an existing pair — not added unless the budget is raised.
 
-With default **15 min** `clip_length`, `--verify-offset` can decode up to **~90 minutes** of audio per run (3 retry candidates × 2 files × `clip_length`). See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Hold-out verification cost.
+With default **15 min** `clip_length`, `--verify-offset` can decode up to **~90 minutes** of audio per run (3 retry candidates × 2 files × `clip_length`). See [docs/dev/corpus-validation.md](../../docs/dev/corpus-validation.md) § Hold-out verification cost.
 
 ## Regenerate WAV fixtures
 
@@ -57,7 +57,7 @@ Regenerate committed WAVs:
 | `looped_chirp_pair` | Hold-out verify probes only (`verify_option_a_false_pass_probe`, `probe_only` in manifest); discovery aliases mod 10 s period |
 | `source_offset_pair` | Real audio from `sources.toml`; ffmpeg decode + known `adelay` offset (requires `_sources/` cache) |
 
-See [docs/corpus-validation.md](../../docs/corpus-validation.md) § Option A false-pass evidence for the looped-fixture discovery (+13 s) vs verify (+13 s false-pass) behaviour.
+See [docs/dev/corpus-validation.md](../../docs/dev/corpus-validation.md) § Option A false-pass evidence for the looped-fixture discovery (+13 s) vs verify (+13 s false-pass) behaviour.
 
 ## Licensing
 

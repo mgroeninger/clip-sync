@@ -53,11 +53,11 @@ Fingerprints (chromaprint) of clip windows from each file are matched to find th
 
 ## 2. Scan gaps
 
-A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) where the level stays below the silence floor (`absolute_silence_rms`, default 33 + `silence_peak_fraction`, default 0.01), measured in `scan_block_ms` blocks (100) with `silence_hold_ms` (500) bridging brief dips. For each detected gap, the aligned position on B is checked for energy (`scan_both`): a gap B can fill is **`fillable`**; one where B is also silent (or out of B's coverage) is **`unfillable`**. The scan also classifies each gap's **silence character** from its per-block levels (`gap_equivalence`; [gap-vocabulary.md](gap-vocabulary.md) § Silence-character pre-gate) — the input to the fill-plan equivalence drop (§3). Output is a `GapReport` with each gap classified and timestamped on the decoded-sample clock.
+A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) where the level stays below the silence floor (`absolute_silence_rms`, default 33 + `silence_peak_fraction`, default 0.01), measured in `scan_block_ms` blocks (100) with `silence_hold_ms` (500) bridging brief dips. For each detected gap, the aligned position on B is checked for energy (`scan_both`): a gap B can fill is **`fillable`**; one where B is also silent (or out of B's coverage) is **`unfillable`**. The scan also classifies each gap's **silence character** from its per-block levels (`gap_equivalence`; [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character pre-gate) — the input to the fill-plan equivalence drop (§3). Output is a `GapReport` with each gap classified and timestamped on the decoded-sample clock.
 
 - **Reference:** [gap-scan.md](gap-scan.md) — detection, B mapping, bidirectional cross-check, output.
 - **Config:** `min_gap_ms`, `absolute_silence_rms`, `silence_peak_fraction`, `scan_block_ms`, `silence_hold_ms`, `scan_both`, `skip_equivalent_gaps`, `gap_offset_tolerance_secs`.
-- **Code:** `application/scan_gaps.rs`. Scan-corpus validation: [corpus-validation.md](corpus-validation.md), [`tests/gap_corpus/README.md`](../crates/clip-sync-repair/tests/gap_corpus/README.md).
+- **Code:** `application/scan_gaps.rs`. Scan-corpus validation: [corpus-validation.md](dev/corpus-validation.md), [`tests/gap_corpus/README.md`](../crates/clip-sync-repair/tests/gap_corpus/README.md).
 
 ## 3. Fill plan
 
@@ -71,7 +71,7 @@ For each fillable gap, the **B offset map** translates A's gap time to a nominal
 
 Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). See [gap-fill-modes.md](gap-fill-modes.md) § Patch anchors and README § Gap patching pipeline (1).
 
-**Equivalence drop (`skip_equivalent_gaps`, on by default).** After the fillable/coverage gates, a gap whose scan-time silence-character verdict `drops()` (mutual/ambient silence — nothing to repair) is removed from the plan as `already_matches_reference`, so it never reaches decode/patch. Lowest precedence (`not_fillable`, coverage, and track blocks win). Disable with `--no-skip-equivalent-gaps`. See [gap-vocabulary.md](gap-vocabulary.md) § Silence-character pre-gate for the classification and [gap-scan.md](gap-scan.md) for how the signals are measured.
+**Equivalence drop (`skip_equivalent_gaps`, on by default).** After the fillable/coverage gates, a gap whose scan-time silence-character verdict `drops()` (mutual/ambient silence — nothing to repair) is removed from the plan as `already_matches_reference`, so it never reaches decode/patch. Lowest precedence (`not_fillable`, coverage, and track blocks win). Disable with `--no-skip-equivalent-gaps`. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character pre-gate for the classification and [gap-scan.md](gap-scan.md) for how the signals are measured.
 
 - **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`.
 - **Code:** `application/patch_audio.rs`, `domain/gap_fill.rs`.
@@ -137,7 +137,7 @@ Steps 3–7 in the old pedagogical list are **one joint search + gates**, not se
 
 Structure match on B → structure gate → waveform Pearson (optional structure-trust skip) → on failure, reactive extend end then start. No anchor seam, no residual gate, no unified fit search. See [gap-fill-modes.md](gap-fill-modes.md) § `fill_mode = gate`.
 
-- **References:** [gap-fill-modes.md](gap-fill-modes.md) (routing, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering), [seam-scoring.md](seam-scoring.md) (seam mechanics), [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) (residual gate design record).
+- **References:** [gap-fill-modes.md](gap-fill-modes.md) (routing, flags, performance), [gap-repair-guide.md](gap-repair-guide.md) (reading/steering), [seam-scoring.md](seam-scoring.md) (seam mechanics), [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md) (residual gate design record).
 - **Config:** `fill_mode`, `anchor_seam_mode`, `residual_gate`, `residual_*`, `fit_boundary_search`, plus §3 fill-plan knobs.
 - **Code:** `application/patch_audio.rs`, `application/patch_region.rs`, `application/fit_routing.rs`, `domain/gap_fill_fit.rs`, `domain/gap_structure.rs`, `domain/gap_energy.rs`, `domain/gap_anchor_seam.rs`.
 
@@ -169,7 +169,7 @@ Report-only / scan-only mode (default `dry_run = true`, no output paths) runs ph
 - [gap-repair-guide.md](gap-repair-guide.md) — reading and steering a repair run
 - [gap-fill-modes.md](gap-fill-modes.md) — `fit` vs `gate`, flag interactions, performance
 - [seam-scoring.md](seam-scoring.md) — how `pre`/`post` seams are identified and scored
-- [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) — residual/floor gate (fit mode, default `veto`; archived design record)
+- [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md) — residual/floor gate (fit mode, default `veto`; archived design record)
 - [cli-output.md](cli-output.md) / [json-output.md](json-output.md) — report layout
-- [corpus-validation.md](corpus-validation.md) — test corpus and acceptance
+- [corpus-validation.md](dev/corpus-validation.md) — test corpus and acceptance
 - [PLAN.md](../PLAN.md) — architecture and application sketch

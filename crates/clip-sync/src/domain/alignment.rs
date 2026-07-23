@@ -298,7 +298,7 @@ pub fn periodic_ambiguity_period(
 /// the offset is large enough (`|offset| ≥ T − 1`) that it could be the true offset plus N×T rather
 /// than the fundamental. Drives the discovery confidence downgrade so period aliases like +13 s
 /// (T = 10) are penalized, while content aligned well inside the first period (offset ≈ 0, T = 30) is
-/// not. See `docs/archive/periodic-ambiguity-plan.md`.
+/// not. See `docs/dev/archive/periodic-ambiguity-plan.md`.
 pub fn should_downgrade_periodic_ambiguity(
     report: &ClipRepetitionReport,
     min_repetition_confidence: f32,

@@ -40,7 +40,7 @@ For a short A against a long B (or vice-versa — the short side is the "query")
 3. **PCM-refine** the top `query_refine_top_k` winning anchor(s).
 4. Build a synthetic single-clip result with the **mapped region** — the slice of the long file the query localizes to. In repair, gaps outside this region are reported but not fillable when `limit_fill_to_mapped_region` is set (default).
 
-Design: [archive/query-reference-alignment-plan.md](archive/query-reference-alignment-plan.md); short-A/long-B donor: [archive/query-reference-b-longer-plan.md](archive/query-reference-b-longer-plan.md).
+Design: [archive/query-reference-alignment-plan.md](dev/archive/query-reference-alignment-plan.md); short-A/long-B donor: [archive/query-reference-b-longer-plan.md](dev/archive/query-reference-b-longer-plan.md).
 
 ## Offset refinement & verification
 
@@ -51,8 +51,8 @@ Design: [archive/query-reference-alignment-plan.md](archive/query-reference-alig
 ## Drift, ambiguity, repetition
 
 - **Offset drift** — when the start-clip and end-clip offsets differ (clocks ran at slightly different rates), the report shows both. Repair's `fill_offset_mode = interpolated` / `anchored_retry` exist to track this across a long file ([gap-fill-modes.md](gap-fill-modes.md)).
-- **Periodic ambiguity** — repetitive content (loops, chants) can match at multiple offsets; the engine detects and reports the ambiguity rather than picking blindly. Design: [archive/periodic-ambiguity-plan.md](archive/periodic-ambiguity-plan.md).
-- **Clip self-repetition** — `validation.check_clip_repetition` guards against a clip window that repeats within a file. Design: [archive/clip-self-repetition-plan.md](archive/clip-self-repetition-plan.md).
+- **Periodic ambiguity** — repetitive content (loops, chants) can match at multiple offsets; the engine detects and reports the ambiguity rather than picking blindly. Design: [archive/periodic-ambiguity-plan.md](dev/archive/periodic-ambiguity-plan.md).
+- **Clip self-repetition** — `validation.check_clip_repetition` guards against a clip window that repeats within a file. Design: [archive/clip-self-repetition-plan.md](dev/archive/clip-self-repetition-plan.md).
 - **Track selection** — `try_all_tracks` / `--try-all-tracks` lets alignment consider tracks beyond the default pick (e.g. when the default-muxed track is the wrong language/layout).
 
 ## Reading the report
@@ -90,5 +90,5 @@ Full `AlignConfig` layout: [PLAN.md](../PLAN.md) § `AlignConfig`.
 
 - [pipeline.md](pipeline.md) — where alignment sits (phase 1)
 - [PLAN.md](../PLAN.md) § Analyzer workflow / Repair workflow
-- [corpus-matrix.md](corpus-matrix.md) — alignment corpus
+- [corpus-matrix.md](dev/corpus-matrix.md) — alignment corpus
 - `archive/` — `query-reference-alignment-plan.md`, `query-reference-b-longer-plan.md`, `offset-verification-plan.md`, `high-rate-offset-refinement-plan.md`, `periodic-ambiguity-plan.md`, `clip-self-repetition-plan.md` (historical design)

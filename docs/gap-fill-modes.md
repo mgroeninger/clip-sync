@@ -2,7 +2,7 @@
 
 Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CLI flags, config keys, performance, and report output.
 
-**Related:** [pipeline.md](pipeline.md) (phases 1–5 and `PatchAudio` run map — **read together with this doc**), [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [seam-scoring.md](seam-scoring.md) (how seams are scored), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md) (`anchored_retry`).
+**Related:** [pipeline.md](pipeline.md) (phases 1–5 and `PatchAudio` run map — **read together with this doc**), [gap-repair-guide.md](gap-repair-guide.md) (classifying gaps and choosing profiles), [seam-scoring.md](seam-scoring.md) (how seams are scored), [cli-output.md](cli-output.md) (human/JSON patch lines), [json-output.md](json-output.md) (`GapPatchStatus`, `confidence`), [README.md](../README.md) § Gap patching (overview). **Patch anchors:** [archive/patch-anchor-offset-plan.md](dev/archive/patch-anchor-offset-plan.md) (`anchored_retry`).
 
 ---
 
@@ -81,7 +81,7 @@ border templates
   → residual veto/rescue (default on; measured lazily at pool selection when residual_gate active)
 ```
 
-Unified search **jointly** scores structure and waveform when sliding B — it is not “structure match, then waveform gate” as separate placement passes. See [seam-scoring.md](seam-scoring.md) for how `pre`/`post` are built; see [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) for headroom veto / dead-zone rescue.
+Unified search **jointly** scores structure and waveform when sliding B — it is not “structure match, then waveform gate” as separate placement passes. See [seam-scoring.md](seam-scoring.md) for how `pre`/`post` are built; see [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md) for headroom veto / dead-zone rescue.
 
 - **No** structure-trust waveform skip, **no** one-strong-seam / mean-only waveform shortcuts.
 - `structure_trusted` is always `false` in JSON.
@@ -180,7 +180,7 @@ Common on long-form pairs where A has tail padding silence B does not share — 
 `unfillable`. Do not lower Pearson floors for analyzer-tagged program-quiet gaps; tune scan if A should not
 have been flagged (P7).
 
-See [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements and [gap-scan.md](gap-scan.md) § Mapping to B and fillability.
+See [gap-fingerprint.md](dev/gap-fingerprint.md) § Registration & dual-fit measurements and [gap-scan.md](gap-scan.md) § Mapping to B and fillability.
 
 ---
 
@@ -243,7 +243,7 @@ Seam Pearson is **peak-normalized** (level is removed) and computed on the chann
 
 This matters because seam Pearson on **near-silent audio is noise** (peak-normalized noise correlates to ~0). If scoring were locked to front L/R, a 5.1 mix with dialogue in the center channel and quiet fronts would show **pre/post ≈ 0** and skip a perfectly fillable gap. Following the signal-bearing channel(s) gives such gaps an honest seam score. (Mono/stereo content is unaffected — all channels carry signal, so all are scored as before.)
 
-The fit-mode **residual/floor** measurement follows the *same* selected channels (not a mono downmix that quiet surrounds would dilute): cancellation depth is measured per selected channel, while the integer alignment lag is found once across all of them by summed correlation. See [seam-scoring.md](seam-scoring.md) § Residual channel policy and [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md).
+The fit-mode **residual/floor** measurement follows the *same* selected channels (not a mono downmix that quiet surrounds would dilute): cancellation depth is measured per selected channel, while the integer alignment lag is found once across all of them by summed correlation. See [seam-scoring.md](seam-scoring.md) § Residual channel policy and [archive/residual-channel-alignment-plan.md](dev/archive/residual-channel-alignment-plan.md).
 
 ---
 
@@ -257,7 +257,7 @@ The fit-mode **residual/floor** measurement follows the *same* selected channels
 | `veto_rescue` | no | Also upgrade Pearson dead-zone skips when cancellation is strong |
 | `off` | no | Measure only when `measure_residual` / debug |
 
-Design: [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md). JSON: `residual_band`, `residual_db` / `floor_db` / `headroom_db`; skip reason `residual_headroom_exceeded`.
+Design: [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md). JSON: `residual_band`, `residual_db` / `floor_db` / `headroom_db`; skip reason `residual_headroom_exceeded`.
 
 ```toml
 [repair]
@@ -271,7 +271,7 @@ Design: [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan
 
 ## Editorial anchor seam
 
-**Status:** shipped (fit mode). Design: [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md).
+**Status:** shipped (fit mode). Design: [archive/TEMP-anchor-seam-plan.md](dev/archive/TEMP-anchor-seam-plan.md).
 
 When a fillable gap has a **quiet scan throat** but salient contour nearby (speech peak, bool onset in the flanking context halves), throat-only Pearson often lands in **W5** (symmetric weak, dead zone). Anchor seam searches **editorial boundaries** on A (energy peaks, bool transitions rising pre / falling post), enumerates feasible brackets, and scores B-side matchability at those anchor windows. Context geometry: [Signature context and contour geometry](#signature-context-and-contour-geometry).
 
@@ -326,7 +326,7 @@ clip-sync-repair a.mkv b.mkv --mux out.mp4 `
 
 ## Patch anchors
 
-**Status:** `anchored_retry` shipped (2026-06-20). See [archive/patch-anchor-offset-plan.md](archive/patch-anchor-offset-plan.md).
+**Status:** `anchored_retry` shipped (2026-06-20). See [archive/patch-anchor-offset-plan.md](dev/archive/patch-anchor-offset-plan.md).
 
 Some runs patch several gaps cleanly (`slide=+0.35s` in verbose) while others fail seam search because the **nominal B map** from alignment is off by hundreds of ms at that point on A — the true dropout sits near the edge of `fill_border_search_secs`, not because `fit` or `gate` chose wrong.
 

@@ -1,6 +1,6 @@
 # clip-sync docs
 
-Reference and operational documentation for `clip-sync` (analyzer) and `clip-sync-repair`. For architecture (crates, hexagonal layers, ports) see [../PLAN.md](../PLAN.md); for open work see [../BACKLOG.md](../BACKLOG.md).
+Operator and behavior reference for `clip-sync` (analyzer) and `clip-sync-repair`. For architecture (crates, hexagonal layers, ports) see [../PLAN.md](../PLAN.md); for open work see [../BACKLOG.md](../BACKLOG.md). Contributor docs (build, tests, plans) live under **[dev/](dev/)**.
 
 ## Pipeline & internals
 
@@ -30,21 +30,8 @@ How to read and steer a run:
 | [json-output.md](json-output.md) | `--format json` schema, `GapPatchStatus`, fields |
 | [error-mapping.md](error-mapping.md) | Errors → exit codes |
 
-## Testing & development
+## Development
 
-| Doc | Covers |
-|-----|--------|
-| [test-tiers.md](test-tiers.md) | **How to run test tiers** — `test-tier.ps1`, composite profiles, prerequisites |
-| [development.md](development.md) | Build, features, integration binary matrix, `#[ignore]` scheduling |
-| [archive/test-tier-plan.md](archive/test-tier-plan.md) | Tier migration history (archived 2026-06) |
-| [test-tier-remainder.md](test-tier-remainder.md) | Deferred tiers (2b, ignore follow-ups, nextest, validate crate) |
-| [corpus-validation.md](corpus-validation.md) | Test corpus tiers, acceptance, energy-signature corpus |
-| [corpus-matrix.md](corpus-matrix.md) | Alignment corpus matrix |
+Build, test tiers, corpus harness, active plans, and archived design records: **[dev/](dev/)**.
 
-## Plans
-
-- **Active drafts:** `TEMP-*.md` in this folder (e.g. [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md)).
-- **Review ledger:** [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — prioritized correctness / silent-failure / perf findings (2026-07-23).
-- **Shipped:** [archive/](archive/) — historical design records (do not treat as current behavior; links may be stale).
-
-> **Conventions:** living reference docs sit flat in `docs/`; active plans use the `TEMP-` prefix; shipped plans move to `archive/` (frozen, original links). See [pipeline.md](pipeline.md) for the execution flow vs. [gap-repair-guide.md](gap-repair-guide.md) for the operator-decision lens vs. [../PLAN.md](../PLAN.md) for architecture.
+> **Conventions:** operator and behavior docs sit flat in `docs/`; contributor material lives in `docs/dev/` (active plans use the `TEMP-` prefix; shipped plans move to `dev/archive/`). See [pipeline.md](pipeline.md) for the execution flow vs. [gap-repair-guide.md](gap-repair-guide.md) for the operator-decision lens vs. [../PLAN.md](../PLAN.md) for architecture.

@@ -53,11 +53,11 @@ Residual/floor cancellation (fit mode) follows the **same** selection. `selected
 
 **Shared alignment, per-channel depth.** The integer lag is a single physical quantity (same master, same clock), so it is found **once across all selected channels** by `shared_alignment_lag` — the lag maximizing the *summed* peak-normalized correlation — then each channel fits only its scalar gain and residual at that fixed lag. Summing correlations (not downmixing waveforms) is what makes this robust to not knowing which channel carries the gap: a loud channel whose B content doesn't match correlates ~0 at every lag and never pulls the alignment, while the matching channel(s) shape a sharp peak at the true lag. (A literal mono downmix fails here — it injects the loud non-matching channels' energy into one waveform and drags the lag off the true value, so even the good channel stops cancelling.)
 
-Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md).
+Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [archive/residual-channel-alignment-plan.md](dev/archive/residual-channel-alignment-plan.md).
 
 ## 3. Seam correlation (peak-normalized Pearson)
 
-`seam_pearson` correlates two equal-length windows via `normalized_correlation` (z-score Pearson). **Pearson correlation is scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [archive/residual-gate-wiring-plan.md](archive/residual-gate-wiring-plan.md) §2).
+`seam_pearson` correlates two equal-length windows via `normalized_correlation` (z-score Pearson). **Pearson correlation is scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md) §2).
 
 ## 4. Pre/post windows at a placement
 
@@ -97,7 +97,7 @@ The `pre`/`post` pair also maps to a **`seam_shape`** tag (`balanced`, `asymmetr
 
 ## 6. Dual-fit repair — reconciling a length step across the seam
 
-**Canonical wire spec** for the dual-fit rescue (operator/mode view: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue (G6); classification tag: [gap-repair-guide.md](gap-repair-guide.md) § Dual-fit rescue (W7)). **Implemented** in production — `domain/dual_fit.rs` (shared scan + production primitive) and `application/patch_audio.rs::skip_or_dual_fit → try_dual_fit`; **default on** (`RepairConfig.dual_fit = true`, `--no-dual-fit` opt-out). The offline predictor of this repair is the fingerprint's `splice_dualfit` field — [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements.
+**Canonical wire spec** for the dual-fit rescue (operator/mode view: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue (G6); classification tag: [gap-repair-guide.md](gap-repair-guide.md) § Dual-fit rescue (W7)). **Implemented** in production — `domain/dual_fit.rs` (shared scan + production primitive) and `application/patch_audio.rs::skip_or_dual_fit → try_dual_fit`; **default on** (`RepairConfig.dual_fit = true`, `--no-dual-fit` opt-out). The offline predictor of this repair is the fingerprint's `splice_dualfit` field — [gap-fingerprint.md](dev/gap-fingerprint.md) § Registration & dual-fit measurements.
 
 **Mechanism.** At a repair gap, A has a quiet/silent hole between two un-stretched shoulders. Each shoulder registers against B at its **own lag**; the lags differ by a **step** (`splice.step_ms`). A single rigid donor shift cannot satisfy both seams — one seam is always off by the step. Dual-fit places each shoulder independently, then reconciles the step with a **trim or pad at the lowest-energy interior sample** of the fill — a pure length edit, not a within-side warp (the content is un-stretched within each side).
 
@@ -168,6 +168,6 @@ Seam scoring is **phase 4, step 4d** of the repair pipeline (after structure mat
 
 - [gap-repair-guide.md](gap-repair-guide.md) — reading a run; tiers, seam shapes, vocabulary
 - [gap-fill-modes.md](gap-fill-modes.md) — `fit` vs `gate`, flag interactions, multichannel seams, performance
-- [gap-fingerprint.md](gap-fingerprint.md) § Registration & dual-fit measurements — the `splice_dualfit` predictor and registration fields behind §6
+- [gap-fingerprint.md](dev/gap-fingerprint.md) § Registration & dual-fit measurements — the `splice_dualfit` predictor and registration fields behind §6
 - [cli-output.md](cli-output.md) — repair gap outcome report layout
 - [README.md](../README.md) § Gap patching pipeline

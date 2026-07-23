@@ -13,7 +13,8 @@ A companion tool `clip-sync-repair` (in development) uses the same alignment eng
 ```text
 clip-sync/
 ├── Cargo.toml                  # workspace root
-├── docs/                       # corpus-validation, error-mapping, corpus-matrix
+├── docs/                       # operator guides + contracts
+│   └── dev/                    # contributor docs
 ├── scripts/                    # generate_corpus.ps1 / .sh
 ├── tests/
 │   └── corpus/                 # manifest.toml, committed WAV fixtures
@@ -626,7 +627,7 @@ Repair exit codes are documented in [docs/error-mapping.md](docs/error-mapping.m
 
 ## Development
 
-See **[docs/test-tiers.md](docs/test-tiers.md)** for how to run each test tier; **[docs/development.md](docs/development.md)** for Cargo features, binary matrix, and fixture regeneration.
+See **[docs/dev/test-tiers.md](docs/dev/test-tiers.md)** for how to run each test tier; **[docs/dev/development.md](docs/dev/development.md)** for Cargo features, binary matrix, and fixture regeneration.
 
 Quick start:
 
@@ -676,12 +677,12 @@ Third-party dependency licenses are summarized in [THIRD_PARTY_LICENSES.txt](THI
 
 - [docs/gap-repair-guide.md](docs/gap-repair-guide.md) — **gap types**, waveform tiers, and repair recommendations
 - [docs/gap-fill-modes.md](docs/gap-fill-modes.md) — **`fit` vs `gate`**, flag matrix, extension semantics, performance recipes
-- [docs/test-tiers.md](docs/test-tiers.md) — how to run test tiers (`test-tier.ps1`)
-- [docs/development.md](docs/development.md) — features, build, integration binary matrix
+- [docs/dev/test-tiers.md](docs/dev/test-tiers.md) — how to run test tiers (`test-tier.ps1`)
+- [docs/dev/development.md](docs/dev/development.md) — features, build, integration binary matrix
 - [docs/cli-output.md](docs/cli-output.md) — progress tiers, human report layout, gap patch outcomes, timeline/duration warnings, mux failures
 - [docs/json-output.md](docs/json-output.md) — JSON output contract (v1) for both CLIs
 - [docs/error-mapping.md](docs/error-mapping.md) — exit codes, user messages, error hierarchy
-- [docs/corpus-validation.md](docs/corpus-validation.md) — test tiers, CI commands, known offsets
-- [docs/corpus-matrix.md](docs/corpus-matrix.md) — case design matrix
+- [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) — test tiers, CI commands, known offsets
+- [docs/dev/corpus-matrix.md](docs/dev/corpus-matrix.md) — case design matrix
 - [PLAN.md](PLAN.md) — full architecture reference
 - [BACKLOG.md](BACKLOG.md) — deferred work items

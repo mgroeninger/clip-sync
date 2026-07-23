@@ -1,6 +1,6 @@
 //! Real-media **stepped** gap builder — proves the A3 dual-fit rescue (G6) on open-licensed
 //! Wikimedia/Musopen masters instead of a frozen `corpus.json`'s static predicates (B2, see
-//! `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7). Produces the same [`BuiltFloorOracle`] shape
+//! `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4.7). Produces the same [`BuiltFloorOracle`] shape
 //! as [`crate::floor_oracle::build_floor_oracle_pair`], so it runs through the identical
 //! `residual_gate::run_built_floor_oracle_cfg` → production `PatchAudio` path — no second
 //! execution path to drift from what production actually does.

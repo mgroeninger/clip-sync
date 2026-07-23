@@ -1,4 +1,4 @@
-//! W5 anchor-rescue grid sweep (Phase 2). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.
+//! W5 anchor-rescue grid sweep (Phase 2). See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §5.2.
 //!
 //! Maps the `(peak_offset_secs, fill_border_search_secs)` plane into behavioral regimes so we can
 //! locate the E3 (anchor-rescue) pocket — where an anchor bracket reaches Pearson High and wins the

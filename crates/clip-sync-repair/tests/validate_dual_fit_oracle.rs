@@ -7,7 +7,7 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features validation-tests --test validate_dual_fit_oracle -- --nocapture`
 //!
-//! Closes the gap flagged in `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7 (B2): the golden
+//! Closes the gap flagged in `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4.7 (B2): the golden
 //! invariance harness (`golden_baseline_corpus_invariance`) only diffs a frozen `corpus.json` — it
 //! never calls the fingerprint dump (`characterize_gaps_from_decode`) or the real production `PatchAudio` path against
 //! decoded audio. This test runs the ACTUAL production entry point

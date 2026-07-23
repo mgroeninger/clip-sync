@@ -635,7 +635,7 @@ pub fn anchor_bracket_both_matchable(
     pre.matchable && post.matchable
 }
 
-/// Perf lever #2 pre-gate (`docs/archive/TEMP-anchor-pregate-plan.md`): decide, WITHOUT running the full
+/// Perf lever #2 pre-gate (`docs/dev/archive/TEMP-anchor-pregate-plan.md`): decide, WITHOUT running the full
 /// `bracket_unified_search`, whether an anchor bracket is **matchability-doomed** — no placement the search
 /// could return can pass [`anchor_bracket_both_matchable`]. Returns `true` iff the bracket may be skipped.
 ///

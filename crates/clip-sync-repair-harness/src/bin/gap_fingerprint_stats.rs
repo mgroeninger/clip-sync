@@ -1,5 +1,5 @@
 //! `gap-fingerprint-stats` — cross-corpus gap-fingerprint analyzer (the P0 prevalence scan).
-//! See `docs/TEMP-w5-timing-offset-rescue-plan.md` §5 P0 and `gap_fingerprint_corpus.rs`.
+//! See `docs/dev/archive/TEMP-w5-timing-offset-rescue-plan.md` §5 P0 and `gap_fingerprint_corpus.rs`.
 //!
 //! Reads one or more `--gap-fingerprints` output dirs and tallies lag verdicts + gate outcomes across
 //! every A/B pair — the numbers P0 needs (how many `timing_offset` gaps the gate skipped, constant vs

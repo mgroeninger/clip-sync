@@ -1,5 +1,5 @@
 //! Perf §4 decision-invariance golden baseline — emit, parse, and compare D/R axis snapshots.
-//! See `docs/TEMP-pipeline-perf-redesign-plan.md` §4 and `golden/README.md`.
+//! See `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4 and `golden/README.md`.
 
 use serde::{Deserialize, Serialize};
 

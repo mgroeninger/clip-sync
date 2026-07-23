@@ -835,7 +835,7 @@ fn build_f3_drone_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFi
 
 const INTEGRATION_TOTAL_SECS: f64 = 8.0;
 
-/// Production-scale geometry for energy corpus fixtures (see `docs/archive/energy-corpus-plan.md`).
+/// Production-scale geometry for energy corpus fixtures (see `docs/dev/archive/energy-corpus-plan.md`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProductionScenarioSpec {
     pub total_secs: f64,
@@ -1596,7 +1596,7 @@ struct PerBinModulation {
 /// structure (envelope) placement to bin resolution, and a moved bracket lands on a *different* contour
 /// it cannot re-slide into waveform alignment. The modulation rides the signal, so it re-aligns under
 /// the recovering lag (the timing-offset signature survives). See
-/// `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §6 (non-stationary collar).
+/// `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §6 (non-stationary collar).
 fn modulate_per_bin(
     samples: &mut [f32],
     channels: usize,
@@ -1635,7 +1635,7 @@ fn modulate_per_bin(
 /// `offset0_secs` delays B relative to A *at the reference time*; `drift` (dimensionless slope, secs per
 /// sec) tilts the lag linearly so pre and post seams carry **different** offsets — the seam *skew* of
 /// the g003 signature. Anchoring at `ref_secs` (the gap) keeps the seam offset ≈ `offset0_secs` instead
-/// of letting drift accumulate from t=0. See `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §4.
+/// of letting drift accumulate from t=0. See `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §4.
 fn resample_linear(
     src: &[f32],
     channels: usize,
@@ -1676,7 +1676,7 @@ fn resample_linear(
 /// Distinct from [`build_w5_noise_collar_anchor_rescue`]: there the collar uses *independent* seeds for
 /// A and B (genuinely `decorrelated`, no lag recovers). Here B is a **resample of A** (same noise, shifted),
 /// so lag-0 dies but the sweep peaks at the shift. The collar is band-limited so the fractional resample
-/// recovers faithfully. See `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §4.
+/// recovers faithfully. See `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §4.
 pub fn build_w5_timing_offset_seam(
     sample_rate: u32,
     channels: usize,
@@ -1712,7 +1712,7 @@ pub fn build_w5_timing_offset_seam(
     //   * the bed is continuous (spans the signature context), so the gap is a clean hole in content and
     //     a moved bracket never reaches self-similar or silent ground it could re-slide onto.
     // The modulation rides the signal, so it re-aligns under the recovering lag — the timing-offset lag
-    // signature is preserved. See `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §6.
+    // signature is preserved. See `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §6.
     let bed_span = context.max(secs_to_frames(peak_offset_secs + collar_secs, sample_rate));
     let pre_bed = gap_start.saturating_sub(bed_span);
     let post_bed_end = (gap_end + bed_span).min(total_frames);

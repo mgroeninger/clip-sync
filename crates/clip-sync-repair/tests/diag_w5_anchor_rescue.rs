@@ -1,5 +1,5 @@
 //! W5 anchor-rescue single-cell diagnostic (Phase 1).
-//! See docs/TEMP-w5-anchor-rescue-diag-plan.md.
+//! See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md.
 //!
 //! Tier: **diagnostic** (`diagnostic-tests` feature). Emits per-cell nominal/baseline throat Pearson
 //! plus per-bracket unified gate scores for human review — replaces `probe_w5_anchor_rescue_scores`.
@@ -126,7 +126,7 @@ fn w5_anchor_rescue_single_cell() {
 
 /// Phase 2 coarse grid: regime map across `(peak_offset, fill_border_search)`. Emits CSV (stdout,
 /// and under `target/w5_anchor_rescue_sweep.csv` when `W5_SWEEP_CSV=1`) plus a regime tally and the
-/// E3 pocket (if any). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.
+/// E3 pocket (if any). See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §5.2.
 #[test]
 fn diag_w5_anchor_rescue_coarse_grid() {
     let cells = coarse_w5_grid_default();
@@ -184,7 +184,7 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
 
 /// §8 Q1 faithful (noise-collar) fixture probe: does a genuine W5 (noise collar at the gap, anchors
 /// reachable only by a moving bracket) finally let a moving bracket pass at High? See
-/// docs/TEMP-w5-anchor-rescue-diag-plan.md §8 Q1.
+/// docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §8 Q1.
 #[test]
 fn diag_w5_noise_collar() {
     // (peak_offset, collar, burst, search_radius, min_prominence). Short triangular bursts + a
@@ -208,7 +208,7 @@ fn diag_w5_noise_collar() {
 
 /// §8 Q1 decoupled exploration: fix `peak_offset=1.0`, sweep `(search, b_shift)` to test whether
 /// decoupling the B dropout shift from the A peak offset opens an E3 pocket the coupled grid cannot
-/// reach (Phase 2 finding). See docs/TEMP-w5-anchor-rescue-diag-plan.md §8.
+/// reach (Phase 2 finding). See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §8.
 #[test]
 fn diag_w5_anchor_rescue_decoupled_grid() {
     let cells = decoupled_w5_grid(1.0, (0.30, 0.70), 0.10, (0.60, 1.40), 0.10);

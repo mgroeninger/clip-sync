@@ -3,7 +3,7 @@
 //! Phase 1 `clip_windows_paired` tests should assert against these values. The helpers encode
 //! expected placement rules before the paired planner exists.
 
-/// Default CI integration scale from [anchored-end-extraction-plan.md](../../../../docs/archive/anchored-end-extraction-plan.md).
+/// Default CI integration scale from [anchored-end-extraction-plan.md](../../../../docs/dev/archive/anchored-end-extraction-plan.md).
 pub const CI_SHARED_SECS: u32 = 240;
 pub const CI_LONG_SECS: u32 = 1800;
 pub const CI_CLIP_LENGTH_SECS: u64 = 60;

@@ -88,5 +88,5 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 
 - [pipeline.md](pipeline.md) — where scan sits (phase 2)
 - [gap-repair-guide.md](gap-repair-guide.md) — plan-time gap types (P0–P7) the classification feeds
-- [corpus-validation.md](corpus-validation.md), [`tests/gap_corpus/README.md`](../crates/clip-sync-repair/tests/gap_corpus/README.md) — scan corpus
+- [corpus-validation.md](dev/corpus-validation.md), [`tests/gap_corpus/README.md`](../crates/clip-sync-repair/tests/gap_corpus/README.md) — scan corpus
 - [PLAN.md](../PLAN.md) § Repair workflow

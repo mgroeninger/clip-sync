@@ -1,5 +1,5 @@
 //! W5 **timing-offset** recoverability diagnostic (Phase C).
-//! See `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §5 Phase C.
+//! See `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §5 Phase C.
 //!
 //! The g003 class is a seam that is dead at lag 0 yet recovers under a multi-ms shift (verdict
 //! `timing_offset`). This module measures that recovery directly — pre/post seam [`LagSummary`] via the

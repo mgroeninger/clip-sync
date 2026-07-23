@@ -2,7 +2,7 @@
 
 Normative behavior for human and progress output of **`clip-sync`** (analyzer) and **`clip-sync-repair`** (repair). For JSON field contracts see [json-output.md](json-output.md); for errors, stderr messages, and exit codes see [error-mapping.md](error-mapping.md). User-facing summary: [README.md](../README.md) § Progress and verbosity.
 
-Historical implementation notes: [archive/cli-output-ux-plan.md](archive/cli-output-ux-plan.md).
+Historical implementation notes: [archive/cli-output-ux-plan.md](dev/archive/cli-output-ux-plan.md).
 
 ---
 
@@ -178,7 +178,7 @@ When `offset_ambiguous_mod_secs` is set (strong start-clip repetition under `che
 |------|------|
 | Default | `Warning: offset ambiguous (repeats every ~N s) — auto offset and verify may match the wrong period` |
 
-Emitted after high-rate refinement lines and before offset-verification lines. The period **N** is the normalized repeat tile from discovery (not necessarily the raw autocorrelation lag). Setting the flag does **not** imply confidence was halved — see [corpus-validation.md](corpus-validation.md) § Periodic offset ambiguity.
+Emitted after high-rate refinement lines and before offset-verification lines. The period **N** is the normalized repeat tile from discovery (not necessarily the raw autocorrelation lag). Setting the flag does **not** imply confidence was halved — see [corpus-validation.md](dev/corpus-validation.md) § Periodic offset ambiguity.
 
 ### Query-reference mode (stdout)
 
@@ -382,7 +382,7 @@ patch when write mode), optionally writes a licensing-safe corpus under `DIR`. s
 `--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-gap N` (repeatable) limits full
 per-bracket detail to selected indices; other gaps get summary rows in `corpus.json`. Ignored when
 `--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` without
-`--gap-fingerprints` are rejected at startup. Schema: [gap-fingerprint.md](gap-fingerprint.md).
+`--gap-fingerprints` are rejected at startup. Schema: [gap-fingerprint.md](dev/gap-fingerprint.md).
 
 ---
 

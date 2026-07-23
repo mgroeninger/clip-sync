@@ -66,7 +66,7 @@ fn refined_scan_hole(fixture: &EnergySignatureFixture) -> RefinedGapFrames {
 }
 
 /// Routing decision facts locked by **step 1** of the fit-joint routing extraction
-/// (`docs/TEMP-fit-routing-extraction-plan.md`). These capture *which exit the router took* and the
+/// (`docs/dev/archive/TEMP-fit-routing-extraction-plan.md`). These capture *which exit the router took* and the
 /// resulting vocabulary — the `route_fit_joint` refactor must preserve them byte-for-byte. They
 /// deliberately encode the current reality (e.g. A2/A5 patch on the baseline throat and never engage
 /// the anchor path: `anchor_seam_used = false`).

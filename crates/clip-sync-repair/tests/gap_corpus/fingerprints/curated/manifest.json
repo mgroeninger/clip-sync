@@ -1,5 +1,5 @@
 {
-  "note": "Curated one-representative-per-cell gap fingerprint fixtures. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/TEMP-gap-fixture-corpus-plan.md.",
+  "note": "Curated one-representative-per-cell gap fingerprint fixtures. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/dev/archive/gap-fixture-corpus-plan.md.",
   "fixtures": [
     {
       "file": "01_bracket_patch_clean.json",

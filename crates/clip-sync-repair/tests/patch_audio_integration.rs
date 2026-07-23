@@ -2372,7 +2372,7 @@ fn patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1() {
     assert_eq!(anchors.len(), 1);
 }
 
-// --- Energy signature acceptance (I4, `docs/TEMP-energy-signature-plan.md`) ---
+// --- Energy signature acceptance (I4, `docs/dev/archive/TEMP-energy-signature-plan.md`) ---
 
 const ENERGY_SIG_RATE: u32 = 48_000;
 

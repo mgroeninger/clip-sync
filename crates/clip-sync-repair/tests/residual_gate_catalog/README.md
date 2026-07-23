@@ -10,8 +10,8 @@ Epistemic guide + engineering notes for residual/floor gate tests (`SeamResidual
 
 Companions:
 
-- [archive/residual-gate-findings.md](../../../../docs/archive/residual-gate-findings.md) — bugs, G5 Run B, FD-1 (archived ledger)
-- [archive/residual-gate-wiring-plan.md](../../../../docs/archive/residual-gate-wiring-plan.md) — production wiring (archived design)
+- [archive/residual-gate-findings.md](../../../../docs/dev/archive/residual-gate-findings.md) — bugs, G5 Run B, FD-1 (archived ledger)
+- [archive/residual-gate-wiring-plan.md](../../../../docs/dev/archive/residual-gate-wiring-plan.md) — production wiring (archived design)
 - [BACKLOG.md](../../../../BACKLOG.md) § Residual gate follow-ups — open/deferred items
 - [floor_oracle/manifest.toml](../floor_oracle/manifest.toml) — real-media encode cases
 
@@ -203,7 +203,7 @@ cargo test -p clip-sync-repair --features validation-tests --test validate_floor
    reassuring. Remaining sub-question: *why* the floor is NaN (cancellation failure vs probe
    abstention, M3-adjacent) — does not change the conclusion.
 
-Details: [archive/residual-gate-findings.md § Run B](../../../../docs/archive/residual-gate-findings.md).
+Details: [archive/residual-gate-findings.md § Run B](../../../../docs/dev/archive/residual-gate-findings.md).
 
 ---
 
@@ -310,7 +310,7 @@ pub fn production_fit_repair_config(gate: ResidualGateMode) -> RepairConfig {
 
 ### Phase 2 — migrate gate tests (landed)
 
-Split binaries (see [development.md](../../../docs/development.md)):
+Split binaries (see [development.md](../../../../docs/dev/development.md)):
 
 - `integration_floor_oracle_smoke.rs` — manifest + gap_frames PR smokes
 - `integration_residual_gate_smoke.rs` — `off_no_regression_baseline` (RG04 PR)

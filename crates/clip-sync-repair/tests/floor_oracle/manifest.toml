@@ -7,7 +7,7 @@ version = 1
 # Codecs calibrated are only those the production pipeline can DECODE (Symphonia): AAC, Vorbis, WAV.
 # Opus is excluded — Symphonia has no Opus codec, so Opus is not a real input format.
 # MP3 contributes zero calibration confidence (M4): inject-then-encode oracle rows are skip-artifacts
-# or libmp3lame determinism-artifacts, not FLOOR_OK data — see docs/archive/residual-gate-findings.md M4.
+# or libmp3lame determinism-artifacts, not FLOOR_OK data — see docs/dev/archive/residual-gate-findings.md M4.
 # All MP3 cases except `cc_speech_gap_oracle_mp3_same` are `ignore = true`; that one row is kept as
 # documented Pearson-skip evidence for M4, not a calibration datum.
 #
@@ -75,7 +75,7 @@ bitrate_a = "128k"
 bitrate_b = "128k"
 # M4 canonical row — NOT calibration: speech MP3 128k skips at Pearson gate on inject-then-encode
 # oracle (post ≈ −0.056 < −0.05; structure_ok). Kept in CSV run as documented skip evidence.
-# Production MP3 is unvalidated; see docs/archive/residual-gate-findings.md M4.
+# Production MP3 is unvalidated; see docs/dev/archive/residual-gate-findings.md M4.
 expect_informative_floor = false
 
 [[case]]

@@ -3,7 +3,7 @@
 //! Searches a short *query* clip (the shorter file) against a long *reference* timeline (the
 //! longer file) and returns a [`ReferenceLocalizationOutcome`]: anchor and coarse-search facts
 //! on the reference timeline. Callers frame A/B roles via
-//! [`QueryLocalization::from_reference_outcome`]. See `docs/archive/query-reference-alignment-plan.md` § Q1.
+//! [`QueryLocalization::from_reference_outcome`]. See `docs/dev/archive/query-reference-alignment-plan.md` § Q1.
 //!
 //! The coarse search is the ring-buffer sliding window proven in the Q0 spike: a small fixed
 //! `bucket_secs` decode granularity feeds a length-`L` ring buffer that is fingerprinted every

@@ -4,7 +4,7 @@
 //! lower-resolution structure that codecs preserve: **R2** the low-frequency waveform, **R4** the
 //! magnitude spectrum (phase-invariant). Measured at the gate's throat placement, these test whether a
 //! dead waveform seam is a *validator mismatch* (robust-high while Pearson-low) rather than wrong
-//! content. See `docs/TEMP-cross-codec-seam-impl-plan.md` §4.
+//! content. See `docs/dev/archive/TEMP-cross-codec-seam-impl-plan.md` §4.
 
 use crate::domain::metrics::normalized_correlation;
 use rustfft::{num_complex::Complex, FftPlanner};

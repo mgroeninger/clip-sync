@@ -1,4 +1,4 @@
-//! The per-gap-**type** classification contract (gap cells defined in `docs/gap-vocabulary.md`). For every
+//! The per-gap-**type** classification contract (gap cells defined in `docs/dev/gap-vocabulary.md`). For every
 //! curated fixture (`clip_sync_repair_fixtures::gap_cell_fixtures`), run
 //! the **live** classifiers on it and assert the result matches its declared cell — media-independent, so it
 //! runs on every PR (no feature gate).
@@ -10,7 +10,7 @@
 //!     signals.
 //!
 //! The two footguns the vocabulary calls out are pinned here: a silence-splice **is** a dual-fit target, and a
-//! program-quiet gap (high seams, dead donor) is **not** — see `docs/gap-vocabulary.md`.
+//! program-quiet gap (high seams, dead donor) is **not** — see `docs/dev/gap-vocabulary.md`.
 
 use clip_sync_repair::domain::gap_equivalence::{
     classify_gap_equivalence, GapEquivalenceClass, GapEquivalenceParams,

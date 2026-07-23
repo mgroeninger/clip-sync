@@ -64,7 +64,7 @@ pub struct GapReport {
     pub track_compatibility: Option<TrackCompatibility>,
     pub alignment: ScanAlignment,
     pub gaps: Vec<Gap>,
-    /// Per-gap silence-character classification (`docs/gap-vocabulary.md` § Silence-character pre-gate), **index-parallel to
+    /// Per-gap silence-character classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate), **index-parallel to
     /// `gaps`**. Always populated by the scan (additive/advisory); empty on reports built before the gate or
     /// by test/legacy constructors. Consumed by `build_gap_fill_plan` only when `skip_equivalent_gaps` is set.
     pub gap_equivalence: Vec<GapEquivalenceVerdict>,

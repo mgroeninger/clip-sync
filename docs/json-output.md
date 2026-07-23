@@ -274,7 +274,7 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 ### GapEquivalenceVerdict
 
 Per-gap silence-character classification (advisory; scan report `gap_equivalence[]` and the `equivalence` /
-`scan_equivalence` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](gap-vocabulary.md)
+`scan_equivalence` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](dev/gap-vocabulary.md)
 § Silence-character pre-gate.
 
 | Field | Type | Presence | Notes |
@@ -297,4 +297,4 @@ Per-gap silence-character classification (advisory; scan report `gap_equivalence
 3. Update this document (bump the version marker for breaking changes; additive fields may stay v1 if they are optional-absent).
 4. Land doc + fixture + code in the same commit.
 
-Crate/binary semver (`Cargo.toml`, git tags) is independent — see [development.md](development.md) § Versioning and release.
+Crate/binary semver (`Cargo.toml`, git tags) is independent — see [development.md](dev/development.md) § Versioning and release.

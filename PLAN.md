@@ -11,9 +11,9 @@ The workspace is intended for workflows where two recordings of the same event (
 | Application | Binary | Scope |
 |-------------|--------|-------|
 | **Analyzer** | `clip-sync` | Read-only: report offset and per-clip alignment |
-| **Repair** | `clip-sync-repair` | Gap scan + patched output via WAV + optional ffmpeg mux ([write-path plan](docs/archive/repair-write-path-plan.md), shipped R0–R5) |
+| **Repair** | `clip-sync-repair` | Gap scan + patched output via WAV + optional ffmpeg mux ([write-path plan](docs/dev/archive/repair-write-path-plan.md), shipped R0–R5) |
 
-Implementation status: workspace migration Phases 1–4 are complete — the analyzer ships as `crates/clip-sync-cli`, repair as `crates/clip-sync-repair`. The repair **write path** (R0–R5) shipped 2026-06-09 — see [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md), which supersedes the thin migration Phase 5 stub in [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md). This document describes the **target** architecture; keep it aligned with those plans when decisions change.
+Implementation status: workspace migration Phases 1–4 are complete — the analyzer ships as `crates/clip-sync-cli`, repair as `crates/clip-sync-repair`. The repair **write path** (R0–R5) shipped 2026-06-09 — see [docs/dev/archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan.md), which supersedes the thin migration Phase 5 stub in [docs/dev/archive/workspace-refactor-plan.md](docs/dev/archive/workspace-refactor-plan.md). This document describes the **target** architecture; keep it aligned with those plans when decisions change.
 
 ---
 
@@ -24,7 +24,7 @@ clip-sync/                              # workspace root
 ├── Cargo.toml                          # [workspace] members only
 ├── PLAN.md
 ├── BACKLOG.md
-├── docs/archive/workspace-refactor-plan.md  # migration plan (phases 1–3 complete; 4–5 tracked in BACKLOG)
+├── docs/dev/archive/workspace-refactor-plan.md  # migration plan (phases 1–3 complete; 4–5 tracked in BACKLOG)
 ├── docs/                               # corpus-matrix, corpus-validation, error-mapping, …
 ├── scripts/                            # generate_corpus.ps1 / .sh
 ├── tests/
@@ -130,19 +130,19 @@ flowchart TB
 7. Optionally refine the recommended offset (PCM around discovery, native-rate hold-out, hold-out verification per `AlignConfig.validation`).
 8. Emit result (offset, confidence, diagnostics) via CLI output; log progress throughout.
 
-Full design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md). B-longer donor (short A, long B): [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md).
+Full design: [docs/dev/archive/query-reference-alignment-plan.md](docs/dev/archive/query-reference-alignment-plan.md). B-longer donor (short A, long B): [docs/dev/archive/query-reference-b-longer-plan.md](docs/dev/archive/query-reference-b-longer-plan.md).
 
 ---
 
 ## Repair workflow (`clip-sync-repair`)
 
-> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/archive/repair-write-path-plan.md](docs/archive/repair-write-path-plan.md) (shipped 2026-06-09). Open CLI/test follow-ups: [BACKLOG.md](BACKLOG.md) § Repair R6.
+> **Phase naming:** Report-only repair = workspace **migration Phase 4** (shipped). The write path = migration **Phase 5** umbrella, implemented per feature phases **R0–R5** in [docs/dev/archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan.md) (shipped 2026-06-09). Open CLI/test follow-ups: [BACKLOG.md](BACKLOG.md) § Repair R6.
 
 1. Parse CLI arguments and load `RepairAppConfig` (align + repair + logging sections). Repair defaults: `alignment.mode = auto`, `clip.num_clips = 2` (symmetric path); query-reference selected automatically for long+short pairs.
 2. Run in-process alignment via `clip_sync::align_with_defaults` (same offset semantics as analyzer, including query-reference and B-longer donor scenarios).
 3. Scan video **A** (target) timeline in chunks: extract mono PCM via `MediaSession`, detect internal silent runs.
 4. Map each gap to video **B** using `recommended_offset_secs` (`b = a + offset`). In query-reference mode, `GapReport.overlap` comes from `alignment.start_overlap` (mapped region); gaps outside the region may be reported but not fillable when `limit_fill_to_mapped_region` is true (default).
-5. For each candidate gap: report whether B has energy; apply fill gates (structure match, correlation, mapped-region coverage). The `fit`-path structure tier matches a gated log-RMS **energy envelope** over `gap_signature_context_secs` of context (`gap_signature_mode = auto` default: energy when both context halves have contour, else bool fallback for flat/near-silent envelopes); see [docs/archive/energy-signature-plan.md](docs/archive/energy-signature-plan.md).
+5. For each candidate gap: report whether B has energy; apply fill gates (structure match, correlation, mapped-region coverage). The `fit`-path structure tier matches a gated log-RMS **energy envelope** over `gap_signature_context_secs` of context (`gap_signature_mode = auto` default: energy when both context halves have contour, else bool fallback for flat/near-silent envelopes); see [docs/dev/archive/energy-signature-plan.md](docs/dev/archive/energy-signature-plan.md).
 6. Output gap table (human + JSON). Exit **0** when analysis completes.
 7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Mux re-encodes audio; default `mux_audio_bitrate = "match_min"` sets ffmpeg `-b:a` from the lower measured compressed bitrate of A and B (counted during patch decode). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6).
 
@@ -179,7 +179,7 @@ Repair always aligns in-process; it does not require piping JSON from a prior `c
 
 #### Domain policies (pure functions)
 
-- **`select_best_track(tracks) -> AudioTrack`** — First decodable track in container order. Fail if no audio tracks. When the main program is not first, use `alignment.try_all_tracks` or `--try-all-tracks` (see [docs/corpus-validation.md](docs/corpus-validation.md)).
+- **`select_best_track(tracks) -> AudioTrack`** — First decodable track in container order. Fail if no audio tracks. When the main program is not first, use `alignment.try_all_tracks` or `--try-all-tracks` (see [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md)).
 - **`clip_windows(duration, clip: &ClipConfig) -> Vec<ClipWindow>`** — See [Clip window policy](#clip-window-policy). Multi-clip placement with end anchoring uses `MediaExtent` and `clip_windows_with_options` when tail extent or end-clip clamping matters.
 - **`pcm_preparation`** — Peak normalization, silence trimming, energy gates (shared with repair gap detection).
 - **`should_use_query_mode` / `resolve_holdout_candidates`** — Query-mode Auto gating and mapped-region hold-out placement (see [Query-reference mode](#query-reference-mode)).
@@ -266,7 +266,7 @@ When the shorter recording is much shorter than the longer one (or `alignment.mo
 
 **Auto gating** (`should_use_query_mode`): shorter/longer ratio below `query_min_duration_ratio` (default **0.5**), or symmetric clip window counts would differ. With default **`SharedTimeline`**, counts come from `clip_windows_paired` so Tier 2 does not fire merely because per-file tail windows would have mismatched. **Hold-out** in query mode: `mapped_region_holdout_candidates` / `resolve_holdout_candidates` keep verification PCM inside the mapped region; calendar-parallel periodic recheck (repetition ambiguity) still uses the full effective extent.
 
-Implementation: `application/align_videos.rs` (`align_query_reference`), `domain/query_localization.rs`. Archive design: [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md), B-longer: [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md).
+Implementation: `application/align_videos.rs` (`align_query_reference`), `domain/query_localization.rs`. Archive design: [docs/dev/archive/query-reference-alignment-plan.md](docs/dev/archive/query-reference-alignment-plan.md), B-longer: [docs/dev/archive/query-reference-b-longer-plan.md](docs/dev/archive/query-reference-b-longer-plan.md).
 
 #### Domain errors
 
@@ -299,7 +299,7 @@ Domain errors carry no I/O or library context; they describe business rule viola
 7. Log alignment summary (mode, start/end aligned, per-clip status, recommended offset, query localization when present).
 8. Return `AlignmentResult` (always on successful analysis, even when no clips match).
 
-**Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/corpus-validation.md](docs/corpus-validation.md) § Repetition downgrade). Strong start-clip repetition also sets `offset_ambiguous_mod_secs` (periodic ambiguity). Hold-out verification tries up to three scored window candidates, runs calendar-parallel PCM recheck when repetition is active, and gates `verified` when parallel and recommended Δ disagree mod **T**; see § Hold-out verification cost and periodic ambiguity in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
+**Validation flags (v1).** `AlignConfig.validation` (`check_clip_repetition`, `verify_offset`, confidence thresholds) runs after discovery assembly. Repetition downgrade halves displayed confidence only — `aligned` / `recommended_offset_secs` stay based on pre-downgrade scores ([docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) § Repetition downgrade). Strong start-clip repetition also sets `offset_ambiguous_mod_secs` (periodic ambiguity). Hold-out verification tries up to three scored window candidates, runs calendar-parallel PCM recheck when repetition is active, and gates `verified` when parallel and recommended Δ disagree mod **T**; see § Hold-out verification cost and periodic ambiguity in the same doc. Headline human confidence uses the **start** clip by label, not `clips[0]`.
 
 #### Default pipeline: `align_with_defaults`
 
@@ -328,7 +328,7 @@ Wires `SymphoniaMediaReader`, `ChromaprintFingerprinter`, `ChromaprintAligner` f
 
 ##### Media session semantics
 
-Shipped 2026-06-11 ([archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md)).
+Shipped 2026-06-11 ([archive/media-session-redesign-plan.md](docs/dev/archive/media-session-redesign-plan.md)).
 
 **Mutability.** Decode and scan operations take `&mut self` because each session owns seekable decoder state (`FormatReader`, cached per-track decoders). `list_tracks` stays `&self` (metadata cached at open). Analyzer and repair hold sessions A and B as separate values and use them **strictly sequentially** — borrows never overlap.
 
@@ -395,7 +395,7 @@ Application errors aggregate domain and port failures; infrastructure maps libra
 - Demux container, enumerate audio tracks, decode selected track.
 - Down-mix to mono during decode (or post-decode mix).
 - Honor `ClipWindow` time bounds; stream decode for long segments.
-- **Session reuse:** one probe and `FormatReader` per file per alignment run; per-track decoders cached across clip windows (see [docs/archive/session-reuse-plan.md](docs/archive/session-reuse-plan.md)).
+- **Session reuse:** one probe and `FormatReader` per file per alignment run; per-track decoders cached across clip windows (see [docs/dev/archive/session-reuse-plan.md](docs/dev/archive/session-reuse-plan.md)).
 - **Seek recovery:** adapter-internal reopen/retry on seek failure and before sequential-from-zero extract fallback — no caller-managed IO reset (see [Media session semantics](#media-session-semantics)).
 - **Tail extent:** optional packet scan via `track_decodable_extent` populates `MediaExtent::decodable`; warns when observed extent exceeds declared duration before clamping.
 - Map Symphonia/decode failures → `MediaError`.
@@ -509,7 +509,7 @@ Own driving hexagon. Uses the library as a **downstream dependency** for alignme
 |------|-------------|
 | `Gap` | Start/end time of a silent run in video A |
 | `GapReport` | List of gaps with fillability, correlation, reason |
-| `GapFillPlan` | PCM splice regions for write path ([R4](docs/archive/repair-write-path-plan.md)) |
+| `GapFillPlan` | PCM splice regions for write path ([R4](docs/dev/archive/repair-write-path-plan.md)) |
 
 Pure policies: minimum gap duration, silence peak fraction (aligned with fingerprint prep), crossfade length.
 
@@ -735,7 +735,7 @@ trait ProgressReporter {
 - Fields: `path`, `track_index`, `window_start`, `window_end`, `offset`, `score`.
 - Errors logged after mapping; see [docs/error-mapping.md](docs/error-mapping.md).
 
-CLI output contract: [docs/cli-output.md](docs/cli-output.md). Historical plan: [docs/archive/cli-output-ux-plan.md](docs/archive/cli-output-ux-plan.md).
+CLI output contract: [docs/cli-output.md](docs/cli-output.md). Historical plan: [docs/dev/archive/cli-output-ux-plan.md](docs/dev/archive/cli-output-ux-plan.md).
 
 ---
 
@@ -895,11 +895,11 @@ Write mode today: `--wav` / `--mux` or TOML `dry_run = false`. Explicit `--dry-r
 
 ### Current (pre-workspace)
 
-Single crate at repo root — see [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) for migration phases.
+Single crate at repo root — see [docs/dev/archive/workspace-refactor-plan.md](docs/dev/archive/workspace-refactor-plan.md) for migration phases.
 
 ### Target
 
-Same tree as [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) § Target layout. Summary:
+Same tree as [docs/dev/archive/workspace-refactor-plan.md](docs/dev/archive/workspace-refactor-plan.md) § Target layout. Summary:
 
 ```text
 clip-sync/
@@ -953,7 +953,7 @@ clip-sync/
 | **Repair use cases** | repair application | Fake `MediaReader`, fake `MediaMuxer`, synthetic PCM gaps |
 | **Repair ffmpeg** | repair infrastructure | `#[ignore]` integration test (like corpus generated tier) |
 
-Corpus manifest and committed WAVs stay at workspace **`tests/corpus/`** (data only — not Rust tests). Harness (`corpus_fixtures.rs`) and `corpus_*` test functions stay in the **library** — they exercise `AlignVideos` + default adapters, not the CLI. `corpus_root()` resolves via `corpus_fixtures.rs` (`CARGO_MANIFEST_DIR/../..`, or `CLIP_SYNC_WORKSPACE_ROOT`). Full layout and rejected alternatives: [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) § Documents and tests.
+Corpus manifest and committed WAVs stay at workspace **`tests/corpus/`** (data only — not Rust tests). Harness (`corpus_fixtures.rs`) and `corpus_*` test functions stay in the **library** — they exercise `AlignVideos` + default adapters, not the CLI. `corpus_root()` resolves via `corpus_fixtures.rs` (`CARGO_MANIFEST_DIR/../..`, or `CLIP_SYNC_WORKSPACE_ROOT`). Full layout and rejected alternatives: [docs/dev/archive/workspace-refactor-plan.md](docs/dev/archive/workspace-refactor-plan.md) § Documents and tests.
 
 ### CI commands (after workspace migration)
 
@@ -965,7 +965,7 @@ cargo test -p clip-sync-cli                          # CLI adapter tests only
 cargo test --workspace
 ```
 
-Default PR gate: `cargo test -p clip-sync corpus_` (committed tier; no ffmpeg). Includes `corpus_query_reference_*` and fast B-longer case — see [docs/corpus-validation.md](docs/corpus-validation.md).
+Default PR gate: `cargo test -p clip-sync corpus_` (committed tier; no ffmpeg). Includes `corpus_query_reference_*` and fast B-longer case — see [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 
 ---
 
@@ -1021,30 +1021,30 @@ Features: `he-aac` (optional HE-AAC decode), `test-utils` (`fakes`, `audio_fixtu
 | Document | Scope |
 |----------|--------|
 | [PLAN.md](PLAN.md) | Target architecture (this file) |
-| [docs/archive/workspace-refactor-plan.md](docs/archive/workspace-refactor-plan.md) | Workspace migration phases 0–5; phases 1–3 complete (2026-06-07) |
+| [docs/dev/archive/workspace-refactor-plan.md](docs/dev/archive/workspace-refactor-plan.md) | Workspace migration phases 0–5; phases 1–3 complete (2026-06-07) |
 | [BACKLOG.md](BACKLOG.md) | Deferred work |
-| [docs/development.md](docs/development.md) | Features per crate, build, full test matrix |
+| [docs/dev/development.md](docs/dev/development.md) | Features per crate, build, full test matrix |
 | [docs/error-mapping.md](docs/error-mapping.md) | Exit codes, user messages, Symphonia mapping |
-| [docs/corpus-validation.md](docs/corpus-validation.md) | Corpus tiers, CI commands, findings |
-| [docs/corpus-matrix.md](docs/corpus-matrix.md) | Case matrix (↔ `tests/corpus/manifest.toml`) |
+| [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) | Corpus tiers, CI commands, findings |
+| [docs/dev/corpus-matrix.md](docs/dev/corpus-matrix.md) | Case matrix (↔ `tests/corpus/manifest.toml`) |
 | [tests/corpus/README.md](tests/corpus/README.md) | Fixture size budget, regenerate commands |
-| [docs/archive/](docs/archive/) | Completed plans — historical paths, do not edit |
-| [docs/archive/clip-self-repetition-plan.md](docs/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
-| [docs/archive/offset-verification-plan.md](docs/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
-| [docs/archive/verification-hardening-plan.md](docs/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
-| [docs/archive/periodic-ambiguity-plan.md](docs/archive/periodic-ambiguity-plan.md) | Shipped (2026-06-11): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`) |
-| [docs/archive/media-session-redesign-plan.md](docs/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
-| [docs/archive/query-reference-alignment-plan.md](docs/archive/query-reference-alignment-plan.md) | Archived (2026-06-15): query-reference localization, repair mapped-region fill |
-| [docs/archive/query-reference-b-longer-plan.md](docs/archive/query-reference-b-longer-plan.md) | Archived (2026-06-16): B-longer donor (short A, long B), offset sign + span remapping |
-| [docs/archive/anchored-end-extraction-plan.md](docs/archive/anchored-end-extraction-plan.md) | Shipped (2026-06-17): shared-timeline end anchoring, paired symmetric extraction, `end_clip_anchor` config + JSON |
-| [docs/archive/anchored-interior-extraction-plan.md](docs/archive/anchored-interior-extraction-plan.md) | Shipped (2026-06-17): combined with end plan — `SharedTimeline` interior from `T_anchor` when `num_clips > 2` |
-| [docs/archive/patch-anchor-offset-plan.md](docs/archive/patch-anchor-offset-plan.md) | Shipped (2026-06-22): `anchored_retry` patch offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade |
+| [docs/dev/archive/](docs/dev/archive/) | Completed plans — historical paths, do not edit |
+| [docs/dev/archive/clip-self-repetition-plan.md](docs/dev/archive/clip-self-repetition-plan.md) | Archived (2026-06-10): clip repetition diagnostic — all phases complete |
+| [docs/dev/archive/offset-verification-plan.md](docs/dev/archive/offset-verification-plan.md) | Archived (2026-06-10): hold-out offset verification — shipped |
+| [docs/dev/archive/verification-hardening-plan.md](docs/dev/archive/verification-hardening-plan.md) | Archived (2026-06-11): label-driven selection, verify retry + `candidates_tried`, Option A probe (no false-pass), corpus/test hygiene, validation v1 docs |
+| [docs/dev/archive/periodic-ambiguity-plan.md](docs/dev/archive/periodic-ambiguity-plan.md) | Shipped (2026-06-11): `offset_ambiguous_mod_secs`, PCM parallel recheck, verify gating (`verify_inconclusive`) |
+| [docs/dev/archive/media-session-redesign-plan.md](docs/dev/archive/media-session-redesign-plan.md) | Archived (2026-06-11): `MediaSession` `&mut self`, internal seek recovery, `MediaExtent`, scan policy extraction |
+| [docs/dev/archive/query-reference-alignment-plan.md](docs/dev/archive/query-reference-alignment-plan.md) | Archived (2026-06-15): query-reference localization, repair mapped-region fill |
+| [docs/dev/archive/query-reference-b-longer-plan.md](docs/dev/archive/query-reference-b-longer-plan.md) | Archived (2026-06-16): B-longer donor (short A, long B), offset sign + span remapping |
+| [docs/dev/archive/anchored-end-extraction-plan.md](docs/dev/archive/anchored-end-extraction-plan.md) | Shipped (2026-06-17): shared-timeline end anchoring, paired symmetric extraction, `end_clip_anchor` config + JSON |
+| [docs/dev/archive/anchored-interior-extraction-plan.md](docs/dev/archive/anchored-interior-extraction-plan.md) | Shipped (2026-06-17): combined with end plan — `SharedTimeline` interior from `T_anchor` when `num_clips > 2` |
+| [docs/dev/archive/patch-anchor-offset-plan.md](docs/dev/archive/patch-anchor-offset-plan.md) | Shipped (2026-06-22): `anchored_retry` patch offset anchors, `fill_anchor_*` config, optional marginal pass-2 upgrade |
 
 Per-crate README files are omitted until crates are published. Feature TEMP plans are **workspace product docs**, not library crate docs — see below.
 
 ### Feature plans vs crate docs
 
-[Clip self-repetition](docs/archive/clip-self-repetition-plan.md) and [hold-out offset verification](docs/archive/offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
+[Clip self-repetition](docs/dev/archive/clip-self-repetition-plan.md) and [hold-out offset verification](docs/dev/archive/offset-verification-plan.md) describe **alignment-engine features** that span the library and analyzer CLI:
 
 | Concern | Crate after refactor |
 |---------|----------------------|
@@ -1053,4 +1053,4 @@ Per-crate README files are omitted until crates are published. Feature TEMP plan
 | `detect_clip_repetition`, `verify_offset_at_holdout` | **lib** infrastructure / application |
 | `--check-clip-repetition`, `--verify-offset`, human/JSON lines | **clip-sync-cli** |
 
-Shipped behaviour is summarized in **PLAN.md** and [docs/error-mapping.md](docs/error-mapping.md); the TEMP plans archive to **`docs/archive/`** and are not copied into `crates/clip-sync/`.
+Shipped behaviour is summarized in **PLAN.md** and [docs/error-mapping.md](docs/error-mapping.md); the TEMP plans archive to **`docs/dev/archive/`** and are not copied into `crates/clip-sync/`.

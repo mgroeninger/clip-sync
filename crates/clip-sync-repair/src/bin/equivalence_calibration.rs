@@ -12,7 +12,7 @@
 //!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
 //!
 //! Exit code 1 if any **dangerous** divergence exists (scan drops, reference keeps), else 0 — so it can gate CI.
-//! See `docs/gap-fingerprint.md` § equivalence (fine vs coarse) and `docs/gap-vocabulary.md`
+//! See `docs/dev/gap-fingerprint.md` § equivalence (fine vs coarse) and `docs/dev/gap-vocabulary.md`
 //! § *Silence-character pre-gate*.
 
 use std::path::{Path, PathBuf};

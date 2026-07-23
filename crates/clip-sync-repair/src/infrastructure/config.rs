@@ -59,7 +59,7 @@ pub struct RepairConfig {
     #[serde(default = "default_true")]
     pub scan_both: bool,
     /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan at
-    /// plan time, before decode/patch (`docs/gap-vocabulary.md` § Silence-character pre-gate). **On by default** (2026-07-20)
+    /// plan time, before decode/patch (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate). **On by default** (2026-07-20)
     /// after media validation (8 pairs, 121 gaps, 0 divergent vs the fine fingerprint reference). Disable
     /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
     #[serde(default = "default_true")]

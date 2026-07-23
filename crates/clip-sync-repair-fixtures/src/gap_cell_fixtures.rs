@@ -6,15 +6,15 @@
 //! cell** without touching the ephemeral `gap-files/` corpus.
 //!
 //! Licensing-safe: the fixtures are the non-identifying fingerprint projection (hashed source ids, numbers
-//! only — no samples, no titles/paths). Gap cells: `docs/gap-vocabulary.md`; fixture-library format:
-//! `docs/gap-fingerprint.md` § Source identity.
+//! only — no samples, no titles/paths). Gap cells: `docs/dev/gap-vocabulary.md`; fixture-library format:
+//! `docs/dev/gap-fingerprint.md` § Source identity.
 
 use std::path::{Path, PathBuf};
 
 use clip_sync_repair::application::gap_fingerprint::{GapCorpus, GapFingerprint};
 use serde::Deserialize;
 
-/// The gap **cell** a fixture represents — a `docs/gap-vocabulary.md` cell crossed with the classifier the
+/// The gap **cell** a fixture represents — a `docs/dev/gap-vocabulary.md` cell crossed with the classifier the
 /// analyzer emits (`GapEquivalenceClass` / `GapPatchSkipReason` / `LagVerdict` / `dualfit_target()`).
 ///
 /// The enum is the complete taxonomy. Not every cell has a curated fixture: `Decorrelated` is a hand-built

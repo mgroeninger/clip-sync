@@ -1,5 +1,5 @@
 //! Cross-corpus aggregation of gap-fingerprint output (the **P0 prevalence scan**, see
-//! `docs/TEMP-w5-timing-offset-rescue-plan.md` §5 P0).
+//! `docs/dev/archive/TEMP-w5-timing-offset-rescue-plan.md` §5 P0).
 //!
 //! `--gap-fingerprints DIR` writes one `corpus.json` per A/B pair (all that pair's gaps) plus per-gap
 //! library files. Point this at the parent of several such runs (e.g. `gap-files/`, holding `1/`..`6/`)
@@ -333,7 +333,7 @@ impl SeamDiag {
 /// Silence-splice classification from the **±600 ms** per-side `baseline_lag` peaks, sequentially
 /// centered (ledger A2: post search is centered on `S + D_A + round(L_pre)`,
 /// not the naive `S + D_A`), not the ±25 ms `seam_probe.recovered_r`, which mislabels any step > 25 ms as
-/// "cross-codec". See `docs/archive/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
+/// "cross-codec". See `docs/dev/archive/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
 /// addressable silence-splice (both shoulders clean at their own lag, separated by a step) or something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpliceDiag {
@@ -1992,7 +1992,7 @@ fn curated_row_label(file: &str) -> &str {
     file.strip_suffix(".json").unwrap_or(file)
 }
 
-/// Analyzed rows for the committed curated per-gap-**type** fixtures (gap cells: `docs/gap-vocabulary.md`).
+/// Analyzed rows for the committed curated per-gap-**type** fixtures (gap cells: `docs/dev/gap-vocabulary.md`).
 /// Each row is labelled by its fixture file stem, so golden keys are unique despite colliding source-gap
 /// indices. Media-free — reads the committed fixture bytes directly.
 pub fn curated_gap_cell_rows() -> Vec<GapRow> {

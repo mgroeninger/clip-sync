@@ -1,6 +1,6 @@
 # Test tier selector for clip-sync workspace.
 # Run from repo root: .\scripts\test-tier.ps1 -Tier pr
-# See docs/test-tiers.md and docs/development.md.
+# See docs/dev/test-tiers.md and docs/dev/development.md.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
@@ -244,7 +244,7 @@ try {
 
     function Invoke-Phase2bStub {
         param([string] $TierName)
-        Write-Error "$TierName is not implemented until Phase 2b (clip-sync tests/ binaries). See docs/test-tier-remainder.md."
+        Write-Error "$TierName is not implemented until Phase 2b (clip-sync tests/ binaries). See docs/dev/test-tier-remainder.md."
         exit 1
     }
 

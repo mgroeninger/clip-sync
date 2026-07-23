@@ -13,7 +13,7 @@
 # a licensing-safe extended corpus (`corpus.json` + per-gap JSON + `manifest.json`) in a single pass over each
 # pair. This oracle force-scoring is REQUIRED for the measurement: a plain production repair drops equivalent
 # gaps at the equivalence gate (`skip_equivalent_gaps`, on by default) BEFORE the anchor-seam search, so on
-# equiv-heavy content it emits ZERO bracket_stats (see docs/archive/TEMP-anchor-pregate-plan.md §7). With
+# equiv-heavy content it emits ZERO bracket_stats (see docs/dev/archive/TEMP-anchor-pregate-plan.md §7). With
 # `CLIP_SYNC_BRACKET_STATS=1` the gate emits one `bracket_stats` event per scored bracket, categorized by
 # BOTH arms (unlike the corpus's own first-failing `failure_stage`, which can't separate matchability-doomed
 # from structure-doomed):
@@ -28,7 +28,7 @@
 # a subset of the ceiling because the unified search optimizes a joint structure+wave score (not seam Pearson)
 # and xcorr rescue lowers the safe floor to −0.03. The roll-up reports realizable count/time and the
 # realizable/ceiling efficiency; a `pregate_doomed=true` on a non-`reject_matchability` bracket is a superset
-# violation (false skip = correctness bug) and is flagged LOUD. See docs/archive/TEMP-anchor-pregate-plan.md §7.
+# violation (false skip = correctness bug) and is flagged LOUD. See docs/dev/archive/TEMP-anchor-pregate-plan.md §7.
 #
 # Two modes:
 #   Run pairs from a manifest (builds the corpus under -CorpusRoot AND rolls up perf):
@@ -79,7 +79,7 @@ param(
     # cargo features to build with. MUST include `calibration` (enables --gap-fingerprints). Codec
     # decoders are opt-in: real MKV/MP4 movie audio is usually AC-3/E-AC-3 (`ac3`) or HE-AAC (`he-aac`);
     # without them tracks demux but come back non-decodable ("no decodable audio tracks"). `ffmpeg-mux` is
-    # NOT needed here (the fingerprint run never muxes). Matches docs/development.md minus ffmpeg-mux.
+    # NOT needed here (the fingerprint run never muxes). Matches docs/dev/development.md minus ffmpeg-mux.
     [string]$Features = 'he-aac,ffmpeg-mux,ac3,calibration'
 )
 

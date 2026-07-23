@@ -1,5 +1,5 @@
 //! W5 anchor-rescue discovery diagnostic (Phases 1–2).
-//! See docs/TEMP-w5-anchor-rescue-diag-plan.md.
+//! See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md.
 //!
 //! **Phase 1** ([`score_w5_anchor_rescue_cell`]): for one cell scores the symmetric-weak-throat
 //! fixture's nominal + baseline throat Pearson plus every feasible anchor bracket on the **unified

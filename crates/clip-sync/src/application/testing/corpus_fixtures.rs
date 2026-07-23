@@ -1263,7 +1263,7 @@ mod tests {
             assert!(
                 !verify.verified,
                 "non-period wrong Δ={probe_offset}: verified=true confidence={} \
-                 (see docs/corpus-validation.md § Option A false-pass evidence)",
+                 (see docs/dev/corpus-validation.md § Option A false-pass evidence)",
                 verify.confidence
             );
         }
@@ -1285,7 +1285,7 @@ mod tests {
         assert!(
             !alias_verify.verified,
             "period-equivalent wrong Δ={period_alias_offset} must not report verified=true \
-             (confidence={}, inconclusive={}); see docs/corpus-validation.md",
+             (confidence={}, inconclusive={}); see docs/dev/corpus-validation.md",
             alias_verify.confidence, alias_verify.verify_inconclusive
         );
         assert!(

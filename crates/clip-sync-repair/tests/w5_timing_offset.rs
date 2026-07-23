@@ -6,7 +6,7 @@
 //! Uses the same lag API the fingerprint records (`gap_fingerprint::{lag_correlation_curve,
 //! summarize_lag_curve}`) so this characterizes the fixture against the production discriminator.
 //! Default tier (one fixture, direct windows, no `PatchAudio`). See
-//! `docs/archive/TEMP-w5-timing-offset-diag-plan.md` §3/§5 Phase B/D and the curated real exemplar
+//! `docs/dev/archive/TEMP-w5-timing-offset-diag-plan.md` §3/§5 Phase B/D and the curated real exemplar
 //! `tests/gap_corpus/fingerprints/g003_timing_offset.json`.
 
 use clip_sync_repair::application::gap_fingerprint::{GateOutcome, LagFingerprint, LagVerdict};

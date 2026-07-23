@@ -1,6 +1,6 @@
 //! `GapRepairSpec` — the typed fix-list + repair-params handoff between **characterize** and **execute**
 //! (pipeline redesign §2.5, step 6a). One spec per planned `FillRegion` after characterization; the executor
-//! consumes specs and never re-decides. See `docs/TEMP-pipeline-perf-redesign-plan.md` §2.5.2 / §2.5.2a for
+//! consumes specs and never re-decides. See `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §2.5.2 / §2.5.2a for
 //! the full derivation.
 //!
 //! ## Layering

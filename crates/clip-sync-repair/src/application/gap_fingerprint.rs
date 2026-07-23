@@ -2,7 +2,7 @@
 //!
 //! Every field here is a number or enum — no audio samples, no transcripts — so a fingerprint can be
 //! committed as a regression/calibration corpus from real (licensed) media. See
-//! `docs/archive/TEMP-gap-fingerprint-plan.md` and `docs/gap-fingerprint.md`.
+//! `docs/dev/archive/TEMP-gap-fingerprint-plan.md` and `docs/dev/gap-fingerprint.md`.
 //!
 //! **P0 (this file):** the serde schema plus the lag-correlation probe
 //! ([`lag_correlation_curve`] / [`summarize_lag_curve`]). The builder that fills these structs from
@@ -203,7 +203,7 @@ pub struct GapFingerprint {
     pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
-    /// Gap-equivalence classification (`docs/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
+    /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
     /// silence. This is the **fine reference**: sample-level A RMS + fine-bin noise floor + 50 ms donor bins,
@@ -463,7 +463,7 @@ pub enum LagChannel {
     Selected(usize),
 }
 
-/// Verdict from a lag curve (see `docs/archive/TEMP-gap-fingerprint-plan.md` §4 thresholds).
+/// Verdict from a lag curve (see `docs/dev/archive/TEMP-gap-fingerprint-plan.md` §4 thresholds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LagVerdict {
@@ -3904,7 +3904,7 @@ mod tests {
 
     /// **C3 — `fingerprint_diagnostics` gates the X-set:** off, the diagnostic-only fields
     /// (`seam_probe`, `wide_envelope`, `b_levels`) are absent; on, they're populated. Closes
-    /// perf-plan `docs/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C3** — the flag
+    /// perf-plan `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C3** — the flag
     /// exists (`RepairConfig.fingerprint_diagnostics`, `characterize_gaps_from_decode`'s
     /// `include_diagnostics`) but had no regression test pinning what it actually gates.
     #[test]

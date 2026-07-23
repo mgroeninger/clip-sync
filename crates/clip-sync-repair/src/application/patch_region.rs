@@ -144,7 +144,7 @@ pub struct SeamGateParams<'a> {
 
 /// Build per-gap [`SeamGateGeometry`] from run-constant `cfg` + this gap's window. Computes
 /// `seam_gate_frames`/`border_frames` from `gap_frames` so the oracle and production share one
-/// path (see docs/TEMP-w5-anchor-rescue-diag-plan.md Phase 0).
+/// path (see docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md Phase 0).
 #[allow(clippy::too_many_arguments)]
 #[doc(hidden)]
 pub fn derive_seam_gate_geometry<'a>(
@@ -974,7 +974,7 @@ fn evaluate_seam_gate_fit_joint(
 
 /// The fit-joint precedence loop (E1–E7), driven by a [`FitCandidateSource`] so it is testable with
 /// scripted numbers (no audio). Production calls it via [`evaluate_seam_gate_fit_joint`] with an
-/// [`AudioFitSource`]; tests use a scripted fake. See docs/archive/fit-routing-extraction-plan.md §9.
+/// [`AudioFitSource`]; tests use a scripted fake. See docs/dev/archive/fit-routing-extraction-plan.md §9.
 ///
 /// Single pool path (the `defer_residual` fork is gone): candidates score with Pearson confidence;
 /// residual is applied at selection (`try_finalize_*` / `select_joint_fit_winner…`), a no-op when
@@ -1298,7 +1298,7 @@ pub fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
 /// Oracle-only: score one fit candidate at the seam gate (W5 discovery, Phase 1). Runs the same
 /// [`evaluate_seam_gate_fit_candidate`] production uses against a pre-built `cache`, returning gate
 /// Pearson `(pre, post)` + confidence + ranking score, or the gate failure. See
-/// docs/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
+/// docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
 #[doc(hidden)]
 /// The 5th element is the structure-aligned placement (`GateStructureAlign::unified.alignment.start_frame`,
 /// already computed inside the gate) — callers that also need the throat placement (e.g. the zero-move
@@ -1323,7 +1323,7 @@ pub fn oracle_score_fit_candidate(
 }
 
 /// Production-faithful joint-pool outcome for one oracle cell (W5 discovery, Phase 2). `patched`
-/// is false when the whole gate skipped (E5). See docs/TEMP-w5-anchor-rescue-diag-plan.md §5.2.2.
+/// is false when the whole gate skipped (E5). See docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §5.2.2.
 #[doc(hidden)]
 pub struct OracleJointOutcome {
     pub patched: bool,
@@ -1402,7 +1402,7 @@ struct GateStructureAlign {
     /// when `CLIP_SYNC_BRACKET_STATS` is set and this is an anchor bracket; `false` otherwise. Emission-only —
     /// no production path reads it, so behavior stays byte-identical. Lets the roll-up size the *realizable*
     /// skip rate against the searched-placement *ceiling* before the lever is wired. See
-    /// `docs/archive/TEMP-anchor-pregate-plan.md` §7 and its top blocking caveat.
+    /// `docs/dev/archive/TEMP-anchor-pregate-plan.md` §7 and its top blocking caveat.
     pregate_doomed: bool,
 }
 
@@ -1644,7 +1644,7 @@ pub(crate) fn oracle_throat_structure_frame(
 /// window matchability pre-gate could skip the search) vs **not** (structure-doomed → still needs it),
 /// sizing lever #2's ceiling before any behavior-changing code. Off by default; emission only — the
 /// scored candidate is unchanged, so output stays byte-identical. See
-/// `docs/archive/TEMP-production-repair-perf-plan.md` § lever 1c and `scripts/measure-anchor-brackets.ps1`.
+/// `docs/dev/archive/TEMP-production-repair-perf-plan.md` § lever 1c and `scripts/measure-anchor-brackets.ps1`.
 fn anchor_bracket_stats_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();

@@ -213,7 +213,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             };
 
         let (a_runs, a_levels) = scanner_a.finish_with_levels();
-        // Gap-equivalence (advisory; `docs/gap-vocabulary.md` § Silence-character pre-gate) is built
+        // Gap-equivalence (advisory; `docs/dev/gap-vocabulary.md` § Silence-character pre-gate) is built
         // index-parallel to `gaps`. Classification uses each run's block-confirmed silent core — not
         // the refined `[start, end]` — so sub-block edge refinement (which can widen a gap into
         // fade-shoulder blocks) never inflates the A-side dropout-depth measurement and flips a real

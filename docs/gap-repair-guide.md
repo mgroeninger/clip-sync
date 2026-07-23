@@ -3,7 +3,7 @@
 Operational guide for `clip-sync-repair`: what kinds of gaps exist, how they appear in the report, and which profiles and flags are worth trying. This is the **operator-decision lens** on **phase 4 (per-gap patch)** of the [repair pipeline](pipeline.md).
 
 **Normative reference** (flag matrix, pipelines, config defaults): [gap-fill-modes.md](gap-fill-modes.md).  
-**Gap types (descriptive, cell-first):** [gap-vocabulary.md](gap-vocabulary.md) — bracket patch, silence-splice, program-quiet, …; this guide's W-tiers are derived readouts from that model.  
+**Gap types (descriptive, cell-first):** [gap-vocabulary.md](dev/gap-vocabulary.md) — bracket patch, silence-splice, program-quiet, …; this guide's W-tiers are derived readouts from that model.  
 **Report layout and skip strings**: [cli-output.md](cli-output.md) § Repair gap outcomes.  
 **JSON fields**: [json-output.md](json-output.md).
 
@@ -113,7 +113,7 @@ Tags and tier on a skip row describe the **throat (first) failure**. Use `best` 
 
 Lowering `--min-fill-correlation` only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need `--fill-absolute-floor`, better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
 
-For per-bracket fall-through detail without re-running repair, use `--gap-fingerprints` (see [gap-fingerprint.md](gap-fingerprint.md)).
+For per-bracket fall-through detail without re-running repair, use `--gap-fingerprints` (see [gap-fingerprint.md](dev/gap-fingerprint.md)).
 
 ### Seam patterns (within fit)
 
@@ -199,7 +199,7 @@ Verbose line: `signature_mode=bool` or `signature_mode=energy` — the **resolve
 
 ## Layer 5 — Repair profiles and search depth
 
-Profiles bundle haystack size, extension flags, and whether the **boundary grid** runs. Explicit CLI/TOML flags override individual fields. See [gap-fill-modes.md](gap-fill-modes.md) and [archive/repair-profiles-plan.md](archive/repair-profiles-plan.md).
+Profiles bundle haystack size, extension flags, and whether the **boundary grid** runs. Explicit CLI/TOML flags override individual fields. See [gap-fill-modes.md](gap-fill-modes.md) and [archive/repair-profiles-plan.md](dev/archive/repair-profiles-plan.md).
 
 **Profile flag precedence:** `--quick` and `--full` win over `--profile <name>` when combined (e.g. `--quick --profile full` → **quick**). `--quick` and `--full` are mutually exclusive. Order: TOML load → TOML `profile` bundle → CLI `--quick` / `--full` / `--profile` → per-field overrides.
 
@@ -219,7 +219,7 @@ Verbose: `fit path: baseline only` vs `fit path: boundary grid`.
 
 Canonical **tag names** for gaps (orthogonal facts from scan/patch/seam scores). For **gap types** —
 which cell a gap occupies (bracket patch, silence-splice, program-quiet, …) — see
-[gap-vocabulary.md](gap-vocabulary.md). This section documents the tags the CLI still emits today.
+[gap-vocabulary.md](dev/gap-vocabulary.md). This section documents the tags the CLI still emits today.
 
 ### Fact vs hint
 
@@ -255,7 +255,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 |-------|--------|-----|
 | `signature_mode_config` | `bool`, `energy`, `auto` | TOML/CLI request before per-gap resolve |
 | `gap_signature_context_secs` | e.g. `3`, `10`, `30` | Matrix column |
-| `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](corpus-validation.md)) |
+| `gap_report_source` | `scan_derived`, `oracle_injected` | How the gap entered patch (see [corpus-validation.md](dev/corpus-validation.md)) |
 | `fixture_scenario` | `F1`, `F2`, `F3`, `F1-long`, `F2-long`, `F3-long` | Synthetic oracle ID |
 | `structure_trusted` | `true`, `false` | JSON patched outcome; structure accepted without waveform gate (gate mode) |
 | `anchor_seam_used` | `true`, `false` | JSON + `-v` tags; editorial anchor bracket won (fit mode) |
@@ -263,11 +263,11 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `anchor_trusted` | via `patch_tier=anchor_trusted` | Fit mode: strong structure at editorial anchors, throat Pearson below `min_fill_correlation` but patch accepted | Gap table `patched (anchor …)` + ` [anchor trusted · seam]`; JSON `tags.patch_tier` |
 | `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`) | JSON `patch.donor_relation`; patch summary header |
 
-**Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
+**Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](dev/archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
 
 ### Corpus fixtures (F1–F3)
 
-Synthetic energy-signature oracles ([corpus-validation.md](corpus-validation.md) § Energy signature). **`fixture_scenario`** + domain oracle define the test; **vocabulary tags** describe a production-default patch run on the same WAVs.
+Synthetic energy-signature oracles ([corpus-validation.md](dev/corpus-validation.md) § Energy signature). **`fixture_scenario`** + domain oracle define the test; **vocabulary tags** describe a production-default patch run on the same WAVs.
 
 | Scenario | Geometry | Domain oracle | Typical `content_hint` | Expected tags when patched (production default) |
 |----------|----------|---------------|------------------------|--------------------------------------------------|
@@ -396,7 +396,7 @@ With **`-v`**, each fillable gap emits a line after placement:
            gap tags: plan=fillable tier=anchor_trusted seam=symmetric_weak fit_path=baseline_only signature_mode=energy anchor_seam=true anchor_move_frames=1200
 ```
 
-Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`. The same `tags` object is emitted on each `GapPatchOutcome` in `--format json` output. Corpus matrix rows and tuning records: [corpus-validation.md](corpus-validation.md) § Energy signature production corpus.
+Tag names and derivation rules are defined in this section; the implementation lives in `domain/gap_tags.rs`. The same `tags` object is emitted on each `GapPatchOutcome` in `--format json` output. Corpus matrix rows and tuning records: [corpus-validation.md](dev/corpus-validation.md) § Energy signature production corpus.
 
 ---
 
@@ -485,6 +485,6 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | [gap-fill-modes.md](gap-fill-modes.md) | `fit` vs `gate`, flag × mode matrix, extension, profiles, performance recipes |
 | [cli-output.md](cli-output.md) | Progress, gap table, skip reason strings |
 | [json-output.md](json-output.md) | `GapPatchStatus`, `confidence`, machine-readable outcomes |
-| [corpus-validation.md](corpus-validation.md) | Corpus tiers, energy-signature oracles, vocabulary matrix rows |
-| [energy-corpus-plan.md](archive/energy-corpus-plan.md) | F1/F2-long synthetic tuning (EC-* acceptance) |
+| [corpus-validation.md](dev/corpus-validation.md) | Corpus tiers, energy-signature oracles, vocabulary matrix rows |
+| [energy-corpus-plan.md](dev/archive/energy-corpus-plan.md) | F1/F2-long synthetic tuning (EC-* acceptance) |
 | [README.md](../README.md) § Gap patching | Short pipeline overview |
