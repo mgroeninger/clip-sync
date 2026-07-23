@@ -11,7 +11,7 @@ use clip_sync_repair::application::{
 };
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
-    AnchorSeamMode, CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
+    CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
     GapPatchStatus, GapSignatureMode, RepairProfile, TrackCompatibility,
 };
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
@@ -258,66 +258,75 @@ pub fn patch_request_with_options(
     min_fill_correlation: f32,
     options: PatchTestOptions,
 ) -> PatchAudioRequest {
-    // NOTE: these values are the harness's own defaults and intentionally still drift from
-    // production (`RepairConfig::default().patch_settings()`) — see M-HARNESS / the config-bundles
-    // plan phase P3, which is where that drift gets reconciled. P0 only reshaped the literal.
+    // Seeded from production (`..RepairConfig::default().patch_settings()`), so a newly added
+    // knob is inherited rather than silently hardcoded here. Config-bundles plan P3 step 1
+    // (§6.4.1) — structural only; production defaults are already exercised separately via
+    // `patch_request_from_repair` (§6.5). Everything listed below is a caller arg, a
+    // `PatchTestOptions` knob, or a deliberate synthetic-fixture deviation.
+    //
+    // Of the 56 settings fields, 40 stay explicit (4 caller args, 28 options knobs, 8
+    // deviations) and 16 are absorbed by the seed. Each absorbed field already equaled its
+    // production default in the previous hand-written literal, so the built request is
+    // value-identical to that literal.
     PatchRequestSettings {
-        skip_equivalent_gaps: false,
-        anchor_seam_mode: AnchorSeamMode::Auto,
-        anchor_seam_min_prominence: 0.0,
-        anchor_seam_min_match_pearson: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_PEARSON,
-        anchor_seam_min_xcorr_peak: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
-        anchor_seam_xcorr_ambiguous_band: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
-        max_anchor_bracket_secs: 5.0,
-        max_anchors_per_side: 5,
+        // ---- caller arguments ----
         normalize_fill,
         normalize_window_secs,
-        max_fill_gain_db: 12.0,
         min_fill_correlation,
+        fill_anchor_min_correlation: min_fill_correlation,
+
+        // ---- test knobs (PatchTestOptions) ----
         fill_align_margin_secs: options.fill_align_margin_secs,
-        max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
-        fill_border_search_secs: options.fill_border_search_secs,
         min_border_discovery_secs: options.min_border_discovery_secs,
-        border_standoff_secs: 0.0,
         short_gap_mean_correlation_secs: options.short_gap_mean_correlation_secs,
         fill_length_slack_secs: options.fill_length_slack_secs,
-        fill_seam_search_secs: 0.25,
         gap_signature_context_secs: options.gap_signature_context_secs,
-        gap_signature_bin_ms: 50,
         min_structure_match_score: options.min_structure_match_score,
         strong_structure_trust: options.strong_structure_trust,
         disable_structure_trust: options.disable_structure_trust,
         partial_structure_waveform_soften: options.partial_structure_waveform_soften,
-        absolute_silence_rms: 0.0,
         fill_offset_mode: options.fill_offset_mode,
         gap_end_extend_on_post_seam_fail: options.gap_end_extend_on_post_seam_fail,
         gap_start_extend_on_pre_seam_fail: options.gap_start_extend_on_pre_seam_fail,
         gap_end_extend_max_ms: options.gap_end_extend_max_ms,
         gap_end_extend_step_ms: options.gap_end_extend_step_ms,
         short_gap_one_strong_seam_fallback: options.short_gap_one_strong_seam_fallback,
-        fill_mode: options.fill_mode,
         fill_fit_structure_weight: options.fill_fit_structure_weight,
         fill_fit_waveform_weight: options.fill_fit_waveform_weight,
         fill_fit_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
-        fill_fit_energy_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
         fill_fit_late_start_penalty_scale: options.fill_fit_late_start_penalty_scale,
         fill_marginal_margin: options.fill_marginal_margin,
         fill_absolute_floor: options.fill_absolute_floor,
         fill_repeat_penalty_weight: options.fill_repeat_penalty_weight,
         fft_seam_search: options.fft_seam_search,
-        fill_anchor_min_correlation: min_fill_correlation,
-        fill_anchor_exclude_structure_trusted: true,
-        fill_anchor_max_adjustment_frac: 0.9,
-        fill_anchor_search_prior_weight: 0.0,
         fill_anchor_retry_marginal: options.fill_anchor_retry_marginal,
         gap_signature_mode: options.gap_signature_mode,
         profile: options.profile,
         fit_boundary_search: options.fit_boundary_search,
         dual_fit: options.dual_fit,
+
+        // ---- deliberate deviations from production (plan §6.3 / §6.4.1) ----
+        // Test-local settings for synthetic fixtures; production is covered elsewhere via
+        // `patch_request_from_repair`. Pending justify-or-drop in undated P3 step 3 — do not
+        // "clean up" without reading §6.4.1 / §6.5.
+        //
+        // Via PatchTestOptions defaults: fill_mode (Gate vs production Fit),
+        // fill_border_search_secs (30.0 vs 10.0), max_fill_align_adjustment_secs (1.0 vs 0.5).
+        fill_mode: options.fill_mode,
+        fill_border_search_secs: options.fill_border_search_secs,
+        max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
+        // Hypothesis: synthetic fixtures contain true digital silence, so production's real-world
+        // noise floor and codec-edge standoff do not apply.
+        absolute_silence_rms: 0.0,
+        border_standoff_secs: 0.0,
+        // Hypothesis: tests want every gap processed and the patch observable, not deduped/vetoed.
+        skip_equivalent_gaps: false,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
-        residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
-        residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
-        residual_lag_secs: clip_sync_repair::domain::DEFAULT_RESIDUAL_LAG_SECS,
+        // No energy field on PatchTestOptions, so energy bias can only mirror nominal. Production
+        // deliberately splits them 4× (1.0 / 0.25). Inert under Gate-mode defaults — see §6.4.4.
+        fill_fit_energy_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
+
+        ..clip_sync_repair::infrastructure::config::RepairConfig::default().patch_settings()
     }
     .into_request(report)
 }

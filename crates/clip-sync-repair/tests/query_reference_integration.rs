@@ -180,66 +180,29 @@ fn mono_region(samples: &[f32], channels: u16, sample_rate: u32, start_secs: f64
 
 fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_repair::application::PatchAudioResult {
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    // Seeded from production (`..RepairConfig::default().patch_settings()`), same structural
+    // pattern as harness `patch_request_with_options` (config-bundles plan P3). Overrides below
+    // are deliberate for this chirp / gate-mode scenario; everything else inherits production.
+    // Value-identical to the previous hand-written literal: each absorbed field already matched
+    // its production default.
     patch
         .execute(
             PatchRequestSettings {
-                skip_equivalent_gaps: false,
+                // Chirp fixture / gate-path scenario (module docs: fill_mode = gate).
                 normalize_fill: false,
-                normalize_window_secs: 5.0,
-                max_fill_gain_db: 12.0,
-                min_fill_correlation: 0.35,
-                fill_align_margin_secs: 1.0,
-                max_fill_align_adjustment_secs: 0.5,
-                fill_border_search_secs: 30.0,
-                min_border_discovery_secs: 2.0,
-                border_standoff_secs: 0.35,
-                short_gap_mean_correlation_secs: 2.0,
-                fill_length_slack_secs: 5.0,
-                fill_seam_search_secs: 0.25,
-                gap_signature_context_secs: 3.0,
-                gap_signature_bin_ms: 50,
-                min_structure_match_score: 0.55,
-                strong_structure_trust: 0.90,
-                disable_structure_trust: false,
-                partial_structure_waveform_soften: 0.85,
-                absolute_silence_rms: 0.0,
-                fill_offset_mode: clip_sync_repair::domain::FillOffsetMode::Recommended,
-                gap_end_extend_on_post_seam_fail: true,
-                gap_start_extend_on_pre_seam_fail: true,
-                gap_end_extend_max_ms: 500,
-                gap_end_extend_step_ms: 20,
-                short_gap_one_strong_seam_fallback: true,
                 fill_mode: clip_sync_repair::domain::FillMode::Gate,
-                fill_fit_structure_weight: 0.35,
-                fill_fit_waveform_weight: 0.65,
-                fill_fit_nominal_bias_scale: 1.0,
-                fill_fit_energy_nominal_bias_scale: 1.0,
-                fill_fit_late_start_penalty_scale: 1.0,
-                fill_marginal_margin: 0.08,
-                fill_absolute_floor: 0.12,
-                fill_repeat_penalty_weight: 0.0,
-                fft_seam_search: true,
-                fill_anchor_min_correlation: 0.35,
-                fill_anchor_exclude_structure_trusted: true,
-                fill_anchor_max_adjustment_frac: 0.9,
-                fill_anchor_search_prior_weight: 0.0,
-                fill_anchor_retry_marginal: false,
                 gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
-                profile: clip_sync_repair::domain::RepairProfile::Default,
-                fit_boundary_search: clip_sync_repair::domain::FitBoundarySearch::BaselineOnly,
+                fill_border_search_secs: 30.0,
+                fill_repeat_penalty_weight: 0.0,
+                // Synthetic audio: digital silence, no dedupe/veto/anchor rescue, energy bias
+                // inert under Gate (mirrors nominal rather than production's 0.25).
+                absolute_silence_rms: 0.0,
+                skip_equivalent_gaps: false,
                 residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
-                residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
-                residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
-                residual_lag_secs: clip_sync_repair::domain::DEFAULT_RESIDUAL_LAG_SECS,
                 anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode::Off,
-                max_anchor_bracket_secs: 5.0,
-                max_anchors_per_side: 5,
-                anchor_seam_min_prominence: 0.0,
-                anchor_seam_min_match_pearson: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_PEARSON,
-                anchor_seam_min_xcorr_peak: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
-                anchor_seam_xcorr_ambiguous_band:
-                    clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
                 dual_fit: false,
+                fill_fit_energy_nominal_bias_scale: 1.0,
+                ..clip_sync_repair::infrastructure::config::RepairConfig::default().patch_settings()
             }
             .into_request(report),
             10,
