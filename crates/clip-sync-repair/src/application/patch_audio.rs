@@ -3635,6 +3635,74 @@ mod tests {
         request
     }
 
+    /// Guard for the P0 `Deref` layering (`docs/dev/TEMP-repair-config-bundles-plan.md` §6.1).
+    ///
+    /// [`PatchAudioRequest`] exposes patch policy by `Deref` to its embedded
+    /// [`PatchRequestSettings`], so `request.fill_mode` and `request.settings.fill_mode` must
+    /// always name the same value. The hazard this catches: if a field is ever added directly to
+    /// `PatchAudioRequest` whose name collides with a settings field, the inherent field silently
+    /// wins at every one of the ~160 `request.<knob>` read sites — no compile error, and no other
+    /// test in the suite would notice. Asserts one field per knob family (plan §5), then that a
+    /// write through `settings` is observable through the `Deref`, which is what distinguishes a
+    /// borrow of the embedded struct from a shadowing copy taken at construction.
+    #[test]
+    fn deref_reads_reach_embedded_settings_and_are_not_shadowed() {
+        let mut request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
+
+        assert_eq!(request.fill_mode, request.settings.fill_mode);
+        assert_eq!(
+            request.min_fill_correlation,
+            request.settings.min_fill_correlation
+        );
+        assert_eq!(
+            request.fill_border_search_secs,
+            request.settings.fill_border_search_secs
+        );
+        assert_eq!(
+            request.fill_fit_structure_weight,
+            request.settings.fill_fit_structure_weight
+        );
+        assert_eq!(
+            request.gap_end_extend_max_ms,
+            request.settings.gap_end_extend_max_ms
+        );
+        assert_eq!(
+            request.fill_anchor_min_correlation,
+            request.settings.fill_anchor_min_correlation
+        );
+        assert_eq!(request.anchor_seam_mode, request.settings.anchor_seam_mode);
+        assert_eq!(request.gap_signature_mode, request.settings.gap_signature_mode);
+        assert_eq!(request.residual_gate, request.settings.residual_gate);
+        assert_eq!(request.normalize_fill, request.settings.normalize_fill);
+        assert_eq!(request.dual_fit, request.settings.dual_fit);
+        assert_eq!(
+            request.skip_equivalent_gaps,
+            request.settings.skip_equivalent_gaps
+        );
+
+        let flipped = !request.settings.dual_fit;
+        request.settings.dual_fit = flipped;
+        assert_eq!(
+            request.dual_fit, flipped,
+            "Deref must observe writes to settings, not a copy"
+        );
+
+        let bumped = request.settings.fill_border_search_secs + 1.0;
+        request.settings.fill_border_search_secs = bumped;
+        assert_eq!(request.fill_border_search_secs, bumped);
+    }
+
+    /// `into_request` must leave the report-only residual measurement off: it is a per-run opt-in
+    /// with no config key, and the only field callers assign on a request after construction.
+    #[test]
+    fn into_request_defaults_measure_residual_off() {
+        let request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
+        assert!(
+            !request.measure_residual,
+            "measure_residual must default off; callers opt in explicitly"
+        );
+    }
+
     /// Regression for the residual-gate bypass fix: dual-fit's success path used to hardcode
     /// `residual: None` on every rescued patch, silently bypassing `--residual-gate` regardless of
     /// whether it was active for the rest of the run. `measure_dual_fit_residual_verdict` gives
