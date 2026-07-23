@@ -9,7 +9,4 @@ pub trait PcmCorrelator {
 
     /// GCC-PHAT similarity for equal-length segments aligned at lag zero.
     fn segment_similarity(&self, a: &[f64], b: &[f64]) -> f64;
-
-    /// GCC-PHAT score at every valid start index when sliding `template` across `signal`.
-    fn slide_template_scores(&self, template: &[f64], signal: &[f64]) -> Vec<f64>;
 }

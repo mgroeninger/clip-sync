@@ -1153,10 +1153,6 @@ mod tests {
         fn segment_similarity(&self, _a: &[f64], _b: &[f64]) -> f64 {
             0.0
         }
-
-        fn slide_template_scores(&self, _template: &[f64], _signal: &[f64]) -> Vec<f64> {
-            Vec::new()
-        }
     }
 
     #[test]

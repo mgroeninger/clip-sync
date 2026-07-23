@@ -231,9 +231,11 @@ pub fn refine_offset_around_prior(
 
 /// Slide a template from `left` across `right`, searching near `center_offset_secs`.
 ///
-/// Scores with local-window Pearson (`normalized_correlation`), not
-/// [`PcmCorrelator::slide_template_scores`] (GCC-PHAT). The port remains for lag refine /
-/// holdout; discover dropped PHAT in Jul 2026 so `DISCOVER_*` thresholds stay Pearson-scaled.
+/// Scores with local-window Pearson (`normalized_correlation`), not GCC-PHAT.
+/// [`PcmCorrelator`] remains for lag refine / holdout (`cross_correlate_lag` /
+/// `segment_similarity`). Discover deliberately stays on the Pearson scale that
+/// `DISCOVER_*` thresholds expect — do not reintroduce a PHAT slide here without a
+/// corpus pass + threshold retune.
 fn pcm_search_near_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,

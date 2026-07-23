@@ -1,8 +1,8 @@
 //! GCC-PHAT scoring helpers and FFT cross-correlation with sub-sample peak interpolation.
 //!
-//! [`PcmCorrelator::slide_template_scores`] is GCC-PHAT (level/EQ-robust). Fine lag on
-//! already-aligned equal-length windows uses `cross_correlate` with parabolic peak fitting.
-//! PCM **discover** search does not use this module — it slides Pearson in
+//! [`PcmCorrelator::segment_similarity`] is GCC-PHAT (level/EQ-robust) at lag zero.
+//! Fine lag on already-aligned equal-length windows uses `cross_correlate` with parabolic
+//! peak fitting. PCM **discover** search does not use this module — it slides Pearson in
 //! `offset_refinement` so `DISCOVER_*` thresholds stay on that scale.
 
 use cross_correlate::{Correlate, CrossCorrelationMode};
@@ -12,7 +12,7 @@ use crate::application::ports::PcmCorrelator;
 
 const PHAT_EPSILON: f64 = 1e-12;
 
-/// Production [`PcmCorrelator`]: GCC-PHAT slide/similarity + FFT lag with parabolic refine.
+/// Production [`PcmCorrelator`]: GCC-PHAT similarity + FFT lag with parabolic refine.
 pub struct FftCorrelator;
 
 impl PcmCorrelator for FftCorrelator {
@@ -22,10 +22,6 @@ impl PcmCorrelator for FftCorrelator {
 
     fn segment_similarity(&self, a: &[f64], b: &[f64]) -> f64 {
         gcc_phat_lag_zero_similarity(a, b)
-    }
-
-    fn slide_template_scores(&self, template: &[f64], signal: &[f64]) -> Vec<f64> {
-        gcc_phat_slide_scores(template, signal)
     }
 }
 
@@ -137,19 +133,6 @@ fn gcc_phat_lag_zero_similarity(a: &[f64], b: &[f64]) -> f64 {
 
     let corr = gcc_phat_correlation(a, b);
     corr.first().copied().unwrap_or(0.0).abs()
-}
-
-/// Score every valid start index when sliding `template` across `signal` with one GCC-PHAT pass.
-pub(crate) fn gcc_phat_slide_scores(template: &[f64], signal: &[f64]) -> Vec<f64> {
-    if template.is_empty() || signal.len() < template.len() {
-        return Vec::new();
-    }
-
-    let corr = gcc_phat_correlation(template, signal);
-    let max_start = signal.len() - template.len();
-    (0..=max_start)
-        .map(|start| corr.get(start).copied().unwrap_or(0.0).abs())
-        .collect()
 }
 
 #[cfg(test)]

@@ -27,8 +27,4 @@ impl PcmCorrelator for FftCorrelator {
     fn segment_similarity(&self, a: &[f64], b: &[f64]) -> f64 {
         self.0.segment_similarity(a, b)
     }
-
-    fn slide_template_scores(&self, template: &[f64], signal: &[f64]) -> Vec<f64> {
-        self.0.slide_template_scores(template, signal)
-    }
 }

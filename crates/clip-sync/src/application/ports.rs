@@ -145,13 +145,6 @@ pub trait PcmCorrelator {
 
     /// GCC-PHAT similarity for equal-length segments aligned at lag zero.
     fn segment_similarity(&self, a: &[f64], b: &[f64]) -> f64;
-
-    /// GCC-PHAT score at every valid start index when sliding `template` across `signal`.
-    ///
-    /// Discover search (`pcm_search_near_offset`) does not call this — it uses Pearson so
-    /// `DISCOVER_*` thresholds stay on that scale. Lag refine still uses other methods on
-    /// this trait.
-    fn slide_template_scores(&self, template: &[f64], signal: &[f64]) -> Vec<f64>;
 }
 
 pub trait Aligner {
