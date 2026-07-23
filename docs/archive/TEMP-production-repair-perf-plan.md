@@ -471,8 +471,15 @@ does the default flip on.
     **deterministic decision metric is the bracket-COUNT fraction** (each bracket ≈ one constant-cost unified search, so
     count% ≈ time%, and unlike wall-clock `search_us` it reproduces across runs — so one run per pair suffices to size
     the ceiling; a re-run that disagrees means source/params changed). `search_us` is advisory. Decision rule baked into
-    the script: <10% ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate. **Next: run it on the licensed pairs and read
-    the ceiling.**
+    the script: <10% ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate.
+
+    **GREEN-LIT 2026-07-22 — build the pre-gate.** Full 17-pair roll-up: pooled **44.8% count / 49.1% time** doomed
+    (median 34.8%, range 3.0–72.8%); 14/17 pairs clear the 10% bar; the three below (4, 5, 11) are clean pairs where the
+    pre-gate is a no-op *and* no-cost. Signal strongest on the largest pairs (13/16/17), so pooled is weighted toward the
+    pairs that dominate wall-clock. `time% ≥ count%` on every pair ⇒ count-fraction is a conservative floor. (The optimistic
+    first-9 slice read 53/57; full 17 regressed to 45/49 — plan against 45%.) **Build plan:
+    `docs/archive/TEMP-anchor-pregate-plan.md`** (predictor = the superset proof above; correctness bar = byte-identical
+    golden corpus + zero false skips).
 
     **Phase 2 — realized-speedup harness (DEFERRED to the pre-gate PR, do NOT build early).** Sizing the ceiling
     (above) is phase 1 and needs no persistence: the count-fraction is deterministic and already recoverable from the
