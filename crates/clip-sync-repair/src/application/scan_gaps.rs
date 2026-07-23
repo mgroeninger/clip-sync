@@ -213,20 +213,23 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             };
 
         let (a_runs, a_levels) = scanner_a.finish_with_levels();
-        let mut gaps = Vec::new();
-        // Block-confirmed silent cores, index-parallel to `gaps`. The equivalence gate classifies
-        // on these (not the refined `[start, end]`) so sub-block edge refinement — which can widen a
-        // gap into fade-shoulder blocks — never inflates the A-side dropout-depth measurement and
-        // flips a real dropout to `ambient-quiet`. `(a_start, a_end, b_mapped)`; B is mapped from the
-        // core so its donor-silence window matches A's.
-        let mut gap_cores: Vec<(f64, f64, Option<(f64, f64)>)> = Vec::new();
+        // Gap-equivalence (advisory; `docs/gap-vocabulary.md` § Silence-character pre-gate) is built
+        // index-parallel to `gaps`. Classification uses each run's block-confirmed silent core — not
+        // the refined `[start, end]` — so sub-block edge refinement (which can widen a gap into
+        // fade-shoulder blocks) never inflates the A-side dropout-depth measurement and flips a real
+        // dropout to `ambient-quiet`. B's donor-silence window is the same core offset-mapped so it
+        // matches A. Always computed and reported; the `skip_equivalent_gaps` drop happens later in
+        // `build_gap_fill_plan`.
+        let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
+        let b_levels_for_eq = (!b_levels.is_empty()).then_some(b_levels.as_slice());
+        let mut gaps = Vec::with_capacity(a_runs.len());
+        let mut gap_equivalence = Vec::with_capacity(a_runs.len());
         for run in a_runs {
             let pos = run.start_secs;
             let end = run.end_secs;
-            let core_start = run.core_start_secs;
-            let core_end = run.core_end_secs;
-            let b_core = offset_secs.map(|delta| (core_start + delta, core_end + delta));
-            gap_cores.push((core_start, core_end, b_core));
             let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
 
             let b_has_energy = match b_positions {
@@ -243,30 +246,19 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 video_b_end_secs: b_positions.map(|(_, e)| e),
                 b_has_energy,
             });
-        }
 
-        // Gap-equivalence classification (advisory; `docs/gap-vocabulary.md` § Silence-character pre-gate): derive the
-        // silence-character signals from the scan's own per-block level timelines (A noise floor + gap RMS,
-        // B donor-silence) and classify each gap. Always computed and reported; the `skip_equivalent_gaps`
-        // drop happens later in `build_gap_fill_plan`. Index-parallel to `gaps`.
-        let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
-            enabled: true,
-            ..Default::default()
-        };
-        let gap_equivalence: Vec<_> = gap_cores
-            .iter()
-            .map(|&(core_start, core_end, b_core)| {
-                let b_mapped = b_core.filter(|_| !b_levels.is_empty());
-                crate::domain::gap_equivalence::derive_gap_equivalence(
-                    &a_levels,
-                    core_start,
-                    core_end,
-                    (!b_levels.is_empty()).then_some(b_levels.as_slice()),
-                    b_mapped,
-                    &equivalence_params,
-                )
-            })
-            .collect();
+            let b_mapped = offset_secs
+                .map(|delta| (run.core_start_secs + delta, run.core_end_secs + delta))
+                .filter(|_| b_levels_for_eq.is_some());
+            gap_equivalence.push(crate::domain::gap_equivalence::derive_gap_equivalence(
+                &a_levels,
+                run.core_start_secs,
+                run.core_end_secs,
+                b_levels_for_eq,
+                b_mapped,
+                &equivalence_params,
+            ));
+        }
 
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
         // Use co-occurring quiet on both timelines; exclude A-only dropouts (b_has_energy).
