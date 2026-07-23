@@ -15,6 +15,6 @@ pub mod run_repair;
 pub mod scan_gaps;
 
 pub use error::RepairError;
-pub use patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
+pub use patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
 pub use repair_videos::{RepairVideos, RepairWriteRequest};
 pub use scan_gaps::{ScanGaps, ScanGapsRequest};

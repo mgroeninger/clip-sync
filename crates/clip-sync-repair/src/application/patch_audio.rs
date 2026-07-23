@@ -61,8 +61,34 @@ pub struct PatchAudioResult {
     pub pcm_container_skew: Option<crate::domain::diagnostics::PcmContainerDurationSkew>,
 }
 
+/// A patch run's inputs: the scan [`GapReport`] plus the policy that governs the patch.
+///
+/// Policy lives in the embedded [`PatchRequestSettings`] and is read directly at use sites
+/// (`request.fill_mode`) through a read-only [`Deref`](std::ops::Deref). There is deliberately
+/// **no `DerefMut`**: policy is set once where the settings are built
+/// ([`RepairConfig::patch_settings`](crate::infrastructure::config::RepairConfig::patch_settings)),
+/// so a stray `request.fill_mode = …` is a compile error rather than a second source of truth.
+/// Only per-run opt-ins that no config key feeds stay as mutable fields here.
 pub struct PatchAudioRequest {
     pub report: GapReport,
+    /// Patch policy. Read through `Deref` (`request.fill_mode`); assign only via `patch_settings`.
+    pub settings: PatchRequestSettings,
+    /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
+    /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
+    pub measure_residual: bool,
+}
+
+impl std::ops::Deref for PatchAudioRequest {
+    type Target = PatchRequestSettings;
+
+    fn deref(&self) -> &Self::Target {
+        &self.settings
+    }
+}
+
+/// Patch parameters without the scan report — filled in after gap scan.
+#[derive(Clone)]
+pub struct PatchRequestSettings {
     /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan before decode/patch
     /// (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate). Off by default.
     pub skip_equivalent_gaps: bool,
@@ -161,76 +187,10 @@ pub struct PatchAudioRequest {
     pub anchor_seam_min_match_pearson: f32,
     pub anchor_seam_min_xcorr_peak: f32,
     pub anchor_seam_xcorr_ambiguous_band: f32,
-    /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
-    /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
-    pub measure_residual: bool,
     /// **A3 dual-fit repair** (flag-gated). When on, a gap the seam gate *skips* (bracket-exhausted) gets a
     /// fallback attempt: independent per-shoulder fit + interior-trim fill, validated by the unchanged gate
-    /// (§5.2). Off by default ⇒ existing bracket-search path byte-identical (D6). Set directly on the request.
+    /// (§5.2). Off by default ⇒ existing bracket-search path byte-identical (D6).
     pub dual_fit: bool,
-    pub residual_gate: crate::domain::ResidualGateMode,
-    pub residual_floor_ok_db: f64,
-    pub residual_headroom_margin_db: f64,
-    pub residual_lag_secs: f64,
-}
-
-/// Patch parameters without the scan report — filled in after gap scan.
-#[derive(Clone)]
-pub struct PatchRequestSettings {
-    /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan (off by default).
-    pub skip_equivalent_gaps: bool,
-    pub normalize_fill: bool,
-    /// A3 dual-fit repair fallback for bracket-exhausted skips (off by default).
-    pub dual_fit: bool,
-    pub normalize_window_secs: f64,
-    pub max_fill_gain_db: f64,
-    pub min_fill_correlation: f32,
-    pub fill_align_margin_secs: f64,
-    pub max_fill_align_adjustment_secs: f64,
-    pub fill_border_search_secs: f64,
-    pub min_border_discovery_secs: f64,
-    pub border_standoff_secs: f64,
-    pub short_gap_mean_correlation_secs: f64,
-    pub fill_length_slack_secs: f64,
-    pub fill_seam_search_secs: f64,
-    pub gap_signature_context_secs: f64,
-    pub gap_signature_bin_ms: u64,
-    pub min_structure_match_score: f32,
-    pub strong_structure_trust: f64,
-    pub disable_structure_trust: bool,
-    pub partial_structure_waveform_soften: f64,
-    pub absolute_silence_rms: f32,
-    pub fill_offset_mode: crate::domain::FillOffsetMode,
-    pub gap_end_extend_on_post_seam_fail: bool,
-    pub gap_start_extend_on_pre_seam_fail: bool,
-    pub gap_end_extend_max_ms: u64,
-    pub gap_end_extend_step_ms: u64,
-    pub short_gap_one_strong_seam_fallback: bool,
-    pub fill_mode: crate::domain::FillMode,
-    pub fill_fit_structure_weight: f64,
-    pub fill_fit_waveform_weight: f64,
-    pub fill_fit_nominal_bias_scale: f64,
-    pub fill_fit_energy_nominal_bias_scale: f64,
-    pub fill_fit_late_start_penalty_scale: f64,
-    pub fill_marginal_margin: f32,
-    pub fill_absolute_floor: f32,
-    pub fill_repeat_penalty_weight: f64,
-    pub fft_seam_search: bool,
-    pub fill_anchor_min_correlation: f32,
-    pub fill_anchor_exclude_structure_trusted: bool,
-    pub fill_anchor_max_adjustment_frac: f64,
-    pub fill_anchor_search_prior_weight: f64,
-    pub fill_anchor_retry_marginal: bool,
-    pub gap_signature_mode: crate::domain::GapSignatureMode,
-    pub profile: crate::domain::RepairProfile,
-    pub fit_boundary_search: crate::domain::FitBoundarySearch,
-    pub anchor_seam_mode: crate::domain::AnchorSeamMode,
-    pub max_anchor_bracket_secs: f64,
-    pub max_anchors_per_side: usize,
-    pub anchor_seam_min_prominence: f32,
-    pub anchor_seam_min_match_pearson: f32,
-    pub anchor_seam_min_xcorr_peak: f32,
-    pub anchor_seam_xcorr_ambiguous_band: f32,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,
@@ -238,67 +198,14 @@ pub struct PatchRequestSettings {
 }
 
 impl PatchRequestSettings {
+    /// Attach the scan report, producing the runnable request. Policy moves in whole — there is
+    /// no per-field copy list to keep in sync when a knob is added.
     pub fn into_request(self, report: GapReport) -> PatchAudioRequest {
         PatchAudioRequest {
             report,
-            skip_equivalent_gaps: self.skip_equivalent_gaps,
-            normalize_fill: self.normalize_fill,
-            normalize_window_secs: self.normalize_window_secs,
-            max_fill_gain_db: self.max_fill_gain_db,
-            min_fill_correlation: self.min_fill_correlation,
-            fill_align_margin_secs: self.fill_align_margin_secs,
-            max_fill_align_adjustment_secs: self.max_fill_align_adjustment_secs,
-            fill_border_search_secs: self.fill_border_search_secs,
-            min_border_discovery_secs: self.min_border_discovery_secs,
-            border_standoff_secs: self.border_standoff_secs,
-            short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
-            fill_length_slack_secs: self.fill_length_slack_secs,
-            fill_seam_search_secs: self.fill_seam_search_secs,
-            gap_signature_context_secs: self.gap_signature_context_secs,
-            gap_signature_bin_ms: self.gap_signature_bin_ms,
-            min_structure_match_score: self.min_structure_match_score,
-            strong_structure_trust: self.strong_structure_trust,
-            disable_structure_trust: self.disable_structure_trust,
-            partial_structure_waveform_soften: self.partial_structure_waveform_soften,
-            absolute_silence_rms: self.absolute_silence_rms,
-            fill_offset_mode: self.fill_offset_mode,
-            gap_end_extend_on_post_seam_fail: self.gap_end_extend_on_post_seam_fail,
-            gap_start_extend_on_pre_seam_fail: self.gap_start_extend_on_pre_seam_fail,
-            gap_end_extend_max_ms: self.gap_end_extend_max_ms,
-            gap_end_extend_step_ms: self.gap_end_extend_step_ms,
-            short_gap_one_strong_seam_fallback: self.short_gap_one_strong_seam_fallback,
-            fill_mode: self.fill_mode,
-            fill_fit_structure_weight: self.fill_fit_structure_weight,
-            fill_fit_waveform_weight: self.fill_fit_waveform_weight,
-            fill_fit_nominal_bias_scale: self.fill_fit_nominal_bias_scale,
-            fill_fit_energy_nominal_bias_scale: self.fill_fit_energy_nominal_bias_scale,
-            fill_fit_late_start_penalty_scale: self.fill_fit_late_start_penalty_scale,
-            fill_marginal_margin: self.fill_marginal_margin,
-            fill_absolute_floor: self.fill_absolute_floor,
-            fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
-            fft_seam_search: self.fft_seam_search,
-            fill_anchor_min_correlation: self.fill_anchor_min_correlation,
-            fill_anchor_exclude_structure_trusted: self.fill_anchor_exclude_structure_trusted,
-            fill_anchor_max_adjustment_frac: self.fill_anchor_max_adjustment_frac,
-            fill_anchor_search_prior_weight: self.fill_anchor_search_prior_weight,
-            fill_anchor_retry_marginal: self.fill_anchor_retry_marginal,
-            gap_signature_mode: self.gap_signature_mode,
-            profile: self.profile,
-            fit_boundary_search: self.fit_boundary_search,
-            anchor_seam_mode: self.anchor_seam_mode,
-            max_anchor_bracket_secs: self.max_anchor_bracket_secs,
-            max_anchors_per_side: self.max_anchors_per_side,
-            anchor_seam_min_prominence: self.anchor_seam_min_prominence,
-            anchor_seam_min_match_pearson: self.anchor_seam_min_match_pearson,
-            anchor_seam_min_xcorr_peak: self.anchor_seam_min_xcorr_peak,
-            anchor_seam_xcorr_ambiguous_band: self.anchor_seam_xcorr_ambiguous_band,
+            settings: self,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
-            dual_fit: self.dual_fit,
-            residual_gate: self.residual_gate,
-            residual_floor_ok_db: self.residual_floor_ok_db,
-            residual_headroom_margin_db: self.residual_headroom_margin_db,
-            residual_lag_secs: self.residual_lag_secs,
         }
     }
 }

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::{ClipLabel, ClipMatch, SymphoniaMediaReader};
 use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
-use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, PatchAudioResult};
+use clip_sync_repair::application::{
+    PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings,
+};
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
     AnchorSeamMode, CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
@@ -256,7 +258,10 @@ pub fn patch_request_with_options(
     min_fill_correlation: f32,
     options: PatchTestOptions,
 ) -> PatchAudioRequest {
-    PatchAudioRequest {
+    // NOTE: these values are the harness's own defaults and intentionally still drift from
+    // production (`RepairConfig::default().patch_settings()`) — see M-HARNESS / the config-bundles
+    // plan phase P3, which is where that drift gets reconciled. P0 only reshaped the literal.
+    PatchRequestSettings {
         skip_equivalent_gaps: false,
         anchor_seam_mode: AnchorSeamMode::Auto,
         anchor_seam_min_prominence: 0.0,
@@ -265,7 +270,6 @@ pub fn patch_request_with_options(
         anchor_seam_xcorr_ambiguous_band: clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
         max_anchor_bracket_secs: 5.0,
         max_anchors_per_side: 5,
-        report,
         normalize_fill,
         normalize_window_secs,
         max_fill_gain_db: 12.0,
@@ -309,13 +313,13 @@ pub fn patch_request_with_options(
         gap_signature_mode: options.gap_signature_mode,
         profile: options.profile,
         fit_boundary_search: options.fit_boundary_search,
-        measure_residual: false,
         dual_fit: options.dual_fit,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
         residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
         residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         residual_lag_secs: clip_sync_repair::domain::DEFAULT_RESIDUAL_LAG_SECS,
     }
+    .into_request(report)
 }
 
 pub fn run_patch(request: PatchAudioRequest, crossfade_ms: u64) -> PatchAudioResult {

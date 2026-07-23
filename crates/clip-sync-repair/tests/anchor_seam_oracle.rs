@@ -149,15 +149,13 @@ fn anchor_seam_pipeline_patches_speech_peaks_fixture() {
     repair.fill_fit_structure_weight = 0.35;
     repair.fill_fit_waveform_weight = 0.65;
     let request = patch_request_with_options(report, false, 5.0, 0.35, options);
-    let request = PatchAudioRequest {
-        anchor_seam_mode: repair.anchor_seam_mode,
-        max_anchor_bracket_secs: repair.max_anchor_bracket_secs,
-        max_anchors_per_side: repair.max_anchors_per_side,
-        anchor_seam_min_prominence: repair.anchor_seam_min_prominence,
-        residual_gate: repair.residual_gate,
-        measure_residual: true,
-        ..request
-    };
+    let mut request = request;
+    request.settings.anchor_seam_mode = repair.anchor_seam_mode;
+    request.settings.max_anchor_bracket_secs = repair.max_anchor_bracket_secs;
+    request.settings.max_anchors_per_side = repair.max_anchors_per_side;
+    request.settings.anchor_seam_min_prominence = repair.anchor_seam_min_prominence;
+    request.settings.residual_gate = repair.residual_gate;
+    request.measure_residual = true;
     let reader = SymphoniaMediaReader;
     let progress = FakeProgressReporter;
     let response = PatchAudio::new(&reader, &progress)
@@ -375,25 +373,23 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
     repair.gap_start_extend_on_pre_seam_fail = false;
     repair.gap_end_extend_max_ms = 0;
     let request = patch_request_with_options(report, false, 5.0, 0.35, options);
-    let request = PatchAudioRequest {
-        anchor_seam_mode: repair.anchor_seam_mode,
-        max_anchor_bracket_secs: repair.max_anchor_bracket_secs,
-        max_anchors_per_side: repair.max_anchors_per_side,
-        anchor_seam_min_prominence: repair.anchor_seam_min_prominence,
-        anchor_seam_min_match_pearson: repair.anchor_seam_min_match_pearson,
-        anchor_seam_min_xcorr_peak: repair.anchor_seam_min_xcorr_peak,
-        anchor_seam_xcorr_ambiguous_band: repair.anchor_seam_xcorr_ambiguous_band,
-        residual_gate: repair.residual_gate,
-        measure_residual: true,
-        normalize_fill: repair.normalize_fill,
-        fill_length_slack_secs: repair.fill_length_slack_secs,
-        min_border_discovery_secs: repair.min_border_discovery_secs,
-        border_standoff_secs: repair.border_standoff_secs,
-        gap_end_extend_on_post_seam_fail: repair.gap_end_extend_on_post_seam_fail,
-        gap_start_extend_on_pre_seam_fail: repair.gap_start_extend_on_pre_seam_fail,
-        gap_end_extend_max_ms: repair.gap_end_extend_max_ms,
-        ..request
-    };
+    let mut request = request;
+    request.settings.anchor_seam_mode = repair.anchor_seam_mode;
+    request.settings.max_anchor_bracket_secs = repair.max_anchor_bracket_secs;
+    request.settings.max_anchors_per_side = repair.max_anchors_per_side;
+    request.settings.anchor_seam_min_prominence = repair.anchor_seam_min_prominence;
+    request.settings.anchor_seam_min_match_pearson = repair.anchor_seam_min_match_pearson;
+    request.settings.anchor_seam_min_xcorr_peak = repair.anchor_seam_min_xcorr_peak;
+    request.settings.anchor_seam_xcorr_ambiguous_band = repair.anchor_seam_xcorr_ambiguous_band;
+    request.settings.residual_gate = repair.residual_gate;
+    request.settings.normalize_fill = repair.normalize_fill;
+    request.settings.fill_length_slack_secs = repair.fill_length_slack_secs;
+    request.settings.min_border_discovery_secs = repair.min_border_discovery_secs;
+    request.settings.border_standoff_secs = repair.border_standoff_secs;
+    request.settings.gap_end_extend_on_post_seam_fail = repair.gap_end_extend_on_post_seam_fail;
+    request.settings.gap_start_extend_on_pre_seam_fail = repair.gap_start_extend_on_pre_seam_fail;
+    request.settings.gap_end_extend_max_ms = repair.gap_end_extend_max_ms;
+    request.measure_residual = true;
     let response = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
         .execute(request, RepairConfig::default().crossfade_ms)
         .expect("patch");

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::{AlignConfig, AlignmentModeUsed, ClipConfig, SymphoniaMediaReader};
-use clip_sync_repair::application::{PatchAudio, PatchAudioRequest, ScanGaps, ScanGapsRequest};
+use clip_sync_repair::application::{PatchAudio, PatchRequestSettings, ScanGaps, ScanGapsRequest};
 use clip_sync_repair::domain::{build_gap_fill_plan, GapFillSkipReason, GapPatchStatus};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use hound::{SampleFormat, WavSpec, WavWriter};
@@ -182,8 +182,7 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
     patch
         .execute(
-            PatchAudioRequest {
-                report,
+            PatchRequestSettings {
                 skip_equivalent_gaps: false,
                 normalize_fill: false,
                 normalize_window_secs: 5.0,
@@ -228,7 +227,6 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 gap_signature_mode: clip_sync_repair::domain::GapSignatureMode::Bool,
                 profile: clip_sync_repair::domain::RepairProfile::Default,
                 fit_boundary_search: clip_sync_repair::domain::FitBoundarySearch::BaselineOnly,
-                measure_residual: false,
                 residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
                 residual_floor_ok_db: clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB,
                 residual_headroom_margin_db: clip_sync_repair::domain::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -242,7 +240,8 @@ fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_re
                 anchor_seam_xcorr_ambiguous_band:
                     clip_sync_repair::domain::DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
                 dual_fit: false,
-            },
+            }
+            .into_request(report),
             10,
         )
         .expect("patch inside-region gap")

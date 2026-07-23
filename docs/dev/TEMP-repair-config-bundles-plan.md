@@ -105,7 +105,7 @@ the description.
 
 | Phase | Work | Trigger | Status | Notes |
 |-------|------|---------|--------|-------|
-| **P0** | Embed `PatchRequestSettings` in `PatchAudioRequest` (or request = settings + report + opt-in flags). Delete `into_request`’s field list. | Convenience / next patch-knob touch | Pending | Biggest mechanical win; **no TOML change**. |
+| **P0** | Embed `PatchRequestSettings` in `PatchAudioRequest` (request = settings + report + opt-in flags). Delete `into_request`’s field list. | Convenience / next patch-knob touch | **Done 2026-07-23** | Biggest mechanical win; **no TOML change**. Read-only `Deref`, no `DerefMut` — see §6.1. |
 | **P1** | Extract `FillSearchParams` + one of `FitScoringParams` / `SeamGatePolicy`. Embed in `RepairConfig` + settings. Teach `SeamGateConfig::from_repair` to consume bundles. | Next knob in that family, or clearing M-CFG | Pending | Update `config_roundtrip` + one patch smoke. |
 | **P2** | Remaining bundles (extension, fill-anchor, residual, anchor-seam, normalize) — **one PR per family** | When that feature is touched | Pending | Stop growing flat copy lists. |
 | **P3** | Harness: `PatchTestOptions::default()` from `RepairConfig::default().patch_settings()` with overrides only; or drop options and use settings directly | With M-HARNESS / next harness patch test edit | Pending | Closes the fifth drift surface for defaults. |
@@ -113,6 +113,37 @@ the description.
 
 **Do not** execute P0–P4 as a single “restructure config” PR. Prefer P0 whenever patch
 request construction is already open; P1 when adding a fill-search or fit-scoring knob.
+
+### 6.1 P0 as landed (2026-07-23)
+
+```rust
+pub struct PatchAudioRequest {
+    pub report: GapReport,
+    pub settings: PatchRequestSettings, // policy
+    pub measure_residual: bool,         // per-run opt-in, no config key
+}
+
+impl std::ops::Deref for PatchAudioRequest {  // read-only: NO DerefMut
+    type Target = PatchRequestSettings;
+    fn deref(&self) -> &Self::Target { &self.settings }
+}
+```
+
+**Layering rule.** Policy is read at use sites as `request.fill_mode` via `Deref` and is
+writable only where the settings are built (`RepairConfig::patch_settings`). Omitting
+`DerefMut` makes a stray `request.fill_mode = …` a compile error, so there is no second
+source of truth; deliberate overrides spell out `request.settings.fill_mode = …`.
+`measure_residual` is the only field callers mutate on a request (`dual_fit` /
+`skip_equivalent_gaps` are config-derived and stay inside `settings` — every existing
+`.dual_fit = …` site turned out to be on `RepairConfig` or `PatchTestOptions`, not a request).
+
+Measured outcome: the ~160 `request.<knob>` **read** sites needed **zero** edits (`Deref`);
+the real diff was `into_request` (56 lines → 4) plus 4 hand-rolled request literals
+(harness `patch_request_with_options`, `query_reference_integration`, `anchor_seam_oracle` ×2).
+`PatchRequestSettings` is now re-exported from `application` so callers can name it.
+
+**Invariant (check in review):** `PatchAudioRequest { … }` appears as a struct literal exactly
+once in the workspace — inside `into_request`. Anything else is a new drift surface.
 
 ## 7. Verification
 
@@ -124,9 +155,12 @@ regressions — all caught by fast gates.
 
 - `cargo build -p clip-sync-repair --all-targets`
 - `cargo test -p clip-sync-repair --test config_roundtrip`
-- `.\scripts\test-tier.ps1 -Tier pr-repair` (or the equivalent fast repair surface)
-- One patch integration smoke that builds a request via `patch_settings` /
-  `patch_request_from_repair`
+- `.\scripts\test-tier.ps1 -Tier pr-repair` — this is the real byte-preservation proof:
+  it carries `golden_baseline_invariance` + `gap_repair_spec_diff`
+- `cargo test -p clip-sync-repair --test patch_audio_integration --test anchor_seam_oracle`
+  (request construction via `patch_settings` / `patch_request_from_repair`; not in the tier)
+- Confirm no knob is settable in two places — after P0, `measure_residual` is the only field
+  assigned on a request outside `patch_settings`
 
 **When nesting TOML (P4):**
 
