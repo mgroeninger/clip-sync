@@ -17,6 +17,9 @@
 > suppressed error; CLI + repair loaders warn on unknown/misspelled TOML keys via a shared
 > `clip_sync::unknown_toml_keys` round-trip diff. Only the **optional** machine-readable
 > report flags remain deferred.
+> **M-FFT closed as hygiene** (2026-07-23): unused `&dyn PcmCorrelator` arg removed from
+> discover search only; the port stays for lag refine / holdout / anchors. Pearson discover
+> left alone (do **not** restore GCC-PHAT `slide_template_scores` there).
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -71,16 +74,18 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
-| 2 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
-| 3 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 4 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 5 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 6 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 1 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 2 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
+| 3 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 4 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
+| 5 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
-effectively closed 2026-07-23 — only optional report flags deferred. See Fixed (P1)
-table. **All P1s are now done except optional report flags; remaining work is P2/P3.**)*
+effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
+2026-07-23** as hygiene (unused discover correlator *arg* removed; `PcmCorrelator` kept
+for lag refine). See Fixed tables. **All P1s are now done except optional report flags;
+remaining work is P2/P3. Next blessed perf step is M-CLONE / remaining repair gate-search
+work — not discover PHAT restore.**)*
 
 ---
 
@@ -307,27 +312,35 @@ query/trim is more work for little gain if paths are normalized.
 
 ## P2 — Performance / maintainability
 
-### M-FFT. Injected correlator ignored — **open (now the blessed perf lever)**
+### M-FFT. Unused discover correlator arg — **closed 2026-07-23** (hygiene; Pearson kept)
 
-**File:** `offset_refinement.rs:238`
+**File:** `application/offset_refinement.rs` (`pcm_search_near_offset` / `pcm_discover_offset`)
 
-**Status note (2026-07-23):** The anchor pre-gate (lever #2, cut k) was measured
-**NO-GO** and dropped — 0/~4939 brackets doomed over the full 17-pair fingerprint
-run vs a 46% ceiling. Perf effort has been redirected to **FFT-ing the per-bracket
-score sweep** (see `production-perf-gate-search-dominates`: `char_gate_search` ≈93%,
-per-bracket score × k brackets is the hot path). That work overlaps directly with
-this item, so M-FFT is no longer just P2 hygiene — it is the actively-blessed
-perf direction and should be the first perf step once the codec P1s land.
+**History (corrected):** This was **not** an unfinished first wiring. Jun 2026 layer
+purity + GCC-PHAT landed `PcmCorrelator::slide_template_scores`, and discover **did**
+call it. Jul 6 (`c6241cd`) deliberately replaced that with a **local-window Pearson**
+slide (`normalized_correlation`) + silence gating, renaming the unused param to
+`_correlator`. Motive: keep discover on the Pearson scale that `DISCOVER_*` thresholds
+expect, and shrink the haystack — not "FFT later." `slide_template_scores` is GCC-PHAT;
+re-wiring it would have been a **behavior change**, not a silent speedup.
 
-**Recommendation:** Wire `_correlator.slide_template_scores` (or equivalent) into
-`pcm_search_near_offset` — FFT the haystack sweep rather than the naive O(n·m) loop.
-Prefer **wire** over delete — the port is already injected. Keep the naive path
-behind `cfg(test)` as an equivalence oracle (pattern used elsewhere).
+**Disposition (2026-07-23):** Removed the unused arg only —
+`pcm_search_near_offset` / `pcm_discover_offset` no longer take `&dyn PcmCorrelator`.
+The **`PcmCorrelator` port remains**; lag refine / holdout / anchor paths still inject
+`FftCorrelator` for `cross_correlate_lag` / `segment_similarity`. Pearson discover left
+alone.
 
-**Test:** existing slow refine tests should get faster; add a short equivalence
-test at small N.
+**Do not:** restore PHAT for discover without a corpus pass + threshold retune.
 
-### M-CLONE. Hot-path allocation — **open**
+**If discover later profiles hot:** FFT/prefix-sum **Pearson** (same family as
+`lag_correlation_curve_auto`) + naive equivalence oracle — separate from this item.
+
+**Perf note:** Do **not** conflate this with repair's blessed gate-search FFT work
+(`char_gate_search` / `TEMP-production-repair-perf-plan.md`). That is a different call
+site and already landed large wins; remaining repair perf → **M-CLONE** (+ delete
+M-DEAD pregate symbols).
+
+### M-CLONE. Hot-path allocation — **open** (next blessed perf step)
 
 Three independent PR-sized bites:
 
@@ -422,10 +435,11 @@ are the remaining ways to get silently wrong audio.
 
 1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → ~~**M-AC3-DRAIN**~~ (done + unit-tested 2026-07-23; reusable `pcm_scratch` covers M-CLONE #3 for AC-3). **All codec P1s closed.**
 2. ~~**M-SILENT** remainder (unknown TOML keys + `align_videos` warn)~~ — **done 2026-07-23** (only optional report flags deferred)
-3. **M-FFT** then **M-CLONE** planner (user-visible speed). M-FFT is now the
-   blessed perf lever after the anchor pre-gate was dropped NO-GO (2026-07-23) —
-   FFT the per-bracket score sweep. Also **delete** the dead pregate symbols
-   (M-DEAD) as part of this cleanup.
+3. ~~**M-FFT**~~ (done 2026-07-23) — unused discover correlator *arg* removed; port kept;
+   Pearson discover unchanged. Next: **M-CLONE** planner (user-visible speed on
+   repair/align hot paths). Also **delete** the dead pregate symbols (M-DEAD). Anchor
+   pre-gate was NO-GO (2026-07-23); repair gate-search FFT already landed separately —
+   do not reopen discover PHAT.
 4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work
 5. **P3** cleanup whenever touching CLI / manifests
 6. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
@@ -436,7 +450,9 @@ are the remaining ways to get silently wrong audio.
 2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
 3. ~~**Codec follow-ups (P1 M-AC3-DRAIN)**~~ — **done 2026-07-23**: drain all AC-3/E-AC-3 frames per packet (`drain_packet` helper + 4 unit tests; real E-AC-3 surround path green). *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder also done 2026-07-23; M-FDK-RESET has a verified red→green backward-seek regression test running on stock ffmpeg.)* **All codec P1s closed.**
 4. ~~**Observability remainder (P1 M-SILENT)**~~ — **done 2026-07-23**: unknown TOML keys (shared `unknown_toml_keys` in analyzer + repair loaders) and `align_videos` `Ok(None)` warn logging. Optional machine-readable report flags deferred.
-5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
+5. ~~**M-FFT hygiene**~~ — **done 2026-07-23**: drop unused discover correlator arg; keep
+   `PcmCorrelator` for lag refine; leave Pearson. **Perf (P2 M-CLONE)** — stop cloning;
+   reuse planner (next).
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.
 7. **P3 hygiene** — CLI broken-pipe, quiet/verbose, unused deps, publish flag.
 

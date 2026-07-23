@@ -1,7 +1,9 @@
-//! GCC-PHAT template scoring and FFT cross-correlation with sub-sample peak interpolation.
+//! GCC-PHAT scoring helpers and FFT cross-correlation with sub-sample peak interpolation.
 //!
-//! Template discovery uses GCC-PHAT (robust across level/EQ differences). Fine lag on
+//! [`PcmCorrelator::slide_template_scores`] is GCC-PHAT (level/EQ-robust). Fine lag on
 //! already-aligned equal-length windows uses `cross_correlate` with parabolic peak fitting.
+//! PCM **discover** search does not use this module — it slides Pearson in
+//! `offset_refinement` so `DISCOVER_*` thresholds stay on that scale.
 
 use cross_correlate::{Correlate, CrossCorrelationMode};
 use rustfft::FftPlanner;
@@ -10,7 +12,7 @@ use crate::application::ports::PcmCorrelator;
 
 const PHAT_EPSILON: f64 = 1e-12;
 
-/// Production [`PcmCorrelator`]: GCC-PHAT for template scoring, FFT lag + parabolic refine.
+/// Production [`PcmCorrelator`]: GCC-PHAT slide/similarity + FFT lag with parabolic refine.
 pub struct FftCorrelator;
 
 impl PcmCorrelator for FftCorrelator {

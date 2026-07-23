@@ -161,7 +161,7 @@ pub fn refine_offset_estimate(
 
     let mut estimate = if should_discover_offset(left, right, coarse.offset_secs) {
         if let Some((discovered_offset, score)) =
-            pcm_discover_offset(left, right, coarse.offset_secs, correlator)
+            pcm_discover_offset(left, right, coarse.offset_secs)
         {
             ClipMatchEstimate {
                 offset_secs: discovered_offset,
@@ -203,7 +203,7 @@ pub fn refine_offset_around_prior(
     }
 
     let mut estimate = if let Some((discovered_offset, score)) =
-        pcm_search_near_offset(left, right, prior.offset_secs, search_radius_secs, correlator)
+        pcm_search_near_offset(left, right, prior.offset_secs, search_radius_secs)
     {
         ClipMatchEstimate {
             offset_secs: discovered_offset,
@@ -230,12 +230,15 @@ pub fn refine_offset_around_prior(
 }
 
 /// Slide a template from `left` across `right`, searching near `center_offset_secs`.
+///
+/// Scores with local-window Pearson (`normalized_correlation`), not
+/// [`PcmCorrelator::slide_template_scores`] (GCC-PHAT). The port remains for lag refine /
+/// holdout; discover dropped PHAT in Jul 2026 so `DISCOVER_*` thresholds stay Pearson-scaled.
 fn pcm_search_near_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     center_offset_secs: f64,
     search_radius_secs: f64,
-    _correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 || search_radius_secs <= 0.0
     {
@@ -360,7 +363,6 @@ fn pcm_discover_offset(
     left: &MonoPcmClip,
     right: &MonoPcmClip,
     coarse_offset_secs: f64,
-    correlator: &dyn PcmCorrelator,
 ) -> Option<(f64, f64)> {
     if left.sample_rate != right.sample_rate || left.sample_rate == 0 {
         return None;
@@ -380,7 +382,7 @@ fn pcm_discover_offset(
     );
     let widen = coarse_corr.is_none_or(|score| score < DISCOVER_WIDEN_IF_COARSE_CORR_BELOW);
     let search_secs = discover_search_radius_secs(left, coarse_offset_secs, widen);
-    pcm_search_near_offset(left, right, coarse_offset_secs, search_secs, correlator)
+    pcm_search_near_offset(left, right, coarse_offset_secs, search_secs)
 }
 
 fn max_refine_adjustment_secs(_left: &MonoPcmClip) -> f64 {
@@ -940,7 +942,7 @@ mod tests {
         let right = prepare_clip_for_fingerprint(&right, options).unwrap();
 
         let (offset, score) =
-            pcm_discover_offset(&left, &right, 16.0, &FftCorrelator).expect("discovered offset");
+            pcm_discover_offset(&left, &right, 16.0).expect("discovered offset");
         assert!(score >= MIN_DISCOVER_CORRELATION, "score={score}");
         assert!(
             (offset - 30.0).abs() < 1.5,
@@ -962,7 +964,7 @@ mod tests {
         let right = prepare_clip_for_fingerprint(&right, options).unwrap();
 
         let (offset, score) =
-            pcm_discover_offset(&left, &right, 15.0, &FftCorrelator).expect("discovered offset");
+            pcm_discover_offset(&left, &right, 15.0).expect("discovered offset");
         assert!(score >= MIN_DISCOVER_CORRELATION, "score={score}");
         assert!(
             (offset - 15.0).abs() < 1.0,
@@ -1113,7 +1115,7 @@ mod tests {
     fn diagnose_wav_leader_60s_full() {
         let (left_p, right_p, coarse) = wav_leader_60s_prep_pair();
         let refined = refine_offset_estimate(&left_p, &right_p, coarse, &RubatoResampler, &FftCorrelator);
-        let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs, &FftCorrelator);
+        let discover = pcm_discover_offset(&left_p, &right_p, coarse.offset_secs);
         let lag_adj = pcm_lag_adjustment_secs(
             &left_p,
             &right_p,
