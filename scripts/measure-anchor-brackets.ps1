@@ -7,16 +7,13 @@
 # (structure-doomed, which still needs the search). Multi-pair because k and the matchability/structure
 # split are content-dependent; one pair can't size the lever.
 #
-# HOW IT RUNS THE MEASUREMENT: `bracket_stats` is emitted by the anchor-seam gate scoring
-# (`evaluate_seam_gate_fit_candidate`) — the gap-FIXING search that decides each patch's seam placement, run
-# during repair PLANNING (upstream of any output/mux, so NO patched audio is ever written). Two run shapes:
-#   * DEFAULT (`--gap-fingerprints DIR`): scores each bracket TWICE — once in the production repair decision
-#     pass (`AudioFitSource::score`) and again in the oracle corpus dump (`compute_region_measurements` ->
-#     `oracle_score_fit_candidate(..., anchor=true)`), which also writes a licensing-safe extended corpus
-#     (`corpus.json` + per-gap JSON + `manifest.json`). That oracle dump is ~82% of wall-clock (see 8g5).
-#   * -PerfOnly: drops `--gap-fingerprints` -> only the production decision pass runs. Same bracket_stats
-#     stream (same emitter), no corpus, ~5x faster. Use this for the §7 realizable re-measurement.
-# With
+# HOW IT RUNS THE MEASUREMENT: a `--gap-fingerprints DIR` run scores every anchor bracket through the SAME
+# `evaluate_seam_gate_fit_candidate` production uses (via `oracle_score_fit_candidate(..., anchor=true)` inside
+# `compute_region_measurements`), but WITHOUT the mux/write step — so it produces the per-bracket perf data AND
+# a licensing-safe extended corpus (`corpus.json` + per-gap JSON + `manifest.json`) in a single pass over each
+# pair. This oracle force-scoring is REQUIRED for the measurement: a plain production repair drops equivalent
+# gaps at the equivalence gate (`skip_equivalent_gaps`, on by default) BEFORE the anchor-seam search, so on
+# equiv-heavy content it emits ZERO bracket_stats (see docs/archive/TEMP-anchor-pregate-plan.md §7). With
 # `CLIP_SYNC_BRACKET_STATS=1` the gate emits one `bracket_stats` event per scored bracket, categorized by
 # BOTH arms (unlike the corpus's own first-failing `failure_stage`, which can't separate matchability-doomed
 # from structure-doomed):
@@ -36,8 +33,6 @@
 # Two modes:
 #   Run pairs from a manifest (builds the corpus under -CorpusRoot AND rolls up perf):
 #     ./scripts/measure-anchor-brackets.ps1 -Manifest pairs.csv -CorpusRoot ./corpus-out
-#   Same, but FAST — production decision pass only, no corpus, ~5x faster (perf lever #2 §7 re-measurement):
-#     ./scripts/measure-anchor-brackets.ps1 -Manifest pairs.csv -PerfOnly
 #   Roll up logs you already captured (skip the runs):
 #     ./scripts/measure-anchor-brackets.ps1 -Logs perf_logs/
 #
@@ -61,19 +56,9 @@ param(
     [string]$ScanArgs = '',
 
     # Where the per-pair fingerprint corpora are written (persisted — this is the extended corpus). Each
-    # pair gets a subdir named for its label. Ignored under -PerfOnly (no corpus is written).
+    # pair gets a subdir named for its label.
     [Parameter(ParameterSetName = 'Run')]
     [string]$CorpusRoot = (Join-Path (Get-Location) 'anchor-bracket-corpus'),
-
-    # FAST PATH (perf lever #2 §7 re-measurement): drop `--gap-fingerprints` so each pair runs ONLY the
-    # production repair decision pass, not the oracle corpus dump. bracket_stats/pregate_doomed are emitted
-    # by the production anchor-seam gate scoring (`AudioFitSource::score` -> `evaluate_seam_gate_fit_candidate`)
-    # during repair PLANNING, which runs regardless of any output/mux — so this yields the same realizable-vs-
-    # ceiling read WITHOUT the ~82%-wall-clock per-bracket oracle dump (see 8g5). ~5x faster; writes no corpus.
-    # Trade-off: scores the brackets production actually tries (the feasible pool), not the oracle's diagnostic
-    # enumeration; the realizable/ceiling ratio + LEAK check stay valid (both fields come from the same line).
-    [Parameter(ParameterSetName = 'Run')]
-    [switch]$PerfOnly,
 
     # Roll up existing logs instead of running. A directory (all *.log) or a glob.
     [Parameter(ParameterSetName = 'Logs', Mandatory = $true)]
@@ -197,7 +182,7 @@ $logFiles = [System.Collections.Generic.List[object]]::new()
 if ($PSCmdlet.ParameterSetName -eq 'Run') {
     if (-not (Test-Path $Manifest)) { throw "manifest not found: $Manifest" }
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-    if (-not $PerfOnly) { New-Item -ItemType Directory -Force -Path $CorpusRoot | Out-Null }
+    New-Item -ItemType Directory -Force -Path $CorpusRoot | Out-Null
 
     Write-Host "Building clip-sync-repair ($CargoProfile, --features $Features)..." -ForegroundColor Cyan
     $profileFlag = if ($CargoProfile -eq 'release') { '--release' } else { "--profile=$CargoProfile" }
@@ -231,16 +216,13 @@ if ($PSCmdlet.ParameterSetName -eq 'Run') {
         $corpus = Join-Path $CorpusRoot $label
         $log = Join-Path $OutDir "$label.log"
 
-        # A B [--gap-fingerprints <corpus>] <shared scan args> <per-pair extra>. No mux/write flag either way:
-        # bracket_stats comes from the production repair DECISION pass (upstream of any output). -PerfOnly drops
-        # --gap-fingerprints so only that pass runs (no oracle corpus dump, ~5x faster). Array form is space-safe.
-        $argList = @($aPath, $bPath)
-        if (-not $PerfOnly) { $argList += @('--gap-fingerprints', $corpus) }
+        # A B --gap-fingerprints <corpus> <shared scan args> <per-pair extra>. No mux/write flag: the
+        # fingerprint run only writes the corpus dir. Paths are passed via the array form (space-safe).
+        $argList = @($aPath, $bPath, '--gap-fingerprints', $corpus)
         if ($ScanArgs -ne '') { $argList += ($ScanArgs -split '\s+' | Where-Object { $_ -ne '' }) }
         if ($extra -ne '') { $argList += ($extra -split '\s+' | Where-Object { $_ -ne '' }) }
 
-        $mode = if ($PerfOnly) { 'perf-only (no corpus)' } else { "fingerprinting (corpus -> $corpus)" }
-        Write-Host "[$label] $mode..." -ForegroundColor Cyan
+        Write-Host "[$label] fingerprinting (corpus -> $corpus)..." -ForegroundColor Cyan
         $env:CLIP_SYNC_BRACKET_STATS = '1'
         $env:RUST_LOG = 'warn,bracket_stats=info'
         # Stderr carries the tracing events; capture both streams to the pair log.

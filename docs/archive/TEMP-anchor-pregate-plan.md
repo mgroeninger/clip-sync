@@ -235,6 +235,33 @@ un-pause and wire §3. If it's near-zero (the −0.03-floor prediction), the byt
 record the negative result, drop the lever, and redirect to the parent plan's other levers (e.g. FFT the
 per-bracket score sweep, `[[production-perf-gate-search-dominates]]`).
 
+**How to run it (2026-07-23 — the equivalence-gate finding; do NOT use a production/`-PerfOnly` run):**
+`pregate_doomed` is emitted inside `evaluate_seam_gate_fit_candidate`, which only fires for a gap that actually
+*enters* the anchor-seam search. In a plain production repair the **equivalence gate** (`skip_equivalent_gaps`,
+ON by default) drops equivalent gaps from the fill plan *before decode/patch* (`patch_audio.rs:337-339`), so on
+equiv-heavy content the anchor search — and therefore `bracket_stats` — **never runs** (empirically: pair 1's 17
+gaps are all `[equiv:]` → a production run emitted zero bracket_stats). The `--gap-fingerprints` oracle path
+(`compute_region_measurements` → `oracle_score_fit_candidate(..., anchor=true)`, `gap_fingerprint.rs:2703`)
+force-scores every bracket of every gap regardless of the equivalence gate — that force-scoring IS the ~82%
+wall-clock this lever optimizes (`[[8g5-fingerprint-perf-deferred]]`, `[[production-perf-gate-search-dominates]]`
+`char_gate_search`) and IS the population the 44.8% ceiling was measured on. So the realizable re-measurement
+**must be the full fingerprint run** (default mode of `measure-anchor-brackets.ps1`, reusing the greenlight
+manifest + recipe): `./scripts/measure-anchor-brackets.ps1 -Manifest <greenlight-pairs.csv> -ScanArgs "--min-gap-ms 500"`.
+No shortcut avoids the ~10-12h — the measurement is a byproduct of the scoring that dominates it. (For a fast
+preliminary read, run just the wall-clock-dominant pairs 13/16/17; the realizable/ceiling ratio is per-bracket so
+a subset is internally valid, but do the full 17 for the final go/no-go.)
+
+> **Strategic note this surfaces:** because the equivalence gate already skips the anchor search in production,
+> lever #2's *production* payoff on equiv-heavy content is ≈0; its real beneficiary is the **characterization/
+> fingerprint tooling** (the force-scoring path). "Byte-identical production audio" remains the *safety* bar on
+> the shared predicate (it must not perturb the rare non-equivalent gaps that DO reach the production anchor
+> search), but the *speedup* accrues to the fingerprint/oracle workload. Weigh the go/no-go accordingly.
+
+> **Tooling cleanup (do this):** a `-PerfOnly` switch was briefly added to `measure-anchor-brackets.ps1` to run
+> the production decision pass without the oracle dump. The equivalence-gate finding makes it the wrong tool for
+> this measurement (it forces `--no-skip-equivalent-gaps`, measuring a population production normally skips).
+> **Remove `-PerfOnly`** — the default fingerprint mode is the sanctioned re-measurement. *(Removed 2026-07-23.)*
+
 ---
 
 ## 6. Definition of done
