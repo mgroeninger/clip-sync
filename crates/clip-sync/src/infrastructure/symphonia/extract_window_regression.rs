@@ -411,3 +411,99 @@ fn mkv_aac_anchored_end_window_extract_succeeds() {
         "end window should contain chirp audio, peak={peak}"
     );
 }
+
+/// M-FDK-RESET regression: after a backward seek on a reused session, the FDK
+/// decoder must re-prime to a **bit-identical steady state** — no SBR/overlap carry
+/// from a previously-decoded window may survive into the converged output.
+///
+/// Oracle & why the steady-state region: extracting window B on a session that just
+/// decoded a later window A is compared against a fresh-session extract of B. The
+/// leading frames legitimately differ between the two (the backward seek re-primes
+/// SBR from a different reader position — the `reset_decode_io` domain, not
+/// `reset()`), so we assert on the region *after* the re-prime transient. There the
+/// two must match exactly. With the pre-fix no-op `reset()`, A's decoder state bleeds
+/// through and thousands of steady-state samples diverge (low magnitude but
+/// systematic); the recreate-decoder `reset()` drives that to zero. A fresh-vs-fresh
+/// control guards against unrelated nondeterminism. The in-process HE-AAC sweep
+/// encoder means this runs on stock ffmpeg (no libfdk needed). Requires `he-aac` +
+/// `ffmpeg-tests`.
+#[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
+#[test]
+fn fdk_reset_backward_seek_reprimes_to_identical_steady_state() {
+    use crate::test_support::ffmpeg_util;
+
+    // Skip the leading re-prime transient (a few 2048-sample HE-AAC frames); assert
+    // bit-exact convergence beyond it.
+    const STEADY_STATE_FROM: usize = 8_192;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mp4 = temp.path().join("sweep_he_aac.mp4");
+    // Genuine HE-AAC (SBR) 1 kHz -> 16 kHz sweep so window A (late) and window B
+    // (early) carry very different high-band content.
+    if !ffmpeg_util::write_he_aac_sweep_mp4(&mp4, SAMPLE_RATE, 3, 1_000.0, 16_000.0) {
+        eprintln!("skipping FDK reset regression: ffmpeg unavailable for HE-AAC remux");
+        return;
+    }
+
+    let (tracks, _, _) = probe_media_reusable(&mp4).expect("probe sweep mp4");
+    let track = tracks.into_iter().next().expect("one audio track");
+
+    // A: late window. B: earlier window, reached by a backward seek after A.
+    let window_a = ClipWindow::new(
+        Duration::from_millis(2_400),
+        Duration::from_millis(2_900),
+        ClipLabel::End,
+    );
+    let window_b = ClipWindow::new(
+        Duration::from_millis(600),
+        Duration::from_millis(1_100),
+        ClipLabel::Interior,
+    );
+
+    // One extract per fresh session, replaying `windows` in order on a single session.
+    let extract = |windows: &[&ClipWindow]| -> Vec<i16> {
+        let reader = SymphoniaMediaReader;
+        let mut session = reader.open(&MediaSource::new(&mp4)).expect("open session");
+        let mut clip = None;
+        for window in windows {
+            clip = Some(
+                session
+                    .extract_mono(&track, window, &NoopProgress, "reset_regression")
+                    .expect("mono extract"),
+            );
+        }
+        clip.expect("at least one window").samples
+    };
+
+    let fresh_b = extract(&[&window_b]);
+    let fresh_b_again = extract(&[&window_b]);
+    // Everyday cached-decoder path: decode later window A, then backward-seek to B —
+    // this runs `decoder.reset()` between windows.
+    let reused_b = extract(&[&window_a, &window_b]);
+
+    let steady_divergent = |a: &[i16], b: &[i16]| -> usize {
+        let n = a.len().min(b.len());
+        (STEADY_STATE_FROM.min(n)..n).filter(|&i| a[i] != b[i]).count()
+    };
+
+    // Control: decoding is deterministic, so two fresh extracts of B are identical.
+    assert_eq!(
+        steady_divergent(&fresh_b, &fresh_b_again),
+        0,
+        "fresh-vs-fresh control diverged: extract is nondeterministic, oracle invalid"
+    );
+    assert!(
+        fresh_b.len() > STEADY_STATE_FROM,
+        "window B too short ({} samples) to have a steady-state region",
+        fresh_b.len()
+    );
+
+    // The fix: the reused decoder must re-prime to the same steady state as fresh.
+    let divergent = steady_divergent(&fresh_b, &reused_b);
+    assert_eq!(
+        divergent, 0,
+        "after a backward seek, {divergent} steady-state samples (beyond \
+         {STEADY_STATE_FROM}) differ from a fresh extract; FDK reset() is leaking \
+         decoder state across the seek"
+    );
+}

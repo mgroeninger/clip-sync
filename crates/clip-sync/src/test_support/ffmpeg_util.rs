@@ -331,24 +331,90 @@ pub fn encode_he_aac_mp4_from_wav(input_wav: &Path, output: &Path) -> bool {
     false
 }
 
+/// Encode a mono linear frequency sweep (`f0`->`f1` Hz) to HE-AAC (SBR) ADTS in-process.
+///
+/// Uses the bundled FDK **encoder** (`fdk_aac::enc`) so a genuine SBR bitstream can be
+/// produced without a libfdk-enabled ffmpeg build (stock ffmpeg only encodes AAC-LC).
+/// `AudioObjectType::Mpeg4HeAac` yields `frameLength == 2048`, the HE-AAC signature.
+/// The sweep guarantees position-dependent high-band content so SBR state is exercised.
+#[cfg(feature = "he-aac")]
+pub fn encode_he_aac_adts_sweep(sample_rate: u32, seconds: u32, f0: f64, f1: f64) -> Vec<u8> {
+    use fdk_aac::enc::{AudioObjectType, BitRate, ChannelMode, Encoder, EncoderParams, Transport};
+
+    let total = (sample_rate * seconds) as usize;
+    let k = (f1 - f0) / f64::from(seconds);
+    let pcm: Vec<i16> = (0..total)
+        .map(|i| {
+            let t = i as f64 / f64::from(sample_rate);
+            // Linear chirp instantaneous phase: 2π(f0·t + ½·k·t²).
+            let phase = std::f64::consts::TAU * (f0 * t + 0.5 * k * t * t);
+            (f64::from(i16::MAX) * 0.6 * phase.sin()) as i16
+        })
+        .collect();
+
+    let encoder = Encoder::new(EncoderParams {
+        bit_rate: BitRate::Cbr(48_000),
+        sample_rate,
+        transport: Transport::Adts,
+        channels: ChannelMode::Mono,
+        audio_object_type: AudioObjectType::Mpeg4HeAac,
+    })
+    .expect("fdk HE-AAC encoder init");
+    let frame_len = encoder.info().expect("encoder info").frameLength as usize;
+
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 8192];
+    let mut pos = 0usize;
+    loop {
+        let chunk = if pos < pcm.len() {
+            &pcm[pos..(pos + frame_len).min(pcm.len())]
+        } else {
+            &[][..] // drain: empty input flushes buffered frames
+        };
+        let info = match encoder.encode(chunk, &mut buf) {
+            Ok(info) => info,
+            Err(_) => break, // AACENC_ENCODE_EOF once fully drained
+        };
+        out.extend_from_slice(&buf[..info.output_size]);
+        if chunk.is_empty() && info.output_size == 0 {
+            break;
+        }
+        pos += info.input_consumed;
+    }
+    out
+}
+
+/// Write a genuine HE-AAC (SBR) sweep to `path` as MP4.
+///
+/// Encodes SBR in-process (see [`encode_he_aac_adts_sweep`]) then remuxes ADTS->MP4 with
+/// `ffmpeg -c copy`, which needs no libfdk (copy, not re-encode) — so this works on stock
+/// ffmpeg locally and in CI. Returns `false` if ffmpeg is unavailable or the remux fails.
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
-pub fn write_he_aac_mp4_fixture(path: &Path) -> bool {
+pub fn write_he_aac_sweep_mp4(path: &Path, sample_rate: u32, seconds: u32, f0: f64, f1: f64) -> bool {
+    use std::io::Write;
+
     if !ffmpeg_available() {
         return false;
     }
-
-    let attempts: &[&[&str]] = &[
-        &["-c:a", "libfdk_aac", "-profile:a", "aac_he", "-b:a", "64k"],
-        &["-c:a", "aac", "-profile:a", "aac_he", "-b:a", "64k"],
-    ];
-
-    for audio_codec_args in attempts {
-        if write_lavfi_sine_container(path, &["-f", "mp4"], audio_codec_args, 3) {
-            return true;
-        }
+    let adts = encode_he_aac_adts_sweep(sample_rate, seconds, f0, f1);
+    let aac_path = path.with_extension("aac");
+    if std::fs::File::create(&aac_path)
+        .and_then(|mut f| f.write_all(&adts))
+        .is_err()
+    {
+        return false;
     }
 
-    false
+    Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&aac_path)
+        .args(["-c:a", "copy", "-f", "mp4"])
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Build a dual-track MP4: track 0 = 2ch AAC, track 1 = 6ch AC-3 (channels duplicated from input).

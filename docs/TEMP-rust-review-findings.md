@@ -8,9 +8,11 @@
 > **P0 status:** All five P0 items **fixed** (2026-07-23).
 > **P1 status:** Mechanical P1s **fixed** (2026-07-23): M-CLI, M-NaN, M-MUX,
 > M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT (warn sites). **M-HE fixed**
-> (2026-07-23): extract sinks + coarse search now rebase to the decoded rate. Still
-> open: M-FDK-RESET, M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report
-> flags / unknown TOML keys / `align_videos` `Ok(None)`).
+> (2026-07-23): extract sinks + coarse search now rebase to the decoded rate.
+> **M-FDK-RESET fixed + regression-tested** (2026-07-23): `reset()` now recreates the
+> FDK decoder; verified red→green with an in-process HE-AAC SBR fixture. Still open:
+> M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report flags / unknown TOML
+> keys / `align_videos` `Ok(None)`).
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -56,6 +58,7 @@ threaded. Remaining open defects cluster in:
 | **M-RESAMPLE** | Clear `decoded_sample_count` after rubato/linear resample | rubato unit tests |
 | **M-SILENT** *(partial)* | `warn!` on B-scan failure; `debug!` on coarse-query prepare/fp/align errors; corpus JSON parse/read warnings | code review |
 | **M-HE** | Extract sinks gate `metadata_ready` on a new `rate_validated` flag so the first decoded packet always reaches `on_first_decode`, which rebases `target_samples`/`target_frames` to the decoded rate and `warn!`s on hint mismatch; `locate_query` coarse search sizes `l_samples`/`stride` from the first bucket's decoded rate, not the probe hint | `extract_loop::tests::{mono_first_decode_rebases_window_math_when_decoded_rate_exceeds_hint, mono_first_decode_preserves_rate_when_hint_matches_decoded, interleaved_first_decode_rebases_target_frames_when_decoded_rate_exceeds_hint}`; `-Tier pr` green |
+| **M-FDK-RESET** | `AacDecoder::reset()` recreates `Decoder::new(Transport::Adts)` + clears `m4a_info_validated` (fdk-aac 0.8 has no flush API), so post-seek frames no longer inherit pre-seek SBR/overlap state; ADTS header is rebuilt per-packet from base-rate `m4a_info`, so first post-reset frame re-configures cleanly | `extract_window_regression::fdk_reset_backward_seek_reprimes_to_identical_steady_state` — **verified red→green** (pre-fix: 5261 divergent steady-state samples; fixed: 0). Runs on **stock ffmpeg** via an in-process FDK-encoder HE-AAC fixture (see below). Full `he-aac,ffmpeg-tests,test-utils` suite green (341 pass). |
 
 ---
 
@@ -63,11 +66,10 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-FDK-RESET | P1 | FDK `reset()` is empty no-op after seeks | `fdk_aac/decoder.rs` |
-| 2 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
-| 3 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
-| 4 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
-| 5 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 1 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
+| 2 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
+| 3 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
+| 4 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
 | 6 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
 | 7 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
 | 8 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
@@ -150,11 +152,61 @@ interleaved sinks — plus a hint-matches-decoded control. Full `-Tier pr` green
 `sample_count_tolerance_allows_he_aac_end_boundary_gap`). Existing HE-AAC ffmpeg
 fixtures cover the integration path under `--features he-aac,ffmpeg-tests`.
 
-### M-FDK-RESET. FDK `reset()` empty after seeks — **open**
+### M-FDK-RESET. FDK `reset()` empty after seeks — **fixed + regression-tested 2026-07-23** (recreate-decoder)
 
-**File:** `fdk_aac/decoder.rs` (confirmed: `reset(&mut self) {}` at line 139; the
-`NeedReset` arm in `extract_loop.rs` calls `decoder.reset()` after seeks, so it is
-reachable).
+**File:** `fdk_aac/decoder.rs` (was `reset(&mut self) {}` at line 139; now recreates
+the `Decoder` and clears `m4a_info_validated`). Note `reset()` is called after **every**
+seek at `extract_loop.rs:309` (the everyday path), not only the `NeedReset` arm — so it
+is firmly on the hot path.
+
+**Measured magnitude (2026-07-23, `fdk_reset_backward_seek_reprimes_to_identical_steady_state`).**
+Reproduced end-to-end with a genuine HE-AAC (SBR) sweep. Comparing a reused-session
+backward-seek extract of window B against a fresh-session extract of B:
+- **Decoder-state effect (what `reset()` owns):** pre-fix leaves **5261** steady-state
+  samples divergent — *low magnitude (≤3 LSB) but systematic and widespread*; the fix
+  drives it to **0** (bit-exact). This is the part that was silently wrong.
+- **Reader-position effect (orthogonal, NOT `reset()`):** the *leading* re-prime region
+  (~first 3 SBR frames ≈ 6 k samples) diverges by a *large* amount (~23 k) both before
+  and after the fix — because the backward seek re-primes SBR from a different reader
+  landing point. This is the `reset_decode_io` domain; the fix neither helps nor should.
+
+So the earlier "SBR-overlap on the first frame(s), within tolerance" framing was
+directionally right but the effect is actually a low-level contamination smeared across
+the *whole converged window*, not just the first frames — real, previously silent, and
+now closed. The large leading divergence is a separate reader-position artifact,
+confirming the reader-reopen analysis below with hard numbers.
+
+**Blast radius (traced 2026-07-23).** `reset()` *is* on the hot path: sessions cache
+`MediaIoState` (with its decoders) via `open_io_state` and reuse it across window
+extracts, doing a per-extract seek + `decoder.reset()`. So the no-op means every
+reused-decoder backward seek carries pre-seek SBR/overlap state into the first
+post-seek frame(s). Why this has never been observed as wrong audio: the three
+reader-reopen escape hatches recreate the decoder as a *side effect*, masking the
+broken reset at exactly the roughest seek points:
+- `seek_with_recovery` — reopens `MediaIoState` on seek failure.
+- `track_decodable_extent` — always reopens after a tail scan (MP4 reader is broken
+  past EOF).
+- `reset_decode_io` — explicit full container reopen (used by high-rate refinement,
+  see below).
+
+Residual exposure = the *everyday* extract path that reuses a cached FDK decoder
+across per-window seeks where none of the reopens fire; the SBR-overlap contamination
+lands on the first frame(s) and is almost certainly swallowed by
+`sample_count_tolerance` (~2 SBR frames) / boundary trimming — which is why it reads
+as latent rather than a live bug.
+
+**`reset_decode_io: true` is reader-motivated, not decoder-motivated (traced
+2026-07-23).** The `extract_native_holdout(…, reset_decode_io: true)` calls in
+`high_rate_refinement.rs` (lines 295, 436) exist to clear a *corrupted reader
+position*, not to reset the decoder. Evidence: the `ports.rs` doc for the method
+("…so the next window decode does not inherit a corrupted reader position (common on
+MKV after backward seeks)"), the introducing commit `14170d8`, and
+`media-session-redesign-plan.md` (Phase 2 `seek_with_recovery` / attempt-2 reopen;
+"post-extent reopen kept for MP4"). The decoder recreation is incidental. **Consequence
+for the fix:** repairing `reset()` does *not* let us delete these reader reopens — the
+reader-position problem is real and orthogonal. At most, a correct cheap `reset()`
+could let a future refactor swap one full-container `reset_decode_io` reopen for a
+decoder-only reset *when* the reader position is known-good; the reopens themselves stay.
 
 **Recommendation:** Implement `reset()` via FDK flush/clear **if `fdk-aac` 0.8
 exposes one on `Decoder`** — but do not assume it does. Robust fallback that needs
@@ -164,8 +216,28 @@ state is cleared without betting on a flush API. Optionally keep a reusable
 ADTS+payload `Vec` on `self` to remove per-packet allocs (pairs with M-CLONE’s FDK
 slice).
 
-**Test:** seek backward then extract the same window twice; post-seek samples must
-not retain pre-seek SBR/overlap state. Needs `he-aac` + a small MP4 fixture.
+**Test (done).** `fdk_reset_backward_seek_reprimes_to_identical_steady_state`
+(`extract_window_regression.rs`): decode a late window A then backward-seek to earlier
+window B on one session; assert the **steady-state region** (samples past the re-prime
+transient) is bit-identical to a fresh-session extract of B, with a fresh-vs-fresh
+determinism control. Verified red (5261 divergent) → green (0).
+
+*Fixture technique worth reusing:* stock ffmpeg (incl. CI's `windows-latest`) is built
+**without libfdk**, so it cannot *encode* HE-AAC — which is why the existing
+`write_he_aac_mp4_fixture` tests silently **skip everywhere**. The `fdk-aac` crate,
+however, bundles the FDK **encoder** (`fdk_aac::enc`), and its public `Encoder` emits
+real SBR (`AudioObjectType::Mpeg4HeAac` → `frameLength == 2048`) despite the "hardcode
+SBR off" source comment. So `test_support::ffmpeg_util::write_he_aac_sweep_mp4` encodes
+SBR **in-process** and remuxes ADTS→MP4 with `ffmpeg -c copy` (copy needs no libfdk).
+This makes HE-AAC decode tests actually **execute** on stock ffmpeg + in CI, instead of
+skipping.
+
+*Migration (done).* `probe_and_extract_he_aac_mp4_container` was moved onto
+`write_he_aac_sweep_mp4` and now genuinely runs (verified: no skip line, decodes real
+SBR, non-silent PCM); the dead `write_he_aac_mp4_fixture` builder was deleted. The 5.1
+`probe_and_extract_he_aac_surround_mp4_container` **cannot** migrate — the fdk-aac crate's
+`Encoder` wrapper is stereo-max (`EncoderHandle::alloc(0, 2)`), so surround still needs a
+libfdk-enabled ffmpeg and continues to skip.
 
 ### M-AC3-DRAIN. Single `receive_frame` per packet — **open**
 
@@ -317,7 +389,7 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 Do **not** start M-CFG or large module splits until the codec P1s are done — those
 are the remaining ways to get silently wrong audio.
 
-1. ~~**M-HE**~~ (done 2026-07-23) → **M-FDK-RESET** (+ buffer reuse) → **M-AC3-DRAIN**
+1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → **M-AC3-DRAIN** (+ FDK buffer reuse M-CLONE #3)
 2. **M-SILENT** remainder (unknown TOML keys + `align_videos` warn) — half-day
 3. **M-FFT** then **M-CLONE** planner (user-visible speed). M-FFT is now the
    blessed perf lever after the anchor pre-gate was dropped NO-GO (2026-07-23) —
@@ -331,7 +403,7 @@ are the remaining ways to get silently wrong audio.
 
 1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**.
 2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
-3. **Codec follow-ups (P1 M-FDK-RESET / M-AC3-DRAIN)** — FDK flush/recreate; drain AC-3 frames. *(M-HE HE-AAC rate cross-check done 2026-07-23.)*
+3. **Codec follow-ups (P1 M-AC3-DRAIN)** — drain AC-3 frames. *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder both done 2026-07-23; M-FDK-RESET now has a verified red→green backward-seek regression test running on stock ffmpeg.)*
 4. **Observability remainder (P1 M-SILENT)** — unknown TOML keys; `align_videos` `Ok(None)` logging; optional report flags.
 5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.

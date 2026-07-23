@@ -472,8 +472,11 @@ fn probe_and_extract_he_aac_mp4_container() {
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tone-he-aac.mp4");
-    if !ffmpeg_util::write_he_aac_mp4_fixture(&path) {
-        eprintln!("skipping HE-AAC MP4 test: ffmpeg unavailable or HE-AAC encode failed");
+    // Real SBR is generated in-process by the fdk-aac encoder, then remuxed with
+    // `ffmpeg -c copy` (no libfdk needed), so this actually runs on stock ffmpeg and
+    // in CI instead of silently skipping. See test_support::ffmpeg_util for why.
+    if !ffmpeg_util::write_he_aac_sweep_mp4(&path, 44_100, 3, 1_000.0, 16_000.0) {
+        eprintln!("skipping HE-AAC MP4 test: ffmpeg unavailable for HE-AAC remux");
         return;
     }
 

@@ -136,7 +136,14 @@ fn audio_buffer(m4a_info: &M4AInfo, sample_rate: u32) -> Result<AudioBuffer<i16>
 }
 
 impl AudioDecoder for AacDecoder {
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        // `fdk-aac` 0.8 exposes no flush/clear on `Decoder`, so recreate it to drop
+        // all SBR/overlap carry-over. Symphonia calls `reset()` after seeks; a no-op
+        // here would let pre-seek state contaminate the first post-seek frame(s).
+        // `m4a_info` is re-validated from the first decoded frame after reset.
+        self.decoder = Decoder::new(Transport::Adts);
+        self.m4a_info_validated = false;
+    }
 
     fn codec_info(&self) -> &CodecInfo {
         &Self::supported_codecs()
