@@ -68,7 +68,7 @@ param(
     # decoders are opt-in: real MKV/MP4 movie audio is usually AC-3/E-AC-3 (`ac3`) or HE-AAC (`he-aac`);
     # without them tracks demux but come back non-decodable ("no decodable audio tracks"). `ffmpeg-mux` is
     # NOT needed here (the fingerprint run never muxes). Matches docs/development.md minus ffmpeg-mux.
-    [string]$Features = 'calibration,ac3,he-aac'
+    [string]$Features = 'he-aac,ffmpeg-mux,ac3,calibration'
 )
 
 $ErrorActionPreference = 'Stop'
