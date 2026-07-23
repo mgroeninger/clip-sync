@@ -93,7 +93,7 @@ impl FromStr for FitBoundarySearch {
 }
 
 /// Which profile-bundle fields were set explicitly (TOML or CLI) and must not be overwritten.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RepairProfileFieldMask {
     pub fill_border_search_secs: bool,
     pub gap_end_extend_on_post_seam_fail: bool,

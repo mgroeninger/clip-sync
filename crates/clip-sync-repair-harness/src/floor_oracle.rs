@@ -40,7 +40,7 @@ pub struct FloorOracleDefaults {
     #[serde(default = "default_gap_interior_edge_secs")]
     pub gap_interior_edge_secs: f64,
     #[serde(default = "default_gap_interior_peak_max")]
-    pub gap_interior_peak_max: i16,
+    pub gap_interior_peak_max: u16,
 }
 
 impl Default for FloorOracleDefaults {
@@ -79,7 +79,7 @@ fn default_duration_match_tolerance_secs() -> f64 {
 fn default_gap_interior_edge_secs() -> f64 {
     0.05
 }
-fn default_gap_interior_peak_max() -> i16 {
+fn default_gap_interior_peak_max() -> u16 {
     500
 }
 
@@ -134,7 +134,7 @@ pub struct FloorOracleCase {
     /// MDCT energy into the silenced interior, so the default (500) would false-fail validation;
     /// the borders (not the interior) drive the seam, so a relaxed cap is acceptable there.
     #[serde(default)]
-    pub gap_interior_peak_max: Option<i16>,
+    pub gap_interior_peak_max: Option<u16>,
     /// **Punch-after-encode geometry** (same-master only). A is encoded from the *full* master,
     /// decoded, then the gap is zeroed in PCM — so A's borders are *native* lossy-decoded audio
     /// (no inject-then-encode MDCT ringing) and the gap interior is genuinely clean. This removes
@@ -176,7 +176,7 @@ pub struct SourceGapOracleMeta {
     pub gap_end_frame: usize,
     pub expect_informative_floor: bool,
     /// Resolved post-encode interior silence cap (per-case override or default).
-    pub gap_interior_peak_max: i16,
+    pub gap_interior_peak_max: u16,
 }
 
 pub struct BuiltFloorOracle {
@@ -561,7 +561,7 @@ pub fn validate_built_oracle(
         .map(|s| s.unsigned_abs())
         .max()
         .unwrap_or(0);
-    if peak > built.meta.gap_interior_peak_max as u16 {
+    if peak > built.meta.gap_interior_peak_max {
         return Err(format!(
             "gap interior peak {peak} exceeds max {} after encode",
             built.meta.gap_interior_peak_max

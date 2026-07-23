@@ -256,6 +256,14 @@ pub struct RepairConfig {
     /// Unified seam/floor integer-lag search radius (seconds).
     #[serde(default = "default_residual_lag_secs")]
     pub residual_lag_secs: f64,
+    /// Fields set explicitly in TOML (or by later CLI overrides of profile-bundle
+    /// knobs). Survives CLI `--quick`/`--full` profile re-application.
+    ///
+    /// Runtime-only: skipped by serde and ignored by `PartialEq` so TOML
+    /// round-trips compare equal to a freshly loaded config's values.
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub profile_field_mask: RepairProfileFieldMask,
 }
 
 fn default_min_gap_ms() -> u64 {
@@ -503,6 +511,7 @@ impl Default for RepairConfig {
             residual_floor_ok_db: default_residual_floor_ok_db(),
             residual_headroom_margin_db: default_residual_headroom_margin_db(),
             residual_lag_secs: default_residual_lag_secs(),
+            profile_field_mask: RepairProfileFieldMask::default(),
         }
     }
 }
@@ -633,6 +642,100 @@ impl RepairConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        // NaN/Inf pass ordinary range comparisons (`NaN < 0.0` is false), so reject
+        // non-finite floats before any threshold check.
+        for (field, value) in [
+            ("silence_peak_fraction", f64::from(self.silence_peak_fraction)),
+            ("absolute_silence_rms", f64::from(self.absolute_silence_rms)),
+            ("gap_offset_tolerance_secs", self.gap_offset_tolerance_secs),
+            ("min_fill_correlation", f64::from(self.min_fill_correlation)),
+            ("fill_align_margin_secs", self.fill_align_margin_secs),
+            (
+                "max_fill_align_adjustment_secs",
+                self.max_fill_align_adjustment_secs,
+            ),
+            ("fill_border_search_secs", self.fill_border_search_secs),
+            ("min_border_discovery_secs", self.min_border_discovery_secs),
+            ("border_standoff_secs", self.border_standoff_secs),
+            (
+                "short_gap_mean_correlation_secs",
+                self.short_gap_mean_correlation_secs,
+            ),
+            ("fill_length_slack_secs", self.fill_length_slack_secs),
+            ("fill_seam_search_secs", self.fill_seam_search_secs),
+            ("gap_signature_context_secs", self.gap_signature_context_secs),
+            (
+                "min_structure_match_score",
+                f64::from(self.min_structure_match_score),
+            ),
+            ("strong_structure_trust", self.strong_structure_trust),
+            (
+                "partial_structure_waveform_soften",
+                self.partial_structure_waveform_soften,
+            ),
+            ("normalize_window_secs", self.normalize_window_secs),
+            ("max_fill_gain_db", self.max_fill_gain_db),
+            ("fill_fit_structure_weight", self.fill_fit_structure_weight),
+            ("fill_fit_waveform_weight", self.fill_fit_waveform_weight),
+            (
+                "fill_fit_nominal_bias_scale",
+                self.fill_fit_nominal_bias_scale,
+            ),
+            (
+                "fill_fit_energy_nominal_bias_scale",
+                self.fill_fit_energy_nominal_bias_scale,
+            ),
+            (
+                "fill_fit_late_start_penalty_scale",
+                self.fill_fit_late_start_penalty_scale,
+            ),
+            ("fill_marginal_margin", f64::from(self.fill_marginal_margin)),
+            ("fill_absolute_floor", f64::from(self.fill_absolute_floor)),
+            ("fill_repeat_penalty_weight", self.fill_repeat_penalty_weight),
+            (
+                "fill_anchor_min_correlation",
+                f64::from(self.fill_anchor_min_correlation),
+            ),
+            (
+                "fill_anchor_max_adjustment_frac",
+                self.fill_anchor_max_adjustment_frac,
+            ),
+            (
+                "fill_anchor_search_prior_weight",
+                self.fill_anchor_search_prior_weight,
+            ),
+            ("max_anchor_bracket_secs", self.max_anchor_bracket_secs),
+            (
+                "anchor_seam_min_prominence",
+                f64::from(self.anchor_seam_min_prominence),
+            ),
+            (
+                "anchor_seam_min_match_pearson",
+                f64::from(self.anchor_seam_min_match_pearson),
+            ),
+            (
+                "anchor_seam_min_xcorr_peak",
+                f64::from(self.anchor_seam_min_xcorr_peak),
+            ),
+            (
+                "anchor_seam_xcorr_ambiguous_band",
+                f64::from(self.anchor_seam_xcorr_ambiguous_band),
+            ),
+            ("residual_floor_ok_db", self.residual_floor_ok_db),
+            (
+                "residual_headroom_margin_db",
+                self.residual_headroom_margin_db,
+            ),
+            ("residual_lag_secs", self.residual_lag_secs),
+        ] {
+            if !value.is_finite() {
+                return Err(ConfigError::InvalidValue {
+                    field: field.into(),
+                    reason: "must be a finite number".into(),
+                });
+            }
+        }
+
         if self.min_gap_ms == 0 {
             return Err(ConfigError::InvalidValue {
                 field: "min_gap_ms".into(),
@@ -948,6 +1051,7 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
     {
         let profile_explicit = repair_table.contains_key("profile");
         let mask = repair_profile_field_mask_from_toml(&repair_table);
+        config.repair.profile_field_mask = mask;
         if profile_explicit || config.repair.profile != RepairProfile::Default {
             config.repair.apply_profile_bundle(mask);
         }
@@ -1117,6 +1221,30 @@ dry_run = true
             format!("{err:?}").contains("fill_repeat_penalty_weight"),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn rejects_nan_float_thresholds() {
+        let config = RepairConfig {
+            min_fill_correlation: f32::NAN,
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("NaN");
+        assert!(
+            format!("{err:?}").contains("min_fill_correlation"),
+            "{err:?}"
+        );
+        assert!(format!("{err:?}").contains("finite"), "{err:?}");
+    }
+
+    #[test]
+    fn rejects_infinite_residual_lag() {
+        let config = RepairConfig {
+            residual_lag_secs: f64::INFINITY,
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("Inf");
+        assert!(format!("{err:?}").contains("residual_lag_secs"), "{err:?}");
     }
 
     #[test]

@@ -164,13 +164,10 @@ fn pcm_duration_secs(pcm: &MultiChannelPcm) -> Option<f64> {
     Some(pcm.frames() as f64 / f64::from(pcm.sample_rate))
 }
 
-fn validate_mux_duration(pcm: &MultiChannelPcm, source_video: &Path) -> Result<(), RepairError> {
+fn validate_mux_duration(pcm: &MultiChannelPcm, video_secs: f64) -> Result<(), RepairError> {
     let pcm_secs = pcm_duration_secs(pcm).ok_or_else(|| {
         RepairError::Mux("patched audio has no decodable duration".into())
     })?;
-    let video_secs = probe_media_duration_ms(source_video)
-        .map(|ms| ms as f64 / 1000.0)
-        .ok_or_else(|| RepairError::Mux("could not probe video duration via ffprobe".into()))?;
     if (pcm_secs - video_secs).abs() > MUX_DURATION_ERROR_SECS {
         return Err(RepairError::Mux(format_mux_duration_error(
             pcm_secs, video_secs,
@@ -179,8 +176,8 @@ fn validate_mux_duration(pcm: &MultiChannelPcm, source_video: &Path) -> Result<(
     Ok(())
 }
 
-fn mux_duration_ms(source_video: &Path, pcm: &MultiChannelPcm) -> Option<u64> {
-    probe_media_duration_ms(source_video).or_else(|| pcm_duration_ms(pcm))
+fn mux_duration_ms_from_probe(video_ms: Option<u64>, pcm: &MultiChannelPcm) -> Option<u64> {
+    video_ms.or_else(|| pcm_duration_ms(pcm))
 }
 
 fn run_ffmpeg_mux_with_progress(
@@ -305,12 +302,26 @@ impl MediaMuxer for FfmpegMediaMuxer {
         progress: &dyn ProgressReporter,
     ) -> Result<(), RepairError> {
         validate_pcm_layout(replacement_audio)?;
-        validate_mux_duration(replacement_audio, source_video)?;
+
+        let video_ms = probe_media_duration_ms(source_video).ok_or_else(|| {
+            RepairError::Mux("could not probe video duration via ffprobe".into())
+        })?;
+        validate_mux_duration(replacement_audio, video_ms as f64 / 1000.0)?;
+
+        // Mux to a sibling temp path, then rename on success so a failed run
+        // never leaves a truncated `-y` output that looks like a good file.
+        let parent = output.parent().filter(|p| !p.as_os_str().is_empty());
+        let tmp = tempfile::Builder::new()
+            .prefix("clip-sync-mux-")
+            .suffix(".partial")
+            .tempfile_in(parent.unwrap_or_else(|| Path::new(".")))
+            .map_err(|err| RepairError::Mux(format!("failed to create mux temp file: {err}")))?;
+        let tmp_path = tmp.path().to_path_buf();
 
         let depth = resolve_output_bit_depth(replacement_audio.source_bit_depth);
         let mut args = build_ffmpeg_mux_args(
             source_video,
-            output,
+            &tmp_path,
             options,
             replacement_audio.sample_rate,
             replacement_audio.channels,
@@ -321,6 +332,7 @@ impl MediaMuxer for FfmpegMediaMuxer {
         tracing::debug!(
             source = %source_video.display(),
             output = %output.display(),
+            temp = %tmp_path.display(),
             sample_rate = replacement_audio.sample_rate,
             channels = replacement_audio.channels,
             frames = replacement_audio.frames(),
@@ -329,8 +341,25 @@ impl MediaMuxer for FfmpegMediaMuxer {
         );
 
         progress.phase("Muxing video with patched audio...");
-        let duration_ms = mux_duration_ms(source_video, replacement_audio);
-        run_ffmpeg_mux_with_progress(&args, replacement_audio, depth, progress, duration_ms)
+        let duration_ms = mux_duration_ms_from_probe(Some(video_ms), replacement_audio);
+        match run_ffmpeg_mux_with_progress(&args, replacement_audio, depth, progress, duration_ms)
+        {
+            Ok(()) => {
+                // persist closes the handle then renames into place (Windows-safe).
+                tmp.persist(output).map_err(|err| {
+                    RepairError::Mux(format!(
+                        "mux succeeded but failed to move temp output into place: {err}"
+                    ))
+                })?;
+                Ok(())
+            }
+            Err(err) => {
+                // NamedTempFile Drop removes the partial on scope exit; keep explicit
+                // close so the error path is obvious.
+                let _ = tmp.close();
+                Err(err)
+            }
+        }
     }
 }
 
@@ -541,9 +570,9 @@ Error: no video stream\n";
             compressed_bytes: None,
             source_bit_depth: None,
         };
-        let err = super::validate_mux_duration(&pcm, Path::new("missing-probe.mp4"))
-            .expect_err("should fail without ffprobe or on skew");
-        assert!(err.to_string().contains("ffprobe") || err.to_string().contains("differ"));
+        // 100s PCM vs 1s video → skew beyond MUX_DURATION_ERROR_SECS.
+        let err = super::validate_mux_duration(&pcm, 1.0).expect_err("skew");
+        assert!(err.to_string().contains("differ") || err.to_string().contains("duration"));
     }
 
     #[test]

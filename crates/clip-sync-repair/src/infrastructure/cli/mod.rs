@@ -4,7 +4,7 @@ pub mod output;
 
 use clip_sync::{AlignmentMode, ProgressMode};
 
-use crate::domain::{RepairProfile, RepairProfileFieldMask};
+use crate::domain::RepairProfile;
 use crate::infrastructure::config::RepairAppConfig;
 
 use self::args::Args;
@@ -12,7 +12,9 @@ use self::args::Args;
 pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(profile) = resolve_cli_profile(args) {
         config.repair.profile = profile;
-        config.repair.apply_profile_bundle(RepairProfileFieldMask::default());
+        // Preserve fields the user set explicitly in TOML (same mask the loader used).
+        let mask = config.repair.profile_field_mask;
+        config.repair.apply_profile_bundle(mask);
     }
     if let Some(duration) = args.clip_length {
         config.align.clip.clip_length = duration;
@@ -77,6 +79,7 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if let Some(secs) = args.fill_border_search_secs {
         config.repair.fill_border_search_secs = secs;
+        config.repair.profile_field_mask.fill_border_search_secs = true;
     }
     if let Some(secs) = args.fill_align_margin_secs {
         config.repair.fill_align_margin_secs = secs;
@@ -140,9 +143,17 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;
+        config
+            .repair
+            .profile_field_mask
+            .gap_end_extend_on_post_seam_fail = true;
     }
     if args.no_gap_start_extend {
         config.repair.gap_start_extend_on_pre_seam_fail = false;
+        config
+            .repair
+            .profile_field_mask
+            .gap_start_extend_on_pre_seam_fail = true;
     }
     if args.no_short_gap_one_strong_seam {
         config.repair.short_gap_one_strong_seam_fallback = false;
@@ -391,6 +402,27 @@ mod cli_override_tests {
         assert!(!config.repair.fill_anchor_exclude_structure_trusted);
         assert!((config.repair.fill_anchor_max_adjustment_frac - 0.8).abs() < f64::EPSILON);
         assert!((config.repair.fill_anchor_search_prior_weight - 0.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn quick_cli_preserves_toml_explicit_border_search() {
+        use clap::Parser;
+        // TOML set fill_border_search_secs explicitly; --quick must not stomp it.
+        let mut config = RepairAppConfig::default();
+        config.repair.fill_border_search_secs = 12.0;
+        config.repair.profile_field_mask.fill_border_search_secs = true;
+        let args = crate::infrastructure::cli::args::Args::try_parse_from([
+            "clip-sync-repair",
+            "a.mkv",
+            "b.mkv",
+            "--quick",
+        ])
+        .expect("parse args");
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.profile, RepairProfile::Quick);
+        assert!((config.repair.fill_border_search_secs - 12.0).abs() < f64::EPSILON);
+        // Bundle fields not masked still take the quick profile.
+        assert!(!config.repair.gap_end_extend_on_post_seam_fail);
     }
 
     #[test]

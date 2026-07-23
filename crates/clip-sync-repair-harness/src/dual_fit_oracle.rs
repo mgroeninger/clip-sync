@@ -301,7 +301,7 @@ fn validate_stepped_oracle(built: &BuiltFloorOracle, defaults: &FloorOracleDefau
         .map(|s| s.unsigned_abs())
         .max()
         .unwrap_or(0);
-    if peak > built.meta.gap_interior_peak_max as u16 {
+    if peak > built.meta.gap_interior_peak_max {
         return Err(format!(
             "gap interior peak {peak} exceeds max {} after encode",
             built.meta.gap_interior_peak_max

@@ -304,18 +304,42 @@ fn coarse_search<RS: MediaSession>(
                     let pos_secs = next_score_index as f64 / f64::from(sample_rate);
 
                     // Prepare + fingerprint inside the callback only (no session re-entry).
-                    if let Ok(prepared) = prepare_clip_for_fingerprint(&window_clip, prep) {
-                        if let Ok(window_fp) = deps.fingerprinter.fingerprint(&prepared) {
-                            if let Ok(estimate) = deps.aligner.find_offset(&window_fp, query_fp) {
-                                // anchor = pos - r (Q0-confirmed sign; see § Coarse search).
-                                let anchor = pos_secs - estimate.offset_secs;
-                                candidates.push(Candidate {
-                                    anchor_ref_secs: anchor,
-                                    confidence: estimate.confidence,
-                                    window_start_secs: pos_secs,
-                                    window_end_secs: pos_secs + params.l_secs,
-                                });
+                    match prepare_clip_for_fingerprint(&window_clip, prep) {
+                        Ok(prepared) => match deps.fingerprinter.fingerprint(&prepared) {
+                            Ok(window_fp) => match deps.aligner.find_offset(&window_fp, query_fp)
+                            {
+                                Ok(estimate) => {
+                                    // anchor = pos - r (Q0-confirmed sign; see § Coarse search).
+                                    let anchor = pos_secs - estimate.offset_secs;
+                                    candidates.push(Candidate {
+                                        anchor_ref_secs: anchor,
+                                        confidence: estimate.confidence,
+                                        window_start_secs: pos_secs,
+                                        window_end_secs: pos_secs + params.l_secs,
+                                    });
+                                }
+                                Err(err) => {
+                                    tracing::debug!(
+                                        error = %err,
+                                        window_start_secs = pos_secs,
+                                        "coarse query: aligner.find_offset failed"
+                                    );
+                                }
+                            },
+                            Err(err) => {
+                                tracing::debug!(
+                                    error = %err,
+                                    window_start_secs = pos_secs,
+                                    "coarse query: fingerprint failed"
+                                );
                             }
+                        },
+                        Err(err) => {
+                            tracing::debug!(
+                                error = %err,
+                                window_start_secs = pos_secs,
+                                "coarse query: prepare_clip_for_fingerprint failed"
+                            );
                         }
                     }
 

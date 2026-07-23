@@ -78,7 +78,9 @@ fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
         sample_rate: target_rate,
         samples,
         decode_error_skips: clip.decode_error_skips,
-        decoded_sample_count: clip.decoded_sample_count,
+        // Count is denominated in source-rate samples; clear after resample so
+        // decode-fraction gating cannot mix units.
+        decoded_sample_count: None,
     }
 }
 
@@ -116,7 +118,7 @@ fn linear_resample_fallback(
         sample_rate: target_rate,
         samples: output,
         decode_error_skips: clip.decode_error_skips,
-        decoded_sample_count: clip.decoded_sample_count,
+        decoded_sample_count: None,
     }
 }
 

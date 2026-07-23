@@ -48,7 +48,10 @@ fn repair_fixture_deserializes_and_validates() {
 
 #[test]
 fn repair_fixture_roundtrips_through_toml() {
-    let config = load_repair_app_config(Some(&fixture_path())).expect("load fixture");
+    let mut config = load_repair_app_config(Some(&fixture_path())).expect("load fixture");
+    // `profile_field_mask` is runtime load metadata (#[serde(skip)]); clear it so the
+    // value round-trip compares equal to a bare TOML deserialize.
+    config.repair.profile_field_mask = Default::default();
     let serialized = toml::to_string(&config).expect("serialize RepairAppConfig");
     let reparsed: RepairAppConfig = toml::from_str(&serialized).expect("re-parse serialized config");
     assert_eq!(config, reparsed);

@@ -792,8 +792,28 @@ fn read_pair(dir: &Path) -> Option<CorpusFile> {
 }
 
 fn read_corpus_json(path: &Path) -> Option<CorpusFile> {
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            eprintln!(
+                "warning: failed to read corpus {}: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    match serde_json::from_str(&text) {
+        Ok(file) => Some(file),
+        Err(err) => {
+            // Do not silently fall back to stale per-gap files when schema drifts.
+            eprintln!(
+                "warning: failed to parse corpus {}: {err}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs: f64) -> GapRow {

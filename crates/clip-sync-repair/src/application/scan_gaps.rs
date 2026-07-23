@@ -348,14 +348,19 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // A decode error still returns whatever was scanned so far (report-only safe); either way we
         // return the runs plus the retained per-block level timeline (empty unless the scanner retains it).
         let mut b_timeline_skew = None;
-        let _ = session.scan_interleaved_buckets(
+        if let Err(err) = session.scan_interleaved_buckets(
             track,
             decode_chunk_secs,
             progress,
             "scan-b",
             &mut on_bucket,
             &mut b_timeline_skew,
-        );
+        ) {
+            tracing::warn!(
+                error = %err,
+                "B-side silence scan failed mid-file; later gaps may report b_has_energy=false"
+            );
+        }
 
         let (runs, levels) = scanner.finish_with_levels();
         let intervals = runs

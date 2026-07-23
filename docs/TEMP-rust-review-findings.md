@@ -5,9 +5,11 @@
 > `clip-sync-repair-fixtures`. Findings were verified in source where marked
 > **confirmed**.
 >
-> **P0 status:** All five P0 items **fixed** (2026-07-23). Regression unit tests
-> added; `cargo test -p clip-sync --features he-aac|ac3 --lib`, harness
-> `floor_oracle` tests, and `.\scripts\test-tier.ps1 -Tier pr` all green.
+> **P0 status:** All five P0 items **fixed** (2026-07-23).
+> **P1 status:** Mechanical P1s **fixed** (2026-07-23): M-CLI, M-NaN, M-MUX,
+> M-HARNESS-CAST, M-RESAMPLE (count clear), M-SILENT (warn sites). Still open:
+> M-HE, M-FDK-RESET, M-AC3-DRAIN, and non-mechanical M-SILENT pieces (report
+> flags / unknown TOML keys / `align_videos` `Ok(None)`).
 >
 > **Context:** Default `cargo clippy --workspace --all-targets` nearly clean
 > (2 `dead_code` warnings in `gap_anchor_seam.rs`). Pedantic clippy produces
@@ -40,23 +42,33 @@ threaded. Remaining open defects cluster in:
 | **H6** | Clamp floor-oracle interior end to `samples_a.len()` via `gap_interior_range` | harness `floor_oracle` tests |
 | **H5** | Replace `unsafe impl Sync` with `Mutex<Box<dyn OxideDecoder>>` | compiles under `AudioDecoder: Send + Sync`; `cargo test -p clip-sync --features ac3 --lib` |
 
+## Fixed (P1 mechanical) — 2026-07-23
+
+| ID | What | Evidence |
+|----|------|----------|
+| **M-CLI** | Persist `profile_field_mask` from TOML; CLI `--quick`/`--full` reuses it | `quick_cli_preserves_toml_explicit_border_search` |
+| **M-NaN** | Reject non-finite floats before range checks | `rejects_nan_float_thresholds`, `rejects_infinite_residual_lag` |
+| **M-MUX** | Single ffprobe; mux to tempfile then `persist`; cleanup on failure | `validate_mux_duration_rejects_large_skew`; `-Tier pr` mux path |
+| **M-HARNESS-CAST** | `gap_interior_peak_max: u16` (no `i16 as u16` wrap) | harness compile + floor_oracle tests |
+| **M-RESAMPLE** | Clear `decoded_sample_count` after rubato/linear resample | rubato unit tests |
+| **M-SILENT** *(partial)* | `warn!` on B-scan failure; `debug!` on coarse-query prepare/fp/align errors; corpus JSON parse/read warnings | code review |
+
 ---
 
 ## Priority order (remaining)
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-CLI | P1 | `--quick`/`--full` stomps explicit TOML overrides | `repair/.../cli/mod.rs:13–16` |
-| 2 | M-NaN | P1 | NaN floats pass config validation | `repair/.../config.rs` |
-| 3 | M-HE | P1 | HE-AAC container rate trusted; SBR mismatch | `extract_loop.rs` |
-| 4 | M-MUX | P1 | Failed mux leaves partial output file | `ffmpeg_mux.rs` |
-| 5 | M-SILENT | P1 | Swallowed errors look like "no match" / unfillable | several (see below) |
-| 6 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search | `offset_refinement.rs:238` |
-| 7 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
-| 8 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 9 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 10 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 11 | L-* | P3 | Dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 1 | M-HE | P1 | HE-AAC container rate trusted; SBR mismatch | `extract_loop.rs` |
+| 2 | M-FDK-RESET | P1 | FDK `reset()` is empty no-op after seeks | `fdk_aac/decoder.rs` |
+| 3 | M-AC3-DRAIN | P1 | Single `receive_frame` per packet | `oxideav_ac3/decoder.rs` |
+| 4 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
+| 5 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search | `offset_refinement.rs:238` |
+| 6 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 7 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
+| 8 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 9 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
+| 10 | L-* | P3 | Dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
 
 ---
 
@@ -249,12 +261,12 @@ one exported stub/builder; RFC 4180 CSV / `csv` crate.
 
 ## Suggested milestones
 
-1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**. Remaining codec follow-ups: M-FDK-RESET, M-AC3-DRAIN.
-2. **Config honesty (P1 M-CLI / M-NaN / CLI unknown keys)** — user-facing trust.
-3. **Observability (P1 M-SILENT)** — warn + report flags; no behavior change if
-   paths already succeeded.
-4. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
-5. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — can land incrementally alongside
+1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**.
+2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
+3. **Codec follow-ups (P1 M-HE / M-FDK-RESET / M-AC3-DRAIN)** — HE-AAC rate cross-check; FDK flush; drain AC-3 frames.
+4. **Observability remainder (P1 M-SILENT)** — report flags; unknown TOML keys; `align_videos` `Ok(None)` logging.
+5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
+6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — can land incrementally alongside
    feature work; see also `TEMP-policies-module-split-plan.md`.
 
 ---
