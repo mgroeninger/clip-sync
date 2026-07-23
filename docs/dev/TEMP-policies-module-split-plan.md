@@ -46,6 +46,11 @@ one-concern-per-module convention.
 - **Arbitrary line-count targets** — avoid three ~900-line files with tangled `pub(crate)` helpers;
   boundaries follow cohesion, not math.
 - **Waiting on a perf hoist** — §2.1 downmix hoist is dead; do not block P2/P3 on it.
+- **Separating unit tests from production code** — do **not** move the current `#[cfg(test)]`
+  block into `tests/`, a shared `policies/tests.rs`, or `*_test.rs` siblings. Unit tests stay at
+  the bottom of the same `.rs` file as the code they cover (same pattern as `residual_gate.rs`
+  and today's monolith). Crate-level integration/corpus tests already outside `policies.rs` stay
+  where they are.
 
 ## 3. Current layout (re-derived 2026-07-23)
 
@@ -88,18 +93,27 @@ imports remain in `gap_structure.rs` / `gap_energy.rs` (`FillAlignment`, `is_sil
 ```text
 domain/
   policies/
-    mod.rs              # re-exports entire public API (stable facade)
+    mod.rs              # re-exports entire public API (stable facade); no unit tests here
     silence.rs          # SilenceRunScanner, is_silent*, rms_*, compute_fill_gain
+                        # + #[cfg(test)] mod tests { … } at bottom of this file
     gap_borders.rs      # refine_gap_frames, GapBorderSpec, border_templates_*,
                         # selected_seam_channels / loudest_seam_channel
+                        # + colocated #[cfg(test)]
     seam_scoring.rs     # SeamTemplates, fill_seam_*, fill_repeat_*, splice scoring,
                         # fill_seam_correlations_band, seam_channel_diagnostics
+                        # + colocated #[cfg(test)]
     seam_residual.rs    # floor probe, seam_chosen_and_floor*, SeamResidualVerdict
+                        # + colocated #[cfg(test)]
     seam_splice.rs      # apply_seam_crossfade, effective_seam_crossfade_frames,
-                        # trim_low_energy_*
+                        # trim_low_energy_* + colocated #[cfg(test)] (if any)
 ```
 
-Each submodule owns its `#[cfg(test)] mod tests { … }` block (move tests with the code they cover).
+**Test organization (required):** each submodule that receives production code also receives the
+unit tests that cover it, as a `#[cfg(test)] mod tests { … }` block **in that same file** —
+directly under the production items, same layout as today's `policies.rs` and siblings like
+`residual_gate.rs`. Partition the monolith's test blob by what it covers; do not create a parallel
+test tree.
+
 Rough test homes from current names: scanner/RMS → `silence`; `refine_gap_*` / `border_*` →
 `gap_borders`; `fill_seam_*` / `fill_repeat_*` / splice correlation → `seam_scoring`;
 `seam_residual_*` / `seam_floor_*` / `residual_verdict_*` → `seam_residual`.
@@ -183,13 +197,15 @@ that would change a `validation` outcome is by definition not a pure move — re
 |------|------------|
 | Missed re-export → compile errors in tests/corpus | `mod.rs` checklist from `grep '^pub '` on old file before delete |
 | Circular imports between submodules | Extract `silence` first when doing P2/P3 together; `seam_residual` depends on border helpers only |
-| Test module path churn | Move tests with code; run residual / floor / border / band tests after each phase |
+| Test module path churn | Keep `#[cfg(test)]` in the same file as prod; move tests with the code they cover; run residual / floor / border / band tests after each phase |
+| Temptation to “clean up” into `tests/` | Non-goal §2 — reject; failure output should point at the module under edit |
 | Facade hides new code location | Submodule names in file paths; optional one-line module docs at top of each file |
 | Moving `effective_seam_crossfade_frames` / channel-select helpers | Decide owner at extract time; keep facade re-exports so callers do not care |
 
 ## 8. Success criteria
 
-- No production file under `domain/policies/` exceeds ~1,000 lines of non-test code (tests colocated).
+- No production file under `domain/policies/` exceeds ~1,000 lines of non-test code; unit tests remain
+  in that same file’s `#[cfg(test)]` block (not `tests/` or a shared test module).
 - `patch_region.rs` / `patch_audio.rs` imports unchanged at the `policies::` path.
 - Further residual/scoring work lands in `seam_residual.rs` / `seam_scoring.rs`, not back into a monolith.
 - M-MOD policies row closable after P5; fingerprint/corpus splits remain separate.
