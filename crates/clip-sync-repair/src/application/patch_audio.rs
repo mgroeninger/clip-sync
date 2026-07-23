@@ -3610,7 +3610,8 @@ mod tests {
         request
     }
 
-    /// Guard for the P0 `Deref` layering (`docs/dev/TEMP-repair-config-bundles-plan.md` §6.1).
+    /// Guard for the P0 `Deref` layering
+    /// (`docs/dev/archive/TEMP-repair-config-bundles-plan.md` §3, invariants 1–2).
     ///
     /// [`PatchAudioRequest`] exposes patch policy by `Deref` to its embedded
     /// [`PatchRequestSettings`], so `request.fill_mode` and `request.settings.fill_mode` must

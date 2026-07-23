@@ -845,7 +845,8 @@ fn patch_audio_fills_gap_in_stereo_wav() {
     );
 }
 
-/// Config-bundles plan P5 (§6.4.4): the five `fill_fit_*` knobs are dead under `fill_mode: Gate`
+/// Config-bundles plan P5 (`docs/dev/archive/TEMP-repair-config-bundles-plan.md` §2/§5):
+/// the five `fill_fit_*` knobs are dead under `fill_mode: Gate`
 /// (they are only read on the Fit candidate path). Perturbing them must leave Gate-mode PCM
 /// byte-identical — documents the coupling and fails if a fit knob later leaks into Gate.
 #[test]

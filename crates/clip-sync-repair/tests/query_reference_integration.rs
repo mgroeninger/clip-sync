@@ -181,7 +181,8 @@ fn mono_region(samples: &[f32], channels: u16, sample_rate: u32, start_secs: f64
 fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_repair::application::PatchAudioResult {
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
     // Seeded from production (`..RepairConfig::default().patch_settings()`), same structural
-    // pattern as harness `patch_request_with_options` (config-bundles plan P3). Overrides below
+    // pattern as harness `patch_request_with_options` (config-bundles plan P3 step 1;
+    // `docs/dev/archive/TEMP-repair-config-bundles-plan.md`). Overrides below
     // are deliberate for this chirp / gate-mode scenario; everything else inherits production.
     // Value-identical to the previous hand-written literal: each absorbed field already matched
     // its production default.

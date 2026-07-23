@@ -23,7 +23,7 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 
 ## Plans
 
-- **Active drafts:** `TEMP-*.md` in this folder (e.g. [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [TEMP-repair-config-bundles-plan.md](TEMP-repair-config-bundles-plan.md), [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)).
+- **Active drafts:** `TEMP-*.md` in this folder (e.g. [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)).
 - **Review ledger:** [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — prioritized correctness / silent-failure / perf findings (2026-07-23).
 - **Shipped:** [archive/](archive/) — historical design records (do not treat as current behavior; links may be stale).
 

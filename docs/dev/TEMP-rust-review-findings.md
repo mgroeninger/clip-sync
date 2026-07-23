@@ -27,6 +27,11 @@
 > `CLIP_SYNC_BRACKET_STATS`, retired measure script → archive).
 > **M-CLONE demoted 2026-07-23** from “next blessed repair perf” to **optional alloc
 > hygiene** (3 independent bites). Material repair wall-time residual remains lever 1c.
+> **M-CFG fixed 2026-07-23** (P2): `PatchAudioRequest` collapsed onto embedded
+> `PatchRequestSettings` (58 fields → 3), `SeamGateConfig` near-twin deleted in favor of a
+> settings borrow + frames-only `SeamGateDerived`, harness/test literals seeded from
+> `RepairConfig::default().patch_settings()` — three conversion lists → one. The proposed policy
+> bundles were **not** built and are declined.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -45,7 +50,8 @@ testable, production paths avoid `unwrap`, and process I/O (ffmpeg) is carefully
 threaded. Remaining open defects cluster in:
 
 1. **Silent degradation** (errors swallowed → plausible but wrong outcomes)
-2. **Structural debt** (3–5 kloc modules, four-layer config field copying)
+2. **Structural debt** (3–5 kloc modules; ~~four-layer config field copying~~ **fixed
+   2026-07-23** — see M-CFG)
 3. ~~Vendored codec shims~~ *(P0 codec / Sync items fixed — see below)*
 
 ---
@@ -80,11 +86,10 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 2 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 3 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 4 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
-| 5 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
+| 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
+| 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
@@ -93,7 +98,8 @@ for lag refine). **M-DEAD closed 2026-07-23** (§2 `slide_template_scores` delet
 pregate measurement stack removed). See Fixed tables. **All P1s are now done except
 optional report flags; remaining work is P2/P3.** Material *repair* wall-time residual
 is **not** the dropped matchability pre-gate (0% realizable) — see archived perf plans.
-M-CLONE is optional alloc hygiene only.)*
+M-CLONE is optional alloc hygiene only. **M-CFG closed 2026-07-23** by collapsing the
+duplicated layers — policy bundles were never built and are declined; see the archived record.)*
 
 ---
 
@@ -395,18 +401,39 @@ consider `prepare_clip_for_fingerprint(Cow<'_, MonoPcmClip>, …)`. Do not flip 
 API on its own; only pursue after a profile shows prepare/trim/normalize allocs matter
 on a realistic align/query workload.
 
-### M-CFG. Four-layer config field copying — **open**
+### M-CFG. Four-layer config field copying — **fixed 2026-07-23**
 
-**Plan:** [`TEMP-repair-config-bundles-plan.md`](TEMP-repair-config-bundles-plan.md).
+**Record:** [`archive/TEMP-repair-config-bundles-plan.md`](archive/TEMP-repair-config-bundles-plan.md)
+(closed; as-landed notes + standing invariants).
 
-**Recommendation:** Do not rewrite all four layers at once. Collapse the isomorphic
-`PatchRequestSettings` ↔ `PatchAudioRequest` layer first, then extract 1–2 shared
-bundles (`FillSearchParams`, `SeamGatePolicy` — not `SeamGateParams`, already used
-for cfg+geom), embed by value in `RepairConfig` and the patch request, delete the
-hand copies for those fields only. Repeat. Pair with any new knob you add anyway.
-Harness `PatchTestOptions` default alignment is Phase 3 (overlaps M-HARNESS).
+**What fixed it — collapsing layers, *not* the proposed policy bundles.** The bundles were
+never built and are explicitly declined: once the duplicated layers were gone, grouping the
+remaining flat fields was organization rather than correctness.
 
-**Test:** config roundtrip + one patch integration smoke.
+- `PatchAudioRequest` 58 fields → **3** (`report` + embedded `PatchRequestSettings` +
+  `measure_residual`), read-only `Deref`, no `DerefMut`; `into_request` 56 lines → 4 (`92571bc`,
+  guards `e02dfad`).
+- `SeamGateConfig` (53 `pub` fields — a near-twin of settings, not a projection) **deleted**;
+  `SeamGateParams` borrows `&PatchRequestSettings` alongside a 13-field `SeamGateDerived` that is
+  frame math only (`894d353`).
+- Both surviving `PatchRequestSettings` literals (harness `patch_request_with_options`,
+  `query_reference_integration`) seeded from `..RepairConfig::default().patch_settings()`
+  (`47cef0e`) — this also closes **M-HARNESS item 1**.
+
+Net: three hand-written conversion lists → **one** (`RepairConfig::patch_settings`). A new knob
+has one definition and one seed, so it cannot drift.
+
+**Standing invariants:** `PatchAudioRequest { … }` literal appears exactly once (in
+`into_request`); no `DerefMut`; every `PatchRequestSettings` literal seeds from
+`patch_settings()`; `SeamGateDerived` carries no policy.
+
+**Test:** `config_roundtrip` + `-Tier pr-repair` (byte-preservation) + `patch_audio_integration`
+/ `anchor_seam_oracle`. Guards: `deref_reads_reach_embedded_settings_and_are_not_shadowed`,
+`into_request_defaults_measure_residual_off`, `gate_mode_ignores_fill_fit_knobs`.
+
+**Deliberately left open (optional, undated):** eight test-local default overrides in the two
+seeded literals await a justify-or-drop comment audit. Not a coverage hole — production settings
+are exercised separately via `patch_request_from_repair`. See the archived record §4.
 
 ### M-MOD. Oversized modules — **open**
 
@@ -426,12 +453,17 @@ first. Then split `gap_fingerprint` into schema / measure / project, and harness
 | `align_videos.rs` | 2,900 |
 | harness `gap_fingerprint_corpus.rs` | 2,300 |
 
-### M-HARNESS. Drift from production — **open**
+### M-HARNESS. Drift from production — **open** (item 1 done)
 
 **Recommended order:**
 
-1. `PatchTestOptions` from `RepairConfig::default()` with overrides only
-   (see [TEMP-repair-config-bundles-plan.md](TEMP-repair-config-bundles-plan.md) Phase 3)
+1. ~~`PatchTestOptions` from `RepairConfig::default()` with overrides only~~ — **done
+   2026-07-23** (`47cef0e`): both harness and `query_reference_integration` literals now seed
+   from `..RepairConfig::default().patch_settings()`. See
+   [archive/TEMP-repair-config-bundles-plan.md](archive/TEMP-repair-config-bundles-plan.md).
+   Eight surviving overrides are deliberate synthetic-fixture settings pending an undated
+   justify-or-drop comment audit — do **not** extend `PatchTestOptions` field-by-field to chase
+   them; that is the mechanism that let five of them drift unseen.
 2. One shared `gap_interior_range` / oracle validator (H6 clamp already on floor path)
 3. One exported `NeverCalledAligner` + alignment builder in fixtures
 4. `csv` crate or RFC 4180 quoting for calibration CSV
@@ -519,8 +551,8 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 
 ## Suggested sequencing
 
-Do **not** start M-CFG or large module splits until the codec P1s are done — those
-are the remaining ways to get silently wrong audio.
+All codec P1s are done, so the structural work is unblocked. M-CFG is closed; large module
+splits (M-MOD) remain the main structural item.
 
 1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → ~~**M-AC3-DRAIN**~~ (done + unit-tested 2026-07-23; reusable `pcm_scratch` covers M-CLONE #3 for AC-3). **All codec P1s closed.**
 2. ~~**M-SILENT** remainder (unknown TOML keys + `align_videos` warn)~~ — **done 2026-07-23** (only optional report flags deferred)
@@ -529,7 +561,8 @@ are the remaining ways to get silently wrong audio.
    gate-search FFT already landed separately — do not reopen discover PHAT.
    ~~**M-DEAD**~~ (done 2026-07-23) — §2 `slide_template_scores` deleted; §1 B2 pregate
    measurement stack removed.
-4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work.
+4. ~~**M-CFG**~~ (closed 2026-07-23 — layers collapsed; bundles declined).
+   **M-MOD** / **M-HARNESS** remainder opportunistically with nearby feature work.
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
    (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
@@ -545,9 +578,10 @@ are the remaining ways to get silently wrong audio.
 5. ~~**M-FFT hygiene**~~ — **done 2026-07-23**: drop unused discover correlator arg; keep
    `PcmCorrelator` for lag refine; leave Pearson. ~~**M-DEAD**~~ — **done 2026-07-23**:
    §2 drop `slide_template_scores`; §1 B2 remove pregate measurement stack.
-6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see
-   `TEMP-repair-config-bundles-plan.md` (M-CFG) and
-   `TEMP-policies-module-split-plan.md` (M-MOD policies slice).
+6. **Structure (P2)** — ~~**M-CFG**~~ **done 2026-07-23**: `PatchAudioRequest` 58 fields → 3,
+   `SeamGateConfig` deleted, harness literals seeded from production; three conversion lists → one
+   (record: `archive/TEMP-repair-config-bundles-plan.md`). **M-MOD / M-HARNESS** remainder
+   incremental; see `TEMP-policies-module-split-plan.md` (M-MOD policies slice).
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.

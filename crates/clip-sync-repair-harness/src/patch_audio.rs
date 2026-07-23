@@ -260,8 +260,8 @@ pub fn patch_request_with_options(
 ) -> PatchAudioRequest {
     // Seeded from production (`..RepairConfig::default().patch_settings()`), so a newly added
     // knob is inherited rather than silently hardcoded here. Config-bundles plan P3 step 1
-    // (§6.4.1) — structural only; production defaults are already exercised separately via
-    // `patch_request_from_repair` (§6.5). Everything listed below is a caller arg, a
+    // (`docs/dev/archive/TEMP-repair-config-bundles-plan.md`) — structural only; production
+    // defaults are exercised separately via `patch_request_from_repair`. Everything below is a caller arg, a
     // `PatchTestOptions` knob, or a deliberate synthetic-fixture deviation.
     //
     // Of the 56 settings fields, 40 stay explicit (4 caller args, 28 options knobs, 8
@@ -305,10 +305,10 @@ pub fn patch_request_with_options(
         fit_boundary_search: options.fit_boundary_search,
         dual_fit: options.dual_fit,
 
-        // ---- deliberate deviations from production (plan §6.3 / §6.4.1) ----
+        // ---- deliberate deviations from production ----
         // Test-local settings for synthetic fixtures; production is covered elsewhere via
-        // `patch_request_from_repair`. Pending justify-or-drop in undated P3 step 3 — do not
-        // "clean up" without reading §6.4.1 / §6.5.
+        // `patch_request_from_repair`. Pending justify-or-drop in the undated P3 step 3 — do not
+        // "clean up" without reading `docs/dev/archive/TEMP-repair-config-bundles-plan.md` §4.
         //
         // Via PatchTestOptions defaults: fill_mode (Gate vs production Fit),
         // fill_border_search_secs (30.0 vs 10.0), max_fill_align_adjustment_secs (1.0 vs 0.5).
@@ -323,7 +323,8 @@ pub fn patch_request_with_options(
         skip_equivalent_gaps: false,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
         // No energy field on PatchTestOptions, so energy bias can only mirror nominal. Production
-        // deliberately splits them 4× (1.0 / 0.25). Inert under Gate-mode defaults — see §6.4.4.
+        // deliberately splits them 4× (1.0 / 0.25). Inert under Gate-mode defaults — see
+        // `gate_mode_ignores_fill_fit_knobs`.
         fill_fit_energy_nominal_bias_scale: options.fill_fit_nominal_bias_scale,
 
         ..clip_sync_repair::infrastructure::config::RepairConfig::default().patch_settings()
