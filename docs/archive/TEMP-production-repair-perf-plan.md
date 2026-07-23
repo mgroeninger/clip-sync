@@ -473,13 +473,16 @@ does the default flip on.
     the ceiling; a re-run that disagrees means source/params changed). `search_us` is advisory. Decision rule baked into
     the script: <10% ⇒ favor "stop here"; ≥10% ⇒ implement the pre-gate.
 
-    **GREEN-LIT 2026-07-22 — build the pre-gate.** Full 17-pair roll-up: pooled **44.8% count / 49.1% time** doomed
-    (median 34.8%, range 3.0–72.8%); 14/17 pairs clear the 10% bar; the three below (4, 5, 11) are clean pairs where the
-    pre-gate is a no-op *and* no-cost. Signal strongest on the largest pairs (13/16/17), so pooled is weighted toward the
-    pairs that dominate wall-clock. `time% ≥ count%` on every pair ⇒ count-fraction is a conservative floor. (The optimistic
-    first-9 slice read 53/57; full 17 regressed to 45/49 — plan against 45%.) **Build plan:
-    `docs/archive/TEMP-anchor-pregate-plan.md`** (predictor = the superset proof above; correctness bar = byte-identical
-    golden corpus + zero false skips).
+    **DROPPED 2026-07-23 — NO-GO.** The 2026-07-22 greenlight (pooled 44.8% count / 49.1% time doomed over 17 pairs)
+    measured the **ceiling** at the *searched* placement, not the realizable gain of a **byte-safe** pre-gate. The §7
+    realizable-rate re-measurement (full 17-pair fingerprint run, `pregate_doomed` instrumentation) returned **0.0% —
+    0 of ~4939 brackets doomed by the byte-safe `anchor_bracket_matchability_doomed` predicate, 0% of the ceiling,
+    zero superset leaks.** The −0.03-floor prediction held exactly (unified search optimizes a joint structure+wave
+    score, not seam Pearson; xcorr rescue drops the safe floor to −0.03, which windowed-max seam Pearson essentially
+    never clears downward). The 46% ceiling is unreachable by any byte-safe gate. **Lever dropped; redirect to FFT-ing
+    the per-bracket score sweep (`char_gate_search`, §0).** Full record: `docs/archive/TEMP-anchor-pregate-plan.md`
+    (top banner + §7 RESULT). The predicate, instrumentation, and side-channel audit survive if ever revisited under
+    different thresholds.
 
     **Phase 2 — realized-speedup harness (DEFERRED to the pre-gate PR, do NOT build early).** Sizing the ceiling
     (above) is phase 1 and needs no persistence: the count-fraction is deterministic and already recoverable from the

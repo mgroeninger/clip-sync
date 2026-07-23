@@ -1,5 +1,25 @@
 # TEMP — Anchor-bracket matchability pre-gate (perf lever #2, "cut k")
 
+> ## 🛑 RESOLVED — NO-GO (2026-07-23). Lever DROPPED. The realizable rate is **0%**.
+>
+> The §7 realizable-rate re-measurement (the gate for the whole build) ran as a **full fingerprint run over all 17
+> licensed pairs** (`measure-anchor-brackets.ps1`, greenlight manifest + `--min-gap-ms 500`). Roll-up:
+>
+> - **Ceiling** (searched-placement matchability reject): **46.5% time / 2265 of 4919 brackets** — reproduces the
+>   greenlight's 44.8%/49.1%, so the run is sound.
+> - **Realizable** (`pregate_doomed=true`, the byte-safe `anchor_bracket_matchability_doomed` predicate over the
+>   reachable window): **0.0% time / 0 of ~4939 brackets. Efficiency = 0.0% of the ceiling. Zero superset leaks.**
+>
+> Not a single bracket, on any of the 17 pairs, is doomed by the byte-safe predicate. This is the blocking caveat's
+> −0.03-floor prediction landing exactly: the unified search optimizes a JOINT structure+wave score (not seam
+> Pearson) and xcorr rescue drops the safe floor to −0.03, so windowed-max seam Pearson essentially never goes
+> anti-correlated below −0.03 across the whole reachable window. **The 46% ceiling was never reachable by a
+> byte-safe gate.** Per §7's decision gate: negative result recorded, **lever dropped, do NOT wire §3.** Redirect the
+> perf effort to the parent plan's live lever — FFT the per-bracket score sweep
+> (`[[production-perf-gate-search-dominates]]`, `char_gate_search` = 93%). Everything below is retained for the
+> record; the instrumentation, predicate, and side-channel audit survive if the lever is ever revisited under
+> different thresholds.
+
 > ## ⚠️ BLOCKING CAVEAT (2026-07-22, discovered during wiring) — the greenlight measured the *ceiling*, not the realizable gain
 >
 > The 44.8%/49.1% "doomed" numbers below are measured at the **searched** placement
@@ -26,8 +46,9 @@
 > byte-identical, emission-only add to the existing `bracket_stats` path (predicate already implemented). See the
 > new **§7 — realizable-rate re-measurement** before wiring any behavior change. All wiring is PAUSED pending it.
 
-**Status:** green-lit 2026-07-22 on interim 9-pair evidence (below), then **PAUSED 2026-07-22** pending
-realizable-rate re-measurement (see blocking caveat). Scope is deliberately narrow.
+**Status:** green-lit 2026-07-22 on interim 9-pair evidence (below), PAUSED 2026-07-22 pending realizable-rate
+re-measurement, then **DROPPED 2026-07-23 — NO-GO** (realizable rate 0% over the full 17-pair fingerprint run; see
+top banner). Scope is deliberately narrow.
 **Parent:** `docs/archive/TEMP-production-repair-perf-plan.md` — this doc does NOT restate the perf ranking,
 the `bracket_stats` instrumentation, or the phase-2 harness spec; it references them. Read the parent's
 lever-#2 entry (~line 430) and its **Superset proof (2026-07-22)** first — that proof is the load-bearing
@@ -235,6 +256,11 @@ un-pause and wire §3. If it's near-zero (the −0.03-floor prediction), the byt
 record the negative result, drop the lever, and redirect to the parent plan's other levers (e.g. FFT the
 per-bracket score sweep, `[[production-perf-gate-search-dominates]]`).
 
+> **RESULT (2026-07-23): near-zero — 0 of ~4939 brackets doomed, 0.0% realizable, 0.0% of ceiling, over all 17
+> pairs.** The −0.03-floor prediction held exactly. Lever DROPPED (see top banner). Redirected to the FFT-the-
+> per-bracket-score lever. Logs: `%TEMP%/clip-sync-anchor-bracket-stats/*.log`; reproduce with
+> `measure-anchor-brackets.ps1 -Logs <that dir>`.
+
 **How to run it (2026-07-23 — the equivalence-gate finding; do NOT use a production/`-PerfOnly` run):**
 `pregate_doomed` is emitted inside `evaluate_seam_gate_fit_candidate`, which only fires for a gap that actually
 *enters* the anchor-seam search. In a plain production repair the **equivalence gate** (`skip_equivalent_gaps`,
@@ -266,11 +292,12 @@ a subset is internally valid, but do the full 17 for the final go/no-go.)
 
 ## 6. Definition of done
 
-- [ ] **Realizable-rate re-measurement (§7) clears the worth-it bar** — GATES everything below.
-- [ ] Pre-gate implemented before the unified search in the bracket loop; reads existing matchability thresholds.
-- [ ] Golden corpus byte-identical, pre-gate ON vs current build.
-- [ ] Harness ON-run skip set == OFF-run `reject_matchability_only + reject_both` set (zero false skips).
-- [ ] Window/stride parity verified (R1); debug assertion added during bring-up.
-- [ ] Phase-2 `--gate-perf-only` + stamped summary + on/off flag landed in the same binary.
-- [ ] Per-pair realized speedup measured on the licensed corpus and recorded (expect ≥ count% floor, ~53%+ pooled).
-- [ ] Parent perf-plan lever-#2 entry updated to "LANDED + measured"; memory note added.
+- [x] **Realizable-rate re-measurement (§7) clears the worth-it bar** — GATES everything below.
+      **FAILED 2026-07-23: 0.0% realizable (0 of ~4939 brackets over 17 pairs). Gate not cleared ⇒ NO-GO.**
+- [ ] ~~Pre-gate implemented before the unified search in the bracket loop~~ — not built (gate failed).
+- [ ] ~~Golden corpus byte-identical, pre-gate ON vs current build.~~
+- [ ] ~~Harness ON-run skip set == OFF-run `reject_matchability_only + reject_both` set.~~
+- [ ] ~~Window/stride parity verified (R1); debug assertion added during bring-up.~~
+- [ ] ~~Phase-2 `--gate-perf-only` + stamped summary + on/off flag landed in the same binary.~~
+- [ ] ~~Per-pair realized speedup measured on the licensed corpus and recorded.~~
+- [x] Parent perf-plan lever-#2 entry updated to "DROPPED — NO-GO"; memory note added.
