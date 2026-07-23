@@ -7,6 +7,15 @@ use crate::domain::seam_local::seam_correlation_over_bases;
 pub struct SilentRun {
     pub start_secs: f64,
     pub end_secs: f64,
+    /// Block-confirmed silent interior — the span of fully-silent analysis blocks, never widened
+    /// by the sub-block edge refinement that produces `[start_secs, end_secs]`. Equals the reported
+    /// boundaries for runs whose onset/offset happen to land on block edges. The gap-equivalence
+    /// gate classifies on this core (not the refined extent) so the fade-shoulder frames pulled in
+    /// by refinement never pollute the A-side dropout-depth measurement (`aggregate_rms_db` is an
+    /// energy mean dominated by the loudest included block, so one partial-signal block flips a
+    /// deep dropout to `ambient-quiet`).
+    pub core_start_secs: f64,
+    pub core_end_secs: f64,
 }
 
 /// One analysis block's RMS level (dBFS) on a media timeline — the lightweight per-block timeline the
@@ -38,6 +47,12 @@ pub struct SilenceRunScanner {
     /// `held_end`, so held non-silent blocks at the tail of a run are never included in
     /// the output interval (avoiding boundary bloat past actual silence).
     silent_tail: Option<f64>,
+    /// Block-confirmed silent interior of the open run, tracked in parallel with the refined
+    /// `run_start`/`silent_tail`. `core_start` is the onset block's leading edge (no backward
+    /// walk); `core_end` is the last fully-silent block's end (no forward walk). Emitted as
+    /// `SilentRun::core_*` for the equivalence gate.
+    core_start: Option<f64>,
+    core_end: Option<f64>,
     runs: Vec<SilentRun>,
     /// When `true`, [`feed`](Self::feed) retains a per-block [`BlockLevel`] timeline in `levels`.
     retain_levels: bool,
@@ -61,6 +76,8 @@ impl SilenceRunScanner {
             held_count: 0,
             run_start: None,
             silent_tail: None,
+            core_start: None,
+            core_end: None,
             runs: Vec::new(),
             retain_levels: false,
             levels: Vec::new(),
@@ -144,9 +161,12 @@ impl SilenceRunScanner {
                     }
                     self.run_start =
                         Some(timeline_start_secs + edge as f64 / f64::from(rate));
+                    // Core onset is the block edge (unwalked) — this whole block is silent.
+                    self.core_start = Some(block_start_secs);
                 }
                 // Advance the confirmed-silent boundary past any previously held blocks.
                 self.silent_tail = Some(block_end_secs);
+                self.core_end = Some(block_end_secs);
             } else if self.run_start.is_some() {
                 // Sub-block trailing-edge refinement: the block that closes a run straddles the
                 // silence offset, so `silent_tail` (last fully-silent block end) lands up to one
@@ -208,12 +228,21 @@ impl SilenceRunScanner {
 
     fn close_open_run(&mut self) {
         let (Some(start), Some(end)) = (self.run_start.take(), self.silent_tail.take()) else {
+            self.core_start = None;
+            self.core_end = None;
             return;
         };
+        let core_start = self.core_start.take().unwrap_or(start);
+        let core_end = self.core_end.take().unwrap_or(end);
+        // Gate on the refined extent so a genuine ≥ min_gap dropout straddling block edges is not
+        // dropped by quantization; report the refined boundaries but preserve the block-confirmed
+        // core for the equivalence gate.
         if end - start >= self.min_gap_secs {
             self.runs.push(SilentRun {
                 start_secs: start,
                 end_secs: end,
+                core_start_secs: core_start,
+                core_end_secs: core_end,
             });
         }
     }
