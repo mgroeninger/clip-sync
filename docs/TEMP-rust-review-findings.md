@@ -12,9 +12,11 @@
 > **M-FDK-RESET fixed + regression-tested** (2026-07-23): `reset()` now recreates the
 > FDK decoder; verified red→green with an in-process HE-AAC SBR fixture.
 > **M-AC3-DRAIN fixed + unit-tested** (2026-07-23): `decode_ref` now drains every frame
-> a packet produces (extracted into a testable `drain_packet` helper). Still open:
-> non-mechanical M-SILENT pieces (report flags / unknown TOML keys /
-> `align_videos` `Ok(None)`).
+> a packet produces (extracted into a testable `drain_packet` helper).
+> **M-SILENT effectively closed** (2026-07-23): `align_videos` `Ok(None)` now `warn!`s the
+> suppressed error; CLI + repair loaders warn on unknown/misspelled TOML keys via a shared
+> `clip_sync::unknown_toml_keys` round-trip diff. Only the **optional** machine-readable
+> report flags remain deferred.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -69,16 +71,16 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-SILENT | P1 | Remaining: report flags, unknown TOML keys, `align_videos` `Ok(None)` | several |
-| 2 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
-| 3 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
-| 4 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
-| 5 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
-| 6 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
-| 7 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
+| 1 | M-FFT | P2 | Injected FFT correlator ignored; O(n·m) search — **blessed perf lever** | `offset_refinement.rs:238` |
+| 2 | M-CLONE | P2 | Full-clip clones + planner rebuild + per-packet alloc | hot paths |
+| 3 | M-CFG | P2 | ~50 knobs copied across 4 struct layers | repair config → patch |
+| 4 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 5 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
+| 6 | L-* | P3 | Delete dead pregate, unused dep, broken-pipe, quiet/verbose | misc |
 
-*(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — see Fixed (P1) table. All codec
-P1s are now closed.)*
+*(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
+effectively closed 2026-07-23 — only optional report flags deferred. See Fixed (P1)
+table. **All P1s are now done except optional report flags; remaining work is P2/P3.**)*
 
 ---
 
@@ -271,15 +273,23 @@ channel-count-mismatch hard error. Full `-p clip-sync --features ac3,ffmpeg-test
 `probe_and_extract_eac3_surround_mp4` (genuine E-AC-3 5.1) and the AC-3 chirp decode
 characterization. Clippy clean on `--features ac3`.
 
-### M-SILENT. Remaining swallowed-error sites — **partially open**
+### M-SILENT. Remaining swallowed-error sites — **effectively closed (only optional report flags remain)** *(2026-07-23)*
+
+`align_videos` `Ok(None)` and CLI/repair unknown-TOML-key detection both landed
+2026-07-23 (see table below). The unknown-key check is a shared, struct-derived
+round-trip diff — `crates/clip-sync/src/infrastructure/config/toml_keys.rs`,
+exported as `clip_sync::unknown_toml_keys`, unit-tested there and guarded against
+false positives by `clip-sync-repair`'s `repair_fixture_reports_no_unknown_keys`
+(full `[repair]` + nested `[repair.output]` surface). Only the **optional**
+machine-readable report flags remain, deferred until an operator needs them.
 
 | Site | Status | Recommendation |
 |------|--------|----------------|
 | `locate_query` prepare/fp/align | **done** (`debug!`) | — |
 | `scan_gaps` B-side scan | **done** (`warn!`) | — |
 | Harness `read_corpus_json` | **done** (warn on read/parse) | Optional later: hard-fail parse in measurement bins |
-| `align_videos` `Ok(None)` | **open** | Keep fallback; `tracing::warn!` the suppressed probe/extent error (same pattern as B-scan). No report-schema change required for v1 |
-| CLI unknown TOML keys | **open** | Pre-pass: walk `toml::Table` against known key sets for `[repair]` / `[clip]` / `[alignment]`; `warn!` / `eprintln!` unknowns. Do not require `deny_unknown_fields` with `flatten` |
+| `align_videos` `Ok(None)` | **done** (`warn!`) | `resolve_mode`'s two `Err(_) => Ok(None)` arms now `tracing::warn!` the suppressed per-side track/extent error before falling back to symmetric (`side`, `%error`) |
+| CLI unknown TOML keys | **done** (`eprintln!`) | Shared `clip_sync::unknown_toml_keys(raw, &config)` round-trips the parsed config back to TOML and diffs key sets (no hand-kept list, no `deny_unknown_fields`); both `load_app_config` (analyzer) and `load_repair_app_config` emit `warning: unknown config key …` via `eprintln!` (tracing not yet up at load time) |
 | Report flags (e.g. `b_scan_truncated`) | **open / optional** | Only if operators need machine-readable signal beyond logs |
 
 **Test:** unit for unknown-key warning; existing align/scan tests for warn-only paths.
@@ -411,7 +421,7 @@ Do **not** start M-CFG or large module splits until the codec P1s are done — t
 are the remaining ways to get silently wrong audio.
 
 1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → ~~**M-AC3-DRAIN**~~ (done + unit-tested 2026-07-23; reusable `pcm_scratch` covers M-CLONE #3 for AC-3). **All codec P1s closed.**
-2. **M-SILENT** remainder (unknown TOML keys + `align_videos` warn) — half-day
+2. ~~**M-SILENT** remainder (unknown TOML keys + `align_videos` warn)~~ — **done 2026-07-23** (only optional report flags deferred)
 3. **M-FFT** then **M-CLONE** planner (user-visible speed). M-FFT is now the
    blessed perf lever after the anchor pre-gate was dropped NO-GO (2026-07-23) —
    FFT the per-bracket score sweep. Also **delete** the dead pregate symbols
@@ -425,7 +435,7 @@ are the remaining ways to get silently wrong audio.
 1. ~~**Codec hardening (P0 H2/H3/H5)**~~ / ~~**Panic clamps (P0 H1/H6)**~~ — **done 2026-07-23**.
 2. ~~**Config honesty (P1 M-CLI / M-NaN)**~~ / ~~**M-MUX / harness cast / resample count / silent warns**~~ — **done 2026-07-23**.
 3. ~~**Codec follow-ups (P1 M-AC3-DRAIN)**~~ — **done 2026-07-23**: drain all AC-3/E-AC-3 frames per packet (`drain_packet` helper + 4 unit tests; real E-AC-3 surround path green). *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder also done 2026-07-23; M-FDK-RESET has a verified red→green backward-seek regression test running on stock ffmpeg.)* **All codec P1s closed.**
-4. **Observability remainder (P1 M-SILENT)** — unknown TOML keys; `align_videos` `Ok(None)` logging; optional report flags.
+4. ~~**Observability remainder (P1 M-SILENT)**~~ — **done 2026-07-23**: unknown TOML keys (shared `unknown_toml_keys` in analyzer + repair loaders) and `align_videos` `Ok(None)` warn logging. Optional machine-readable report flags deferred.
 5. **Perf (P2 M-FFT / M-CLONE)** — wire correlator; stop cloning; reuse planner.
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see `TEMP-policies-module-split-plan.md`.
 7. **P3 hygiene** — CLI broken-pipe, quiet/verbose, unused deps, publish flag.

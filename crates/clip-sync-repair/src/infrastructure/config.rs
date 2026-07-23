@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use clip_sync::{AlignConfig, AppError, ConfigError, LoggingConfig};
+use clip_sync::{unknown_toml_keys, AlignConfig, AppError, ConfigError, LoggingConfig};
 
 use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
 use crate::application::patch_audio::PatchRequestSettings;
@@ -1055,6 +1055,14 @@ pub fn load_repair_app_config(path: Option<&Path>) -> Result<RepairAppConfig, Ap
         if profile_explicit || config.repair.profile != RepairProfile::Default {
             config.repair.apply_profile_bundle(mask);
         }
+    }
+
+    // Surface keys serde silently ignored (flatten rules out deny_unknown_fields),
+    // so a typo does not read as "setting had no effect". `eprintln!` because
+    // tracing is not yet initialized at config-load time. `profile_field_mask` is
+    // `#[serde(skip)]`, so the diff is unaffected by the mutations above.
+    for key in unknown_toml_keys(&text, &config) {
+        eprintln!("warning: unknown config key `{key}` was ignored");
     }
 
     Ok(config)

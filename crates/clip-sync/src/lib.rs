@@ -47,6 +47,7 @@ pub use infrastructure::correlation::FftCorrelator;
 pub use infrastructure::resample::{resample_interleaved, RubatoResampler};
 pub use infrastructure::symphonia::SymphoniaMediaReader;
 pub use infrastructure::config::file::load_align_config;
+pub use infrastructure::config::toml_keys::unknown_toml_keys;
 pub use infrastructure::logging::{
     FINGERPRINT_ALIGN_STAGE, LoggingConfig, LogLevel, ProgressMode, StderrProgressReporter,
 };

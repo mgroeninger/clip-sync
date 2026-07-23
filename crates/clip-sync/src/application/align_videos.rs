@@ -208,7 +208,14 @@ where
             None,
         ) {
             Ok(resolved) => resolved,
-            Err(_) => return Ok(None),
+            Err(error) => {
+                tracing::warn!(
+                    side = "a",
+                    %error,
+                    "align: per-file track/extent resolution failed; falling back to symmetric alignment"
+                );
+                return Ok(None);
+            }
         };
         let (track_b, extent_b) = match self.resolve_track_extent(
             session_b,
@@ -218,7 +225,14 @@ where
             Some(&track_a),
         ) {
             Ok(resolved) => resolved,
-            Err(_) => return Ok(None),
+            Err(error) => {
+                tracing::warn!(
+                    side = "b",
+                    %error,
+                    "align: per-file track/extent resolution failed; falling back to symmetric alignment"
+                );
+                return Ok(None);
+            }
         };
 
         let planning = request.config.alignment.clip_planning_options();

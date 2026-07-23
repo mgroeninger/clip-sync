@@ -78,9 +78,9 @@ impl AacDecoder {
         } else {
             m4a_info.otype = M4AType::Lc;
             m4a_info.sample_rate = params.sample_rate.unwrap_or_default();
-            m4a_info.sample_rate_index = sample_rate_index(m4a_info.sample_rate).ok_or_else(|| {
-                Error::DecodeError("aac: sample rate has no ADTS table index")
-            })?;
+            m4a_info.sample_rate_index = sample_rate_index(m4a_info.sample_rate).ok_or(
+                Error::DecodeError("aac: sample rate has no ADTS table index"),
+            )?;
 
             m4a_info.channels = if let Some(channels) = &params.channels {
                 channels.count() as u8

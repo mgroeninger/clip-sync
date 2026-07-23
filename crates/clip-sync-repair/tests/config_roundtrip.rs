@@ -47,6 +47,30 @@ fn repair_fixture_deserializes_and_validates() {
 }
 
 #[test]
+fn repair_fixture_reports_no_unknown_keys() {
+    // Guards against false positives from the unknown-key detector on the full
+    // repair config surface (incl. nested [repair.output]) — e.g. a future
+    // `skip_serializing_if` on an accepted field would make it look "unknown".
+    let raw = std::fs::read_to_string(fixture_path()).expect("read fixture");
+    let config: RepairAppConfig = toml::from_str(&raw).expect("parse fixture");
+    let unknown = clip_sync::unknown_toml_keys(&raw, &config);
+    assert!(
+        unknown.is_empty(),
+        "valid fixture keys must not be flagged as unknown: {unknown:?}"
+    );
+}
+
+#[test]
+fn repair_config_flags_a_misspelled_repair_key() {
+    let raw = "[repair]\nmin_gap_mss = 1000\n";
+    let config: RepairAppConfig = toml::from_str(raw).expect("parse");
+    assert_eq!(
+        clip_sync::unknown_toml_keys(raw, &config),
+        vec!["repair.min_gap_mss".to_string()]
+    );
+}
+
+#[test]
 fn repair_fixture_roundtrips_through_toml() {
     let mut config = load_repair_app_config(Some(&fixture_path())).expect("load fixture");
     // `profile_field_mask` is runtime load metadata (#[serde(skip)]); clear it so the

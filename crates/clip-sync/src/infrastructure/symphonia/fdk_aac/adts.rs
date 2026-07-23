@@ -42,9 +42,9 @@ pub(super) fn construct_adts_header(
         );
     }
 
-    let frame_length = ADTS_HEADER_LENGTH.checked_add(num_bytes).ok_or_else(|| {
-        symphonia::core::errors::Error::DecodeError("aac: ADTS frame length overflow")
-    })?;
+    let frame_length = ADTS_HEADER_LENGTH.checked_add(num_bytes).ok_or(
+        symphonia::core::errors::Error::DecodeError("aac: ADTS frame length overflow"),
+    )?;
     if frame_length > ADTS_MAX_FRAME_LENGTH {
         return symphonia::core::errors::decode_error(
             "aac: access unit exceeds ADTS frame_length maximum (8191)",
