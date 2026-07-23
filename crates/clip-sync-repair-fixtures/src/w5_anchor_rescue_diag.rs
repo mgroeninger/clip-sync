@@ -16,7 +16,7 @@ use clip_sync::MultiChannelPcm;
 
 use clip_sync_repair::application::gate_oracle::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
-    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateConfig,
+    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateDerived,
     SeamGateFailure, SeamGateParams,
 };
 use clip_sync_repair::domain::gap_anchor_seam::{
@@ -250,7 +250,8 @@ fn pcm_from_samples(samples: Vec<f32>, sample_rate: u32, channels: usize) -> Mul
 struct W5CellContext {
     a_pcm: MultiChannelPcm,
     b_haystack: Vec<f32>,
-    cfg: SeamGateConfig,
+    settings: clip_sync_repair::application::PatchRequestSettings,
+    derived: SeamGateDerived,
     b_extract_start_secs: f64,
     refined_b_start_secs: f64,
     refined_b_end_secs: f64,
@@ -268,7 +269,8 @@ impl W5CellContext {
     /// Phase 0 constructors so it cannot drift from production.
     fn params(&self) -> SeamGateParams<'_> {
         let geom = derive_seam_gate_geometry(
-            &self.cfg,
+            &self.settings,
+            &self.derived,
             &self.a_pcm,
             &self.b_haystack,
             self.b_extract_start_secs,
@@ -278,7 +280,8 @@ impl W5CellContext {
             None,
         );
         SeamGateParams {
-            cfg: &self.cfg,
+            settings: &self.settings,
+            derived: self.derived,
             geom,
         }
     }
@@ -318,7 +321,7 @@ fn context_from_fixture(
     let request = patch_request_from_repair(report, repair);
 
     let ch = fixture.channels.max(1);
-    let cfg = clip_sync_repair::application::gate_oracle::seam_gate_config_from_repair(
+    let derived = clip_sync_repair::application::gate_oracle::seam_gate_derived_from_repair(
         &request,
         fixture.sample_rate,
         fixture.channels,
@@ -345,7 +348,8 @@ fn context_from_fixture(
     Some(W5CellContext {
         a_pcm,
         b_haystack,
-        cfg,
+        settings: request.settings,
+        derived,
         b_extract_start_secs: preview.b_extract_start_secs,
         refined_b_start_secs: preview.refined_b_start_secs,
         refined_b_end_secs: preview.refined_b_end_secs,

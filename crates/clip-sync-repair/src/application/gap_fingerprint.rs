@@ -2582,23 +2582,28 @@ fn stage_of(
 }
 
 fn anchor_params_from_gate(
-    cfg: &crate::application::patch_region::SeamGateConfig,
+    settings: &crate::application::PatchRequestSettings,
+    derived: &crate::application::patch_region::SeamGateDerived,
     baseline: RefinedGapFrames,
 ) -> AnchorSeamParams {
     let gap_frames = baseline.end_frame.saturating_sub(baseline.start_frame);
     AnchorSeamParams {
-        context_frames: cfg.context_frames,
-        max_anchors_per_side: cfg.max_anchors_per_side,
-        max_bracket_frames: (cfg.max_anchor_bracket_secs * f64::from(cfg.sample_rate)).round().max(1.0) as usize,
-        min_prominence: cfg.anchor_seam_min_prominence,
+        context_frames: derived.context_frames,
+        max_anchors_per_side: settings.max_anchors_per_side,
+        max_bracket_frames: (settings.max_anchor_bracket_secs * f64::from(derived.sample_rate))
+            .round()
+            .max(1.0) as usize,
+        min_prominence: settings.anchor_seam_min_prominence,
         structure: StructureMatchParams {
             gap_frames,
-            bin_frames: cfg.bin_frames.max(1),
-            search_radius_frames: cfg.search_radius_frames,
-            fill_length_slack_frames: cfg.fill_length_slack_frames,
-            max_fine_adjustment_frames: crate::domain::gap_structure::structure_fine_polish_frames(cfg.bin_frames),
-            silence_peak_fraction: cfg.silence_peak_fraction,
-            absolute_silence_rms: cfg.absolute_silence_rms,
+            bin_frames: derived.bin_frames.max(1),
+            search_radius_frames: derived.search_radius_frames,
+            fill_length_slack_frames: derived.fill_length_slack_frames,
+            max_fine_adjustment_frames: crate::domain::gap_structure::structure_fine_polish_frames(
+                derived.bin_frames,
+            ),
+            silence_peak_fraction: derived.silence_peak_fraction,
+            absolute_silence_rms: settings.absolute_silence_rms,
         },
     }
 }
@@ -2633,7 +2638,8 @@ struct RegionMeasureInput<'a> {
     gap_offset: f64,
     refined: RefinedGapFrames,
     gap_frames: usize,
-    gate_cfg: &'a crate::application::patch_region::SeamGateConfig,
+    gate_settings: &'a crate::application::PatchRequestSettings,
+    gate_derived: crate::application::patch_region::SeamGateDerived,
     cfg: &'a FingerprintConfig,
     gap_floor_db: f32,
     include_diagnostics: bool,
@@ -2660,7 +2666,8 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         gap_offset,
         refined,
         gap_frames,
-        gate_cfg,
+        gate_settings,
+        gate_derived,
         cfg,
         gap_floor_db,
         include_diagnostics,
@@ -2673,7 +2680,8 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     } = inp;
 
     let geom = derive_seam_gate_geometry(
-        gate_cfg,
+        gate_settings,
+        &gate_derived,
         a_pcm,
         b_slice,
         b_extract_start_secs,
@@ -2682,12 +2690,16 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         gap_frames,
         None,
     );
-    let params = SeamGateParams { cfg: gate_cfg, geom };
+    let params = SeamGateParams {
+        settings: gate_settings,
+        derived: gate_derived,
+        geom,
+    };
     let cache = oracle_build_fit_cache(&params);
 
     // Per-bracket authoritative seam + failure_stage (gate enumeration). The zero-move bracket is the throat;
     // its score becomes the baseline seam (consistent with the brackets and ~the production throat).
-    let anchor_params = anchor_params_from_gate(gate_cfg, refined);
+    let anchor_params = anchor_params_from_gate(gate_settings, &gate_derived, refined);
     let candidates = list_anchor_candidates_a(&a_pcm.samples, ch, refined, &anchor_params);
     let brackets = list_feasible_anchor_brackets(&candidates, refined, &anchor_params);
     let mut any_ok = false;
@@ -2934,13 +2946,13 @@ pub fn characterize_gaps_from_decode(
     let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
     let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
 
-    let mut gate_cfg = crate::application::patch_region::SeamGateConfig::from_repair(
+    let mut gate_derived = crate::application::patch_region::SeamGateDerived::from_repair(
         request,
         sample_rate,
         channels,
         report.silence_peak_fraction,
     );
-    gate_cfg.measure_residual = true;
+    gate_derived.measure_residual = true;
     let rate = f64::from(sample_rate).max(1.0);
     let ch = channels.max(1);
     let b_total = b_samples_full.len() / ch;
@@ -2991,7 +3003,8 @@ pub fn characterize_gaps_from_decode(
             gap_offset,
             refined,
             gap_frames,
-            gate_cfg: &gate_cfg,
+            gate_settings: &request.settings,
+            gate_derived,
             cfg: &cfg,
             gap_floor_db: fp.levels.gap_floor_db,
             include_diagnostics,

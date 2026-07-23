@@ -116,7 +116,7 @@ the description.
 | Phase | Work | Trigger | Status | Notes |
 |-------|------|---------|--------|-------|
 | **P0** | Embed `PatchRequestSettings` in `PatchAudioRequest` (request = settings + report + opt-in flags). Delete `into_request`’s field list. | Convenience / next patch-knob touch | **Done 2026-07-23** | Biggest mechanical win; **no TOML change**. Read-only `Deref`, no `DerefMut` — see §6.1. |
-| **P1** | ~~Extract `FillSearchParams` + `FitScoringParams` / `SeamGatePolicy` into both layers~~ → **reframed: delete the `SeamGateConfig` twin**, have `SeamGateParams` borrow `&PatchRequestSettings` + keep only the derived frame fields | Clearing M-CFG | Pending — **gated on a copy-cost measurement** (§6.4.2) | `SeamGateConfig` is 53 `pub` fields vs settings' 56 — a near-twin, not a projection. Extracting bundles into *both* would preserve the duplication it's meant to remove. |
+| **P1** | ~~Extract `FillSearchParams` + `FitScoringParams` / `SeamGatePolicy` into both layers~~ → **reframed: delete the `SeamGateConfig` twin**, have `SeamGateParams` borrow `&PatchRequestSettings` + keep only the derived frame fields | Clearing M-CFG | **Done 2026-07-23** | `SeamGateDerived` holds frames + scan/opt-in only; policy reads `settings`. Hot path was already `&` — duplication cleanup, not a perf change. |
 | **P2** | Remaining bundles (extension, fill-anchor, residual, anchor-seam, normalize) — one PR per family | When that feature is touched | **Demoted to optional** (§6.4.3) | Post-P0/P3.1 this is organization, not correctness. Do it only if a family genuinely becomes unwieldy. |
 | **P3** | Seed the harness literal from `RepairConfig::default().patch_settings()` — removes the last independent default source | Now | **Done 2026-07-23** | Reduced to one step: §6.5 retracted §6.2, so step 2 (production-fidelity test) was dropped as redundant and step 3 demoted to undated cleanup. |
 | **P4** | ~~Nest TOML under `[repair.fill_search]`~~ | — | **Not recommended** (§6.4.3) | Fights `repair_profile_field_mask_from_toml`'s flat `contains_key` walker and forces alias keys. Revisit only on a real TOML-ergonomics complaint. |
@@ -287,21 +287,14 @@ And that coverage is better bought **additively** than by mutating 37 existing t
 Step 1 is done. The abandoned "flip everything and see what breaks" sequence is explicitly
 **not** the plan.
 
-#### 6.4.2 P1, reframed — delete the twin, don't bundle into it
+#### 6.4.2 P1, reframed — delete the twin, don't bundle into it — **done 2026-07-23**
 
-`SeamGateConfig` carries **53 `pub` fields** against `PatchRequestSettings`' 56. That is not
-the narrow derived projection §2 and Principle 5 assume — it is a near-twin, and the single
-largest remaining hand-copy in the workspace. Extracting shared bundles into *both* structs
-would preserve the duplication the exercise is meant to remove. The better move is to delete
-`SeamGateConfig` and have `SeamGateParams` hold `&PatchRequestSettings` alongside the genuinely
-derived frame fields.
-
-**Gate before committing to this:** `SeamGateConfig` is `Clone, Copy` and sits on the seam
-search that is ~93% of repair wall-clock ([[production-perf-gate-search-dominates]]). Measure
-whether it is actually copied per-bracket or already passed by reference. If per-bracket copies
-are real, a 53-field `Copy` struct is a perf liability *and* a duplication liability, which
-strengthens the case; if it is already borrowed, the change is free. Do not start P1 without
-that number.
+`SeamGateConfig` carried **53 `pub` fields** against `PatchRequestSettings`' 56. That was not
+the narrow derived projection §2 and Principle 5 assumed — it was a near-twin. P1 deleted it:
+`SeamGateParams` now holds `&PatchRequestSettings` + owned `SeamGateDerived` (frames, rate/channels,
+`silence_peak_fraction`, `measure_residual`, `anchor_matchability`). `from_repair` is frame math
+only. Hot path was already behind `&` (copy-cost gate answered by types); this is duplication
+cleanup.
 
 #### 6.4.3 P2 demoted, P4 not recommended
 
@@ -419,10 +412,10 @@ would change a validation outcome is not pure structure — re-scope or call it 
 - Adding a knob means: define once on a bundle, wire CLI/TOML once, embed/propagate the
   bundle — **no new lines** in three parallel field lists.
 - `PatchRequestSettings` and `PatchAudioRequest` no longer duplicate ~50 scalar fields.
-- `SeamGateConfig::from_repair` copies bundles (and derives frames), not a long flat list.
+- `SeamGateDerived::from_repair` derives frames only; policy is read from `&PatchRequestSettings`.
 - Harness defaults for shared knobs come from `RepairConfig::default()` (P3).
-- M-CFG closable after **P0 + P3 step 1** (one definition, one seed → drift impossible). P1
-  optionally follows for the `SeamGateConfig` twin; P2/P4 are not required to close it.
+- M-CFG closable after **P0 + P3 step 1 + P1** (one settings owner; gate has no policy twin).
+  P2/P4 are not required to close it.
 
 ---
 
@@ -432,9 +425,10 @@ would change a validation outcome is not pure structure — re-scope or call it 
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — orthogonal M-MOD slice
 - `crates/clip-sync-repair/src/infrastructure/config.rs` — `RepairConfig`, `patch_settings`
 - `crates/clip-sync-repair/src/application/patch_audio.rs` — `PatchAudioRequest`,
-  `PatchRequestSettings`, `SeamGateConfig::from_repair`
-- `crates/clip-sync-repair/src/application/patch_region.rs` — `SeamGateConfig`, existing
-  `SeamGateParams` (cfg+geom — do not overload)
+  `PatchRequestSettings`, `SeamGateDerived::from_repair`
+- `crates/clip-sync-repair/src/application/patch_region.rs` — `SeamGateDerived`,
+  `SeamGateParams` (settings borrow + derived + geom), existing
+  `SeamGateParams` name (cfg+geom era — do not overload with a policy-bundle name)
 - `crates/clip-sync-repair-harness/src/patch_audio.rs` — `PatchTestOptions`
 - `crates/clip-sync/src/application/config.rs` — `AlignConfig` nesting precedent
 - `crates/clip-sync/src/infrastructure/config/toml_keys.rs` — `unknown_toml_keys` / flatten caveat
