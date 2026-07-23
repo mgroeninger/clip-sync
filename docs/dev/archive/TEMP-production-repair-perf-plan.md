@@ -481,8 +481,9 @@ does the default flip on.
     score, not seam Pearson; xcorr rescue drops the safe floor to −0.03, which windowed-max seam Pearson essentially
     never clears downward). The 46% ceiling is unreachable by any byte-safe gate. **Lever dropped; redirect to FFT-ing
     the per-bracket score sweep (`char_gate_search`, §0).** Full record: `docs/dev/archive/TEMP-anchor-pregate-plan.md`
-    (top banner + §7 RESULT). The predicate, instrumentation, and side-channel audit survive if ever revisited under
-    different thresholds.
+    (top banner + §7 RESULT). **Measurement tooling removed 2026-07-23 (M-DEAD B2):** predicate, `CLIP_SYNC_BRACKET_STATS`
+    emit path, and `scripts/measure-anchor-brackets.ps1` are gone from the live tree (retired script under
+    `docs/dev/archive/measure-anchor-brackets.ps1`).
 
     **Phase 2 — realized-speedup harness (DEFERRED to the pre-gate PR, do NOT build early).** Sizing the ceiling
     (above) is phase 1 and needs no persistence: the count-fraction is deterministic and already recoverable from the

@@ -16,9 +16,12 @@
 > anti-correlated below −0.03 across the whole reachable window. **The 46% ceiling was never reachable by a
 > byte-safe gate.** Per §7's decision gate: negative result recorded, **lever dropped, do NOT wire §3.** Redirect the
 > perf effort to the parent plan's live lever — FFT the per-bracket score sweep
-> (`[[production-perf-gate-search-dominates]]`, `char_gate_search` = 93%). Everything below is retained for the
-> record; the instrumentation, predicate, and side-channel audit survive if the lever is ever revisited under
-> different thresholds.
+> (`[[production-perf-gate-search-dominates]]`, `char_gate_search` = 93%).
+>
+> **Tooling removed 2026-07-23 (M-DEAD B2):** `CLIP_SYNC_BRACKET_STATS` / `pregate_doomed` emit path,
+> `anchor_bracket_matchability_doomed`, and `scripts/measure-anchor-brackets.ps1` were deleted from the live
+> tree. The retired script is kept at `docs/dev/archive/measure-anchor-brackets.ps1` for the record only — it
+> no longer matches production. NO-GO numbers above remain the source of truth.
 
 > ## ⚠️ BLOCKING CAVEAT (2026-07-22, discovered during wiring) — the greenlight measured the *ceiling*, not the realizable gain
 >

@@ -23,13 +23,15 @@
 > **M-DEAD §2 fixed** (2026-07-23): `PcmCorrelator::slide_template_scores` +
 > `gcc_phat_slide_scores` removed; port keeps `cross_correlate_lag` /
 > `segment_similarity`.
+> **M-DEAD §1 B2 fixed** (2026-07-23): pregate measurement stack removed (predicate,
+> `CLIP_SYNC_BRACKET_STATS`, retired measure script → archive).
 > **M-CLONE demoted 2026-07-23** from “next blessed repair perf” to **optional alloc
 > hygiene** (3 independent bites). Material repair wall-time residual remains lever 1c.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
-> **Context:** Default `cargo clippy --workspace --all-targets` clean on the correlator
-> path. Pedantic clippy produces ~900 mostly cast/docs noise.
+> **Context:** Default `cargo clippy --workspace --all-targets` clean on correlator /
+> pregate paths. Pedantic clippy produces ~900 mostly cast/docs noise.
 
 Legend: **sev** = P0 (correctness / panic / decode corruption) · P1 (silent wrong
 behavior / user-intent override) · P2 (perf / maintainability) · P3 (hygiene).
@@ -82,16 +84,16 @@ threaded. Remaining open defects cluster in:
 | 2 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
 | 3 | M-HARNESS | P2 | Harness drifts from production defaults / formulas | harness crate |
 | 4 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
-| 5 | L-* / M-DEAD §1 | P3 | Pregate measurement stack (decision pending) + CLI hygiene | misc |
+| 5 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
 2026-07-23** as hygiene (unused discover correlator *arg* removed; `PcmCorrelator` kept
-for lag refine). **M-DEAD §2 closed 2026-07-23** (`slide_template_scores` deleted).
-See Fixed tables. **All P1s are now done except optional report flags;
-remaining work is P2/P3.** Material *repair* wall-time residual is gate-search lever 1c
-(`k`-reduction in `TEMP-production-repair-perf-plan.md`) — **not**
-M-CLONE and **not** discover PHAT. M-CLONE is optional alloc hygiene only.)*
+for lag refine). **M-DEAD closed 2026-07-23** (§2 `slide_template_scores` deleted; §1 B2
+pregate measurement stack removed). See Fixed tables. **All P1s are now done except
+optional report flags; remaining work is P2/P3.** Material *repair* wall-time residual
+is **not** the dropped matchability pre-gate (0% realizable) — see archived perf plans.
+M-CLONE is optional alloc hygiene only.)*
 
 ---
 
@@ -445,20 +447,23 @@ first. Then split `gap_fingerprint` into schema / measure / project, and harness
 | M-FRAMES | Inconsistent floor vs `.round()` in secs→frames | Standardize on `.round()` (match siblings that already do) |
 | M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) |
 | M-HOUND | String-match on `hound::Error` Display | Match enum variants |
-| M-DEAD | Dead / measurement-only leftovers | **§2 done**; §1 decision pending (B0/B1/B2) |
+| M-DEAD | ~~Dead / measurement leftovers~~ | **done 2026-07-23** (§1 B2 + §2) |
 
-### M-DEAD. Dead symbols — **§2 fixed; §1 decision pending**
+### M-DEAD. Dead symbols — **fixed 2026-07-23** (both bites)
 
-**1. Anchor pre-gate symbols** (`gap_anchor_seam.rs`) — **not `dead_code`**
+**1. Anchor pre-gate measurement stack** — **removed (B2)**
 
-The anchor pre-gate was measured NO-GO and dropped (2026-07-23) — 0/~4939 brackets
-doomed vs a 46% ceiling. The "wire it up" option is off the table. The predicate
-(`anchor_bracket_matchability_doomed` + `MATCHABILITY_PREGATE_EPSILON`) and
-`CLIP_SYNC_BRACKET_STATS` / `pregate_doomed` emit path are **measurement-only**, still
-called from `patch_region` when the env gate is set — clippy is clean. Archive plan
-says instrumentation may survive for revisit. Decide: keep (B0), narrow-delete
-predicate only (B1), or strip the whole bracket-stats stack (B2). See
-`archive/TEMP-anchor-pregate-plan.md` §7.
+Lever was NO-GO (0/~4939 brackets doomed vs 46% ceiling). Deleted the measurement-only
+stack rather than leaving env-gated scaffolding:
+
+| Removed | Where |
+|---------|-------|
+| `anchor_bracket_matchability_doomed` + `MATCHABILITY_PREGATE_EPSILON` + 3 unit tests | `gap_anchor_seam.rs` |
+| `pregate_doomed`, `CLIP_SYNC_BRACKET_STATS` helpers, emit/timer path | `patch_region.rs` |
+| `scripts/measure-anchor-brackets.ps1` | moved to `docs/dev/archive/measure-anchor-brackets.ps1` (retired) |
+
+NO-GO numbers remain in `archive/TEMP-anchor-pregate-plan.md`. Production
+`anchor_bracket_both_matchable*` gate path is unchanged.
 
 **2. `PcmCorrelator::slide_template_scores`** — **fixed 2026-07-23**
 
@@ -477,15 +482,16 @@ PHAT slide without a corpus pass + threshold retune.
 | `clip-sync-repair/.../infrastructure/correlation.rs` | Dropped forwarder |
 | `offset_refinement.rs` + this ledger | Softened wording (method gone) |
 
-**Verified:** `cargo test -p clip-sync --lib` (320 pass / 15 ignored) +
+**Verified (§2):** `cargo test -p clip-sync --lib` (320 pass / 15 ignored) +
 `cargo test -p clip-sync-repair --lib` (383 pass / 1 ignored).
+**Verified (§1 B2):** `cargo test -p clip-sync-repair --lib` (380 pass / 1 ignored;
+−3 pregate unit tests removed); clippy clean on `--lib`.
 
 ---
 
 ## P3 — Hygiene (selected)
 
-Batch in a cleanup PR whenever touching CLI / `Cargo.toml`. Prefer bundling
-**M-DEAD §1** (pregate decision) with CLI hygiene when convenient.
+Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
@@ -495,7 +501,7 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`. Prefer bundling
 | L-EXIT | Redundant `NoAudioTracks` exit-code arm | Distinct code or delete the specific arm |
 | L-MSG | Fingerprinter "greater than 1001" vs check `< MIN` | Align message with the check ("at least") |
 | L-PUBLISH | CLI missing `publish = false` | Match sibling internal crates |
-| M-DEAD / L-pregate | Pregate measurement stack (NO-GO lever; not `dead_code`) | Decide B0 keep / B1 narrow / B2 full — see M-DEAD §1 |
+| M-DEAD / L-pregate | ~~Pregate measurement stack~~ | **done 2026-07-23** (B2 full remove) |
 | M-DEAD / L-slide | ~~Unused `slide_template_scores`~~ | **done 2026-07-23** |
 
 ---
@@ -521,13 +527,13 @@ are the remaining ways to get silently wrong audio.
 3. ~~**M-FFT**~~ (done 2026-07-23) — unused discover correlator *arg* removed; port kept;
    Pearson discover unchanged. Anchor pre-gate was NO-GO (2026-07-23); repair
    gate-search FFT already landed separately — do not reopen discover PHAT.
-   ~~**M-DEAD §2**~~ (done 2026-07-23) — `slide_template_scores` deleted.
+   ~~**M-DEAD**~~ (done 2026-07-23) — §2 `slide_template_scores` deleted; §1 B2 pregate
+   measurement stack removed.
 4. **M-CFG** / **M-MOD** / **M-HARNESS** opportunistically with nearby feature work.
-   Material repair wall-time (if pursued) → lever 1c, not M-CLONE.
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
    (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
-6. **P3** / **M-DEAD §1** whenever convenient — pregate measurement-stack decision
-   (B0/B1/B2); also CLI broken-pipe / quiet / verbose / unused deps / publish flag
+6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
+   publish flag
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
 
 ### Milestone checklist
@@ -537,15 +543,14 @@ are the remaining ways to get silently wrong audio.
 3. ~~**Codec follow-ups (P1 M-AC3-DRAIN)**~~ — **done 2026-07-23**: drain all AC-3/E-AC-3 frames per packet (`drain_packet` helper + 4 unit tests; real E-AC-3 surround path green). *(M-HE HE-AAC rate cross-check + M-FDK-RESET recreate-decoder also done 2026-07-23; M-FDK-RESET has a verified red→green backward-seek regression test running on stock ffmpeg.)* **All codec P1s closed.**
 4. ~~**Observability remainder (P1 M-SILENT)**~~ — **done 2026-07-23**: unknown TOML keys (shared `unknown_toml_keys` in analyzer + repair loaders) and `align_videos` `Ok(None)` warn logging. Optional machine-readable report flags deferred.
 5. ~~**M-FFT hygiene**~~ — **done 2026-07-23**: drop unused discover correlator arg; keep
-   `PcmCorrelator` for lag refine; leave Pearson. ~~**M-DEAD §2**~~ — **done 2026-07-23**:
-   drop `slide_template_scores` / `gcc_phat_slide_scores`.
+   `PcmCorrelator` for lag refine; leave Pearson. ~~**M-DEAD**~~ — **done 2026-07-23**:
+   §2 drop `slide_template_scores`; §1 B2 remove pregate measurement stack.
 6. **Structure (P2 M-CFG / M-MOD / M-HARNESS)** — incremental; see
    `TEMP-repair-config-bundles-plan.md` (M-CFG) and
    `TEMP-policies-module-split-plan.md` (M-MOD policies slice).
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
-8. **P3 / M-DEAD §1** — pregate measurement stack decision (B0/B1/B2); CLI broken-pipe,
-   quiet/verbose, unused deps, publish flag.
+8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---
 

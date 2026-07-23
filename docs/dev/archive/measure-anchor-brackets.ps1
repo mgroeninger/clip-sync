@@ -1,4 +1,10 @@
 #!/usr/bin/env pwsh
+# RETIRED 2026-07-23 (M-DEAD B2 / anchor pre-gate NO-GO).
+# Lever #2 matchability pre-gate measured 0% realizable; measurement stack removed from production.
+# This copy is archival only — it no longer matches live `patch_region` / `gap_anchor_seam`.
+# NO-GO numbers: docs/dev/archive/TEMP-anchor-pregate-plan.md (top banner).
+#
+# --- original header below ---
 # Measurement harness for perf-plan §2.5 lever 1c #2 ("cut k" — the anchor-bracket matchability pre-gate).
 #
 # Sizes lever #2's ceiling on real media: of the time `gate_anchor_search` spends running a full
