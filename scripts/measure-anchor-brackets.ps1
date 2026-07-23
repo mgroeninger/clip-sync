@@ -14,9 +14,18 @@
 # `CLIP_SYNC_BRACKET_STATS=1` the gate emits one `bracket_stats` event per scored bracket, categorized by
 # BOTH arms (unlike the corpus's own first-failing `failure_stage`, which can't separate matchability-doomed
 # from structure-doomed):
-#     ... INFO bracket_stats: anchor bracket a_start_secs=<f> category="<cat>" search_us=<u> ...
+#     ... INFO bracket_stats: anchor bracket a_start_secs=<f> category="<cat>" search_us=<u> pregate_doomed=<bool> ...
 # categories: pass_arms | reject_structure_only | reject_matchability_only | reject_both | no_placement
-# Recoverable = reject_matchability_only + reject_both (the matchability arm the pre-gate targets).
+# Recoverable (CEILING) = reject_matchability_only + reject_both — the matchability arm, measured at the
+# SEARCHED placement. This is the most any matchability pre-gate could skip.
+#
+# REALIZABLE (perf lever #2 §7, the actual decision gate): `pregate_doomed=true` marks brackets the BYTE-SAFE
+# pre-gate predicate (`anchor_bracket_matchability_doomed`: windowed-max seam Pearson < min_pearson −
+# xcorr_ambiguous_band = −0.03 with defaults, over the reachable placement window) would ACTUALLY skip. It is
+# a subset of the ceiling because the unified search optimizes a joint structure+wave score (not seam Pearson)
+# and xcorr rescue lowers the safe floor to −0.03. The roll-up reports realizable count/time and the
+# realizable/ceiling efficiency; a `pregate_doomed=true` on a non-`reject_matchability` bracket is a superset
+# violation (false skip = correctness bug) and is flagged LOUD. See docs/archive/TEMP-anchor-pregate-plan.md §7.
 #
 # Two modes:
 #   Run pairs from a manifest (builds the corpus under -CorpusRoot AND rolls up perf):
@@ -95,6 +104,14 @@ function New-PairTally {
             reject_both             = 0
             no_placement            = 0
         }
+        # Perf lever #2 §7 — the REALIZABLE arm: brackets the byte-safe pre-gate predicate
+        # (`anchor_bracket_matchability_doomed`, windowed-max seam Pearson < floor over the reachable window)
+        # would actually skip. Distinct from the ceiling (`reject_matchability_*`, measured at the SEARCHED
+        # placement). By the superset proof PregateN ⊆ recoverable; PregateLeakN counts any violation (a
+        # pre-gate skip on a bracket the searched gate would have PASSED = a correctness bug → must stay 0).
+        PregateN     = 0
+        PregateUs    = [long]0
+        PregateLeakN = 0
     }
 }
 
@@ -102,7 +119,10 @@ function New-PairTally {
 function Read-LogTally {
     param([string]$Path, [string]$Label)
     $t = New-PairTally -Label $Label
+    # `pregate_doomed` may appear before or after `search_us` depending on field order; capture it separately
+    # and default to false for older logs that predate the §7 instrumentation.
     $rx = [regex]'bracket_stats:.*?category="(?<cat>[a-z_]+)".*?search_us=(?<us>\d+)'
+    $rxDoom = [regex]'pregate_doomed=(?<d>true|false)'
     foreach ($line in [System.IO.File]::ReadLines($Path)) {
         if ($line -notlike '*bracket_stats*') { continue }
         $m = $rx.Match($line)
@@ -114,6 +134,12 @@ function Read-LogTally {
         $t.CatN[$cat] += 1
         $t.TotalUs += $us
         $t.Brackets += 1
+        $dm = $rxDoom.Match($line)
+        if ($dm.Success -and $dm.Groups['d'].Value -eq 'true') {
+            $t.PregateN += 1
+            $t.PregateUs += $us
+            if ($cat -ne 'reject_matchability_only' -and $cat -ne 'reject_both') { $t.PregateLeakN += 1 }
+        }
     }
     return $t
 }
@@ -124,17 +150,26 @@ function Write-TallyRow {
     param($T, [long]$GrandTotalUs)
     $recovUs = $T.Cat.reject_matchability_only + $T.Cat.reject_both
     $recovPct = if ($T.TotalUs -gt 0) { 100.0 * $recovUs / $T.TotalUs } else { 0.0 }
-    '{0,-20} {1,5} {2} {3} {4,7:N1}%  (m-only {5}, both {6}, struct {7}, pass {8}, noplace {9})' -f `
+    $recovN = $T.CatN.reject_matchability_only + $T.CatN.reject_both
+    # Realizable (§7): byte-safe pre-gate would skip these. `real%` is by-time vs total; `eff%` is the
+    # realizable/ceiling efficiency (how much of the ceiling the byte-safe predicate actually captures).
+    $realPct = if ($T.TotalUs -gt 0) { 100.0 * $T.PregateUs / $T.TotalUs } else { 0.0 }
+    $effPct = if ($recovN -gt 0) { 100.0 * $T.PregateN / $recovN } else { 0.0 }
+    $leak = if ($T.PregateLeakN -gt 0) { " LEAK={0}!" -f $T.PregateLeakN } else { '' }
+    '{0,-20} {1,5} {2} {3} {4,6:N1}% | real {5} {6,6:N1}% eff {7,5:N1}%  (ceilN {8}, m-only {9}, both {10}, struct {11}){12}' -f `
         $T.Label,
         $T.Brackets,
         (Format-Sec $T.TotalUs),
         (Format-Sec $recovUs),
         $recovPct,
+        (Format-Sec $T.PregateUs),
+        $realPct,
+        $effPct,
+        $recovN,
         $T.CatN.reject_matchability_only,
         $T.CatN.reject_both,
         $T.CatN.reject_structure_only,
-        $T.CatN.pass_arms,
-        $T.CatN.no_placement
+        $leak
 }
 
 # ---- collect logs (running the pairs first, if in Run mode) --------------------------------------
@@ -209,6 +244,9 @@ $grand = New-PairTally -Label 'TOTAL'
 foreach ($t in $tallies) {
     $grand.Brackets += $t.Brackets
     $grand.TotalUs += $t.TotalUs
+    $grand.PregateN += $t.PregateN
+    $grand.PregateUs += $t.PregateUs
+    $grand.PregateLeakN += $t.PregateLeakN
     foreach ($k in @($t.Cat.Keys)) {
         if (-not $grand.Cat.ContainsKey($k)) { $grand.Cat[$k] = [long]0; $grand.CatN[$k] = 0 }
         $grand.Cat[$k] += $t.Cat[$k]
@@ -235,10 +273,30 @@ $recovNPct = if ($grand.Brackets -gt 0) { 100.0 * $recovN / $grand.Brackets } el
 $recovUs = $grand.Cat.reject_matchability_only + $grand.Cat.reject_both
 $recovPct = if ($grand.TotalUs -gt 0) { 100.0 * $recovUs / $grand.TotalUs } else { 0.0 }
 Write-Host ("Ceiling (by time):     lever #2 can remove at most {0:N1}% of anchor-bracket search time." -f $recovPct)
-Write-Host ("Ceiling (by bracket #): {0} of {1} brackets are matchability-doomed = {2:N1}% (deterministic proxy)." -f $recovN, $grand.Brackets, $recovNPct)
+Write-Host ("Ceiling (by bracket #): {0} of {1} brackets are matchability-doomed (searched placement) = {2:N1}% (deterministic proxy)." -f $recovN, $grand.Brackets, $recovNPct)
 Write-Host ("Across {0} pair(s)." -f $tallies.Count)
-if ($recovNPct -lt 10.0) {
-    Write-Host "  -> Low ceiling: most brackets are structure-doomed, not matchability-doomed. Favor 'stop here'." -ForegroundColor Yellow
+
+# ---- REALIZABLE arm (perf lever #2 §7 — the actual decision gate) --------------------------------
+# The ceiling above is measured at the SEARCHED placement; the byte-safe pre-gate skips only when
+# windowed-max seam Pearson < floor (= min_pearson - xcorr_ambiguous_band = -0.03 with defaults) over the
+# whole reachable window. That is a subset — this is what the lever would ACTUALLY save.
+$realN = $grand.PregateN
+$realUs = $grand.PregateUs
+$realNPct = if ($grand.Brackets -gt 0) { 100.0 * $realN / $grand.Brackets } else { 0.0 }
+$realPct = if ($grand.TotalUs -gt 0) { 100.0 * $realUs / $grand.TotalUs } else { 0.0 }
+$effPct = if ($recovN -gt 0) { 100.0 * $realN / $recovN } else { 0.0 }
+Write-Host ''
+Write-Host 'REALIZABLE (byte-safe pre-gate `anchor_bracket_matchability_doomed`, the §7 decision gate):' -ForegroundColor Green
+Write-Host ("Realizable (by time):     {0:N1}% of anchor-bracket search time." -f $realPct)
+Write-Host ("Realizable (by bracket #): {0} of {1} brackets = {2:N1}% (deterministic); efficiency = {3:N1}% of the ceiling." -f $realN, $grand.Brackets, $realNPct, $effPct)
+if ($grand.PregateLeakN -gt 0) {
+    # A superset violation invalidates the byte-identity argument — it must block the go/no-go verdict, not
+    # coexist with it. Fix the predicate/window before the realizable rate means anything.
+    Write-Host ("  !! SUPERSET VIOLATION: {0} bracket(s) pre-gate-doomed but NOT searched-rejected — a false skip = CORRECTNESS BUG." -f $grand.PregateLeakN) -ForegroundColor Red
+    Write-Host "  -> STOP: the byte-identity superset proof is contradicted by data. Do NOT wire. Audit anchor_bracket_matchability_doomed / the reachable window (plan §4 R1) before any go/no-go read." -ForegroundColor Red
+}
+elseif ($realNPct -lt 10.0) {
+    Write-Host "  -> Low realizable rate: the -0.03 floor prediction holds; the byte-safe pre-gate does not pay off. Record the negative result and drop the lever (plan §7)." -ForegroundColor Yellow
 } else {
-    Write-Host "  -> Material ceiling: proceed to design/implement the matchability pre-gate (perf-plan §2.5 #2)." -ForegroundColor Green
+    Write-Host "  -> Material realizable rate: un-pause and wire the pre-gate (plan §3)." -ForegroundColor Green
 }

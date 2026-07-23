@@ -1397,6 +1397,13 @@ struct GateStructureAlign {
     waveform_gate_frames: usize,
     post_gate_frames: usize,
     unified: UnifiedFillMatch,
+    /// Measurement-only (perf lever #2 §7): whether the byte-safe pre-gate predicate
+    /// [`anchor_bracket_matchability_doomed`] fires over the reachable placement window. Computed **only**
+    /// when `CLIP_SYNC_BRACKET_STATS` is set and this is an anchor bracket; `false` otherwise. Emission-only —
+    /// no production path reads it, so behavior stays byte-identical. Lets the roll-up size the *realizable*
+    /// skip rate against the searched-placement *ceiling* before the lever is wired. See
+    /// `docs/archive/TEMP-anchor-pregate-plan.md` §7 and its top blocking caveat.
+    pregate_doomed: bool,
 }
 
 /// The gate's structure-alignment search for one `(refined, baseline)` candidate: builds the same border
@@ -1581,6 +1588,27 @@ fn gate_structure_align(
         );
     }
 
+    // Measurement-only (perf lever #2 §7): size the *realizable* pre-gate skip rate. The reachable placement
+    // window is `offset_nominal_start ± (search_radius + fine_polish)` clamped to the haystack — a superset of
+    // the unified search's own `[nominal ± search_radius]` + fine polish (wider is conservative). Gated on
+    // `CLIP_SYNC_BRACKET_STATS` so production pays nothing; emission-only, so output stays byte-identical.
+    let pregate_doomed = if anchor_seam_bracket && anchor_bracket_stats_enabled() {
+        let reach = params.cfg.search_radius_frames + structure_params.max_fine_adjustment_frames;
+        let start_lo = offset_nominal_start.saturating_sub(reach);
+        let start_hi = (offset_nominal_start + reach).min(cache.b_mono.len());
+        crate::domain::gap_anchor_seam::anchor_bracket_matchability_doomed(
+            &templates,
+            gap_frames,
+            waveform_gate_frames,
+            post_gate_frames,
+            start_lo,
+            start_hi,
+            &params.cfg.anchor_matchability,
+        )
+    } else {
+        false
+    };
+
     Ok(GateStructureAlign {
         a_pre_border,
         a_post_border,
@@ -1591,6 +1619,7 @@ fn gate_structure_align(
         waveform_gate_frames,
         post_gate_frames,
         unified,
+        pregate_doomed,
     })
 }
 
@@ -1639,6 +1668,7 @@ fn emit_anchor_bracket_stat(
     category: &str,
     structure_pre: Option<f64>,
     structure_post: Option<f64>,
+    pregate_doomed: bool,
     elapsed: std::time::Duration,
 ) {
     let a_start_secs = baseline.start_frame as f64 / params.cfg.sample_rate.max(1) as f64;
@@ -1649,6 +1679,10 @@ fn emit_anchor_bracket_stat(
         search_us = elapsed.as_micros() as u64,
         structure_pre = structure_pre.unwrap_or(f64::NAN),
         structure_post = structure_post.unwrap_or(f64::NAN),
+        // Perf lever #2 §7: `pregate_doomed` = the byte-safe pre-gate would skip this bracket (realizable);
+        // `category ∈ {reject_matchability_only, reject_both}` = the searched placement failed matchability
+        // (ceiling). `pregate_doomed ⊆ reject_matchability` by the superset proof; the roll-up ratios them.
+        pregate_doomed,
         "anchor bracket"
     );
 }
@@ -1675,12 +1709,16 @@ fn evaluate_seam_gate_fit_candidate(
         waveform_gate_frames,
         post_gate_frames,
         unified,
+        pregate_doomed,
     } = match gate_structure_align(refined, baseline, params, cache, anchor_seam_bracket) {
         Ok(align) => align,
         Err(err) => {
             if let Some(timer) = stats_timer {
-                // No placement — the pre-gate can't recover these (no searched geometry to matchability-test).
-                emit_anchor_bracket_stat(baseline, params, "no_placement", None, None, timer.elapsed());
+                // No placement — the pre-gate can't recover these (no searched geometry to matchability-test),
+                // so it never fires here: `pregate_doomed = false`.
+                emit_anchor_bracket_stat(
+                    baseline, params, "no_placement", None, None, false, timer.elapsed(),
+                );
             }
             return Err(err);
         }
@@ -1733,6 +1771,7 @@ fn evaluate_seam_gate_fit_candidate(
             anchor_bracket_category(structure_ok, match_ok),
             Some(structure_pre),
             Some(structure_post),
+            pregate_doomed,
             timer.elapsed(),
         );
     }

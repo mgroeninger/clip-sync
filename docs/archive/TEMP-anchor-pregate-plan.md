@@ -1,6 +1,33 @@
 # TEMP — Anchor-bracket matchability pre-gate (perf lever #2, "cut k")
 
-**Status:** green-lit 2026-07-22 on interim 9-pair evidence (below). Scope is deliberately narrow.
+> ## ⚠️ BLOCKING CAVEAT (2026-07-22, discovered during wiring) — the greenlight measured the *ceiling*, not the realizable gain
+>
+> The 44.8%/49.1% "doomed" numbers below are measured at the **searched** placement
+> (`anchor_bracket_both_matchable_at_gate(placement = alignment.start_frame)`, `patch_region.rs:1723`): the
+> fraction of brackets whose *chosen* placement fails matchability. That is the **ceiling** — the most *any*
+> matchability pre-gate could skip. The **byte-safe** pre-gate this plan builds skips only when
+> `windowed_max(seam_pearson) < floor` over the whole reachable window, and that realizable set is a
+> potentially **much smaller subset**, for two independent reasons:
+>
+> 1. **The unified search optimizes a JOINT structure+wave score** (`unified_fit_score_with_repeat`), not seam
+>    Pearson. The chosen lag can have low seam Pearson while another lag in the same window has high seam
+>    Pearson. Such a bracket is "matchability-rejected" (counted in the 44.8%) yet its **windowed-max is high**,
+>    so the pre-gate does **not** skip it.
+> 2. **xcorr rescue is ACTIVE in production** (`anchor_bracket_both_matchable_at_gate` wires a `FftCorrelator`
+>    whenever `residual_max_lag_frames > 0`, which config-validation forces `> 0`). Rescue extends "matchable"
+>    down to `min_pearson − xcorr_ambiguous_band = 0.12 − 0.15 = **−0.03**`. So the byte-safe floor is **−0.03**:
+>    a seam must be **anti-correlated below −0.03 across the entire reachable window** to be skipped. For the
+>    decorrelated / missing-donor content this lever targets, windowed-max Pearson is typically **positive**
+>    (~+0.1–0.3), which clears −0.03 ⇒ **not skipped**.
+>
+> **Consequence:** the realizable skip rate is unmeasured and may be a small fraction of 44.8%. Do **not** treat
+> the greenlight as validating the *build* until the **realizable** rate (fraction of brackets where
+> `anchor_bracket_matchability_doomed` fires over the reachable window) is measured. Instrumentation is a small,
+> byte-identical, emission-only add to the existing `bracket_stats` path (predicate already implemented). See the
+> new **§7 — realizable-rate re-measurement** before wiring any behavior change. All wiring is PAUSED pending it.
+
+**Status:** green-lit 2026-07-22 on interim 9-pair evidence (below), then **PAUSED 2026-07-22** pending
+realizable-rate re-measurement (see blocking caveat). Scope is deliberately narrow.
 **Parent:** `docs/archive/TEMP-production-repair-perf-plan.md` — this doc does NOT restate the perf ranking,
 the `bracket_stats` instrumentation, or the phase-2 harness spec; it references them. Read the parent's
 lever-#2 entry (~line 430) and its **Superset proof (2026-07-22)** first — that proof is the load-bearing
@@ -83,8 +110,12 @@ time is the pre-gate's exact ceiling **upper** bound.
    (`fill_seam_correlations_band`) over the same search window and the same `pre_window`/`post_window`
    (`waveform_gate_frames`/`post_gate_frames`) the unified search uses. Reuse, do not reimplement.
 2. **Insert the skip test before `gate_structure_align`/`bracket_unified_search`** in the bracket loop
-   (`try_anchor_seam_joint_search`, `gap_anchor_seam.rs:880`). On skip, the bracket contributes nothing to the
-   pool — identical to the search running and the matchability arm rejecting.
+   (`try_anchor_seam_joint_search`, `gap_anchor_seam.rs:880`). On a doomed bracket, **return
+   `Err(SeamGateFailure::WaveformBelowThreshold { pre, post, min, best_attempt: None })` — the same failure
+   variant the matchability arm returns** (`patch_region.rs:1760`). Do **NOT** "contribute nothing / skip the
+   bracket entirely": that is *not* byte-identical (see §3a). Returning the matchability variant makes a
+   pre-gated bracket indistinguishable, to `record_fit_joint_candidate_to_pool`, from a searched-then-rejected
+   bracket — same `recorded_failure` variant, same first-wins ordering, same (empty) pool contribution.
 3. **Threshold source:** `anchor_matchability.min_pearson` and `.xcorr_ambiguous_band` from config
    (`config.rs:246`, defaults `DEFAULT_ANCHOR_MATCH_MIN_PEARSON` / `_XCORR_AMBIGUOUS_BAND`). No new tunable —
    the pre-gate reads the SAME thresholds the real gate uses, or the superset property breaks.
@@ -95,6 +126,50 @@ time is the pre-gate's exact ceiling **upper** bound.
 **Interlock with lever-1:** the band FFT must cover the search window at the resolution the unified search
 samples placements — if the search can land on a lag the band didn't evaluate, the "searched placement lies in
 window" premise fails. Confirm window/stride parity before trusting byte-identity (see §4 risk R1).
+
+---
+
+## 3a. Byte-identity side-channel audit (2026-07-22, resolves the open pre-wiring question)
+
+The superset proof (§2) covers only the **candidate pool**. A rejected bracket also feeds two side channels in
+`record_fit_joint_candidate_to_pool` (`patch_region.rs:444`) that the proof did not touch. Both were traced:
+
+- **`best_waveform` → `best_attempt` (`consider_waveform_attempt`, `enrich_waveform_failure`):** the best
+  seam-Pearson attempt seen across brackets. Consumed **only** by (a) the skip-reason *display* string
+  (`format_correlation_below_threshold`, `patch_result.rs:92`) and (b) `dual_fit_attempt`'s display. **Never a
+  decision, never audio, never a serialized golden field** (`skip_reason_tag` emits only the coarse variant
+  label `"correlation_below_threshold"`; pre/post/best are not serialized). Diagnostic-only.
+
+- **`recorded_failure` (first-failure-wins):** `WaveformBelowThreshold`/`ResidualHeadroomExceeded` set-if-none;
+  `StructureAlignmentFailed` (an "other") sets **only if `pool.is_empty() && recorded_failure.is_none()`**. This
+  is the one that can flip audio. `dual_fit_eligible` (`patch_audio.rs:1566`) =
+  `request_dual_fit && !matches!(fail, StructureAlignmentFailed)` — it keys on the failure **variant**. If the
+  pre-gate merely *dropped* a doomed bracket (which would have produced `WaveformBelowThreshold`), a later
+  `StructureAlignmentFailed` bracket could become `recorded_failure`, flipping `dual_fit_eligible` false and
+  **silently losing a dual-fit rescue** (a real skip↔patch flip → audio divergence).
+
+  **Fix = §3.2's synthetic-Waveform return.** By returning `WaveformBelowThreshold` the pre-gate preserves the
+  `recorded_failure` variant and ordering, so `dual_fit_eligible` and the whole patch/skip decision are
+  **provably byte-identical in audio**. (Dual-fit's rescue inputs come from `df` region mono, never from
+  `best_attempt`, so nothing else in that path depends on the skipped bracket.)
+
+**Residual risk — `seam_shape` (R4, empirical).** The gap's *reported* `CorrelationBelowThreshold { pre, post }`
+is `recorded_failure`'s pre/post = the **first-failing bracket's** values. On the skip path these feed
+`patch_tier_from_correlation_skip` **and** `classify_seam_shape` (`gap_tags.rs:398-417`), and `seam_shape` **is
+serialized in the goldens**. The synthetic return must supply pre/post values:
+
+- `patch_tier`: `min(pre,post) < hard_floor ⇒ HardSkip`. A doomed side is `< (min_pearson − band)`; **iff
+  `(min_pearson − band) ≤ hard_floor`** (config check — verify before trusting) this is HardSkip on *either*
+  valuation → golden-stable.
+- `seam_shape`: reads the **non-doomed** side too. Per-side windowed-max on that side can cross the `0.85`/`0.27`
+  `classify_seam_shape` boundaries differently than the true searched placement (which the pre-gate skips). So
+  windowed-max values *can*, in a narrow case (first-failing bracket is pre-gated, gap is all-fail/skipped,
+  non-doomed side crosses a bucket), perturb the serialized `seam_shape`.
+
+There is no cheap way to reproduce the exact searched-placement pair without searching. Decision: **supply
+per-side windowed-max as the synthetic pre/post (honest cheap upper bound) and let the golden corpus adjudicate
+`seam_shape`** — the plan already mandates golden byte-identity as the primary gate, so a divergence surfaces
+the exact gap and we refine (prove bucket-stability, or narrow the skip). Audio is unaffected regardless.
 
 ---
 
@@ -118,6 +193,12 @@ passed gets dropped = a silently lost patch. Acceptance is **byte-identical outp
   wrong. Re-audit `matchability_at_anchor:585-597` if the golden corpus diverges.
 - **R3 — "both matchable" asymmetry:** confirm the real gate requires BOTH sides (it does — `anchor_bracket_both_matchable`);
   the OR-of-per-side-skip is only valid because either side failing dooms the bracket.
+- **R4 — `seam_shape` side channel (empirical, see §3a):** synthetic windowed-max values feed
+  `classify_seam_shape` via `recorded_failure` when a pre-gated bracket is a skipped gap's first failure. Audio
+  is unaffected (variant/ordering preserved); the golden corpus is the arbiter for the serialized `seam_shape`.
+  Verify `(min_pearson − band) ≤ hard_floor` for `patch_tier` stability. If a golden's `seam_shape` diverges,
+  that is the case to inspect — not necessarily a correctness bug (it's diagnostic tier metadata, not audio),
+  but it must be understood and signed off, not silently accepted.
 
 ---
 
@@ -131,8 +212,34 @@ write), the pre-gate on/off flag (§3.5), and a persisted `bracket-stats-summary
 
 ---
 
+## 7. Realizable-rate re-measurement (DO THIS BEFORE ANY WIRING — see blocking caveat)
+
+The greenlight measured the ceiling (searched-placement matchability reject). Measure the **realizable** rate —
+brackets `anchor_bracket_matchability_doomed` would actually skip over the reachable window — before committing.
+
+**Instrumentation (byte-identical, emission-only, gated on `CLIP_SYNC_BRACKET_STATS`):**
+- Inside `gate_structure_align` the reachable window is available: `start_lo/hi = offset_nominal_start ±
+  (params.cfg.search_radius_frames + gap_structure::structure_fine_polish_frames(params.cfg.bin_frames))`,
+  clamped to `[0, cache.b_mono.len()]`. (Wider is safe; this is a superset of the search's own
+  `[nominal ± search_radius]` + fine polish.)
+- When stats are enabled AND `anchor_seam_bracket`, call `anchor_bracket_matchability_doomed(templates,
+  gap_frames, waveform_gate_frames, post_gate_frames, start_lo, start_hi, &params.cfg.anchor_matchability)` and
+  thread the bool out to the emit site (add a `pregate_doomed` field to the `bracket_stats` event). Pure
+  side-effect — production behavior unchanged.
+- Roll up in `measure-anchor-brackets.ps1`: report `pregate_doomed` count/time **against** the existing
+  `reject_matchability_only + reject_both` ceiling, per pair. `pregate_doomed ⊆ reject_matchability` must hold
+  (superset proof); the ratio `pregate_doomed / reject_matchability` is the realizable-vs-ceiling efficiency.
+
+**Decision gate:** if realizable count% clears a worth-it bar (say ≥10–15% pooled, per-pair on the big pairs),
+un-pause and wire §3. If it's near-zero (the −0.03-floor prediction), the byte-safe mechanism does not pay off —
+record the negative result, drop the lever, and redirect to the parent plan's other levers (e.g. FFT the
+per-bracket score sweep, `[[production-perf-gate-search-dominates]]`).
+
+---
+
 ## 6. Definition of done
 
+- [ ] **Realizable-rate re-measurement (§7) clears the worth-it bar** — GATES everything below.
 - [ ] Pre-gate implemented before the unified search in the bracket loop; reads existing matchability thresholds.
 - [ ] Golden corpus byte-identical, pre-gate ON vs current build.
 - [ ] Harness ON-run skip set == OFF-run `reject_matchability_only + reject_both` set (zero false skips).
