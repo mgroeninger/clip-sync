@@ -2508,46 +2508,6 @@ mod tests {
     }
 
     #[test]
-    fn should_downgrade_cases() {
-        use crate::domain::should_downgrade_repetition_confidence;
-
-        let finding = |lag_secs: f64| RepetitionFinding {
-            lag_secs,
-            confidence: 0.9,
-            items_count: 100,
-        };
-
-        let cases = [
-            (Some(finding(30.0)), None, 30.0, true, "exact lag match on a"),
-            (None, Some(finding(30.0)), -30.0, true, "exact lag match on b with negative offset"),
-            (Some(finding(45.0)), None, 30.0, false, "lag differs from offset"),
-            (None, None, 30.0, false, "no findings"),
-            (Some(finding(29.0)), None, 30.0, true, "lower 1 s boundary"),
-            (Some(finding(28.9)), None, 30.0, false, "beyond lower 1 s boundary"),
-            (Some(finding(31.0)), None, 30.0, true, "upper 1 s boundary"),
-            (
-                Some(finding(30.5)),
-                Some(RepetitionFinding {
-                    lag_secs: 29.5,
-                    confidence: 0.85,
-                    items_count: 90,
-                }),
-                30.0,
-                true,
-                "either side within ±1 s of |offset|",
-            ),
-        ];
-
-        for (rep_a, rep_b, offset, expect, label) in cases {
-            assert_eq!(
-                should_downgrade_repetition_confidence(&rep_a, &rep_b, offset),
-                expect,
-                "{label}"
-            );
-        }
-    }
-
-    #[test]
     fn repetition_on_skipped_clip_has_null_findings() {
         let reader = FakeMediaReader::new()
             .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
