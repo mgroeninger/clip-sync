@@ -428,8 +428,10 @@ struct DualFitRepairInput<'a> {
     border_standoff_frames: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_dual_fit_input<'a>(
+/// Grouped inputs for [`build_dual_fit_input`] — the raw A/B buffers, resolved gap geometry, and
+/// fill thresholds needed to assemble a [`DualFitRepairInput`]. Bundled into one value so the
+/// constructor takes a single, order-safe parameter instead of a 13-wide positional list.
+struct DualFitInputSpec<'a> {
     a_samples: &'a [f32],
     b_samples: &'a [f32],
     channels: usize,
@@ -443,7 +445,24 @@ fn build_dual_fit_input<'a>(
     fill_absolute_floor: f32,
     crossfade_secs: f64,
     border_standoff_frames: usize,
-) -> Option<DualFitRepairInput<'a>> {
+}
+
+fn build_dual_fit_input<'a>(spec: DualFitInputSpec<'a>) -> Option<DualFitRepairInput<'a>> {
+    let DualFitInputSpec {
+        a_samples,
+        b_samples,
+        channels,
+        sample_rate,
+        refined,
+        refined_b_start_secs,
+        b_extract_start_secs,
+        gap_frames,
+        fill_seam_search_secs,
+        min_fill_correlation,
+        fill_absolute_floor,
+        crossfade_secs,
+        border_standoff_frames,
+    } = spec;
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
     let a_frames = a_samples.len() / ch;
@@ -1545,8 +1564,8 @@ pub(super) fn characterize_region(
         .dual_fit
         .then(|| {
             let _s = tracing::info_span!("char_dual_fit_input").entered();
-            build_dual_fit_input(
-                &a_pcm.samples,
+            build_dual_fit_input(DualFitInputSpec {
+                a_samples: &a_pcm.samples,
                 b_samples,
                 channels,
                 sample_rate,
@@ -1556,10 +1575,10 @@ pub(super) fn characterize_region(
                 gap_frames,
                 fill_seam_search_secs,
                 min_fill_correlation,
-                request.fill_absolute_floor,
-                region.crossfade_secs,
-                derived.border_standoff_frames,
-            )
+                fill_absolute_floor: request.fill_absolute_floor,
+                crossfade_secs: region.crossfade_secs,
+                border_standoff_frames: derived.border_standoff_frames,
+            })
         })
         .flatten();
 
