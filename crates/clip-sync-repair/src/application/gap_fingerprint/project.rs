@@ -500,3 +500,97 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
         tags_ctx: tags_from_fingerprint(fp),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::gap_repair_spec::{
+        BExtractWindow, GapRepairCell, GapRepairTags, GateTags, SeamLocalTags,
+    };
+    use crate::domain::policies::RefinedGapFrames;
+
+    /// 8e projection: a bracket-exhausted **silence-splice skip** (dual-fit declined) projects to a
+    /// fingerprint whose corpus-read fields equal the spec's stored tags — no re-measurement (A7). Exercises
+    /// the seam_local → splice_dualfit, donor, gate-count → bracket-synthesis, and outcome mappings.
+    #[test]
+    fn spec_to_fingerprint_projects_silence_splice_skip_axes() {
+        let tags = GapRepairTags {
+            seam_local: Some(SeamLocalTags {
+                pre_seam_r: 0.97,
+                post_seam_r: 0.95,
+                post_seam_global_r: 0.40,
+                trim_frames: 480,
+                gate_pass: true,
+                pre_lag: 12,
+                post_lag: -8,
+                pre_seam_prom: None,
+                post_seam_prom: None,
+                pre_seam_z: None,
+                post_seam_z: None,
+            }),
+            donor_aligned: Some(crate::domain::donor::DonorInterior {
+                rms_db: -22.0,
+                silence_fraction: 0.03,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            donor_nominal: Some(crate::domain::donor::DonorInterior {
+                rms_db: -25.0,
+                silence_fraction: 0.10,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            gate: GateTags {
+                brackets_total: 4,
+                brackets_passing: 0,
+                closest_failure_stage: Some("waveform_floor".into()),
+                best_bracket_seam: Some(0.6),
+                ..GateTags::default()
+            },
+            ..GapRepairTags::default()
+        };
+        let spec = GapRepairSpec {
+            gap_index: 3,
+            a_start_secs: 10.0,
+            a_end_secs: 10.5,
+            gap_offset_secs: 0.25,
+            refined: RefinedGapFrames { start_frame: 480_000, end_frame: 504_000 },
+            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            crossfade_secs: 0.01,
+            verdict: GapRepairVerdict::Skip {
+                cell: GapRepairCell::SilenceSplice,
+                reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.97,
+                    post_correlation: 0.95,
+                    min_correlation: 0.5,
+                    best_attempt: None,
+                },
+            },
+            tags_ctx: tags,
+        };
+
+        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, None);
+
+        // outcome: a skip (tier is patch/skip, matching the scan path).
+        let o = fp.outcome.as_ref().unwrap();
+        assert_eq!(o.tier, "skip");
+        assert_eq!(o.skip_reason.as_deref(), Some("correlation_below_threshold"));
+
+        // splice_dualfit — single-source copies of seam_local (A7), gate_pass + step-real inputs preserved.
+        let df = fp.splice_dualfit.expect("splice_dualfit projected");
+        assert_eq!(df.pre_seam_r, 0.97);
+        assert_eq!(df.post_seam_r, 0.95);
+        assert_eq!(df.post_seam_global_r, 0.40);
+        assert!(df.gate_pass);
+        assert_eq!(df.gap_frames, 24_000);
+        assert_eq!(df.trim_frames, 480);
+
+        // donor blocks round-trip whole.
+        assert_eq!(fp.donor_interior.unwrap().silence_fraction, 0.03);
+        assert_eq!(fp.donor_interior_nominal.unwrap().silence_fraction, 0.10);
+
+        // brackets: synthesized to read back total=4, passing=0 (bracket-exhausted).
+        assert_eq!(fp.brackets.len(), 4);
+        assert_eq!(fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(), 0);
+    }
+}

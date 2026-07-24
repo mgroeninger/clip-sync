@@ -560,3 +560,153 @@ pub struct GateOutcome {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub skip_reason: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic PRNG noise sample in [-1, 1) — local to the schema tests (the measure slice keeps
+    /// its own copy for its PCM builders).
+    fn noise(seed: u64, i: usize) -> f64 {
+        let mut z = ((seed << 32) | (i as u64 & 0xffff_ffff)).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        ((z >> 40) as f64 / (1u64 << 24) as f64) * 2.0 - 1.0
+    }
+
+    #[test]
+    fn source_id_stable_and_distinguishing() {
+        let a: Vec<f32> = (0..10_000).map(|i| noise(7, i) as f32).collect();
+        let b: Vec<f32> = (0..10_000).map(|i| noise(8, i) as f32).collect();
+        assert_eq!(source_id(&a, 48_000, 2), source_id(&a, 48_000, 2), "deterministic");
+        assert_eq!(source_id(&a, 48_000, 2).len(), 16, "16 hex chars");
+        assert_ne!(source_id(&a, 48_000, 2), source_id(&b, 48_000, 2), "different audio → different id");
+        assert_ne!(source_id(&a, 48_000, 2), source_id(&a, 44_100, 2), "sample rate is part of identity");
+        assert_ne!(source_id(&a, 48_000, 2), source_id(&a, 48_000, 6), "channels are part of identity");
+    }
+
+    #[test]
+    fn fingerprint_json_round_trips() {
+        let fp = GapFingerprint {
+            index: 3,
+            tier: DetailTier::Summary,
+            sample_rate: 48_000,
+            channels: 6,
+            geometry: GapGeometry {
+                a_start_secs: 832.5,
+                a_end_secs: 834.0,
+                a_refined_start_secs: 832.304,
+                a_refined_end_secs: 834.133,
+                duration_secs: 1.829,
+                b_mapped_start_secs: Some(826.752),
+                b_mapped_end_secs: Some(828.581),
+                fill_offset_secs: Some(-5.552),
+            },
+            levels: LevelProfile {
+                bin_ms: 50,
+                profile_db: vec![-45.0, -24.0, -45.0],
+                floor_db: -120.0,
+                speech_peak_db: -22.0,
+                noise_floor_db: -45.0,
+                gap_floor_db: -120.0,
+            },
+            silence: SilenceProfile {
+                collar_rms_peak_ratio: 0.42,
+                collar_above_relative_floor: true,
+                silence_peak_fraction: 0.01,
+            },
+            contour: ContourInfo {
+                has_anchor_seam_contour: true,
+                pre_flatness: 0.1,
+                post_flatness: 0.1,
+            },
+            anchors: AnchorSet {
+                pre: vec![AnchorPoint {
+                    time_secs: 831.3,
+                    source: AnchorSourceKind::EnergyPeak,
+                    prominence: 0.0075,
+                    rms_db: -24.0,
+                }],
+                post: vec![],
+            },
+            brackets: vec![],
+            structure: Some(StructureScores {
+                baseline_pre: 0.996,
+                baseline_post: 0.926,
+            }),
+            seams: Some(SeamScores {
+                baseline_pre: 0.030,
+                baseline_post: 0.030,
+                selected_channels: vec![2],
+                per_channel: vec![(0.030, -0.050), (0.030, 0.030)],
+                mono_pre: 0.0296,
+                mono_post: 0.0290,
+            }),
+            lag: None,
+            baseline_lag: None,
+            residual: Some(ResidualInfo {
+                chosen_pre_db: -42.0,
+                chosen_post_db: -38.0,
+                floor_pre_db: -40.0,
+                floor_post_db: -39.0,
+                informative: true,
+            }),
+            seam_probe: Some(SeamProbeFingerprint {
+                pre: Some(SeamProbe {
+                    waveform_r: 0.04,
+                    recovered_r: 0.95,
+                    recovered_lag_ms: -8.0,
+                    bandlimited_r: 0.8,
+                    spectrum_r: 0.85,
+                    envelope_r: 0.9,
+                    rms_db: -30.0,
+                    snr_db: 20.0,
+                }),
+                post: None,
+            }),
+            donor_interior: Some(DonorInterior {
+                rms_db: -28.0,
+                silence_fraction: 0.0,
+                longest_silence_ms: 0.0,
+                continuous: true,
+            }),
+            splice: Some(SpliceSummary {
+                step_ms: 4.2,
+                pre_peak_r: 0.99,
+                post_peak_r: 0.96,
+                pre_peak_z: Some(15.0),
+                post_peak_z: Some(14.0),
+                edge_pinned: Some(false),
+            }),
+            wide_envelope: Some(WideEnvelopeFingerprint {
+                pre: Some(EnvPeak {
+                    peak_r: 0.98,
+                    peak_lag_ms: -110.0,
+                    prominence: 0.55,
+                }),
+                post: None,
+            }),
+            splice_dualfit: None,
+            donor_interior_nominal: None,
+            b_levels: None,
+            outcome: Some(GateOutcome {
+                plan_kind: "fillable".into(),
+                tier: "hard_skip".into(),
+                seam_shape: "symmetric_weak".into(),
+                fit_path: Some("baseline_only".into()),
+                signature_mode: Some("energy".into()),
+                skip_reason: Some("boundary correlation below threshold".into()),
+            }),
+            equivalence: None,
+            scan_equivalence: None,
+        };
+        let json = serde_json::to_string(&fp).expect("serialize");
+        let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(fp, back);
+        // Absent optionals stay out of the wire form.
+        assert!(!json.contains("\"lag\""));
+        assert!(!json.contains("\"baseline_lag\""));
+        assert!(!json.contains("\"brackets\""));
+    }
+}
