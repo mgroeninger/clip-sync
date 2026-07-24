@@ -168,7 +168,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 | **P1** | `request.rs` (result / request / settings) | **Done (2026-07-24)** |
 | **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Done (2026-07-24)** |
 | **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Done (2026-07-24)** |
-| **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Planned** |
+| **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Done (2026-07-24)** |
 | **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Planned** |
 | **P6** | Thin `mod.rs` — only `PatchAudio::execute` + re-exports; delete monolith `.rs` | **Planned** |
 
@@ -244,6 +244,40 @@ required to close the M-MOD `patch_audio` row. Explicitly take
 `RegionPatchMedia` / `RegionPatchOpts` / `RegionPatchContext`, `skipped_patch*`,
 `record_patch_gap_span`, and `region_outcome_gap_tags` here (see contested
 table). `region` may `use` `log::gap_key` for `outcomes_in_report_order`.
+
+**P4 as-landed (2026-07-24).** `region.rs` = 2511 lines (within the predicted
+1.8–2.2 kloc + colocated tests). Moved verbatim: the full region-patch pipeline —
+`RegionPatch` / `RegionPatchOutcome`, `skipped_patch` / `skipped_patch_with_residual`,
+`record_patch_gap_span`, `anchor_search_prior_for_gap`, `RegionPatchMedia` /
+`RegionPatchOpts` / `RegionPatchContext`, `outcomes_in_report_order`,
+`region_outcome_gap_tags`, `seam_failure_outcome`, `a_gap_floor_db`,
+`b_mapped_start_frame`, the dual-fit chain (`DualFitRepairInput` / `build_dual_fit_input`
+/ `dual_fit_eligible` / `measure_dual_fit_residual_verdict` / `skip_or_dual_fit` /
+`finalize_dual_fit` / `DualFitDecision` / `DualFitRescue`), the bracket chain
+(`BracketFillAssembly` / `assemble_bracket_fill` / `ExecuteBracketFillCtx` /
+`execute_bracket_fill` / `ExecuteBracketOutputCtx` / `execute_bracket_output`),
+`RegionCharacterization`, `skip_region_spec` / `skip_outcome_from_spec` /
+`dual_fit_skipped`, `execute_region_spec`, `characterize_region` /
+`characterize_all_regions`, `prepare_region_patch`, `slice_b_segment`,
+`compute_a_border_rms`, and `splice_into_a`. Visibility widened only where the
+`execute` orchestrator + the P5 anchor code (still in `mod.rs`) consume them:
+`pub(super)` on `RegionPatch`(+fields) / `RegionPatchOutcome` / `RegionPatchMedia`(+fields)
+/ `RegionPatchOpts`(+fields) / `RegionPatchContext`(+fields) / `RegionCharacterization`
+and on `skipped_patch` / `record_patch_gap_span` / `outcomes_in_report_order` /
+`region_outcome_gap_tags` / `skip_outcome_from_spec` / `execute_region_spec` /
+`characterize_region` / `prepare_region_patch` / `splice_into_a`; everything else stayed
+private. `region` uses `log::gap_key` (via `super::log`), so the `log ← region` edge
+holds; `region` has no `anchor_retry` dependency (that module doesn't exist yet), so the
+cycle guard holds. Facade wires `mod region;` + `use region::{...}` (internal-only, plus
+`pub(crate) use geometry`/`decode` unchanged). The 8 region-bound unit tests
+(`characterize_all_regions_yields_one_consistent_spec_per_region`,
+`dual_fit_eligible_excludes_structure_alignment_failed`, `fit_fill_trims_tail...` /
+`fit_fill_zero_pads...`, the `dual_fit_test_request` helper + `measure_dual_fit_residual...`,
+and the two M-CFG deref/into-request guards) moved into `region.rs`'s `#[cfg(test)] mod
+tests`; the anchored-retry tests + `dummy_region_tags` stay in `mod.rs` (they move in P5).
+`skipped_patch` is imported directly from `region` by the `mod.rs` tests (not re-exported
+through the facade, since no non-test `mod.rs` code consumes it). Build / clippy /
+`-Tier pr-repair` green.
 
 **P5 notes.** Anchor retry imports media/opts from `region`; do not redefine or
 move those structs into `anchor_retry.rs`. Take only the retry policy / candidate
