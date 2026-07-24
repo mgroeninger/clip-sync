@@ -804,7 +804,18 @@ struct BracketFillAssembly<'a> {
     post_gate_frames: usize,
     repeat_window_frames: usize,
     seam_ctx: policies::SpliceSeamContext<'a>,
-    a_start_secs: f64,
+}
+
+/// The assembled fill plus the one reportable fact about how it was built. Returning the fact instead of
+/// logging it (L0) is what makes [`assemble_bracket_fill`] safe to call twice: a pure function called from
+/// both passes yields the same value twice, and only the reporting call site speaks. Reporting from inside
+/// the primitive would double-emit once the executor re-derives — and would describe characterize's fill,
+/// which is discarded, rather than the executor's, which is written.
+struct BracketFill {
+    pcm: Vec<f32>,
+    /// Gate mode only: frames appended from contiguous B because the bracket was shorter than the A gap.
+    /// `None` in Fit mode (length fitting handles it) and when no extension was needed or available.
+    extended_frames: Option<usize>,
 }
 
 /// Assemble the bracket fill PCM to exactly `gap_frames` from the sliced B: **Fit** length-fits against the A
@@ -814,7 +825,9 @@ struct BracketFillAssembly<'a> {
 /// executor reconstructs these inputs deterministically from the spec: `b_fill_raw`/`b_extension` re-sliced
 /// from the decode buffer via `FillAlignment`, and (Fit mode only) the A-border templates + `seam_ctx` rebuilt
 /// from A geometry — never re-deciding.
-fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> Vec<f32> {
+///
+/// **Side-effect-free (L0).** No logging, no spans: see [`BracketFill`].
+fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> BracketFill {
     let BracketFillAssembly {
         b_fill_raw,
         b_extension,
@@ -829,7 +842,6 @@ fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> Vec<f32> {
         post_gate_frames,
         repeat_window_frames,
         seam_ctx,
-        a_start_secs,
     } = inp;
     // `source_frames` is derived here (not a field) so a caller can't pass one inconsistent with `b_fill_raw`.
     let source_frames = b_fill_raw.len() / channels;
@@ -842,30 +854,33 @@ fn assemble_bracket_fill(inp: BracketFillAssembly<'_>) -> Vec<f32> {
             pre_window: pre_gate_frames,
             post_window: post_gate_frames,
         };
-        fit_fill_length_for_gap(
-            &b_fill_raw,
-            b_extension,
-            channels,
-            gap_frames,
-            &borders,
-            repeat_window_frames,
-            seam_ctx,
-        )
+        BracketFill {
+            pcm: fit_fill_length_for_gap(
+                &b_fill_raw,
+                b_extension,
+                channels,
+                gap_frames,
+                &borders,
+                repeat_window_frames,
+                seam_ctx,
+            ),
+            extended_frames: None,
+        }
     } else {
         let mut gate_fill = b_fill_raw;
+        let mut extended_frames = None;
         if source_frames < gap_frames {
             let need_samples = (gap_frames - source_frames) * channels;
             let extend_to = need_samples.min(b_extension.len());
             if extend_to > 0 {
                 gate_fill.extend_from_slice(&b_extension[..extend_to]);
-                tracing::debug!(
-                    a_start_secs,
-                    extended_frames = extend_to / channels,
-                    "B bracket shorter than A gap; extended from contiguous B audio (gate)"
-                );
+                extended_frames = Some(extend_to / channels);
             }
         }
-        fit_fill_to_gap_frames(&gate_fill, channels, gap_frames)
+        BracketFill {
+            pcm: fit_fill_to_gap_frames(&gate_fill, channels, gap_frames),
+            extended_frames,
+        }
     }
 }
 
@@ -887,7 +902,6 @@ struct ExecuteBracketFillCtx<'a> {
     seam_gate_frames: usize,
     sample_rate: u32,
     crossfade_secs: f64,
-    a_start_secs: f64,
 }
 
 /// The executor's bracket-fill reconstruction (6b.3a). Re-derives everything the fill needs from the spec's
@@ -916,7 +930,6 @@ fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
         seam_gate_frames,
         sample_rate,
         crossfade_secs,
-        a_start_secs,
     } = ctx;
     // M0 (§3): the executor-side cost — border rebuild + assembly. In debug builds this nests under the
     // `debug_assert_eq!` shadow rather than the live path; measure on a release-profile run.
@@ -976,8 +989,8 @@ fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
         post_gate_frames,
         repeat_window_frames,
         seam_ctx,
-        a_start_secs,
     })
+    .pcm
 }
 
 /// Resolved values the executor assembles a bracket `(RegionPatch, RegionPatchOutcome)` from. Everything
@@ -1877,7 +1890,7 @@ pub(super) fn characterize_region(
     // assembly itself. `char_gate_search` closes well before this point, so the assembly was previously
     // unmeasured — this span decides whether re-deriving the fill in execute needs a dedup hoist first.
     // `fill_mode` is request-level, so the Fit/Gate split comes from running one measurement per mode.
-    let b_fill = {
+    let BracketFill { pcm: b_fill, extended_frames } = {
         let _s = tracing::info_span!("char_fill_assembly").entered();
         assemble_bracket_fill(BracketFillAssembly {
             b_fill_raw,
@@ -1893,9 +1906,18 @@ pub(super) fn characterize_region(
             post_gate_frames,
             repeat_window_frames,
             seam_ctx,
-            a_start_secs,
         })
     };
+    // L0: the primitive returns the fact, the caller reports it — same message and fields as the emission
+    // that used to live inside `assemble_bracket_fill`, so the log stream is unchanged. Reporting here (not
+    // in the primitive) is what lets the executor re-derive the fill without double-emitting.
+    if let Some(extended_frames) = extended_frames {
+        tracing::debug!(
+            a_start_secs,
+            extended_frames,
+            "B bracket shorter than A gap; extended from contiguous B audio (gate)"
+        );
+    }
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec's `FillAlignment` +
     // decode buffers alone (rebuilding borders independently). Guards the characterize→execute split before
@@ -1917,7 +1939,6 @@ pub(super) fn characterize_region(
             seam_gate_frames,
             sample_rate,
             crossfade_secs: region.crossfade_secs,
-            a_start_secs,
         }),
         b_fill,
         "6b.3a: executor bracket-fill reconstruction must byte-match the inline fill"
