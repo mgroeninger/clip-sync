@@ -86,7 +86,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules | fingerprint / policies / patch |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies done; **M-MOD-DEPS** follow-up open) | fingerprint / policies / patch |
 | 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
@@ -438,25 +438,73 @@ are exercised separately via `patch_request_from_repair`. See the archived recor
 ### M-MOD. Oversized modules — **open** (policies slice done)
 
 **Recommendation:** Policies split complete — see
-[`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md). Next: split
-`gap_fingerprint` into schema / measure / project, and harness `gap_fingerprint_corpus` into
-schema / analysis / report. Pure moves + `pub(crate)` — no behavior change. Optionally curate
-repair `lib.rs` like `clip-sync`.
+[`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md). Next fingerprint
+splits, **in this order**:
 
-**Progress (2026-07-23):** policies **P1–P5 done** —
+1. **Harness corpus first** (mechanical warm-up) — `gap_fingerprint_corpus` → schema /
+   analysis / report:
+   [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md).
+   Natural existing seams; do not redesign classification or report text.
+2. **Production `gap_fingerprint` second** (judgment-heavy) — schema / measure / project:
+   [`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md).
+   Give it its **own** scheduled slot ahead of upcoming fingerprint feature work — not as the
+   opening commit of a feature PR. P1 must call schema-vs-measure on helpers interleaved with
+   types; P2 routes the `tags_from_measurements` / `RegionMeasurements` cycle (prefer keeping
+   that fn in `measure`).
+
+Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
+`clip-sync`.
+
+**Progress (2026-07-23):** policies **P1–P5 done** (`7dd0978`) —
 `domain/policies/{silence,gap_borders,seam_scoring,seam_residual,seam_splice}.rs` behind a thin
-`mod.rs` facade. Remaining M-MOD targets: fingerprint + harness corpus (and optionally
-`patch_audio` / `align_videos`).
+`mod.rs` facade. Verified byte-preserving against the pre-split monolith (normalized line-set
+diff: zero removals; only additions are a duplicated `interleave_a` test helper and re-wrapped
+`use`s), `pub use` surface identical to the pre-split `pub` set, 55/55 policies tests with the
+same test names. Remaining M-MOD targets: harness corpus → production fingerprint (plans
+linked; order above), the **M-MOD-DEPS** follow-up below, and optionally `patch_audio` /
+`align_videos`.
 
 **Test:** `-Tier pr` after each split.
 
 | File | ~Lines |
 |------|--------|
+| harness `gap_fingerprint_corpus.rs` | 2,300 |
 | `gap_fingerprint.rs` | 4,000 |
 | `policies/` (split) | facade + 5 modules (~0.3–1.4 kloc each) |
 | `patch_audio.rs` | 3,600 |
 | `align_videos.rs` | 2,900 |
-| harness `gap_fingerprint_corpus.rs` | 2,300 |
+
+#### M-MOD-DEPS. Policies helper placement — **fixed 2026-07-23**
+
+Deliberately **not** done in `7dd0978`, which was byte-preserving by rule. Three misplacements
+the split exposed, landed as a separate commit:
+
+| Item | Was | Now | Why |
+|------|-----|-----|-----|
+| `interleaved_to_mono`, `interleaved_to_channels` | `policies/gap_borders.rs` | `domain/pcm.rs` | Generic interleaved→f64 converters, not border logic. **Imports swept, no facade re-export kept** — 8 files across 3 crates now say `domain::pcm::`, so the honest path is the only path. |
+| `seam_score_channel_indices` (+ its `template_mean_square` helper) | `policies/gap_borders.rs` | `policies/seam_scoring.rs` | Energy-based **scoring** channel selection; its unit test already lived in `seam_scoring.rs`. `template_mean_square` moved with it and is `pub(crate)` for `gap_borders::loudest_seam_channel`. |
+| `effective_repeat_window_frames` | `pub(crate)` in `seam_scoring.rs` | private `fn` | Used only inside `seam_scoring`; the facade never re-exported it, so the visibility was provably dead. Pre-existing — the split surfaced it. |
+
+**Payoff (realized):** the `seam_scoring → gap_borders` edge is gone. Final DAG —
+`silence` / `seam_splice` leaves; `seam_scoring → domain::pcm`;
+`gap_borders → {silence, seam_splice, seam_scoring}`; `seam_residual → seam_scoring`.
+Both moves had to land together: moving `seam_score_channel_indices` alone would have *flipped*
+the edge (via `gap_borders::selected_seam_channels`) rather than removing it.
+
+**Verified:** normalized line-set diff of the five affected files against `7dd0978` — the only
+5 differing lines are re-wrapped `pub use` continuations in `mod.rs`; **zero function bodies
+changed**. Public API delta is exactly the two intended removals from `policies::`. `cargo
+clippy --workspace --all-targets` clean; policies tests still 55/55 with unchanged names; full
+`cargo test --workspace` green.
+
+**Docs:** `docs/seam-scoring.md` § Code map re-pointed at the split submodules (it still cited
+`domain/policies.rs`, a file that no longer exists) and gained a downmix row.
+
+**Declined (recorded so it isn't re-proposed):** the `interleave_a` test helper duplicated in
+`gap_borders` and `seam_residual` test modules (identical 12-line bodies) — a shared
+`#[cfg(test)] mod test_support` costs about what it saves. Likewise the 8 double-blank-line
+seams left at extraction boundaries: the crate is not rustfmt-managed (752 `Diff in` hunks
+workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
 ### M-HARNESS. Drift from production — **open** (item 1 done)
 
@@ -567,7 +615,11 @@ splits (M-MOD) remain the main structural item.
    ~~**M-DEAD**~~ (done 2026-07-23) — §2 `slide_template_scores` deleted; §1 B2 pregate
    measurement stack removed.
 4. ~~**M-CFG**~~ (closed 2026-07-23 — layers collapsed; bundles declined).
-   **M-MOD** / **M-HARNESS** remainder opportunistically with nearby feature work.
+   **M-MOD-DEPS** (policies helper placement) is small and self-contained — take it next time
+   `policies/` or `domain/pcm.rs` is open, before the fingerprint splits pile on more churn.
+   **M-MOD** fingerprint remainder: harness `gap_fingerprint_corpus` first (mechanical), then
+   production `gap_fingerprint` in its own slot (not wedged as a feature PR opener).
+   **M-HARNESS** remainder opportunistically with nearby feature work.
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
    (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
@@ -586,7 +638,9 @@ splits (M-MOD) remain the main structural item.
 6. **Structure (P2)** — ~~**M-CFG**~~ **done 2026-07-23**: `PatchAudioRequest` 58 fields → 3,
    `SeamGateConfig` deleted, harness literals seeded from production; three conversion lists → one
    (record: `archive/TEMP-repair-config-bundles-plan.md`). **M-MOD / M-HARNESS** remainder
-   incremental; see `TEMP-policies-module-split-plan.md` (M-MOD policies slice).
+   incremental; see `TEMP-policies-module-split-plan.md` (policies done), then
+   `TEMP-gap-fingerprint-corpus-module-split-plan.md` (harness first), then
+   `TEMP-gap-fingerprint-module-split-plan.md` (production fingerprint).
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.

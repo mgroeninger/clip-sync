@@ -4,7 +4,7 @@
 //! no seam/residual math.
 
 use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams, GapEquivalenceVerdict};
-use crate::domain::policies::interleaved_to_mono;
+use crate::domain::pcm::interleaved_to_mono;
 
 /// dBFS a fully-silent span floors to — kept identical to the fingerprint's `to_db` / `LevelProfile`
 /// convention so `a_gap_rms_db` is on the **same scale** as the `noise_floor_db` it's compared against.

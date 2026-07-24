@@ -6,10 +6,11 @@ use clip_sync_repair::domain::gap_fill_fit::{
 };
 use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
 use clip_sync_repair::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
+use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
-    border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
-    interleaved_to_mono, is_silent_frame, refine_gap_frames, FillAlignment, GapBorderSpec,
-    RefinedGapFrames, SeamPlacement, SeamTemplates,
+    border_templates_for_gap, border_templates_per_channel_for_gap, is_silent_frame,
+    refine_gap_frames, FillAlignment, GapBorderSpec, RefinedGapFrames, SeamPlacement,
+    SeamTemplates,
 };
 
 pub const BOOL_AMBIGUITY_EPS: f64 = 0.45;

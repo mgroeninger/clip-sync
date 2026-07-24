@@ -12,11 +12,12 @@ use crate::domain::gap_structure::{
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::SeamResidualVerdict;
+use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_seam_correlations, fill_seam_correlations_band,
     fill_seam_correlations_with_channels, fill_splice_seam_correlations_interleaved,
-    interleaved_to_mono, seam_score_channels, BorderSeamTemplates, FillAlignment, SeamPlacement,
-    SeamTemplates, SpliceSeamContext,
+    seam_score_channels, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
+    SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -1573,7 +1574,7 @@ mod tests {
         }
     }
 
-    use crate::domain::policies::{interleaved_to_channels, interleaved_to_mono};
+    use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 
     fn sine_frame(frame: usize, rate: u32) -> f32 {
         let t = frame as f64 / f64::from(rate);

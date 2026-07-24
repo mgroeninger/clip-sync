@@ -850,7 +850,7 @@ fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::gap_borders::seam_score_channel_indices;
+    use super::super::seam_scoring::seam_score_channel_indices;
 
     /// Build interleaved f32 A samples (normalized) from per-channel f64 timelines (raw level).
     fn interleave_a(channels_f64: &[Vec<f64>], norm: f64) -> Vec<f32> {

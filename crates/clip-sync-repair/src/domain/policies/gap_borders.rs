@@ -2,7 +2,11 @@
 //!
 //! Turns a raw gap into the A-side templates the seam gate scores against: refined `[start, end)`
 //! frames, per-channel border templates, and the channel subset carrying border energy. Builds on
-//! `silence::is_silent_frame` and `seam_splice`'s low-energy trim.
+//! `silence::is_silent_frame`, `seam_splice`'s low-energy trim, and `seam_scoring`'s energy-based
+//! channel selection.
+use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
+
+use super::seam_scoring::{seam_score_channel_indices, template_mean_square};
 use super::seam_splice::{trim_low_energy_prefix, trim_low_energy_suffix};
 use super::silence::is_silent_frame;
 
@@ -15,15 +19,6 @@ pub struct FillAlignment {
     pub fill_frames: usize,
     pub pre_correlation: f64,
     pub post_correlation: f64,
-}
-
-/// Downmix interleaved f32 PCM to mono `f64` (channel average).
-pub fn interleaved_to_mono(samples: &[f32], channels: usize) -> Vec<f64> {
-    let channels = channels.max(1);
-    samples
-        .chunks(channels)
-        .map(|frame| frame.iter().map(|&s| s as f64).sum::<f64>() / channels as f64)
-        .collect()
 }
 
 /// Refined gap boundaries on A's PCM timeline (frame indices, `[start, end)`).
@@ -211,19 +206,6 @@ fn gap_border_frame_range(
     }
 }
 
-/// Downmix interleaved PCM to one `f64` vector per channel.
-pub fn interleaved_to_channels(samples: &[f32], channels: usize) -> Vec<Vec<f64>> {
-    let channels = channels.max(1);
-    (0..channels)
-        .map(|ch| {
-            samples
-                .chunks(channels)
-                .map(|frame| frame[ch] as f64)
-                .collect()
-        })
-        .collect()
-}
-
 /// Build mono border templates for seam correlation, skipping silence adjacent to the gap.
 pub fn border_templates_for_gap(
     samples: &[f32],
@@ -322,35 +304,6 @@ pub fn border_templates_per_channel_for_gap(
 }
 
 /// Mean-square energy of a (peak-domain) seam template.
-fn template_mean_square(samples: &[f64]) -> f64 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    samples.iter().map(|s| s * s).sum::<f64>() / samples.len() as f64
-}
-
-/// A-side channels that carry seam signal — those within ~20 dB of the loudest channel's
-/// energy. Lets seam scoring follow the channel(s) that actually hold content (e.g. a
-/// center-dominant 5.1 mix where front L/R are near-silent) instead of assuming front L/R.
-/// Returns empty when every channel is near-silent, so the caller falls back to the mono mix.
-pub(crate) fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> Vec<usize> {
-    let n = a_pre_ch.len().min(a_post_ch.len());
-    if n == 0 {
-        return Vec::new();
-    }
-    let energy: Vec<f64> = (0..n)
-        .map(|ch| template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch])))
-        .collect();
-    let max_energy = energy.iter().copied().fold(0.0, f64::max);
-    if max_energy <= f64::EPSILON {
-        return Vec::new();
-    }
-    // Mean-square ratio 0.01 ≈ −20 dB in amplitude: a channel must carry meaningful signal
-    // relative to the loudest to be scored, so silent surrounds/LFE never veto a good splice.
-    let threshold = max_energy * 0.01;
-    (0..n).filter(|&ch| energy[ch] >= threshold).collect()
-}
-
 /// The **loudest** energy-passing seam channel — argmax of per-channel border energy (max of pre/post
 /// mean-square), or `None` when every channel is near-silent. Use this for a single-channel
 /// *representative* (e.g. the lag/probe diagnostic) instead of `selected_seam_channels().first()`, which

@@ -4,12 +4,12 @@ use clip_sync_repair::domain::gap_fill_fit::{
     apply_residual_to_confidence, classify_fill_waveform_confidence, FillConfidence,
     ResidualGateError,
 };
+use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
-    interleaved_to_channels, interleaved_to_mono, seam_channel_diagnostics, seam_chosen_and_floor,
-    seam_chosen_and_floor_multichannel, selected_seam_channels, GapBorderSpec,
-    DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamChannelResidual, SeamFloorParams, SeamFloorProbe, SeamPlacement,
-    SeamResidualVerdict, SeamSide, SeamTemplates,
+    seam_channel_diagnostics, seam_chosen_and_floor, seam_chosen_and_floor_multichannel,
+    selected_seam_channels, GapBorderSpec, DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamChannelResidual,
+    SeamFloorParams, SeamFloorProbe, SeamPlacement, SeamResidualVerdict, SeamSide, SeamTemplates,
 };
 use clip_sync_repair::domain::{
     residual_max_lag_frames, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,

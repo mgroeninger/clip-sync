@@ -1,12 +1,40 @@
 //! Pearson seam scoring (repeat, splice-aware, FFT band) and channel diagnostics.
 //!
 //! The correlation half of the seam gate: how well a candidate B fill's shoulders match A's
-//! borders. Consumes `gap_borders` templates and channel indices; `seam_residual` measures the
-//! complementary cancellation half on top of `seam_pearson` from here.
+//! borders, and which channels are energetic enough to be worth scoring. `seam_residual` measures
+//! the complementary cancellation half on top of `seam_pearson` from here.
 use crate::domain::metrics::normalized_correlation;
+use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::seam_local::seam_correlation_over_bases;
 
-use super::gap_borders::{interleaved_to_mono, seam_score_channel_indices};
+pub(crate) fn template_mean_square(samples: &[f64]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    samples.iter().map(|s| s * s).sum::<f64>() / samples.len() as f64
+}
+
+/// A-side channels that carry seam signal — those within ~20 dB of the loudest channel's
+/// energy. Lets seam scoring follow the channel(s) that actually hold content (e.g. a
+/// center-dominant 5.1 mix where front L/R are near-silent) instead of assuming front L/R.
+/// Returns empty when every channel is near-silent, so the caller falls back to the mono mix.
+pub(crate) fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> Vec<usize> {
+    let n = a_pre_ch.len().min(a_post_ch.len());
+    if n == 0 {
+        return Vec::new();
+    }
+    let energy: Vec<f64> = (0..n)
+        .map(|ch| template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch])))
+        .collect();
+    let max_energy = energy.iter().copied().fold(0.0, f64::max);
+    if max_energy <= f64::EPSILON {
+        return Vec::new();
+    }
+    // Mean-square ratio 0.01 ≈ −20 dB in amplitude: a channel must carry meaningful signal
+    // relative to the loudest to be scored, so silent surrounds/LFE never veto a good splice.
+    let threshold = max_energy * 0.01;
+    (0..n).filter(|&ch| energy[ch] >= threshold).collect()
+}
 
 pub(crate) fn seam_pearson(left: &[f64], right: &[f64]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
@@ -49,7 +77,7 @@ pub struct SeamPlacement {
 /// `min_border_discovery_secs`) exceeds short gap brackets and `a_post.len()`,
 /// disabling `repeat_post` entirely, or comparing `a_post` against fill plus
 /// haystack past the bracket end.
-pub(crate) fn effective_repeat_window_frames(
+fn effective_repeat_window_frames(
     repeat_window_frames: usize,
     gap_frames: usize,
     border_len: usize,

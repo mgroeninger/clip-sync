@@ -13,9 +13,8 @@ pub use silence::{
     BlockLevel, SilenceRunScanner, SilentRun, BLOCK_LEVEL_FLOOR_DB,
 };
 pub use gap_borders::{
-    border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
-    interleaved_to_mono, loudest_seam_channel, refine_gap_frames, selected_seam_channels,
-    FillAlignment, GapBorderSpec, RefinedGapFrames,
+    border_templates_for_gap, border_templates_per_channel_for_gap, loudest_seam_channel,
+    refine_gap_frames, selected_seam_channels, FillAlignment, GapBorderSpec, RefinedGapFrames,
 };
 pub(crate) use gap_borders::{adaptive_seam_window_frames, border_active_extent_frames};
 pub use seam_scoring::{

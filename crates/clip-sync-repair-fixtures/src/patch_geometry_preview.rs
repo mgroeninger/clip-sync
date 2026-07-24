@@ -7,9 +7,10 @@ use clip_sync_repair::domain::gap_fill_fit::{match_gap_fill_unified_in_b, Unifie
 use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use clip_sync_repair::domain::gap_structure::{self, StructureMatchParams};
 use clip_sync_repair::domain::repair_profile::gap_extension_slack_secs;
+use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
-    self, border_templates_for_gap, border_templates_per_channel_for_gap, interleaved_to_channels,
-    interleaved_to_mono, GapBorderSpec, RefinedGapFrames, SeamTemplates,
+    self, border_templates_for_gap, border_templates_per_channel_for_gap, GapBorderSpec,
+    RefinedGapFrames, SeamTemplates,
 };
 use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
 

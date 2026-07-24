@@ -26,6 +26,7 @@ use crate::domain::gap_anchor_seam::{
     should_run_anchor_seam, AnchorBracket, AnchorSeamMode, AnchorSeamParams,
 };
 use crate::domain::gap_energy::EnergyTimeline;
+use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
 
 use crate::application::fit_routing;
@@ -282,8 +283,8 @@ impl FitHaystackCache {
         let total_frames = params.geom.b_samples.len() / channels;
         let bin_frames = params.derived.bin_frames.max(1);
         Self {
-            b_mono: policies::interleaved_to_mono(params.geom.b_samples, channels),
-            b_ch: policies::interleaved_to_channels(params.geom.b_samples, channels),
+            b_mono: interleaved_to_mono(params.geom.b_samples, channels),
+            b_ch: interleaved_to_channels(params.geom.b_samples, channels),
             bool_timeline: gap_structure::ActivityTimeline::build(
                 params.geom.b_samples,
                 channels,
@@ -1747,8 +1748,8 @@ fn evaluate_seam_gate_legacy(
         params.derived.channels,
         &border_spec,
     );
-    let b_mono = policies::interleaved_to_mono(params.geom.b_samples, params.derived.channels);
-    let b_ch = policies::interleaved_to_channels(params.geom.b_samples, params.derived.channels);
+    let b_mono = interleaved_to_mono(params.geom.b_samples, params.derived.channels);
+    let b_ch = interleaved_to_channels(params.geom.b_samples, params.derived.channels);
 
     let offset_nominal_start = ((params.geom.refined_b_start_secs - params.geom.b_extract_start_secs)
         * params.derived.sample_rate as f64)

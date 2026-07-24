@@ -21,10 +21,10 @@ use crate::domain::gap_fill_fit::{
 };
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::gap_structure::StructureMatchParams;
+use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{
-    border_templates_for_gap, border_templates_per_channel_for_gap,
-    interleaved_to_channels, interleaved_to_mono, refine_gap_frames, seam_channel_diagnostics,
-    GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
+    border_templates_for_gap, border_templates_per_channel_for_gap, refine_gap_frames,
+    seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
 use crate::domain::patch_result::GapPatchSkipReason;

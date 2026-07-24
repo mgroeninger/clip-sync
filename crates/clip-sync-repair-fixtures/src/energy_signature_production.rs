@@ -375,9 +375,10 @@ pub fn oracle_nominal_throat_pearson(
     repair: &RepairConfig,
 ) -> (f64, f64) {
     use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
+    use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
     use clip_sync_repair::domain::policies::{
         border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
-        interleaved_to_channels, interleaved_to_mono, GapBorderSpec, SeamPlacement, SeamTemplates,
+        GapBorderSpec, SeamPlacement, SeamTemplates,
     };
     use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 

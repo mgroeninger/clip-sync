@@ -6,6 +6,7 @@ use clip_sync_repair::domain::gap_anchor_seam::{
     AnchorSource, DEFAULT_ANCHOR_MATCH_MIN_PEARSON, DEFAULT_ANCHOR_MATCH_MIN_XCORR_PEAK,
     DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
 };
+use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{self, refine_gap_frames, RefinedGapFrames, SeamTemplates};
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
@@ -99,8 +100,8 @@ pub fn print_anchor_seam_diagnostic(fixture: &EnergySignatureFixture, label: &st
             policies::border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
         let (a_pre_ch, a_post_ch) =
             policies::border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
-        let b_mono = policies::interleaved_to_mono(&fixture.b_samples, ch);
-        let b_ch = policies::interleaved_to_channels(&fixture.b_samples, ch);
+        let b_mono = interleaved_to_mono(&fixture.b_samples, ch);
+        let b_ch = interleaved_to_channels(&fixture.b_samples, ch);
         let templates = SeamTemplates {
             a_pre: &a_pre,
             a_post: &a_post,

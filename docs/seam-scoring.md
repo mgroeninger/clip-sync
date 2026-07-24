@@ -145,13 +145,15 @@ A companion `fill residual channel breakdown` line (same debug target) reports `
 
 | Step | Function (crate `clip-sync-repair`) |
 |------|-------------------------------------|
-| Border frame range + silence walk-off + standoff | `domain/policies.rs::gap_border_frame_range` |
-| Mono / per-channel templates + low-energy trim | `policies::border_templates_for_gap`, `border_templates_per_channel_for_gap`, `trim_low_energy_prefix/suffix` |
-| Channel selection | `policies::seam_score_channel_indices` |
-| Peak-normalized Pearson | `policies::seam_pearson` |
-| Pre/post at a placement | `policies::fill_seam_correlations` |
-| Splice-time per-channel seams | `policies::fill_splice_seam_correlations_interleaved` |
-| Per-channel debug diagnostics | `policies::seam_channel_diagnostics` |
+| Border frame range + silence walk-off + standoff | `domain/policies/gap_borders.rs::gap_border_frame_range` |
+| Mono / per-channel templates | `policies::border_templates_for_gap`, `border_templates_per_channel_for_gap` (`gap_borders.rs`) |
+| Low-energy trim | `policies/seam_splice.rs::trim_low_energy_prefix/suffix` |
+| Interleaved → mono / per-channel downmix | `domain/pcm.rs::interleaved_to_mono`, `interleaved_to_channels` |
+| Channel selection | `policies/seam_scoring.rs::seam_score_channel_indices` |
+| Peak-normalized Pearson | `policies/seam_scoring.rs::seam_pearson` |
+| Pre/post at a placement | `policies::fill_seam_correlations` (`seam_scoring.rs`) |
+| Splice-time per-channel seams | `policies::fill_splice_seam_correlations_interleaved` (`seam_scoring.rs`) |
+| Per-channel debug diagnostics | `policies::seam_channel_diagnostics` (`seam_scoring.rs`) |
 | Fit waveform tiers | `domain/gap_fill_fit.rs::classify_fill_waveform_confidence`, `fit_mode_waveform_floor_passes` |
 | Structure gate / gate-mode waveform gate | `application/patch_region.rs::structure_passes_gate`, `seams_pass_correlation_gate` |
 | Dual-fit repair (§6) | `domain/dual_fit.rs`, `application/patch_audio.rs::skip_or_dual_fit`, `try_dual_fit` |
