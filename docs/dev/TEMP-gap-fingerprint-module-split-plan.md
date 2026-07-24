@@ -117,8 +117,28 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 | Phase | Slice | Status |
 |-------|-------|--------|
 | **P1** | `schema.rs` (types + `source_id`; strip measure helpers out of the type section) | **Done (2026-07-23)** |
-| **P2** | `project.rs` (Spec↔Fingerprint; apply §3b cycle guard) | **Open** |
+| **P2** | `project.rs` (Spec↔Fingerprint; apply §3b cycle guard) | **Done (2026-07-23)** |
 | **P3** | Remainder → `measure.rs` + thin `mod.rs` facade; delete monolith `.rs` | **Open** |
+
+**P2 as-landed (2026-07-23).** Extracted the pure Spec↔Fingerprint projection into
+`gap_fingerprint/project.rs` (503 lines): `FingerprintXSet`, `spec_to_fingerprint_summary`,
+`fingerprint_to_spec`, `tags_from_fingerprint`, `tags_from_fields` (the shared core), and the private
+helpers (`projected_lag_entry`, `synth_brackets`, `failure_stage_from_tag`, `projected_level_profile`,
+`skip_reason_tag`, `mono_lag`, `failure_stage_tag`). `mod.rs` gained `mod project; pub use project::*;`.
+**Cycle guard applied (§3b option 1):** `tags_from_measurements` stayed in `mod.rs` (measure — it
+consumes `RegionMeasurements`) and now calls the shared `tags_from_fields`, which is `pub(crate)` in
+`project`. `project.rs` imports only `super::schema::*` + domain tag structs — **verified zero
+references to any measure symbol** (`RegionMeasurements`/`summarize_lag_curve`/`to_db`/… absent from
+project code), so the `schema ← project ← measure` DAG holds with no `project ↔ measure` edge.
+Non-move deltas (normalized union diff vs the P1 tree: 3 removed / 16 added, **zero function bodies
+changed**): `SILENCE_FLOOR_DB` relocated from `mod.rs` to `schema.rs` as `pub(crate)` (it is the
+`LevelProfile::floor_db` sentinel, shared by projection + measure — moving it to the common `schema`
+dependency keeps the P3 DAG clean); `tags_from_fields` → `pub(crate)`; the
+`use crate::domain::gap_repair_spec::{…}` import moved verbatim mod.rs→project.rs (one test's local
+`use` block gained `GapRepairSpec`, which it had been taking from the now-removed top-level import);
+module docs added. **Verified:** `cargo build/clippy -p clip-sync-repair --all-targets` clean;
+`-Tier pr-repair` green (repair lib 382 pass; `gap_repair_spec_diff` 4/4 and `golden_baseline_invariance`
+2/2 — the projection round-trip guards — plus harness 13/13).
 
 **P1 as-landed (2026-07-23).** `git mv` monolith → `gap_fingerprint/mod.rs`; extracted the schema
 types + serde `de_*_null_as_nan` helpers + `source_id`/`file_source`/`fnv_feed`/`impl ScanRecipe` +

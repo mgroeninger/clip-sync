@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// dBFS sentinel substituted for true-silent RMS so level vectors carry no `-inf` (the value
+/// [`LevelProfile::floor_db`] reports). Shared by the schema projection and the PCM measure path.
+pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
+
 // ---------------------------------------------------------------------------------------------
 // Corpus envelope
 // ---------------------------------------------------------------------------------------------
