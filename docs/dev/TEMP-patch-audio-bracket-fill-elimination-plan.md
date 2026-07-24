@@ -1,14 +1,19 @@
 # `bracket_fill` elimination — plan
 
-Status: **planned** (not started).
+Status: **planned** (not started). Revised 2026-07-24 after a code/measurement
+audit (see §9 for what changed and why).
 
 Kill the transitional `bracket_fill: Option<Vec<f32>>` carry on
 `RegionCharacterization::Patch`, making the characterize→execute handoff
 **decision-only** (a `GapRepairSpec`). Execute re-derives the bracket fill PCM
-from the spec's `FillAlignment` + the decode buffers via the already-shadowed
-`execute_bracket_fill`. This is behavior-**preserving** (byte-parity gated), not
-byte-*text*-preserving — it moves where PCM is assembled and changes buffer
-lifetimes, so it is **not** part of the M-MOD module split.
+from the spec's `FillAlignment` + `BExtractWindow` + the decode buffers via the
+already-shadowed `execute_bracket_fill`. This is behavior-**preserving**
+(byte-parity gated), not byte-*text*-preserving — it moves where PCM is
+assembled and changes buffer lifetimes, so it is **not** part of the M-MOD
+module split.
+
+Paths below are relative to
+`crates/clip-sync-repair/src/application/patch_audio/` unless stated.
 
 ---
 
@@ -21,13 +26,20 @@ lifetimes, so it is **not** part of the M-MOD module split.
   temporary 2× fill/border assembly appears *and* is deduped." That doc is the
   authoritative history for steps 6a–6c and the 6b.3 sub-step ledger; do not
   re-open it — track the flip here.
+- **The Hoists half of that row is dead.** The mono-downmix hoist (redesign §3.1,
+  production-perf §2.1) was **REFUTED by measurement 2026-07-20**: 0.1 s of
+  1872 s = **0.006%** of runtime, with an explicit "do not re-propose without new
+  measurement" ([archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md)
+  §2.1, §0 table). This plan therefore does **not** gate on it. What survives of
+  the "2× assembly" worry is a question to *measure* (§3, phase **M0**), and the
+  thing to measure is the fill assembly itself — not the downmix.
 - **Not the module split.** [TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md)
   (M-MOD, P1–P6 **done**) was verbatim relocation with **no** behavior change.
   This plan *does* change behavior-adjacent structure and must be gated on
   byte-parity, so it is deliberately a **separate** work item — do not fold it
   into the split ledger or land it as split cleanup.
 - **`large_enum_variant` is a side effect, not the goal.** The `#[allow(clippy::large_enum_variant)]`
-  on `RegionCharacterization` (`region.rs`) is driven by the large `Bracket`
+  on `RegionCharacterization` (`region.rs:1051`) is driven by the large `Bracket`
   struct-variant *inside* `GapRepairSpec`, which **both** arms carry — not by the
   24-byte `Option<Vec<f32>>`. Dropping `bracket_fill` does not shrink anything; it
   makes `Patch { spec }` and `Skip(spec)` carry an identical payload, so the
@@ -39,18 +51,17 @@ lifetimes, so it is **not** part of the M-MOD module split.
 ## 1. Problem
 
 Today the Bracket path assembles the fill PCM during **characterize**
-(`characterize_region`, `region.rs` ~L1873) and carries that `Vec<f32>` across
+(`characterize_region`, `region.rs:1873`) and carries that `Vec<f32>` across
 the two loops inside `RegionCharacterization::Patch { spec, bracket_fill }`.
 `execute_region_spec` then reads it back via
 `bracket_fill.expect("bracket verdict requires a bracket fill until 6c re-derivation")`
-(`region.rs` ~L1293).
+(`region.rs:1293`).
 
 Consequences:
 
 - The pass-1 characterization buffer (`Vec<(RegionCharacterization, …)>`) retains
-  per-gap fill PCM between the characterize and execute loops — often the largest
-  payload on the Bracket path — for no decision reason (all decisions are already
-  on the spec).
+  per-gap fill PCM between the characterize and execute loops — on the Bracket
+  path, for no decision reason (all decisions are already on the spec).
 - The characterize→execute boundary is muddied: characterize is supposed to
   **decide** (geometry, seams, gain, verdict) and execute is supposed to
   **assemble PCM**. The carry is a transitional cheat (the 6b.3e intent was a
@@ -58,74 +69,113 @@ Consequences:
 - `RegionCharacterization` can't collapse to `GapRepairSpec` alone (or
   `Patch(spec) | Skip(spec)`) while the side-channel `Vec` exists.
 
-## 2. Why it's safe — the parity contract already exists
+**Scope note — this does not make pass-1 PCM-free.**
+`GapRepairStrategy::SilenceSplice { fill: Vec<f32>, … }`
+(`domain/gap_repair_spec.rs:186-188`) carries synthesized PCM **on the spec** by
+design (the documented "PCM-ownership asymmetry": Bracket carries indices,
+SilenceSplice carries PCM that is not reconstructable from indices). Dual-fit
+rescues therefore keep dragging PCM through pass 1 and through preview after
+this plan lands. Every retention claim below is **Bracket-path-only**.
+
+## 2. Why it's safe — the parity contract already exists (with one hole)
 
 `execute_bracket_fill` (`region.rs:902`) already reconstructs the fill from
-`FillAlignment` + decode buffers + A geometry **independently of characterize**,
-and the `debug_assert_eq!` at `region.rs:1893` asserts it byte-matches the inline
-`assemble_bracket_fill`. That shadow is the contract this plan flips to live.
+`FillAlignment` + decode buffers + A geometry, and the `debug_assert_eq!` at
+`region.rs:1893` asserts it byte-matches the inline `assemble_bracket_fill`.
+That shadow is the contract this plan flips to live.
+
+**The hole: the B-extract re-slice is not shadow-covered.** The shadow passes
+`execute_bracket_fill` the *already-sliced* `b_samples` that characterize holds.
+The executor will only have `b_samples_full` and must re-slice via
+`spec.b_extract`. That step is currently unproven, and it has a live mismatch:
+
+- the spec stores `b_extract.end_frame` **unclamped** —
+  `(b_extract_end_secs * sample_rate).round()` (`region.rs:2005`);
+- characterize's `slice_b_segment` **clamps** `end_frame` to
+  `b_samples.len() / channels` (`region.rs:2103`).
+
+Near the end of B, the naive re-slice is longer than characterize's (or out of
+range). `b_extension` is `&b_samples[b_fill_end_sample..]` (`region.rs:924`), so
+a longer slice changes Gate-mode extension and Fit-mode length fitting — a
+byte-parity break in exactly the awkward tail case. **Phase S1 closes this hole
+before anything flips.**
 
 **The shadow survives the flip** (stronger than "gate then delete"): characterize
 must *still* assemble the fill for its own decisions —
 
-- report-vs-splice seam reconciliation (`fill_splice_seam_correlations_interleaved`, ~L1954),
-- `normalize_gain` from `rms_interleaved(&b_fill)` (~L1924),
+- report-vs-splice seam reconciliation (`fill_splice_seam_correlations_interleaved`, `region.rs:1955`),
+- `normalize_gain` from `rms_interleaved(&b_fill)` (`region.rs:1924`),
 
 — so the inline `assemble_bracket_fill` does not disappear. The
 `debug_assert_eq!` therefore remains a **permanent** parity guard, not migration
-scaffolding. This is exactly the "assemble twice" design that the Hoists step
-then dedupes.
+scaffolding.
 
 **The decision outputs are already off the fill.** `seam_pre`/`seam_post`/
 `used_splice`/`confidence` and `normalize_gain` are computed in characterize and
-stored **on the spec** (~L1997–2028); `execute_region_spec` reads them back via
-`ExecuteBracketOutputCtx`. The *only* thing execute needs the carried `Vec` for
-is the splice PCM — precisely what `execute_bracket_fill` reproduces.
+stored **on the spec** (`region.rs:1996-2028`); `execute_region_spec` reads them
+back via `ExecuteBracketOutputCtx`. `b_fill` is never mutated after assembly. The
+*only* thing execute needs the carried `Vec` for is the splice PCM — precisely
+what `execute_bracket_fill` reproduces.
 
-## 3. Why it must land Hoists-gated (perf caveat)
+## 3. Perf posture: measure, don't assume (M0)
 
-This change makes nothing faster **by itself** and adds a temporary **2×
-assembly**: characterize builds the fill for reconciliation/gain, execute builds
-it again for the splice. Given the standing perf posture (per-bracket score
-already dominates wall-clock — per-bracket score × k brackets),
-adding a second border/fill assembly to the hot bracket path before the shared
-inputs exist is a regression we don't want to eat.
+The original draft gated this work on landing the shared mono downmix first, to
+pre-pay for a "temporary 2× assembly". That gate is withdrawn: the downmix hoist
+is refuted (§0), and the 2× cost was never measured — **no tracing span covers
+the fill assembly at all**. `char_gate_search` (93% of characterize) closes at
+`region.rs:1676`, well before the assembly at `1873`.
 
-So the real move is: **land the input-sharing Hoists first** (share the per-side
-mono downmix — the byte-preservable, exactly-sliceable hoist per §3.1 of the
-redesign doc; **not** one border template/RMS grid for all consumers), **then**
-flip execute to re-derive so the second assemble is cheap.
+So M0 measures the actual thing. The plausibly-material cost inside
+`execute_bracket_fill` is `fit_fill_length_for_gap` (Fit mode, incl. the boundary
+grid), *not* the downmix or the border-template rebuild.
 
-**Hazard (from redesign §H2/H3):** any hoisted shared subexpression must be
-**precomputed read-only before the characterize loop**, or memoized with an
-**order-independent** key — never lazily populated *during* characterize in gap
-order.
+- **M0 result < ~1% of wall-clock** → no hoist phase; go straight to S0.
+- **M0 result material** → open a hoist phase targeting *what M0 indicts*, with
+  its own measurement, before F1. Do not resurrect the downmix hoist without new
+  measurement showing the downmix specifically is material.
+
+**Hazard (from redesign §H2/H3), applicable to any hoist M0 justifies:** a
+hoisted shared subexpression must be **precomputed read-only before the
+characterize loop**, or memoized with an **order-independent** key — never
+lazily populated *during* characterize in gap order.
 
 ## 4. What execute needs threaded in
 
 `execute_region_spec` today receives only `sample_rate`. `execute_bracket_fill`'s
 `ExecuteBracketFillCtx` (`region.rs:874`) needs, beyond what's already on the spec
-(`alignment`, `refined`, `crossfade_secs`):
+(`alignment`, `refined`, `crossfade_secs`, `b_extract`), three distinct classes —
+and they are **not** all "config knobs", which the first draft got wrong:
 
-- **media buffers:** `b_samples`, `a_samples`, `a_frames`
-- **channel/geometry:** `channels`, `gap_frames`, `a_start_secs`
-- **fill/border policy knobs:** `fill_mode`, `border_frames`,
-  `border_standoff_frames`, `silence_peak_fraction`, `absolute_silence_rms`,
-  `seam_gate_frames`
+1. **Media (thread a borrow).** `b_samples`, `a_samples`, `a_frames`. Both
+   `a_pcm` and `b_samples_full` are already in scope in `mod.rs` at the execute
+   loop, so this is `&RegionPatchMedia<'_>` — no new ownership, no re-decode
+   (`b_samples` is a borrowed slice of `b_samples_full`, not a per-gap decode).
+   Execute re-slices the extract itself via `spec.b_extract` + the S1 helper.
+2. **Request/context fields (thread a borrow).** `channels`, `sample_rate`,
+   `fill_mode`, `silence_peak_fraction`, `absolute_silence_rms` — read from
+   `&PatchAudioRequest` + `&RegionPatchContext`.
+3. **Per-gap *derived* values (re-derive, do not thread).** `gap_frames`,
+   `correlate_frames`, `seam_gate_frames`, `border_frames`,
+   `border_standoff_frames` are computed **inside characterize** from request
+   fields *and gap geometry* (`region.rs:1548`, `1560-1608`) — e.g.
+   `border_frames = border_frames_from_secs(normalize_window_secs, sample_rate).min(correlate_frames)`,
+   where `correlate_frames` depends on `gap_frames`. They are re-derivable from
+   `spec.refined` + request, but hand-duplicating those expressions in the
+   executor is exactly where byte-parity breaks. **S0 extracts them into one
+   shared helper called by both loops.**
 
-Thread these through the executor entry (grouped in a ctx/spec struct to avoid a
-`too_many_arguments` fight — mirror the `DualFitInputSpec` / `ExecuteBracketFillCtx`
-pattern already in the file). Several are `PatchAudioRequest`/derived-config
-fields; prefer reading from a borrowed request + derived struct over a 15-wide
-positional list.
+Thread (1) and (2) grouped in a ctx struct to avoid a `too_many_arguments`
+fight — mirror the `DualFitInputSpec` / `ExecuteBracketFillCtx` pattern already
+in the file.
 
 ## 5. Preview note
 
 The `preview()` / `PatchRunKind::Preview` path and `outcome_from_characterization`
-(`region.rs:1239`) already landed (post-split). Preview already derives outcomes
-from the spec without executing, so "scan-only preview" is largely realized —
-killing `bracket_fill` removes the last per-gap PCM that preview drags around,
-finishing that story rather than starting it.
+(`region.rs:1239`) already landed (post-split). Preview derives outcomes from the
+spec without executing, so killing `bracket_fill` removes the Bracket path's
+per-gap PCM from preview. It does **not** make preview PCM-free — SilenceSplice
+specs still carry `fill` (§1 scope note). "Scan-only preview" needs that
+asymmetry addressed separately; it is out of scope here.
 
 ---
 
@@ -139,10 +189,13 @@ commit that touches the fill path.
 
 | Phase | Scope | Gate |
 |-------|-------|------|
-| **H1** | Share the per-side **mono downmix** (precompute read-only before the characterize loop; exactly-sliceable). Measure first — confirm the hoist is worthwhile and byte-preservable. No `bracket_fill` change yet. | Perf measurement + byte-parity; §H2/H3 ordering rule |
-| **H2** | Route the second (execute-side) border/fill assembly through the shared downmix so `execute_bracket_fill` is cheap — dedup the "assemble twice" cost. Shadow still live. | Byte-parity (shadow + fixtures) |
-| **F1** | Thread media + fill/border policy knobs into `execute_region_spec` (grouped struct). Switch the Bracket arm from `bracket_fill.expect(...)` to `execute_bracket_fill(...)`. Still set `Some(b_fill)` on the characterization (no removal yet) so the flip is isolated and shadow-comparable. | Byte-parity; execute output unchanged |
-| **F2** | Stop putting `Some(b_fill)` on `RegionCharacterization`; drop the `bracket_fill` param from `execute_region_spec`. Characterize keeps its local `assemble_bracket_fill` (for reconciliation/gain) and discards the `Vec` after building the spec. | Byte-parity; pass-1 buffer no longer retains fill |
+| **M0** | Instrument the fill assembly (span around `assemble_bracket_fill` + `execute_bracket_fill`, Fit vs Gate broken out) and measure on the standing perf corpus. Decides whether any hoist phase exists at all (§3). Instrumentation only — no path change. | Measurement recorded here; spans don't alter output |
+| **L0** | Make `assemble_bracket_fill` silent: return `extended_frames: Option<usize>` instead of logging; emit from characterize's call site with identical message/fields (§7). Prerequisite for F1 — a pure primitive can't be called twice while it narrates. | Byte-parity incl. **log output** (same line, same place) |
+| **S0** | Extract the per-gap derived-knob computation (`gap_frames`, `correlate_frames`, `seam_gate_frames`, `border_frames`, `border_standoff_frames`) into one helper; call it from characterize in place of the inline expressions. No executor change yet. | Byte-parity (pure refactor; characterize output identical) |
+| **S1** | Extract the B-extract re-slice as a helper taking `(b_samples_full, channels, spec.b_extract)` that **replicates `slice_b_segment`'s clamp** (§2). Feed the existing `debug_assert_eq!` shadow through it, so the shadow proves reconstruction from *spec + full buffers* — closing the last un-shadowed step. | Shadow now covers the re-slice; byte-parity incl. end-of-B fixtures |
+| **H?** | **Conditional on M0** only. Hoist/dedup whatever M0 indicts, order-independent per §3. Skip entirely if M0 says the assembly is immaterial. | Perf measurement + byte-parity |
+| **F1** | Thread media + request/context into `execute_region_spec` (grouped struct); re-derive per-gap knobs via S0's helper and the extract via S1's. Switch the Bracket arm from `bracket_fill.expect(...)` to `execute_bracket_fill(...)`. Still set `Some(b_fill)` on the characterization (no removal yet) so the flip is isolated and shadow-comparable. | Byte-parity; execute output unchanged |
+| **F2** | Stop putting `Some(b_fill)` on `RegionCharacterization`; drop the `bracket_fill` param from `execute_region_spec`. Characterize keeps its local `assemble_bracket_fill` (for reconciliation/gain) and discards the `Vec` after building the spec. | Byte-parity; pass-1 buffer no longer retains **Bracket** fill |
 | **C1** | Collapse `RegionCharacterization::Patch { spec, bracket_fill }` → `Patch(spec)`; remove `#[allow(clippy::large_enum_variant)]`. Evaluate deleting `RegionCharacterization` entirely in favor of returning `GapRepairSpec` (`Skip` is already a full `Skip`-verdict spec). | build/clippy clean; behavior unchanged |
 
 **Do not** insert an intermediate `struct { spec, bracket_fill }` rename — it's a
@@ -153,26 +206,86 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 - **Behavior byte-parity only.** No gate/threshold/dual-fit/anchor-policy retune,
   no string changes. The `debug_assert_eq!` shadow is the contract; keep it after
   the flip.
-- **Sequence is load-bearing.** H before F: do not flip execute to re-derive
-  before the shared downmix exists, or you add a real 2× to the hot path.
-- **Order-independent hoisting.** Precompute shared subexpressions read-only
-  before the characterize loop (§H2/H3).
+- **The one log inside the assembly must move out of it first (phase L0).**
+  `assemble_bracket_fill` is a pure PCM primitive that also narrates: the
+  Gate-mode `"B bracket shorter than A gap; extended from contiguous B audio (gate)"`
+  debug log (`region.rs:861`, fires only when Gate mode + `source_frames <
+  gap_frames` + `extend_to > 0`). A pure function that computes *and* reports
+  cannot be called twice, so re-deriving the fill in execute would double-emit it
+  in release (debug already double-emits via the shadow). Nothing else in the
+  assembly tree logs — `fit_fill_length_for_gap`,
+  `score_extend_short_fill_to_gap_frames`, and `fit_fill_to_gap_frames` are
+  silent; the `unified_*` spans belong to the placement search, which execute
+  does not re-run.
+
+  **Fix the layering, don't flag it.** An `emit_logs: bool` parameter would just
+  make the wrong owner work twice. Instead have `assemble_bracket_fill` *return*
+  the fact (`extended_frames: Option<usize>`) and emit from the caller. That is
+  structurally duplication-proof: calling a pure function twice yields the same
+  value twice, and only the reporting call site speaks. It also fixes a second
+  problem the duplication exposed — after F2 characterize's fill is **discarded**
+  (kept only for reconciliation/gain), so a log describing that fill describes a
+  throwaway artifact, while the fill actually written is the executor's.
+
+  **Parity-safe form:** move the emission up one frame to characterize's existing
+  call site, keeping the message and fields byte-identical. Folding it into the
+  per-gap structured reporter (`GapFillResultLog`, `log.rs:41`) is the better
+  end state — that struct is the established owner of per-gap fill reporting and
+  this log is an orphan that bypassed it — but that changes verbose output, so it
+  is a **separate** follow-up, not part of a parity-gated phase.
+- **L0 + S0 + S1 before F1.** The flip is only as safe as the re-derivation it
+  relies on: the primitive must be side-effect-free (L0) and both derivation
+  paths single-sourced (S0) and shadow-covered (S1) first.
+- **No refuted hoists.** The mono-downmix hoist stays dead unless new measurement
+  says otherwise (§0).
+- **Order-independent hoisting** if H? happens: precompute read-only before the
+  characterize loop (§H2/H3).
 - Stage only phase-relevant files; commit each phase separately with
-  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
 ## 8. Ledger
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| H1 | Planned | — | measure mono-downmix hoist first |
-| H2 | Planned | — | dedup execute-side assembly |
+| M0 | Planned | — | span the assembly; decides whether H? exists |
+| L0 | Planned | — | de-narrate `assemble_bracket_fill`; return the fact, caller emits |
+| S0 | Planned | — | single-source the per-gap derived knobs |
+| S1 | Planned | — | re-slice helper w/ clamp; shadow covers it |
+| H? | Conditional | — | only if M0 indicts something; not the downmix |
 | F1 | Planned | — | thread inputs; flip to `execute_bracket_fill` (carry still set) |
 | F2 | Planned | — | drop the carry + param |
 | C1 | Planned | — | collapse enum; remove `#[allow]`; consider deleting the type |
+
+## 9. Revision log
+
+**2026-07-24 (audit revision).** Changes from the first draft:
+
+- **Dropped H1/H2 (mono-downmix hoist) as a blocking prerequisite.** It is the
+  refuted §2.1 hoist (0.006%, measured 2026-07-20). Replaced by **M0**, which
+  measures the fill assembly itself — the cost the "2× assembly" worry was
+  actually about, and which no span currently covers.
+- **Added S1** — the B-extract re-slice was an unproven reconstruction step with
+  a real unclamped-`end_frame` mismatch (`region.rs:2005` vs `2103`). §2 now
+  states the hole instead of claiming the shadow already covers everything.
+- **Added S0 and rewrote §4** — `border_frames` / `seam_gate_frames` /
+  `border_standoff_frames` / `correlate_frames` are per-gap *derived*, not
+  request fields; the draft's "thread these knobs" framing invited a
+  hand-duplicated derivation, the most likely byte-parity break in the plan.
+- **Added L0** — the re-derivation would have double-emitted the one log living
+  inside `assemble_bracket_fill`. Rather than suppress the second copy, the
+  primitive stops narrating: it returns the fact and the caller reports. The
+  duplication was a symptom of a leaf PCM primitive owning diagnostics, and of
+  reporting from the pass whose fill is discarded.
+- **Corrected §5 and §1** — `bracket_fill` is not the last per-gap PCM in pass 1;
+  `SilenceSplice` specs carry `fill` by design. All retention claims are now
+  scoped to the Bracket path.
+- Refreshed line references to post-split `region.rs`; fixed the commit trailer.
 
 ---
 
 Companions: [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)
 (§3 step 8 Hoists / 6b.3 ledger — authoritative history),
+[archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md)
+(§0/§2.1 — the measurement that killed the downmix hoist),
 [TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md)
 (M-MOD, done), [pipeline.md](../pipeline.md), [gap-fill-modes.md](../gap-fill-modes.md).
