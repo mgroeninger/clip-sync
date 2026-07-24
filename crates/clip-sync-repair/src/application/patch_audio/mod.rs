@@ -265,9 +265,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let _gap_enter = gap_span.enter();
 
             let (patch, outcome) = match characterization {
-                RegionCharacterization::Patch { spec, bracket_fill } => execute_region_spec(
+                RegionCharacterization::Patch(spec) => execute_region_spec(
                     spec,
-                    bracket_fill,
                     &request,
                     &RegionPatchMedia {
                         b_samples_full: &b_samples_full,

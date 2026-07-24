@@ -55,7 +55,7 @@
 ### A3 — Validation & docs ✓
 
 - [x] Corpus test: dual-track MP4 (2ch AAC + 6ch AC-3), align + repair smoke when `ac3` enabled.
-- [x] Manual validation: licensed pair → 4 repairable gaps, 3 patched. ✓
+- [x] Manual validation: media pair → 4 repairable gaps, 3 patched. ✓
 - [x] README: feature flag, limitations, `ffprobe` tip.
 - [x] Archive this doc.
 
@@ -76,7 +76,7 @@
 
 ---
 
-## Validation result (licensed media, 2026-06-09)
+## Validation result (media, 2026-06-09)
 
 ```
 Tracks:    A 6ch @ 48000Hz   B 6ch @ 48000Hz   (identical)

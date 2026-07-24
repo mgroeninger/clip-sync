@@ -277,8 +277,23 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 | S1 | Done | `5a00b16` | `slice_b_extract` / `b_extract_frames`; shadow re-slices from the spec's own `BExtractWindow` |
 | H? | Conditional | — | only if M0 indicts something; not the downmix. **Blocked on M0's measurement** |
 | F1 | Done | (this commit) | Executor re-derives the fill. Added `window_gap_frames` to the Bracket verdict — see §4.1. Carry retained as a debug parity check at the handoff |
-| F2 | Planned | — | drop the carry + param |
-| C1 | Planned | — | collapse enum; remove `#[allow]`; consider deleting the type |
+| F2 | Done | (with C1) | `bracket_fill: None` at the char site; param dropped |
+| C1 | Done | (with F2) | `Patch(GapRepairSpec)`; `#[allow(large_enum_variant)]` gone. **Deletion of the type: evaluated, not done** — see below |
+
+**F2 and C1 landed in one commit.** Separating them would have committed a
+`field bracket_fill is never read` warning, and CI runs
+`cargo clippy --all-targets -- -D warnings` — so the F2-only state is not a
+valid commit. Removing the field *is* the completion of F2.
+
+**C1's "evaluate deleting `RegionCharacterization`":** both variants now carry
+nothing but a `GapRepairSpec`, so the enum is a restatement of `spec.verdict` —
+a second source of truth for a tag that already exists (`skip_outcome_from_spec`
+already `unreachable!()`s on the disagreement). Deleting it means
+`characterize_region -> (GapRepairSpec, GapTagsPatchContext)` and matching on
+`spec.verdict` at the ~5 dispatch sites, all in `region.rs` + `mod.rs`.
+Recommended, mechanical, and **out of scope for this plan** — it is a
+characterize-boundary cleanup, not `bracket_fill` elimination. Left for the
+user to schedule.
 
 ## 9. Revision log
 

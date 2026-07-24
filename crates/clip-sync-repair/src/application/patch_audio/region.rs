@@ -908,9 +908,9 @@ struct ExecuteBracketFillCtx<'a> {
 /// assembles a fill to score the report-vs-splice reconciliation and discards it; the executor re-assembles
 /// from the spec for the splice (borders rebuilt from scratch — deduped later by the step-8 hoists).
 ///
-/// **Currently exercised only by the fill `debug_assert_eq!` shadow** (the live fill is still the inline
-/// `assemble_bracket_fill`, shared with the reconciliation). It becomes the live fill path at 6b.3c, when
-/// `execute_region_spec` re-assembles from the spec in a separate execute step.
+/// **This is the live fill path** (F1). The `debug_assert_eq!` shadow in characterize still compares this
+/// reconstruction against the inline assembly on every bracket gap in debug builds — that is what keeps
+/// "assemble twice" honest about producing the same bytes twice.
 fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
     let ExecuteBracketFillCtx {
         alignment,
@@ -1055,19 +1055,14 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
     (patch, outcome)
 }
 
-/// What `characterize_region` decided for one region (6b.3e). A `Patch` carries the spec to execute plus the
-/// transitional pre-assembled bracket fill (`None` for dual-fit, whose fill is on the spec); a `Skip` carries
-/// its already-built outcome — skips are not executed (§2.5.5), so there is nothing for the executor to do.
-/// (Skips are not yet full `Skip`-verdict specs; the fingerprint projection at step 8 will need that, tracked
-/// separately.)
-// A transient per-region value, built once and matched immediately — boxing the large `Patch` variant would
-// add a pointless heap alloc, so the size disparity is deliberate.
-#[allow(clippy::large_enum_variant)]
+/// What `characterize_region` decided for one region (6b.3e) — a spec either way. A `Patch` is executed; a
+/// `Skip` is not (§2.5.5), its outcome comes off the spec.
+///
+/// Both variants now carry nothing but a [`GapRepairSpec`] (C1): the bracket fill that used to ride along on
+/// `Patch` is gone — the executor rebuilds it. The variant is therefore a restatement of `spec.verdict`; see
+/// the plan's C1 note on deleting the type outright.
 pub(super) enum RegionCharacterization {
-    Patch {
-        spec: GapRepairSpec,
-        bracket_fill: Option<Vec<f32>>,
-    },
+    Patch(GapRepairSpec),
     /// A reasoned/mechanical skip — now a full `Skip`-verdict [`GapRepairSpec`] (8d), not a bare outcome, so
     /// every region yields a projectable spec (§2.5.5). The loop/shim derives the [`RegionPatchOutcome`] from
     /// it via [`skip_outcome_from_spec`]; downstream reporting/tiering is byte-identical.
@@ -1125,7 +1120,7 @@ fn finalize_dual_fit(
                 verdict: GapRepairVerdict::Patch(strategy),
                 tags_ctx,
             };
-            RegionCharacterization::Patch { spec, bracket_fill: None }
+            RegionCharacterization::Patch(spec)
         }
         DualFitDecision::Skipped { reason, residual } => {
             RegionCharacterization::Skip(skip_region_spec(
@@ -1255,7 +1250,7 @@ pub(super) fn outcome_from_characterization(
     sample_rate: u32,
 ) -> RegionPatchOutcome {
     match characterization {
-        RegionCharacterization::Patch { spec, .. } => patched_outcome_from_spec(spec, sample_rate),
+        RegionCharacterization::Patch(spec) => patched_outcome_from_spec(spec, sample_rate),
         RegionCharacterization::Skip(spec) => skip_outcome_from_spec(spec),
     }
 }
@@ -1277,13 +1272,12 @@ fn dual_fit_skipped(outcome: RegionPatchOutcome) -> DualFitDecision {
 /// handoff. Handles the two PATCH verdicts; `Skip` isn't *executed* (the loop filters skips and derives their
 /// outcome from the spec, §2.5.5). Takes `spec` by value so the SilenceSplice fill moves out without a clone.
 ///
-/// **F1:** the bracket fill is now assembled HERE, from the spec + `media` + `request`, rather than carried
-/// over from characterize. `bracket_fill` is characterize's copy, retained one more step purely as a debug
-/// parity check at the real handoff (F2 removes it). The media/request params are what re-derivation costs:
-/// the executor needs the decode buffers back, plus the run-level knobs the windows are sized from.
+/// The bracket fill is assembled HERE, from the spec + `media` + `request` — characterize hands over a
+/// decision, not PCM (F2). The media/request params are what that costs: the executor needs the decode
+/// buffers back, plus the run-level knobs the windows are sized from. SilenceSplice still carries its `fill`
+/// on the spec, by design: that PCM is synthesized from a decision the executor cannot re-make (§1).
 pub(super) fn execute_region_spec(
     spec: GapRepairSpec,
-    bracket_fill: Option<Vec<f32>>,
     request: &PatchAudioRequest,
     media: &RegionPatchMedia<'_>,
     ctx: &RegionPatchContext,
@@ -1338,14 +1332,6 @@ pub(super) fn execute_region_spec(
                 sample_rate,
                 crossfade_secs,
             });
-            // The 6b.3a shadow re-stated at the real boundary: characterize's fill, carried one last time,
-            // must equal what the spec round-trip reproduces. Stronger than the in-function shadow (it covers
-            // the spec's own fields, not characterize's locals) and it is what F2 deletes.
-            debug_assert_eq!(
-                bracket_fill.as_ref(),
-                Some(&fill),
-                "F1: executor-derived bracket fill must byte-match characterize's"
-            );
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
                 fill,
                 gain: normalize_gain,
@@ -1415,6 +1401,10 @@ pub(super) fn execute_region_spec(
 /// assemble the final patch; that is `execute_region_spec`, invoked by the `prepare_region_patch` shim. This
 /// is the characterize→execute boundary (§2.5): all repair *decisions* live here; PCM *assembly* lives in the
 /// executor.
+///
+/// It does assemble a bracket fill internally — the report-vs-splice reconciliation and the normalize gain are
+/// decisions that can only be made against the actual bytes — but that `Vec` is scored and dropped (F2). No
+/// PCM crosses the boundary on the Bracket path.
 pub(super) fn characterize_region(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2124,15 +2114,17 @@ pub(super) fn characterize_region(
         tags_ctx: GapRepairTags::default(),
     };
     (
-        RegionCharacterization::Patch { spec, bracket_fill: Some(b_fill) },
+        // F2: the fill is NOT handed over — `b_fill` was built for the reconciliation and the gain above, and
+        // dies here. The executor rebuilds its own from the spec.
+        RegionCharacterization::Patch(spec),
         tag_ctx,
     )
 }
 
 /// Characterize every planned region into a spec — the §2.5.5 multi-region loop over [`characterize_region`].
 /// **Region-infallible:** exactly one spec per region, every failure folded into a `Skip` verdict (§2.5.7 #3),
-/// so `specs.len() == regions.len()`. Drops the executor/reporting extras (`bracket_fill` /
-/// `GapTagsPatchContext`) — this yields the repair *decisions* without executing PCM. First-pass anchors only
+/// so `specs.len() == regions.len()`. Drops the reporting extra (`GapTagsPatchContext`) and the Patch/Skip
+/// tag — this yields the repair *decisions* without executing PCM. First-pass anchors only
 /// (pass-2 anchored retry is out of scope for this helper; production preview is `PatchAudio::preview`).
 ///
 /// Test-only: production `--repair-preview` runs the same loop inside `PatchAudio::preview` (with progress /
@@ -2157,7 +2149,7 @@ fn characterize_all_regions(
                 RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
             );
             match characterization {
-                RegionCharacterization::Patch { spec, .. } => spec,
+                RegionCharacterization::Patch(spec) => spec,
                 RegionCharacterization::Skip(spec) => spec,
             }
         })
@@ -2178,8 +2170,8 @@ pub(super) fn prepare_region_patch(
     let (characterization, tag_ctx) =
         characterize_region(progress, media, region, request, ctx, opts);
     match characterization {
-        RegionCharacterization::Patch { spec, bracket_fill } => {
-            let (patch, outcome) = execute_region_spec(spec, bracket_fill, request, media, ctx);
+        RegionCharacterization::Patch(spec) => {
+            let (patch, outcome) = execute_region_spec(spec, request, media, ctx);
             (patch, outcome, tag_ctx)
         }
         RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec), tag_ctx),
