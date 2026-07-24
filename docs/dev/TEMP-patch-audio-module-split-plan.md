@@ -170,7 +170,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 | **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Done (2026-07-24)** |
 | **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Done (2026-07-24)** |
 | **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Done (2026-07-24)** |
-| **P6** | Thin `mod.rs` — only `PatchAudio::execute` + re-exports; delete monolith `.rs` | **Planned** |
+| **P6** | Thin `mod.rs` — only `PatchAudio::execute` + re-exports; delete monolith `.rs` | **Done (2026-07-24)** |
 
 **Suggested order rationale.** Request first (no sibling deps). Decode + geometry
 next (leaves with outside call sites — green `composition` / `patch_region`
@@ -305,6 +305,22 @@ left with the anchor code, and dropped `prepare_region_patch` from the region fa
 **P6 notes.** `mod.rs` should hold orchestration only (plan → decode →
 `characterize_*` / execute loop → optional `run_anchored_retry_pass` →
 `splice_into_a` → summary). No leftover free-function clusters.
+
+**P6 as-landed (2026-07-24).** No further extraction was required: P4+P5 already
+left `mod.rs` at 324 lines holding orchestration only — module declarations, the
+facade re-exports, `GAP_EDGE_REFINE_SECS` (consumed by `execute`), and
+`PatchAudio::{new, execute}` (plan → decode → two-pass `characterize_region` /
+`execute_region_spec` → optional `run_anchored_retry_pass` → `splice_into_a` →
+summary). No leftover free-function clusters, no `#[cfg(test)] mod tests` in `mod.rs`
+(all unit tests are colocated in their submodules). The original monolith is `mod.rs`
+itself (P1 `git mv`), so there is no separate `.rs` to delete. P6 is a ledger-only
+close-out; `-Tier pr-repair` confirmed green including the `PatchAudio::execute`
+integration/oracle paths.
+
+**Module split complete.** `patch_audio/` is now `mod.rs` (orchestration) + seven
+submodules: `request` (P1), `decode` / `geometry` (P2), `log` (P3), `region` (P4),
+`anchor_retry` (P5). Public import paths (`patch_audio::`, `application::PatchAudio`)
+unchanged throughout; every phase was byte-preserving with unit tests colocated.
 
 ## 5. Verification (per phase / final gate)
 
