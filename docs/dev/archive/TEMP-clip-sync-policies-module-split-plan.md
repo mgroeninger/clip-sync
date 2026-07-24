@@ -1,5 +1,7 @@
 # Analyzer `policies.rs` module split — plan
 
+> **Archived 2026-07-24.** Planned M-MOD analyzer `clip-sync` policies bite; shipped. Record only.
+
 Status: **done (2026-07-24)** — P1–P4 complete. Live tree:
 
 ```text
@@ -15,17 +17,17 @@ Callers keep `crate::domain::policies::{…}` (and existing `domain/mod.rs` / `l
 re-exports); no import sweep. Unit tests stay in each submodule’s `#[cfg(test)]` block
 (not `tests/` / `*_test.rs`).
 
-**M-MOD context.** This is the **analyzer hexagon** policies bite that
-[`TEMP-policies-module-split-plan.md`](archive/TEMP-policies-module-split-plan.md) explicitly left
+**M-MOD context.** This was the **analyzer hexagon** policies bite that
+[`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md) explicitly left
 out of scope (“Splitting `clip-sync` (lib) `policies.rs` — analyzer hexagon out of scope”).
 Repair `domain/policies/` is **done**, as are the other planned repair M-MOD splits
 (harness corpus, production fingerprint, `patch_audio`). `align_videos` stays deferred
 and **out of scope** here.
 
 **Ground rules (same family as repair policies / fingerprint / corpus).** Derived from
-[`TEMP-policies-module-split-plan.md`](archive/TEMP-policies-module-split-plan.md),
-[`TEMP-gap-fingerprint-module-split-plan.md`](archive/TEMP-gap-fingerprint-module-split-plan.md),
-and [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](archive/TEMP-gap-fingerprint-corpus-module-split-plan.md):
+[`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md),
+[`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md),
+and [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md):
 
 1. **Byte-preserving moves only** — never bundle into a behavior-change PR. No threshold
    retunes, no API redesign, no algorithm edits.
@@ -46,8 +48,8 @@ and [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](archive/TEMP-gap-finger
 9. **Do not reopen companions** — repair policies, fingerprint, corpus splits are closed;
    this plan is maintainability only.
 
-Companions: [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**,
-[TEMP-policies-module-split-plan.md](archive/TEMP-policies-module-split-plan.md) (repair ground-rules
+Companions: [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**,
+[TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) (repair ground-rules
 template), `crates/clip-sync/src/domain/policies/` (current tree).
 
 ---
@@ -149,9 +151,9 @@ mod.rs  re-exports all four
 
 ## Related
 
-- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
-- [TEMP-policies-module-split-plan.md](archive/TEMP-policies-module-split-plan.md) — repair policies (done; ground-rules template; explicitly deferred this bite)
-- [TEMP-gap-fingerprint-module-split-plan.md](archive/TEMP-gap-fingerprint-module-split-plan.md) — production fingerprint (done)
-- [TEMP-gap-fingerprint-corpus-module-split-plan.md](archive/TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness corpus (done)
-- [TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md) — repair `patch_audio` (done)
+- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — repair policies (done; ground-rules template; explicitly deferred this bite)
+- [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — production fingerprint (done)
+- [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness corpus (done)
+- [TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md) — repair `patch_audio` (done)
 - `crates/clip-sync/src/domain/policies/` — current tree

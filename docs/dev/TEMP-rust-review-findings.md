@@ -466,10 +466,11 @@ Do not open an `align_videos` split unless that changes.
    2026-07-24; public `patch_audio::` / `application::{PatchAudio,…}` paths unchanged.
 4. ~~**Analyzer `clip-sync` `policies.rs`** — track selection / clip planning / extract quality /
    hold-out~~ **DONE (2026-07-24)** —
-   [`TEMP-clip-sync-policies-module-split-plan.md`](TEMP-clip-sync-policies-module-split-plan.md)
+   [`TEMP-clip-sync-policies-module-split-plan.md`](archive/TEMP-clip-sync-policies-module-split-plan.md)
    P1–P4 complete: `domain/policies/{mod,track_selection,clip_planning,extract_quality,holdout}.rs`;
    thin facade; public `crate::domain::policies::*` unchanged; `holdout ← clip_planning`
    (`secs_to_duration` only); 46/46 policies lib tests + `-Tier pr-align` green.
+   Re-verified 2026-07-24 (success criteria checked against source; plan archived).
 
 Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
 `clip-sync` (not opened).
@@ -654,7 +655,8 @@ module splits are closed (`align_videos` deferred only).
 6. **Structure (P2)** — ~~**M-CFG**~~ **done 2026-07-23**: `PatchAudioRequest` 58 fields → 3,
    `SeamGateConfig` deleted, harness literals seeded from production; three conversion lists → one
    (record: `archive/TEMP-repair-config-bundles-plan.md`). ~~**M-MOD** planned splits~~ **done**
-   (policies / harness corpus / production fingerprint / `patch_audio`; re-verified 2026-07-24).
+   (repair + analyzer policies / harness corpus / production fingerprint / `patch_audio`;
+   re-verified 2026-07-24; analyzer policies plan archived).
    `align_videos` deferred. **M-HARNESS** remainder incremental.
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
