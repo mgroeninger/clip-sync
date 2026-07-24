@@ -140,10 +140,13 @@ pub struct RepairConfig {
     #[serde(default)]
     pub output: RepairOutputConfig,
     /// Dry-run: scan and report only; do not write any output files.
+    /// Cleared when `--wav` / `--mux` (or output paths) select write mode; kept when
+    /// [`Self::repair_preview`] is set (characterize without write).
     #[serde(default = "default_true")]
     pub dry_run: bool,
-    /// Characterize planned gaps and report would-be patch/skip decisions without splice/write
-    /// (`--repair-preview`). Pass-1 only; mutually exclusive with write outputs.
+    /// After scan, run pass-1 characterize and report would-be patch/skip decisions without
+    /// splice/write (`--repair-preview`). Mutually exclusive with output paths; implies
+    /// scan+characterize rather than scan-only. See [`crate::application::run_repair::PendingAfterScan`].
     #[serde(default)]
     pub repair_preview: bool,
     /// When query-reference alignment is used, only treat gaps inside the mapped B coverage
@@ -930,6 +933,15 @@ impl RepairConfig {
                 reason: "must be non-negative".into(),
             });
         }
+        if self.repair_preview
+            && (self.output.wav_path.is_some() || self.output.video_path.is_some())
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "repair_preview".into(),
+                reason: "cannot combine with output.wav_path / output.video_path (--wav / --mux)"
+                    .into(),
+            });
+        }
         if self.max_anchor_bracket_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "max_anchor_bracket_secs".into(),
@@ -1194,6 +1206,23 @@ dry_run = true
             .expect("write config");
         let config = load_repair_app_config(Some(&path)).expect("load config");
         assert!(!config.align.alignment.refine_offset_high_rate);
+    }
+
+    #[test]
+    fn rejects_repair_preview_with_output_paths() {
+        let config = RepairConfig {
+            repair_preview: true,
+            output: RepairOutputConfig {
+                wav_path: Some(PathBuf::from("out.wav")),
+                ..RepairOutputConfig::default()
+            },
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("preview + wav");
+        assert!(
+            format!("{err:?}").contains("repair_preview"),
+            "unexpected err: {err:?}"
+        );
     }
 
     #[test]

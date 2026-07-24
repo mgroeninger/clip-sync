@@ -108,6 +108,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
+                preview: kind == PatchRunKind::Preview,
                 source_audio_bitrate_a_bps: None,
                 source_audio_bitrate_b_bps: None,
                 pcm_container_skew: None,
@@ -233,6 +234,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
+                preview: true,
                 source_audio_bitrate_a_bps,
                 source_audio_bitrate_b_bps,
                 pcm_container_skew: None,
@@ -379,6 +381,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         Ok(PatchAudioResult {
             pcm: Some(a_pcm),
             summary,
+            preview: false,
             source_audio_bitrate_a_bps,
             source_audio_bitrate_b_bps,
             pcm_container_skew,

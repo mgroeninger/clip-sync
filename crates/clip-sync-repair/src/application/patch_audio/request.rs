@@ -4,9 +4,13 @@ use crate::domain::patch_result::PatchSummary;
 use crate::domain::GapReport;
 
 pub struct PatchAudioResult {
-    /// Present when A was decoded for patching; `None` when the fill plan was empty.
+    /// Present when A was decoded for patching; `None` when the fill plan was empty or this was a
+    /// [`preview`](crate::application::PatchAudio::preview) run (no splice).
     pub pcm: Option<MultiChannelPcm>,
     pub summary: PatchSummary,
+    /// True when this result came from [`PatchAudio::preview`](crate::application::PatchAudio::preview)
+    /// (characterize without execute/splice). Drives human "would repair" wording.
+    pub preview: bool,
     /// Measured encoded bitrate of video A's selected audio track (bits/s).
     pub source_audio_bitrate_a_bps: Option<u32>,
     /// Measured encoded bitrate of video B's selected audio track (bits/s).

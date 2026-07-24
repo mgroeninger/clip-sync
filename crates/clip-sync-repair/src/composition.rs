@@ -10,7 +10,7 @@ use crate::application::error::RepairError;
 #[cfg(feature = "calibration")]
 use crate::application::patch_audio::decode_ab;
 use crate::application::run_repair::{
-    PendingRepairPreview, PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair,
+    PendingAfterScan, PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair,
 };
 #[cfg(feature = "calibration")]
 use crate::domain::GapReport;
@@ -18,7 +18,7 @@ use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::cli::{
     self, args::Args, exit_code::exit_code_for, output::print_repair_output,
-    validate_fingerprint_flags, validate_repair_preview_flags, validate_repair_profile_flags,
+    validate_fingerprint_flags, validate_repair_profile_flags,
 };
 use crate::infrastructure::config::RepairAppConfig;
 use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
@@ -52,7 +52,6 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     let mut config = crate::infrastructure::config::load_repair_app_config(args.config.as_deref())
         .map_err(RepairError::Align)?;
     validate_repair_profile_flags(&args).map_err(RepairError::Config)?;
-    validate_repair_preview_flags(&args).map_err(RepairError::Config)?;
     validate_fingerprint_flags(&args).map_err(RepairError::Config)?;
     cli::apply_cli_overrides(&mut config, &args);
     validate_config(&config)?;
@@ -164,22 +163,27 @@ pub fn repair_run_input(
         limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
     };
 
+    let after_scan = pending_after_scan(config, video_a)?;
+    Ok(RepairRunInput { scan, after_scan })
+}
+
+/// Map `RepairConfig` run-mode fields (`dry_run`, `repair_preview`, output paths) onto the
+/// post-scan orchestration arm.
+fn pending_after_scan(
+    config: &RepairAppConfig,
+    source_video: PathBuf,
+) -> Result<PendingAfterScan, RepairError> {
     if config.repair.repair_preview {
-        return Ok(RepairRunInput {
-            scan,
-            write: None,
-            preview: Some(PendingRepairPreview {
-                patch_settings: config.repair.patch_settings(),
-                crossfade_ms: config.repair.crossfade_ms,
-            }),
+        return Ok(PendingAfterScan::Preview {
+            patch_settings: config.repair.patch_settings(),
+            crossfade_ms: config.repair.crossfade_ms,
         });
     }
 
-    Ok(RepairRunInput {
-        scan,
-        write: pending_repair_write(config, video_a)?,
-        preview: None,
-    })
+    match pending_repair_write(config, source_video)? {
+        Some(write) => Ok(PendingAfterScan::Write(write)),
+        None => Ok(PendingAfterScan::None),
+    }
 }
 
 fn pending_repair_write(
@@ -267,7 +271,7 @@ fn print_repair_outcome(
         .as_ref()
         .ok()
         .and_then(|result| result.as_ref())
-        .filter(|result| result.summary.has_patches())
+        .filter(|result| !result.preview && result.summary.has_patches())
         .and({
             #[cfg(feature = "ffmpeg-mux")]
             {
@@ -296,7 +300,6 @@ fn print_repair_outcome(
         args.format,
         args.verbose,
         output_written,
-        config.repair.repair_preview,
     )?;
 
     outcome.patch_result.map(|_| ())

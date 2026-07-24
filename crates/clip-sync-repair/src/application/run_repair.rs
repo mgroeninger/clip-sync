@@ -31,18 +31,24 @@ pub struct PendingRepairWrite {
     pub mux_audio_bitrate_policy: MuxAudioBitratePolicy,
 }
 
-/// Characterize-only step after scan (`--repair-preview`): no splice / file write.
-pub struct PendingRepairPreview {
-    pub patch_settings: PatchRequestSettings,
-    pub crossfade_ms: u64,
+/// What runs after [`ScanGaps`] — the three orchestration modes (scan-only / preview / write).
+///
+/// Built from `RepairConfig` (`dry_run`, `repair_preview`, output paths) in `composition`.
+pub enum PendingAfterScan {
+    /// Scan report only (`dry_run`, no preview, no output paths).
+    None,
+    /// Pass-1 characterize without splice/write (`repair_preview`).
+    Preview {
+        patch_settings: PatchRequestSettings,
+        crossfade_ms: u64,
+    },
+    /// Full patch + optional file outputs (`--wav` / `--mux` / `dry_run = false`).
+    Write(PendingRepairWrite),
 }
 
 pub struct RepairRunInput {
     pub scan: ScanGapsRequest,
-    /// Full write path (`--wav` / `--mux`). Mutually exclusive with [`Self::preview`].
-    pub write: Option<PendingRepairWrite>,
-    /// Pass-1 characterize only. Mutually exclusive with [`Self::write`].
-    pub preview: Option<PendingRepairPreview>,
+    pub after_scan: PendingAfterScan,
 }
 
 pub struct RepairRunOutcome {
@@ -69,14 +75,15 @@ fn into_write_request(
     })
 }
 
-fn run_preview_patch<MR: MediaReader>(
-    media_reader: &MR,
+fn run_preview(
+    media_reader: &impl MediaReader,
     progress: &dyn ProgressReporter,
-    pending: PendingRepairPreview,
+    patch_settings: PatchRequestSettings,
+    crossfade_ms: u64,
     report: GapReport,
 ) -> Result<PatchAudioResult, RepairError> {
-    let request = pending.patch_settings.into_request(report);
-    PatchAudio::new(media_reader, progress).preview(request, pending.crossfade_ms)
+    let request = patch_settings.into_request(report);
+    PatchAudio::new(media_reader, progress).preview(request, crossfade_ms)
 }
 
 #[cfg(feature = "ffmpeg-mux")]
@@ -98,20 +105,19 @@ where
     let report = scan.report;
     let alignment_detail = scan.alignment_detail;
 
-    let patch_result = match (input.write, input.preview) {
-        (Some(_), Some(_)) => Err(RepairError::Config(
-            "internal: write and repair-preview both set".into(),
-        )),
-        (Some(pending), None) => into_write_request(pending, report.clone()).and_then(
+    let patch_result = match input.after_scan {
+        PendingAfterScan::None => Ok(None),
+        PendingAfterScan::Preview {
+            patch_settings,
+            crossfade_ms,
+        } => run_preview(media_reader, progress, patch_settings, crossfade_ms, report.clone())
+            .map(Some),
+        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone()).and_then(
             |write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request, muxer).map(Some)
             },
         ),
-        (None, Some(pending)) => {
-            run_preview_patch(media_reader, progress, pending, report.clone()).map(Some)
-        }
-        (None, None) => Ok(None),
     };
 
     Ok(RepairRunOutcome {
@@ -138,20 +144,19 @@ where
     let report = scan.report;
     let alignment_detail = scan.alignment_detail;
 
-    let patch_result = match (input.write, input.preview) {
-        (Some(_), Some(_)) => Err(RepairError::Config(
-            "internal: write and repair-preview both set".into(),
-        )),
-        (Some(pending), None) => into_write_request(pending, report.clone()).and_then(
+    let patch_result = match input.after_scan {
+        PendingAfterScan::None => Ok(None),
+        PendingAfterScan::Preview {
+            patch_settings,
+            crossfade_ms,
+        } => run_preview(media_reader, progress, patch_settings, crossfade_ms, report.clone())
+            .map(Some),
+        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone()).and_then(
             |write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request).map(Some)
             },
         ),
-        (None, Some(pending)) => {
-            run_preview_patch(media_reader, progress, pending, report.clone()).map(Some)
-        }
-        (None, None) => Ok(None),
     };
 
     Ok(RepairRunOutcome {

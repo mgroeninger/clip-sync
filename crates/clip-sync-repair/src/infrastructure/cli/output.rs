@@ -40,7 +40,6 @@ fn format_human(
     patch_result: Option<&PatchAudioResult>,
     show_diagnostics: bool,
     output_written: Option<&Path>,
-    repair_preview: bool,
 ) -> String {
     let mut out = String::new();
     let align = AlignmentReport::from(alignment_detail);
@@ -192,7 +191,7 @@ fn format_human(
         report,
         patch,
         show_diagnostics,
-        repair_preview,
+        patch_result.is_some_and(|r| r.preview),
     ));
 
     if let Some(path) = output_written {
@@ -629,7 +628,7 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         query_localization: None,
         end_clip_anchor: None,
     };
-    print!("{}", format_human(report, &alignment, None, None, false, None, false));
+    print!("{}", format_human(report, &alignment, None, None, false, None));
     Ok(())
 }
 
@@ -732,7 +731,6 @@ pub fn print_repair_output(
     format: OutputFormat,
     show_diagnostics: bool,
     output_written: Option<&Path>,
-    repair_preview: bool,
 ) -> Result<(), RepairError> {
     match format {
         OutputFormat::Human => {
@@ -745,7 +743,6 @@ pub fn print_repair_output(
                     patch_result,
                     show_diagnostics,
                     output_written,
-                    repair_preview,
                 )
             );
             Ok(())
@@ -1370,7 +1367,7 @@ mod tests {
         let mut report = minimal_report();
         report.alignment = scan_alignment_from_result(&alignment_detail);
 
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("Start clip: -10.956s"));
         assert!(text.contains("End clip: -11.200s"));
         assert!(text.contains("Drift:"));
@@ -1393,7 +1390,7 @@ mod tests {
             agrees: true,
         });
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("Cross-chk"), "expected cross-check line");
         assert!(text.contains("AGREE"));
         assert!(!text.contains("WARNING"));
@@ -1410,7 +1407,7 @@ mod tests {
             agrees: false,
         });
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("MISMATCH"));
         assert!(text.contains("WARNING"));
     }
@@ -1418,7 +1415,7 @@ mod tests {
     #[test]
     fn human_failed_alignment_notes_b_mapping_skipped() {
         let (report, alignment_detail) = failed_alignment_report();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(
             text.contains("B timeline mapping skipped"),
             "expected B mapping skipped note in human output"
@@ -1470,7 +1467,7 @@ mod tests {
         ];
 
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("0 repairable"));
         assert!(text.contains("fill blocked by track layout"));
         assert!(text.contains("blocked (track layout)"));
@@ -1720,7 +1717,6 @@ mod tests {
             None,
             false,
             Some(std::path::Path::new("out/repaired.mp4")),
-            false,
         );
         assert!(text.contains("Output: out/repaired.mp4"));
     }
@@ -1819,7 +1815,7 @@ mod tests {
             ),
         ]);
 
-        let text = super::format_human(&report, &alignment_detail, Some(&summary), None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, Some(&summary), None, false, None);
         assert!(text.contains("alignment unstable"));
         assert!(text.contains("review gap #2"));
         assert!(text.contains("repaired 2.0s of audio"));
@@ -1827,7 +1823,7 @@ mod tests {
         assert!(text.contains(">2 "));
         assert!(text.contains("231.7s!"));
 
-        let verbose = super::format_human(&report, &alignment_detail, Some(&summary), None, true, None, false);
+        let verbose = super::format_human(&report, &alignment_detail, Some(&summary), None, true, None);
         assert!(verbose.contains("End anchor: shared timeline"));
         assert!(verbose.contains("End clip A"));
     }
@@ -1933,7 +1929,7 @@ mod tests {
             delta_secs: 4.9,
         });
 
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("overlap starts at 5.0s"));
         assert!(text.contains("timeline mismatch on video A"));
     }

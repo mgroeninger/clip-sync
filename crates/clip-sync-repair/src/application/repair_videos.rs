@@ -396,6 +396,7 @@ mod tests {
         PatchAudioResult {
             pcm,
             summary: PatchSummary::from_outcomes(gaps),
+            preview: false,
             source_audio_bitrate_a_bps: None,
             source_audio_bitrate_b_bps: None,
             pcm_container_skew: None,
