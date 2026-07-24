@@ -90,7 +90,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules (**done**: policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` + `patch_audio`; `align_videos` deferred, no plan) | fingerprint / policies / patch |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules (**done**: repair policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` + `patch_audio` + analyzer `clip-sync` policies; `align_videos` deferred, no plan) | fingerprint / policies / patch |
 | 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
@@ -464,13 +464,20 @@ Do not open an `align_videos` split unless that changes.
    P1–P6 complete: `application/patch_audio/{mod,request,decode,geometry,log,region,anchor_retry}.rs`;
    facade holds `PatchAudio` orchestration only; contested helpers and DAG verified in source
    2026-07-24; public `patch_audio::` / `application::{PatchAudio,…}` paths unchanged.
+4. ~~**Analyzer `clip-sync` `policies.rs`** — track selection / clip planning / extract quality /
+   hold-out~~ **DONE (2026-07-24)** —
+   [`TEMP-clip-sync-policies-module-split-plan.md`](TEMP-clip-sync-policies-module-split-plan.md)
+   P1–P4 complete: `domain/policies/{mod,track_selection,clip_planning,extract_quality,holdout}.rs`;
+   thin facade; public `crate::domain::policies::*` unchanged; `holdout ← clip_planning`
+   (`secs_to_duration` only); 46/46 policies lib tests + `-Tier pr-align` green.
 
 Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
 `clip-sync` (not opened).
 
-**Progress (2026-07-24):** policies **P1–P5 done** (`7dd0978`) + **M-MOD-DEPS** (`16b06e3`);
-harness corpus **done**; production fingerprint **done**; **`patch_audio` P1–P6 done**.
-Remaining optional M-MOD target: `align_videos` only (deferred — no plan).
+**Progress (2026-07-24):** repair policies **P1–P5 done** (`7dd0978`) + **M-MOD-DEPS** (`16b06e3`);
+harness corpus **done**; production fingerprint **done**; **`patch_audio` P1–P6 done**;
+**analyzer `clip-sync` policies P1–P4 done**. Remaining optional M-MOD target: `align_videos`
+only (deferred — no plan).
 
 **Test:** `-Tier pr` after each split (historical); plans carry per-phase green notes.
 
@@ -478,8 +485,9 @@ Remaining optional M-MOD target: `align_videos` only (deferred — no plan).
 |------|--------|
 | ~~harness `gap_fingerprint_corpus.rs`~~ (split 2026-07-23) | 2,300 |
 | ~~`gap_fingerprint.rs`~~ (split 2026-07-23) | 4,000 |
-| `policies/` (split) | facade + 5 modules (~0.3–1.4 kloc each) |
+| ~~repair `policies/`~~ (split) | facade + 5 modules (~0.3–1.4 kloc each) |
 | ~~`patch_audio.rs`~~ (split 2026-07-24) | 3,600 → facade + 6 submodules (`region` ~2.5 kloc accepted) |
+| ~~analyzer `policies.rs`~~ (split 2026-07-24) | 1,725 → facade + 4 modules |
 | `align_videos.rs` (optional; no plan) | 2,900 |
 
 #### M-MOD-DEPS. Policies helper placement — **fixed 2026-07-23**
