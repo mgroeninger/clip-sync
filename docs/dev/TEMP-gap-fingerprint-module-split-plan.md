@@ -116,9 +116,23 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| **P1** | `schema.rs` (types + `source_id`; strip measure helpers out of the type section) | **Open** |
+| **P1** | `schema.rs` (types + `source_id`; strip measure helpers out of the type section) | **Done (2026-07-23)** |
 | **P2** | `project.rs` (Spec↔Fingerprint; apply §3b cycle guard) | **Open** |
 | **P3** | Remainder → `measure.rs` + thin `mod.rs` facade; delete monolith `.rs` | **Open** |
+
+**P1 as-landed (2026-07-23).** `git mv` monolith → `gap_fingerprint/mod.rs`; extracted the schema
+types + serde `de_*_null_as_nan` helpers + `source_id`/`file_source`/`fnv_feed`/`impl ScanRecipe` +
+the `domain::donor` re-export into `gap_fingerprint/schema.rs` (559 lines). `mod.rs` gained
+`mod schema; pub use schema::*;` so the public path is unchanged (no import sweep). The interleaved
+**measure** helpers were deliberately left in `mod.rs` for P3: `LevelProfileSpan`/`level_profile`/
+`mono_slice_rms`, `LAG_EDGE_TOL_MS`/`LagSweepParams`/`LagSideSweep`, `DUALFIT_SEAM_UNIQ_LAG_MS`/
+`SEAM_LOCAL_SEARCH_MS`/`seam_prominence`. Non-move deltas (normalized line-set diff: 7 removed /
+14 added, **zero function bodies or serde attrs changed**): `file_source` → `pub(crate)` (called by
+`characterize_gaps`); the `[`LAG_EDGE_TOL_MS`]` intra-doc link in `LagSummary::edge_pinned` softened
+to inline code (target now in `mod.rs`, private — avoids a private-intra-doc warning); the two
+`#[derive(Serialize)]` on `Manifest`/`ManifestEntry` fully-qualified to `serde::Serialize` (drops the
+now-unused `use serde` from `mod.rs`); module docs refreshed. **Verified:** `cargo build/clippy
+-p clip-sync-repair --all-targets` clean; `-Tier pr-repair` green (repair lib 382 pass, harness 13/13).
 
 Harness corpus phases: **not here** — see
 [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md)
