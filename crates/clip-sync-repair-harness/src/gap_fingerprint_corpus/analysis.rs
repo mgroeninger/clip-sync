@@ -1,7 +1,7 @@
 //! Corpus discovery + JSON projection: walk pair dirs, parse the minimal `corpus.json` projection, and
 //! flatten each gap into a [`GapRow`] ([`analyze_dirs`]). Owns the private `Deserialize` types (their only
 //! consumer is `gap_row` here) and the curated-fixture / env-knob entrypoints. Builds the report shell
-//! ([`super::CorpusReport`]); the formatters that render it live in `super` (the report concern).
+//! ([`super::CorpusReport`]); the formatters that render it live in [`super::report`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

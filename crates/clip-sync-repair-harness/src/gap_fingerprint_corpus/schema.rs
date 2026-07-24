@@ -334,7 +334,7 @@ impl GapRow {
 
     /// **The A3 repair-scope predicate** — the gaps a dual-fit repair should actually run on, measured
     /// directly rather than proxied by uniqueness. A gap is a target when the scan-native `splice_dualfit`
-    /// shows: the seams **pass** the unchanged gate (`dualfit_pass`); the **step is real** ([`step_is_real`] —
+    /// shows: the seams **pass** the unchanged gate (`dualfit_pass`); the **step is real** ([`Self::step_is_real`] —
     /// the step materially improves the post seam vs a constant offset); the **donor bridges** the hole
     /// (`donor_continuous`); and it is **not program-quiet** (there is content to fill). This supersedes
     /// `dualfit_candidate` (uniqueness), which mispredicts placement seam viability — edge-pin/D11 rescan:

@@ -8,11 +8,9 @@ use std::collections::BTreeMap;
 use clip_sync_repair::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
 
 use super::schema::{
-    GapKind, GapRow, SkewClass, SpliceDiag, LOW_UNIQUENESS_MARGIN, SEAM_ROBUST_R, SPLICE_MIN_PEAK_R,
-    SPLICE_MIN_PEAK_Z, SPLICE_MIN_PROMINENCE,
+    GapKind, GapRow, SkewClass, SpliceDiag, LOW_UNIQUENESS_MARGIN, SEAM_ROBUST_R,
+    SPLICE_MIN_PEAK_R, SPLICE_MIN_PEAK_Z, SPLICE_MIN_PROMINENCE,
 };
-
-// ── analysis result: taxonomy + `GapRow` live in `schema` (re-exported above) ────
 
 /// Full aggregation across every pair dir found.
 #[derive(Debug, Clone, Default)]
