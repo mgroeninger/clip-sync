@@ -918,6 +918,9 @@ fn execute_bracket_fill(ctx: ExecuteBracketFillCtx<'_>) -> Vec<f32> {
         crossfade_secs,
         a_start_secs,
     } = ctx;
+    // M0 (§3): the executor-side cost — border rebuild + assembly. In debug builds this nests under the
+    // `debug_assert_eq!` shadow rather than the live path; measure on a release-profile run.
+    let _s = tracing::info_span!("exec_fill_assembly").entered();
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     let b_fill_raw = b_samples[fill_start_sample..b_fill_end_sample].to_vec();
@@ -1870,22 +1873,29 @@ pub(super) fn characterize_region(
         channels,
         single_lag_alignment: true,
     };
-    let b_fill = assemble_bracket_fill(BracketFillAssembly {
-        b_fill_raw,
-        b_extension,
-        channels,
-        gap_frames,
-        fill_mode: request.fill_mode,
-        a_pre_border: &a_pre_border,
-        a_post_border: &a_post_border,
-        a_pre_ch: &a_pre_ch,
-        a_post_ch: &a_post_ch,
-        pre_gate_frames,
-        post_gate_frames,
-        repeat_window_frames,
-        seam_ctx,
-        a_start_secs,
-    });
+    // M0 perf instrumentation (TEMP-patch-audio-bracket-fill-elimination-plan.md §3): time the fill
+    // assembly itself. `char_gate_search` closes well before this point, so the assembly was previously
+    // unmeasured — this span decides whether re-deriving the fill in execute needs a dedup hoist first.
+    // `fill_mode` is request-level, so the Fit/Gate split comes from running one measurement per mode.
+    let b_fill = {
+        let _s = tracing::info_span!("char_fill_assembly").entered();
+        assemble_bracket_fill(BracketFillAssembly {
+            b_fill_raw,
+            b_extension,
+            channels,
+            gap_frames,
+            fill_mode: request.fill_mode,
+            a_pre_border: &a_pre_border,
+            a_post_border: &a_post_border,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            pre_gate_frames,
+            post_gate_frames,
+            repeat_window_frames,
+            seam_ctx,
+            a_start_secs,
+        })
+    };
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec's `FillAlignment` +
     // decode buffers alone (rebuilding borders independently). Guards the characterize→execute split before
