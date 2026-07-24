@@ -86,7 +86,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies + **M-MOD-DEPS** + harness corpus done; production `gap_fingerprint` next) | fingerprint / policies / patch |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` done; optional `patch_audio` / `align_videos` remain) | fingerprint / policies / patch |
 | 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
@@ -435,7 +435,7 @@ has one definition and one seed, so it cannot drift.
 seeded literals await a justify-or-drop comment audit. Not a coverage hole — production settings
 are exercised separately via `patch_request_from_repair`. See the archived record §4.
 
-### M-MOD. Oversized modules — **open** (policies + harness corpus slices done)
+### M-MOD. Oversized modules — **open** (policies + harness corpus + production fingerprint slices done)
 
 **Recommendation:** Policies split complete — see
 [`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md). Next fingerprint
@@ -446,12 +446,15 @@ splits, **in this order**:
    [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md)
    P1–P4 complete: `gap_fingerprint_corpus/{mod,schema,analysis,report}.rs`, thin facade, public
    path + byte-preserving verified, harness lib 13/13 + `clip-sync-repair --all-targets` green.
-2. **Production `gap_fingerprint` second** (judgment-heavy) — schema / measure / project:
-   [`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md).
-   Give it its **own** scheduled slot ahead of upcoming fingerprint feature work — not as the
-   opening commit of a feature PR. P1 must call schema-vs-measure on helpers interleaved with
-   types; P2 routes the `tags_from_measurements` / `RegionMeasurements` cycle (prefer keeping
-   that fn in `measure`).
+2. ~~**Production `gap_fingerprint` second** (judgment-heavy) — schema / measure / project~~
+   **DONE (2026-07-23)** —
+   [`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md)
+   P1–P3 complete: `application/gap_fingerprint/{mod,schema,project,measure}.rs`, 20-line thin
+   facade, public path `crate::application::gap_fingerprint::*` unchanged (no import sweep),
+   `schema ← project ← measure` DAG (no cycle — `tags_from_measurements` kept in `measure`, shared
+   `tags_from_fields` `pub(crate)` in `project`). Byte-preserving verified per phase (normalized
+   union diffs, zero function bodies/serde attrs changed); `-Tier pr-repair` green incl. both
+   projection guards, `cargo build --workspace` clean.
 
 Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
 `clip-sync`.
@@ -463,15 +466,16 @@ diff: zero removals; only additions are a duplicated `interleave_a` test helper 
 `use`s), `pub use` surface identical to the pre-split `pub` set, 55/55 policies tests with the
 same test names. The **M-MOD-DEPS** follow-up below is **done** (`16b06e3`). **Harness corpus
 split done (2026-07-23)** — `gap_fingerprint_corpus` is now a `mod.rs` facade over
-`schema`/`analysis`/`report`. Remaining M-MOD targets: production `gap_fingerprint` (plan linked;
-next in order), and optionally `patch_audio` / `align_videos`.
+`schema`/`analysis`/`report`. **Production `gap_fingerprint` split done (2026-07-23)** —
+`application/gap_fingerprint/{mod,schema,project,measure}.rs` behind a thin facade. Remaining
+M-MOD targets: optionally `patch_audio` / `align_videos`.
 
 **Test:** `-Tier pr` after each split.
 
 | File | ~Lines |
 |------|--------|
 | ~~harness `gap_fingerprint_corpus.rs`~~ (split 2026-07-23) | 2,300 |
-| `gap_fingerprint.rs` | 4,000 |
+| ~~`gap_fingerprint.rs`~~ (split 2026-07-23) | 4,000 |
 | `policies/` (split) | facade + 5 modules (~0.3–1.4 kloc each) |
 | `patch_audio.rs` | 3,600 |
 | `align_videos.rs` | 2,900 |

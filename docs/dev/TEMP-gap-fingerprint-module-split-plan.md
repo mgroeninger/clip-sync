@@ -1,6 +1,6 @@
 # `gap_fingerprint` module split — plan
 
-Status: **open** (2026-07-23). Target tree (after all phases):
+Status: **done** (2026-07-23) — all phases (P1/P2/P3) landed; tree below is realized. Target tree:
 
 ```text
 application/gap_fingerprint/
@@ -118,7 +118,27 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 |-------|-------|--------|
 | **P1** | `schema.rs` (types + `source_id`; strip measure helpers out of the type section) | **Done (2026-07-23)** |
 | **P2** | `project.rs` (Spec↔Fingerprint; apply §3b cycle guard) | **Done (2026-07-23)** |
-| **P3** | Remainder → `measure.rs` + thin `mod.rs` facade; delete monolith `.rs` | **Open** |
+| **P3** | Remainder → `measure.rs` + thin `mod.rs` facade; delete monolith `.rs` | **Done (2026-07-23)** |
+
+**P3 as-landed (2026-07-23).** Moved the entire measure remainder — every builder/helper and the
+colocated `#[cfg(test)] mod tests` block — out of `mod.rs` into `gap_fingerprint/measure.rs`
+(3246 lines): lag summarize/classify, `FingerprintConfig`/`GapInputs`, placement / seam-probe /
+dual-fit / wide-envelope builders, `build_gap_fingerprint`, `compute_region_measurements`,
+`characterize_gaps*`, the manifest/`write_corpus_dir` writer, `tags_from_measurements` (kept in
+measure per the P2 cycle guard — consumes `RegionMeasurements`), and the `splice_summary_from_lag` /
+`summarize_lag_curve` / `domain::seam_local` re-exports (still `pub`, so the public path is
+unchanged). `measure.rs` heads with `use super::schema::*; use super::project::*;` + the domain
+imports moved verbatim from `mod.rs`; the `schema ← project ← measure` DAG holds. `mod.rs` is now a
+**20-line thin facade**: `mod schema; mod project; mod measure;` + `pub use {schema,project,measure}::*;`
+and the module-map doc — **no production code, no unit tests**. There is no monolith `.rs` left to
+delete (P1 already `git mv`'d it into the directory). Non-move deltas (normalized union diff
+`HEAD:mod.rs` vs new `mod.rs` + `measure.rs`: 4 removed / ~15 added, all doc/facade lines, **zero
+function bodies or serde attrs changed**): facade module-map doc rewritten; `measure.rs` module-doc
+header added; `mod measure;` / `pub use measure::*;` / `use super::{schema,project}::*;` added.
+**Verified:** `cargo build --workspace` + `cargo clippy -p clip-sync-repair --all-targets` clean
+(external consumers `composition.rs` / `equivalence_calibration` compile against the unchanged path);
+`-Tier pr-repair` green (`gap_repair_spec_diff` and `golden_baseline_invariance` projection guards
+pass; harness 13/13). **M-MOD production-fingerprint row closable.**
 
 **P2 as-landed (2026-07-23).** Extracted the pure Spec↔Fingerprint projection into
 `gap_fingerprint/project.rs` (503 lines): `FingerprintXSet`, `spec_to_fingerprint_summary`,
