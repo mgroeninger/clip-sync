@@ -128,22 +128,15 @@ pub fn derive_seam_gate_geometry<'a>(
     gap_frames: usize,
     anchor_search_prior: Option<AnchorSearchPrior>,
 ) -> SeamGateGeometry<'a> {
-    let correlate_frames = crate::application::patch_audio::correlate_frames_for_gap(
-        settings.normalize_window_secs,
-        settings.min_border_discovery_secs,
+    let crate::application::patch_audio::FillWindowFrames {
+        seam_gate_frames,
+        border_frames,
+        ..
+    } = crate::application::patch_audio::FillWindowFrames::for_gap(
+        settings,
         gap_frames,
         derived.sample_rate,
     );
-    let seam_gate_frames = crate::application::patch_audio::seam_gate_frames_for(
-        correlate_frames,
-        settings.fill_seam_search_secs,
-        derived.sample_rate,
-    );
-    let border_frames = crate::application::patch_audio::border_frames_from_secs(
-        settings.normalize_window_secs,
-        derived.sample_rate,
-    )
-    .min(correlate_frames);
     SeamGateGeometry {
         a_pcm,
         b_samples,

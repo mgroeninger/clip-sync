@@ -1,7 +1,7 @@
 use crate::application::patch_region::SeamGateDerived;
 use crate::domain::RepairPatchConfigView;
 
-use super::PatchAudioRequest;
+use super::{PatchAudioRequest, PatchRequestSettings};
 
 pub(super) fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
     RepairPatchConfigView {
@@ -66,6 +66,54 @@ impl SeamGateDerived {
                     settings.anchor_seam_min_xcorr_peak,
                     settings.anchor_seam_xcorr_ambiguous_band,
                 ),
+        }
+    }
+}
+
+/// The three gap-length-derived window sizes that the seam gate and the bracket-fill assembly share.
+///
+/// **Single-sourced (S0).** These were computed by three call sites from the same inputs
+/// (`characterize_region`, `derive_seam_gate_geometry`, and — once the executor re-derives the fill —
+/// `execute_bracket_fill`). Hand-duplicating the expressions is the most likely way to break byte-parity
+/// between the two passes, so they live here and every consumer calls [`FillWindowFrames::for_gap`].
+///
+/// **`gap_frames` is the gap length *before* the seam gate ran.** The gate may move the gap boundaries —
+/// gate-mode seam-extension retry (`retry_waveform_seam_extensions`) and fit-mode boundary search both
+/// do — but these windows are deliberately sized once from the original length and held fixed for the
+/// rest of the gap's processing. Sizing them from the post-gate `refined` would silently change the
+/// assembly on every gap the gate extended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FillWindowFrames {
+    /// Seam correlation window sized to the gap.
+    pub(crate) correlate_frames: usize,
+    /// Cap for fine-align slide search and the seam correlation gate.
+    pub(crate) seam_gate_frames: usize,
+    /// A-border template length (never longer than `correlate_frames`).
+    pub(crate) border_frames: usize,
+}
+
+impl FillWindowFrames {
+    /// Derive the trio from a gap length. See the type docs for which gap length to pass.
+    pub(crate) fn for_gap(
+        settings: &PatchRequestSettings,
+        gap_frames: usize,
+        sample_rate: u32,
+    ) -> Self {
+        let correlate_frames = correlate_frames_for_gap(
+            settings.normalize_window_secs,
+            settings.min_border_discovery_secs,
+            gap_frames,
+            sample_rate,
+        );
+        FillWindowFrames {
+            correlate_frames,
+            seam_gate_frames: seam_gate_frames_for(
+                correlate_frames,
+                settings.fill_seam_search_secs,
+                sample_rate,
+            ),
+            border_frames: border_frames_from_secs(settings.normalize_window_secs, sample_rate)
+                .min(correlate_frames),
         }
     }
 }

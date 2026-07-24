@@ -42,9 +42,7 @@ use super::log::{
     gap_key, log_gap_fill_plan_verbose, log_gap_fill_result_verbose, log_marginal_gap_fill,
     log_skip_gap_fill, GapFillPlanLog, GapFillResultLog, MarginalGapFillLog,
 };
-use super::{
-    border_frames_from_secs, correlate_frames_for_gap, seam_gate_frames_for, PatchAudioRequest,
-};
+use super::{border_frames_from_secs, FillWindowFrames, PatchAudioRequest};
 
 // Collected B segment ready to splice into A.
 #[derive(Debug, PartialEq)]
@@ -1408,7 +1406,6 @@ pub(super) fn characterize_region(
     let normalize_window_secs = request.normalize_window_secs;
     let margin_secs = request.fill_align_margin_secs;
     let border_search_secs = request.fill_border_search_secs;
-    let min_border_discovery_secs = request.min_border_discovery_secs;
     let border_standoff_secs = request.border_standoff_secs;
     let fill_length_slack_secs = request.fill_length_slack_secs;
     let fill_seam_search_secs = request.fill_seam_search_secs;
@@ -1574,14 +1571,12 @@ pub(super) fn characterize_region(
         );
     }
 
-    let correlate_frames = correlate_frames_for_gap(
-        normalize_window_secs,
-        min_border_discovery_secs,
-        gap_frames,
-        sample_rate,
-    );
-    let seam_gate_frames =
-        seam_gate_frames_for(correlate_frames, fill_seam_search_secs, sample_rate);
+    // S0: the gap-derived window sizes, computed ONCE here from the pre-gate gap length and held fixed for
+    // the rest of this gap — the gate may extend the gap boundaries afterwards, but these windows do not
+    // follow it. `derive_seam_gate_geometry` and the executor derive the identical trio from the identical
+    // input via this one helper.
+    let windows = FillWindowFrames::for_gap(&request.settings, gap_frames, sample_rate);
+    let seam_gate_frames = windows.seam_gate_frames;
     let b_extract_result = {
         let _s = tracing::info_span!("char_b_extract").entered();
         slice_b_segment(
@@ -1613,8 +1608,7 @@ pub(super) fn characterize_region(
         }
     };
 
-    let border_frames = border_frames_from_secs(normalize_window_secs, sample_rate)
-        .min(correlate_frames);
+    let border_frames = windows.border_frames;
     let border_standoff_frames =
         (border_standoff_secs * sample_rate as f64).round() as usize;
     let search_radius_frames =

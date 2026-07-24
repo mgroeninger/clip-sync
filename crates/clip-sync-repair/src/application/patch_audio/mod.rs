@@ -23,9 +23,7 @@ mod request;
 pub use request::{PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
 
 pub(crate) use decode::{decode_ab, DecodedAb};
-pub(crate) use geometry::{
-    border_frames_from_secs, correlate_frames_for_gap, seam_gate_frames_for,
-};
+pub(crate) use geometry::{border_frames_from_secs, FillWindowFrames};
 use anchor_retry::{
     build_patch_anchor_candidates, patch_anchor_policy, run_anchored_retry_pass, AnchoredRetryState,
 };
