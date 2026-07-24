@@ -166,7 +166,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 | Phase | Slice | Status |
 |-------|-------|--------|
 | **P1** | `request.rs` (result / request / settings) | **Done (2026-07-24)** |
-| **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Planned** |
+| **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Done (2026-07-24)** |
 | **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Planned** |
 | **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Planned** |
 | **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Planned** |
@@ -202,6 +202,19 @@ facade `super::` re-export) and relocate in **P4** when `dual_fit_test_request` 
 (etc.) working via facade `pub(crate) use`. `SeamGateDerived` *type* remains in
 `patch_region`; only the `from_repair` impl moves into `geometry.rs`. Accept the
 pre-existing `geometry` ↔ `patch_region` intra-crate edge (see §3).
+
+**P2 as-landed (2026-07-24).** `decode.rs` = `DecodedAb` + `decode_ab`
+(`pub(crate)`, re-exported `pub(crate) use decode::{decode_ab, DecodedAb}`).
+`geometry.rs` = `repair_patch_config_view` + `impl SeamGateDerived::from_repair` +
+`border_frames_from_secs` / `seam_gate_frames_for` / `correlate_frames_for_gap`
+(three frame helpers re-exported `pub(crate) use`; `from_repair` is an inherent
+method, needs no re-export). All blocks moved verbatim. **One visibility change:**
+`repair_patch_config_view` was a private `fn` in the monolith; the cross-module move
+requires `pub(super)` (used only from `mod.rs` at two sites) — minimal, not widened
+to the crate. Unused imports pruned from `mod.rs` (`Duration`, eight `clip_sync`
+decode-only symbols, `GapReport`, `RepairPatchConfigView`). Build / clippy /
+`-Tier pr-repair` green (382 lib pass / 1 ignored; composition, patch_region,
+harness, fingerprint-measure external paths all compile without import edits).
 
 **P3 notes.** Move `gap_key` and `fill_offset_mode_label` with the log slice
 (even though they currently sit above the anchor-retry block). Format-line unit

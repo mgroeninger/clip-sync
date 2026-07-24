@@ -1,10 +1,7 @@
 use std::collections::HashMap;
-use std::time::Duration;
 
 use clip_sync::{
-    format_time_range_verbose, select_best_track, select_track_for_reference, ClipLabel, ClipWindow,
-    DomainError, MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter,
-    resample_interleaved,
+    format_time_range_verbose, MediaReader, MultiChannelPcm, ProgressReporter,
 };
 
 use crate::application::patch_region::{
@@ -45,13 +42,20 @@ use crate::domain::{
         BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
         SeamLocalTags,
     },
-    RepairPatchConfigView,
-    Gap, GapReport,
+    Gap,
 };
 
+mod decode;
+mod geometry;
 mod request;
 
 pub use request::{PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
+
+pub(crate) use decode::{decode_ab, DecodedAb};
+pub(crate) use geometry::{
+    border_frames_from_secs, correlate_frames_for_gap, seam_gate_frames_for,
+};
+use geometry::repair_patch_config_view;
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
@@ -369,103 +373,6 @@ enum RegionPatchOutcome {
         reason: GapPatchSkipReason,
         residual: Option<policies::SeamResidualVerdict>,
     },
-}
-
-/// Full-track decoded A/B for the repair fill path (and the gap-fingerprint diagnostic).
-pub(crate) struct DecodedAb {
-    pub a_pcm: MultiChannelPcm,
-    /// B resampled to A's rate (interleaved).
-    pub b_samples_full: Vec<f32>,
-    pub source_audio_bitrate_a_bps: Option<u32>,
-    pub source_audio_bitrate_b_bps: Option<u32>,
-    /// A track's container-reported duration (for PCM-vs-container skew).
-    pub container_duration_a_secs: f64,
-}
-
-/// Open A and B, select tracks, decode both full timelines, and resample B to A's rate. Extracted
-/// verbatim from `PatchAudio::run` (steps 2–6) so the fingerprint diagnostic decodes identically.
-pub(crate) fn decode_ab<MR: MediaReader>(
-    media_reader: &MR,
-    report: &GapReport,
-    progress: &dyn ProgressReporter,
-) -> Result<DecodedAb, RepairError> {
-    // Step 2: Open A, select best track, get duration.
-    let source_a = MediaSource::new(report.video_a.clone());
-    let mut session_a = media_reader.open(&source_a).map_err(RepairError::Media)?;
-    let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
-    let track_a = select_best_track(&tracks_a)?.clone();
-    let duration_a = track_a
-        .duration
-        .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
-
-    // Step 3: Extract full A timeline.
-    let full_window_a = ClipWindow::new(Duration::ZERO, duration_a, ClipLabel::Interior);
-    let a_pcm = {
-        let _decode_a = tracing::info_span!(
-            "patch_decode_a",
-            path = %report.video_a.display(),
-            duration_secs = duration_a.as_secs_f64(),
-            channels = track_a.channels,
-            sample_rate = track_a.sample_rate,
-            bit_depth = ?track_a.bit_depth,
-        )
-        .entered();
-        session_a
-            .extract_interleaved(&track_a, &full_window_a, progress, "patch-a")
-            .map_err(RepairError::Media)?
-    };
-    let source_audio_bitrate_a_bps = a_pcm.measured_bitrate_bps();
-
-    // Step 5: Open B, select best track.
-    let source_b = MediaSource::new(report.video_b.clone());
-    let mut session_b = media_reader.open(&source_b).map_err(RepairError::Media)?;
-    let tracks_b = session_b.list_tracks().map_err(RepairError::Media)?;
-    let track_b = select_track_for_reference(&track_a, &tracks_b)?.clone();
-
-    // Step 6: Decode full B timeline once (sequential from t=0) to avoid per-gap MKV seeks.
-    let duration_b = track_b
-        .duration
-        .ok_or(RepairError::Domain(DomainError::InvalidDuration))?;
-    let full_window_b = ClipWindow::new(Duration::ZERO, duration_b, ClipLabel::Interior);
-    let b_pcm_full = {
-        let _decode_b = tracing::info_span!(
-            "patch_decode_b",
-            path = %report.video_b.display(),
-            duration_secs = duration_b.as_secs_f64(),
-            channels = track_b.channels,
-            sample_rate = track_b.sample_rate,
-            bit_depth = ?track_b.bit_depth,
-        )
-        .entered();
-        session_b
-            .extract_interleaved(&track_b, &full_window_b, progress, "patch-b")
-            .map_err(RepairError::Media)?
-    };
-    let source_audio_bitrate_b_bps = b_pcm_full.measured_bitrate_bps();
-    let b_samples_full = if b_pcm_full.sample_rate != a_pcm.sample_rate {
-        let _resample = tracing::debug_span!(
-            "patch_resample_b",
-            from_rate = b_pcm_full.sample_rate,
-            to_rate = a_pcm.sample_rate,
-        )
-        .entered();
-        resample_interleaved(
-            &b_pcm_full.samples,
-            b_pcm_full.channels,
-            b_pcm_full.sample_rate,
-            a_pcm.sample_rate,
-        )
-    } else {
-        b_pcm_full.samples
-    };
-
-    Ok(DecodedAb {
-        a_pcm,
-        b_samples_full,
-        source_audio_bitrate_a_bps,
-        source_audio_bitrate_b_bps,
-        container_duration_a_secs: duration_a.as_secs_f64(),
-    })
 }
 
 fn skipped_patch(reason: GapPatchSkipReason) -> RegionPatchOutcome {
@@ -2792,103 +2699,6 @@ fn prepare_region_patch(
         }
         RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec), tag_ctx),
     }
-}
-
-fn repair_patch_config_view(request: &PatchAudioRequest) -> RepairPatchConfigView {
-    RepairPatchConfigView {
-        fill_mode: request.fill_mode,
-        fit_boundary_search: request.fit_boundary_search,
-        gap_end_extend_on_post_seam_fail: request.gap_end_extend_on_post_seam_fail,
-        gap_start_extend_on_pre_seam_fail: request.gap_start_extend_on_pre_seam_fail,
-        gap_end_extend_max_ms: request.gap_end_extend_max_ms,
-        disable_structure_trust: request.disable_structure_trust,
-        short_gap_one_strong_seam_fallback: request.short_gap_one_strong_seam_fallback,
-        fill_anchor_search_prior_weight: request.fill_anchor_search_prior_weight,
-        fill_anchor_retry_marginal: request.fill_anchor_retry_marginal,
-        fill_offset_mode: request.fill_offset_mode,
-        anchor_seam_mode: request.anchor_seam_mode,
-    }
-}
-
-impl SeamGateDerived {
-    /// Build run-constant derived seam-gate inputs from a repair request. Frame math only —
-    /// policy is read from `request.settings` at use sites. `silence_peak_fraction` comes from
-    /// the per-run patch/scan context.
-    pub(crate) fn from_repair(
-        request: &PatchAudioRequest,
-        sample_rate: u32,
-        channels: usize,
-        silence_peak_fraction: f32,
-    ) -> Self {
-        let settings = &request.settings;
-        let context_frames =
-            (settings.gap_signature_context_secs * sample_rate as f64).round() as usize;
-        let bin_frames =
-            ((settings.gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
-        let border_standoff_frames =
-            (settings.border_standoff_secs * sample_rate as f64).round() as usize;
-        let search_radius_frames =
-            (settings.fill_border_search_secs * sample_rate as f64).round() as usize;
-        let fill_length_slack_frames =
-            (settings.fill_length_slack_secs * sample_rate as f64).round() as usize;
-        let max_extend_frames =
-            (settings.gap_end_extend_max_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
-        let step_frames =
-            (settings.gap_end_extend_step_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
-        SeamGateDerived {
-            channels,
-            sample_rate,
-            context_frames,
-            bin_frames,
-            border_standoff_frames,
-            search_radius_frames,
-            fill_length_slack_frames,
-            max_extend_frames,
-            step_frames,
-            residual_max_lag_frames: crate::domain::residual_max_lag_frames(
-                sample_rate,
-                settings.residual_lag_secs,
-            ),
-            silence_peak_fraction,
-            measure_residual: request.measure_residual,
-            anchor_matchability:
-                crate::domain::gap_anchor_seam::AnchorMatchabilityParams::from_repair_fields(
-                    settings.anchor_seam_min_match_pearson,
-                    settings.anchor_seam_min_xcorr_peak,
-                    settings.anchor_seam_xcorr_ambiguous_band,
-                ),
-        }
-    }
-}
-
-pub(crate) fn border_frames_from_secs(window_secs: f64, sample_rate: u32) -> usize {
-    (window_secs * sample_rate as f64) as usize
-}
-
-/// Cap for fine-align slide search and seam correlation gate (frames).
-pub(crate) fn seam_gate_frames_for(
-    correlate_frames: usize,
-    fill_seam_search_secs: f64,
-    sample_rate: u32,
-) -> usize {
-    let cap = (fill_seam_search_secs * sample_rate as f64).round() as usize;
-    correlate_frames.min(cap).max(1)
-}
-
-/// Seam correlation window sized to the gap (short gaps use shorter templates).
-pub(crate) fn correlate_frames_for_gap(
-    normalize_window_secs: f64,
-    min_border_discovery_secs: f64,
-    gap_frames: usize,
-    sample_rate: u32,
-) -> usize {
-    let gap_secs = gap_frames as f64 / sample_rate as f64;
-    let window_secs = normalize_window_secs
-        .min(gap_secs * 0.45)
-        .min(2.0)
-        .max(min_border_discovery_secs)
-        .max(0.25);
-    ((window_secs * sample_rate as f64) as usize).max(1)
 }
 
 fn slice_b_segment(
