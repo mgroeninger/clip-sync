@@ -1,14 +1,26 @@
 # `gap_fingerprint_corpus.rs` module split — plan
 
-Status: **open** — not started. Target tree:
+Status: **P1 done (2026-07-23)** — `schema.rs` extracted; analysis + report still in the (still-named)
+`gap_fingerprint_corpus.rs` parent, which now carries `mod schema;` + facade re-exports. P2/P3 pending.
+Target tree:
 
 ```text
 gap_fingerprint_corpus/
   mod.rs              # thin facade; stable `clip_sync_repair_harness::gap_fingerprint_corpus::*`
-  schema.rs           # ~650 lines — JSON projection + taxonomy + GapRow
-  analysis.rs         # ~480 lines — dir walk, gap_row, analyze_dirs, curated/env
+  schema.rs           # ~414 lines — taxonomy + thresholds + GapRow (DONE)
+  analysis.rs         # ~640 lines — JSON projection + dir walk, gap_row, analyze_dirs, curated/env
   report.rs           # ~900 lines — CorpusReport + summary/CSV/golden text
 ```
+
+> **P1 deviation from the original grouping (deliberate, byte-preserving rule wins).** The minimal
+> `Deserialize` projection (`CorpusFile`…`Outcome`) was *not* moved into `schema.rs`. Its only consumers
+> are analysis's `gap_row` / `seam_diag` / `worst_seam_side` / `pair_min`, which read the structs' **private
+> fields**; hoisting them into a child module would have forced `pub(crate)` on ~20 structs / ~80 fields (an
+> ~80-line visibility churn that leaks parse internals crate-wide) — violating ground rule #1. So the
+> projection **stays with its consumer** and travels to `analysis.rs` in P2, fully private. `schema.rs` is
+> therefore the pure taxonomy + `GapRow` + thresholds leaf (~414 lines, no serde import), and `analysis.rs`
+> absorbs the projection (~640). `LOW_UNIQUENESS_MARGIN` moved into `schema.rs` (used by `GapRow`); the six
+> `SEAM_*` / `SPLICE_MIN_*` thresholds are `pub(crate)` there (shared with analysis + report).
 
 Callers keep `clip_sync_repair_harness::gap_fingerprint_corpus::{…}`; no import sweep.
 Unit tests stay in each submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
@@ -66,8 +78,8 @@ do not redesign classification or report text.
 
 | Module | Owns | Notes |
 |--------|------|-------|
-| `schema.rs` | `CorpusFile`…`Outcome` (private `Deserialize`); `SkewClass`, `GapKind`, `SeamDiag`, `SpliceDiag`; seam/splice threshold consts; `GapRow` + row methods (`splice_diag`, `dualfit_target`, …) | JSON types stay private; facade re-exports public taxonomy + `GapRow` |
-| `analysis.rs` | `analyze_dirs`, `pair_dirs` / `read_pair` / `read_corpus_json`, `gap_row`, seam-side helpers (`worst_seam_side`, `seam_diag`, `pair_min`); `gap_rows_from_corpus_json`, curated_* loaders, `drift_eps_from_env` / `tail_secs_from_env` | Builds `CorpusReport { rows, pairs, … }`; uses `schema::*` |
+| `schema.rs` **(done)** | `SkewClass`, `GapKind`, `SeamDiag`, `SpliceDiag`; seam/splice + uniqueness threshold consts (`pub(crate)`); `GapRow` + row methods (`splice_diag`, `dualfit_target`, …) | Facade re-exports public taxonomy + `GapRow`; imports only the two repair-domain margins, no serde |
+| `analysis.rs` | `CorpusFile`…`Outcome` (private `Deserialize`); `analyze_dirs`, `pair_dirs` / `read_pair` / `read_corpus_json`, `gap_row`, seam-side helpers (`worst_seam_side`, `seam_diag`, `pair_min`); `gap_rows_from_corpus_json`, curated_* loaders, `drift_eps_from_env` / `tail_secs_from_env` | JSON projection stays private *here* (its only consumer); builds `CorpusReport { rows, pairs, … }`; uses `schema::*` |
 | `report.rs` | `CorpusReport` + all `*_text` / `csv` / `golden_*` methods; report-only helpers (`pct`, `stats`, `linfit`, `quantization_residual`) | Consumes `&[GapRow]` / `GapRow` methods; no JSON I/O |
 | `mod.rs` | Re-exports only | No unit tests |
 
@@ -95,8 +107,8 @@ as today).
 
 | Phase | Module | Status | Notes |
 |-------|--------|--------|-------|
-| **P1** | `schema.rs` | Pending | Move Deserialize projection + enums + thresholds + `GapRow` (+ its `impl`). Colocate GapRow-focused unit tests that do not need dir I/O. |
-| **P2** | `analysis.rs` | Pending | Move I/O + `gap_row` + `analyze_dirs` + curated/env. Colocate aggregation / hygiene tests that call `analyze_dirs`. |
+| **P1** | `schema.rs` | **Done (2026-07-23)** | Moved taxonomy enums + thresholds + `GapRow` (+ its `impl`). Deserialize projection deliberately left with analysis (see deviation note). No GapRow-only tests needed relocating — the two GapRow-focused tests (`splice_diag_uses_peak_z_when_present`, `dualfit_target_scopes_…`) still pass via the facade and can move to `schema.rs`'s `#[cfg(test)]` in a later tidy. Build/clippy/lib tests green; `clip-sync-repair --all-targets` green (facade intact). |
+| **P2** | `analysis.rs` | Pending | Move Deserialize projection + I/O + `gap_row` + `analyze_dirs` + curated/env. Colocate aggregation / hygiene tests that call `analyze_dirs`. |
 | **P3** | `report.rs` | Pending | Move `CorpusReport` + formatting + report helpers. Leave formatting-only tests here if any are split out; otherwise keep with analysis if they assert via `analyze_dirs` + `summary_text`. |
 | **P4** | Thin `mod.rs` only | Pending | Delete the monolith file; `lib.rs` keeps `pub mod gap_fingerprint_corpus;` (now a directory). |
 

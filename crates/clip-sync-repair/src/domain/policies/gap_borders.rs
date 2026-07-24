@@ -303,7 +303,6 @@ pub fn border_templates_per_channel_for_gap(
     (pre_ch, post_ch)
 }
 
-/// Mean-square energy of a (peak-domain) seam template.
 /// The **loudest** energy-passing seam channel — argmax of per-channel border energy (max of pre/post
 /// mean-square), or `None` when every channel is near-silent. Use this for a single-channel
 /// *representative* (e.g. the lag/probe diagnostic) instead of `selected_seam_channels().first()`, which
