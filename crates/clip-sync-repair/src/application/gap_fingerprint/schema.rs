@@ -1,7 +1,7 @@
 //! Licensing-safe serde **schema** for the gap-fingerprint corpus: the per-gap / per-source
 //! numeric types (no PCM samples, no transcripts) plus the decoded-audio identity digest
 //! ([`source_id`]). Types + identity only — the PCM measurement loops that *fill* these structs
-//! live in the sibling `measure` slice. See `docs/dev/TEMP-gap-fingerprint-module-split-plan.md`.
+//! live in the sibling `measure` slice. See `docs/dev/archive/TEMP-gap-fingerprint-module-split-plan.md`.
 
 use serde::{Deserialize, Serialize};
 

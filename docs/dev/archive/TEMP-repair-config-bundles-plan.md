@@ -139,7 +139,7 @@ silently excluded the evidence**:
 
 - [../TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — M-CFG (closed by this
   work); M-HARNESS item 1 (closed by P3 step 1)
-- [../TEMP-policies-module-split-plan.md](../TEMP-policies-module-split-plan.md) — orthogonal
+- [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — orthogonal
   M-MOD slice (module layout, not config shape)
 - `crates/clip-sync-repair/src/infrastructure/config.rs` — `RepairConfig`, `patch_settings`
 - `crates/clip-sync-repair/src/application/patch_audio.rs` — `PatchAudioRequest`,

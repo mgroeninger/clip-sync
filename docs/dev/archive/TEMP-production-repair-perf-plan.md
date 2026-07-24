@@ -582,6 +582,6 @@ extract-when-you-touch rule applies then — but §2.3's likely targets are in `
 - [archive/TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) — predecessor
   (audit §1, cost hierarchy §1.3, characterize→execute §2.5, 8g fingerprint unification, §3.1 hoist
   feasibility). The durable audit history.
-- [TEMP-policies-module-split-plan.md](../TEMP-policies-module-split-plan.md) — P2/P3 triggers for the hoist.
+- [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — P2/P3 triggers for the hoist.
 - [gap-fingerprint.md](../gap-fingerprint.md) § Performance — the dump-path profile (why 82%/12% is dump-only).
 - [gap-vocabulary.md](../gap-vocabulary.md) — the cell vocabulary the shared objects are rooted in.

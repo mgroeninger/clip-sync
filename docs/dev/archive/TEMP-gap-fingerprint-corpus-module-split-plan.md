@@ -1,5 +1,7 @@
 # `gap_fingerprint_corpus.rs` module split — plan
 
+> **Archived 2026-07-24.** Planned M-MOD harness corpus bite; shipped. Record only.
+
 Status: **COMPLETE (P1–P4 done, 2026-07-23)** — `schema.rs`, `analysis.rs`, and `report.rs` extracted; the
 parent is now `gap_fingerprint_corpus/mod.rs`, a thin facade (`mod schema; mod analysis; mod report;` +
 re-exports) carrying only the cross-cutting integration tests (310 lines). Public path
@@ -27,27 +29,27 @@ gap_fingerprint_corpus/
 Callers keep `clip_sync_repair_harness::gap_fingerprint_corpus::{…}`; no import sweep.
 Unit tests stay in each submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
-**M-MOD context.** This is the **harness corpus slice** of
-[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open) (findings L442–443).
-Sibling M-MOD bites (production `gap_fingerprint` → schema / measure / project — see
-[`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md);
-optionally `patch_audio` / `align_videos`) are **out of scope** here. Policies slice is done —
+**M-MOD context.** This was the **harness corpus slice** of
+[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed) (findings L442–443).
+Sibling planned M-MOD bites (production `gap_fingerprint`, `patch_audio`) are also done;
+`align_videos` remains deferred. Policies slice is done —
 see [`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md).
+Those siblings were **out of scope** here.
 
 **Ground rules (same as policies).** Byte-preserving moves only; never bundle into a
 behavior-change PR. Pure move/split + `pub(crate)` for cross-submodule helpers. Facade
 re-exports the pre-split public API. Do **not** unify this harness schema with production
 `GapCorpus` — the minimal deserialize projection is intentional drift tolerance.
 
-Companions: [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
-§5 P0, `gap-fingerprint-stats` bin, [`golden_baseline.rs`](../../crates/clip-sync-repair-harness/src/golden_baseline.rs).
+Companions: [TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md)
+§5 P0, `gap-fingerprint-stats` bin, [`golden_baseline.rs`](../../../crates/clip-sync-repair-harness/src/golden_baseline.rs).
 
 ---
 
-## 1. Problem
+## 1. Problem (resolved)
 
-`crates/clip-sync-repair-harness/src/gap_fingerprint_corpus.rs` is a ~2.3 kloc monolith
-mixing three concerns:
+Pre-split, `crates/clip-sync-repair-harness/src/gap_fingerprint_corpus.rs` was a ~2.3 kloc
+monolith mixing three concerns:
 
 | Concern | Approx. lines today | What it is |
 |---------|---------------------|------------|
@@ -132,6 +134,10 @@ Smoke (optional, after P4): `gap-fingerprint-stats` still resolves
 
 ## 6. Success criteria
 
+Verified in source 2026-07-24: `gap_fingerprint_corpus/{mod,schema,analysis,report}.rs`
+(no leftover monolith `.rs`); bins / `golden_baseline` / projections still import
+`gap_fingerprint_corpus::*`.
+
 - [x] No production file under `gap_fingerprint_corpus/` is a multi-concern monolith; unit
       tests colocated.
 - [x] Bin / `golden_baseline` / `corpus_projection` / `gap_repair_spec_projection` imports
@@ -144,7 +150,7 @@ Smoke (optional, after P4): `gap-fingerprint-stats` still resolves
 
 ## Related
 
-- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — prior M-MOD slice (ground-rules template)
 - [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — sibling production fingerprint split
-- `crates/clip-sync-repair-harness/src/gap_fingerprint_corpus.rs` — current monolith
+- `crates/clip-sync-repair-harness/src/gap_fingerprint_corpus/` — live split tree

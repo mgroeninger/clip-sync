@@ -1,6 +1,8 @@
 # `patch_audio.rs` module split — plan
 
-Status: **planned** (not started) — target tree:
+> **Archived 2026-07-24.** Planned M-MOD `patch_audio` bite; shipped. Record only.
+
+Status: **done (P1–P6, 2026-07-24)** — all phases landed; tree below is realized:
 
 ```text
 application/patch_audio/
@@ -17,15 +19,16 @@ Callers keep `crate::application::patch_audio::{…}` (and the crate-level
 `application::{PatchAudio, PatchAudioRequest, …}` re-exports); no import sweep.
 Unit tests stay in each submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
-**M-MOD context.** This is the **optional `patch_audio` slice** of
-[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open). Policies,
-harness corpus, and production `gap_fingerprint` are **done** (see their plans /
-archives). `align_videos` is **out of scope** here (test-inflated orchestrator;
-already decomposed via sibling application modules — decline or defer without a
-sibling plan unless that changes).
+**M-MOD context.** This was the **optional `patch_audio` slice** of
+[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Policies,
+harness corpus, and production `gap_fingerprint` were already done when this
+landed; with P1–P6 complete, the planned M-MOD splits are closed. `align_videos`
+remains **out of scope** (test-inflated orchestrator; already decomposed via
+sibling application modules — decline or defer without a sibling plan unless
+that changes).
 
 **Companion history (do not re-open).** Config collapse is closed
-([archive/TEMP-repair-config-bundles-plan.md](archive/TEMP-repair-config-bundles-plan.md)
+([TEMP-repair-config-bundles-plan.md](TEMP-repair-config-bundles-plan.md)
 — M-CFG). This plan is **M-MOD maintainability only**: byte-preserving moves,
 never bundled into behavior-change PRs. Do **not** retune gates, dual-fit, or
 anchor policy while splitting.
@@ -33,15 +36,15 @@ anchor policy while splitting.
 Companions: [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)
 (ground-rules template),
 [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md),
-[TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**,
-[gap-fill-modes.md](../gap-fill-modes.md), [pipeline.md](../pipeline.md).
+[TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**,
+[gap-fill-modes.md](../../gap-fill-modes.md), [pipeline.md](../../pipeline.md).
 
 ---
 
-## 1. Problem
+## 1. Problem (resolved)
 
-`application/patch_audio.rs` (~3.6 kloc; ~3.0 k production + ~0.6 k colocated
-tests) is a single-file repair orchestrator mixing several cohesion slices.
+Pre-split, `application/patch_audio.rs` (~3.6 kloc; ~3.0 k production + ~0.6 k colocated
+tests) was a single-file repair orchestrator mixing several cohesion slices.
 
 **Locus table is approximate orientation only.** Symbols today are interleaved
 (e.g. `RegionPatch` sits next to request types; `skipped_patch*` sits between
@@ -339,30 +342,41 @@ exercise `PatchAudio::execute`.
 
 ## 6. Success criteria
 
-- [ ] No production file under `application/patch_audio/` is a multi-concern
+Verified in source 2026-07-24: `application/patch_audio/` has
+`mod`/`request`/`decode`/`geometry`/`log`/`region`/`anchor_retry` (no leftover
+monolith `.rs`); `mod.rs` holds `PatchAudio::{execute,preview}` orchestration
+only (no `#[cfg(test)]`); contested helpers match §3 (`gap_key` /
+`fill_offset_mode_label` in `log`; `region_outcome_gap_tags` /
+`RegionPatchMedia`/`Opts`/`skipped_patch*` in `region`; `SeamGateDerived::from_repair`
+in `geometry`); DAG holds (`region` has zero `anchor_retry` refs; `log` has
+zero `region` refs; `geometry` does not import `region`);
+`application::{PatchAudio, PatchAudioRequest, …}` and `patch_audio::decode_ab`
+still resolve for composition / config / repair callers.
+
+- [x] No production file under `application/patch_audio/` is a multi-concern
       monolith; unit tests colocated per submodule (facade may keep only
       cross-cutting tests).
-- [ ] Public import paths unchanged (`patch_audio::` and
+- [x] Public import paths unchanged (`patch_audio::` and
       `application::{PatchAudio, …}`).
-- [ ] Dependency DAG in §3 holds (no `region` ↔ `anchor_retry` cycle; no
+- [x] Dependency DAG in §3 holds (no `region` ↔ `anchor_retry` cycle; no
       `geometry` → `region`; no `log` → `region`).
-- [ ] Contested helpers match the §3 table (`gap_key` / `fill_offset_mode_label`
+- [x] Contested helpers match the §3 table (`gap_key` / `fill_offset_mode_label`
       in `log`; `region_outcome_gap_tags` / media-opts / `skipped_patch*` in
       `region`; `from_repair` in `geometry`).
-- [ ] `decode_ab` / frame helpers / request types remain reachable at the same
+- [x] `decode_ab` / frame helpers / request types remain reachable at the same
       paths; harness + composition + `patch_region` compile without import sweep.
-- [ ] Byte-preserving: no intentional behavior / string / threshold changes.
-- [ ] `patch_audio` row of M-MOD closable; `align_videos` remains optional /
+- [x] Byte-preserving: no intentional behavior / string / threshold changes.
+- [x] `patch_audio` row of M-MOD closable; `align_videos` remains optional /
       declined separately.
 
 ---
 
 ## Related
 
-- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — ground-rules template (done)
 - [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — sibling production split (done)
 - [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness sibling (done)
-- [archive/TEMP-repair-config-bundles-plan.md](archive/TEMP-repair-config-bundles-plan.md) — M-CFG (do not reopen)
-- `crates/clip-sync-repair/src/application/patch_audio.rs` — current monolith
+- [TEMP-repair-config-bundles-plan.md](TEMP-repair-config-bundles-plan.md) — M-CFG (do not reopen)
+- `crates/clip-sync-repair/src/application/patch_audio/` — live split tree
 - `crates/clip-sync-repair/src/application/patch_region.rs` — gate sibling (stays)

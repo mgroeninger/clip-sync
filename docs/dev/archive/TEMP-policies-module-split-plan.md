@@ -1,5 +1,7 @@
 # `policies.rs` module split — plan
 
+> **Archived 2026-07-24.** Planned M-MOD policies bite; shipped. Record only.
+
 Status: **done (2026-07-23)** — P1–P5 complete. Live tree:
 
 ```text
@@ -16,17 +18,18 @@ Callers keep `crate::domain::policies::{…}`; no import sweep. Unit tests stay 
 submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
 **M-MOD context.** This was the **policies slice** of
-[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open). Remaining M-MOD bites
-(`gap_fingerprint`, harness `gap_fingerprint_corpus`, optionally `patch_audio` /
-`align_videos`) are **out of scope** here.
+[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
+splits (production `gap_fingerprint`, harness `gap_fingerprint_corpus`, `patch_audio`) are
+also done; `align_videos` remains deferred with no plan. Those bites were **out of scope**
+here.
 
 **Companion history (do not re-open).** Pipeline redesign closed; production-perf §2.1 hoist
 refuted — extractions were opportunistic / M-MOD-driven, not hoist-triggered. Rule kept:
 byte-preserving moves, never bundled into behavior-change PRs.
 
-Companions: [archive/residual-channel-alignment-plan.md](archive/residual-channel-alignment-plan.md),
-[archive/residual-gate-findings.md](archive/residual-gate-findings.md) (L12 deleted),
-[gap-fill-modes.md](../gap-fill-modes.md) § Multichannel seams.
+Companions: [residual-channel-alignment-plan.md](residual-channel-alignment-plan.md),
+[residual-gate-findings.md](residual-gate-findings.md) (L12 deleted),
+[gap-fill-modes.md](../../gap-fill-modes.md) § Multichannel seams.
 
 ---
 
@@ -85,8 +88,11 @@ All green after P5 (2026-07-23).
 
 ## 6. Success criteria
 
+Verified in source 2026-07-24: `domain/policies/` facade + five submodules; no leftover
+`policies.rs` monolith; public path `crate::domain::policies::*` via re-exports.
+
 - [x] No production file under `domain/policies/` is a multi-concern monolith; unit tests colocated.
-- [x] `patch_region.rs` / `patch_audio.rs` imports unchanged at the `policies::` path.
+- [x] `patch_region.rs` / `patch_audio` imports unchanged at the `policies::` path.
 - [x] Residual/scoring work has dedicated homes (`seam_residual.rs` / `seam_scoring.rs`).
 - [x] Policies row of M-MOD closable; fingerprint/corpus splits remain separate.
 
@@ -94,6 +100,6 @@ All green after P5 (2026-07-23).
 
 ## Related
 
-- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
-- [archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) — hoist refuted
+- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) — hoist refuted
 - `crates/clip-sync-repair/src/domain/policies/` — current tree

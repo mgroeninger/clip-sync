@@ -1,6 +1,6 @@
 # Rust review findings — prioritized recommendations
 
-> **Status:** Active ledger (updated 2026-07-23). Workspace review of `clip-sync`,
+> **Status:** Active ledger (updated 2026-07-24). Workspace review of `clip-sync`,
 > `clip-sync-repair`, `clip-sync-cli`, `clip-sync-repair-harness`, and
 > `clip-sync-repair-fixtures`. Findings were verified in source where marked
 > **confirmed**.
@@ -32,6 +32,9 @@
 > settings borrow + frames-only `SeamGateDerived`, harness/test literals seeded from
 > `RepairConfig::default().patch_settings()` — three conversion lists → one. The proposed policy
 > bundles were **not** built and are declined.
+> **M-MOD planned splits closed 2026-07-24** (P2): policies + M-MOD-DEPS + harness corpus +
+> production `gap_fingerprint` + `patch_audio` (re-verified in source); `align_videos`
+> deferred with no plan.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -50,8 +53,9 @@ testable, production paths avoid `unwrap`, and process I/O (ffmpeg) is carefully
 threaded. Remaining open defects cluster in:
 
 1. **Silent degradation** (errors swallowed → plausible but wrong outcomes)
-2. **Structural debt** (3–5 kloc modules; ~~four-layer config field copying~~ **fixed
-   2026-07-23** — see M-CFG)
+2. **Structural debt** (~~3–5 kloc modules~~ **planned M-MOD splits done 2026-07-24** —
+   policies / corpus / fingerprint / `patch_audio`; `align_videos` deferred; ~~four-layer config
+   field copying~~ **fixed 2026-07-23** — see M-CFG)
 3. ~~Vendored codec shims~~ *(P0 codec / Sync items fixed — see below)*
 
 ---
@@ -86,7 +90,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` done; optional `patch_audio` plan open / `align_videos` deferred) | fingerprint / policies / patch |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules (**done**: policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` + `patch_audio`; `align_videos` deferred, no plan) | fingerprint / policies / patch |
 | 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
@@ -435,56 +439,47 @@ has one definition and one seed, so it cannot drift.
 seeded literals await a justify-or-drop comment audit. Not a coverage hole — production settings
 are exercised separately via `patch_request_from_repair`. See the archived record §4.
 
-### M-MOD. Oversized modules — **open** (policies + harness corpus + production fingerprint slices done)
+### M-MOD. Oversized modules — **closed**
 
-**Recommendation:** Policies + harness corpus + production fingerprint splits complete.
-Optional next: `patch_audio` — see
-[`TEMP-patch-audio-module-split-plan.md`](TEMP-patch-audio-module-split-plan.md).
-`align_videos` deferred (no plan).
+**Recommendation:** All planned M-MOD bites are complete. `align_videos` stays deferred
+(no plan; test-inflated orchestrator already decomposed via sibling application modules).
+Do not open an `align_videos` split unless that changes.
 
 1. ~~**Harness corpus first** (mechanical warm-up) — `gap_fingerprint_corpus` → schema /
    analysis / report~~ **DONE (2026-07-23)** —
-   [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md)
+   [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](archive/TEMP-gap-fingerprint-corpus-module-split-plan.md)
    P1–P4 complete: `gap_fingerprint_corpus/{mod,schema,analysis,report}.rs`, thin facade, public
    path + byte-preserving verified, harness lib 13/13 + `clip-sync-repair --all-targets` green.
+   Re-verified 2026-07-24 (success criteria checked against source).
 2. ~~**Production `gap_fingerprint` second** (judgment-heavy) — schema / measure / project~~
    **DONE (2026-07-23)** —
-   [`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md)
-   P1–P3 complete: `application/gap_fingerprint/{mod,schema,project,measure}.rs`, 20-line thin
-   facade, public path `crate::application::gap_fingerprint::*` unchanged (no import sweep),
-   `schema ← project ← measure` DAG (no cycle — `tags_from_measurements` kept in `measure`, shared
-   `tags_from_fields` `pub(crate)` in `project`). Byte-preserving verified per phase (normalized
-   union diffs, zero function bodies/serde attrs changed); `-Tier pr-repair` green incl. both
-   projection guards, `cargo build --workspace` clean.
-3. **Optional `patch_audio`** — request / decode / geometry / log / region / anchor_retry behind
-   a thin facade — plan open:
-   [`TEMP-patch-audio-module-split-plan.md`](TEMP-patch-audio-module-split-plan.md).
+   [`TEMP-gap-fingerprint-module-split-plan.md`](archive/TEMP-gap-fingerprint-module-split-plan.md)
+   P1–P3 complete: `application/gap_fingerprint/{mod,schema,project,measure}.rs`, thin facade,
+   public path `crate::application::gap_fingerprint::*` unchanged, `schema ← project ← measure`
+   DAG (`tags_from_measurements` in `measure`). Re-verified 2026-07-24 (success criteria
+   checked against source).
+3. ~~**Optional `patch_audio`** — request / decode / geometry / log / region / anchor_retry~~
+   **DONE (2026-07-24)** —
+   [`TEMP-patch-audio-module-split-plan.md`](archive/TEMP-patch-audio-module-split-plan.md)
+   P1–P6 complete: `application/patch_audio/{mod,request,decode,geometry,log,region,anchor_retry}.rs`;
+   facade holds `PatchAudio` orchestration only; contested helpers and DAG verified in source
+   2026-07-24; public `patch_audio::` / `application::{PatchAudio,…}` paths unchanged.
 
 Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
-`clip-sync`.
+`clip-sync` (not opened).
 
-**Progress (2026-07-23):** policies **P1–P5 done** (`7dd0978`) —
-`domain/policies/{silence,gap_borders,seam_scoring,seam_residual,seam_splice}.rs` behind a thin
-`mod.rs` facade. Verified byte-preserving against the pre-split monolith (normalized line-set
-diff: zero removals; only additions are a duplicated `interleave_a` test helper and re-wrapped
-`use`s), `pub use` surface identical to the pre-split `pub` set, 55/55 policies tests with the
-same test names. The **M-MOD-DEPS** follow-up below is **done** (`16b06e3`). **Harness corpus
-split done (2026-07-23)** — `gap_fingerprint_corpus` is now a `mod.rs` facade over
-`schema`/`analysis`/`report`. **Production `gap_fingerprint` split done (2026-07-23)** —
-`application/gap_fingerprint/{mod,schema,project,measure}.rs` behind a thin facade. Remaining
-M-MOD targets: optional `patch_audio` (plan:
-[`TEMP-patch-audio-module-split-plan.md`](TEMP-patch-audio-module-split-plan.md)) /
-`align_videos` (deferred — no plan; test-inflated orchestrator already decomposed via
-siblings).
+**Progress (2026-07-24):** policies **P1–P5 done** (`7dd0978`) + **M-MOD-DEPS** (`16b06e3`);
+harness corpus **done**; production fingerprint **done**; **`patch_audio` P1–P6 done**.
+Remaining optional M-MOD target: `align_videos` only (deferred — no plan).
 
-**Test:** `-Tier pr` after each split.
+**Test:** `-Tier pr` after each split (historical); plans carry per-phase green notes.
 
 | File | ~Lines |
 |------|--------|
 | ~~harness `gap_fingerprint_corpus.rs`~~ (split 2026-07-23) | 2,300 |
 | ~~`gap_fingerprint.rs`~~ (split 2026-07-23) | 4,000 |
 | `policies/` (split) | facade + 5 modules (~0.3–1.4 kloc each) |
-| `patch_audio.rs` (optional; plan open) | 3,600 |
+| ~~`patch_audio.rs`~~ (split 2026-07-24) | 3,600 → facade + 6 submodules (`region` ~2.5 kloc accepted) |
 | `align_videos.rs` (optional; no plan) | 2,900 |
 
 #### M-MOD-DEPS. Policies helper placement — **fixed 2026-07-23**
@@ -617,8 +612,8 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 
 ## Suggested sequencing
 
-All codec P1s are done, so the structural work is unblocked. M-CFG is closed; large module
-splits (M-MOD) remain the main structural item.
+All codec P1s are done, so the structural work is unblocked. M-CFG is closed; planned M-MOD
+module splits are closed (`align_videos` deferred only).
 
 1. ~~**M-HE**~~ (done 2026-07-23) → ~~**M-FDK-RESET**~~ (done + regression-tested 2026-07-23, recreate-decoder) → ~~**M-AC3-DRAIN**~~ (done + unit-tested 2026-07-23; reusable `pcm_scratch` covers M-CLONE #3 for AC-3). **All codec P1s closed.**
 2. ~~**M-SILENT** remainder (unknown TOML keys + `align_videos` warn)~~ — **done 2026-07-23** (only optional report flags deferred)
@@ -630,8 +625,8 @@ splits (M-MOD) remain the main structural item.
 4. ~~**M-CFG**~~ (closed 2026-07-23 — layers collapsed; bundles declined).
    ~~**M-MOD-DEPS**~~ (done 2026-07-23, `16b06e3` — policies helpers relocated; `seam_scoring →
    gap_borders` edge removed).
-   **M-MOD** fingerprint remainder: harness `gap_fingerprint_corpus` first (mechanical), then
-   production `gap_fingerprint` in its own slot (not wedged as a feature PR opener).
+   ~~**M-MOD** planned splits~~ (policies → harness corpus → production fingerprint →
+   `patch_audio` P1–P6 done 2026-07-24). `align_videos` deferred (no plan).
    **M-HARNESS** remainder opportunistically with nearby feature work.
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
    (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
@@ -650,10 +645,9 @@ splits (M-MOD) remain the main structural item.
    §2 drop `slide_template_scores`; §1 B2 remove pregate measurement stack.
 6. **Structure (P2)** — ~~**M-CFG**~~ **done 2026-07-23**: `PatchAudioRequest` 58 fields → 3,
    `SeamGateConfig` deleted, harness literals seeded from production; three conversion lists → one
-   (record: `archive/TEMP-repair-config-bundles-plan.md`). **M-MOD / M-HARNESS** remainder
-   incremental; see `TEMP-policies-module-split-plan.md` (policies done), then
-   `TEMP-gap-fingerprint-corpus-module-split-plan.md` (harness first), then
-   `TEMP-gap-fingerprint-module-split-plan.md` (production fingerprint).
+   (record: `archive/TEMP-repair-config-bundles-plan.md`). ~~**M-MOD** planned splits~~ **done**
+   (policies / harness corpus / production fingerprint / `patch_audio`; re-verified 2026-07-24).
+   `align_videos` deferred. **M-HARNESS** remainder incremental.
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.

@@ -19,7 +19,6 @@ Last updated: 2026-07-21.
 |------|--------|
 | [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
-| [TEMP-policies-module-split-plan.md](docs/dev/TEMP-policies-module-split-plan.md) | `policies.rs` module split — draft, not started |
 | [TEMP-rust-review-findings.md](docs/dev/TEMP-rust-review-findings.md) | Workspace Rust review ledger (P0–P3) — open, 2026-07-23 |
 
 ## Open work

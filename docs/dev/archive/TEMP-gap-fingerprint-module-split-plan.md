@@ -1,5 +1,7 @@
 # `gap_fingerprint` module split — plan
 
+> **Archived 2026-07-24.** Planned M-MOD production fingerprint bite; shipped. Record only.
+
 Status: **done** (2026-07-23) — all phases (P1/P2/P3) landed; tree below is realized. Target tree:
 
 ```text
@@ -18,28 +20,27 @@ lives in
 [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md)
 (same ground rules; do not fold harness phases into this ledger).
 
-**M-MOD context.** This is the **production fingerprint** slice of
-[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--open). Policies is done
-([`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md)). Remaining M-MOD
-bites (`patch_audio`, `align_videos`, optional repair `lib.rs` curation) are **out of scope**
-here.
+**M-MOD context.** This was the **production fingerprint** slice of
+[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
+splits (policies, harness corpus, `patch_audio`) are also done; `align_videos` remains
+deferred with no plan. Those bites were **out of scope** here.
 
 **Companion history (do not re-open).** Fingerprint feature work is closed
-([archive/TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md),
-[gap-fingerprint.md](gap-fingerprint.md)). Perf 8g.5 deferred by measurement — this plan is
+([TEMP-gap-fingerprint-plan.md](TEMP-gap-fingerprint-plan.md),
+[gap-fingerprint.md](../gap-fingerprint.md)). Perf 8g.5 deferred by measurement — this plan is
 **M-MOD maintainability only**, not a perf lever. Rule kept: byte-preserving moves, never
 bundled into behavior-change PRs.
 
 Companions: [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) (ground-rules
 template), [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md),
-[TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**.
+[TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**.
 
 ---
 
-## 1. Problem
+## 1. Problem (resolved)
 
-`application/gap_fingerprint.rs` (~4.3 kloc; ~3.3 k production + ~1.0 k colocated tests) mixes
-three concerns in one file:
+Pre-split, `application/gap_fingerprint.rs` (~4.3 kloc; ~3.3 k production + ~1.0 k colocated tests)
+mixed three concerns in one file:
 
 | Concern | Rough locus today | Role |
 |---------|-------------------|------|
@@ -176,8 +177,8 @@ now-unused `use serde` from `mod.rs`); module docs refreshed. **Verified:** `car
 
 Harness corpus phases: **not here** — see
 [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-corpus-module-split-plan.md)
-(P1–P4). Optional later (still M-MOD, **not** this plan’s success gate): `patch_audio` /
-`align_videos` splits; repair `lib.rs` curation like `clip-sync`.
+(P1–P4). Other planned M-MOD bites (`patch_audio`, policies) are separate plans (now done);
+`align_videos` remains deferred.
 
 ---
 
@@ -195,21 +196,26 @@ After **P3**, confirm external call sites still compile without import edits:
 
 ## 6. Success criteria
 
-- [ ] No production file under `application/gap_fingerprint/` is a multi-concern monolith; unit
+Verified in source 2026-07-24: `application/gap_fingerprint/{mod,schema,project,measure}.rs`
+(thin ~20-line facade; no leftover monolith `.rs`); `tags_from_measurements` lives in
+`measure` (consumes `RegionMeasurements`); `project` imports only `super::schema::*` (no
+`measure` edge); callers still use `crate::application::gap_fingerprint::*`.
+
+- [x] No production file under `application/gap_fingerprint/` is a multi-concern monolith; unit
       tests colocated per submodule.
-- [ ] Public import paths unchanged (`gap_fingerprint::`).
-- [ ] Dependency DAG in §3b holds (no `project` ↔ `measure` cycle).
-- [ ] JSON corpus shape unchanged (round-trip / curated fixtures still green).
-- [ ] Fingerprint row of M-MOD closable; harness corpus + `patch_audio` / `align_videos` remain
+- [x] Public import paths unchanged (`gap_fingerprint::`).
+- [x] Dependency DAG in §3b holds (no `project` ↔ `measure` cycle).
+- [x] JSON corpus shape unchanged (round-trip / curated fixtures still green).
+- [x] Fingerprint row of M-MOD closable; harness corpus + `patch_audio` / `align_videos` remain
       separate plans.
 
 ---
 
 ## Related
 
-- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — prior M-MOD slice (done)
 - [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness sibling
-- [gap-fingerprint.md](gap-fingerprint.md) — product docs (update path note when tree lands)
-- [archive/TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md) — original feature plan
-- `crates/clip-sync-repair/src/application/gap_fingerprint.rs` — current monolith
+- [gap-fingerprint.md](../gap-fingerprint.md) — product docs (update path note when tree lands)
+- [TEMP-gap-fingerprint-plan.md](TEMP-gap-fingerprint-plan.md) — original feature plan
+- `crates/clip-sync-repair/src/application/gap_fingerprint/` — live split tree
