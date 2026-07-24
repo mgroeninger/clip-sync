@@ -167,7 +167,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 |-------|-------|--------|
 | **P1** | `request.rs` (result / request / settings) | **Done (2026-07-24)** |
 | **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Done (2026-07-24)** |
-| **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Planned** |
+| **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Done (2026-07-24)** |
 | **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Planned** |
 | **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Planned** |
 | **P6** | Thin `mod.rs` — only `PatchAudio::execute` + re-exports; delete monolith `.rs` | **Planned** |
@@ -219,6 +219,24 @@ harness, fingerprint-measure external paths all compile without import edits).
 **P3 notes.** Move `gap_key` and `fill_offset_mode_label` with the log slice
 (even though they currently sit above the anchor-retry block). Format-line unit
 tests move here. Leave `region_outcome_gap_tags` behind for P4.
+
+**P3 as-landed (2026-07-24).** `log.rs` = the 13 log/format symbols moved
+verbatim: `gap_key` (`pub(super)`), private `fill_offset_mode_label`,
+`GapFillPlanLog<'a>` / `GapFillResultLog` (`pub(crate)`), `format_gap_fill_plan_lines`
+/ `format_gap_fill_result_line` / `format_skip_gap_fill_log` (`pub(crate)`, used by
+the colocated tests), `log_gap_fill_plan_verbose` / `log_gap_fill_result_verbose` /
+`log_skip_gap_fill` / `MarginalGapFillLog<'a>` (fields `pub(super)`) /
+`log_marginal_gap_fill` / `log_gap_tags_verbose` (`pub(super)`). The 4 format-line
+unit tests moved into `log.rs`'s `#[cfg(test)] mod tests`. **No visibility widening**
+beyond the private→`pub(super)` needed for the cross-module move of `gap_key`. Facade
+wires `mod log;` + `use log::{gap_key, log_*, GapFillPlanLog, GapFillResultLog,
+MarginalGapFillLog}` (internal-only, no `pub` re-export — nothing outside
+`patch_audio` consumes these). Unused imports pruned from `mod.rs` (five
+`crate::domain::patch_result` / `gap_tags` format-fn symbols now owned by `log.rs`;
+the dead `pub(crate) use log::{format_*}` re-export dropped). `log` has zero `region`
+dependencies (all helpers take plain log structs / domain types / `GapTags` /
+`ProgressReporter`), so the `log ← region` DAG edge holds. Build / clippy /
+`-Tier pr-repair` green.
 
 **P4 notes.** Expect `region.rs` ≈ 1.8–2.2 kloc after the move. That is acceptable
 for this plan. Optional later peel (`dual_fit.rs` / `bracket.rs`) is **not**
