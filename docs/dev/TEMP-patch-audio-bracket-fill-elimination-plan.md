@@ -168,6 +168,30 @@ Thread (1) and (2) grouped in a ctx struct to avoid a `too_many_arguments`
 fight — mirror the `DualFitInputSpec` / `ExecuteBracketFillCtx` pattern already
 in the file.
 
+### 4.1 Correction (F1): one derived value is **not** re-derivable
+
+Class (3) above is wrong on one input, discovered while implementing F1. The
+window trio (`correlate_frames` / `seam_gate_frames` / `border_frames`) is sized
+from the gap length **as it stood before the seam gate ran** (`region.rs:1561`),
+and then held fixed. `spec.refined` is the **post**-gate gap. So the executor
+cannot reconstruct the windows from `refined`:
+
+* Fit mode: boundary search moves `refined`. The delta *is* recorded, in
+  `gap_start_adjust_frames` / `gap_end_adjust_frames`.
+* Gate mode: `retry_waveform_seam_extensions` mutates `refined.end_frame` and
+  then **re-runs** `evaluate_seam_gate` on the already-extended gap
+  (`patch_region.rs`), so the retry's delta is *not* in the adjust fields. Adding
+  them back does not recover the pre-gate length.
+
+Fix: the spec carries the pre-gate length explicitly as
+`GapRepairStrategy::Bracket { window_gap_frames }`. It is a real decision output
+— "the size the fill's windows were cut to" — not a threading shortcut, and it
+is the input `FillWindowFrames::for_gap` takes on both sides. The *post*-gate
+length (what the fill is assembled **to**) stays underived-from-storage: it is
+`refined.end_frame - refined.start_frame`, pinned by a `debug_assert_eq!` in
+characterize against the gate's own reported `gap_frames`, so a future gate that
+decouples the two fails loudly instead of assembling a differently-sized fill.
+
 ## 5. Preview note
 
 The `preview()` / `PatchRunKind::Preview` path and `outcome_from_characterization`
@@ -247,12 +271,12 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| M0 | Planned | — | span the assembly; decides whether H? exists |
-| L0 | Planned | — | de-narrate `assemble_bracket_fill`; return the fact, caller emits |
-| S0 | Planned | — | single-source the per-gap derived knobs |
-| S1 | Planned | — | re-slice helper w/ clamp; shadow covers it |
-| H? | Conditional | — | only if M0 indicts something; not the downmix |
-| F1 | Planned | — | thread inputs; flip to `execute_bracket_fill` (carry still set) |
+| M0 | Done | `ededf0f` | `char_fill_assembly` + `exec_fill_assembly` spans added. **Measurement still owed** — needs a release-profile licensed-media run (§3) |
+| L0 | Done | `61fcd78` | `assemble_bracket_fill` returns `BracketFill { pcm, extended_frames }`; caller emits the same line |
+| S0 | Done | `7c774f7` | `FillWindowFrames::for_gap` in `geometry.rs`; characterize + `derive_seam_gate_geometry` both call it |
+| S1 | Done | `5a00b16` | `slice_b_extract` / `b_extract_frames`; shadow re-slices from the spec's own `BExtractWindow` |
+| H? | Conditional | — | only if M0 indicts something; not the downmix. **Blocked on M0's measurement** |
+| F1 | Done | (this commit) | Executor re-derives the fill. Added `window_gap_frames` to the Bracket verdict — see §4.1. Carry retained as a debug parity check at the handoff |
 | F2 | Planned | — | drop the carry + param |
 | C1 | Planned | — | collapse enum; remove `#[allow]`; consider deleting the type |
 
@@ -280,6 +304,12 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
   `SilenceSplice` specs carry `fill` by design. All retention claims are now
   scoped to the Bracket path.
 - Refreshed line references to post-split `region.rs`; fixed the commit trailer.
+
+**2026-07-24 (F1).** §4.1 added: the "re-derive, do not thread" rule has one
+exception the audit missed — the window trio is sized from the *pre*-gate gap
+length, which `spec.refined` does not preserve and the adjust fields cannot
+reconstruct in gate mode. The spec now carries `window_gap_frames`. This is a
+deviation from §4 as written, deliberate and scoped to that one value.
 
 ---
 

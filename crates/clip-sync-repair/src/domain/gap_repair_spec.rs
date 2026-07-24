@@ -162,6 +162,19 @@ pub enum GapRepairStrategy {
     Bracket {
         /// Single rigid B placement — start_frame, fill_frames, report pre/post r.
         alignment: FillAlignment,
+        /// Gap length (frames) the fill's correlate/seam-gate/border windows were sized from — the gap as
+        /// it stood **before** the seam gate ran.
+        ///
+        /// Carried explicitly because it is **not** recoverable from `refined`. The gate can move the gap
+        /// boundaries after the windows are sized (gate-mode seam-extension retry, fit-mode boundary
+        /// search) while the windows stay fixed at their original size, and the extension retry's delta is
+        /// not recorded in `gap_start_adjust_frames`/`gap_end_adjust_frames` — it re-runs the gate on the
+        /// already-extended gap, so those record only the within-gate move. Re-deriving the windows from
+        /// `refined` would therefore silently change the assembled fill on every extended gap.
+        ///
+        /// The *post*-gate length the fill is assembled to is just
+        /// `refined.end_frame - refined.start_frame`, so it is not stored.
+        window_gap_frames: usize,
         structure_start_frame: usize,
         structure_trusted: bool,
         anchor_seam_used: bool,
@@ -423,6 +436,7 @@ mod tests {
     fn bracket() -> GapRepairStrategy {
         GapRepairStrategy::Bracket {
             alignment: FillAlignment { start_frame: 0, fill_frames: 48_000, pre_correlation: 0.99, post_correlation: 0.99 },
+            window_gap_frames: 48_000,
             structure_start_frame: 0,
             structure_trusted: true,
             anchor_seam_used: false,

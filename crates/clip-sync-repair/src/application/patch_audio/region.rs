@@ -1275,19 +1275,25 @@ fn dual_fit_skipped(outcome: RegionPatchOutcome) -> DualFitDecision {
 
 /// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
 /// handoff. Handles the two PATCH verdicts; `Skip` isn't *executed* (the loop filters skips and derives their
-/// outcome from the spec, §2.5.5). `bracket_fill` is the transitional pre-assembled bracket fill (6b.3c) —
-/// `Some` for `Bracket`, `None` for `SilenceSplice` (whose fill is on the spec); 6c re-derives the bracket
-/// fill from `FillAlignment` and drops this param. Takes `spec` by value so the SilenceSplice fill moves out
-/// without a clone.
+/// outcome from the spec, §2.5.5). Takes `spec` by value so the SilenceSplice fill moves out without a clone.
+///
+/// **F1:** the bracket fill is now assembled HERE, from the spec + `media` + `request`, rather than carried
+/// over from characterize. `bracket_fill` is characterize's copy, retained one more step purely as a debug
+/// parity check at the real handoff (F2 removes it). The media/request params are what re-derivation costs:
+/// the executor needs the decode buffers back, plus the run-level knobs the windows are sized from.
 pub(super) fn execute_region_spec(
     spec: GapRepairSpec,
     bracket_fill: Option<Vec<f32>>,
-    sample_rate: u32,
+    request: &PatchAudioRequest,
+    media: &RegionPatchMedia<'_>,
+    ctx: &RegionPatchContext,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
+    let &RegionPatchContext { channels, sample_rate, silence_peak_fraction, .. } = ctx;
     let GapRepairSpec { refined, crossfade_secs, b_extract, verdict, .. } = spec;
     match verdict {
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
+            window_gap_frames,
             structure_start_frame,
             structure_trusted,
             anchor_seam_used,
@@ -1303,8 +1309,45 @@ pub(super) fn execute_region_spec(
             normalize_gain,
             ..
         }) => {
+            // F1: re-derive the fill from the spec alone. The window trio comes from the *pre*-gate
+            // `window_gap_frames` the spec carries (S0's helper, same call characterize made); the length the
+            // fill is assembled TO is the *post*-gate gap on `refined`. Mixing those two up is the one way
+            // this reconstruction can silently diverge, which is why they read from different fields here.
+            let windows = FillWindowFrames::for_gap(&request.settings, window_gap_frames, sample_rate);
+            let fill = execute_bracket_fill(ExecuteBracketFillCtx {
+                alignment,
+                b_samples: slice_b_extract(
+                    media.b_samples_full,
+                    channels,
+                    b_extract.start_frame,
+                    b_extract.end_frame,
+                )
+                .expect("a Bracket verdict's B extract window is the one characterize sliced non-empty"),
+                a_samples: &media.a_pcm.samples,
+                a_frames: media.a_pcm.frames(),
+                refined,
+                channels,
+                gap_frames: refined.end_frame.saturating_sub(refined.start_frame),
+                fill_mode: request.fill_mode,
+                border_frames: windows.border_frames,
+                border_standoff_frames: (request.border_standoff_secs * sample_rate as f64).round()
+                    as usize,
+                silence_peak_fraction,
+                absolute_silence_rms: request.absolute_silence_rms,
+                seam_gate_frames: windows.seam_gate_frames,
+                sample_rate,
+                crossfade_secs,
+            });
+            // The 6b.3a shadow re-stated at the real boundary: characterize's fill, carried one last time,
+            // must equal what the spec round-trip reproduces. Stronger than the in-function shadow (it covers
+            // the spec's own fields, not characterize's locals) and it is what F2 deletes.
+            debug_assert_eq!(
+                bracket_fill.as_ref(),
+                Some(&fill),
+                "F1: executor-derived bracket fill must byte-match characterize's"
+            );
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
-                fill: bracket_fill.expect("bracket verdict requires a bracket fill until 6c re-derivation"),
+                fill,
                 gain: normalize_gain,
                 refined,
                 crossfade_secs,
@@ -1575,7 +1618,8 @@ pub(super) fn characterize_region(
     // the rest of this gap — the gate may extend the gap boundaries afterwards, but these windows do not
     // follow it. `derive_seam_gate_geometry` and the executor derive the identical trio from the identical
     // input via this one helper.
-    let windows = FillWindowFrames::for_gap(&request.settings, gap_frames, sample_rate);
+    let window_gap_frames = gap_frames;
+    let windows = FillWindowFrames::for_gap(&request.settings, window_gap_frames, sample_rate);
     let seam_gate_frames = windows.seam_gate_frames;
     // S1: compute the window frames ONCE — these exact values go on the spec, and the executor re-slices
     // from them. Deriving them here (instead of recomputing the same expressions at the spec site) is what
@@ -1814,6 +1858,15 @@ pub(super) fn characterize_region(
     // `align_adjustment_secs` (= structure + waveform slide) is recomputed inside `execute_bracket_output`
     // from the placement fields; `structure_slide_secs`/`waveform_slide_secs` remain for the verbose log.
 
+    // The executor derives the fill's target length from `spec.refined` rather than storing it. That is only
+    // sound while the gate's reported `gap_frames` *is* its reported gap — pin it here so a future gate that
+    // decouples them fails loudly in debug instead of silently assembling a differently-sized fill.
+    debug_assert_eq!(
+        gap_frames,
+        refined.end_frame.saturating_sub(refined.start_frame),
+        "gate gap_frames must match its own refined gap; the executor re-derives the fill length from it"
+    );
+
     // The bracket spec's B window — built here (not at the spec site) so the `debug_assert_eq!` shadow below
     // can prove the executor's reconstruction against the very struct the spec will carry (S1).
     let bracket_b_extract = BExtractWindow {
@@ -2051,6 +2104,7 @@ pub(super) fn characterize_region(
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
+            window_gap_frames,
             structure_start_frame,
             structure_trusted: patched_structure_trusted,
             anchor_seam_used,
@@ -2111,8 +2165,8 @@ fn characterize_all_regions(
 }
 
 /// Thin shim (6b.3e): characterize the region, then execute if it's a patch. The former target of this name;
-/// the split lives in [`characterize_region`] + [`execute_region_spec`]. `sample_rate` for the executor comes
-/// from the region context.
+/// the split lives in [`characterize_region`] + [`execute_region_spec`]. Media/request/context are handed to
+/// both passes: characterize to decide, execute to re-derive the fill PCM.
 pub(super) fn prepare_region_patch(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2121,12 +2175,11 @@ pub(super) fn prepare_region_patch(
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
-    let sample_rate = ctx.sample_rate;
     let (characterization, tag_ctx) =
         characterize_region(progress, media, region, request, ctx, opts);
     match characterization {
         RegionCharacterization::Patch { spec, bracket_fill } => {
-            let (patch, outcome) = execute_region_spec(spec, bracket_fill, sample_rate);
+            let (patch, outcome) = execute_region_spec(spec, bracket_fill, request, media, ctx);
             (patch, outcome, tag_ctx)
         }
         RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec), tag_ctx),

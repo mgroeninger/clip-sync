@@ -171,6 +171,7 @@ mod tests {
     fn bracket_strategy() -> GapRepairStrategy {
         GapRepairStrategy::Bracket {
             alignment: FillAlignment { start_frame: 100, fill_frames: 19_200, pre_correlation: 0.9, post_correlation: 0.9 },
+            window_gap_frames: 19_200,
             structure_start_frame: 100,
             structure_trusted: true,
             anchor_seam_used: false,
