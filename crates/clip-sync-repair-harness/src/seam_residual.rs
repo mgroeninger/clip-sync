@@ -1,5 +1,6 @@
 //! Seam residual score harness.
 
+use clip_sync_repair::application::FillWindowFrames;
 use clip_sync_repair::domain::gap_fill_fit::{
     apply_residual_to_confidence, classify_fill_waveform_confidence, FillConfidence,
     ResidualGateError,
@@ -17,20 +18,12 @@ use clip_sync_repair::domain::{
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair_fixtures::energy_signature_fixtures::EnergySignatureFixture;
 
-// Production defaults mirrored from infrastructure/config.rs + application/patch_audio.rs so the
-// harness windows match `evaluate_seam_gate_fit_candidate` exactly.
-const NORMALIZE_WINDOW_SECS: f64 = 5.0;
-const MIN_BORDER_DISCOVERY_SECS: f64 = 2.0;
-const FILL_SEAM_SEARCH_SECS: f64 = 0.25;
 // Production border_standoff is 0.35 s; the harness uses 0 (see `geometry_for`).
 
+/// Seam correlation window sized to the gap — delegates to production [`FillWindowFrames`].
 pub fn correlate_frames_for_gap(gap_frames: usize, rate: u32) -> usize {
-    let gap_secs = gap_frames as f64 / rate as f64;
-    let window_secs = NORMALIZE_WINDOW_SECS
-        .min(gap_secs * 0.45)
-        .clamp(MIN_BORDER_DISCOVERY_SECS, 2.0)
-        .max(0.25);
-    ((window_secs * rate as f64) as usize).max(1)
+    FillWindowFrames::for_gap(&RepairConfig::default().patch_settings(), gap_frames, rate)
+        .correlate_frames
 }
 
 pub struct Geometry {
@@ -40,16 +33,35 @@ pub struct Geometry {
 }
 
 pub fn geometry_for(gap_frames: usize, rate: u32) -> Geometry {
-    let correlate = correlate_frames_for_gap(gap_frames, rate);
+    let windows =
+        FillWindowFrames::for_gap(&RepairConfig::default().patch_settings(), gap_frames, rate);
     Geometry {
-        border_frames: ((NORMALIZE_WINDOW_SECS * rate as f64) as usize).min(correlate),
-        seam_gate_frames: correlate
-            .min((FILL_SEAM_SEARCH_SECS * rate as f64).round() as usize)
-            .max(1),
+        border_frames: windows.border_frames,
+        seam_gate_frames: windows.seam_gate_frames,
         // Zero standoff in the harness: production's search slides B to absorb the standoff, but
         // direct scoring places B at the exact oracle frame, so the A template must not be trimmed
         // or the pre/post windows misalign by ~`border_standoff` and even the true fill won't cancel.
         standoff_frames: 0,
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    use clip_sync_repair::application::FillWindowFrames;
+    use clip_sync_repair::infrastructure::config::RepairConfig;
+
+    #[test]
+    fn harness_geometry_matches_production_fill_windows() {
+        let settings = RepairConfig::default().patch_settings();
+        for &(gap_frames, rate) in &[(48_000usize, 48_000u32), (12_000, 48_000), (96_000, 44_100)] {
+            let prod = FillWindowFrames::for_gap(&settings, gap_frames, rate);
+            let harness = geometry_for(gap_frames, rate);
+            assert_eq!(harness.border_frames, prod.border_frames);
+            assert_eq!(harness.seam_gate_frames, prod.seam_gate_frames);
+            assert_eq!(correlate_frames_for_gap(gap_frames, rate), prod.correlate_frames);
+            assert_eq!(harness.standoff_frames, 0);
+        }
     }
 }
 

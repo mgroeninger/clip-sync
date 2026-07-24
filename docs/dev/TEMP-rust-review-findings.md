@@ -35,6 +35,8 @@
 > **M-MOD planned splits closed 2026-07-24** (P2): policies + M-MOD-DEPS + harness corpus +
 > production `gap_fingerprint` + `patch_audio` (re-verified in source); `align_videos`
 > deferred with no plan.
+> **M-HARNESS closed 2026-07-24** (P2): shared interior oracle + NeverCalledAligner/builders +
+> RFC 4180 CSV + production `FillWindowFrames` for harness geometry.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -91,7 +93,7 @@ threaded. Remaining open defects cluster in:
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
 | 1 | M-MOD | P2 | Split 3–5 kloc modules (**done**: repair policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` + `patch_audio` + analyzer `clip-sync` policies; `align_videos` deferred, no plan) | fingerprint / policies / patch |
-| 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
+| 2 | M-HARNESS | P2 | Harness drifts from production formulas (**closed 2026-07-24**) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
@@ -523,9 +525,9 @@ clippy --workspace --all-targets` clean; policies tests still 55/55 with unchang
 seams left at extraction boundaries: the crate is not rustfmt-managed (752 `Diff in` hunks
 workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
-### M-HARNESS. Drift from production — **open** (item 1 done)
+### M-HARNESS. Drift from production — **closed 2026-07-24**
 
-**Recommended order:**
+**Recommended order (all done):**
 
 1. ~~`PatchTestOptions` from `RepairConfig::default()` with overrides only~~ — **done
    2026-07-23** (`47cef0e`): both harness and `query_reference_integration` literals now seed
@@ -534,12 +536,22 @@ workspace-wide), so fixing these 8 adds noise without changing the baseline.
    Eight surviving overrides are deliberate synthetic-fixture settings pending an undated
    justify-or-drop comment audit — do **not** extend `PatchTestOptions` field-by-field to chase
    them; that is the mechanism that let five of them drift unseen.
-2. One shared `gap_interior_range` / oracle validator (H6 clamp already on floor path)
-3. One exported `NeverCalledAligner` + alignment builder in fixtures
-4. `csv` crate or RFC 4180 quoting for calibration CSV
-5. Delete the collapsed window formula or call production’s window helper
+2. ~~One shared `gap_interior_range` / oracle validator~~ — **done 2026-07-24**:
+   `floor_oracle::{gap_interior_range, validate_gap_interior_peak}`; dual-fit validator calls the
+   shared peak check (H6 clamp stays on the range helper).
+3. ~~One exported `NeverCalledAligner` + alignment builder in fixtures~~ — **done 2026-07-24**:
+   `NeverCalledAligner` lives in repair `application::test_support` (so unit tests and fixtures
+   share one `Aligner` impl); fixtures `test_align` re-exports it and owns
+   `no_op_alignment` / `start_clip_alignment` / `zero_offset_alignment` /
+   `oracle_injected_alignment`.
+4. ~~`csv` crate or RFC 4180 quoting for calibration CSV~~ — **done 2026-07-24**: `csv` dep on
+   harness + fixtures; `CorpusReport::csv`, W5 sweep CSV, and `w5_timing_offset_csv` use
+   `csv::Writer` (regression: `csv_quotes_commas_in_pair_and_ids`).
+5. ~~Delete the collapsed window formula or call production’s window helper~~ — **done
+   2026-07-24**: harness `geometry_for` / `correlate_frames_for_gap` delegate to public
+   `FillWindowFrames::for_gap` (standoff stays 0 by design); `geometry_tests` locks parity.
 
-**Test:** harness lib + oracle smoke already in PR.
+**Test:** harness lib (incl. CSV + geometry parity) + `scan_gaps` unit tests.
 
 ### Other P2
 
@@ -636,7 +648,7 @@ module splits are closed (`align_videos` deferred only).
    gap_borders` edge removed).
    ~~**M-MOD** planned splits~~ (policies → harness corpus → production fingerprint →
    `patch_audio` P1–P6 done 2026-07-24). `align_videos` deferred (no plan).
-   **M-HARNESS** remainder opportunistically with nearby feature work.
+   **M-HARNESS** ~~remainder~~ **closed 2026-07-24** (items 2–5).
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
    (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
@@ -657,7 +669,7 @@ module splits are closed (`align_videos` deferred only).
    (record: `archive/TEMP-repair-config-bundles-plan.md`). ~~**M-MOD** planned splits~~ **done**
    (repair + analyzer policies / harness corpus / production fingerprint / `patch_audio`;
    re-verified 2026-07-24; analyzer policies plan archived).
-   `align_videos` deferred. **M-HARNESS** remainder incremental.
+   `align_videos` deferred. ~~**M-HARNESS** remainder incremental.~~ **M-HARNESS closed 2026-07-24**.
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
    (done 2026-07-23); #2 planner only if profiled.
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.

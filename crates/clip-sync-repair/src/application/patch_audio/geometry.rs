@@ -83,18 +83,18 @@ impl SeamGateDerived {
 /// rest of the gap's processing. Sizing them from the post-gate `refined` would silently change the
 /// assembly on every gap the gate extended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FillWindowFrames {
+pub struct FillWindowFrames {
     /// Seam correlation window sized to the gap.
-    pub(crate) correlate_frames: usize,
+    pub correlate_frames: usize,
     /// Cap for fine-align slide search and the seam correlation gate.
-    pub(crate) seam_gate_frames: usize,
+    pub seam_gate_frames: usize,
     /// A-border template length (never longer than `correlate_frames`).
-    pub(crate) border_frames: usize,
+    pub border_frames: usize,
 }
 
 impl FillWindowFrames {
     /// Derive the trio from a gap length. See the type docs for which gap length to pass.
-    pub(crate) fn for_gap(
+    pub fn for_gap(
         settings: &PatchRequestSettings,
         gap_frames: usize,
         sample_rate: u32,

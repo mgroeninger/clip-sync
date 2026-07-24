@@ -163,6 +163,29 @@ mod tests {
     }
 
     #[test]
+    fn csv_quotes_commas_in_pair_and_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let pair_dir = root.path().join("pair,name");
+        let gap_json = gap(0, "timing_offset", "skip", -16.0, -8.0);
+        write_corpus(&pair_dir, "a,id", "b,id", &format!("[{gap_json}]"));
+        let report = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0);
+        let csv = report.csv();
+        let mut rdr = csv::Reader::from_reader(csv.as_bytes());
+        let rec = rdr.records().next().expect("row").expect("parse");
+        let pair = rec.get(0).expect("pair");
+        assert!(
+            pair.ends_with("pair,name") || pair.contains("/pair,name"),
+            "pair field should round-trip the comma: {pair:?}"
+        );
+        assert_eq!(rec.get(1), Some("a,id"));
+        assert_eq!(rec.get(2), Some("b,id"));
+        assert!(
+            csv.contains("\"a,id\"") && csv.contains("\"b,id\""),
+            "RFC 4180 should quote comma-bearing ids:\n{csv}"
+        );
+    }
+
+    #[test]
     fn splice_diag_uses_peak_z_when_present() {
         let root = tempfile::tempdir().unwrap();
         let gap_json = r#"{"index":0,"tier":"full","sample_rate":48000,"channels":2,

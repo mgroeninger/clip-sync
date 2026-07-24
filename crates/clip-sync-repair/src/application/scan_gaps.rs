@@ -383,7 +383,7 @@ mod tests {
 
     use clip_sync::testing::fakes::FakeProgressReporter;
     use clip_sync::{
-        AlignmentResult, AudioTrack, ClipLabel, ClipMatch, ClipWindow, MediaError, MediaSession,
+        AlignmentResult, AudioTrack, ClipWindow, MediaError, MediaSession,
         MediaSource, MonoPcmClip, MultiChannelPcm,
     };
 
@@ -701,33 +701,7 @@ mod tests {
     // --- helpers ---
 
     fn aligned_result(offset: Option<f64>) -> AlignmentResult {
-        AlignmentResult {
-            clips: vec![ClipMatch {
-                label: ClipLabel::Start,
-                window_start_secs: 0.0,
-                window_end_secs: 60.0,
-                aligned: offset.is_some(),
-                offset_secs: offset,
-                confidence: if offset.is_some() { 0.9 } else { 0.0 },
-                video_a_decode_skips: 0,
-                video_b_decode_skips: 0,
-                repetition: None,
-                video_b_window_start_secs: None,
-                video_b_window_end_secs: None,
-            }],
-            start_aligned: offset.is_some(),
-            end_aligned: None,
-            recommended_offset_secs: offset,
-            offsets_consistent: true,
-            offset_drift_secs: None,
-            start_overlap: None,
-            high_rate_refinement: None,
-            offset_verification: None,
-            offset_ambiguous_mod_secs: None,
-            alignment_mode_used: None,
-            query_localization: None,
-            end_clip_anchor: None,
-        }
+        clip_sync_repair_fixtures::start_clip_alignment(60.0, offset)
     }
 
     fn scan_request(a: &str, b: &str, decode_chunk_secs: u64) -> ScanGapsRequest {
@@ -747,17 +721,7 @@ mod tests {
         }
     }
 
-    struct NeverCalledAligner;
-
-    impl crate::application::ports::Aligner for NeverCalledAligner {
-        fn align(
-            &self,
-            _: clip_sync::AlignVideosRequest,
-            _: &dyn clip_sync::ProgressReporter,
-        ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
-            unreachable!("tests use scan_after_alignment directly")
-        }
-    }
+    use crate::application::NeverCalledAligner;
 
     struct NoDurationSession;
 

@@ -25,8 +25,8 @@ use serde::Deserialize;
 
 use crate::floor_oracle::{
     decode_to_mono_wav_at, encode_with_format, floor_oracle_corpus_root, output_path,
-    read_mono_wav, secs_to_frames, BuiltFloorOracle, FloorOracleDefaults, FloorOracleFormat,
-    OracleVariant, SourceGapOracleMeta,
+    read_mono_wav, secs_to_frames, validate_gap_interior_peak, BuiltFloorOracle,
+    FloorOracleDefaults, FloorOracleFormat, OracleVariant, SourceGapOracleMeta,
 };
 
 #[derive(Debug, Deserialize)]
@@ -289,23 +289,12 @@ fn validate_stepped_oracle(built: &BuiltFloorOracle, defaults: &FloorOracleDefau
     let gap_start = built.meta.gap_start_frame;
     let gap_end = built.meta.gap_end_frame;
     let edge = secs_to_frames(defaults.gap_interior_edge_secs, rate);
-    let interior_start = gap_start.saturating_add(edge);
-    let interior_end = gap_end.saturating_sub(edge).min(samples_a.len());
-    if interior_start >= interior_end {
-        return Err(format!(
-            "gap too short for interior check: {gap_start}..{gap_end}"
-        ));
-    }
-    let peak = samples_a[interior_start..interior_end]
-        .iter()
-        .map(|s| s.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-    if peak > built.meta.gap_interior_peak_max {
-        return Err(format!(
-            "gap interior peak {peak} exceeds max {} after encode",
-            built.meta.gap_interior_peak_max
-        ));
-    }
+    validate_gap_interior_peak(
+        &samples_a,
+        gap_start,
+        gap_end,
+        edge,
+        built.meta.gap_interior_peak_max,
+    )?;
     Ok(())
 }

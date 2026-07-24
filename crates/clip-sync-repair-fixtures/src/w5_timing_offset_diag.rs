@@ -138,39 +138,58 @@ pub fn w5_timing_offset_grid_default() -> Vec<W5TimingOffsetCell> {
     w5_timing_offset_grid(&offsets, &drifts)
 }
 
-const CSV_HEADER: &str = "seam_offset_ms,drift_ppm,pre_lag0_r,pre_peak_r,pre_frac_lag_ms,pre_verdict,\
-post_lag0_r,post_peak_r,post_frac_lag_ms,post_verdict,recoverable";
+const CSV_FIELDS: &[&str] = &[
+    "seam_offset_ms",
+    "drift_ppm",
+    "pre_lag0_r",
+    "pre_peak_r",
+    "pre_frac_lag_ms",
+    "pre_verdict",
+    "post_lag0_r",
+    "post_peak_r",
+    "post_frac_lag_ms",
+    "post_verdict",
+    "recoverable",
+];
 
-fn lag_cols(l: Option<&LagSummary>) -> String {
+fn lag_field_vals(l: Option<&LagSummary>) -> [String; 4] {
     match l {
-        Some(s) => format!(
-            "{:.4},{:.4},{:.3},{}",
-            s.lag0_r,
-            s.peak_r,
-            s.frac_lag_ms,
-            verdict_str(s.verdict)
-        ),
-        None => ",,,".to_string(),
+        Some(s) => [
+            format!("{:.4}", s.lag0_r),
+            format!("{:.4}", s.peak_r),
+            format!("{:.3}", s.frac_lag_ms),
+            verdict_str(s.verdict).to_string(),
+        ],
+        None => [String::new(), String::new(), String::new(), String::new()],
     }
 }
 
-/// CSV for a recoverability sweep, one row per cell.
+/// CSV for a recoverability sweep, one row per cell (RFC 4180 via the `csv` crate).
 pub fn w5_timing_offset_csv(cells: &[W5TimingOffsetCell]) -> String {
-    let mut out = String::from(CSV_HEADER);
-    out.push('\n');
+    let mut wtr = csv::Writer::from_writer(Vec::new());
+    wtr.write_record(CSV_FIELDS).expect("csv header");
     for c in cells {
         let (pre, post) = c
             .lag
             .map(|l| (Some(l.pre), Some(l.post)))
             .unwrap_or((None, None));
-        out.push_str(&format!(
-            "{:.1},{:.0},{},{},{}\n",
-            c.seam_offset_ms,
-            c.drift_ppm,
-            lag_cols(pre.as_ref()),
-            lag_cols(post.as_ref()),
-            c.recoverable(),
-        ));
+        let pre = lag_field_vals(pre.as_ref());
+        let post = lag_field_vals(post.as_ref());
+        wtr.write_record([
+            format!("{:.1}", c.seam_offset_ms),
+            format!("{:.0}", c.drift_ppm),
+            pre[0].clone(),
+            pre[1].clone(),
+            pre[2].clone(),
+            pre[3].clone(),
+            post[0].clone(),
+            post[1].clone(),
+            post[2].clone(),
+            post[3].clone(),
+            c.recoverable().to_string(),
+        ])
+        .expect("csv row");
     }
-    out
+    let bytes = wtr.into_inner().expect("csv flush");
+    String::from_utf8(bytes).expect("csv utf8")
 }

@@ -212,13 +212,18 @@ function Write-Verdict {
         Write-Host "     assembled fill — i.e. the carry F1/F2 deleted. That outcome is accept-or-revert, not hoist."
     }
 
-    # The two assemblies do the same work on the same inputs; a large asymmetry is a correctness smell, not
-    # a perf finding. Border rebuild puts exec legitimately above char, so only flag a wide gap.
-    if ($exec.Calls -gt 0 -and $char.Calls -gt 0) {
+    # The two spans do NOT cover the same work: `char_fill_assembly` wraps `assemble_bracket_fill` alone,
+    # while `exec_fill_assembly` also wraps the border-template rebuild and the B re-slice. exec > char is
+    # expected BY CONSTRUCTION — the difference IS the rebuild, which is what a Gate-mode hoist would target.
+    # Only exec running CHEAPER than char is suspicious (it should strictly dominate on the same inputs), and
+    # only worth reporting once enough gaps have run for the ratio to mean anything.
+    if ($exec.Calls -ge 5 -and $char.Calls -ge 5) {
         $ratio = $exec.Secs / $char.Secs
-        if ($ratio -gt 2.0 -or $ratio -lt 0.5) {
-            Write-Warning ("  exec/char assembly ratio is {0:N2} — the two passes should cost about the same." -f $ratio)
-            Write-Warning "  Investigate before trusting this as a perf number (are they assembling the same thing?)."
+        Write-Host ("  exec/char = {0:N2}x; the excess over 1.0 is the executor's border rebuild ({1:N4}s total)." -f `
+            $ratio, ($exec.Secs - $char.Secs))
+        if ($ratio -lt 0.9) {
+            Write-Warning ("  exec is CHEAPER than char ({0:N2}x) — it does strictly more work, so this wants" -f $ratio)
+            Write-Warning "  explaining before the number is trusted."
         }
         if ($exec.Calls -ne $char.Calls) {
             Write-Warning ("  call counts differ (char {0} vs exec {1}). In a release run they should match —" -f $char.Calls, $exec.Calls)

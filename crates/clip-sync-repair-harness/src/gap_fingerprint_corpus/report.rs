@@ -924,44 +924,63 @@ impl CorpusReport {
             .to_string()
     }
 
-    /// One CSV row per gap for drill-down.
+    /// One CSV row per gap for drill-down (RFC 4180 via the `csv` crate).
     pub fn csv(&self) -> String {
-        use std::fmt::Write;
-        let mut s = String::from(
-            "pair,a_id,b_id,index,duration_secs,plan_kind,kind,verdict,outcome_tier,patched,\
-frac_lag_pre_ms,frac_lag_post_ms,seam_mid_ms,seam_step_ms,drift_ms,peak_r_pre,peak_r_post,\
-uniqueness_margin,residual_headroom_db,residual_informative,skew\n",
-        );
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record([
+            "pair",
+            "a_id",
+            "b_id",
+            "index",
+            "duration_secs",
+            "plan_kind",
+            "kind",
+            "verdict",
+            "outcome_tier",
+            "patched",
+            "frac_lag_pre_ms",
+            "frac_lag_post_ms",
+            "seam_mid_ms",
+            "seam_step_ms",
+            "drift_ms",
+            "peak_r_pre",
+            "peak_r_post",
+            "uniqueness_margin",
+            "residual_headroom_db",
+            "residual_informative",
+            "skew",
+        ])
+        .expect("csv header");
         let opt = |v: Option<f64>| v.map(|x| format!("{x:.4}")).unwrap_or_default();
         let optb = |v: Option<bool>| v.map(|x| x.to_string()).unwrap_or_default();
         for r in &self.rows {
-            let _ = writeln!(
-                s,
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:?}",
-                r.pair,
-                r.a_id,
-                r.b_id,
-                r.index,
-                opt(r.duration_secs),
-                r.plan_kind.clone().unwrap_or_default(),
+            wtr.write_record([
+                r.pair.as_str(),
+                r.a_id.as_str(),
+                r.b_id.as_str(),
+                &r.index.to_string(),
+                &opt(r.duration_secs),
+                r.plan_kind.as_deref().unwrap_or(""),
                 r.kind.as_str(),
-                r.verdict.clone().unwrap_or_default(),
-                r.outcome_tier.clone().unwrap_or_default(),
-                r.patched(),
-                opt(r.frac_lag_pre_ms),
-                opt(r.frac_lag_post_ms),
-                opt(r.seam_mid_ms()),
-                opt(r.seam_step_ms()),
-                opt(r.drift_ms()),
-                opt(r.peak_r_pre),
-                opt(r.peak_r_post),
-                opt(r.uniqueness_margin),
-                opt(r.residual_headroom_db),
-                optb(r.residual_informative),
-                r.skew,
-            );
+                r.verdict.as_deref().unwrap_or(""),
+                r.outcome_tier.as_deref().unwrap_or(""),
+                &r.patched().to_string(),
+                &opt(r.frac_lag_pre_ms),
+                &opt(r.frac_lag_post_ms),
+                &opt(r.seam_mid_ms()),
+                &opt(r.seam_step_ms()),
+                &opt(r.drift_ms()),
+                &opt(r.peak_r_pre),
+                &opt(r.peak_r_post),
+                &opt(r.uniqueness_margin),
+                &opt(r.residual_headroom_db),
+                &optb(r.residual_informative),
+                &format!("{:?}", r.skew),
+            ])
+            .expect("csv row");
         }
-        s
+        let bytes = wtr.into_inner().expect("csv flush");
+        String::from_utf8(bytes).expect("csv utf8")
     }
 
     /// **Golden baseline for the perf §4 decision-invariance harness.** See [`crate::golden_baseline`].

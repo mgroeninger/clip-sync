@@ -2,15 +2,12 @@
 
 use std::path::Path;
 
-use clip_sync::{
-    AlignVideosRequest, AlignmentResult, ClipLabel, ClipMatch, ProgressReporter,
-    SymphoniaMediaReader, TimelineOverlap,
-};
+use clip_sync::SymphoniaMediaReader;
 
 use crate::NoOpProgressReporter;
+use crate::test_align::{oracle_injected_alignment, zero_offset_alignment, NeverCalledAligner};
 
 use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
-use clip_sync_repair::application::ports::Aligner;
 use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::{GapReport, GapSignatureMode};
@@ -216,102 +213,6 @@ pub fn production_weight_sweep_config(
         // Sweep controls the actual bias for both modes (coupling-neutral).
         fill_fit_energy_nominal_bias_scale: nominal_bias_scale,
         ..production_repair_config(gap_signature_mode, gap_signature_context_secs)
-    }
-}
-
-struct NeverCalledAligner;
-
-impl Aligner for NeverCalledAligner {
-    fn align(
-        &self,
-        _: AlignVideosRequest,
-        _: &dyn ProgressReporter,
-    ) -> Result<AlignmentResult, clip_sync::AppError> {
-        unreachable!("energy production corpus uses scan_after_alignment directly")
-    }
-}
-
-/// Scan path: single start clip + overlap (aligner not invoked).
-fn zero_offset_alignment(duration_secs: f64) -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: duration_secs,
-            aligned: true,
-            offset_secs: Some(0.0),
-            confidence: 0.95,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: None,
-            video_b_window_start_secs: None,
-            video_b_window_end_secs: None,
-        }],
-        start_aligned: true,
-        end_aligned: None,
-        recommended_offset_secs: Some(0.0),
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: Some(TimelineOverlap {
-            video_a_start_secs: 0.0,
-            video_a_end_secs: duration_secs,
-            video_b_start_secs: 0.0,
-            video_b_end_secs: duration_secs,
-            shared_length_secs: duration_secs,
-        }),
-        high_rate_refinement: None,
-        offset_verification: None,
-        offset_ambiguous_mod_secs: None,
-        alignment_mode_used: None,
-        query_localization: None,
-        end_clip_anchor: None,
-    }
-}
-
-/// I1-style injected report: zero drift, start + end clips (matches integration oracle).
-fn oracle_injected_alignment(timeline_secs: f64) -> AlignmentResult {
-    let half = timeline_secs / 2.0;
-    AlignmentResult {
-        clips: vec![
-            ClipMatch {
-                label: ClipLabel::Start,
-                window_start_secs: 0.0,
-                window_end_secs: half,
-                aligned: true,
-                offset_secs: Some(0.0),
-                confidence: 0.95,
-                video_a_decode_skips: 0,
-                video_b_decode_skips: 0,
-                repetition: None,
-                video_b_window_start_secs: None,
-                video_b_window_end_secs: None,
-            },
-            ClipMatch {
-                label: ClipLabel::End,
-                window_start_secs: half,
-                window_end_secs: timeline_secs,
-                aligned: true,
-                offset_secs: Some(0.0),
-                confidence: 0.95,
-                video_a_decode_skips: 0,
-                video_b_decode_skips: 0,
-                repetition: None,
-                video_b_window_start_secs: None,
-                video_b_window_end_secs: None,
-            },
-        ],
-        start_aligned: true,
-        end_aligned: Some(true),
-        recommended_offset_secs: Some(0.0),
-        offsets_consistent: false,
-        offset_drift_secs: Some(0.0),
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-        offset_ambiguous_mod_secs: None,
-        alignment_mode_used: None,
-        query_localization: None,
-        end_clip_anchor: None,
     }
 }
 

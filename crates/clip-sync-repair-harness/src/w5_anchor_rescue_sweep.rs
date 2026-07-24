@@ -194,28 +194,59 @@ pub const SWEEP_CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,b_s
 joint_winner,nominal_min,baseline_min,max_bracket_min,anchor_seam_would_run,bracket_count,\
 passing_bracket_count,wall_ms";
 
+const SWEEP_CSV_FIELDS: &[&str] = &[
+    "peak_offset_secs",
+    "fill_border_search_secs",
+    "b_shift_secs",
+    "regime",
+    "joint_winner",
+    "nominal_min",
+    "baseline_min",
+    "max_bracket_min",
+    "anchor_seam_would_run",
+    "bracket_count",
+    "passing_bracket_count",
+    "wall_ms",
+];
+
 fn opt(value: Option<f64>) -> String {
     value.map(|v| format!("{v:.4}")).unwrap_or_default()
 }
 
-/// One CSV row for a cell.
+/// One CSV row for a cell (RFC 4180 via the `csv` crate).
 pub fn sweep_csv_row(cell: &W5SweepCell) -> String {
+    let mut wtr = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(Vec::new());
+    write_sweep_row(&mut wtr, cell);
+    let bytes = wtr.into_inner().expect("csv flush");
+    let mut s = String::from_utf8(bytes).expect("csv utf8");
+    if s.ends_with('\n') {
+        s.pop();
+        if s.ends_with('\r') {
+            s.pop();
+        }
+    }
+    s
+}
+
+fn write_sweep_row<W: std::io::Write>(wtr: &mut csv::Writer<W>, cell: &W5SweepCell) {
     let s = &cell.eval.scores;
-    format!(
-        "{:.3},{:.3},{:.3},{},{},{:.4},{:.4},{},{},{},{},{}",
-        s.cell.peak_offset_secs,
-        s.cell.fill_border_search_secs,
-        s.cell.effective_b_shift_secs(),
-        cell.regime.as_str(),
+    wtr.write_record([
+        format!("{:.3}", s.cell.peak_offset_secs),
+        format!("{:.3}", s.cell.fill_border_search_secs),
+        format!("{:.3}", s.cell.effective_b_shift_secs()),
+        cell.regime.as_str().to_string(),
         joint_winner_label(cell.eval.joint_winner),
-        s.nominal_pre.min(s.nominal_post),
-        s.baseline_min(),
+        format!("{:.4}", s.nominal_pre.min(s.nominal_post)),
+        format!("{:.4}", s.baseline_min()),
         opt(s.max_bracket_min()),
-        cell.eval.anchor_seam_would_run,
-        s.brackets.len(),
-        s.passing_bracket_count(),
-        s.wall_ms,
-    )
+        cell.eval.anchor_seam_would_run.to_string(),
+        s.brackets.len().to_string(),
+        s.passing_bracket_count().to_string(),
+        s.wall_ms.to_string(),
+    ])
+    .expect("csv row");
 }
 
 /// Render the full sweep CSV (header + one row per cell, sorted by `(offset, search)`).
@@ -225,13 +256,13 @@ pub fn sweep_csv(cells: &[W5SweepCell]) -> String {
         (key(a.peak_offset_secs()), key(a.fill_border_search_secs()))
             .cmp(&(key(b.peak_offset_secs()), key(b.fill_border_search_secs())))
     });
-    let mut out = String::from(SWEEP_CSV_HEADER);
-    out.push('\n');
+    let mut wtr = csv::Writer::from_writer(Vec::new());
+    wtr.write_record(SWEEP_CSV_FIELDS).expect("csv header");
     for c in sorted {
-        out.push_str(&sweep_csv_row(c));
-        out.push('\n');
+        write_sweep_row(&mut wtr, c);
     }
-    out
+    let bytes = wtr.into_inner().expect("csv flush");
+    String::from_utf8(bytes).expect("csv utf8")
 }
 
 /// Write the sweep CSV to `path`.

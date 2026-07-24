@@ -554,19 +554,13 @@ pub fn validate_built_oracle(
     let gap_start = built.meta.gap_start_frame;
     let gap_end = built.meta.gap_end_frame;
     let edge = secs_to_frames(defaults.gap_interior_edge_secs, rate);
-    let (interior_start, interior_end) =
-        gap_interior_range(gap_start, gap_end, edge, samples_a.len())?;
-    let peak = samples_a[interior_start..interior_end]
-        .iter()
-        .map(|s| s.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-    if peak > built.meta.gap_interior_peak_max {
-        return Err(format!(
-            "gap interior peak {peak} exceeds max {} after encode",
-            built.meta.gap_interior_peak_max
-        ));
-    }
+    validate_gap_interior_peak(
+        &samples_a,
+        gap_start,
+        gap_end,
+        edge,
+        built.meta.gap_interior_peak_max,
+    )?;
 
     Ok(())
 }
@@ -584,7 +578,7 @@ pub fn format_label(format: FloorOracleFormat) -> &'static str {
 ///
 /// Clamps `end` to `sample_len` so a short decode round-trip returns `Err`
 /// instead of panicking on the slice.
-pub(crate) fn gap_interior_range(
+pub fn gap_interior_range(
     gap_start: usize,
     gap_end: usize,
     edge: usize,
@@ -598,6 +592,29 @@ pub(crate) fn gap_interior_range(
         ));
     }
     Ok((interior_start, interior_end))
+}
+
+/// Shared post-encode oracle check: gap interior peak must stay ≤ `peak_max`.
+pub fn validate_gap_interior_peak(
+    samples: &[i16],
+    gap_start: usize,
+    gap_end: usize,
+    edge: usize,
+    peak_max: u16,
+) -> Result<(), String> {
+    let (interior_start, interior_end) =
+        gap_interior_range(gap_start, gap_end, edge, samples.len())?;
+    let peak = samples[interior_start..interior_end]
+        .iter()
+        .map(|s| s.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    if peak > peak_max {
+        return Err(format!(
+            "gap interior peak {peak} exceeds max {peak_max} after encode"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

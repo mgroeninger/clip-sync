@@ -3,14 +3,14 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::Deserialize;
 use tempfile::TempDir;
 
-use clip_sync::{AlignmentResult, ClipLabel, ClipMatch, SymphoniaMediaReader, TimelineOverlap};
+use clip_sync::SymphoniaMediaReader;
 
 use crate::energy_signature_fixtures::{
     build_speech_peaks_offset_from_throat, write_pcm_wav,
 };
+use crate::test_align::{no_op_alignment, zero_offset_alignment, NeverCalledAligner};
 use crate::NoOpProgressReporter;
 
-use clip_sync_repair::application::ports::Aligner;
 use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::domain::gap::Gap;
 
@@ -649,36 +649,6 @@ pub fn write_committed_wav_fixtures() {
 
 // ── scan runner & assertions ──────────────────────────────────────────────────
 
-fn no_op_alignment() -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: 0.0,
-            aligned: false,
-            offset_secs: None,
-            confidence: 0.0,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: None,
-            video_b_window_start_secs: None,
-            video_b_window_end_secs: None,
-        }],
-        start_aligned: false,
-        end_aligned: None,
-        recommended_offset_secs: None,
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: None,
-        high_rate_refinement: None,
-        offset_verification: None,
-        offset_ambiguous_mod_secs: None,
-        alignment_mode_used: None,
-        query_localization: None,
-        end_clip_anchor: None,
-    }
-}
-
 fn build_scan_request(
     video_a: PathBuf,
     video_b: PathBuf,
@@ -801,42 +771,6 @@ pub fn write_clean_chirp_reference(dest: &Path, format_from: &Path) {
     }
 }
 
-fn patch_corpus_alignment(duration_secs: f64) -> AlignmentResult {
-    AlignmentResult {
-        clips: vec![ClipMatch {
-            label: ClipLabel::Start,
-            window_start_secs: 0.0,
-            window_end_secs: duration_secs,
-            aligned: true,
-            offset_secs: Some(0.0),
-            confidence: 0.95,
-            video_a_decode_skips: 0,
-            video_b_decode_skips: 0,
-            repetition: None,
-            video_b_window_start_secs: None,
-            video_b_window_end_secs: None,
-        }],
-        start_aligned: true,
-        end_aligned: None,
-        recommended_offset_secs: Some(0.0),
-        offsets_consistent: true,
-        offset_drift_secs: None,
-        start_overlap: Some(TimelineOverlap {
-            video_a_start_secs: 0.0,
-            video_a_end_secs: duration_secs,
-            video_b_start_secs: 0.0,
-            video_b_end_secs: duration_secs,
-            shared_length_secs: duration_secs,
-        }),
-        high_rate_refinement: None,
-        offset_verification: None,
-        offset_ambiguous_mod_secs: None,
-        alignment_mode_used: None,
-        query_localization: None,
-        end_clip_anchor: None,
-    }
-}
-
 fn patch_audio_request_from_defaults(
     report: clip_sync_repair::domain::GapReport,
 ) -> clip_sync_repair::application::PatchAudioRequest {
@@ -879,18 +813,6 @@ fn patch_audio_request_for_corpus_timing(
 }
 
 // ── integration corpus runners (called from `tests/integration_gap_corpus.rs`) ─
-
-struct NeverCalledAligner;
-
-impl Aligner for NeverCalledAligner {
-    fn align(
-        &self,
-        _: clip_sync::AlignVideosRequest,
-        _: &dyn clip_sync::ProgressReporter,
-    ) -> Result<clip_sync::AlignmentResult, clip_sync::AppError> {
-        unreachable!("corpus tests use scan_after_alignment directly")
-    }
-}
 
 /// Run scan-after-alignment expectations for every non-ignored manifest case in `tier`.
 pub fn run_gap_corpus_manifest_cases(tier: GapCorpusTier) {
@@ -979,7 +901,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
 
         let scan_request =
             build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
-        let alignment = patch_corpus_alignment(duration_secs);
+        let alignment = zero_offset_alignment(duration_secs);
         let report = scan
             .scan_after_alignment(scan_request, alignment)
             .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
@@ -1062,7 +984,7 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
         let scan_request =
             build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
         let report = scan
-            .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
+            .scan_after_alignment(scan_request, zero_offset_alignment(duration_secs))
             .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
             .report;
 
@@ -1155,7 +1077,7 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
     let duration_secs = frames as f64 / f64::from(sample_rate);
     let scan_request = build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
     let report = scan_gaps
-        .scan_after_alignment(scan_request, patch_corpus_alignment(duration_secs))
+        .scan_after_alignment(scan_request, zero_offset_alignment(duration_secs))
         .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))
         .report;
 

@@ -21,5 +21,11 @@ pub mod gap_cell_fixtures;
 pub mod energy_signature_production;
 pub mod gap_corpus_fixtures;
 pub mod patch_geometry_preview;
+pub mod test_align;
 pub mod w5_anchor_rescue_diag;
 pub mod w5_timing_offset_diag;
+
+pub use test_align::{
+    no_op_alignment, oracle_injected_alignment, start_clip_alignment, zero_offset_alignment,
+    NeverCalledAligner,
+};

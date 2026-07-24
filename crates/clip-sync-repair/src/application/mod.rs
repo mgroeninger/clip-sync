@@ -13,8 +13,13 @@ pub mod ports;
 pub mod repair_videos;
 pub mod run_repair;
 pub mod scan_gaps;
+#[doc(hidden)]
+pub mod test_support;
 
 pub use error::RepairError;
-pub use patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
+pub use patch_audio::{
+    FillWindowFrames, PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings,
+};
 pub use repair_videos::{RepairVideos, RepairWriteRequest};
 pub use scan_gaps::{ScanGaps, ScanGapsRequest};
+pub use test_support::NeverCalledAligner;
