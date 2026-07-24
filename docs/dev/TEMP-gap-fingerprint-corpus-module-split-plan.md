@@ -1,14 +1,15 @@
 # `gap_fingerprint_corpus.rs` module split — plan
 
-Status: **P1 done (2026-07-23)** — `schema.rs` extracted; analysis + report still in the (still-named)
-`gap_fingerprint_corpus.rs` parent, which now carries `mod schema;` + facade re-exports. P2/P3 pending.
-Target tree:
+Status: **P1+P2 done (2026-07-23)** — `schema.rs` and `analysis.rs` extracted; the (still-named)
+`gap_fingerprint_corpus.rs` parent now holds `mod schema; mod analysis;` + facade re-exports and carries
+only the report concern (`CorpusReport` + formatters) plus the cross-cutting integration tests. P3 (extract
+`report.rs`) then P4 (rename parent → `mod.rs`) pending. Target tree:
 
 ```text
 gap_fingerprint_corpus/
   mod.rs              # thin facade; stable `clip_sync_repair_harness::gap_fingerprint_corpus::*`
   schema.rs           # ~414 lines — taxonomy + thresholds + GapRow (DONE)
-  analysis.rs         # ~640 lines — JSON projection + dir walk, gap_row, analyze_dirs, curated/env
+  analysis.rs         # ~666 lines — JSON projection + dir walk, gap_row, analyze_dirs, curated/env (DONE)
   report.rs           # ~900 lines — CorpusReport + summary/CSV/golden text
 ```
 
@@ -108,8 +109,8 @@ as today).
 | Phase | Module | Status | Notes |
 |-------|--------|--------|-------|
 | **P1** | `schema.rs` | **Done (2026-07-23)** | Moved taxonomy enums + thresholds + `GapRow` (+ its `impl`). Deserialize projection deliberately left with analysis (see deviation note). No GapRow-only tests needed relocating — the two GapRow-focused tests (`splice_diag_uses_peak_z_when_present`, `dualfit_target_scopes_…`) still pass via the facade and can move to `schema.rs`'s `#[cfg(test)]` in a later tidy. Build/clippy/lib tests green; `clip-sync-repair --all-targets` green (facade intact). |
-| **P2** | `analysis.rs` | Pending | Move Deserialize projection + I/O + `gap_row` + `analyze_dirs` + curated/env. Colocate aggregation / hygiene tests that call `analyze_dirs`. |
-| **P3** | `report.rs` | Pending | Move `CorpusReport` + formatting + report helpers. Leave formatting-only tests here if any are split out; otherwise keep with analysis if they assert via `analyze_dirs` + `summary_text`. |
+| **P2** | `analysis.rs` | **Done (2026-07-23)** | Moved the Deserialize projection (`CorpusFile`…`Outcome`, fully private) + `DEFAULT_*` consts + I/O (`pair_dirs`/`read_pair`/`read_corpus_json`) + `gap_row` + seam helpers + `analyze_dirs` + curated/env. Imports `super::schema::{taxonomy, SEAM_* consts}` + `super::CorpusReport`. The integration tests (`analyze_dirs` → `summary_text`/`csv`) touch only the public surface, so they **stayed in the parent** (they span analysis + report — the plan's "split only when a test clearly belongs with one submodule"). Parent dropped `serde` + `std::path` at top level (`Path` now imported inside `mod tests`); `use schema::{…}` trimmed to the five report-side consts. Build/clippy/lib tests green; `clip-sync-repair --all-targets` green. |
+| **P3** | `report.rs` | Pending | Move `CorpusReport` + formatting + report helpers (`pct`/`stats`/`linfit`/`quantization_residual`) + `CLEAN_STEP_MS`. Parent becomes thin facade + the cross-cutting integration tests (or move those to a `tests/` integration file). |
 | **P4** | Thin `mod.rs` only | Pending | Delete the monolith file; `lib.rs` keeps `pub mod gap_fingerprint_corpus;` (now a directory). |
 
 **Suggested order rationale.** Schema first (no sibling deps), then analysis (needs schema +
