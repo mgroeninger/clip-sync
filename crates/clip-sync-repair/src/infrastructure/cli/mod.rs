@@ -65,6 +65,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
         config.repair.output.video_path = Some(mux_path.clone());
         config.repair.dry_run = false;
     }
+    if args.repair_preview {
+        config.repair.repair_preview = true;
+    }
     if args.no_normalize {
         config.repair.normalize_fill = false;
     }
@@ -241,6 +244,26 @@ fn resolve_cli_profile(args: &Args) -> Option<RepairProfile> {
 pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     if args.quick && args.full {
         return Err("cannot use --quick and --full together".into());
+    }
+    Ok(())
+}
+
+/// `--repair-preview` cannot combine with write outputs.
+pub(crate) fn validate_repair_preview_flags(args: &Args) -> Result<(), String> {
+    if !args.repair_preview {
+        return Ok(());
+    }
+    if args.wav.is_some() {
+        return Err("cannot use --repair-preview with --wav".into());
+    }
+    #[cfg(feature = "ffmpeg-mux")]
+    if args.mux.is_some() {
+        return Err("cannot use --repair-preview with --mux".into());
+    }
+    #[cfg(not(feature = "ffmpeg-mux"))]
+    if args.mux.is_some() {
+        // Still reject the combo when the binary lacks mux support (mux itself errors later).
+        return Err("cannot use --repair-preview with --mux".into());
     }
     Ok(())
 }
@@ -499,6 +522,33 @@ mod cli_override_tests {
                 && err.to_string().contains("full"),
             "unexpected clap error: {err}"
         );
+    }
+
+    #[test]
+    fn repair_preview_with_wav_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--repair-preview",
+            "--wav",
+            "out.wav",
+        ]);
+        let err = validate_repair_preview_flags(&args).unwrap_err();
+        assert!(err.contains("--repair-preview") && err.contains("--wav"));
+    }
+
+    #[test]
+    fn repair_preview_cli_sets_config_flag() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--repair-preview"]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(config.repair.repair_preview);
+        validate_repair_preview_flags(&args).expect("preview alone is valid");
     }
 
     #[cfg(feature = "calibration")]

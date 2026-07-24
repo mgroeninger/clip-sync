@@ -103,6 +103,12 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub mux: Option<PathBuf>,
 
+    /// Characterize planned gaps with the production patch gate and report would-be patch/skip
+    /// decisions without splicing or writing files (pass-1 only; no anchored retry). Mutually
+    /// exclusive with `--wav` / `--mux`. Not the same as `--gap-fingerprints` (fingerprint `any_ok`).
+    #[arg(long)]
+    pub repair_preview: bool,
+
     /// Disable loudness normalization of fill segments [default: normalization enabled].
     #[arg(long)]
     pub no_normalize: bool,

@@ -1165,6 +1165,87 @@ pub(super) fn skip_outcome_from_spec(spec: &GapRepairSpec) -> RegionPatchOutcome
     }
 }
 
+/// Reproduce the [`RegionPatchOutcome::Patched`] the executor would emit for a `Patch`-verdict spec —
+/// decision fields only, no PCM assembly. Used by `--repair-preview` (characterize without execute).
+pub(super) fn patched_outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> RegionPatchOutcome {
+    match &spec.verdict {
+        GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
+            alignment,
+            structure_start_frame,
+            structure_trusted,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
+            seam_pre,
+            seam_post,
+            confidence,
+            gap_start_adjust_frames,
+            gap_end_adjust_frames,
+            fit_used_boundary_grid,
+            fit_boundary_grid_cells,
+            residual,
+            ..
+        }) => {
+            let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
+            let structure_slide_secs = (*structure_start_frame as f64 - offset_nominal_start as f64)
+                / sample_rate as f64;
+            let waveform_slide_secs = (alignment.start_frame as f64 - *structure_start_frame as f64)
+                / sample_rate as f64;
+            RegionPatchOutcome::Patched {
+                pre_correlation: *seam_pre,
+                post_correlation: *seam_post,
+                align_adjustment_secs: structure_slide_secs + waveform_slide_secs,
+                waveform_adjustment_secs: waveform_slide_secs,
+                structure_trusted: *structure_trusted,
+                confidence: *confidence,
+                gap_start_adjust_frames: *gap_start_adjust_frames,
+                gap_end_adjust_frames: *gap_end_adjust_frames,
+                fit_used_boundary_grid: *fit_used_boundary_grid,
+                fit_boundary_grid_cells: *fit_boundary_grid_cells,
+                residual: *residual,
+                anchor_seam_used: *anchor_seam_used,
+                anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                dual_fit_used: false,
+            }
+        }
+        GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+            pre_seam_r,
+            post_seam_r,
+            residual,
+            confidence,
+            ..
+        }) => RegionPatchOutcome::Patched {
+            pre_correlation: *pre_seam_r,
+            post_correlation: *post_seam_r,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: *confidence,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: *residual,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            dual_fit_used: true,
+        },
+        GapRepairVerdict::Skip { .. } => {
+            unreachable!("patched_outcome_from_spec called on a Skip-verdict spec")
+        }
+    }
+}
+
+/// Decision-only outcome from a characterization (preview / report path — no PCM).
+pub(super) fn outcome_from_characterization(
+    characterization: &RegionCharacterization,
+    sample_rate: u32,
+) -> RegionPatchOutcome {
+    match characterization {
+        RegionCharacterization::Patch { spec, .. } => patched_outcome_from_spec(spec, sample_rate),
+        RegionCharacterization::Skip(spec) => skip_outcome_from_spec(spec),
+    }
+}
+
 /// Adapt a `seam_failure_outcome` result (always a `Skipped`) into a [`DualFitDecision::Skipped`] so
 /// `finalize_dual_fit` can wrap it into a `Skip`-verdict spec with the region geometry (8d).
 fn dual_fit_skipped(outcome: RegionPatchOutcome) -> DualFitDecision {
@@ -1955,13 +2036,11 @@ pub(super) fn characterize_region(
 /// **Region-infallible:** exactly one spec per region, every failure folded into a `Skip` verdict (§2.5.7 #3),
 /// so `specs.len() == regions.len()`. Drops the executor/reporting extras (`bracket_fill` /
 /// `GapTagsPatchContext`) — this yields the repair *decisions* without executing PCM. First-pass anchors only
-/// (pass-2 anchored retry re-characterizes from the specs, §2.5.5).
+/// (pass-2 anchored retry is out of scope for this helper; production preview is `PatchAudio::preview`).
 ///
-/// **Role (re-scoped by the pre-flip review, 2026-07-10):** the scan-only **repair-preview** building block
-/// (§2.5.5 "run characterize without execute"). It is **NOT** on the fingerprint-dump path — the dump keeps
-/// fingerprint `any_ok` semantics (from `compute_region_measurements`), whereas this runs the production patch
-/// gate, which diverges on residual-veto. Shadow (`#[allow(dead_code)]`) until a preview consumer wires it.
-#[allow(dead_code)] // shadow: no consumer yet (repair-preview building block, not the dump)
+/// Test-only: production `--repair-preview` runs the same loop inside `PatchAudio::preview` (with progress /
+/// plan wiring). Kept here to pin region-infallible + disposition parity against `prepare_region_patch`.
+#[cfg(test)]
 fn characterize_all_regions(
     progress: &dyn ProgressReporter,
     media: &RegionPatchMedia<'_>,
@@ -2126,7 +2205,7 @@ pub(super) fn splice_into_a(
 mod tests {
     use super::{
         dual_fit_eligible, measure_dual_fit_residual_verdict, DualFitRepairInput, PatchAudioRequest,
-        RegionPatchOutcome, SeamGateFailure,
+        SeamGateFailure,
     };
     use crate::domain::gap::GapReport;
     use crate::domain::gap_fill_fit::{fit_fill_to_gap_frames, FillConfidence};
@@ -2139,8 +2218,9 @@ mod tests {
     #[test]
     fn characterize_all_regions_yields_one_consistent_spec_per_region() {
         use super::{
-            characterize_all_regions, prepare_region_patch, AnchoredRetryPass, GapRepairVerdict,
-            RegionPatchContext, RegionPatchMedia, RegionPatchOpts,
+            characterize_all_regions, patched_outcome_from_spec, prepare_region_patch,
+            skip_outcome_from_spec, AnchoredRetryPass, GapRepairVerdict, RegionPatchContext,
+            RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
         };
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -2255,6 +2335,17 @@ mod tests {
                 matches!(outcome, RegionPatchOutcome::Skipped { .. }),
                 "Skip verdict ⟺ Skipped outcome",
             );
+            // Preview path: decision-only outcomes match the executor's dispositions (pass-1).
+            let preview_outcome = if is_patch {
+                patched_outcome_from_spec(spec, rate)
+            } else {
+                skip_outcome_from_spec(spec)
+            };
+            match (&preview_outcome, &outcome) {
+                (RegionPatchOutcome::Patched { .. }, RegionPatchOutcome::Patched { .. })
+                | (RegionPatchOutcome::Skipped { .. }, RegionPatchOutcome::Skipped { .. }) => {}
+                _ => panic!("preview disposition diverged from execute for region"),
+            }
         }
     }
 

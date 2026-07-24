@@ -40,6 +40,7 @@ fn format_human(
     patch_result: Option<&PatchAudioResult>,
     show_diagnostics: bool,
     output_written: Option<&Path>,
+    repair_preview: bool,
 ) -> String {
     let mut out = String::new();
     let align = AlignmentReport::from(alignment_detail);
@@ -187,7 +188,12 @@ fn format_human(
     }
 
     out.push('\n');
-    out.push_str(&format_unified_gap_report(report, patch, show_diagnostics));
+    out.push_str(&format_unified_gap_report(
+        report,
+        patch,
+        show_diagnostics,
+        repair_preview,
+    ));
 
     if let Some(path) = output_written {
         out.push_str(&format!("\nOutput: {}\n", path.display()));
@@ -200,13 +206,14 @@ pub fn format_unified_gap_report(
     report: &GapReport,
     patch: Option<&PatchSummary>,
     show_diagnostics: bool,
+    repair_preview: bool,
 ) -> String {
     if report.gaps.is_empty() {
         return "No gaps detected in video A.\n".into();
     }
 
     let mut out = String::new();
-    out.push_str(&format_unified_gap_header(report, patch));
+    out.push_str(&format_unified_gap_header(report, patch, repair_preview));
     if let Some(summary_line) = patch.and_then(|summary| format_patch_duration_summary(report, summary))
     {
         out.push_str(&summary_line);
@@ -409,7 +416,11 @@ fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Op
     Some(format!("           {}\n", parts.join("; ")))
 }
 
-fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -> String {
+fn format_unified_gap_header(
+    report: &GapReport,
+    patch: Option<&PatchSummary>,
+    preview: bool,
+) -> String {
     let found = report.gaps.len();
     if let Some(summary) = patch {
         let marginal_note = if summary.patched_marginal_count > 0 {
@@ -417,6 +428,14 @@ fn format_unified_gap_header(report: &GapReport, patch: Option<&PatchSummary>) -
         } else {
             String::new()
         };
+        if preview {
+            return format!(
+                "Gaps in video A ({found} found, {} would repair{marginal_note}, {} would skip, {} unfillable — repair preview, no write):\n",
+                summary.patched_count,
+                summary.skipped_count,
+                summary.not_planned_count,
+            );
+        }
         return format!(
             "Gaps in video A ({found} found, {} repaired{marginal_note}, {} skipped, {} unfillable):\n",
             summary.patched_count,
@@ -610,7 +629,7 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         query_localization: None,
         end_clip_anchor: None,
     };
-    print!("{}", format_human(report, &alignment, None, None, false, None));
+    print!("{}", format_human(report, &alignment, None, None, false, None, false));
     Ok(())
 }
 
@@ -713,6 +732,7 @@ pub fn print_repair_output(
     format: OutputFormat,
     show_diagnostics: bool,
     output_written: Option<&Path>,
+    repair_preview: bool,
 ) -> Result<(), RepairError> {
     match format {
         OutputFormat::Human => {
@@ -725,6 +745,7 @@ pub fn print_repair_output(
                     patch_result,
                     show_diagnostics,
                     output_written,
+                    repair_preview,
                 )
             );
             Ok(())
@@ -1102,7 +1123,7 @@ mod tests {
             vec![classify_gap_equivalence(Some(-108.0), Some(-46.0), Some(1.0), &on)];
 
         // Scan-only (no patch summary): the advisory tag appears.
-        let text = super::format_unified_gap_report(&report, None, false);
+        let text = super::format_unified_gap_report(&report, None, false, false);
         assert!(
             text.contains("[equiv: shared-silence → drop]"),
             "scan table should show the classification:\n{text}"
@@ -1111,12 +1132,12 @@ mod tests {
         // Repairable dropout renders its own tag.
         report.gap_equivalence =
             vec![classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on)];
-        let text = super::format_unified_gap_report(&report, None, false);
+        let text = super::format_unified_gap_report(&report, None, false, false);
         assert!(text.contains("[equiv: dropout]"), "{text}");
 
         // Not-evaluated (empty) ⇒ no tag, table stays clean.
         report.gap_equivalence = Vec::new();
-        let text = super::format_unified_gap_report(&report, None, false);
+        let text = super::format_unified_gap_report(&report, None, false, false);
         assert!(!text.contains("[equiv:"), "{text}");
     }
 
@@ -1349,7 +1370,7 @@ mod tests {
         let mut report = minimal_report();
         report.alignment = scan_alignment_from_result(&alignment_detail);
 
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(text.contains("Start clip: -10.956s"));
         assert!(text.contains("End clip: -11.200s"));
         assert!(text.contains("Drift:"));
@@ -1372,7 +1393,7 @@ mod tests {
             agrees: true,
         });
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(text.contains("Cross-chk"), "expected cross-check line");
         assert!(text.contains("AGREE"));
         assert!(!text.contains("WARNING"));
@@ -1389,7 +1410,7 @@ mod tests {
             agrees: false,
         });
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(text.contains("MISMATCH"));
         assert!(text.contains("WARNING"));
     }
@@ -1397,7 +1418,7 @@ mod tests {
     #[test]
     fn human_failed_alignment_notes_b_mapping_skipped() {
         let (report, alignment_detail) = failed_alignment_report();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(
             text.contains("B timeline mapping skipped"),
             "expected B mapping skipped note in human output"
@@ -1449,7 +1470,7 @@ mod tests {
         ];
 
         let alignment_detail = minimal_alignment_detail();
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(text.contains("0 repairable"));
         assert!(text.contains("fill blocked by track layout"));
         assert!(text.contains("blocked (track layout)"));
@@ -1482,7 +1503,7 @@ mod tests {
             },
         )]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         assert!(text.contains("1 found, 1 repaired, 0 skipped, 0 unfillable"));
         assert!(text.contains("patched (struct 0.98→1.00)"));
         assert!(!text.contains("Patch results"));
@@ -1538,7 +1559,7 @@ mod tests {
             0.0, 60.0, status, tags.clone(),
         )]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         assert!(text.contains("! patched (anchor 0.31→0.29)"));
         assert!(text.contains("[anchor trusted"));
         assert!(tags.anchor_seam_used);
@@ -1614,7 +1635,7 @@ mod tests {
             0.0, 60.0, status, tags.clone(),
         )]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         assert!(text.contains("! patched (dual-fit 0.31→0.29)"));
         assert!(tags.dual_fit_used);
 
@@ -1660,7 +1681,7 @@ mod tests {
             },
         )]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), true);
+        let text = super::format_unified_gap_report(&report, Some(&summary), true, false);
         assert!(text.contains("struct pre=0.92 post=0.90 slide=+0.010s"));
         assert!(text.contains("[high · balanced]"));
     }
@@ -1683,7 +1704,7 @@ mod tests {
             },
         )]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         assert!(text.contains("skipped: boundary correlation below threshold"));
         assert!(text.contains("[hard skip · post-strong]"));
     }
@@ -1699,6 +1720,7 @@ mod tests {
             None,
             false,
             Some(std::path::Path::new("out/repaired.mp4")),
+            false,
         );
         assert!(text.contains("Output: out/repaired.mp4"));
     }
@@ -1797,7 +1819,7 @@ mod tests {
             ),
         ]);
 
-        let text = super::format_human(&report, &alignment_detail, Some(&summary), None, false, None);
+        let text = super::format_human(&report, &alignment_detail, Some(&summary), None, false, None, false);
         assert!(text.contains("alignment unstable"));
         assert!(text.contains("review gap #2"));
         assert!(text.contains("repaired 2.0s of audio"));
@@ -1805,7 +1827,7 @@ mod tests {
         assert!(text.contains(">2 "));
         assert!(text.contains("231.7s!"));
 
-        let verbose = super::format_human(&report, &alignment_detail, Some(&summary), None, true, None);
+        let verbose = super::format_human(&report, &alignment_detail, Some(&summary), None, true, None, false);
         assert!(verbose.contains("End anchor: shared timeline"));
         assert!(verbose.contains("End clip A"));
     }
@@ -1875,7 +1897,7 @@ mod tests {
             ),
         ]);
 
-        let text = super::format_unified_gap_report(&report, Some(&summary), false);
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         let patched_pos = text.find("patched (struct").expect("patched row");
         let unfillable_pos = text.find("-2 ").expect("unfillable marker");
         let skipped_pos = text.find(">3 ").expect("skipped marker");
@@ -1911,7 +1933,7 @@ mod tests {
             delta_secs: 4.9,
         });
 
-        let text = super::format_human(&report, &alignment_detail, None, None, false, None);
+        let text = super::format_human(&report, &alignment_detail, None, None, false, None, false);
         assert!(text.contains("overlap starts at 5.0s"));
         assert!(text.contains("timeline mismatch on video A"));
     }

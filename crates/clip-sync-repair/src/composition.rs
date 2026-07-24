@@ -9,14 +9,16 @@ use clip_sync::{ProgressReporter, SymphoniaMediaReader};
 use crate::application::error::RepairError;
 #[cfg(feature = "calibration")]
 use crate::application::patch_audio::decode_ab;
-use crate::application::run_repair::{PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair};
+use crate::application::run_repair::{
+    PendingRepairPreview, PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair,
+};
 #[cfg(feature = "calibration")]
 use crate::domain::GapReport;
 use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::cli::{
     self, args::Args, exit_code::exit_code_for, output::print_repair_output,
-    validate_fingerprint_flags, validate_repair_profile_flags,
+    validate_fingerprint_flags, validate_repair_preview_flags, validate_repair_profile_flags,
 };
 use crate::infrastructure::config::RepairAppConfig;
 use crate::infrastructure::wav_writer::WavPatchedAudioWriter;
@@ -50,6 +52,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     let mut config = crate::infrastructure::config::load_repair_app_config(args.config.as_deref())
         .map_err(RepairError::Align)?;
     validate_repair_profile_flags(&args).map_err(RepairError::Config)?;
+    validate_repair_preview_flags(&args).map_err(RepairError::Config)?;
     validate_fingerprint_flags(&args).map_err(RepairError::Config)?;
     cli::apply_cli_overrides(&mut config, &args);
     validate_config(&config)?;
@@ -146,22 +149,36 @@ pub fn repair_run_input(
     video_a: PathBuf,
     video_b: PathBuf,
 ) -> Result<RepairRunInput, RepairError> {
+    let scan = ScanGapsRequest {
+        video_a: video_a.clone(),
+        video_b,
+        align: config.align.clone(),
+        decode_chunk_secs: config.repair.decode_chunk_secs,
+        scan_block_secs: config.repair.scan_block_secs(),
+        silence_peak_fraction: config.repair.silence_peak_fraction,
+        absolute_silence_rms: config.repair.absolute_silence_rms,
+        silence_hold_blocks: config.repair.silence_hold_blocks(),
+        min_gap_secs: config.repair.min_gap_secs(),
+        scan_both: config.repair.scan_both,
+        gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
+        limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
+    };
+
+    if config.repair.repair_preview {
+        return Ok(RepairRunInput {
+            scan,
+            write: None,
+            preview: Some(PendingRepairPreview {
+                patch_settings: config.repair.patch_settings(),
+                crossfade_ms: config.repair.crossfade_ms,
+            }),
+        });
+    }
+
     Ok(RepairRunInput {
-        scan: ScanGapsRequest {
-            video_a: video_a.clone(),
-            video_b,
-            align: config.align.clone(),
-            decode_chunk_secs: config.repair.decode_chunk_secs,
-            scan_block_secs: config.repair.scan_block_secs(),
-            silence_peak_fraction: config.repair.silence_peak_fraction,
-            absolute_silence_rms: config.repair.absolute_silence_rms,
-            silence_hold_blocks: config.repair.silence_hold_blocks(),
-            min_gap_secs: config.repair.min_gap_secs(),
-            scan_both: config.repair.scan_both,
-            gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
-            limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
-        },
+        scan,
         write: pending_repair_write(config, video_a)?,
+        preview: None,
     })
 }
 
@@ -279,6 +296,7 @@ fn print_repair_outcome(
         args.format,
         args.verbose,
         output_written,
+        config.repair.repair_preview,
     )?;
 
     outcome.patch_result.map(|_| ())

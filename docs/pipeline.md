@@ -16,18 +16,21 @@ The `clip-sync-repair` execution pipeline, phase by phase, with the reference do
 | **4** | **Per-gap patch** | Unified fit (or gate) placement → seam tiers → optional anchor seam / boundary grid → residual gate → splice | [gap-repair-guide.md](gap-repair-guide.md), [gap-fill-modes.md](gap-fill-modes.md), [seam-scoring.md](seam-scoring.md) | `application/patch_region.rs`, `domain/gap_fill_fit.rs`, `gap_structure.rs`, `gap_energy.rs`, `domain/gap_anchor_seam.rs` |
 | **5** | **Write / mux** | Write patched WAV / mux into A's container via ffmpeg | README § Write output, [cli-output.md](cli-output.md) § Timeline warnings | `application/repair_videos.rs`, `infrastructure/ffmpeg_mux.rs` |
 
-Phases **1–2** always run. Phases **3–5** run only in **write mode** (see [Orchestration](#orchestration-scan-only-vs-write-mode) below).
+Phases **1–2** always run. Phases **3–5** run in **write mode**; phases **3–4** (pass-1 characterize) also run under **`--repair-preview`** (see [Orchestration](#orchestration-scan-only-vs-write-mode-vs-repair-preview) below).
 
 For the architectural view (crates, hexagonal layers, ports), see [PLAN.md](../PLAN.md).
 
 ---
 
-## Orchestration: scan-only vs write mode
+## Orchestration: scan-only vs write mode vs repair preview
 
 The five phases above are the **logical** execution order. The **binary** wires them in two steps (`application/run_repair.rs`):
 
 ```text
 ScanGaps (align + scan)  →  GapReport
+       │
+       ├── when --repair-preview:
+       │     PatchAudio::preview (fill plan + decode + pass-1 characterize) → patch summary, no splice/write
        │
        └── when --wav / --mux (dry_run = false):
              RepairVideos → PatchAudio (fill plan + per-gap patch + splice) → write WAV / mux
@@ -35,12 +38,15 @@ ScanGaps (align + scan)  →  GapReport
 
 | Mode | Trigger | What runs | Output |
 |------|---------|-----------|--------|
-| **Scan-only** (default) | `dry_run = true`, no `--wav` / `--mux` | Phases **1–2** only | `GapReport` on stdout (alignment + gaps + fillability signal) |
+| **Scan-only** (default) | `dry_run = true`, no `--wav` / `--mux` / `--repair-preview` | Phases **1–2** only | `GapReport` on stdout (alignment + gaps + fillability signal) |
+| **Repair preview** | `--repair-preview` | Phases **1–4** (pass-1 characterize only; no anchored retry, splice, or file write) | Gap report + would-be patch/skip summary (production gate) |
 | **Write mode** | `--wav` and/or `--mux` | Phases **1–5** | Patched file(s) + full patch summary in the report |
 
-In scan-only mode, phases **3–5 never execute** — there is no `build_gap_fill_plan`, no seam scoring, no splice. Plan-time labels (`fillable`, `unfillable`, `not planned: …`) are still readable from the scan report via `Gap::is_fillable`, `GapReport::repairable_count`, and `track_compatibility` (same rules as the fill plan, but skip reasons like `track_layout_mismatch` only appear in the patch section after a write run).
+`--repair-preview` is mutually exclusive with `--wav` / `--mux`. It is **not** `--gap-fingerprints` (that dump uses fingerprint `any_ok` semantics; preview uses the production residual-veto gate). Cost is still a full multichannel decode plus characterize — only splice/encode are skipped.
 
-Phases **3–4** are nested inside `PatchAudio::execute`, not separate use cases. **`anchored_retry` pass 2** is documented under the fill plan (offset map) but runs at the end of phase 4 after pass 1 completes.
+In scan-only mode, phases **3–5 never execute** — there is no `build_gap_fill_plan`, no seam scoring, no splice. Plan-time labels (`fillable`, `unfillable`, `not planned: …`) are still readable from the scan report via `Gap::is_fillable`, `GapReport::repairable_count`, and `track_compatibility` (same rules as the fill plan, but skip reasons like `track_layout_mismatch` only appear in the patch section after a write or preview run).
+
+Phases **3–4** are nested inside `PatchAudio::execute` / `preview`, not separate use cases. **`anchored_retry` pass 2** is documented under the fill plan (offset map) but runs at the end of phase 4 after pass 1 completes **in write mode only** (preview is pass-1 dispositions).
 
 ---
 
@@ -61,7 +67,7 @@ A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) wher
 
 ## 3. Fill plan
 
-**Write mode only.** `build_gap_fill_plan` runs as the first step of `PatchAudio::execute`. Scan-only runs skip this phase; use `GapReport::repairable_count` and per-gap `is_fillable` for the same fillability signal.
+**Write mode and `--repair-preview`.** `build_gap_fill_plan` runs as the first step of `PatchAudio::execute` / `preview`. Scan-only runs skip this phase; use `GapReport::repairable_count` and per-gap `is_fillable` for the same fillability signal.
 
 For each fillable gap, the **B offset map** translates A's gap time to a nominal location on B, governed by `fill_offset_mode`:
 
@@ -78,7 +84,7 @@ Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). Se
 
 ## 4. Per-gap patch
 
-**Write mode only.** Phase 4 detail — bracket routing, per-bracket measurement, and flag matrix — is in [gap-fill-modes.md](gap-fill-modes.md). This section is the **run-level** map; read both documents together for a complete picture.
+**Write mode and `--repair-preview`.** Phase 4 detail — bracket routing, per-bracket measurement, and flag matrix — is in [gap-fill-modes.md](gap-fill-modes.md). This section is the **run-level** map; read both documents together for a complete picture. Preview runs the same pass-1 characterize path as write, then stops (no execute / anchored retry / splice).
 
 ### `PatchAudio` run (once per write)
 

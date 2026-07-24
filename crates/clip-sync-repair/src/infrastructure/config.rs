@@ -142,6 +142,10 @@ pub struct RepairConfig {
     /// Dry-run: scan and report only; do not write any output files.
     #[serde(default = "default_true")]
     pub dry_run: bool,
+    /// Characterize planned gaps and report would-be patch/skip decisions without splice/write
+    /// (`--repair-preview`). Pass-1 only; mutually exclusive with write outputs.
+    #[serde(default)]
+    pub repair_preview: bool,
     /// When query-reference alignment is used, only treat gaps inside the mapped B coverage
     /// region as fillable (gaps outside are still reported).
     #[serde(default = "default_true")]
@@ -475,6 +479,7 @@ impl Default for RepairConfig {
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),
             dry_run: default_true(),
+            repair_preview: false,
             limit_fill_to_mapped_region: default_true(),
             fill_offset_mode: crate::domain::FillOffsetMode::default(),
             fill_mode: crate::domain::FillMode::default(),

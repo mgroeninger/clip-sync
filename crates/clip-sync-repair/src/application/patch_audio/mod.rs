@@ -32,11 +32,19 @@ use anchor_retry::{
 use geometry::repair_patch_config_view;
 use log::log_gap_tags_verbose;
 use region::{
-    characterize_region, execute_region_spec, outcomes_in_report_order, record_patch_gap_span,
-    region_outcome_gap_tags, skip_outcome_from_spec, splice_into_a,
-    RegionCharacterization, RegionPatch, RegionPatchContext, RegionPatchMedia,
-    RegionPatchOpts, RegionPatchOutcome,
+    characterize_region, execute_region_spec, outcome_from_characterization,
+    outcomes_in_report_order, record_patch_gap_span, region_outcome_gap_tags,
+    skip_outcome_from_spec, splice_into_a, RegionCharacterization, RegionPatch,
+    RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
 };
+
+/// Write = full repair (characterize → execute → optional anchored retry → splice).
+/// Preview = pass-1 characterize only; report would-be decisions without PCM write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PatchRunKind {
+    Write,
+    Preview,
+}
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
@@ -59,6 +67,25 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         &self,
         request: PatchAudioRequest,
         crossfade_ms: u64,
+    ) -> Result<PatchAudioResult, RepairError> {
+        self.run(request, crossfade_ms, PatchRunKind::Write)
+    }
+
+    /// Characterize planned gaps (pass 1 only) and return the would-be patch summary without
+    /// executing fills, anchored retry, splice, or returning PCM. Same production gate as write.
+    pub fn preview(
+        &self,
+        request: PatchAudioRequest,
+        crossfade_ms: u64,
+    ) -> Result<PatchAudioResult, RepairError> {
+        self.run(request, crossfade_ms, PatchRunKind::Preview)
+    }
+
+    fn run(
+        &self,
+        request: PatchAudioRequest,
+        crossfade_ms: u64,
+        kind: PatchRunKind,
     ) -> Result<PatchAudioResult, RepairError> {
         // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy). The equivalence
         // gate drops already-equivalent gaps here (when enabled) so they never reach decode/patch.
@@ -92,8 +119,15 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             region_count = plan.regions.len(),
             fill_mode = ?request.fill_mode,
             fill_offset_mode = ?request.fill_offset_mode,
+            preview = kind == PatchRunKind::Preview,
         )
         .entered();
+
+        if kind == PatchRunKind::Preview {
+            self.progress.phase(
+                "Repair preview: characterizing gaps (no splice / write; pass-1 only)...",
+            );
+        }
 
         self.progress.phase_verbose(&format_repair_profile_verbose(
             request.profile,
@@ -132,11 +166,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             silence_peak_fraction: request.report.silence_peak_fraction,
         };
 
-        // Step 8: Collect B segments (immutable borrow on a_pcm.samples),
-        // then apply them in a separate pass (mutable borrow).
-        let mut patches: Vec<RegionPatch> = Vec::new();
-        let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
-        let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
         let region_count = plan.regions.len() as u64;
 
         self.progress
@@ -147,6 +176,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // `execute_region_spec`), byte-identical output; the per-gap tracing/progress reorders (char pass
         // then exec pass) but no tested surface (PCM/outcomes) changes. The anchored-retry (below) still
         // re-runs the `prepare_region_patch` shim on failed gaps.
+        //
+        // Preview stops after characterize: outcomes from specs, no execute / retry / splice.
         //
         // Pass 1 — characterize.
         let mut characterizations: Vec<(RegionCharacterization, GapTagsPatchContext)> =
@@ -174,7 +205,44 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             ));
         }
 
+        let thresholds = FillTierThresholds {
+            min_fill_correlation: request.min_fill_correlation,
+            fill_marginal_margin: request.fill_marginal_margin,
+            fill_absolute_floor: request.fill_absolute_floor,
+        };
+
+        if kind == PatchRunKind::Preview {
+            let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> =
+                Vec::with_capacity(plan.regions.len());
+            for ((characterization, tag_ctx), region) in
+                characterizations.into_iter().zip(plan.regions.iter())
+            {
+                let outcome =
+                    outcome_from_characterization(&characterization, region_ctx.sample_rate);
+                let tags = region_outcome_gap_tags(&outcome, tag_ctx);
+                log_gap_tags_verbose(self.progress, &tags);
+                region_results.push((region.a_start_secs, region.a_end_secs, outcome, tags));
+            }
+            let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+                &request.report.gaps,
+                &plan,
+                &region_results,
+                request.fill_mode,
+                thresholds,
+            ));
+            return Ok(PatchAudioResult {
+                pcm: None,
+                summary,
+                source_audio_bitrate_a_bps,
+                source_audio_bitrate_b_bps,
+                pcm_container_skew: None,
+            });
+        }
+
         // Pass 2 — execute patches (skips carry their outcome; nothing to run).
+        let mut patches: Vec<RegionPatch> = Vec::new();
+        let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
+        let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
         for ((characterization, tag_ctx), (index, region)) in
             characterizations.into_iter().zip(plan.regions.iter().enumerate())
         {
@@ -280,11 +348,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
-        let thresholds = FillTierThresholds {
-            min_fill_correlation: request.min_fill_correlation,
-            fill_marginal_margin: request.fill_marginal_margin,
-            fill_absolute_floor: request.fill_absolute_floor,
-        };
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
             &plan,

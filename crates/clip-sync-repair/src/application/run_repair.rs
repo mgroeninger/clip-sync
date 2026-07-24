@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use clip_sync::{MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
-use crate::application::patch_audio::{PatchAudioResult, PatchRequestSettings};
+use crate::application::patch_audio::{PatchAudio, PatchAudioResult, PatchRequestSettings};
 use crate::application::ports::Aligner;
 use crate::application::ports::PatchedAudioWriter;
 use crate::application::repair_videos::{RepairVideos, RepairWriteRequest};
@@ -31,9 +31,18 @@ pub struct PendingRepairWrite {
     pub mux_audio_bitrate_policy: MuxAudioBitratePolicy,
 }
 
+/// Characterize-only step after scan (`--repair-preview`): no splice / file write.
+pub struct PendingRepairPreview {
+    pub patch_settings: PatchRequestSettings,
+    pub crossfade_ms: u64,
+}
+
 pub struct RepairRunInput {
     pub scan: ScanGapsRequest,
+    /// Full write path (`--wav` / `--mux`). Mutually exclusive with [`Self::preview`].
     pub write: Option<PendingRepairWrite>,
+    /// Pass-1 characterize only. Mutually exclusive with [`Self::write`].
+    pub preview: Option<PendingRepairPreview>,
 }
 
 pub struct RepairRunOutcome {
@@ -60,6 +69,16 @@ fn into_write_request(
     })
 }
 
+fn run_preview_patch<MR: MediaReader>(
+    media_reader: &MR,
+    progress: &dyn ProgressReporter,
+    pending: PendingRepairPreview,
+    report: GapReport,
+) -> Result<PatchAudioResult, RepairError> {
+    let request = pending.patch_settings.into_request(report);
+    PatchAudio::new(media_reader, progress).preview(request, pending.crossfade_ms)
+}
+
 #[cfg(feature = "ffmpeg-mux")]
 pub fn run_repair<MR, A, PW, MM>(
     input: RepairRunInput,
@@ -79,13 +98,20 @@ where
     let report = scan.report;
     let alignment_detail = scan.alignment_detail;
 
-    let patch_result = match input.write {
-        Some(pending) => into_write_request(pending, report.clone())
-            .and_then(|write_request| {
+    let patch_result = match (input.write, input.preview) {
+        (Some(_), Some(_)) => Err(RepairError::Config(
+            "internal: write and repair-preview both set".into(),
+        )),
+        (Some(pending), None) => into_write_request(pending, report.clone()).and_then(
+            |write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request, muxer).map(Some)
-            }),
-        None => Ok(None),
+            },
+        ),
+        (None, Some(pending)) => {
+            run_preview_patch(media_reader, progress, pending, report.clone()).map(Some)
+        }
+        (None, None) => Ok(None),
     };
 
     Ok(RepairRunOutcome {
@@ -112,12 +138,20 @@ where
     let report = scan.report;
     let alignment_detail = scan.alignment_detail;
 
-    let patch_result = match input.write {
-        Some(pending) => into_write_request(pending, report.clone()).and_then(|write_request| {
-            let repair = RepairVideos::new(media_reader, progress, wav_writer);
-            repair.execute(write_request).map(Some)
-        }),
-        None => Ok(None),
+    let patch_result = match (input.write, input.preview) {
+        (Some(_), Some(_)) => Err(RepairError::Config(
+            "internal: write and repair-preview both set".into(),
+        )),
+        (Some(pending), None) => into_write_request(pending, report.clone()).and_then(
+            |write_request| {
+                let repair = RepairVideos::new(media_reader, progress, wav_writer);
+                repair.execute(write_request).map(Some)
+            },
+        ),
+        (None, Some(pending)) => {
+            run_preview_patch(media_reader, progress, pending, report.clone()).map(Some)
+        }
+        (None, None) => Ok(None),
     };
 
     Ok(RepairRunOutcome {
