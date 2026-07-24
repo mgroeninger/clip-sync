@@ -1577,14 +1577,18 @@ pub(super) fn characterize_region(
     // input via this one helper.
     let windows = FillWindowFrames::for_gap(&request.settings, gap_frames, sample_rate);
     let seam_gate_frames = windows.seam_gate_frames;
+    // S1: compute the window frames ONCE — these exact values go on the spec, and the executor re-slices
+    // from them. Deriving them here (instead of recomputing the same expressions at the spec site) is what
+    // makes "the executor gets the buffer characterize used" true by construction rather than by coincidence.
+    let (b_extract_start_frame, b_extract_end_frame) =
+        b_extract_frames(sample_rate, b_extract_start_secs, b_extract_end_secs);
     let b_extract_result = {
         let _s = tracing::info_span!("char_b_extract").entered();
-        slice_b_segment(
+        slice_b_extract(
             b_samples_full,
             channels,
-            sample_rate,
-            b_extract_start_secs,
-            b_extract_end_secs,
+            b_extract_start_frame,
+            b_extract_end_frame,
         )
     };
     let b_samples = match b_extract_result {
@@ -1677,8 +1681,8 @@ pub(super) fn characterize_region(
     // relative nominal gap start the dual-fit input already computed). Built here so `finalize_dual_fit` can
     // attach it; the executor's SilenceSplice arm doesn't read it, so this is PCM-neutral (byte-parity).
     let silence_splice_b_extract = BExtractWindow {
-        start_frame: (b_extract_start_secs * sample_rate as f64).round() as usize,
-        end_frame: (b_extract_end_secs * sample_rate as f64).round() as usize,
+        start_frame: b_extract_start_frame,
+        end_frame: b_extract_end_frame,
         b_mapped_start_frame: dual_fit_input.as_ref().map(|d| d.b_mapped_start).unwrap_or(0),
     };
 
@@ -1810,6 +1814,14 @@ pub(super) fn characterize_region(
     // `align_adjustment_secs` (= structure + waveform slide) is recomputed inside `execute_bracket_output`
     // from the placement fields; `structure_slide_secs`/`waveform_slide_secs` remain for the verbose log.
 
+    // The bracket spec's B window — built here (not at the spec site) so the `debug_assert_eq!` shadow below
+    // can prove the executor's reconstruction against the very struct the spec will carry (S1).
+    let bracket_b_extract = BExtractWindow {
+        start_frame: b_extract_start_frame,
+        end_frame: b_extract_end_frame,
+        b_mapped_start_frame: offset_nominal_start,
+    };
+
     let fill_start_sample = alignment.start_frame * channels;
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
@@ -1913,13 +1925,23 @@ pub(super) fn characterize_region(
         );
     }
 
-    // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec's `FillAlignment` +
-    // decode buffers alone (rebuilding borders independently). Guards the characterize→execute split before
-    // 6b.3b removes the inline path. Debug-only; the release path is unchanged.
+    // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec + the FULL decode buffers
+    // alone (re-slicing the B extract, rebuilding borders independently). Guards the characterize→execute
+    // split before 6b.3b removes the inline path. Debug-only; the release path is unchanged.
+    //
+    // S1: the B slice is re-derived from `bracket_b_extract` — the exact struct the spec carries — rather
+    // than reusing characterize's `b_samples`. That closes the last step the shadow did not cover: without
+    // it, the re-slice (and its clamp) would first run in production, on end-of-B gaps.
     debug_assert_eq!(
         execute_bracket_fill(ExecuteBracketFillCtx {
             alignment,
-            b_samples,
+            b_samples: slice_b_extract(
+                b_samples_full,
+                channels,
+                bracket_b_extract.start_frame,
+                bracket_b_extract.end_frame,
+            )
+            .expect("bracket spec's B extract window re-slices (characterize just sliced it)"),
             a_samples: &a_pcm.samples,
             a_frames: a_pcm.frames(),
             refined,
@@ -2025,11 +2047,7 @@ pub(super) fn characterize_region(
         a_end_secs: region.a_end_secs,
         gap_offset_secs,
         refined,
-        b_extract: BExtractWindow {
-            start_frame: (b_extract_start_secs * sample_rate as f64).round() as usize,
-            end_frame: (b_extract_end_secs * sample_rate as f64).round() as usize,
-            b_mapped_start_frame: offset_nominal_start,
-        },
+        b_extract: bracket_b_extract,
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
@@ -2115,21 +2133,36 @@ pub(super) fn prepare_region_patch(
     }
 }
 
-fn slice_b_segment(
+/// Slice the B extract window out of the **full** B buffer — the one place that turns a
+/// [`BExtractWindow`]'s frame indices into the actual `&[f32]` characterize works on (S1).
+///
+/// **The clamp is the load-bearing part.** `end_frame` as stored on the spec is the *nominal* window end
+/// and is deliberately left unclamped (it is derived geometry, not a buffer fact); near the end of B it can
+/// point past the decode buffer. Clamping here — rather than at either call site — is what lets the executor
+/// re-slice from `spec.b_extract` and get back the byte-identical buffer characterize used. Without it the
+/// executor's slice would be longer, which lengthens `b_extension` and silently changes both Gate-mode
+/// extension and Fit-mode length fitting on end-of-B gaps.
+fn slice_b_extract(
     b_samples: &[f32],
     channels: usize,
-    sample_rate: u32,
-    start_secs: f64,
-    end_secs: f64,
+    start_frame: usize,
+    end_frame: usize,
 ) -> Option<&[f32]> {
     let channels = channels.max(1);
-    let start_frame = (start_secs * sample_rate as f64).round() as usize;
-    let end_frame = ((end_secs * sample_rate as f64).round() as usize)
-        .min(b_samples.len() / channels);
+    let end_frame = end_frame.min(b_samples.len() / channels);
     if start_frame >= end_frame {
         return None;
     }
     Some(&b_samples[start_frame * channels..end_frame * channels])
+}
+
+/// Frame indices of the B extract window for a gap. Kept next to [`slice_b_extract`] so the secs→frames
+/// rounding that characterize stores on the spec and the rounding the slice uses cannot drift apart.
+fn b_extract_frames(sample_rate: u32, start_secs: f64, end_secs: f64) -> (usize, usize) {
+    (
+        (start_secs * sample_rate as f64).round() as usize,
+        (end_secs * sample_rate as f64).round() as usize,
+    )
 }
 
 /// Compute RMS of the A samples bordering the gap region.
@@ -2229,11 +2262,34 @@ pub(super) fn splice_into_a(
 #[cfg(test)]
 mod tests {
     use super::{
-        dual_fit_eligible, measure_dual_fit_residual_verdict, DualFitRepairInput, PatchAudioRequest,
-        SeamGateFailure,
+        dual_fit_eligible, measure_dual_fit_residual_verdict, slice_b_extract, DualFitRepairInput,
+        PatchAudioRequest, SeamGateFailure,
     };
     use crate::domain::gap::GapReport;
     use crate::domain::gap_fill_fit::{fit_fill_to_gap_frames, FillConfidence};
+
+    /// **S1 — the B-extract re-slice clamps, so the executor gets characterize's exact buffer.** The window
+    /// stored on a spec is nominal geometry and is deliberately unclamped, so near the end of B it points
+    /// past the decode buffer. Both passes must nonetheless slice the same samples: an unclamped executor
+    /// slice would be longer, lengthening `b_extension` and changing Gate-mode extension / Fit-mode length
+    /// fitting on exactly those gaps. Fixtures don't reliably place a gap at the end of B, so pin it here.
+    #[test]
+    fn b_extract_slice_clamps_a_window_that_overruns_the_buffer() {
+        let channels = 2usize;
+        let frames = 100usize;
+        let b: Vec<f32> = (0..frames * channels).map(|i| i as f32).collect();
+
+        // A window whose nominal end runs 50 frames past the buffer yields the same slice as one that
+        // stops exactly at the end — this is the equality the executor's reconstruction depends on.
+        let overrun = slice_b_extract(&b, channels, 10, frames + 50).expect("overrunning window slices");
+        let exact = slice_b_extract(&b, channels, 10, frames).expect("exact window slices");
+        assert_eq!(overrun, exact);
+        assert_eq!(overrun.len(), (frames - 10) * channels);
+
+        // Degenerate windows stay `None` rather than panicking on the reversed range.
+        assert!(slice_b_extract(&b, channels, 10, 10).is_none());
+        assert!(slice_b_extract(&b, channels, frames + 10, frames + 50).is_none());
+    }
 
     /// **8g.2 — `characterize_all_regions` yields one consistent spec per region.** Region-infallible
     /// (`specs.len() == regions.len()`), and each spec's verdict agrees with what the `prepare_region_patch`
