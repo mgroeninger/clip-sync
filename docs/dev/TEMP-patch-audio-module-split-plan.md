@@ -165,7 +165,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| **P1** | `request.rs` (result / request / settings) | **Planned** |
+| **P1** | `request.rs` (result / request / settings) | **Done (2026-07-24)** |
 | **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Planned** |
 | **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Planned** |
 | **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Planned** |
@@ -185,6 +185,18 @@ Public path must stay stable for harness `patch_audio::{PatchAudio, …}` and
 `application::{PatchAudio, …}`. Leave `RegionPatch` in the monolith/`mod.rs`
 body for P4 — it is **not** part of the request slice even though it follows
 `PatchRequestSettings` in the file today.
+
+**P1 as-landed (2026-07-24).** `git mv` → `patch_audio/mod.rs`; the three request
+types + `Deref` + `into_request` moved verbatim to `request.rs`; `mod request;` +
+`pub use request::{PatchAudioRequest, PatchAudioResult, PatchRequestSettings};` in
+`mod.rs`. No import sweep (facade + `application::` re-exports unchanged). Build /
+clippy / `-Tier pr-repair` green (382 lib pass / 1 ignored).
+**Deviation from §3:** the M-CFG guards (`deref_reads_*`, `into_request_defaults_*`)
+did **not** move to `request.rs` this phase — they share the `dual_fit_test_request`
+helper with two dual-fit residual tests bound for `region.rs` (P4). Moving them now
+would duplicate ~40 lines of `ScanAlignment` / `GapReport` scaffolding that P4 would
+then reconcile. They stay in `mod.rs`'s `tests` (still resolving the types via the
+facade `super::` re-export) and relocate in **P4** when `dual_fit_test_request` moves.
 
 **P2 notes.** Keep `patch_region`’s `crate::application::patch_audio::correlate_frames_for_gap`
 (etc.) working via facade `pub(crate) use`. `SeamGateDerived` *type* remains in
