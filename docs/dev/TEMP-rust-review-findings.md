@@ -435,24 +435,25 @@ has one definition and one seed, so it cannot drift.
 seeded literals await a justify-or-drop comment audit. Not a coverage hole — production settings
 are exercised separately via `patch_request_from_repair`. See the archived record §4.
 
-### M-MOD. Oversized modules — **open**
+### M-MOD. Oversized modules — **open** (policies slice done)
 
-**Recommendation:** Follow existing plan: [`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md)
-first. Then split `gap_fingerprint` into schema / measure / project, and harness
-`gap_fingerprint_corpus` into schema / analysis / report. Pure moves +
-`pub(crate)` — no behavior change. Optionally curate repair `lib.rs` like
-`clip-sync`.
+**Recommendation:** Policies split complete — see
+[`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md). Next: split
+`gap_fingerprint` into schema / measure / project, and harness `gap_fingerprint_corpus` into
+schema / analysis / report. Pure moves + `pub(crate)` — no behavior change. Optionally curate
+repair `lib.rs` like `clip-sync`.
 
-**Progress (2026-07-23):** policies **P1** landed — residual/floor measurement is
-`domain/policies/seam_residual.rs` behind the `policies::*` facade. Remaining policies
-phases P2–P5 (silence / borders / scoring / delete monolith shell) still open.
+**Progress (2026-07-23):** policies **P1–P5 done** —
+`domain/policies/{silence,gap_borders,seam_scoring,seam_residual,seam_splice}.rs` behind a thin
+`mod.rs` facade. Remaining M-MOD targets: fingerprint + harness corpus (and optionally
+`patch_audio` / `align_videos`).
 
 **Test:** `-Tier pr` after each split.
 
 | File | ~Lines |
 |------|--------|
 | `gap_fingerprint.rs` | 4,000 |
-| `policies/` (`mod.rs` + `seam_residual.rs`) | ~2,800 + ~1,600 |
+| `policies/` (split) | facade + 5 modules (~0.3–1.4 kloc each) |
 | `patch_audio.rs` | 3,600 |
 | `align_videos.rs` | 2,900 |
 | harness `gap_fingerprint_corpus.rs` | 2,300 |

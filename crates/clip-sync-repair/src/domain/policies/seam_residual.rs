@@ -1,7 +1,9 @@
 //! Residual / floor cancellation measurement for gap seams.
 //!
-//! Extracted from the policies monolith (P1 of TEMP-policies-module-split-plan.md).
-use super::{interleaved_channel_timeline_f64, seam_pearson};
+//! The cancellation half of the seam gate: least-squares fit of A's border against B at a searched
+//! lag, reported as residual dB plus a floor probe for what "as good as it gets" looks like on this
+//! material. Builds on `seam_scoring`'s Pearson and channel-timeline helpers.
+use super::seam_scoring::{interleaved_channel_timeline_f64, seam_pearson};
 
 /// Integer lag search result for one seam side (`seam_residual_for_side`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -848,7 +850,7 @@ fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::seam_score_channel_indices;
+    use super::super::gap_borders::seam_score_channel_indices;
 
     /// Build interleaved f32 A samples (normalized) from per-channel f64 timelines (raw level).
     fn interleave_a(channels_f64: &[Vec<f64>], norm: f64) -> Vec<f32> {
