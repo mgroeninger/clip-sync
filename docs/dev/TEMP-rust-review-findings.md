@@ -86,7 +86,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies done; **M-MOD-DEPS** follow-up open) | fingerprint / policies / patch |
+| 1 | M-MOD | P2 | Split 3–5 kloc modules (policies + **M-MOD-DEPS** done; fingerprint splits next) | fingerprint / policies / patch |
 | 2 | M-HARNESS | P2 | Harness drifts from production formulas (item 1 done) | harness crate |
 | 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
 | 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
@@ -460,9 +460,9 @@ Pure moves + `pub(crate)` — no behavior change. Optionally curate repair `lib.
 `mod.rs` facade. Verified byte-preserving against the pre-split monolith (normalized line-set
 diff: zero removals; only additions are a duplicated `interleave_a` test helper and re-wrapped
 `use`s), `pub use` surface identical to the pre-split `pub` set, 55/55 policies tests with the
-same test names. Remaining M-MOD targets: harness corpus → production fingerprint (plans
-linked; order above), the **M-MOD-DEPS** follow-up below, and optionally `patch_audio` /
-`align_videos`.
+same test names. The **M-MOD-DEPS** follow-up below is **done** (`16b06e3`). Remaining M-MOD
+targets: harness corpus → production fingerprint (plans linked; order above), and optionally
+`patch_audio` / `align_videos`.
 
 **Test:** `-Tier pr` after each split.
 
@@ -615,8 +615,8 @@ splits (M-MOD) remain the main structural item.
    ~~**M-DEAD**~~ (done 2026-07-23) — §2 `slide_template_scores` deleted; §1 B2 pregate
    measurement stack removed.
 4. ~~**M-CFG**~~ (closed 2026-07-23 — layers collapsed; bundles declined).
-   **M-MOD-DEPS** (policies helper placement) is small and self-contained — take it next time
-   `policies/` or `domain/pcm.rs` is open, before the fingerprint splits pile on more churn.
+   ~~**M-MOD-DEPS**~~ (done 2026-07-23, `16b06e3` — policies helpers relocated; `seam_scoring →
+   gap_borders` edge removed).
    **M-MOD** fingerprint remainder: harness `gap_fingerprint_corpus` first (mechanical), then
    production `gap_fingerprint` in its own slot (not wedged as a feature PR opener).
    **M-HARNESS** remainder opportunistically with nearby feature work.
