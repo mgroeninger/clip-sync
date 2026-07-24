@@ -169,7 +169,7 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 | **P2** | `decode.rs` + `geometry.rs` (leaf helpers; external consumers) | **Done (2026-07-24)** |
 | **P3** | `log.rs` (formatters + verbose helpers + their unit tests) | **Done (2026-07-24)** |
 | **P4** | `region.rs` (outcomes + characterize + dual-fit + bracket + splice) | **Done (2026-07-24)** |
-| **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Planned** |
+| **P5** | `anchor_retry.rs` (retry pass; needs `prepare_region_patch`) | **Done (2026-07-24)** |
 | **P6** | Thin `mod.rs` — only `PatchAudio::execute` + re-exports; delete monolith `.rs` | **Planned** |
 
 **Suggested order rationale.** Request first (no sibling deps). Decode + geometry
@@ -282,6 +282,25 @@ through the facade, since no non-test `mod.rs` code consumes it). Build / clippy
 **P5 notes.** Anchor retry imports media/opts from `region`; do not redefine or
 move those structs into `anchor_retry.rs`. Take only the retry policy / candidate
 / pass helpers and `AnchoredRetryState`.
+
+**P5 as-landed (2026-07-24).** `anchor_retry.rs` = 356 lines (206 code + 116
+tests + header). Moved verbatim: `patch_anchor_policy` / `build_patch_anchor_candidates`
+/ `run_anchored_retry_pass` (`pub(super)`, consumed by `execute`), `AnchoredRetryState`
+(`pub(super)` struct + all three `pub(super)` fields, since `execute` constructs it),
+and the internals `anchored_retry_gap_indices` / `should_apply_anchored_retry_outcome`
+/ `store_anchored_retry_patch` (private). No structs redefined — `RegionPatch`,
+`RegionPatchOutcome`, `RegionPatchContext`, `RegionPatchMedia`, `RegionPatchOpts`,
+`prepare_region_patch`, `record_patch_gap_span`, `region_outcome_gap_tags` are imported
+straight from `super::region::{…}` (not through the `mod.rs` facade, so no facade
+re-export is left dangling as "unused"); `PatchAudioRequest` from `super`, log helper
+from `super::log`. The `region ← anchor_retry` DAG edge holds and there is no reverse
+edge (region has zero anchor_retry references). The two anchored-retry unit tests +
+`dummy_region_tags` moved into `anchor_retry.rs`'s `#[cfg(test)] mod tests` (they pull
+`skipped_patch` via `super::super::region`). `mod.rs` pruned four now-unmoved domain
+imports (`resolve_gap_offset_secs`, `is_retryable_patch_skip`, `PatchAnchorCandidate`,
+`PatchAnchorPolicy`) plus the `FillMode` / `FillConfidence` / `FillRegion` symbols that
+left with the anchor code, and dropped `prepare_region_patch` from the region facade
+(now only anchor_retry used it). Build / clippy / `-Tier pr-repair` green.
 
 **P6 notes.** `mod.rs` should hold orchestration only (plan → decode →
 `characterize_*` / execute loop → optional `run_anchored_retry_pass` →
