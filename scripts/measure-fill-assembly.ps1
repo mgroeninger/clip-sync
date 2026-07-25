@@ -6,7 +6,7 @@
 # and once in execute (the bytes actually spliced). `exec_fill_assembly` is the cost that split ADDED. This
 # harness measures it against the run it belongs to, and decides whether a dedup/hoist phase (H?) exists.
 #
-# Prior bound (2026-07-20 Alien run, docs/dev/archive/TEMP-production-repair-perf-plan.md §0): 1872 s total,
+# Prior bound (2026-07-20 run, docs/dev/archive/TEMP-production-repair-perf-plan.md §0): 1872 s total,
 # `char_gate_search` 93.3%, decode 6.5%, execute+splice 0.008 s. Everything else in characterize — the fill
 # assembly included — fit in the ~4.8 s remainder (<=0.26%). Expect a small number; the point is to replace
 # "expect" with a measurement.
@@ -35,6 +35,11 @@
 #
 # `fill_mode` is request-level, not per-gap, so the Fit/Gate split comes from running the manifest ONCE PER
 # MODE (vary it via -RepairArgs) rather than from a span field. Use -OutDir to keep the two apart.
+#
+# MEDIA HYGIENE: the manifest and every log this writes contain absolute paths to licensed media. NEITHER MAY
+# BE COMMITTED. -OutDir defaults outside the repo ($env:TEMP) for that reason; if you point it inside the repo,
+# use the gitignored `gap-files/`. When recording results in docs, carry over only the derived numbers, keyed
+# by the manifest's label — never the paths. See docs/dev/TEMP-anchor-search-perf-baseline.md §"Media handling".
 
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
@@ -125,7 +130,14 @@ function Read-LogTally {
     $rxSpan = [regex]'(?<span>[A-Za-z0-9_]+)(\{[^}]*\})?$'
     $unit = @{ 'ns' = 1e-9; 'ms' = 1e-3; 's' = 1.0 }
 
-    foreach ($line in [System.IO.File]::ReadLines($Path, [System.Text.Encoding]::UTF8)) {
+    # Share ReadWrite/Delete: rolling up while a run is still appending to its log is a normal case (checking
+    # an in-flight sweep), and the default ReadLines share mode throws on the open handle.
+    $fs = [System.IO.File]::Open(
+        $Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    $reader = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
+    try {
+    while ($null -ne ($line = $reader.ReadLine())) {
         $m = $rxBusy.Match($line)
         if (-not $m.Success) { continue }
 
@@ -145,6 +157,11 @@ function Read-LogTally {
 
         Add-Span -T $t -Name $sm.Groups['span'].Value -Secs $secs
         $t.Lines += 1
+    }
+    }
+    finally {
+        $reader.Dispose()
+        $fs.Dispose()
     }
     return $t
 }

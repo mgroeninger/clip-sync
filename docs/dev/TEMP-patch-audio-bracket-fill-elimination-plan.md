@@ -134,6 +134,43 @@ grid), *not* the downmix or the border-template rebuild.
   its own measurement, before F1. Do not resurrect the downmix hoist without new
   measurement showing the downmix specifically is material.
 
+### 3.1 Measured result (2026-07-24) — immaterial, H? retired
+
+Release profile, real repair path (`--wav`), `CLIP_SYNC_SPAN_TIMING=1`, via
+`scripts/measure-fill-assembly.ps1` (7 of 17 pairs; the rest were still running
+and would not move a figure this small). Licensed media, gap-fingerprint corpus pairs
+(the pair-index → media mapping is deliberately **not** recorded in-repo; it lives
+only in the gitignored source map, per the convention in the archived perf plan).
+
+| Pair | `patch_audio` | `char_fill_assembly` | `exec_fill_assembly` | exec share |
+|------|---------------|----------------------|----------------------|-----------|
+| 1  | 728 s | 0.004 s (n=1) | 0.006 s (n=1) | 0.0009% |
+| 10 | 846 s | 0.057 s (n=3) | 0.066 s (n=4) | 0.0078% |
+| 11 | 345 s | 0.086 s (n=4) | 0.098 s (n=4) | 0.0285% |
+| 12 | 693 s | 0.046 s (n=4) | 0.062 s (n=4) | 0.0089% |
+| 13 | 534 s | 0.037 s (n=6) | 0.057 s (n=8) | 0.0107% |
+| 14 | 195 s | 0.009 s (n=2) | 0.019 s (n=2) | 0.0097% |
+| 15 | 334 s | 0.071 s (n=2) | 0.079 s (n=2) | 0.0238% |
+| **all** | **3675 s** | **0.31 s (n=22)** | **0.39 s (n=25)** | **0.0106%** |
+
+**Verdict: the F1 re-derivation costs 0.011% of wall-clock — three orders of
+magnitude under the 1% bar. No hoist. H? is retired, not deferred.** The "2×
+assembly" worry that gated the original draft was never a cost; the ceiling
+derivable from the 2026-07-20 baseline (≤0.26%) was itself ~30× too pessimistic.
+
+Two observations worth recording, neither actionable:
+
+- `exec_fill_assembly` exceeds `char_fill_assembly` in time on every pair (delta
+  0.002–0.020 s). Expected and not a regression: the exec span additionally wraps
+  the border-template rebuild and the B re-slice, which the char span excludes.
+  That delta **is** the true added cost of F1, and it is ≤20 ms per pair.
+- Call counts differ (22 char vs 25 exec overall; pair 10 is 3 vs 4, pair 13 is
+  6 vs 8) — exec is never lower. Some brackets reach execute without a
+  characterize-side assembly. Not investigated; flagged only so a future reader
+  does not read the asymmetry as double-assembly. The harness warns on this
+  because in a *debug* build it would indicate the assert shadow inflating exec;
+  these runs are release, so that explanation is excluded.
+
 **Hazard (from redesign §H2/H3), applicable to any hoist M0 justifies:** a
 hoisted shared subexpression must be **precomputed read-only before the
 characterize loop**, or memoized with an **order-independent** key — never
@@ -271,11 +308,11 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| M0 | Done | `ededf0f` | `char_fill_assembly` + `exec_fill_assembly` spans added. **Measurement still owed** — needs a release-profile licensed-media run (§3) |
+| M0 | Done | `ededf0f` | `char_fill_assembly` + `exec_fill_assembly` spans added. **Measured 2026-07-24: 0.011% of wall-clock over 7 pairs — immaterial (§3.1)** |
 | L0 | Done | `61fcd78` | `assemble_bracket_fill` returns `BracketFill { pcm, extended_frames }`; caller emits the same line |
 | S0 | Done | `7c774f7` | `FillWindowFrames::for_gap` in `geometry.rs`; characterize + `derive_seam_gate_geometry` both call it |
 | S1 | Done | `5a00b16` | `slice_b_extract` / `b_extract_frames`; shadow re-slices from the spec's own `BExtractWindow` |
-| H? | Conditional | — | only if M0 indicts something; not the downmix. **Blocked on M0's measurement** |
+| H? | **Retired** | — | M0 measured 0.011% (§3.1). Nothing indicted; no hoist will be opened |
 | F1 | Done | (this commit) | Executor re-derives the fill. Added `window_gap_frames` to the Bracket verdict — see §4.1. Carry retained as a debug parity check at the handoff |
 | F2 | Done | (with C1) | `bracket_fill: None` at the char site; param dropped |
 | C1 | Done | (with F2) | `Patch(GapRepairSpec)`; `#[allow(large_enum_variant)]` gone. **Deletion of the type: evaluated, not done** — see below |
