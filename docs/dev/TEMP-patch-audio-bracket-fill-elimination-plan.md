@@ -121,9 +121,10 @@ what `execute_bracket_fill` reproduces.
 
 The original draft gated this work on landing the shared mono downmix first, to
 pre-pay for a "temporary 2× assembly". That gate is withdrawn: the downmix hoist
-is refuted (§0), and the 2× cost was never measured — **no tracing span covers
-the fill assembly at all**. `char_gate_search` (93% of characterize) closes at
-`region.rs:1676`, well before the assembly at `1873`.
+is refuted (§0), and the 2× cost had never been measured — at the time **no
+tracing span covered the fill assembly at all** (`char_fill_assembly` /
+`exec_fill_assembly` were added *for* M0). `char_gate_search` (93% of
+characterize) closes at `region.rs:1676`, well before the assembly at `1873`.
 
 So M0 measures the actual thing. The plausibly-material cost inside
 `execute_bracket_fill` is `fit_fill_length_for_gap` (Fit mode, incl. the boundary
@@ -177,14 +178,15 @@ Three observations worth recording, none actionable:
 
 - **`char_gate_search` is 73.8% here, not the 93.3% of the 2026-07-20 baseline.**
   Not a regression — the lever-1/2 gate optimizations cut the numerator, so decode
-  and the rest occupy a larger *relative* share of a much smaller total. The
-  harness warns below 50% for exactly this reason (run shape moved ⇒ baseline
-  comparison void); 73.8% is comfortably inside the valid band.
+  and the rest occupy a larger *relative* share of a much smaller total. Read the
+  baseline doc §2.1 for where that reclaimed share went (decode is now 25.6%).
 - **Call counts differ: 60 char vs 74 exec overall, and exec is never lower.**
   Some brackets reach execute without a characterize-side assembly. Not
   investigated; flagged so a future reader does not read the asymmetry as
-  double-assembly. The harness's warning text for this is wrong (it says release
-  runs "should match") and has been corrected — see below.
+  double-assembly. It is **not** a defect: two of the harness's original
+  M0 guardrails ("call counts should match in a release run", "exec cheaper than
+  char wants explaining") were themselves wrong and fired on this good data;
+  both were dropped when the harness was generalized (`5bd58a6`).
 - **The exec > char expectation holds only in aggregate (1.01×), not per pair.**
   Pair 7 came in at 0.87× and pair 5/16 at 0.99×, despite exec doing strictly
   more work (it also wraps the border rebuild and B re-slice). At totals of
@@ -330,14 +332,21 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| M0 | Done | `ededf0f` | `char_fill_assembly` + `exec_fill_assembly` spans added. **Measured 2026-07-24, full 17-pair sweep: 0.053% of wall-clock (worst pair 0.35%) — immaterial (§3.1)** |
-| L0 | Done | `61fcd78` | `assemble_bracket_fill` returns `BracketFill { pcm, extended_frames }`; caller emits the same line |
-| S0 | Done | `7c774f7` | `FillWindowFrames::for_gap` in `geometry.rs`; characterize + `derive_seam_gate_geometry` both call it |
-| S1 | Done | `5a00b16` | `slice_b_extract` / `b_extract_frames`; shadow re-slices from the spec's own `BExtractWindow` |
+| M0 | Done | `b4efce0` (spans), `abd35c4` (result) | `char_fill_assembly` + `exec_fill_assembly` spans added. **Measured 2026-07-24, full 17-pair sweep: 0.053% of wall-clock (worst pair 0.35%) — immaterial (§3.1)** |
+| L0 | Done | `aff81c4` | `assemble_bracket_fill` returns `BracketFill { pcm, extended_frames }`; caller emits the same line |
+| S0 | Done | `7bc905e` | `FillWindowFrames::for_gap` in `geometry.rs`; characterize + `derive_seam_gate_geometry` both call it |
+| S1 | Done | `6bb86e5` | `slice_b_extract` / `b_extract_frames`; shadow re-slices from the spec's own `BExtractWindow` |
 | H? | **Retired** | — | M0 measured 0.053% over 17 pairs (§3.1). Nothing indicted; no hoist will be opened |
-| F1 | Done | (this commit) | Executor re-derives the fill. Added `window_gap_frames` to the Bracket verdict — see §4.1. Carry retained as a debug parity check at the handoff |
-| F2 | Done | (with C1) | `bracket_fill: None` at the char site; param dropped |
-| C1 | Done | (with F2) | `Patch(GapRepairSpec)`; `#[allow(large_enum_variant)]` gone. **Deletion of the type: evaluated, not done** — see below |
+| F1 | Done | `94b2d91` | Executor re-derives the fill. Added `window_gap_frames` to the Bracket verdict — see §4.1. Carry retained as a debug parity check at the handoff |
+| F2 | Done | `66f889a` (with C1) | `bracket_fill: None` at the char site; param dropped |
+| C1 | Done | `66f889a` (with F2) | `Patch(GapRepairSpec)`; `#[allow(large_enum_variant)]` gone. **Deletion of the type: evaluated, not done** — see below |
+
+The M0 harness itself is `scripts/measure-repair-perf.ps1` (`1dc5c6c`, generalized
+beyond M0 in `5bd58a6`); the baseline it feeds is
+[TEMP-anchor-search-perf-baseline.md](TEMP-anchor-search-perf-baseline.md)
+(`2d8e4f0`, framing corrected in `ba27c00`). Earlier revisions of this ledger
+carried four hashes that no longer exist in history — if you are chasing a
+commit and it resolves to nothing, this table is the corrected version.
 
 **F2 and C1 landed in one commit.** Separating them would have committed a
 `field bracket_fill is never read` warning, and CI runs
@@ -361,7 +370,7 @@ user to schedule.
 - **Dropped H1/H2 (mono-downmix hoist) as a blocking prerequisite.** It is the
   refuted §2.1 hoist (0.006%, measured 2026-07-20). Replaced by **M0**, which
   measures the fill assembly itself — the cost the "2× assembly" worry was
-  actually about, and which no span currently covers.
+  actually about, and which no span covered at the time of that revision.
 - **Added S1** — the B-extract re-slice was an unproven reconstruction step with
   a real unclamped-`end_frame` mismatch (`region.rs:2005` vs `2103`). §2 now
   states the hole instead of claiming the shadow already covers everything.

@@ -686,8 +686,9 @@ fn unified_search_best_fill_start(
     // Perf instrumentation (Level E, TEMP-production-repair-perf-plan.md §2.3/§2.4): split each unified search
     // into the SPARSE coarse pass vs the DENSE integer refine — the distribution that decides prefix-sum vs FFT
     // for lever 1. `candidates` records attempts per phase (per-candidate cost = busy / candidates). Names are
-    // shared with the end search so aggregation sums coarse-vs-refine across both. Emits only under
-    // CLIP_SYNC_SPAN_TIMING (Level A); nests under `bracket_unified_search`.
+    // shared with the end search, so the harness's by-name roll-up sums coarse-vs-refine across both while the
+    // span tree still shows each placement separately. Emits only under CLIP_SYNC_SPAN_TIMING (Level A); nests
+    // under `bracket_unified_search`.
     //
     // Lever 1 (§2.5): the coarse pass stays NAIVE — it is sparse (4.8%, Level E) and, crucially, keeping it
     // naive means the coarse winner that anchors the refine window is bit-identical to today, so the FFT can

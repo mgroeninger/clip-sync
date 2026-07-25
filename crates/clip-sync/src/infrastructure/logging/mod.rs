@@ -67,11 +67,12 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), AppError> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(default_env_filter(config.level)));
 
-    // Perf instrumentation (Level A, TEMP-production-repair-perf-plan.md §0): when `CLIP_SYNC_SPAN_TIMING`
-    // is set, emit a line on every span close carrying `time.busy` / `time.idle`, so a licensed-pair repair
-    // run can be bucketed by span name (`decode_*` / `characterize` / `char_gate_search` / `patch_gap` /
-    // `patch_splice`). Off by default — no change to normal output. Combine with e.g.
-    // `RUST_LOG=clip_sync_repair=info` and a `--release` build.
+    // Perf instrumentation (Level A, archive/TEMP-production-repair-perf-plan.md §0): when
+    // `CLIP_SYNC_SPAN_TIMING` is set, emit a line on every span close carrying `time.busy` / `time.idle`.
+    // `scripts/measure-repair-perf.ps1` reads these back, keyed by each span's FULL parent chain (the chain
+    // is on the close line, so nesting is recoverable), and reports a span tree with exclusive costs. Note
+    // a parent's `time.busy` INCLUDES its children's. Off by default — no change to normal output. Combine
+    // with e.g. `RUST_LOG=clip_sync_repair=info` and a `--release` build.
     let span_events = if std::env::var_os("CLIP_SYNC_SPAN_TIMING").is_some() {
         FmtSpan::CLOSE
     } else {
