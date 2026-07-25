@@ -358,10 +358,16 @@ nothing but a `GapRepairSpec`, so the enum is a restatement of `spec.verdict` â€
 a second source of truth for a tag that already exists (`skip_outcome_from_spec`
 already `unreachable!()`s on the disagreement). Deleting it means
 `characterize_region -> (GapRepairSpec, GapTagsPatchContext)` and matching on
-`spec.verdict` at the ~5 dispatch sites, all in `region.rs` + `mod.rs`.
+`spec.verdict` at the dispatch sites, all in `region.rs` + `mod.rs`.
 Recommended, mechanical, and **out of scope for this plan** â€” it is a
-characterize-boundary cleanup, not `bracket_fill` elimination. Left for the
-user to schedule.
+characterize-boundary cleanup, not `bracket_fill` elimination.
+
+**Now scoped separately:**
+[TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)
+carries it (usage inventory: 4 match sites, 2 real; the `unreachable!()`
+accounting; and the finding that `execute_region_spec` already re-matches
+`spec.verdict`, so the collapse needs no new guard). Nothing further is owed
+from this plan.
 
 ## 9. Revision log
 
