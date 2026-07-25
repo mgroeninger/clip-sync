@@ -26,8 +26,9 @@ and are the reason to open it:
   window length cannot be reconstructed from `spec.refined`. That is a live
   invariant in `region.rs`, not history.
 
-The one follow-up this plan deferred is now scoped in
-[TEMP-region-characterization-collapse-plan.md](../TEMP-region-characterization-collapse-plan.md).
+The one follow-up this plan deferred is now **done** — see
+[TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)
+(archived).
 
 ---
 
@@ -376,9 +377,9 @@ already `unreachable!()`s on the disagreement). Deleting it means
 Recommended, mechanical, and **out of scope for this plan** — it is a
 characterize-boundary cleanup, not `bracket_fill` elimination.
 
-**Now scoped separately:**
-[TEMP-region-characterization-collapse-plan.md](../TEMP-region-characterization-collapse-plan.md)
-carries it (usage inventory: 4 match sites, 2 real; the `unreachable!()`
+**Now done (archived):**
+[TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)
+carried it (usage inventory: 4 match sites, 2 real; the `unreachable!()`
 accounting; and the finding that `execute_region_spec` already re-matches
 `spec.verdict`, so the collapse needs no new guard). Nothing further is owed
 from this plan.

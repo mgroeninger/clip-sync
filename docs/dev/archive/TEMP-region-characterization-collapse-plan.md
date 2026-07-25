@@ -1,7 +1,7 @@
 # `RegionCharacterization` collapse — plan
 
-Status: **done** (R1+R2 landed in working tree; not committed). Written 2026-07-24;
-revised same day after pre-impl review (§8); implemented 2026-07-24.
+Status: **done / archived** (2026-07-24). R1+R2 implemented and committed.
+Written 2026-07-24; revised same day after pre-impl review (§8).
 
 Delete `RegionCharacterization` and dispatch on `GapRepairSpec.verdict` instead,
 making `spec.verdict` the single source of truth for patch-vs-skip at the
@@ -20,16 +20,16 @@ Paths below are relative to
 ## 0. Relationship to other plans (read first)
 
 - **Provenance.** This is the deferred **C1 note** from
-  [TEMP-patch-audio-bracket-fill-elimination-plan.md](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md)
+  [TEMP-patch-audio-bracket-fill-elimination-plan.md](TEMP-patch-audio-bracket-fill-elimination-plan.md)
   §8, which evaluated the deletion, recommended it, and put it out of scope:
   "a characterize-boundary cleanup, not `bracket_fill` elimination". That plan
   is otherwise complete and is the reason this one is now possible — see §1.
 - **Not a perf change.** Nothing here is on a hot path; the enum is matched once
   per *region* (tens of times per run), not per bracket. Do not attach a
   measurement claim to it, and do not bundle it with anything from
-  [repair-perf.md](repair-perf.md).
+  [repair-perf.md](../repair-perf.md).
 - **8d is the counter-precedent, read it before arguing with §1.**
-  [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)
+  [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)
   §864 (Fingerprint-unification **8d**, 2026-07-08) deliberately *added* type
   structure here: `Skip` went from a bare `RegionPatchOutcome` to a full
   `Skip`-verdict `GapRepairSpec` so "every region now yields a projectable
@@ -285,4 +285,6 @@ into separate commits). `GapRepairVerdict::is_patch`, `outcome_from_spec`,
 return `GapRepairSpec`. Only remaining verdict `unreachable!` is
 `execute_region_spec`'s Skip arm (`dual_fit_skipped` untouched). Gate:
 `cargo build --all-targets`, `cargo clippy --all-targets -- -D warnings`,
-`.\scripts\test-tier.ps1 -Tier pr-repair` — all green.
+`.\scripts\test-tier.ps1 -Tier pr-repair`, plus
+`cargo test -p clip-sync-repair --test patch_audio_integration` (27/27;
+lives in `pr-repair-extended`, not base `pr-repair`) — all green.
