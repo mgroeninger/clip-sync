@@ -4,6 +4,13 @@
 //! Fine lag on already-aligned equal-length windows uses `cross_correlate` with parabolic
 //! peak fitting. PCM **discover** search does not use this module — it slides Pearson in
 //! `offset_refinement` so `DISCOVER_*` thresholds stay on that scale.
+//!
+//! **M-CLONE #2** (`docs/dev/TEMP-rust-review-findings.md`): `fft_cross_correlation` reuses a
+//! thread-local [`FftPlanner`] so repair's per-lag `local_anchor_xcorr_peak` →
+//! `segment_similarity` path does not allocate a new planner on every call. `FftCorrelator`
+//! stays a ZST (no `Mutex` on the struct). `seam_local` planner reuse is out of scope.
+
+use std::cell::RefCell;
 
 use cross_correlate::{Correlate, CrossCorrelationMode};
 use rustfft::FftPlanner;
@@ -11,6 +18,12 @@ use rustfft::FftPlanner;
 use crate::application::ports::PcmCorrelator;
 
 const PHAT_EPSILON: f64 = 1e-12;
+
+thread_local! {
+    /// Reused across GCC-PHAT / FFT cross-correlation calls on this thread (M-CLONE #2).
+    /// rustfft memoizes plans by length on a reused planner.
+    static FFT_PLANNER: RefCell<FftPlanner<f64>> = RefCell::new(FftPlanner::new());
+}
 
 /// Production [`PcmCorrelator`]: GCC-PHAT similarity + FFT lag with parabolic refine.
 pub struct FftCorrelator;
@@ -55,6 +68,18 @@ fn gcc_phat_correlation(a: &[f64], b: &[f64]) -> Vec<f64> {
 }
 
 fn fft_cross_correlation(a: &[f64], b: &[f64], phat: bool) -> Vec<f64> {
+    FFT_PLANNER.with(|cell| {
+        let mut planner = cell.borrow_mut();
+        fft_cross_correlation_with_planner(&mut planner, a, b, phat)
+    })
+}
+
+fn fft_cross_correlation_with_planner(
+    planner: &mut FftPlanner<f64>,
+    a: &[f64],
+    b: &[f64],
+    phat: bool,
+) -> Vec<f64> {
     let out_len = a.len() + b.len().saturating_sub(1);
     if a.is_empty() || b.is_empty() {
         return Vec::new();
@@ -64,7 +89,6 @@ fn fft_cross_correlation(a: &[f64], b: &[f64], phat: bool) -> Vec<f64> {
     let mut spectrum_a = to_complex_padded(a, n);
     let mut spectrum_b = to_complex_padded(b, n);
 
-    let mut planner = FftPlanner::<f64>::new();
     let forward = planner.plan_fft_forward(n);
     let inverse = planner.plan_fft_inverse(n);
 
@@ -150,6 +174,15 @@ mod tests {
             .collect()
     }
 
+    fn gcc_phat_lag_zero_with_fresh_planner(a: &[f64], b: &[f64]) -> f64 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let mut planner = FftPlanner::<f64>::new();
+        let corr = fft_cross_correlation_with_planner(&mut planner, a, b, true);
+        corr.first().copied().unwrap_or(0.0).abs()
+    }
+
     #[test]
     fn parabolic_peak_refines_integer_peak() {
         let values = vec![0.1, 0.9, 1.0, 0.85, 0.2];
@@ -188,5 +221,43 @@ mod tests {
         let misaligned = FftCorrelator.segment_similarity(&left, &right[100..count]);
         assert!(aligned > misaligned);
         assert!(aligned > 0.2);
+    }
+
+    /// M-CLONE #2: thread-local planner reuse must match a fresh `FftPlanner` oracle.
+    #[test]
+    fn gcc_phat_thread_local_planner_matches_fresh_planner_oracle() {
+        let rate = 44_100;
+        let count = rate as usize; // 1 s — keeps the test snappy; length still hits real plan sizes
+        let left = tone_samples(rate, count, 440.0);
+        let right = left.clone();
+        let misaligned = &right[100..count];
+
+        let production_aligned = FftCorrelator.segment_similarity(&left, &right);
+        let oracle_aligned = gcc_phat_lag_zero_with_fresh_planner(&left, &right);
+        assert_eq!(
+            production_aligned, oracle_aligned,
+            "aligned GCC-PHAT must be bit-identical to fresh-planner oracle"
+        );
+
+        let production_mis = FftCorrelator.segment_similarity(&left, misaligned);
+        let oracle_mis = gcc_phat_lag_zero_with_fresh_planner(&left, misaligned);
+        assert_eq!(
+            production_mis, oracle_mis,
+            "misaligned GCC-PHAT must be bit-identical to fresh-planner oracle"
+        );
+        assert!(production_aligned > production_mis);
+    }
+
+    /// M-CLONE #2: warm memo path (second call, same lengths) stays identical.
+    #[test]
+    fn gcc_phat_repeated_calls_same_lengths_are_stable() {
+        let rate = 16_000;
+        let count = rate as usize / 2;
+        let left = tone_samples(rate, count, 880.0);
+        let right = left.clone();
+        let first = FftCorrelator.segment_similarity(&left, &right);
+        let second = FftCorrelator.segment_similarity(&left, &right);
+        assert_eq!(first, second);
+        assert!(first > 0.2);
     }
 }
