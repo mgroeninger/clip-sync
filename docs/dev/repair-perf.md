@@ -27,7 +27,13 @@ the pair index — nothing else. Grep before committing.
 `scripts/measure-repair-perf.ps1`. Two modes: `-Manifest pairs.csv` runs the
 pairs, `-Logs dir/` rolls up logs you already have (tolerates a run still
 appending). `-Focus <spans>` puts named spans against the root; `-MinPct` trims
-deep trees.
+deep trees. Every report prints the span tree, the exclusive by-name roll-up, and
+the Level F candidate-loop component split (§1a).
+
+The harness strips ANSI escapes before parsing. It has to: the stderr fmt layer
+is always colored (only the `--log-file` layer sets `with_ansi(false)`) and this
+harness captures stderr, so an un-stripped log parses as zero span lines and
+reports as empty.
 
 Non-negotiables — the measurement is invalid otherwise:
 
@@ -73,6 +79,51 @@ Exclusive time, merged by span name. Root = `patch_audio`, **9215 s**.
 `unified_refine` at 56.4% is the single dominant cost (1.47 ms/call over 3516
 calls). It is what lever 1's FFT already attacked; the `ExclSecs` column is what
 a future attempt must be measured against.
+
+### Span renames since this table (re-measure before comparing)
+
+The candidate loops now carry a `_start` / `_end` suffix — `unified_refine_start`
+/ `unified_refine_end`, `unified_coarse_start` / `unified_coarse_end`. The two
+searches run **structurally different loop bodies**: the end search hoists the pre
+structure score and *both* seam values out of its loop
+(`unified_search_best_fill_end`), so its per-candidate cost is far lower. The old
+shared name made the by-name roll-up average two populations, and the resulting
+1.47 ms/call figure above describes neither of them. `unified_fine_polish` is
+unchanged (one loop, no ambiguity).
+
+## 1a. Level F — what *inside* a candidate loop costs (2026-07-25)
+
+`unified_refine` has no child spans, so the tree can only attribute its 56.4% to
+"the loop body". The body is not uniform work: it is four separable pieces, and
+each candidate loop now reports them as span fields in **microseconds**
+(`CandidateTimers`, `domain/gap_fill_fit.rs`). The harness sums them into the
+`--- candidate-loop component split (Level F) ---` table.
+
+| Field | What it times |
+|-------|---------------|
+| `structure_us` | `score_pre_for_signature` + `score_post_for_signature` (timeline scan) |
+| `seam_us` | the seam pair: O(1) FFT-band lookup on lever 1's path, naive Pearson otherwise |
+| `repeat_us` | `fill_repeat_correlations` — the repeat window, which lever 1 did **not** band |
+| `score_us` | the rest of `unified_fit_score_with_repeat` (`repeat_us` subtracted out) |
+
+The four are disjoint; `Unacct` in the table is the span's exclusive time minus
+all four (loop overhead, candidates rejected by the bounds guards, and the clock
+reads). A large `Unacct` means the buckets are missing real work.
+
+**Why fields and not sub-spans:** at ~330 µs/candidate over hundreds of
+candidates per call, a per-candidate span enter/exit would be a measurable
+fraction of what it measures. These are plain `Instant` deltas, ~2 clock reads
+per component per candidate, gated on `CLIP_SYNC_SPAN_TIMING` so production pays
+one bool load and no clock reads.
+
+**Not yet measured on the corpus.** A synthetic mono-chirp pair puts `repeat_us`
+at **99%** of both refine loops, which matches the standing hypothesis — lever 1
+banded the seam correlations and left the repeat window naive — but a 120 s
+synthetic chirp is not the corpus, and this number must not be quoted as one.
+Record the real split here after the next 17-pair sweep.
+
+**Reading `seam_us` ≈ 0 on `*_end`:** expected, not a bug. That loop hoists both
+seam values above it (lever 1), so no candidate pays for them.
 
 ## 2. Per-pair characterize baseline, 17 pairs (2026-07-23)
 

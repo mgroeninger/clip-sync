@@ -1,5 +1,9 @@
 //! Waveform seam search and unified structure+waveform fit (Phase A/B/C).
 
+use std::cell::Cell;
+use std::sync::OnceLock;
+use std::time::Instant;
+
 use serde::Serialize;
 
 use crate::domain::gap_signature::{
@@ -29,6 +33,93 @@ const FFT_SEAM_DISCREPANCY_TOL: f64 = 1e-6;
 const REPEAT_CORR_THRESHOLD: f64 = 0.55;
 const REPEAT_SEAM_WEAK: f64 = 0.45;
 const REPEAT_SUM_CEILING: f64 = 1.1;
+
+/// Level F perf instrumentation (docs/dev/repair-perf.md §1): split ONE candidate evaluation into its
+/// component costs. `unified_refine_*` is the pipeline's single largest exclusive cost and has no child spans,
+/// so its 56.4% is a genuine leaf as far as the span tree can see — but the loop body is not uniform work. It
+/// is four separable pieces, and which one dominates decides where the next optimization lever goes:
+///
+///   * `structure_us` — `score_pre_for_signature` + `score_post_for_signature` (the bool/energy timeline scan)
+///   * `seam_us`      — the waveform seam pair: an O(1) FFT-band lookup on the lever-1 path, a full naive
+///                      Pearson (`waveform_seams_at_start`) on the fallback/coarse path
+///   * `repeat_us`    — `fill_repeat_correlations` inside the repeat penalty. Lever 1 banded the SEAM
+///                      correlations only; the repeat window is a different window and is still a naive
+///                      per-candidate Pearson (lever 1b(b)). Prime suspect for the post-lever-1 residual.
+///   * `score_us`     — the rest of `unified_fit_score_with_repeat` (arithmetic, anchor prior), i.e. the
+///                      combining math with `repeat_us` already subtracted out.
+///
+/// Sub-spans are deliberately NOT used here: at ~330 µs/candidate and hundreds of candidates per call, a
+/// per-candidate span enter/exit would be a measurable fraction of the thing being measured. These are plain
+/// `Instant` deltas accumulated into the enclosing span's fields, ~2 clock reads per component per candidate.
+///
+/// Off unless `CLIP_SYNC_SPAN_TIMING` is set (the same gate the fmt subscriber uses to emit close lines), so
+/// production runs pay one relaxed bool load per component and no clock reads at all.
+#[derive(Default)]
+struct CandidateTimers {
+    structure_ns: Cell<u64>,
+    seam_ns: Cell<u64>,
+    repeat_ns: Cell<u64>,
+    score_ns: Cell<u64>,
+}
+
+fn candidate_timing_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CLIP_SYNC_SPAN_TIMING").is_some())
+}
+
+impl CandidateTimers {
+    /// Run `f`, adding its elapsed time to `bucket`. When timing is off this is `f()` and nothing else.
+    fn time<T>(&self, bucket: fn(&Self) -> &Cell<u64>, f: impl FnOnce() -> T) -> T {
+        if !candidate_timing_enabled() {
+            return f();
+        }
+        let t0 = Instant::now();
+        let out = f();
+        let cell = bucket(self);
+        cell.set(cell.get().saturating_add(t0.elapsed().as_nanos() as u64));
+        out
+    }
+
+    /// Record the four buckets on `span` as microsecond fields, then reset them so the next phase's span
+    /// reports its own split rather than a running total. Call before the span is dropped (a field recorded
+    /// after close is lost), and only on a span that declared these fields `Empty`.
+    ///
+    /// `score_ns` is measured around the whole of `unified_fit_score_with_repeat`, which CONTAINS the repeat
+    /// correlation, so `repeat_ns` is subtracted out here. The four reported buckets are then disjoint and
+    /// sum to the instrumented part of the loop body (the remainder vs the span's `time.busy` is loop
+    /// overhead, the bounds guards, and the clock reads themselves).
+    fn record_on(&self, span: &tracing::Span) {
+        if !candidate_timing_enabled() {
+            return;
+        }
+        span.record("structure_us", self.structure_ns.get() / 1_000);
+        span.record("seam_us", self.seam_ns.get() / 1_000);
+        span.record("repeat_us", self.repeat_ns.get() / 1_000);
+        span.record(
+            "score_us",
+            self.score_ns.get().saturating_sub(self.repeat_ns.get()) / 1_000,
+        );
+        self.structure_ns.set(0);
+        self.seam_ns.set(0);
+        self.repeat_ns.set(0);
+        self.score_ns.set(0);
+    }
+}
+
+/// The field set every candidate-loop span declares, so `CandidateTimers::record_on` always has somewhere to
+/// write. `tracing` requires fields to be declared at span construction.
+macro_rules! candidate_loop_span {
+    ($name:expr) => {
+        tracing::info_span!(
+            $name,
+            candidates = tracing::field::Empty,
+            structure_us = tracing::field::Empty,
+            seam_us = tracing::field::Empty,
+            repeat_us = tracing::field::Empty,
+            score_us = tracing::field::Empty,
+        )
+    };
+}
 
 /// Default hard skip floor for fit-mode waveform tiering (Phase C).
 pub const DEFAULT_FILL_ABSOLUTE_FLOOR: f32 = 0.12;
@@ -307,6 +398,7 @@ fn repeat_penalty_at_placement(
     start: usize,
     pre_seam: f64,
     post_seam: f64,
+    timers: &CandidateTimers,
 ) -> f64 {
     if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
         return 0.0;
@@ -318,10 +410,10 @@ fn repeat_penalty_at_placement(
         pre_window: ctx.pre_window,
         post_window: ctx.post_window,
     };
-    let (repeat_pre, repeat_post) = fill_repeat_correlations(
-        ctx.templates,
-        placement,
-        ctx.repeat_window_frames,
+    // Level F `repeat_us`: the un-banded per-candidate Pearson, timed on its own.
+    let (repeat_pre, repeat_post) = timers.time(
+        |t| &t.repeat_ns,
+        || fill_repeat_correlations(ctx.templates, placement, ctx.repeat_window_frames),
     );
     let repeat_max = repeat_pre.max(repeat_post);
     let repeat_sum = repeat_pre + repeat_post;
@@ -355,6 +447,7 @@ fn unified_fit_score_with_repeat(
     weights: UnifiedFitWeights,
     waveform: &WaveformSeamContext<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
+    timers: &CandidateTimers,
 ) -> f64 {
     let mut score = unified_fit_score(
         candidate.structure_pre,
@@ -376,6 +469,7 @@ fn unified_fit_score_with_repeat(
                 candidate.placement.start,
                 candidate.wave_pre,
                 candidate.wave_post,
+                timers,
             );
     }
     score
@@ -637,6 +731,10 @@ fn unified_search_best_fill_start(
     let mut best_start = nominal_start;
     let mut best_score = f64::NEG_INFINITY;
 
+    // Level F: one accumulator per PHASE, so the coarse and refine spans report their own component splits
+    // rather than a running total. `consider` is shared, so the active accumulator is swapped between phases.
+    let timers = CandidateTimers::default();
+
     // `consider` takes the `(pre_seam, post_seam)` correlations as `precomputed_wave`: `None` ⇒ compute them
     // naively in-line (the pre-lever-1 behaviour, exact), `Some((pre, post))` ⇒ use the FFT-band values the
     // refine loop looked up. Passing `None` everywhere is byte-identical to the old closure, so the flag-off path
@@ -652,27 +750,52 @@ fn unified_search_best_fill_start(
         if candidate_end + post_span > total_frames {
             return;
         }
-        let pre_score = score_pre_for_signature(signature, timeline, start, params);
-        let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let (wave_pre, wave_post) = precomputed_wave
-            .unwrap_or_else(|| waveform_seams_at_start(waveform, start, score_channels));
-        let score = unified_fit_score_with_repeat(
-            UnifiedFitCandidate {
-                structure_pre: pre_score,
-                structure_post: post_score,
-                wave_pre,
-                wave_post,
-                placement: fill_bracket_placement(
-                    start,
-                    candidate_end,
-                    nominal_start,
-                    nominal_end,
-                ),
+        // Level F `structure_us`: both timeline scans together — they are the same kind of work and always
+        // run as a pair, so splitting pre from post would cost a clock read to say nothing new.
+        let (pre_score, post_score) = timers.time(
+            |t| &t.structure_ns,
+            || {
+                (
+                    score_pre_for_signature(signature, timeline, start, params),
+                    score_post_for_signature(signature, timeline, candidate_end, params),
+                )
             },
-            params,
-            weights,
-            waveform,
-            anchor_prior,
+        );
+        // Level F `seam_us`: an O(1) band lookup when the caller supplied `precomputed_wave` (lever 1's FFT
+        // path), a full naive Pearson otherwise. Timing both under one name is what makes the FFT path's
+        // saving readable as a drop in this bucket.
+        let (wave_pre, wave_post) = timers.time(
+            |t| &t.seam_ns,
+            || {
+                precomputed_wave
+                    .unwrap_or_else(|| waveform_seams_at_start(waveform, start, score_channels))
+            },
+        );
+        // Level F `score_us`: the combining math. `repeat_us` is accumulated separately inside, so this
+        // bucket is the score arithmetic with the repeat correlation already excluded.
+        let score = timers.time(
+            |t| &t.score_ns,
+            || {
+                unified_fit_score_with_repeat(
+                    UnifiedFitCandidate {
+                        structure_pre: pre_score,
+                        structure_post: post_score,
+                        wave_pre,
+                        wave_post,
+                        placement: fill_bracket_placement(
+                            start,
+                            candidate_end,
+                            nominal_start,
+                            nominal_end,
+                        ),
+                    },
+                    params,
+                    weights,
+                    waveform,
+                    anchor_prior,
+                    &timers,
+                )
+            },
         );
             let better = score > *best_score + SCORE_TIE_EPSILON
                 || (score >= *best_score - SCORE_TIE_EPSILON
@@ -685,15 +808,20 @@ fn unified_search_best_fill_start(
 
     // Perf instrumentation (Level E, TEMP-production-repair-perf-plan.md §2.3/§2.4): split each unified search
     // into the SPARSE coarse pass vs the DENSE integer refine — the distribution that decides prefix-sum vs FFT
-    // for lever 1. `candidates` records attempts per phase (per-candidate cost = busy / candidates). Names are
-    // shared with the end search, so the harness's by-name roll-up sums coarse-vs-refine across both while the
-    // span tree still shows each placement separately. Emits only under CLIP_SYNC_SPAN_TIMING (Level A); nests
-    // under `bracket_unified_search`.
+    // for lever 1. `candidates` records attempts per phase (per-candidate cost = busy / candidates), and the
+    // Level F `*_us` fields split one candidate into its components (see `CandidateTimers`). Emits only under
+    // CLIP_SYNC_SPAN_TIMING (Level A); nests under `bracket_unified_search`.
+    //
+    // The `_start` / `_end` suffix matters (docs/dev/repair-perf.md §1): the start and end searches run
+    // structurally DIFFERENT loop bodies — the end search hoists the pre structure score and both seam values
+    // out of its loop (see `unified_search_best_fill_end`), so its per-candidate cost is far lower. Sharing one
+    // span name made the harness's by-name roll-up average two populations, and the resulting per-candidate
+    // figure described neither.
     //
     // Lever 1 (§2.5): the coarse pass stays NAIVE — it is sparse (4.8%, Level E) and, crucially, keeping it
     // naive means the coarse winner that anchors the refine window is bit-identical to today, so the FFT can
     // only ever move a placement *within* the ±coarse_step refine band, never relocate it grossly.
-    let coarse_span = tracing::info_span!("unified_coarse", candidates = tracing::field::Empty);
+    let coarse_span = candidate_loop_span!("unified_coarse_start");
     let mut coarse_n = 0u64;
     {
         let _e = coarse_span.enter();
@@ -709,6 +837,7 @@ fn unified_search_best_fill_start(
         }
     }
     coarse_span.record("candidates", coarse_n);
+    timers.record_on(&coarse_span);
 
     if !best_score.is_finite() {
         return None;
@@ -728,7 +857,7 @@ fn unified_search_best_fill_start(
     } else {
         None
     };
-    let refine_span = tracing::info_span!("unified_refine", candidates = tracing::field::Empty);
+    let refine_span = candidate_loop_span!("unified_refine_start");
     let mut refine_n = 0u64;
     {
         let _e = refine_span.enter();
@@ -753,6 +882,7 @@ fn unified_search_best_fill_start(
         }
     }
     refine_span.record("candidates", refine_n);
+    timers.record_on(&refine_span);
 
     // Exact re-score belt + runtime monitor (§2.5): the FFT band only *finds where to look*; verify the chosen
     // winner's band value against an exact naive re-score. A divergence beyond FFT noise (≫ 1e-10) can only be
@@ -785,6 +915,10 @@ fn unified_search_best_fill_start(
                 delta = (naive_wm - band_wm).abs(),
                 "fft seam band diverged from naive at the winner — falling back to naive refine for this gap"
             );
+            // Level F: this fallback re-refine's component times land in `timers` with no span left to record
+            // them on, so they are discarded rather than misattributed to the next phase. That is deliberate —
+            // the belt plus this fallback sit inside `bracket_unified_search`'s own time, measured at 0.3% of
+            // root, so the loss is bounded and far below what the buckets are being used to decide.
             best_start = coarse_best_start;
             best_score = coarse_best_score;
             for start in refine_min..=refine_max {
@@ -835,6 +969,11 @@ fn unified_search_best_fill_end(
     let const_pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
     let (const_wave_pre, const_wave_post) =
         waveform_seams_at_start(waveform, fill_start, score_channels);
+
+    // Level F (see `CandidateTimers`): the end search's `seam_us` is structurally ZERO — both seam values are
+    // hoisted above, so no candidate pays for them. Its `structure_us` covers the post scan only. That is
+    // exactly why the span names carry `_start` / `_end`: these buckets are not comparable across the two.
+    let timers = CandidateTimers::default();
     let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
         if end < end_min || end > end_max || end + post_span > total_frames {
             return;
@@ -847,19 +986,28 @@ fn unified_search_best_fill_end(
         if fill_len < min_fill || fill_len > max_fill {
             return;
         }
-        let post_score = score_post_for_signature(signature, timeline, end, params);
-        let score = unified_fit_score_with_repeat(
-            UnifiedFitCandidate {
-                structure_pre: const_pre_score,
-                structure_post: post_score,
-                wave_pre: const_wave_pre,
-                wave_post: const_wave_post,
-                placement: fill_bracket_placement(fill_start, end, fill_start, nominal_end),
+        let post_score = timers.time(
+            |t| &t.structure_ns,
+            || score_post_for_signature(signature, timeline, end, params),
+        );
+        let score = timers.time(
+            |t| &t.score_ns,
+            || {
+                unified_fit_score_with_repeat(
+                    UnifiedFitCandidate {
+                        structure_pre: const_pre_score,
+                        structure_post: post_score,
+                        wave_pre: const_wave_pre,
+                        wave_post: const_wave_post,
+                        placement: fill_bracket_placement(fill_start, end, fill_start, nominal_end),
+                    },
+                    params,
+                    weights,
+                    waveform,
+                    None,
+                    &timers,
+                )
             },
-            params,
-            weights,
-            waveform,
-            None,
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
             || (score >= *best_score - SCORE_TIE_EPSILON
@@ -870,8 +1018,9 @@ fn unified_search_best_fill_end(
         }
     };
 
-    // Level E (see start search): coarse (sparse) vs refine (dense) split, shared span names.
-    let coarse_span = tracing::info_span!("unified_coarse", candidates = tracing::field::Empty);
+    // Level E (see start search): coarse (sparse) vs refine (dense) split. Names are suffixed `_end` so the
+    // by-name roll-up keeps this loop's much cheaper candidates separate from the start search's.
+    let coarse_span = candidate_loop_span!("unified_coarse_end");
     let mut coarse_n = 0u64;
     {
         let _e = coarse_span.enter();
@@ -885,6 +1034,7 @@ fn unified_search_best_fill_end(
         }
     }
     coarse_span.record("candidates", coarse_n);
+    timers.record_on(&coarse_span);
 
     if !best_score.is_finite() {
         return None;
@@ -892,7 +1042,7 @@ fn unified_search_best_fill_end(
 
     let refine_min = best_end.saturating_sub(coarse_step).max(end_min);
     let refine_max = (best_end + coarse_step).min(end_max);
-    let refine_span = tracing::info_span!("unified_refine", candidates = tracing::field::Empty);
+    let refine_span = candidate_loop_span!("unified_refine_end");
     let mut refine_n = 0u64;
     {
         let _e = refine_span.enter();
@@ -902,6 +1052,7 @@ fn unified_search_best_fill_end(
         }
     }
     refine_span.record("candidates", refine_n);
+    timers.record_on(&refine_span);
 
     Some((best_end, best_score))
 }
@@ -932,8 +1083,11 @@ fn unified_fine_polish_start(
     let mut best_start = start;
     let mut best_score = f64::NEG_INFINITY;
 
-    // Level E: the fine polish is a small DENSE integer window (±max_fine_adjustment_frames).
-    let polish_span = tracing::info_span!("unified_fine_polish", candidates = tracing::field::Empty);
+    // Level E: the fine polish is a small DENSE integer window (±max_fine_adjustment_frames). Its loop body is
+    // the same four components as the start refine, and it is fully naive (no FFT band), so its Level F split
+    // doubles as the un-accelerated control against `unified_refine_start`'s banded one.
+    let polish_span = candidate_loop_span!("unified_fine_polish");
+    let timers = CandidateTimers::default();
     let mut polish_n = 0u64;
     let polish_guard = polish_span.enter();
     for delta in -(params.max_fine_adjustment_frames as i64)
@@ -946,26 +1100,42 @@ fn unified_fine_polish_start(
         }
         let candidate = candidate as usize;
         let candidate_end = candidate + fill_len;
-        let pre_score = score_pre_for_signature(signature, timeline, candidate, params);
-        let post_score = score_post_for_signature(signature, timeline, candidate_end, params);
-        let (wave_pre, wave_post) = waveform_seams_at_start(waveform, candidate, score_channels);
-        let score = unified_fit_score_with_repeat(
-            UnifiedFitCandidate {
-                structure_pre: pre_score,
-                structure_post: post_score,
-                wave_pre,
-                wave_post,
-                placement: fill_bracket_placement(
-                    candidate,
-                    candidate_end,
-                    nominal_start,
-                    nominal_end,
-                ),
+        let (pre_score, post_score) = timers.time(
+            |t| &t.structure_ns,
+            || {
+                (
+                    score_pre_for_signature(signature, timeline, candidate, params),
+                    score_post_for_signature(signature, timeline, candidate_end, params),
+                )
             },
-            params,
-            weights,
-            waveform,
-            anchor_prior,
+        );
+        let (wave_pre, wave_post) = timers.time(
+            |t| &t.seam_ns,
+            || waveform_seams_at_start(waveform, candidate, score_channels),
+        );
+        let score = timers.time(
+            |t| &t.score_ns,
+            || {
+                unified_fit_score_with_repeat(
+                    UnifiedFitCandidate {
+                        structure_pre: pre_score,
+                        structure_post: post_score,
+                        wave_pre,
+                        wave_post,
+                        placement: fill_bracket_placement(
+                            candidate,
+                            candidate_end,
+                            nominal_start,
+                            nominal_end,
+                        ),
+                    },
+                    params,
+                    weights,
+                    waveform,
+                    anchor_prior,
+                    &timers,
+                )
+            },
         );
         let better = score > best_score + SCORE_TIE_EPSILON
             || (score >= best_score - SCORE_TIE_EPSILON
@@ -977,6 +1147,7 @@ fn unified_fine_polish_start(
     }
     drop(polish_guard);
     polish_span.record("candidates", polish_n);
+    timers.record_on(&polish_span);
 
     best_start
 }
@@ -1936,6 +2107,7 @@ mod tests {
             weights,
             &waveform,
             None,
+            &CandidateTimers::default(),
         );
         let no_penalty = WaveformSeamContext {
             repeat_penalty_weight: 0.0,
@@ -1947,6 +2119,7 @@ mod tests {
             weights,
             &no_penalty,
             None,
+            &CandidateTimers::default(),
         );
         assert!(
             without > base,
@@ -2148,6 +2321,7 @@ mod tests {
             weights,
             &waveform_penalized,
             None,
+            &CandidateTimers::default(),
         );
         let without_penalty = unified_fit_score_with_repeat(
             fit_candidate(0.9, 0.9, 0.2, nominal_start, nominal_end, nominal_start, nominal_end),
@@ -2155,6 +2329,7 @@ mod tests {
             weights,
             &waveform_off,
             None,
+            &CandidateTimers::default(),
         );
         assert!(
             without_penalty > with_penalty,
@@ -2219,6 +2394,7 @@ mod tests {
                 weights,
                 &waveform,
                 None,
+                &CandidateTimers::default(),
             )
         };
 

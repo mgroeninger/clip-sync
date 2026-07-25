@@ -110,7 +110,7 @@ function New-Tally {
     [pscustomobject]@{
         Label = $Label
         # full chain key ("patch_audio>characterize>char_gate_search") ->
-        #   @{ Name; Parent; Depth; Secs; Calls }
+        #   @{ Name; Parent; Depth; Secs; Calls; Fields }
         Paths    = @{}
         Lines    = 0
         Unparsed = 0
@@ -118,7 +118,7 @@ function New-Tally {
 }
 
 function Add-SpanPath {
-    param($T, [string[]]$Chain, [double]$Secs)
+    param($T, [string[]]$Chain, [double]$Secs, [hashtable]$Fields)
     $key = $Chain -join '>'
     if (-not $T.Paths.ContainsKey($key)) {
         $parent = if ($Chain.Count -gt 1) { ($Chain[0..($Chain.Count - 2)] -join '>') } else { '' }
@@ -128,10 +128,19 @@ function Add-SpanPath {
             Depth  = $Chain.Count - 1
             Secs   = [double]0
             Calls  = 0
+            # Numeric span fields summed over every close of this span: `candidates`, and the Level F
+            # component split (`structure_us` / `seam_us` / `repeat_us` / `score_us`).
+            Fields = @{}
         }
     }
     $T.Paths[$key].Secs += $Secs
     $T.Paths[$key].Calls += 1
+    if ($Fields) {
+        foreach ($f in $Fields.Keys) {
+            if (-not $T.Paths[$key].Fields.ContainsKey($f)) { $T.Paths[$key].Fields[$f] = [double]0 }
+            $T.Paths[$key].Fields[$f] += $Fields[$f]
+        }
+    }
 }
 
 # Split a span chain on ':' at brace/quote depth 0. Span FIELDS can contain colons (`outcome="a:b"`, Windows
@@ -157,6 +166,18 @@ function Split-SpanChain {
     return $out
 }
 
+# Pull the NUMERIC fields out of a span's `{...}` blob (`{candidates=250 seam_us=30}`). Non-numeric fields
+# (`outcome="a:b"`, paths) are skipped: nothing here aggregates them, and a quoted value could contain
+# anything. Fields recorded as `Empty` and never filled in print as `candidates=` and are skipped too.
+function Read-SpanFields {
+    param([string]$Blob)
+    $out = @{}
+    foreach ($m in ([regex]'(?<k>[A-Za-z_][A-Za-z0-9_]*)=(?<v>[0-9]+(?:\.[0-9]+)?)(?=[\s,}]|$)').Matches($Blob)) {
+        $out[$m.Groups['k'].Value] = [double]$m.Groups['v'].Value
+    }
+    return $out
+}
+
 # Parse one log's span-close lines into a tally.
 #
 # A close line looks like:
@@ -172,6 +193,10 @@ function Read-LogTally {
     $rxLevel = [regex]'\s(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+'
     $rxIdent = [regex]'^[A-Za-z_][A-Za-z0-9_]*$'
     $unit = @{ 'ns' = 1e-9; 'ms' = 1e-3; 's' = 1.0 }
+    # The stderr fmt layer is COLORED (only the `--log-file` layer sets `with_ansi(false)`), and this harness
+    # captures stderr — so every line arrives wrapped in SGR escapes, including between `close` and
+    # `time.busy=`. Strip them first or nothing below matches and the log reports as empty.
+    $rxAnsi = [regex]"`e\[[0-9;]*[A-Za-z]"
 
     # Share ReadWrite/Delete: rolling up while a run is still appending to its log is a normal case (checking
     # an in-flight sweep), and the default ReadLines share mode throws on the open handle.
@@ -181,6 +206,7 @@ function Read-LogTally {
     $reader = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
     try {
         while ($null -ne ($line = $reader.ReadLine())) {
+            if ($line.IndexOf([char]27) -ge 0) { $line = $rxAnsi.Replace($line, '') }
             $m = $rxBusy.Match($line)
             if (-not $m.Success) { continue }
 
@@ -199,17 +225,28 @@ function Read-LogTally {
             if ($lm.Success) { $prefix = $prefix.Substring($lm.Index + $lm.Length) }
 
             # Chain elements are `name` or `name{field=v ...}`; keep the names, drop anything unrecognizable.
+            # Fields are kept for the LAST element only — that is the span actually closing on this line.
+            # Ancestors re-print their fields on every descendant's close, so summing those would multiply
+            # a parent's `candidates` by its child count.
             $chain = [System.Collections.Generic.List[string]]::new()
+            $fields = $null
             foreach ($part in (Split-SpanChain $prefix)) {
                 $name = $part.Trim()
+                $blob = ''
                 $brace = $name.IndexOf('{')
-                if ($brace -ge 0) { $name = $name.Substring(0, $brace) }
+                if ($brace -ge 0) {
+                    $blob = $name.Substring($brace)
+                    $name = $name.Substring(0, $brace)
+                }
                 $name = $name.Trim()
-                if ($name -ne '' -and $rxIdent.IsMatch($name)) { [void]$chain.Add($name) }
+                if ($name -ne '' -and $rxIdent.IsMatch($name)) {
+                    [void]$chain.Add($name)
+                    $fields = if ($blob -ne '') { Read-SpanFields $blob } else { $null }
+                }
             }
             if ($chain.Count -eq 0) { $t.Unparsed += 1; continue }
 
-            Add-SpanPath -T $t -Chain $chain.ToArray() -Secs $secs
+            Add-SpanPath -T $t -Chain $chain.ToArray() -Secs $secs -Fields $fields
             $t.Lines += 1
         }
     }
@@ -336,6 +373,85 @@ function Write-HotSpots {
             Write-Warning ("  {0} has NEGATIVE exclusive time ({1:N2}s): its children outlast it." -f $T.Paths[$k].Name, $e)
             Write-Warning "  Either a child span escapes the parent's scope, or mismatched logs were merged."
         }
+    }
+}
+
+# Level F: split each candidate loop's own cost into the four components its `*_us` fields carry
+# (see `CandidateTimers` in domain/gap_fill_fit.rs). This is the table that answers "WHAT inside
+# unified_refine_start is the 56%" — the span tree can only say "the loop body", because sub-spans at
+# ~330 us/candidate would perturb what they measure.
+#
+# `unaccounted` is the span's exclusive time minus the four buckets: loop overhead, the bounds guards that
+# return before any component runs, and the clock reads themselves. A large value here means the components
+# are missing real work, the same way a fat parent means an instrumentation gap in the tree above.
+function Write-CandidateSplit {
+    param($T)
+    if ($T.Lines -eq 0) { return }
+    $rootSecs = Get-RootSecs -T $T
+    $components = @('structure_us', 'seam_us', 'repeat_us', 'score_us')
+
+    # Merge by span name, the same way Write-HotSpots does, so this lines up with that table.
+    $byName = @{}
+    foreach ($k in $T.Paths.Keys) {
+        $p = $T.Paths[$k]
+        $hasAny = $false
+        foreach ($c in $components) { if ($p.Fields.ContainsKey($c)) { $hasAny = $true; break } }
+        if (-not $hasAny) { continue }
+        if (-not $byName.ContainsKey($p.Name)) {
+            $byName[$p.Name] = [pscustomobject]@{ Excl = [double]0; Cands = [double]0; Comp = @{} }
+        }
+        $byName[$p.Name].Excl += (Get-ExclusiveSecs -T $T -Key $k)
+        if ($p.Fields.ContainsKey('candidates')) { $byName[$p.Name].Cands += $p.Fields['candidates'] }
+        foreach ($c in $components) {
+            if (-not $byName[$p.Name].Comp.ContainsKey($c)) { $byName[$p.Name].Comp[$c] = [double]0 }
+            if ($p.Fields.ContainsKey($c)) { $byName[$p.Name].Comp[$c] += $p.Fields[$c] }
+        }
+    }
+
+    Write-Host ""
+    Write-Host "--- candidate-loop component split (Level F, seconds) ---" -ForegroundColor Cyan
+    if ($byName.Count -eq 0) {
+        Write-Host "  no *_us fields in these logs — pre-Level-F binary, or CLIP_SYNC_SPAN_TIMING was unset" `
+            -ForegroundColor DarkGray
+        Write-Host "  when the run happened (the timers gate on the same variable as the close lines)." `
+            -ForegroundColor DarkGray
+        return
+    }
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+    foreach ($e in ($byName.GetEnumerator() | Sort-Object { - $_.Value.Excl })) {
+        $v = $e.Value
+        $sum = 0.0
+        foreach ($c in $components) { $sum += $v.Comp[$c] / 1e6 }   # fields are microseconds
+        $pct = { param($s) if ($v.Excl -gt 0) { [math]::Round(100 * $s / $v.Excl, 1) } else { $null } }
+        $rows.Add([pscustomobject]@{
+            Span        = $e.Key
+            ExclSecs    = [math]::Round($v.Excl, 1)
+            PctOfRoot   = if ($rootSecs -gt 0) { [math]::Round(100 * $v.Excl / $rootSecs, 2) } else { $null }
+            Candidates  = [long]$v.Cands
+            PerCandUs   = if ($v.Cands -gt 0) { [math]::Round(1e6 * $v.Excl / $v.Cands, 1) } else { $null }
+            Structure   = & $pct ($v.Comp['structure_us'] / 1e6)
+            Seam        = & $pct ($v.Comp['seam_us'] / 1e6)
+            Repeat      = & $pct ($v.Comp['repeat_us'] / 1e6)
+            Score       = & $pct ($v.Comp['score_us'] / 1e6)
+            Unacct      = & $pct ($v.Excl - $sum)
+        })
+    }
+    $rows | Format-Table -AutoSize
+
+    Write-Host "  Structure/Seam/Repeat/Score are % of that span's OWN (exclusive) time; they are disjoint." -ForegroundColor DarkGray
+    Write-Host "  Unacct = loop overhead + candidates rejected by the bounds guards + the clock reads." -ForegroundColor DarkGray
+    Write-Host "  Repeat is fill_repeat_correlations, the seam correlation lever 1's FFT did NOT band." -ForegroundColor DarkGray
+    Write-Host "  Seam ~0 on *_end is expected: that loop hoists both seam values out (lever 1)." -ForegroundColor DarkGray
+
+    # The whole point of the split: name the biggest bucket in the biggest loop, so the next lever is picked
+    # from a measurement rather than from a guess.
+    $top = $rows | Sort-Object { - $_.ExclSecs } | Select-Object -First 1
+    if ($top) {
+        $best = @('Structure', 'Seam', 'Repeat', 'Score', 'Unacct') |
+            Sort-Object { - ([double]($top.$_)) } | Select-Object -First 1
+        Write-Host ("  verdict: {0} is the largest loop ({1:N1}s); its dominant component is {2} at {3}% of it." -f `
+            $top.Span, $top.ExclSecs, $best, $top.$best) -ForegroundColor Green
     }
 }
 
@@ -489,6 +605,7 @@ $tallies = @(foreach ($lf in $logFiles) { Read-LogTally -Path $lf.Path -Label $l
 foreach ($t in $tallies) {
     Write-SpanTree -T $t
     Write-HotSpots -T $t
+    Write-CandidateSplit -T $t
     Write-MCloneSpans -T $t
     Write-Focus -T $t -Names $Focus
 }
@@ -503,15 +620,20 @@ if ($tallies.Count -gt 1) {
                 $src = $t.Paths[$key]
                 $grand.Paths[$key] = [pscustomobject]@{
                     Name = $src.Name; Parent = $src.Parent; Depth = $src.Depth
-                    Secs = [double]0; Calls = 0
+                    Secs = [double]0; Calls = 0; Fields = @{}
                 }
             }
             $grand.Paths[$key].Secs += $t.Paths[$key].Secs
             $grand.Paths[$key].Calls += $t.Paths[$key].Calls
+            foreach ($f in $t.Paths[$key].Fields.Keys) {
+                if (-not $grand.Paths[$key].Fields.ContainsKey($f)) { $grand.Paths[$key].Fields[$f] = [double]0 }
+                $grand.Paths[$key].Fields[$f] += $t.Paths[$key].Fields[$f]
+            }
         }
     }
     Write-SpanTree -T $grand
     Write-HotSpots -T $grand
+    Write-CandidateSplit -T $grand
     Write-MCloneSpans -T $grand
     Write-Focus -T $grand -Names $Focus
 }
