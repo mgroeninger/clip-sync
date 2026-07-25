@@ -701,7 +701,7 @@ mod tests {
     // --- helpers ---
 
     fn aligned_result(offset: Option<f64>) -> AlignmentResult {
-        clip_sync_repair_fixtures::start_clip_alignment(60.0, offset)
+        crate::application::start_clip_alignment(60.0, offset)
     }
 
     fn scan_request(a: &str, b: &str, decode_chunk_secs: u64) -> ScanGapsRequest {

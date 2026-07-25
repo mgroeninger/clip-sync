@@ -540,13 +540,12 @@ workspace-wide), so fixing these 8 adds noise without changing the baseline.
    `floor_oracle::{gap_interior_range, validate_gap_interior_peak}`; dual-fit validator calls the
    shared peak check (H6 clamp stays on the range helper).
 3. ~~One exported `NeverCalledAligner` + alignment builder in fixtures~~ — **done 2026-07-24**:
-   `NeverCalledAligner` lives in repair `application::test_support` (so unit tests and fixtures
-   share one `Aligner` impl); fixtures `test_align` re-exports it and owns
-   `no_op_alignment` / `start_clip_alignment` / `zero_offset_alignment` /
-   `oracle_injected_alignment`.
+   `NeverCalledAligner` + alignment builders live in repair `application::test_support`
+   (so unit tests and fixtures share one crate); fixtures `test_align` is a thin re-export.
 4. ~~`csv` crate or RFC 4180 quoting for calibration CSV~~ — **done 2026-07-24**: `csv` dep on
    harness + fixtures; `CorpusReport::csv`, W5 sweep CSV, and `w5_timing_offset_csv` use
-   `csv::Writer` (regression: `csv_quotes_commas_in_pair_and_ids`).
+   `csv::Writer` (regression: `csv_quotes_commas_in_pair_and_ids`). Sweep header is
+   [`SWEEP_CSV_FIELDS`] / `sweep_csv_header()` (single source; no parallel string).
 5. ~~Delete the collapsed window formula or call production’s window helper~~ — **done
    2026-07-24**: harness `geometry_for` / `correlate_frames_for_gap` delegate to public
    `FillWindowFrames::for_gap` (standoff stays 0 by design); `geometry_tests` locks parity.

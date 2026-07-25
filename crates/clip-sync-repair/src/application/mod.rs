@@ -22,4 +22,7 @@ pub use patch_audio::{
 };
 pub use repair_videos::{RepairVideos, RepairWriteRequest};
 pub use scan_gaps::{ScanGaps, ScanGapsRequest};
-pub use test_support::NeverCalledAligner;
+pub use test_support::{
+    no_op_alignment, oracle_injected_alignment, start_clip_alignment, zero_offset_alignment,
+    NeverCalledAligner,
+};

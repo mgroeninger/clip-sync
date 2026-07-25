@@ -189,12 +189,8 @@ fn joint_winner_label(w: W5JointWinner) -> String {
     }
 }
 
-/// CSV header for the sweep (plan §5.2.5; `b_shift_secs` added for §8 Q1 decoupled runs).
-pub const SWEEP_CSV_HEADER: &str = "peak_offset_secs,fill_border_search_secs,b_shift_secs,regime,\
-joint_winner,nominal_min,baseline_min,max_bracket_min,anchor_seam_would_run,bracket_count,\
-passing_bracket_count,wall_ms";
-
-const SWEEP_CSV_FIELDS: &[&str] = &[
+/// CSV column names for the sweep (plan §5.2.5; `b_shift_secs` added for §8 Q1 decoupled runs).
+pub const SWEEP_CSV_FIELDS: &[&str] = &[
     "peak_offset_secs",
     "fill_border_search_secs",
     "b_shift_secs",
@@ -208,6 +204,11 @@ const SWEEP_CSV_FIELDS: &[&str] = &[
     "passing_bracket_count",
     "wall_ms",
 ];
+
+/// Joined header line (no trailing newline), derived from [`SWEEP_CSV_FIELDS`].
+pub fn sweep_csv_header() -> String {
+    SWEEP_CSV_FIELDS.join(",")
+}
 
 fn opt(value: Option<f64>) -> String {
     value.map(|v| format!("{v:.4}")).unwrap_or_default()
@@ -285,4 +286,16 @@ pub fn anchor_rescue_pocket(cells: &[W5SweepCell]) -> Vec<&W5SweepCell> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     pocket
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sweep_csv_header_matches_fields_join() {
+        assert_eq!(sweep_csv_header(), SWEEP_CSV_FIELDS.join(","));
+        let csv = sweep_csv(&[]);
+        assert_eq!(csv.lines().next(), Some(sweep_csv_header().as_str()));
+    }
 }
