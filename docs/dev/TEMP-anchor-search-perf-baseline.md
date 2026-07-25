@@ -1,7 +1,22 @@
-# Anchor bracket search — pre-FFT perf baseline
+# Anchor bracket search — current-state perf baseline
 
-**Status:** reference data, not a plan. Captured 2026-07-23/24 so the per-bracket
-score-sweep optimization (FFT the haystack sweep) has something to subtract from.
+**Status:** reference data, not a plan. Captured 2026-07-23/24.
+
+**This is a POST-optimization baseline, not a pre-FFT one.** By these runs the
+per-bracket levers had already landed and are on by default: the hoisted
+placement-invariant channel selection (lever 2) and the FFT seam band on the
+dense refine (lever 1, `RepairConfig.fft_seam_search`, `patch_region.rs:1515`;
+`--no-fft-seam-search` opts out). `char_gate_search` had already gone 1746 s →
+330 s (5.3×) off the 2026-07-20 baseline. Do not read the numbers below as
+something an FFT is still going to fix — and note the standing correction that
+there is **no full haystack sweep** to FFT: the unified search is already
+windowed and coarse-stepped.
+
+The remaining structural lever was **cutting bracket count k**, and that was
+measured and **dropped NO-GO on 2026-07-23** (the realizable pre-gate fraction
+over this same 17-pair run was 0%). So there is no active optimization this
+baseline is feeding. Its value is (1) the no-regression proof in §2, and (2) a
+reference point for whatever the next candidate turns out to be.
 
 ## Media handling
 
@@ -16,7 +31,9 @@ production-repair perf plan.
 
 ## 1. Characterize-only baseline, 17 pairs (2026-07-23)
 
-Pre-refactor (before the `bracket_fill` elimination phases). Fingerprint mode, so
+Before the `bracket_fill` elimination phases, after the lever-1/2 gate-search
+optimizations. This is the same run whose bracket categories produced the
+anchor pre-gate NO-GO. Fingerprint mode, so
 brackets are enumerated **exhaustively** rather than short-circuited at the first
 winner — treat `search s` as an **upper bound** on the production path. `search s`
 is the sum of the per-bracket `search_us` field; `wall s` spans the first to last
@@ -48,12 +65,17 @@ is the sum of the per-bracket `search_us` field; `wall s` spans the first to las
 `gate_anchor_search` 88–96% of that.
 
 **Per-bracket cost is flat** — 4.3–5.0 s on 15 of 17 pairs, with pairs 1 (2.93)
-and 6 (2.54) the only outliers. This is the load-bearing observation for the FFT
-work: a flat per-bracket cost means the win scales linearly with bracket count,
-so a per-bracket speedup of *k* buys ≈*k* on total runtime across the whole
-corpus, with no pair-specific structure to special-case. It also means bracket
-**count** (94 → 757, an 8× spread) is what separates a 8-minute pair from a
-74-minute one, not per-bracket difficulty.
+and 6 (2.54) the only outliers. Two consequences:
+
+- Bracket **count** (94 → 757, an 8× spread) is what separates an 8-minute pair
+  from a 74-minute one, not per-bracket difficulty. That is why k was the lever
+  worth attacking — and why its NO-GO leaves no obvious successor.
+- Any *future* per-bracket speedup would scale linearly across the corpus, with
+  no pair-specific structure to special-case. That is a property of the workload,
+  not an endorsement of a candidate; the cheap wins here are spent.
+
+Note these are fingerprint-mode figures and so sit above the production
+per-bracket cost (§2 measures 2.7–4.1 s on the production path).
 
 ## 2. Post-refactor spot check (2026-07-24)
 
