@@ -18,6 +18,10 @@ over this same 17-pair run was 0%). So there is no active optimization this
 baseline is feeding. Its value is (1) the no-regression proof in §2, and (2) a
 reference point for whatever the next candidate turns out to be.
 
+**Read §2.1 before picking a next candidate** — the exclusive-cost breakdown says
+decode is now 25.6% of runtime and that a 9.9% slice inside `gate_anchor_search`
+is not instrumented at all. Neither was visible when this doc was first written.
+
 ## Media handling
 
 All figures below come from runs over **licensed media**, referenced only by
@@ -97,10 +101,51 @@ Gap planning is unchanged across the refactor: pair 1 yields 17 gaps found with 
 `→ drop` equivalence tags → 10 planned regions on **both** dates. That is a
 real-media parity signal for the refactor, independent of the fixture suite.
 
+## 2.1 Exclusive-cost breakdown, all 17 pairs, production path (2026-07-24)
+
+From `scripts/measure-repair-perf.ps1`, which keys spans by their **full parent
+chain** and reports **exclusive** time (own busy minus direct children's). Unlike
+inclusive `TotalSecs`, exclusive time is a partition — it sums to the root.
+Root = `patch_audio`, **9215 s** over 17 pairs.
+
+| Span | Exclusive | Share | Calls |
+|------|-----------|-------|-------|
+| `unified_refine` | 5198.1 s | **56.4%** | 3516 |
+| `patch_decode_a` | 1197.2 s | **13.0%** | 17 |
+| `patch_decode_b` | 1157.5 s | **12.6%** | 17 |
+| `gate_anchor_search` (own) | 910.8 s | **9.9%** | 81 |
+| `unified_coarse` | 408.4 s | 4.4% | 3516 |
+| `unified_fine_polish` | 216.5 s | 2.4% | 1758 |
+| `patch_audio` (own) | 40.1 s | 0.4% | 17 |
+| `bracket_unified_search` (own) | 26.8 s | 0.3% | 1758 |
+| everything else | 59.6 s | 0.6% | — |
+
+Two things here were invisible in the older flat by-name reporting, and both
+change the picture:
+
+1. **`gate_anchor_search` holds 910.8 s (9.9%) of exclusive time** — a tenth of
+   all runtime is inside the anchor search but inside *no* child span. That is an
+   **instrumentation gap, not a located cost**: something between
+   `try_anchor_seam_joint_search`'s entry and the per-bracket
+   `bracket_unified_search` calls (anchor enumeration, feasibility filtering,
+   per-bracket setup) is unmeasured. Anyone resuming perf work should span that
+   region before theorizing about it. The harness now flags any parent holding
+   ≥10% exclusive for exactly this reason.
+2. **Decode is now 25.6% combined (2354.7 s), the #2 cost after `unified_refine`.**
+   The 2026-07-20 baseline put decode at 6.5%; it has not got slower — the gate
+   got ~5× faster, so decode's *share* grew. It is now a larger slice than
+   anything except the refine loop, and it is 34 calls of ~69 s each rather than a
+   long tail. This is the most plausible next perf candidate and, unlike the k-cut,
+   it has never been investigated.
+
+`unified_refine` at 56.4% remains the single dominant cost. Its per-call figure
+(1.47 ms over 3516 calls) is the thing lever-1's FFT already attacked; the
+`ExclSecs` column is what a future attempt should be measured against.
+
 ## 3. What this closes
 
 - **"Did the refactor slow production down?"** — No. §2. The fill assembly itself
-  is 0.0092% of wall-clock (measured; see the `bracket_fill` elimination plan
+  is 0.053% of wall-clock (measured; see the `bracket_fill` elimination plan
   §3.1).
 - **"Was pair 1 ever 5–6 minutes?"** — Not on any recorded run. Characterize
   alone was 18.4 min on 2026-07-23 and the full repair is 12.1 min now. The

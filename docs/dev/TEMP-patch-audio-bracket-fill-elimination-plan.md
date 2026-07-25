@@ -137,7 +137,7 @@ grid), *not* the downmix or the border-template rebuild.
 ### 3.1 Measured result (2026-07-24) — immaterial, H? retired
 
 Release profile, real repair path (`--wav`), `CLIP_SYNC_SPAN_TIMING=1`, via
-`scripts/measure-fill-assembly.ps1`. **Complete 17-pair sweep**, licensed media,
+`scripts/measure-repair-perf.ps1`. **Complete 17-pair sweep**, licensed media,
 gap-fingerprint corpus pairs (the pair-index → media mapping is deliberately
 **not** recorded in-repo; it lives only in the gitignored source map, per the
 convention in the archived perf plan).
