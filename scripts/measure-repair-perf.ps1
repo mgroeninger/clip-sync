@@ -33,6 +33,10 @@
 #   Put specific spans back under the microscope:
 #     ./scripts/measure-repair-perf.ps1 -Logs perf_logs/ -Focus exec_fill_assembly,gate_anchor_search
 #
+# M-CLONE #2 (FftPlanner / ambiguous-band GCC-PHAT): every report also sums inclusive busy for
+# `anchor_matchability` (gate envelope) and `local_anchor_xcorr` (planner+PHAT path only). Old logs
+# without those spans print "never ran" for both until re-measured.
+#
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header row
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair repair args]
 # The log for each row is named after its label (`<label>.log`), as is its WAV. Delimiter is auto-picked from
@@ -334,6 +338,19 @@ function Write-HotSpots {
     }
 }
 
+function Get-SpanNameTotals {
+    param($T, [string]$Name)
+    $secs = 0.0; $calls = 0; $places = 0
+    foreach ($k in $T.Paths.Keys) {
+        if ($T.Paths[$k].Name -eq $Name) {
+            $secs += $T.Paths[$k].Secs
+            $calls += $T.Paths[$k].Calls
+            $places++
+        }
+    }
+    return [pscustomobject]@{ Secs = $secs; Calls = $calls; Places = $places }
+}
+
 function Write-Focus {
     param($T, [string[]]$Names)
     if ($Names.Count -eq 0 -or $T.Lines -eq 0) { return }
@@ -342,18 +359,47 @@ function Write-Focus {
     Write-Host ""
     Write-Host "--- focus ---" -ForegroundColor Cyan
     foreach ($n in $Names) {
-        $secs = 0.0; $calls = 0; $places = 0
-        foreach ($k in $T.Paths.Keys) {
-            if ($T.Paths[$k].Name -eq $n) { $secs += $T.Paths[$k].Secs; $calls += $T.Paths[$k].Calls; $places++ }
-        }
-        if ($calls -eq 0) {
+        $tot = Get-SpanNameTotals -T $T -Name $n
+        if ($tot.Calls -eq 0) {
             Write-Warning ("  {0}: never ran. Wrong span name, or this run did not take that path" -f $n)
             Write-Warning "  (e.g. --repair-preview skips everything on the executor side)."
             continue
         }
-        $pct = if ($rootSecs -gt 0) { 100 * $secs / $rootSecs } else { 0 }
-        $where = if ($places -gt 1) { " across $places places in the tree" } else { '' }
-        Write-Host ("  {0,-26} {1,10:N3}s  {2,7:N4}% of root  ({3} calls{4})" -f $n, $secs, $pct, $calls, $where)
+        $pct = if ($rootSecs -gt 0) { 100 * $tot.Secs / $rootSecs } else { 0 }
+        $where = if ($tot.Places -gt 1) { " across $($tot.Places) places in the tree" } else { '' }
+        Write-Host ("  {0,-26} {1,10:N3}s  {2,7:N4}% of root  ({3} calls{4})" -f `
+            $n, $tot.Secs, $pct, $tot.Calls, $where)
+    }
+}
+
+# M-CLONE #2: inclusive busy for the gate matchability envelope and the ambiguous-band GCC-PHAT
+# path (per-lag FftPlanner::new lives inside the latter). Always printed — even when -Focus is empty.
+function Write-MCloneSpans {
+    param($T)
+    if ($T.Lines -eq 0) { return }
+    $rootSecs = Get-RootSecs -T $T
+    $names = @('anchor_matchability', 'local_anchor_xcorr')
+
+    Write-Host ""
+    Write-Host "--- M-CLONE #2 (anchor matchability / local xcorr) ---" -ForegroundColor Cyan
+    foreach ($n in $names) {
+        $tot = Get-SpanNameTotals -T $T -Name $n
+        if ($tot.Calls -eq 0) {
+            Write-Host ("  {0,-26} (never ran — re-measure with current binary, or path unused)" -f $n) `
+                -ForegroundColor DarkGray
+            continue
+        }
+        $pct = if ($rootSecs -gt 0) { 100 * $tot.Secs / $rootSecs } else { 0 }
+        $where = if ($tot.Places -gt 1) { " across $($tot.Places) places" } else { '' }
+        Write-Host ("  {0,-26} {1,10:N3}s  {2,7:N4}% of root  ({3} calls{4})" -f `
+            $n, $tot.Secs, $pct, $tot.Calls, $where)
+    }
+    $match = Get-SpanNameTotals -T $T -Name 'anchor_matchability'
+    $xcorr = Get-SpanNameTotals -T $T -Name 'local_anchor_xcorr'
+    if ($match.Calls -gt 0 -and $xcorr.Calls -gt 0 -and $match.Secs -gt 0) {
+        $share = 100 * $xcorr.Secs / $match.Secs
+        Write-Host ("  local_anchor_xcorr is {0:N1}% of anchor_matchability inclusive busy" -f $share) `
+            -ForegroundColor DarkGray
     }
 }
 
@@ -442,6 +488,7 @@ $tallies = @(foreach ($lf in $logFiles) { Read-LogTally -Path $lf.Path -Label $l
 foreach ($t in $tallies) {
     Write-SpanTree -T $t
     Write-HotSpots -T $t
+    Write-MCloneSpans -T $t
     Write-Focus -T $t -Names $Focus
 }
 
@@ -464,6 +511,7 @@ if ($tallies.Count -gt 1) {
     }
     Write-SpanTree -T $grand
     Write-HotSpots -T $grand
+    Write-MCloneSpans -T $grand
     Write-Focus -T $grand -Names $Focus
 }
 

@@ -95,7 +95,7 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer until profiled) | (no dedicated profile harness) |
+| 1 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer until re-measured) | `anchor_matchability` / `local_anchor_xcorr` spans |
 | 2 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
@@ -380,11 +380,11 @@ Three **independent** PR-sized bites. Do not bundle. Corpus green proves *safety
    repair FFT (`seam_local::lag_correlation_curve_fft`) also rebuilds a planner but is
    outside this bite. Do not stuff a `Mutex` into the ZST; if profiling justifies it,
    use a size-keyed plan memo (optionally shared with `seam_local`).
-   **Measurement gap:** there is **no** dedicated harness for this bite. Existing
-   `scripts/measure-repair-perf.ps1` is span wall-time for bracket fill assembly (M0),
-   not `FftPlanner` / alloc counting on `segment_similarity` or prepare/trim. Opening #2
-   (or the prepare-clone stretch) needs an ad-hoc profile (e.g. sampling profiler /
-   `CLIP_SYNC_SPAN_TIMING` on the ambiguous-band path) before any code change.
+   **Measurement:** `anchor_matchability` (gate envelope) + `local_anchor_xcorr` (ambiguous-band
+   GCC-PHAT; includes per-lag `FftPlanner::new`) emit under `CLIP_SYNC_SPAN_TIMING`.
+   `scripts/measure-repair-perf.ps1` always sums both inclusive busy. Existing `perf-gate` logs
+   predate these spans — re-measure to decide #2. Planner-vs-FFT split inside
+   `fft_cross_correlation` is still not instrumented (would flood per-lag closes).
 3. **FDK ADTS+payload scratch** — **done 2026-07-23.** `AacDecoder` holds reusable
    `adts_scratch: Vec<u8>`; `construct_adts_header` returns `[u8; 7]` (no heap);
    `decode_ref` clears/extends the scratch then `fill(&self.adts_scratch)`. Capacity
@@ -657,8 +657,8 @@ module splits are closed (`align_videos` deferred only).
    `patch_audio` P1–P6 done 2026-07-24). `align_videos` deferred (no plan).
    ~~**M-HARNESS**~~ **complete 2026-07-24** (items 1–5; no open remainder).
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
-   (done 2026-07-23); **#2 planner deferred** until profiled (no dedicated harness — see
-   M-CLONE §2 measurement gap).
+   (done 2026-07-23); **#2 planner deferred** until re-measured (`anchor_matchability` /
+   `local_anchor_xcorr` spans + `measure-repair-perf.ps1`).
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
    publish flag
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
@@ -676,7 +676,7 @@ module splits are closed (`align_videos` deferred only).
    2026-07-24 (`align_videos` deferred); ~~**M-HARNESS**~~ **complete 2026-07-24** (all five
    items; no open remainder).
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
-   (done 2026-07-23); #2 planner only if profiled (no dedicated profile harness yet).
+   (done 2026-07-23); #2 planner only if re-measured spans justify it.
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---

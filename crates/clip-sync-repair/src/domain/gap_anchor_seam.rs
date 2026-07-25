@@ -586,6 +586,10 @@ pub fn matchability_at_anchor(args: &MatchabilityAtAnchorArgs<'_>) -> AnchorMatc
         && pearson < min_pearson
         && pearson >= min_pearson - f64::from(params.xcorr_ambiguous_band);
     let xcorr_peak = if ambiguous {
+        // M-CLONE #2: GCC-PHAT peak search (includes per-lag `FftPlanner::new` in FftCorrelator).
+        // Nested under `anchor_matchability` when called from the gate. Emits only when
+        // `CLIP_SYNC_SPAN_TIMING` is set (Level A).
+        let _s = tracing::info_span!("local_anchor_xcorr").entered();
         correlator.and_then(|c| {
             local_anchor_xcorr_peak(c, templates, placement, side, pre_window, post_window, max_lag_frames)
         })

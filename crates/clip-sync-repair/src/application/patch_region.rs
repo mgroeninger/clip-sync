@@ -1629,13 +1629,19 @@ fn evaluate_seam_gate_fit_candidate(
             pre_window: waveform_gate_frames,
             post_window: post_gate_frames,
         };
-        if !anchor_bracket_both_matchable_at_gate(
-            &templates,
-            placement,
-            waveform_gate_frames,
-            post_gate_frames,
-            params,
-        ) {
+        // M-CLONE #2 envelope (TEMP-rust-review-findings.md): Pearson + optional local GCC-PHAT
+        // after bracket_* spans close. Emits only when `CLIP_SYNC_SPAN_TIMING` is set (Level A).
+        let matchable = {
+            let _s = tracing::info_span!("anchor_matchability").entered();
+            anchor_bracket_both_matchable_at_gate(
+                &templates,
+                placement,
+                waveform_gate_frames,
+                post_gate_frames,
+                params,
+            )
+        };
+        if !matchable {
             return Err(waveform_below_threshold(
                 alignment.pre_correlation,
                 alignment.post_correlation,
