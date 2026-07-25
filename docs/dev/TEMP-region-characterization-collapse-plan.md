@@ -1,7 +1,7 @@
 # `RegionCharacterization` collapse — plan
 
-Status: **planned** (not started). Written 2026-07-24; revised same day after
-pre-impl review (§8).
+Status: **done** (R1+R2 landed in working tree; not committed). Written 2026-07-24;
+revised same day after pre-impl review (§8); implemented 2026-07-24.
 
 Delete `RegionCharacterization` and dispatch on `GapRepairSpec.verdict` instead,
 making `spec.verdict` the single source of truth for patch-vs-skip at the
@@ -261,8 +261,8 @@ enforces. (Same reason F2 and C1 landed together in the parent plan.)
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| R1 | Planned | — | `is_patch` + pinned `outcome_from_spec` / field-level skip helper; 2 of 3 `unreachable!()`s deleted |
-| R2 | Planned | — | Dispatch on `spec.verdict`; `characterize_region` + `finalize_dual_fit` → `GapRepairSpec`; enum + `outcome_from_characterization` deleted |
+| R1 | Done | — (with R2) | `is_patch` + pinned `outcome_from_spec` / `skip_outcome_from_fields`; 2 of 3 `unreachable!()`s deleted |
+| R2 | Done | — (with R1) | Dispatch on `spec.verdict`; `characterize_region` + `finalize_dual_fit` → `GapRepairSpec`; enum + `outcome_from_characterization` deleted. Gate: build + clippy `-D warnings` + `pr-repair` green. |
 
 ---
 
@@ -278,3 +278,11 @@ enforces. (Same reason F2 and C1 landed together in the parent plan.)
   `outcome_from_spec` is expected; assertion/disposition changes are not.
 - **R2 surface.** Explicitly listed `finalize_dual_fit` → `GapRepairSpec` (was
   implied by enum deletion, easy to miss).
+
+**2026-07-24 (implemented).** R1+R2 in one working-tree change (phases not split
+into separate commits). `GapRepairVerdict::is_patch`, `outcome_from_spec`,
+`skip_outcome_from_fields`; enum deleted; characterize/`finalize_dual_fit`
+return `GapRepairSpec`. Only remaining verdict `unreachable!` is
+`execute_region_spec`'s Skip arm (`dual_fit_skipped` untouched). Gate:
+`cargo build --all-targets`, `cargo clippy --all-targets -- -D warnings`,
+`.\scripts\test-tier.ps1 -Tier pr-repair` — all green.

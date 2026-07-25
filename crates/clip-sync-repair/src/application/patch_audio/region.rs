@@ -1055,20 +1055,6 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
     (patch, outcome)
 }
 
-/// What `characterize_region` decided for one region (6b.3e) — a spec either way. A `Patch` is executed; a
-/// `Skip` is not (§2.5.5), its outcome comes off the spec.
-///
-/// Both variants now carry nothing but a [`GapRepairSpec`] (C1): the bracket fill that used to ride along on
-/// `Patch` is gone — the executor rebuilds it. The variant is therefore a restatement of `spec.verdict`; see
-/// the plan's C1 note on deleting the type outright.
-pub(super) enum RegionCharacterization {
-    Patch(GapRepairSpec),
-    /// A reasoned/mechanical skip — now a full `Skip`-verdict [`GapRepairSpec`] (8d), not a bare outcome, so
-    /// every region yields a projectable spec (§2.5.5). The loop/shim derives the [`RegionPatchOutcome`] from
-    /// it via [`skip_outcome_from_spec`]; downstream reporting/tiering is byte-identical.
-    Skip(GapRepairSpec),
-}
-
 /// What `skip_or_dual_fit` decided, **before** the region geometry is attached (8c). The dual-fit call site
 /// lacks `b_extract` / `gap_offset` / `gap_index`, so on a rescue it returns the SilenceSplice *strategy* plus
 /// the base geometry it does own (from the dual-fit input); [`finalize_dual_fit`] — called from
@@ -1096,20 +1082,20 @@ struct DualFitRescue {
     crossfade_secs: f64,
 }
 
-/// Wrap a [`DualFitDecision`] into a [`RegionCharacterization`], attaching the region geometry the dual-fit
-/// call site lacked (`gap_offset`, `b_extract`). `gap_index` stays `0` — assigned at the fingerprint
-/// projection (8e/8f), same as the bracket path — so it is not SilenceSplice-specific inert geometry.
+/// Wrap a [`DualFitDecision`] into a [`GapRepairSpec`], attaching the region geometry the dual-fit call site
+/// lacked (`gap_offset`, `b_extract`). `gap_index` stays `0` — assigned at the fingerprint projection
+/// (8e/8f), same as the bracket path — so it is not SilenceSplice-specific inert geometry.
 fn finalize_dual_fit(
     decision: DualFitDecision,
     region: &FillRegion,
     gap_offset_secs: f64,
     b_extract: BExtractWindow,
     gap_refined: RefinedGapFrames,
-) -> RegionCharacterization {
+) -> GapRepairSpec {
     match decision {
         DualFitDecision::Rescued(rescue) => {
             let DualFitRescue { strategy, tags_ctx, refined, crossfade_secs } = *rescue;
-            let spec = GapRepairSpec {
+            GapRepairSpec {
                 gap_index: 0,
                 a_start_secs: region.a_start_secs,
                 a_end_secs: region.a_end_secs,
@@ -1119,19 +1105,16 @@ fn finalize_dual_fit(
                 crossfade_secs,
                 verdict: GapRepairVerdict::Patch(strategy),
                 tags_ctx,
-            };
-            RegionCharacterization::Patch(spec)
+            }
         }
-        DualFitDecision::Skipped { reason, residual } => {
-            RegionCharacterization::Skip(skip_region_spec(
-                reason, residual, region, gap_offset_secs, gap_refined, b_extract,
-            ))
-        }
+        DualFitDecision::Skipped { reason, residual } => skip_region_spec(
+            reason, residual, region, gap_offset_secs, gap_refined, b_extract,
+        ),
     }
 }
 
 /// Build a `Skip`-verdict [`GapRepairSpec`] (8d). Carries the `reason` (in the verdict) and `residual` (in
-/// `tags_ctx.gate.residual`) so [`skip_outcome_from_spec`] reproduces the identical [`RegionPatchOutcome`].
+/// `tags_ctx.gate.residual`) so [`skip_outcome_from_fields`] reproduces the identical [`RegionPatchOutcome`].
 /// The cell is derived from the reason + whatever tags are available (`skip_cell_from_tags`); on the decline
 /// path tags are partial (no `seam_local`) until 8f, so a class-3/4 decline reports as `Decorrelated` for now
 /// — cell correctness is a projection (8f) concern, not an outcome one (§8b guard).
@@ -1159,24 +1142,21 @@ fn skip_region_spec(
     }
 }
 
-/// Reproduce the [`RegionPatchOutcome::Skipped`] for a `Skip`-verdict spec (8d) — `reason` from the verdict,
-/// `residual` from `tags_ctx.gate.residual`, the two fields `RegionPatchOutcome::Skipped` carries. Byte-
-/// identical to the pre-8d `skipped_patch` / `seam_failure_outcome` outputs.
-pub(super) fn skip_outcome_from_spec(spec: &GapRepairSpec) -> RegionPatchOutcome {
-    match &spec.verdict {
-        GapRepairVerdict::Skip { reason, .. } => RegionPatchOutcome::Skipped {
-            reason: reason.clone(),
-            residual: spec.tags_ctx.gate.residual,
-        },
-        GapRepairVerdict::Patch(_) => {
-            unreachable!("skip_outcome_from_spec called on a Patch-verdict spec")
-        }
+/// Field-level skip outcome — no verdict match, so no assert arm (§3.2). Callers take `reason` /
+/// `residual` after dispatching on `spec.verdict` (or from `outcome_from_spec`'s Skip arm).
+pub(super) fn skip_outcome_from_fields(
+    reason: &GapPatchSkipReason,
+    residual: Option<policies::SeamResidualVerdict>,
+) -> RegionPatchOutcome {
+    RegionPatchOutcome::Skipped {
+        reason: reason.clone(),
+        residual,
     }
 }
 
-/// Reproduce the [`RegionPatchOutcome::Patched`] the executor would emit for a `Patch`-verdict spec —
-/// decision fields only, no PCM assembly. Used by `--repair-preview` (characterize without execute).
-pub(super) fn patched_outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> RegionPatchOutcome {
+/// Decision-only outcome from a spec (preview / report path — no PCM). Matches `spec.verdict` once;
+/// both arms are live (no `unreachable!`).
+pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> RegionPatchOutcome {
     match &spec.verdict {
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
@@ -1238,20 +1218,9 @@ pub(super) fn patched_outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) 
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
         },
-        GapRepairVerdict::Skip { .. } => {
-            unreachable!("patched_outcome_from_spec called on a Skip-verdict spec")
+        GapRepairVerdict::Skip { reason, .. } => {
+            skip_outcome_from_fields(reason, spec.tags_ctx.gate.residual)
         }
-    }
-}
-
-/// Decision-only outcome from a characterization (preview / report path — no PCM).
-pub(super) fn outcome_from_characterization(
-    characterization: &RegionCharacterization,
-    sample_rate: u32,
-) -> RegionPatchOutcome {
-    match characterization {
-        RegionCharacterization::Patch(spec) => patched_outcome_from_spec(spec, sample_rate),
-        RegionCharacterization::Skip(spec) => skip_outcome_from_spec(spec),
     }
 }
 
@@ -1397,7 +1366,7 @@ pub(super) fn execute_region_spec(
 }
 
 /// **Characterize** one region (6b.3e): run geometry → gate → dual-fit/reconciliation and decide a
-/// [`RegionCharacterization`] — a `Patch` spec to execute, or an already-built `Skip` outcome. Does NOT
+/// [`GapRepairSpec`] — `Patch` to execute, or `Skip` whose outcome is derived from the spec (§2.5.5). Does NOT
 /// assemble the final patch; that is `execute_region_spec`, invoked by the `prepare_region_patch` shim. This
 /// is the characterize→execute boundary (§2.5): all repair *decisions* live here; PCM *assembly* lives in the
 /// executor.
@@ -1412,7 +1381,7 @@ pub(super) fn characterize_region(
     request: &PatchAudioRequest,
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
-) -> (RegionCharacterization, GapTagsPatchContext) {
+) -> (GapRepairSpec, GapTagsPatchContext) {
     let RegionPatchMedia {
         b_samples_full,
         a_pcm,
@@ -1596,10 +1565,10 @@ pub(super) fn characterize_region(
         // Pre-placement mechanical skip: no B window established yet (`b_extract` is the not-measured zero
         // window — full geometry for such skips is an 8f concern; the outcome ignores it).
         return (
-            RegionCharacterization::Skip(skip_region_spec(
+            skip_region_spec(
                 GapPatchSkipReason::ZeroLengthGap, None, region, gap_offset_secs, refined,
                 BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
-            )),
+            ),
             tag_ctx,
         );
     }
@@ -1637,10 +1606,10 @@ pub(super) fn characterize_region(
                 &reason,
             );
             return (
-                RegionCharacterization::Skip(skip_region_spec(
+                skip_region_spec(
                     reason, None, region, gap_offset_secs, refined,
                     BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
-                )),
+                ),
                 tag_ctx,
             );
         }
@@ -1877,9 +1846,9 @@ pub(super) fn characterize_region(
             &reason,
         );
         return (
-            RegionCharacterization::Skip(skip_region_spec(
+            skip_region_spec(
                 reason, None, region, gap_offset_secs, refined, silence_splice_b_extract,
-            )),
+            ),
             tag_ctx,
         );
     }
@@ -2116,16 +2085,16 @@ pub(super) fn characterize_region(
     (
         // F2: the fill is NOT handed over — `b_fill` was built for the reconciliation and the gain above, and
         // dies here. The executor rebuilds its own from the spec.
-        RegionCharacterization::Patch(spec),
+        spec,
         tag_ctx,
     )
 }
 
 /// Characterize every planned region into a spec — the §2.5.5 multi-region loop over [`characterize_region`].
 /// **Region-infallible:** exactly one spec per region, every failure folded into a `Skip` verdict (§2.5.7 #3),
-/// so `specs.len() == regions.len()`. Drops the reporting extra (`GapTagsPatchContext`) and the Patch/Skip
-/// tag — this yields the repair *decisions* without executing PCM. First-pass anchors only
-/// (pass-2 anchored retry is out of scope for this helper; production preview is `PatchAudio::preview`).
+/// so `specs.len() == regions.len()`. Drops the reporting extra (`GapTagsPatchContext`) — this yields the
+/// repair *decisions* without executing PCM. First-pass anchors only (pass-2 anchored retry is out of scope
+/// for this helper; production preview is `PatchAudio::preview`).
 ///
 /// Test-only: production `--repair-preview` runs the same loop inside `PatchAudio::preview` (with progress /
 /// plan wiring). Kept here to pin region-infallible + disposition parity against `prepare_region_patch`.
@@ -2140,7 +2109,7 @@ fn characterize_all_regions(
     regions
         .iter()
         .map(|region| {
-            let (characterization, _tag_ctx) = characterize_region(
+            let (spec, _tag_ctx) = characterize_region(
                 progress,
                 media,
                 region,
@@ -2148,10 +2117,7 @@ fn characterize_all_regions(
                 ctx,
                 RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
             );
-            match characterization {
-                RegionCharacterization::Patch(spec) => spec,
-                RegionCharacterization::Skip(spec) => spec,
-            }
+            spec
         })
         .collect()
 }
@@ -2167,15 +2133,22 @@ pub(super) fn prepare_region_patch(
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
 ) -> (Option<RegionPatch>, RegionPatchOutcome, GapTagsPatchContext) {
-    let (characterization, tag_ctx) =
-        characterize_region(progress, media, region, request, ctx, opts);
-    match characterization {
-        RegionCharacterization::Patch(spec) => {
-            let (patch, outcome) = execute_region_spec(spec, request, media, ctx);
-            (patch, outcome, tag_ctx)
+    let (spec, tag_ctx) = characterize_region(progress, media, region, request, ctx, opts);
+    let (patch, outcome) = if spec.verdict.is_patch() {
+        execute_region_spec(spec, request, media, ctx)
+    } else {
+        // Field-level skip outcome — no verdict-matching helper (§3.2).
+        let residual = spec.tags_ctx.gate.residual;
+        match &spec.verdict {
+            GapRepairVerdict::Skip { reason, .. } => {
+                (None, skip_outcome_from_fields(reason, residual))
+            }
+            // `is_patch()` is the dispatch predicate; this arm is exhaustiveness-only. Re-enter the
+            // executor so its existing Skip `unreachable!` remains the sole verdict assert.
+            GapRepairVerdict::Patch(_) => execute_region_spec(spec, request, media, ctx),
         }
-        RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec), tag_ctx),
-    }
+    };
+    (patch, outcome, tag_ctx)
 }
 
 /// Slice the B extract window out of the **full** B buffer — the one place that turns a
@@ -2344,9 +2317,8 @@ mod tests {
     #[test]
     fn characterize_all_regions_yields_one_consistent_spec_per_region() {
         use super::{
-            characterize_all_regions, patched_outcome_from_spec, prepare_region_patch,
-            skip_outcome_from_spec, AnchoredRetryPass, GapRepairVerdict, RegionPatchContext,
-            RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
+            characterize_all_regions, outcome_from_spec, prepare_region_patch, AnchoredRetryPass,
+            RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
         };
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -2454,7 +2426,7 @@ mod tests {
                 &ctx,
                 RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
             );
-            let is_patch = matches!(spec.verdict, GapRepairVerdict::Patch(_));
+            let is_patch = spec.verdict.is_patch();
             assert_eq!(is_patch, patch.is_some(), "Patch verdict ⟺ executor emits a RegionPatch");
             assert_eq!(
                 !is_patch,
@@ -2462,11 +2434,7 @@ mod tests {
                 "Skip verdict ⟺ Skipped outcome",
             );
             // Preview path: decision-only outcomes match the executor's dispositions (pass-1).
-            let preview_outcome = if is_patch {
-                patched_outcome_from_spec(spec, rate)
-            } else {
-                skip_outcome_from_spec(spec)
-            };
+            let preview_outcome = outcome_from_spec(spec, rate);
             match (&preview_outcome, &outcome) {
                 (RegionPatchOutcome::Patched { .. }, RegionPatchOutcome::Patched { .. })
                 | (RegionPatchOutcome::Skipped { .. }, RegionPatchOutcome::Skipped { .. }) => {}

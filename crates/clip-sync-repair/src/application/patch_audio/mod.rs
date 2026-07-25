@@ -7,6 +7,7 @@ use crate::domain::{
     format_repair_profile_verbose,
     inactive_repair_flag_notes,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase},
+    gap_repair_spec::{GapRepairSpec, GapRepairVerdict},
     gap_tags::{FillTierThresholds, GapTags, GapTagsPatchContext},
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
     patch_result::PatchSummary,
@@ -31,10 +32,9 @@ use anchor_retry::{
 use geometry::repair_patch_config_view;
 use log::log_gap_tags_verbose;
 use region::{
-    characterize_region, execute_region_spec, outcome_from_characterization,
-    outcomes_in_report_order, record_patch_gap_span, region_outcome_gap_tags,
-    skip_outcome_from_spec, splice_into_a, RegionCharacterization, RegionPatch,
-    RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
+    characterize_region, execute_region_spec, outcome_from_spec, outcomes_in_report_order,
+    record_patch_gap_span, region_outcome_gap_tags, skip_outcome_from_fields, splice_into_a,
+    RegionPatch, RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
 };
 
 /// Write = full repair (characterize → execute → optional anchored retry → splice).
@@ -180,7 +180,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Preview stops after characterize: outcomes from specs, no execute / retry / splice.
         //
         // Pass 1 — characterize.
-        let mut characterizations: Vec<(RegionCharacterization, GapTagsPatchContext)> =
+        let mut characterizations: Vec<(GapRepairSpec, GapTagsPatchContext)> =
             Vec::with_capacity(plan.regions.len());
         for (index, region) in plan.regions.iter().enumerate() {
             let gap_num = index as u64 + 1;
@@ -214,11 +214,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         if kind == PatchRunKind::Preview {
             let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> =
                 Vec::with_capacity(plan.regions.len());
-            for ((characterization, tag_ctx), region) in
-                characterizations.into_iter().zip(plan.regions.iter())
+            for ((spec, tag_ctx), region) in characterizations.into_iter().zip(plan.regions.iter())
             {
-                let outcome =
-                    outcome_from_characterization(&characterization, region_ctx.sample_rate);
+                let outcome = outcome_from_spec(&spec, region_ctx.sample_rate);
                 let tags = region_outcome_gap_tags(&outcome, tag_ctx);
                 log_gap_tags_verbose(self.progress, &tags);
                 region_results.push((region.a_start_secs, region.a_end_secs, outcome, tags));
@@ -244,7 +242,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
-        for ((characterization, tag_ctx), (index, region)) in
+        for ((spec, tag_ctx), (index, region)) in
             characterizations.into_iter().zip(plan.regions.iter().enumerate())
         {
             let gap_num = index as u64 + 1;
@@ -265,17 +263,24 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             );
             let _gap_enter = gap_span.enter();
 
-            let (patch, outcome) = match characterization {
-                RegionCharacterization::Patch(spec) => execute_region_spec(
-                    spec,
-                    &request,
-                    &RegionPatchMedia {
-                        b_samples_full: &b_samples_full,
-                        a_pcm: &a_pcm,
-                    },
-                    &region_ctx,
-                ),
-                RegionCharacterization::Skip(spec) => (None, skip_outcome_from_spec(&spec)),
+            let media = RegionPatchMedia {
+                b_samples_full: &b_samples_full,
+                a_pcm: &a_pcm,
+            };
+            let (patch, outcome) = if spec.verdict.is_patch() {
+                execute_region_spec(spec, &request, &media, &region_ctx)
+            } else {
+                // Field-level skip outcome — no verdict-matching helper (§3.2).
+                let residual = spec.tags_ctx.gate.residual;
+                match &spec.verdict {
+                    GapRepairVerdict::Skip { reason, .. } => {
+                        (None, skip_outcome_from_fields(reason, residual))
+                    }
+                    // `is_patch()` is the dispatch predicate; this arm is exhaustiveness-only.
+                    GapRepairVerdict::Patch(_) => {
+                        execute_region_spec(spec, &request, &media, &region_ctx)
+                    }
+                }
             };
             let tags = region_outcome_gap_tags(&outcome, tag_ctx);
             log_gap_tags_verbose(self.progress, &tags);

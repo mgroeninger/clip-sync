@@ -357,6 +357,13 @@ fn classify_bracket_exhausted_skip(tags: &GapRepairTags) -> GapRepairCell {
 }
 
 impl GapRepairVerdict {
+    /// Does this verdict mean the executor runs? The characterize→execute dispatch predicate —
+    /// `Patch` specs go to `execute_region_spec`, `Skip` specs have their outcome derived from the
+    /// spec (§2.5.5).
+    pub fn is_patch(&self) -> bool {
+        matches!(self, GapRepairVerdict::Patch(_))
+    }
+
     /// A skip whose cell is the reason's default (`cell_for_skip_reason`). Use when characterize has no
     /// richer classification than the reason implies.
     pub fn skip(reason: GapPatchSkipReason) -> Self {
