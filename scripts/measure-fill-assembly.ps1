@@ -232,19 +232,24 @@ function Write-Verdict {
     # The two spans do NOT cover the same work: `char_fill_assembly` wraps `assemble_bracket_fill` alone,
     # while `exec_fill_assembly` also wraps the border-template rebuild and the B re-slice. exec > char is
     # expected BY CONSTRUCTION — the difference IS the rebuild, which is what a Gate-mode hoist would target.
-    # Only exec running CHEAPER than char is suspicious (it should strictly dominate on the same inputs), and
-    # only worth reporting once enough gaps have run for the ratio to mean anything.
+    # exec > char holds IN AGGREGATE ONLY. Measured over the full 17-pair sweep (2026-07-24) the ratio is 1.01x
+    # overall but ranges 0.87x-1.05x per pair: at totals of 0.02-1.5s over n<=8 calls, cache warmth (characterize
+    # touches these buffers first and eats the cold misses) and run-to-run variance swamp the structural
+    # difference. So a sub-1.0 per-pair ratio is NOT suspicious, and the old warning here fired on good data.
+    # Only warn when the totals are large enough for the ratio to carry signal.
     if ($exec.Calls -ge 5 -and $char.Calls -ge 5) {
         $ratio = $exec.Secs / $char.Secs
         Write-Host ("  exec/char = {0:N2}x; the excess over 1.0 is the executor's border rebuild ({1:N4}s total)." -f `
             $ratio, ($exec.Secs - $char.Secs))
-        if ($ratio -lt 0.9) {
-            Write-Warning ("  exec is CHEAPER than char ({0:N2}x) — it does strictly more work, so this wants" -f $ratio)
-            Write-Warning "  explaining before the number is trusted."
+        if ($ratio -lt 0.9 -and $exec.Secs -ge 5.0) {
+            Write-Warning ("  exec is CHEAPER than char ({0:N2}x) at a total ({1:N2}s) too large for cache noise" -f $ratio, $exec.Secs)
+            Write-Warning "  to explain — it does strictly more work, so this wants explaining."
         }
-        if ($exec.Calls -ne $char.Calls) {
-            Write-Warning ("  call counts differ (char {0} vs exec {1}). In a release run they should match —" -f $char.Calls, $exec.Calls)
-            Write-Warning "  a debug build's assert shadow inflates exec, and anchored retry re-characterizes gaps."
+        # Counts legitimately differ in release: measured 60 char vs 74 exec over 17 pairs, exec never lower.
+        # Some brackets reach execute without a characterize-side assembly. Only exec < char is anomalous.
+        if ($exec.Calls -lt $char.Calls) {
+            Write-Warning ("  char ran MORE often than exec ({0} vs {1}) — exec should never be lower;" -f $char.Calls, $exec.Calls)
+            Write-Warning "  a characterize-side assembly with no executor counterpart means work is being dropped."
         }
     }
 
