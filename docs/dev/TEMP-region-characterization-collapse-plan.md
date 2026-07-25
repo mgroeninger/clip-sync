@@ -1,6 +1,7 @@
 # `RegionCharacterization` collapse — plan
 
-Status: **planned** (not started). Written 2026-07-24.
+Status: **planned** (not started). Written 2026-07-24; revised same day after
+pre-impl review (§8).
 
 Delete `RegionCharacterization` and dispatch on `GapRepairSpec.verdict` instead,
 making `spec.verdict` the single source of truth for patch-vs-skip at the
@@ -19,14 +20,14 @@ Paths below are relative to
 ## 0. Relationship to other plans (read first)
 
 - **Provenance.** This is the deferred **C1 note** from
-  [TEMP-patch-audio-bracket-fill-elimination-plan.md](TEMP-patch-audio-bracket-fill-elimination-plan.md)
+  [TEMP-patch-audio-bracket-fill-elimination-plan.md](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md)
   §8, which evaluated the deletion, recommended it, and put it out of scope:
   "a characterize-boundary cleanup, not `bracket_fill` elimination". That plan
   is otherwise complete and is the reason this one is now possible — see §1.
 - **Not a perf change.** Nothing here is on a hot path; the enum is matched once
   per *region* (tens of times per run), not per bracket. Do not attach a
   measurement claim to it, and do not bundle it with anything from
-  [TEMP-anchor-search-perf-baseline.md](TEMP-anchor-search-perf-baseline.md).
+  [repair-perf.md](repair-perf.md).
 - **8d is the counter-precedent, read it before arguing with §1.**
   [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)
   §864 (Fingerprint-unification **8d**, 2026-07-08) deliberately *added* type
@@ -90,7 +91,7 @@ Four `match` sites. Only two are real dispatch.
 
 | # | Site | Now | After |
 |---|------|-----|-------|
-| 1 | `mod.rs:269` — two-pass loop, execute half | `Patch → execute_region_spec`, `Skip → skip_outcome_from_spec` | real dispatch, `is_patch()` predicate |
+| 1 | `mod.rs:269` — two-pass loop, execute half | `Patch → execute_region_spec`, `Skip → skip_outcome_from_spec` | `is_patch()` → execute; else field-level skip outcome (§3.2) |
 | 2 | `region.rs:2173` — `prepare_region_patch` shim (used by `anchor_retry.rs:199`) | same shape | same |
 | 3 | `region.rs:1253` — `outcome_from_characterization`, preview path (`mod.rs:221`) | forwards to `patched_outcome_from_spec` / `skip_outcome_from_spec` | **merges** into one `outcome_from_spec` |
 | 4 | `region.rs:2152` — `characterize_all_regions` (`#[cfg(test)]`) | `Patch(spec) => spec, Skip(spec) => spec` | **disappears** |
@@ -101,8 +102,8 @@ already match on `spec.verdict`, so it is a re-dispatch on a fact they re-check.
 **The `unreachable!()` count is the headline.** Three are in scope:
 
 - `execute_region_spec` (`region.rs:1394`) — Skip arm. **Stays** (see §3.3).
-- `patched_outcome_from_spec` (`region.rs:1242`) — Skip arm. **Deleted.**
-- `skip_outcome_from_spec` (`region.rs:1172`) — Patch arm. **Deleted.**
+- `patched_outcome_from_spec` (`region.rs:1242`) — Skip arm. **Deleted** (function goes; body moves into `outcome_from_spec`).
+- `skip_outcome_from_spec` (`region.rs:1172`) — Patch arm. **Deleted** (function reshaped per §3.2 — no verdict match, so no assert arm).
 
 `region.rs` holds a fourth (`1266`, `dual_fit_skipped`: "seam_failure_outcome
 always yields a skip outcome"). That one asserts a `RegionPatchOutcome` shape,
@@ -111,12 +112,11 @@ not a verdict, and is **out of scope** — do not touch it and do not count it.
 A single exhaustive match over `Patch`/`Skip` in the merged `outcome_from_spec`
 needs no impossible arm, so both go.
 
-**Confirming evidence that the post-collapse call shape is already correct:** the
+**Confirming evidence that the post-collapse *truth* is already correct:** the
 existing 8g.2 test (`characterize_all_regions_yields_one_consistent_spec_per_region`,
 `region.rs:2340`) already takes `matches!(spec.verdict, GapRepairVerdict::Patch(_))`
-as its source of truth and already branches
-`if is_patch { patched_outcome_from_spec } else { skip_outcome_from_spec }`. The
-test was written against the verdict, not the enum, and needs no rewrite.
+as its source of truth. The expected call-site edit is switching its preview branch
+to `outcome_from_spec` (see §3.2 / §5) — assertions and dispositions stay.
 
 ---
 
@@ -141,21 +141,38 @@ Two call sites is thin justification for a helper, but the dispatch *meaning*
 `matches!` twice in application code — and it is where a doc comment about the
 §2.5.5 contract belongs.
 
-### 3.2 Merge the two outcome functions
+### 3.2 Merge the two outcome functions (pinned shape)
 
 `patched_outcome_from_spec` + `skip_outcome_from_spec` → one
 `outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> RegionPatchOutcome`
-matching `spec.verdict` once. This replaces both site 3 and the two
-`unreachable!()`s.
+matching `spec.verdict` once. Both arms are live; **no `unreachable!()`**.
+This replaces site 3 and is how the two in-scope asserts actually go.
 
-**Keep `skip_outcome_from_spec` as well.** Sites 1 and 2 call it on the
-already-known-Skip branch and have no `sample_rate` need; making them go through
-`outcome_from_spec` would widen the call for nothing. Its `unreachable!()` is
-what goes — it becomes a private helper called only from the Skip arm of
-`outcome_from_spec` and from the two dispatch sites, or (preferred) the Patch arm
-of `outcome_from_spec` inlines the patched construction and the Skip arm calls
-`skip_outcome_from_spec`. Decide at implementation time; the constraint is that
-**no function retains an arm asserting a verdict it cannot receive.**
+**Rejected: keep `skip_outcome_from_spec(&GapRepairSpec)`.** A helper that still
+takes the full spec must exhaustively match `verdict`, so its Patch arm is either
+`unreachable!()` (contradicts the accounting) or a silent fallback (behavior
+change). Rust exhaustiveness makes "delete the assert, keep that signature"
+impossible — that was the review gap; do not reopen it at implement time.
+
+**Pinned shape:**
+
+1. Move the Patch-arm body of `patched_outcome_from_spec` into the Patch arm of
+   `outcome_from_spec`; **delete** `patched_outcome_from_spec`.
+2. Replace `skip_outcome_from_spec(&GapRepairSpec)` with a thin field helper that
+   does **not** match on verdict, e.g.
+   `skip_outcome_from_fields(reason: &GapPatchSkipReason, residual: Option<…>)
+   -> RegionPatchOutcome` (or inline the two-field `Skipped { .. }` at the call
+   sites — same effect; a named helper is optional).
+3. Sites 1 and 2, after `!spec.verdict.is_patch()`, take the Skip fields (match /
+   `if let`) and call the field helper / inline. They do **not** go through
+   `outcome_from_spec` — no `sample_rate` need on the Skip path.
+4. Preview (site 3) uses `outcome_from_spec` only. In R1,
+   `outcome_from_characterization` becomes a one-line forward onto it; R2 deletes
+   the forward.
+5. 8g.2 switches its preview `if is_patch { patched… } else { skip… }` to
+   `outcome_from_spec(spec, rate)`. That call-site edit is **expected** (§5).
+
+Constraint: **no function retains an arm asserting a verdict it cannot receive.**
 
 ### 3.3 `execute_region_spec` keeps its `unreachable!()`
 
@@ -188,15 +205,15 @@ reviewable diff.
 
 | Phase | Change |
 |-------|--------|
-| **R1** | Add `GapRepairVerdict::is_patch` + `outcome_from_spec`; strip the two `unreachable!()`s. Enum still exists; `outcome_from_characterization` becomes a one-line forward. No dispatch change. |
-| **R2** | Flip the four sites to `spec.verdict`. `characterize_region` returns `(GapRepairSpec, GapTagsPatchContext)`; delete the enum, `outcome_from_characterization`, and site 4's match. |
+| **R1** | Add `GapRepairVerdict::is_patch` + `outcome_from_spec` (§3.2 pinned shape); reshape/delete the old outcome helpers so the two `unreachable!()`s are gone. Enum still exists; `outcome_from_characterization` becomes a one-line forward. No dispatch change. Point 8g.2 at `outcome_from_spec`. |
+| **R2** | Flip the four sites to `spec.verdict`. `characterize_region` returns `(GapRepairSpec, GapTagsPatchContext)`; **`finalize_dual_fit` returns `GapRepairSpec`** (today it returns `RegionCharacterization` — same edit as deleting the enum). Delete the enum, `outcome_from_characterization`, and site 4's match. |
 
 R1 is additive and independently valid (build + clippy clean, tests pass with
 the enum still in place). R2 is the flip.
 
 **Do not split R2 further.** Deleting the enum and changing
-`characterize_region`'s return type are the same edit — an intermediate state
-where the enum exists but nothing constructs it fails
+`characterize_region` / `finalize_dual_fit` return types are the same edit — an
+intermediate state where the enum exists but nothing constructs it fails
 `cargo clippy --all-targets -- -D warnings` on a dead-code lint, which CI
 enforces. (Same reason F2 and C1 landed together in the parent plan.)
 
@@ -211,8 +228,10 @@ enforces. (Same reason F2 and C1 landed together in the parent plan.)
 - **`#[cfg(test)]` helpers keep their contract.** `characterize_all_regions`
   still returns `Vec<GapRepairSpec>` and the 8g.2 test still asserts
   region-infallibility (`specs.len() == regions.len()`) and Patch-verdict ⟺
-  `RegionPatch`. If that test needs *any* edit beyond an import list, stop —
-  something is being changed that this plan says is not being changed.
+  `RegionPatch`. The **one expected 8g.2 edit** is switching the preview helper
+  to `outcome_from_spec` (and optionally `verdict.is_patch()`). If assertions,
+  dispositions, or region-infallibility checks change, stop — something outside
+  this plan is moving.
 - **No `#[allow]` added.** If a lint fires, fix the code.
 - **The three in-scope `unreachable!()`s are the accounting.** Two must be gone
   at the end and the third (`execute_region_spec`) must remain, with its message
@@ -242,5 +261,20 @@ enforces. (Same reason F2 and C1 landed together in the parent plan.)
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| R1 | Planned | — | `is_patch` + merged `outcome_from_spec`; 2 of 3 `unreachable!()`s deleted |
-| R2 | Planned | — | Dispatch on `spec.verdict`; enum + `outcome_from_characterization` deleted |
+| R1 | Planned | — | `is_patch` + pinned `outcome_from_spec` / field-level skip helper; 2 of 3 `unreachable!()`s deleted |
+| R2 | Planned | — | Dispatch on `spec.verdict`; `characterize_region` + `finalize_dual_fit` → `GapRepairSpec`; enum + `outcome_from_characterization` deleted |
+
+---
+
+## 8. Revision log
+
+**2026-07-24 (pre-impl review).** Pinned gaps that blocked a clean "ready":
+
+- **§3.2 helper shape.** Rejected keeping `skip_outcome_from_spec(&GapRepairSpec)`
+  while claiming its `unreachable!()` is deleted — exhaustiveness makes that
+  impossible. Pinned: `outcome_from_spec` owns the full verdict match; Skip
+  dispatch uses a field-level helper (or inline) with no verdict assert.
+- **§5 / 8g.2.** Softened the "imports only" rule: switching the preview call to
+  `outcome_from_spec` is expected; assertion/disposition changes are not.
+- **R2 surface.** Explicitly listed `finalize_dual_fit` → `GapRepairSpec` (was
+  implied by enum deletion, easy to miss).

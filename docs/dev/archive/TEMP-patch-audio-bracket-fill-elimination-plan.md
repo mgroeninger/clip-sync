@@ -1,7 +1,8 @@
 # `bracket_fill` elimination — plan
 
-Status: **planned** (not started). Revised 2026-07-24 after a code/measurement
-audit (see §9 for what changed and why).
+Status: **SHIPPED — archived 2026-07-24.** All phases done or retired (§8 ledger);
+the `bracket_fill` carry no longer exists in the tree. Revised 2026-07-24 after a
+code/measurement audit (see §9 for what changed and why).
 
 Kill the transitional `bracket_fill: Option<Vec<f32>>` carry on
 `RegionCharacterization::Patch`, making the characterize→execute handoff
@@ -15,12 +16,25 @@ module split.
 Paths below are relative to
 `crates/clip-sync-repair/src/application/patch_audio/` unless stated.
 
+**Historical record — do not treat §6/§7 as instructions.** The phase table and
+ground rules describe work that is complete. Two things here outlived the plan
+and are the reason to open it:
+
+- **§3.1** — the per-pair M0 fill-assembly table. The durable perf reference is
+  [../repair-perf.md](../repair-perf.md), which carries the roll-up (0.053%).
+- **§4.1** — `window_gap_frames` on the Bracket verdict, and *why* the pre-gate
+  window length cannot be reconstructed from `spec.refined`. That is a live
+  invariant in `region.rs`, not history.
+
+The one follow-up this plan deferred is now scoped in
+[TEMP-region-characterization-collapse-plan.md](../TEMP-region-characterization-collapse-plan.md).
+
 ---
 
 ## 0. Relationship to other plans (read first)
 
 - **Provenance.** This is the breakout of one deferred row from
-  [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)
+  [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)
   — specifically §3 step 8 **Hoists**, note **(b)**: "`execute_bracket_fill` goes
   live (spec self-sufficient); transitional `bracket_fill: Option` dropped; the
   temporary 2× fill/border assembly appears *and* is deduped." That doc is the
@@ -29,11 +43,11 @@ Paths below are relative to
 - **The Hoists half of that row is dead.** The mono-downmix hoist (redesign §3.1,
   production-perf §2.1) was **REFUTED by measurement 2026-07-20**: 0.1 s of
   1872 s = **0.006%** of runtime, with an explicit "do not re-propose without new
-  measurement" ([archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md)
+  measurement" ([TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md)
   §2.1, §0 table). This plan therefore does **not** gate on it. What survives of
   the "2× assembly" worry is a question to *measure* (§3, phase **M0**), and the
   thing to measure is the fill assembly itself — not the downmix.
-- **Not the module split.** [TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md)
+- **Not the module split.** [TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md)
   (M-MOD, P1–P6 **done**) was verbatim relocation with **no** behavior change.
   This plan *does* change behavior-adjacent structure and must be gated on
   byte-parity, so it is deliberately a **separate** work item — do not fold it
@@ -343,7 +357,7 @@ stepping stone to nowhere; the field is deleted in C1 regardless.
 
 The M0 harness itself is `scripts/measure-repair-perf.ps1` (`1dc5c6c`, generalized
 beyond M0 in `5bd58a6`); the baseline it feeds is
-[TEMP-anchor-search-perf-baseline.md](TEMP-anchor-search-perf-baseline.md)
+[../repair-perf.md](../repair-perf.md)
 (`2d8e4f0`, framing corrected in `ba27c00`). Earlier revisions of this ledger
 carried four hashes that no longer exist in history — if you are chasing a
 commit and it resolves to nothing, this table is the corrected version.
@@ -363,7 +377,7 @@ Recommended, mechanical, and **out of scope for this plan** — it is a
 characterize-boundary cleanup, not `bracket_fill` elimination.
 
 **Now scoped separately:**
-[TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)
+[TEMP-region-characterization-collapse-plan.md](../TEMP-region-characterization-collapse-plan.md)
 carries it (usage inventory: 4 match sites, 2 real; the `unreachable!()`
 accounting; and the finding that `execute_region_spec` already re-matches
 `spec.verdict`, so the collapse needs no new guard). Nothing further is owed
@@ -402,9 +416,9 @@ deviation from §4 as written, deliberate and scoped to that one value.
 
 ---
 
-Companions: [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)
+Companions: [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)
 (§3 step 8 Hoists / 6b.3 ledger — authoritative history),
-[archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md)
+[TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md)
 (§0/§2.1 — the measurement that killed the downmix hoist),
-[TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md)
-(M-MOD, done), [pipeline.md](../pipeline.md), [gap-fill-modes.md](../gap-fill-modes.md).
+[TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md)
+(M-MOD, done), [pipeline.md](../../pipeline.md), [gap-fill-modes.md](../../gap-fill-modes.md).

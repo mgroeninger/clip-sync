@@ -14,6 +14,12 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 | [corpus-matrix.md](corpus-matrix.md) | Alignment corpus matrix |
 | [test-acceptance-glossary.md](test-acceptance-glossary.md) | SD/SP/EC/RG acceptance IDs |
 
+## Performance
+
+| Doc | Covers |
+|-----|--------|
+| [repair-perf.md](repair-perf.md) | **Where repair time goes** — current measured baseline, how to measure (`measure-repair-perf.ps1`), settled/refuted candidates, open candidates, media-hygiene rule |
+
 ## Domain / corpus tooling
 
 | Doc | Covers |
@@ -25,6 +31,6 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 
 - **Active drafts:** `TEMP-*.md` in this folder (e.g. [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)).
 - **Review ledger:** [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — prioritized correctness / silent-failure / perf findings (2026-07-23).
-- **Shipped:** [archive/](archive/) — historical design records (do not treat as current behavior; links may be stale). Includes closed M-MOD module-split plans (repair policies / analyzer policies / fingerprint / corpus / `patch_audio`).
+- **Shipped:** [archive/](archive/) — historical design records (do not treat as current behavior; links may be stale). Includes closed M-MOD module-split plans (repair policies / analyzer policies / fingerprint / corpus / `patch_audio`) and the [`bracket_fill` elimination plan](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md).
 
 > Architecture: [../../PLAN.md](../../PLAN.md). Open work: [../../BACKLOG.md](../../BACKLOG.md).

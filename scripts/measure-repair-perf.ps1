@@ -2,10 +2,11 @@
 # Repair-path performance harness: runs a manifest of media pairs under span timing and reports where the
 # time actually goes, as a span tree with exclusive costs.
 #
-# Reference numbers this produces live in docs/dev/TEMP-anchor-search-perf-baseline.md (derived figures only —
-# see MEDIA HYGIENE below). It began life as the M0 harness for the `bracket_fill` elimination plan; that
-# question is settled (0.053% over 17 pairs, plan §3.1) so the reporting is now general. Use -Focus to put a
-# specific span back under the microscope the way M0 did.
+# Reference numbers this produces live in docs/dev/repair-perf.md (derived figures only —
+# see MEDIA HYGIENE below) — record new sweeps THERE rather than starting a second baseline. It began life as
+# the M0 harness for the `bracket_fill` elimination plan; that question is settled (0.053% over 17 pairs,
+# archive/TEMP-patch-audio-bracket-fill-elimination-plan.md §3.1) so the reporting is now general. Use -Focus
+# to put a specific span back under the microscope the way M0 did.
 #
 # HOW IT MEASURES: `CLIP_SYNC_SPAN_TIMING=1` switches the fmt subscriber to `FmtSpan::CLOSE`, so every span
 # emits `time.busy`/`time.idle` when it closes. This sums busy time per span, keyed by its full parent chain.
@@ -49,7 +50,7 @@
 # MEDIA HYGIENE: the manifest and every log this writes contain absolute paths to licensed media. NEITHER MAY
 # BE COMMITTED. -OutDir defaults outside the repo ($env:TEMP) for that reason; if you point it inside the repo,
 # use the gitignored `gap-files/`. When recording results in docs, carry over only the derived numbers, keyed
-# by the manifest's label — never the paths. See docs/dev/TEMP-anchor-search-perf-baseline.md §"Media handling".
+# by the manifest's label — never the paths. See docs/dev/repair-perf.md §"Media handling".
 
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
@@ -522,4 +523,4 @@ if ($unparsed -gt 0) {
 
 Write-Host ""
 Write-Host "Logs: $(($logFiles | ForEach-Object { $_.Path }) -join ', ')" -ForegroundColor DarkGray
-Write-Host "Baseline figures: docs/dev/TEMP-anchor-search-perf-baseline.md (derived numbers only — never paths)" -ForegroundColor DarkGray
+Write-Host "Baseline figures: docs/dev/repair-perf.md (derived numbers only — never paths)" -ForegroundColor DarkGray

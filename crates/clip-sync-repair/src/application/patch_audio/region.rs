@@ -1935,7 +1935,7 @@ pub(super) fn characterize_region(
         channels,
         single_lag_alignment: true,
     };
-    // M0 perf instrumentation (TEMP-patch-audio-bracket-fill-elimination-plan.md §3): time the fill
+    // M0 perf instrumentation (archive/TEMP-patch-audio-bracket-fill-elimination-plan.md §3): time the fill
     // assembly itself. `char_gate_search` closes well before this point, so the assembly was previously
     // unmeasured — this span decides whether re-deriving the fill in execute needs a dedup hoist first.
     // `fill_mode` is request-level, so the Fit/Gate split comes from running one measurement per mode.
