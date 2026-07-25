@@ -35,8 +35,9 @@
 > **M-MOD planned splits closed 2026-07-24** (P2): policies + M-MOD-DEPS + harness corpus +
 > production `gap_fingerprint` + `patch_audio` (re-verified in source); `align_videos`
 > deferred with no plan.
-> **M-HARNESS closed 2026-07-24** (P2): shared interior oracle + NeverCalledAligner/builders +
-> RFC 4180 CSV + production `FillWindowFrames` for harness geometry.
+> **M-HARNESS complete 2026-07-24** (P2): all five recommended items done — shared interior
+> oracle + NeverCalledAligner/builders + RFC 4180 CSV + production `FillWindowFrames` for
+> harness geometry. No open M-HARNESS work remains.
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -90,12 +91,12 @@ threaded. Remaining open defects cluster in:
 
 ## Priority order (remaining)
 
+*(~~**M-HARNESS**~~ **complete 2026-07-24** — removed from this table; see M-HARNESS section.)*
+
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-MOD | P2 | Split 3–5 kloc modules (**done**: repair policies + **M-MOD-DEPS** + harness corpus + production `gap_fingerprint` + `patch_audio` + analyzer `clip-sync` policies; `align_videos` deferred, no plan) | fingerprint / policies / patch |
-| 2 | M-HARNESS | P2 | Harness drifts from production formulas (**closed 2026-07-24**) | harness crate |
-| 3 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer) | (planner deferred) |
-| 4 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
+| 1 | M-CLONE | P2 | Optional alloc hygiene (#1+#3 done; #2 defer until profiled) | (no dedicated profile harness) |
+| 2 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
@@ -105,7 +106,9 @@ pregate measurement stack removed). See Fixed tables. **All P1s are now done exc
 optional report flags; remaining work is P2/P3.** Material *repair* wall-time residual
 is **not** the dropped matchability pre-gate (0% realizable) — see archived perf plans.
 M-CLONE is optional alloc hygiene only. **M-CFG closed 2026-07-23** by collapsing the
-duplicated layers — policy bundles were never built and are declined; see the archived record.)*
+duplicated layers — policy bundles were never built and are declined; see the archived
+record. **M-MOD planned splits closed 2026-07-24** (`align_videos` deferred only; see
+M-MOD section).)*
 
 ---
 
@@ -377,6 +380,11 @@ Three **independent** PR-sized bites. Do not bundle. Corpus green proves *safety
    repair FFT (`seam_local::lag_correlation_curve_fft`) also rebuilds a planner but is
    outside this bite. Do not stuff a `Mutex` into the ZST; if profiling justifies it,
    use a size-keyed plan memo (optionally shared with `seam_local`).
+   **Measurement gap:** there is **no** dedicated harness for this bite. Existing
+   `scripts/measure-repair-perf.ps1` is span wall-time for bracket fill assembly (M0),
+   not `FftPlanner` / alloc counting on `segment_similarity` or prepare/trim. Opening #2
+   (or the prepare-clone stretch) needs an ad-hoc profile (e.g. sampling profiler /
+   `CLIP_SYNC_SPAN_TIMING` on the ambiguous-band path) before any code change.
 3. **FDK ADTS+payload scratch** — **done 2026-07-23.** `AacDecoder` holds reusable
    `adts_scratch: Vec<u8>`; `construct_adts_header` returns `[u8; 7]` (no heap);
    `decode_ref` clears/extends the scratch then `fill(&self.adts_scratch)`. Capacity
@@ -525,7 +533,7 @@ clippy --workspace --all-targets` clean; policies tests still 55/55 with unchang
 seams left at extraction boundaries: the crate is not rustfmt-managed (752 `Diff in` hunks
 workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
-### M-HARNESS. Drift from production — **closed 2026-07-24**
+### M-HARNESS. Drift from production — **complete 2026-07-24**
 
 **Recommended order (all done):**
 
@@ -647,9 +655,10 @@ module splits are closed (`align_videos` deferred only).
    gap_borders` edge removed).
    ~~**M-MOD** planned splits~~ (policies → harness corpus → production fingerprint →
    `patch_audio` P1–P6 done 2026-07-24). `align_videos` deferred (no plan).
-   **M-HARNESS** ~~remainder~~ **closed 2026-07-24** (items 2–5).
+   ~~**M-HARNESS**~~ **complete 2026-07-24** (items 1–5; no open remainder).
 5. **M-CLONE** optional hygiene — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~
-   (done 2026-07-23); **#2 planner deferred** until profiled (see M-CLONE section).
+   (done 2026-07-23); **#2 planner deferred** until profiled (no dedicated harness — see
+   M-CLONE §2 measurement gap).
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
    publish flag
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
@@ -663,14 +672,11 @@ module splits are closed (`align_videos` deferred only).
 5. ~~**M-FFT hygiene**~~ — **done 2026-07-23**: drop unused discover correlator arg; keep
    `PcmCorrelator` for lag refine; leave Pearson. ~~**M-DEAD**~~ — **done 2026-07-23**:
    §2 drop `slide_template_scores`; §1 B2 remove pregate measurement stack.
-6. **Structure (P2)** — ~~**M-CFG**~~ **done 2026-07-23**: `PatchAudioRequest` 58 fields → 3,
-   `SeamGateConfig` deleted, harness literals seeded from production; three conversion lists → one
-   (record: `archive/TEMP-repair-config-bundles-plan.md`). ~~**M-MOD** planned splits~~ **done**
-   (repair + analyzer policies / harness corpus / production fingerprint / `patch_audio`;
-   re-verified 2026-07-24; analyzer policies plan archived).
-   `align_videos` deferred. ~~**M-HARNESS** remainder incremental.~~ **M-HARNESS closed 2026-07-24**.
+6. ~~**Structure (P2)**~~ — ~~**M-CFG**~~ **done 2026-07-23**; ~~**M-MOD** planned splits~~ **done**
+   2026-07-24 (`align_videos` deferred); ~~**M-HARNESS**~~ **complete 2026-07-24** (all five
+   items; no open remainder).
 7. **M-CLONE optional hygiene** — ~~#3 FDK ADTS scratch~~ / ~~#1 align clones~~
-   (done 2026-07-23); #2 planner only if profiled.
+   (done 2026-07-23); #2 planner only if profiled (no dedicated profile harness yet).
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---
