@@ -25,11 +25,10 @@
 > `segment_similarity`.
 > **M-DEAD §1 B2 fixed** (2026-07-23): pregate measurement stack removed (predicate,
 > `CLIP_SYNC_BRACKET_STATS`, retired measure script → archive).
-> **M-CLONE #1+#3 done** (2026-07-23). **#2 implemented 2026-07-25** — thread-local
-> `FftPlanner` reuse in `fft_cross_correlation`; score-identical to fresh-planner oracle
-> (`gcc_phat_thread_local_planner_matches_fresh_planner_oracle`). **Perf re-measure still
-> open** (checklist §Verify) vs baseline `local_anchor_xcorr` 846 s / 9.5%.
-> `unified_refine` remains the larger lever (~58%).
+> **M-CLONE complete 2026-07-25** (#1+#3 2026-07-23; **#2 done** — thread-local
+> `FftPlanner` reuse). Perf: corpus `local_anchor_xcorr` **846 s / 9.5% → 358 s / 4.2%**
+> (−58%; same 1335 calls). Root 8937 s → 8449 s. Remaining material repair wall-time is
+> `unified_refine_*` / lever 1c (~61% combined start+end). Prepare-clone stretch stays deferred.
 > **M-CFG fixed 2026-07-23** (P2): `PatchAudioRequest` collapsed onto embedded
 > `PatchRequestSettings` (58 fields → 3), `SeamGateConfig` near-twin deleted in favor of a
 > settings borrow + frames-only `SeamGateDerived`, harness/test literals seeded from
@@ -94,24 +93,17 @@ threaded. Remaining open defects cluster in:
 
 ## Priority order (remaining)
 
-*(~~**M-HARNESS**~~ **complete 2026-07-24** — removed from this table; see M-HARNESS section.)*
-
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-CLONE | P2 | #2 landed (TLS planner); **perf re-measure open** | `clip-sync` correlation |
-| 2 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
+| 1 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
-2026-07-23** as hygiene (unused discover correlator *arg* removed; `PcmCorrelator` kept
-for lag refine). **M-DEAD closed 2026-07-23** (§2 `slide_template_scores` deleted; §1 B2
-pregate measurement stack removed). See Fixed tables. **All P1s are now done except
-optional report flags; remaining work is P2/P3.** Material *repair* wall-time is still
-dominated by `unified_refine` (~58% corpus); M-CLONE #2 is the next **measured** alloc/
-planner bite (~9.5% via `local_anchor_xcorr`). **M-CFG closed 2026-07-23** by collapsing the
-duplicated layers — policy bundles were never built and are declined; see the archived
-record. **M-MOD planned splits closed 2026-07-24** (`align_videos` deferred only; see
-M-MOD section).)*
+2026-07-23** as hygiene. **M-DEAD closed 2026-07-23**. See Fixed tables. **All P1s are
+now done except optional report flags; remaining ledger work is P3.** Material *repair*
+wall-time is `unified_refine_*` / lever 1c (~61% of root post–M-CLONE #2), not the
+closed M-CLONE bites. **M-CFG** / **M-MOD** / **M-HARNESS** closed earlier — see
+sections below.)*
 
 ---
 
@@ -367,80 +359,46 @@ site and already landed large wins; remaining *material* repair wall-time → **
 (`k`-reduction), not M-CLONE. Unused `slide_template_scores` removed under **M-DEAD §2**
 (2026-07-23); do not reintroduce a PHAT slide into discover without retune.
 
-### M-CLONE. Optional alloc hygiene — **#2 landed** (code 2026-07-25; perf verify open)
+### M-CLONE. Optional alloc hygiene — **complete 2026-07-25**
 
-Three **independent** PR-sized bites. Do not bundle. Corpus green proves *safety*; the
-2026-07-25 span corpus proved #2 was *worth opening*. Reviewed 2026-07-23 against source;
-#2 implemented after measurement.
+Three **independent** PR-sized bites. Do not bundle. #1+#3 done 2026-07-23; #2 done
+2026-07-25 (code + 17-pair perf verify). Prepare-clone stretch remains deferred.
 
 1. **Align full-clip clones** — **done 2026-07-23.** `truncate_padded_tail` takes
    `&MonoPcmClip` → `Cow` (allocates only when padding must be dropped). Align loop
    borrows End/non-End refs into `select_aligned_subclip_pair` / prepare; no redundant
    pre-clone. Extracted `raw_clips` stay owned for repetition re-align.
-2. **`FftPlanner` reuse on GCC-PHAT path** — **code done 2026-07-25; perf re-measure open.**
-   Production `segment_similarity` → `fft_cross_correlation` previously did
-   `FftPlanner::new()` on every call. Repair invokes that once per lag inside
-   `local_anchor_xcorr_peak` (Pearson-ambiguous band only). Lag refine still uses the
-   `cross_correlate` crate (no planner). Hotter repair FFT
-   (`seam_local::lag_correlation_curve_fft`) also rebuilds a planner but is **out of
-   scope** for this bite (lives under `unified_refine`, already ~58% of root).
+2. **`FftPlanner` reuse on GCC-PHAT path** — **done 2026-07-25.**
 
    **As landed:** `thread_local!` + `RefCell<FftPlanner<f64>>` in
-   `crates/clip-sync/src/infrastructure/correlation.rs`; core work in
+   `crates/clip-sync/src/infrastructure/correlation.rs`; core in
    `fft_cross_correlation_with_planner`. `FftCorrelator` remains a ZST. Module docs cite
-   M-CLONE #2.
+   M-CLONE #2. Lag refine (`cross_correlate`) and `seam_local` planner untouched.
 
-   **Correctness verified:**
-   - `gcc_phat_thread_local_planner_matches_fresh_planner_oracle` — bit-identical aligned +
-     misaligned vs fresh-planner oracle
-   - `gcc_phat_repeated_calls_same_lengths_are_stable` — warm memo path
-   - Existing `gcc_phat_similarity_*` / `fft_cross_correlate_*` green
-   - `cargo test -p clip-sync --lib infrastructure::correlation::tests` — 5 pass
+   **Correctness:** `gcc_phat_thread_local_planner_matches_fresh_planner_oracle`
+   (bit-identical vs fresh planner); `gcc_phat_repeated_calls_same_lengths_are_stable`;
+   correlator module tests 5/5.
 
-   **Corpus baseline** (pre-change; `measure-repair-perf`, 17-pair `perf-gate`, release,
-   `--wav`, `CLIP_SYNC_SPAN_TIMING=1`, 2026-07-25) — keep for before/after:
+   **Perf** (`measure-repair-perf`, 17-pair, release, `--wav`, `CLIP_SYNC_SPAN_TIMING=1`;
+   same call counts on the xcorr path — n=1335):
 
-   | Exclusive (ALL PAIRS) | Secs | % of root (8937 s) |
-   |-----------------------|-----:|-------------------:|
-   | `unified_refine` | 5218 | **58.4%** |
-   | decode A+B | 2105 | 23.6% |
-   | `local_anchor_xcorr` | **846** | **9.5%** |
-   | `unified_coarse` + fine polish | 630 | 7.0% |
-   | fill assembly (char+exec) | ~9 | ~0.1% |
+   | Metric | Before (2026-07-25 GO) | After (#2) | Δ |
+   |--------|-----------------------:|-----------:|--:|
+   | root (`patch_audio`) | 8937 s | 8449 s | −5.5% |
+   | `local_anchor_xcorr` | **846 s / 9.5%** | **358 s / 4.2%** | **−58%** |
+   | `anchor_matchability` | 848 s / 9.5% | 360 s / 4.3% | −58% |
+   | xcorr share of matchability | 99.7% | 99.3% | — |
 
-   - `anchor_matchability` inclusive = 848 s; **`local_anchor_xcorr` was 99.7% of it**.
-   - Pair spread: **0%** (pair 11) → **23%** (pair 1); typical ~4–14%.
-   - **Caveat:** 9.5% is whole ambiguous-band GCC-PHAT (planner + FFT + PHAT). Memo may
-     reclaim only a slice.
+   Post-change exclusive hotspots (ALL PAIRS): `unified_refine_start`+`_end` ≈ **61.5%**
+   of root (Level F: Repeat ≈99.6% of refine-start — lever 1c / `fill_repeat_correlations`);
+   decode A+B ≈25%; `local_anchor_xcorr` now **4.2%**. No Instant planner-vs-FFT split
+   needed — memo delivered a material slice of the envelope.
 
-   **Instrumentation** (landed 2026-07-24): `anchor_matchability` + `local_anchor_xcorr`
-   under `CLIP_SYNC_SPAN_TIMING`; harness always rolls both up.
+   **Instrumentation** (2026-07-24): `anchor_matchability` + `local_anchor_xcorr` spans;
+   harness always rolls both up.
 
-   **Precision:** plan reuse is **score-identical** to a fresh `FftPlanner` (oracle test).
-   Path only feeds ambiguous-band anchor matchability, not unified placement PCM.
-
-   **Remaining checklist (#2):**
-
-   **Verify (perf) — still open**
-   9. Re-run: `./scripts/measure-repair-perf.ps1 -Manifest <pairs.csv> -OutDir <fresh dir>`
-      (release, `--wav`; script sets `CLIP_SYNC_SPAN_TIMING`). Keep baseline `perf-gate`
-      logs for comparison.
-   10. **Success:** material drop in corpus `local_anchor_xcorr` vs **846 s / 9.5%**. Do not
-       expect the full 9.5% back.
-   11. If win is negligible: optional Instant split on `local_anchor_xcorr` (planner vs
-       process) — only then consider a deeper rewrite.
-
-   **Close out (after perf)**
-   12. Record before/after `local_anchor_xcorr` secs + % here; mark #2 fully **done**; flip
-       priority / sequencing / milestone if M-CLONE closes.
-   13. No TEMP doc. After perf close-out, M-CLONE is complete aside from the deferred
-       prepare-clone stretch.
-
-   **Out of scope (unchanged)**
-   - Sharing the memo with `seam_local::lag_correlation_curve_fft` / `unified_refine`
-   - Rewriting `local_anchor_xcorr_peak` to one multi-lag FFT
-   - Changing `anchor_seam_*` / ambiguous-band thresholds
-   - Prepare-clone stretch; lever 1c / `unified_refine`
+   **Out of scope (still):** share memo with `seam_local` / `unified_refine`; multi-lag
+   rewrite of `local_anchor_xcorr_peak`; threshold changes; prepare-clone stretch.
 3. **FDK ADTS+payload scratch** — **done 2026-07-23.** `AacDecoder` holds reusable
    `adts_scratch: Vec<u8>`; `construct_adts_header` returns `[u8; 7]` (no heap);
    `decode_ref` clears/extends the scratch then `fill(&self.adts_scratch)`. Capacity
@@ -454,7 +412,7 @@ Three **independent** PR-sized bites. Do not bundle. Corpus green proves *safety
 ignored), including all `construct_adts_header_*` unit tests and
 `fdk_reset_backward_seek_reprimes_to_identical_steady_state`.
 
-**Verified (#2 code):** correlator tests above. **Perf verify open** (checklist 9–12).
+**Verified (#2):** correlator oracle tests + 17-pair before/after table above.
 
 **Do not (prepare-clone stretch):** Changing `prepare_clip_for_fingerprint` to take
 owned `MonoPcmClip` (or dropping its internal clone) is **not** a worthwhile follow-up
@@ -712,15 +670,14 @@ module splits are closed (`align_videos` deferred only).
    ~~**M-MOD** planned splits~~ (policies → harness corpus → production fingerprint →
    `patch_audio` P1–P6 done 2026-07-24). `align_videos` deferred (no plan).
    ~~**M-HARNESS**~~ **complete 2026-07-24** (items 1–5; no open remainder).
-5. **M-CLONE** — ~~**#3 FDK scratch**~~ / ~~**#1 align clones**~~ (done 2026-07-23);
-   ~~**#2 code**~~ (2026-07-25: thread-local `FftPlanner` in `fft_cross_correlation`;
-   oracle + warm-path tests green) — **perf re-measure still open** vs 846 s / 9.5%
-   `local_anchor_xcorr` baseline.
+5. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#3 2026-07-23; #2 TLS `FftPlanner` +
+   17-pair verify: `local_anchor_xcorr` 846 s/9.5% → 358 s/4.2%). Prepare-clone stretch
+   deferred only.
 6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
    publish flag
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
-   *(larger remaining repair wall-time is still `unified_refine` / lever 1c — not blocked
-   on M-CLONE #2.)*
+   *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
+   per Level F.)*
 
 ### Milestone checklist
 
@@ -734,8 +691,7 @@ module splits are closed (`align_videos` deferred only).
 6. ~~**Structure (P2)**~~ — ~~**M-CFG**~~ **done 2026-07-23**; ~~**M-MOD** planned splits~~ **done**
    2026-07-24 (`align_videos` deferred); ~~**M-HARNESS**~~ **complete 2026-07-24** (all five
    items; no open remainder).
-7. **M-CLONE** — ~~#3~~ / ~~#1~~ (done 2026-07-23); ~~#2 code~~ (2026-07-25 TLS planner +
-   oracle tests); **perf re-measure open**.
+7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
 8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.
 
 ---
