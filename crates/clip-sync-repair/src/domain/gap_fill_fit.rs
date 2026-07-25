@@ -441,12 +441,26 @@ struct UnifiedFitCandidate {
     placement: FillBracketPlacement,
 }
 
+/// Lever 1b(c) (docs/dev/repair-perf.md §1a): how a candidate loop supplies the repeat penalty.
+///
+/// `PerCandidate` is the general case — the penalty moves with the candidate, so it is recomputed.
+/// `Fixed` is for a loop that has PROVEN the penalty loop-invariant and computed it once above the loop;
+/// `unified_fit_score_with_repeat` then substitutes the value instead of recomputing an identical one.
+/// The substitution is byte-identical: it replaces `repeat_penalty_at_placement(..)` with the f64 that call
+/// would have returned, under the same `wf > 0.0 && score.is_finite()` guard and the same arithmetic.
+#[derive(Clone, Copy)]
+enum RepeatPenaltySource {
+    PerCandidate,
+    Fixed(f64),
+}
+
 fn unified_fit_score_with_repeat(
     candidate: UnifiedFitCandidate,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
     waveform: &WaveformSeamContext<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
+    repeat_source: RepeatPenaltySource,
     timers: &CandidateTimers,
 ) -> f64 {
     let mut score = unified_fit_score(
@@ -462,15 +476,17 @@ fn unified_fit_score_with_repeat(
     }
     let wf = weights.normalized().waveform_weight;
     if wf > 0.0 && score.is_finite() {
-        score -= waveform.repeat_penalty_weight
-            * wf
-            * repeat_penalty_at_placement(
+        let penalty = match repeat_source {
+            RepeatPenaltySource::Fixed(penalty) => penalty,
+            RepeatPenaltySource::PerCandidate => repeat_penalty_at_placement(
                 waveform,
                 candidate.placement.start,
                 candidate.wave_pre,
                 candidate.wave_post,
                 timers,
-            );
+            ),
+        };
+        score -= waveform.repeat_penalty_weight * wf * penalty;
     }
     score
 }
@@ -793,6 +809,8 @@ fn unified_search_best_fill_start(
                     weights,
                     waveform,
                     anchor_prior,
+                    // `start` moves here, so the repeat window moves with it — no hoist available.
+                    RepeatPenaltySource::PerCandidate,
                     &timers,
                 )
             },
@@ -964,8 +982,7 @@ fn unified_search_best_fill_end(
     // Lever 1 (byte-identical cross-candidate reuse, TEMP-production-repair-perf-plan.md §2.5): in the END
     // search the pre seam and the waveform seams are anchored at the FIXED `fill_start`, so they are constant
     // across every `end` candidate. Compute them once here instead of per candidate — removes the per-channel
-    // Pearson (`waveform_seams_at_start`) *and* the repeat penalty's seam reuse per end candidate. Also constant:
-    // the repeat penalty itself keys only on `fill_start` — but `end` moves its window, so it is not hoisted here.
+    // Pearson (`waveform_seams_at_start`) *and* the repeat penalty's seam reuse per end candidate.
     let const_pre_score = score_pre_for_signature(signature, timeline, fill_start, params);
     let (const_wave_pre, const_wave_post) =
         waveform_seams_at_start(waveform, fill_start, score_channels);
@@ -974,6 +991,26 @@ fn unified_search_best_fill_end(
     // hoisted above, so no candidate pays for them. Its `structure_us` covers the post scan only. That is
     // exactly why the span names carry `_start` / `_end`: these buckets are not comparable across the two.
     let timers = CandidateTimers::default();
+
+    // Lever 1b(c) (docs/dev/repair-perf.md §1a): the repeat penalty is likewise CONSTANT across this loop, so
+    // it is hoisted too. An earlier note here claimed `end` "moves its window" and left it per-candidate; that
+    // is wrong. `repeat_penalty_at_placement` reads only `waveform` (its `gap_frames` / `pre_window` /
+    // `post_window` come from the context, NOT from the candidate), the placement's `start` — which here is
+    // `fill_start` for every candidate, since `fill_bracket_placement(fill_start, end, ..)` puts `fill_start`
+    // in `.start` — and the two seam values, already hoisted above. `end` never reaches it.
+    //
+    // The 2026-07-25 sweep measured what that cost: `repeat_us` was 99.8% of `unified_refine_end` and
+    // `unified_coarse_end`, ~34% of total repair time, recomputing one identical f64 ~4.2M times.
+    //
+    // Timed on a throwaway accumulator so this one-off does not land in the first phase's `repeat_us`. Like
+    // `const_pre_score` and the seam pair above, its cost now sits in `bracket_unified_search`'s own time.
+    let const_repeat_penalty = repeat_penalty_at_placement(
+        waveform,
+        fill_start,
+        const_wave_pre,
+        const_wave_post,
+        &CandidateTimers::default(),
+    );
     let consider = |end: usize, best_end: &mut usize, best_score: &mut f64| {
         if end < end_min || end > end_max || end + post_span > total_frames {
             return;
@@ -1005,6 +1042,7 @@ fn unified_search_best_fill_end(
                     weights,
                     waveform,
                     None,
+                    RepeatPenaltySource::Fixed(const_repeat_penalty),
                     &timers,
                 )
             },
@@ -1133,6 +1171,8 @@ fn unified_fine_polish_start(
                     weights,
                     waveform,
                     anchor_prior,
+                    // `candidate` moves the placement start, so the repeat window moves too.
+                    RepeatPenaltySource::PerCandidate,
                     &timers,
                 )
             },
@@ -2107,6 +2147,7 @@ mod tests {
             weights,
             &waveform,
             None,
+            RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
         );
         let no_penalty = WaveformSeamContext {
@@ -2119,12 +2160,104 @@ mod tests {
             weights,
             &no_penalty,
             None,
+            RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
         );
         assert!(
             without > base,
             "repeat penalty should lower score when fill duplicates borders (with={without}, base={base})"
         );
+    }
+
+    /// Lever 1b(c): the end search hoists the repeat penalty above its candidate loop, which is only valid if
+    /// the penalty does not depend on `end`. Pin that here — vary `end` across the loop's whole slack range and
+    /// require `Fixed(penalty computed once at fill_start)` to be BIT-equal to `PerCandidate`. If someone ever
+    /// makes the repeat window depend on the candidate end, this fails instead of silently changing placements.
+    #[test]
+    fn end_search_repeat_penalty_is_invariant_to_fill_end() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            // The end search's candidate range is `gap_frames ± fill_length_slack_frames`; a non-zero slack
+            // is what makes "vary `end`" meaningful here.
+            fill_length_slack_frames: 20,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights::default();
+        let a_pre: Vec<f64> = (0..16).map(|i| (i as f64 * 0.1).sin()).collect();
+        let a_post: Vec<f64> = (0..16).map(|i| (i as f64 * 0.2).cos()).collect();
+        let mut b_mono = vec![0.0f64; 200];
+        // Duplicate both borders into the fill interior so the penalty is genuinely non-zero — an all-zero
+        // penalty would make the two sources agree trivially and prove nothing.
+        b_mono[100..116].copy_from_slice(&a_pre[..16]);
+        b_mono[140..156].copy_from_slice(&a_post[..16]);
+        let b_ch = vec![b_mono.clone()];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames: 40,
+            pre_window: 16,
+            post_window: 16,
+            b_total_frames: b_mono.len(),
+            repeat_window_frames: 16,
+            repeat_penalty_weight: 1.0,
+        };
+
+        let fill_start = 100usize;
+        let timers = CandidateTimers::default();
+        let hoisted = repeat_penalty_at_placement(&waveform, fill_start, 0.2, 0.2, &timers);
+        assert!(
+            hoisted > 0.0,
+            "fixture should produce a real repeat penalty, got {hoisted}"
+        );
+
+        for end in 120..=160 {
+            // Exactly how `unified_search_best_fill_end` builds its candidate: placement start pinned to
+            // `fill_start`, seams pinned to the hoisted constants, only `end` moving.
+            let candidate = || UnifiedFitCandidate {
+                structure_pre: 0.9,
+                structure_post: 0.9,
+                wave_pre: 0.2,
+                wave_post: 0.2,
+                placement: fill_bracket_placement(fill_start, end, fill_start, 140),
+            };
+            let per_candidate = unified_fit_score_with_repeat(
+                candidate(),
+                &params,
+                weights,
+                &waveform,
+                None,
+                RepeatPenaltySource::PerCandidate,
+                &timers,
+            );
+            let fixed = unified_fit_score_with_repeat(
+                candidate(),
+                &params,
+                weights,
+                &waveform,
+                None,
+                RepeatPenaltySource::Fixed(hoisted),
+                &timers,
+            );
+            assert_eq!(
+                per_candidate.to_bits(),
+                fixed.to_bits(),
+                "hoisted repeat penalty diverged at end={end} \
+                 (per_candidate={per_candidate}, fixed={fixed})"
+            );
+        }
     }
 
     #[test]
@@ -2321,6 +2454,7 @@ mod tests {
             weights,
             &waveform_penalized,
             None,
+            RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
         );
         let without_penalty = unified_fit_score_with_repeat(
@@ -2329,6 +2463,7 @@ mod tests {
             weights,
             &waveform_off,
             None,
+            RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
         );
         assert!(
@@ -2394,6 +2529,7 @@ mod tests {
                 weights,
                 &waveform,
                 None,
+                RepeatPenaltySource::PerCandidate,
                 &CandidateTimers::default(),
             )
         };

@@ -116,14 +116,110 @@ fraction of what it measures. These are plain `Instant` deltas, ~2 clock reads
 per component per candidate, gated on `CLIP_SYNC_SPAN_TIMING` so production pays
 one bool load and no clock reads.
 
-**Not yet measured on the corpus.** A synthetic mono-chirp pair puts `repeat_us`
-at **99%** of both refine loops, which matches the standing hypothesis — lever 1
-banded the seam correlations and left the repeat window naive — but a 120 s
-synthetic chirp is not the corpus, and this number must not be quoted as one.
-Record the real split here after the next 17-pair sweep.
-
 **Reading `seam_us` ≈ 0 on `*_end`:** expected, not a bug. That loop hoists both
 seam values above it (lever 1), so no candidate pays for them.
+
+### First corpus measurement (2026-07-25, complete — 17 of 17 pairs)
+
+6-channel media, **8449 s instrumented**, 1758 bracket searches.
+
+| Loop | Excl | % root | Cand. | µs/cand | Structure | Seam | Repeat | Score | Unacct |
+|------|------|--------|-------|---------|-----------|------|--------|-------|--------|
+| `unified_refine_start` | 2598 s | 30.75% | 8.44 M | 308 | 0.3% | 0.0% | **99.6%** | 0.0% | 0.1% |
+| `unified_refine_end` | 2595 s | 30.71% | 8.44 M | 307 | 0.2% | 0.0% | **99.7%** | 0.0% | 0.0% |
+| `unified_coarse_start` | 332 s | 3.93% | 707 k | 470 | 0.2% | 36.4% | 63.3% | 0.0% | 0.0% |
+| `unified_fine_polish` | 218 s | 2.58% | 452 k | 482 | 0.2% | 36.1% | 63.7% | 0.0% | 0.0% |
+| `unified_coarse_end` | 78 s | 0.92% | 355 k | 220 | 0.2% | 0.0% | **99.7%** | 0.0% | 0.1% |
+
+Non-loop costs worth naming: `patch_decode_b` 1084 s (12.83%) + `patch_decode_a`
+1047 s (12.39%) = **25.2% in decode**, and `local_anchor_xcorr` 358 s (4.23%,
+99.3% of `anchor_matchability`).
+
+**Repeat correlation totals ~5601 s = 66% of instrumented time.** The 9-pair
+partial read (33.0/32.9%, 290 µs/cand) held up: the full set lands at
+30.75/30.71% and 308 µs/cand, and every per-pair split agrees within a point.
+
+What this settles:
+
+- **The repeat correlation is ~72% of total repair time.** Not the structure
+  scan (0.2–0.3%), not the score arithmetic (0.0%). `Unacct` ≈ 0 everywhere, so
+  the four buckets account for the loops completely — no further split needed.
+- **Lever 1 worked, and that is exactly why repeat now dominates.** Where seam is
+  still naive (`unified_coarse_start`, `unified_fine_polish`) it costs the same
+  order as repeat; where it was banded, it is 0.0% and repeat is all that's left.
+- **Repeat runs more channels than seam does.** On mono the two are 50/50
+  exactly; on this 6-channel media the naive loops sit at Seam 38% / Repeat 62%,
+  a ratio consistent with seam using the filtered `score_channels` subset (~4 of
+  6) while `fill_repeat_correlations` iterates every channel. Lever 2's channel
+  hoist never reached the repeat path.
+
+**Rolling up a sweep still in flight** produces negative exclusive times on
+`patch_audio` (and any span whose close is still pending) — children have closed,
+the parent has not. The harness warns. It is an artifact of reading early, not a
+measurement fault; it cleared when the run finished.
+
+**After lever 1b(c), the profile should be:** `unified_refine_start` ~2598 s
+(45%), decode ~2131 s (37%), everything else ~1048 s. Decode becomes the #2 cost
+and the start-search repeat window becomes the only remaining lever-1b target.
+Re-measure to confirm — this is arithmetic, not a measurement.
+
+### Lever 1b(c) — end-search repeat hoist (implemented 2026-07-25, unmeasured)
+
+The table above says `unified_refine_end` is 32.9% of root and 99.8% repeat.
+**All of it was recomputing one identical `f64`.** In the end search:
+
+- the placement start is `fill_bracket_placement(fill_start, end, ..).start`, so
+  it is `fill_start` for every candidate;
+- both seam values were already hoisted by lever 1;
+- `repeat_penalty_at_placement` takes `gap_frames` / `pre_window` / `post_window`
+  from the *context*, not the candidate.
+
+So `end` never reaches the repeat window, and the penalty is loop-invariant. A
+comment in `unified_search_best_fill_end` had claimed `end` "moves its window",
+which is what kept it in the loop; that comment was wrong and is now corrected.
+
+The fix hoists it above the loop and passes it via `RepeatPenaltySource::Fixed`,
+substituting the same `f64` under the same guard — byte-identical by
+construction, pinned by
+`end_search_repeat_penalty_is_invariant_to_fill_end` (bit-equality across the
+whole slack range). Expected saving on the full 17-pair run: **2672 s of 8449 s**
+(`unified_refine_end` 2595 + `unified_coarse_end` 78), **31.6% of instrumented
+repair time**, with no approximation. Re-measure to confirm.
+
+**If the post seam ever becomes end-dependent** (Phase C of
+[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md)), this hoist
+needs revisiting — but only its cheap half. `repeat_penalty_at_placement` takes
+the seams as *arguments* and branches on them (`wave_min`,
+`asymmetric_post_dup`), so an end-varying `post_seam` makes the penalty
+end-varying. The two Pearson correlations do **not** move: they read `start` and
+the context windows only. So hoist `(repeat_pre, repeat_post)` and recompute just
+the branch arithmetic per candidate — `RepeatPenaltySource::Fixed(f64)` becomes
+`Fixed { repeat_pre, repeat_post }`, and ~99.8% of the saving survives.
+`end_search_repeat_penalty_is_invariant_to_fill_end` fails if this is missed,
+which is the intended tripwire.
+
+**This was never a regression — the end search's waveform terms have been
+loop-constant since the loop was written.** `unified_search_best_fill_end` was
+introduced in `e849e64` (2026-06-20) already calling
+`waveform_min_at_start(waveform, fill_start)` inside `consider`, with
+`gap_frames: ctx.gap_frames`. `92b8920` (same day) swapped in
+`unified_fit_score_with_repeat`, still keyed on `fill_start`. Both were inert in
+that loop from their first commit; lever 1 and lever 1b(c) only stopped paying
+for them. There is no earlier end-dependent behavior to restore.
+
+**Where the waveform *does* vote on fill length:** at splice time, not search
+time. `fit_fill_length_for_gap` → `pick_fill_length_anchor` scores trim-head vs
+trim-tail with `fill_splice_seam_correlations_interleaved` on the actual trimmed
+fill, and `score_extend_short_fill_to_gap_frames` extends only while the seam
+holds and `repeat_post` does not rise. The origin plan
+(`archive/fill-fitting-plan.md`, Phase D) specified `repeat_post =
+corr(A_post_border, B_fill_tail)` — the *fill tail*, end-dependent by
+definition. Pinning the tail at `start + gap_frames` is exact when
+`fill_len == gap_frames` and drifts with `|end − nominal_end|`, which the 5.0 s
+`default_fill_length_slack_secs` makes reachable. Whether the search's end sweep
+should carry its own seam evidence is an open **behavior** question, and no
+harness currently records fill placement at all — see
+[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md).
 
 ## 2. Per-pair characterize baseline, 17 pairs (2026-07-23)
 
