@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-07-21.
+Last updated: 2026-07-26.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups); [Narrow fill-length slack](#narrow-fill-length-slack).
 
 ---
 
@@ -21,7 +21,18 @@ Last updated: 2026-07-21.
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-rust-review-findings.md](docs/dev/TEMP-rust-review-findings.md) | Workspace Rust review ledger (P0–P3) — open, 2026-07-23 |
 
+**Recently archived:** [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26).
+
 ## Open work
+
+### Narrow fill-length slack
+
+From [archive/TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) Phase B
+residue; tracked as [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
+
+| Item | Direction |
+|------|-----------|
+| Narrow `fill_length_slack_secs` default 5.0 → **1.0 s** | Corpus max end excursion vs bracket span is 388 ms; ±5 s is ~50–200× over-provisioned. Not byte-identical (`search_coarse_step` scales with window). Exit: golden A/B + fingerprint `|fill−span|` bound-pin check + spot listen. Then consider 0.5 s only if clean. |
 
 ### Repair R6 follow-ups
 
