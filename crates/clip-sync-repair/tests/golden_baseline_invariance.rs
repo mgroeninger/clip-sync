@@ -61,48 +61,60 @@ fn curated_golden_baseline_invariance() {
     );
 }
 
-/// **Property 2 of the fill-placement re-baseline, asserted in the negative** — see
-/// docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+/// **Property 2 of the fill-placement re-baseline** — see docs/dev/TEMP-fill-placement-axis-plan.md
+/// Phase A.
 ///
 /// `fill_start_frame` / `fill_frames` are Tier-1 axes whose purpose is to turn the golden red when a
-/// fill length changes. They are currently **null on every curated gap**, because the committed
-/// fixtures were extracted before `compute_region_measurements` emitted the gate's chosen placement.
-/// A null column is indistinguishable from a passing one, so the gap is asserted rather than left to
-/// be discovered.
+/// fill length changes. Fixtures 01–10 were extracted before `compute_region_measurements` emitted the
+/// gate's chosen placement, so they carry the axes as null — and a null column is indistinguishable
+/// from a passing one. Fixtures **11 and 12** were harvested after the emit landed and are the ones
+/// that actually arm the tripwire; this test asserts at least one such gap exists, so the coverage
+/// cannot silently regress to all-null.
 ///
-/// **When a fixture carrying placement is added, this test will fail — that is the point.** Replace it
-/// with the positive form, which is the assertion that actually arms the tripwire. Deleting it instead
-/// re-opens the blind spot the plan exists to close.
-///
-/// **Scope the positive form to gaps whose best bracket *passed the gate*, not to gaps with a complete
-/// seam pair.** `compute_region_measurements` records placement only on the `Ok` branch, while
-/// `seam_pre` / `seam_post` are also populated from gate *failures* (`stage_of`). Across the 17-pair
-/// corpus, 200 of 360 gaps with an eligible bracket have a failed best bracket, so a seam-pair-scoped
-/// assertion would demand placement that cannot exist. The tripwire therefore covers the **patch path
-/// only** — which is the only path where a fill placement is used.
+/// **Placement is scoped to the gate's `Ok` branch, and the golden reads only the *best* bracket.**
+/// `seam_pre` / `seam_post` are populated from gate *failures* too (`stage_of`), and
+/// `best_seam_bracket` ranks by min-seam over every bracket with a complete seam pair — **failures
+/// included**. So the correct predicate is *the best-by-min-seam bracket passed the gate*, which is
+/// strictly narrower than *some bracket passed*: a gap whose min-seam winner failed yields null
+/// placement even though other brackets passed. Fixture 11 exercises exactly this shape (20 brackets,
+/// 5 `waveform_floor` failures carrying seams with null placement, best bracket passing).
 ///
 /// `fill_pre_r` / `fill_post_r` are *not* covered here: they read the pre-existing `seam_pre` /
-/// `seam_post` and are already populated on the 6 gaps that have an eligible bracket.
+/// `seam_post` and are populated wherever a bracket has a complete seam pair, pass or fail.
 #[test]
-fn curated_golden_fill_placement_is_not_yet_armed() {
+fn curated_golden_fill_placement_is_armed() {
     let live = baseline_from_rows(&curated_gap_cell_rows());
-    // Without this the emptiness assertion below would pass vacuously on an empty fixture set.
+    // Without this the assertions below would pass vacuously on an empty fixture set.
     assert!(live.gap_count > 0, "no curated fixtures analyzed");
+
     let armed: Vec<String> = live
         .gaps
         .iter()
-        .filter(|g| g.fill_start_frame.is_some() || g.fill_frames.is_some())
+        .filter(|g| g.fill_start_frame.is_some() && g.fill_frames.is_some())
         .map(|g| format!("{}·g{}", g.pair, g.index))
         .collect();
     assert!(
-        armed.is_empty(),
-        "fill placement is now populated on {} curated gap(s): {}\n\
-         A fixture carrying placement has been added — replace this test with the positive assertion \
-         (placement present wherever the best bracket PASSED THE GATE — not wherever it had a complete \
-         seam pair; failed brackets carry seams but no placement) and regenerate the golden. \
-         See docs/dev/TEMP-fill-placement-axis-plan.md Phase A, property 2.",
-        armed.len(),
-        armed.join(", "),
+        !armed.is_empty(),
+        "no curated gap carries fill placement — the Tier-1 fill_start_frame / fill_frames tripwire is \
+         disarmed and would pass vacuously. A fixture whose BEST-by-min-seam bracket passes the gate \
+         must be present (fixtures 11/12). See docs/dev/TEMP-fill-placement-axis-plan.md Phase A, \
+         property 2.",
+    );
+
+    // The two axes are read from one `FillAlignment`, so they are populated or absent together. A gap
+    // carrying exactly one means the projection in `compute_region_measurements` has been split.
+    let half: Vec<String> = live
+        .gaps
+        .iter()
+        .filter(|g| g.fill_start_frame.is_some() != g.fill_frames.is_some())
+        .map(|g| format!("{}·g{}", g.pair, g.index))
+        .collect();
+    assert!(
+        half.is_empty(),
+        "{} curated gap(s) carry only one of fill_start_frame / fill_frames: {}\n\
+         Both project from the same FillAlignment on the gate's Ok branch, so they must move together.",
+        half.len(),
+        half.join(", "),
     );
 }
 

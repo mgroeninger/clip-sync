@@ -1,5 +1,5 @@
 {
-  "note": "Curated one-representative-per-cell gap fingerprint fixtures. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/dev/archive/gap-fixture-corpus-plan.md.",
+  "note": "Curated gap fingerprint fixtures, at least one per representable cell. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/dev/archive/gap-fixture-corpus-plan.md. NOT one-per-cell: fixtures 11/12 duplicate the bracket_patch_donor_broken and bracket_patch_clean cells of 02/01 on purpose, because 01-10 predate compute_region_measurements emitting the gate's chosen fill placement and so carry null fill_start_frame/fill_frames. Duplicates are legal - the coverage test asserts cell membership, not uniqueness. See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.",
   "fixtures": [
     {
       "file": "01_bracket_patch_clean.json",
@@ -109,6 +109,28 @@
         "pair": "derived-from",
         "gap_index": 3,
         "original_filename": "03_silence_splice_dualfit_target.json"
+      }
+    },
+    {
+      "file": "11_bracket_patch_donor_broken_placement.json",
+      "type": "bracket_patch_donor_broken",
+      "expected": "patched despite donor BROKEN (dNom=0.958, continuous=false); 20 brackets, 15 gate-PASS carrying fill placement and 5 waveform_floor FAILURES carrying seams but null placement. Arms the fill_start_frame/fill_frames tripwire and pins the Ok-branch-only rule within one gap. Best-by-min-seam bracket (#6) passes, so the golden's fill_* are non-null.",
+      "provenance": {
+        "corpus": "fill-placement-arm",
+        "pair": "aad11753_5a3f",
+        "gap_index": 2,
+        "original_filename": "aad11753_5a3f_t00-04-49_g002_full_timing_offset.json"
+      }
+    },
+    {
+      "file": "12_bracket_patch_clean_placement.json",
+      "type": "bracket_patch_clean",
+      "expected": "patched; donor occupied (dNom=0.0, continuous=true); all 22 brackets pass the gate and carry fill placement. The all-pass counterpart to fixture 11 \u2014 covers the clean cell for the placement axes.",
+      "provenance": {
+        "corpus": "fill-placement-arm",
+        "pair": "aad11753_5a3f",
+        "gap_index": 3,
+        "original_filename": "aad11753_5a3f_t00-16-54_g003_full_timing_offset.json"
       }
     }
   ]
