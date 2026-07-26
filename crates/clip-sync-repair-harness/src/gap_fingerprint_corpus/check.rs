@@ -16,7 +16,8 @@ pub const DEFAULT_FILL_SLACK_SECS: f64 = 5.1;
 
 #[derive(Debug, Clone)]
 pub struct HealthCheckOptions {
-    /// Max |fill_frames/sr − gap duration| allowed for placed brackets.
+    /// Max |fill_frames/sr − geometry gap duration| allowed for placed brackets.
+    /// Loose sanity bound only: includes anchor widening. Phase B slack use is |fill − span|.
     pub fill_slack_secs: f64,
 }
 

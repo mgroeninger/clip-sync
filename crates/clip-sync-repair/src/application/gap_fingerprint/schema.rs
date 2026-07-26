@@ -285,9 +285,14 @@ pub struct BracketInfo {
     pub seam_pre: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seam_post: Option<f64>,
-    /// B frame where the placement starts, and the fill length the end sweep chose. `fill_frames`
-    /// differs from the gap length by up to the slack; it is the *only* projection of the end
-    /// search's decision, which nothing else records. See TEMP-fill-placement-axis-plan.md.
+    /// B frame where the placement starts, and the fill length the end sweep chose.
+    ///
+    /// The end search's nominal is this bracket's refined span (`span_secs` /
+    /// `params.gap_frames` = post−pre), **not** the original silent-run gap.
+    /// `fill_frames` differs from that span by up to `fill_length_slack_secs` (default 5.0 s).
+    /// Comparing `fill_frames` to the original gap conflates **anchor widening** with end-search
+    /// excursion — the Phase B denominator trap; see TEMP-fill-placement-axis-plan.md.
+    /// On the dump path this is the *only* projection of the end search's decision.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub start_frame: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

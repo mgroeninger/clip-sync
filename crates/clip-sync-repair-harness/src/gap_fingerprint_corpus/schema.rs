@@ -186,9 +186,11 @@ pub struct GapRow {
     /// Best `min(pre,post)` waveform seam any bracket reached (how close it got to passing).
     pub best_bracket_seam: Option<f64>,
     /// Placement chosen for that best-min-seam bracket: B start frame, and the fill length the end
-    /// sweep picked (differs from the gap length by up to `fill_length_slack_secs`). `None` on dumps
-    /// written before 2026-07-25. The only record of the end search's decision — a change that moved
-    /// every fill length on the corpus used to leave the golden diff green.
+    /// sweep picked. Nominal is the bracket span (`span_secs`), not the original silent-run gap —
+    /// excursion is `|fill − span|` (≤ `fill_length_slack_secs`); `|fill − gap|` is mostly anchor
+    /// widening. `None` on dumps written before 2026-07-25. The only record of the end search's
+    /// decision — a change that moved every fill length on the corpus used to leave the golden
+    /// diff green.
     pub best_bracket_start_frame: Option<usize>,
     pub best_bracket_fill_frames: Option<usize>,
     /// That bracket's two seam correlations, unaggregated — `best_bracket_seam` is their `min`, which

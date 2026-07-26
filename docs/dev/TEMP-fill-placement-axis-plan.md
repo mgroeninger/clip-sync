@@ -1,11 +1,13 @@
 # Fill placement axis — measure the end search before changing it
 
-> **Status (2026-07-25):** Phase A is **COMPLETE — exit criterion met.** The placement is emitted,
-> carried to `GapRow`, recorded in `GoldenRecord`, and the golden is armed end-to-end: fixtures **11**
-> (`bracket_patch_donor_broken`) and **12** (`bracket_patch_clean`), harvested from
-> `gap-files/fill-placement-arm`, carry non-null `fill_start_frame` / `fill_frames`, so a golden diff
-> now turns red when a fill length moves. `curated_golden_fill_placement_is_armed` replaced the
-> negative assert. Legacy fixtures 01–10 remain null (their provenance media is gone) and untouched.
+> **Status (2026-07-26):** Phase A is **COMPLETE — exit criterion met.** Phase B's slack-use exit is
+> also **met on the 17-pair fingerprint corpus** (denominator = bracket span, not original gap) →
+> **Phase C is a NO-GO.** The placement is emitted, carried to `GapRow`, recorded in `GoldenRecord`,
+> and the golden is armed end-to-end: fixtures **11** (`bracket_patch_donor_broken`) and **12**
+> (`bracket_patch_clean`), harvested from `gap-files/fill-placement-arm`, carry non-null
+> `fill_start_frame` / `fill_frames`, so a golden diff now turns red when a fill length moves.
+> `curated_golden_fill_placement_is_armed` replaced the negative assert. Legacy fixtures 01–10 remain
+> null (their provenance media is gone) and untouched.
 >
 > Prerequisite for any change to the end search's scoring; **not** a prerequisite for lever 1b(c)
 > (the end-search repeat hoist), which is byte-identical and already landed.
@@ -192,60 +194,83 @@ still turns the golden red.
    were verified against this before selection. A future fixture must be checked the same way, or the
    positive assert will fail for a reason that has nothing to do with a regression.
 
-## Phase B — production-weights second placement (opt-in)
+## Phase B — production-weights second placement (opt-in) + corpus roll-up
+
+### Denominator (do not get this wrong)
+
+The end search's nominal is the **bracket's refined span** — `span_secs` / `params.gap_frames` =
+post−pre after anchor widening — **not** the original silent-run gap
+(`geometry.duration_secs` / `splice_dualfit.gap_frames`). Slack use is
+`|fill_frames − span| / fill_length_slack_secs`.
+
+**Denominator trap:** `|fill − original gap|` is almost entirely **anchor widening**
+(`|span − gap|`). On the 17-pair corpus those two medians both read ~2.0 s and look like a saturated
+±5 s slack; against span the median excursion is tens of milliseconds. Inside a multi-bracket gap,
+`fill_frames` tracks the per-bracket span (widening), not an independent length hunt over the original
+hole. This distinction decides the Phase C go/no-go and belongs in every roll-up.
+
+### Corpus roll-up (17/17 pairs, 2026-07-26) — slack exit **MET → Phase C NO-GO**
+
+Corpus: 297 gaps (121 patch / 176 skip), 5064 brackets, **1044** with recorded placement (gate Ok ↔
+placement, property 2 held corpus-wide). Dumps are from-decode / production-weights
+(`compute_region_measurements`); no `structure_pre`/`structure_post` fields.
+
+| Axis | What it measures | Result |
+|------|------------------|--------|
+| \|fill − **span**\| | end-search excursion (Phase B exit) | median **0–24 ms**, p95 ~80–90 ms, **max 388 ms**; nothing ≥1 s (~8% of ±5 s) |
+| \|fill − **gap**\| | widening + excursion (trap) | median **~2.0 s** — do not use for the exit |
+| \|span − gap\| | anchor widening alone | median **~2.1 s** — explains the trap |
+| throat (`span == gap`, n=65): end excursion vs `splice_dualfit` trim | length-correction agreement | same order of magnitude (medians ~3 ms / ~6 ms) but **r ≈ 0.06**, sign agreement at chance — **not redundant** |
+
+So: the end sweep is not inert (~72% of placed brackets move >10 ms off span), but the slack is
+**50–200× wider than the search ever needs.** Per the exit wording below, Phase C stops here.
+
+**Residue (not Phase C):** (1) the r≈0.06 disagreement — at least one of end-search length vs dual-fit
+trim is reading noise; (2) `fill_length_slack_secs = 5.0` vs 388 ms observed max — narrowing is a
+separate lever (not byte-identical: `search_coarse_step` depends on span extent), gated by the Phase A
+golden tripwire.
+
+### Optional second placement (still open; not required for the exit above)
+
+The Phase A dump already carries **production-weights** placement on brackets. A structure-only second
+placement remains useful for A/B if someone retunes weights later, but it is **not** needed to decide
+Phase C — the slack number is already in hand.
 
 - [ ] `place_on_b` optionally computes a **second** match with production `UnifiedFitWeights` (from
       config, not hardcoded), emitted as `placement_production.{start_frame,fill_frames,seam_pre,seam_post}`.
+      *(Revisit only if weight A/B is planned; default dump already has production placement.)*
 - [ ] **Ship the validators with it.** A seam-influenced placement without an alias companion is the
       max-of-noise estimator, and the dual-fit path already sets the precedent for how to avoid that.
       Emit **`seam_z` (primary)** — whole-curve z over the placement search, the periodicity-robust
       guard — and `seam_prom` (secondary, ±30 ms single-rival margin) for the production placement,
       reusing `seam_prominence` and the `DUALFIT_SEAM_UNIQ_LAG_MS` convention so the numbers are
-      comparable to `splice_dualfit`'s. Non-negotiable — without `seam_z` the Phase B roll-up cannot
-      distinguish a real placement gain from search freedom, and prominence alone cannot: it reads low
-      on correct-but-periodic content.
+      comparable to `splice_dualfit`'s. Non-negotiable for any seam-chosen placement axis.
 - [ ] Gate behind a fingerprint flag (default **off**) — the default dump must stay byte-identical to
       Phase A, and the cost objection must not land on routine runs.
-- [ ] Roll-up: report the `structure` vs `production` vs `splice_dualfit` placement delta
-      distribution over the corpus — three placements, one table.
+- [x] Roll-up: `|fill − span|` (slack use), `|span − gap|` (widening), and end-excursion vs
+      `splice_dualfit.trim` on throat brackets — **done on the 17-pair corpus above.** A future
+      structure-vs-production table is additive, not blocking.
 
-**Exit:** we can state, on real media, how far production placement diverges from structure-only, and
-how much of the ±5 s slack is actually being used. **This is the number that decides whether Phase C
-is worth doing at all.** If the end sweep rarely leaves nominal, the whole question is moot and the
-plan stops here.
+**Exit (slack):** we can state, on real media, how much of the ±5 s slack is actually being used
+**against the bracket-span nominal.** **This is the number that decides whether Phase C is worth
+doing at all.** If the end sweep rarely leaves nominal, the whole question is moot and the plan stops
+here. **Met 2026-07-26 — rarely leaves nominal → Phase C closed.**
 
-## Phase C — end-dependent seam (behavior change, gated on B)
+## Phase C — end-dependent seam — **NO-GO (2026-07-26)**
 
-Only if Phase B shows the slack is materially used.
+Gated on Phase B's slack exit; that exit failed the "materially used" test (max excursion 388 ms on a
+±5 s allowance). Do **not** implement an end-dependent post seam / repeat-post on the strength of this
+corpus. Items below are retained only as the design that would have applied if the exit had passed.
 
-- [ ] Make the post seam a function of the candidate's `end` in `unified_search_best_fill_end` —
-      i.e. build the `SeamPlacement` from `end - start` rather than `ctx.gap_frames`.
-- [ ] Affordability: the end-swept post seam is affine in the sliding index, so
-      `fill_seam_correlations_band` (lever 1 Part B) applies. Without banding this is not shippable —
-      it puts back the per-candidate Pearson lever 1 removed.
-- [ ] Same for the repeat-post window: the origin plan
-      ([archive/fill-fitting-plan.md](archive/fill-fitting-plan.md), Phase D) specified
-      `repeat_post = corr(A_post_border, B_fill_tail)` — the *fill tail*. Pinning it at
-      `start + gap_frames` is exact only when `fill_len == gap_frames`.
-- [ ] A/B on the corpus using the Phase A axes: placement deltas, patch-rate delta, seam-r delta.
-- [ ] **Listening pass.** Per the dual-fit precedent, a placement change is validated by ear, not by
-      a green harness. Phase A/B make the change *visible*; they do not make it *correct*.
+- [ ] ~~Make the post seam a function of the candidate's `end` in `unified_search_best_fill_end`~~ —
+      cancelled.
+- [ ] ~~Affordability / banding / repeat-post / A/B / listening~~ — cancelled with the above.
 
-**Interaction with the two mechanisms that already do this.** Phase C must not be a third
-implementation of length reconciliation:
-
-- `fit_fill_length_for_gap` → `pick_fill_length_anchor` scores trim-head vs trim-tail on the actual
-  trimmed fill at splice time.
-- **`splice_dualfit_at` already solves the general form.** Two independent shoulder fits, and
-  `trim_frames = bridge_frames - gap_frames` *is* the length delta implied by them. An end-dependent
-  post seam in `unified_search_best_fill_end` would be re-deriving the post-shoulder fit inside the
-  bracket search.
-
-So the honest Phase C question may not be "should the end search's post seam move with `end`" but
-**"is the bracket path's end search vestigial for gaps where dual-fit applies?"** Phase B's
-three-placement roll-up is what tells us: if the production placement's fill length tracks
-`splice_dualfit`'s `bridge_frames`, the mechanisms are redundant and the answer is consolidation, not
-a new seam term. Settle that before writing any Phase C code.
+**What the corpus still says about consolidation.** Even with Phase C closed, the throat comparison
+answers the earlier redundancy question: production fill excursion and `splice_dualfit` trim are
+**uncorrelated** (r≈0.06). Consolidation of the end search into dual-fit is **not** justified by
+"they already agree," and is a separate decision from Phase C. The live residue is which of those two
+small length corrections (if either) is signal.
 
 ---
 
@@ -260,8 +285,9 @@ a new seam term. Settle that before writing any Phase C code.
 | A future fixture is added whose min-seam winner failed the gate | Its `fill_*` would be null and the positive assert would read as a regression — check `best_seam_bracket` before selecting (property 2) |
 | Trying to re-extract 01–10 from dead provenance | Don't — expand from media still on disk (`anchor-bracket-corpus` / dedicated dumps) |
 | Phase B doubles fingerprint runtime | Default off; run once per A/B, not per sweep |
-| Phase C ships on a green harness with no listening | Listening is an explicit Phase C exit item, not optional |
-| Phase C double-counts with the splice trim | Called out above; resolve before implementing |
+| Phase C ships on a green harness with no listening | Listening is an explicit Phase C exit item, not optional — **moot:** Phase C NO-GO |
+| Phase C double-counts with the splice trim | Called out above; resolve before implementing — **moot:** Phase C NO-GO |
+| Roll-up uses \|fill − original gap\| as slack use | **Closed in doc:** nominal is bracket span; trap called out in Phase B |
 
 ## Related reading
 

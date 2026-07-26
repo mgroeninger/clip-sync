@@ -47,9 +47,11 @@ cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerpri
 ```
 
 Asserts writer invariants: gate Ok ↔ `start_frame`/`fill_frames`, patch/skip ↔ bracket passes, library
-file count / manifest consistency, `|fill−gap|` within slack (default 5.1 s; override
-`GAP_FP_FILL_SLACK_SECS`). Incomplete pair dirs are warnings. This is **not** the prevalence analyzer
-(omit `--check` for that).
+file count / manifest consistency, and a loose `|fill − geometry duration|` sanity bound (default 5.1 s;
+override `GAP_FP_FILL_SLACK_SECS`). That bound is **not** the Phase B slack-use metric — end-search
+excursion is `|fill − bracket span|`; `|fill − gap|` includes anchor widening. See
+[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md) Phase B. Incomplete pair dirs are
+warnings. This is **not** the prevalence analyzer (omit `--check` for that).
 
 To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
 every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in
@@ -143,11 +145,14 @@ single-rival margin, which reads low on correct-but-periodic content), and `post
 second production-weights placement with its own validators is fine to add as **additional** fields —
 never by overwriting the structure-only seam pair. See that plan's Phase B.
 
-`fill_frames` is the B-derived fill length, which differs from the gap length by up to
-`fill_length_slack_secs` (default 5.0 s). **On the dump path they are the only projection of the end
-search's decision.** Before they existed, a change that moved every fill length on the corpus left the
-golden diff green. They are `None` on dumps written before that date, on projected (non-measured)
-brackets, and on brackets that failed the gate.
+`fill_frames` is the B-derived fill length. The end search's nominal is the **bracket span**
+(`span_secs` / refined post−pre), not the original silent-run gap; `fill_frames` differs from that
+span by up to `fill_length_slack_secs` (default 5.0 s). Measuring `|fill − original gap|` mostly
+reads anchor widening, not slack use — see [TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md)
+Phase B. **On the dump path they are the only projection of the end search's decision.** Before they
+existed, a change that moved every fill length on the corpus left the golden diff green. They are
+`None` on dumps written before that date, on projected (non-measured) brackets, and on brackets that
+failed the gate.
 
 ### `equivalence` — does this gap need patching?
 
