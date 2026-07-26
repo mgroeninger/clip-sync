@@ -537,7 +537,8 @@ Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracke
 | `fill_border_search_secs` | `10.0` | `--fill-border-search-secs` | B slide radius (unified search) |
 | `fill_align_margin_secs` | `1.0` | `--fill-align-margin-secs` | Extra B extract padding |
 | `gap_signature_context_secs` | `3.0` | `--gap-signature-context-secs` | Structure signature context |
-| `fill_length_slack_secs` | `5.0` | `--fill-length-slack-secs` | B fill-end slide slack |
+| `fill_length_slack_secs` | `5.0` | `--fill-length-slack-secs` | B fill-end slide slack (end-search / `max_fill` only) |
+| `fill_extract_tail_slack_secs` | `5.0` | `--fill-extract-tail-slack-secs` | B haystack tail beyond refined end (extract / fingerprint `pad_tail`; `max` with align margin) |
 | `fill_repeat_penalty_weight` | `0.4` | `--fill-repeat-penalty-weight` | Penalize repeat-at-seam when seams weak (0 = off) |
 | `fill_fit_structure_weight` | `0.35` | `--fill-fit-structure-weight` | Unified scorer |
 | `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |

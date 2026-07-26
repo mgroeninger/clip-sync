@@ -1409,7 +1409,7 @@ pub(super) fn characterize_region(
     let margin_secs = request.fill_align_margin_secs;
     let border_search_secs = request.fill_border_search_secs;
     let border_standoff_secs = request.border_standoff_secs;
-    let fill_length_slack_secs = request.fill_length_slack_secs;
+    let fill_extract_tail_slack_secs = request.fill_extract_tail_slack_secs;
     let fill_seam_search_secs = request.fill_seam_search_secs;
     let gap_signature_context_secs = request.gap_signature_context_secs;
     let gap_signature_bin_ms = request.gap_signature_bin_ms;
@@ -1493,7 +1493,7 @@ pub(super) fn characterize_region(
         - margin_secs
         - extend_slack_secs)
         .max(0.0);
-    let length_slack_secs = fill_length_slack_secs.max(margin_secs);
+    let length_slack_secs = fill_extract_tail_slack_secs.max(margin_secs);
     let b_extract_end_secs = refined_b_end_secs
         + gap_signature_context_secs
         + search_radius_secs
@@ -2388,6 +2388,7 @@ mod tests {
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
             fill_length_slack_secs: 0.1,
+            fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
             border_standoff_secs: 0.0,
             max_anchor_bracket_secs: 0.2,

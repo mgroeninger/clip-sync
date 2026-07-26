@@ -89,9 +89,15 @@ pub struct RepairConfig {
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
     pub short_gap_mean_correlation_secs: f64,
-    /// How far B fill length may differ from A's scanned gap when locating the post-border.
+    /// How far B fill length may differ from A's scanned gap when locating the post-border
+    /// (end-search / `max_fill` only).
     #[serde(default = "default_fill_length_slack_secs")]
     pub fill_length_slack_secs: f64,
+    /// Extra B haystack tail beyond the refined mapped end (seconds), before `max` with
+    /// `fill_align_margin_secs`. Sizes `b_extract_end` / fingerprint `pad_tail` only — not the
+    /// end-search range. Split from `fill_length_slack_secs` so the two can move independently.
+    #[serde(default = "default_fill_extract_tail_slack_secs")]
+    pub fill_extract_tail_slack_secs: f64,
     /// Seam correlation window (seconds) for fine align slide search and the fill gate.
     #[serde(default = "default_fill_seam_search_secs")]
     pub fill_seam_search_secs: f64,
@@ -326,6 +332,9 @@ fn default_short_gap_mean_correlation_secs() -> f64 {
 fn default_fill_length_slack_secs() -> f64 {
     5.0
 }
+fn default_fill_extract_tail_slack_secs() -> f64 {
+    5.0
+}
 fn default_fill_seam_search_secs() -> f64 {
     0.25
 }
@@ -467,6 +476,7 @@ impl Default for RepairConfig {
             border_standoff_secs: default_border_standoff_secs(),
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
+            fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
             fill_seam_search_secs: default_fill_seam_search_secs(),
             gap_signature_context_secs: default_gap_signature_context_secs(),
             gap_signature_bin_ms: default_gap_signature_bin_ms(),
@@ -603,6 +613,7 @@ impl RepairConfig {
             border_standoff_secs: self.border_standoff_secs,
             short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
             fill_length_slack_secs: self.fill_length_slack_secs,
+            fill_extract_tail_slack_secs: self.fill_extract_tail_slack_secs,
             fill_seam_search_secs: self.fill_seam_search_secs,
             gap_signature_context_secs: self.gap_signature_context_secs,
             gap_signature_bin_ms: self.gap_signature_bin_ms,
@@ -670,6 +681,10 @@ impl RepairConfig {
                 self.short_gap_mean_correlation_secs,
             ),
             ("fill_length_slack_secs", self.fill_length_slack_secs),
+            (
+                "fill_extract_tail_slack_secs",
+                self.fill_extract_tail_slack_secs,
+            ),
             ("fill_seam_search_secs", self.fill_seam_search_secs),
             ("gap_signature_context_secs", self.gap_signature_context_secs),
             (
@@ -831,6 +846,12 @@ impl RepairConfig {
         if self.fill_length_slack_secs < 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "fill_length_slack_secs".into(),
+                reason: "must be non-negative".into(),
+            });
+        }
+        if self.fill_extract_tail_slack_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_extract_tail_slack_secs".into(),
                 reason: "must be non-negative".into(),
             });
         }

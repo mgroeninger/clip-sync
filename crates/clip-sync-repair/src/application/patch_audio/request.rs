@@ -70,8 +70,12 @@ pub struct PatchRequestSettings {
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,
-    /// How far B fill length may differ from A's scanned gap when locating the post-border.
+    /// How far B fill length may differ from A's scanned gap when locating the post-border
+    /// (end-search / `max_fill` only).
     pub fill_length_slack_secs: f64,
+    /// Extra B haystack tail beyond the refined mapped end (before `max` with
+    /// `fill_align_margin_secs`). Extract / `pad_tail` only — not the end-search range.
+    pub fill_extract_tail_slack_secs: f64,
     /// Seam correlation window (seconds) for fine align slide search and the fill gate.
     pub fill_seam_search_secs: f64,
     /// Seconds of A audio on each side of the gap used to build the structure signature.

@@ -96,6 +96,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(secs) = args.fill_length_slack_secs {
         config.repair.fill_length_slack_secs = secs;
     }
+    if let Some(secs) = args.fill_extract_tail_slack_secs {
+        config.repair.fill_extract_tail_slack_secs = secs;
+    }
     if let Some(secs) = args.border_standoff_secs {
         config.repair.border_standoff_secs = secs;
     }

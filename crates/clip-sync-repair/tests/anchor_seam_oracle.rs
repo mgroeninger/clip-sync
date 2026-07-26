@@ -186,6 +186,7 @@ fn a5_baseline_only_auto_patches_speech_peaks_without_boundary_grid() {
     // Geometry aligned with passing A1 pipeline oracle (harness-tuned haystack).
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
+    repair.fill_extract_tail_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
     repair.gap_end_extend_on_post_seam_fail = false;
@@ -234,6 +235,7 @@ fn a5b_baseline_only_auto_patches_speech_peaks_bool_mode() {
     repair.min_fill_correlation = 0.35;
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
+    repair.fill_extract_tail_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
     repair.gap_end_extend_on_post_seam_fail = false;
@@ -367,6 +369,7 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
     repair.fill_fit_waveform_weight = 0.65;
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
+    repair.fill_extract_tail_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
     repair.gap_end_extend_on_post_seam_fail = false;
@@ -384,6 +387,7 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
     request.settings.residual_gate = repair.residual_gate;
     request.settings.normalize_fill = repair.normalize_fill;
     request.settings.fill_length_slack_secs = repair.fill_length_slack_secs;
+    request.settings.fill_extract_tail_slack_secs = repair.fill_extract_tail_slack_secs;
     request.settings.min_border_discovery_secs = repair.min_border_discovery_secs;
     request.settings.border_standoff_secs = repair.border_standoff_secs;
     request.settings.gap_end_extend_on_post_seam_fail = repair.gap_end_extend_on_post_seam_fail;
@@ -427,6 +431,7 @@ fn a3_flat_c1_anchor_off_and_force_same_outcome() {
     base_repair.min_fill_correlation = 0.35;
     base_repair.normalize_fill = false;
     base_repair.fill_length_slack_secs = 0.05;
+    base_repair.fill_extract_tail_slack_secs = 0.05;
     base_repair.min_border_discovery_secs = 0.25;
     base_repair.border_standoff_secs = 0.0;
     base_repair.gap_end_extend_on_post_seam_fail = false;

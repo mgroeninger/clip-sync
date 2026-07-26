@@ -408,6 +408,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--gap-signature-context-secs` | `gap_signature_context_secs` |
 | `--gap-signature-mode` | `gap_signature_mode` |
 | `--fill-length-slack-secs` | `fill_length_slack_secs` |
+| `--fill-extract-tail-slack-secs` | `fill_extract_tail_slack_secs` |
 | `--fill-offset` | `fill_offset_mode` |
 | `--fill-mode` | `fill_mode` |
 | `--fill-fit-structure-weight` | `fill_fit_structure_weight` |
@@ -531,6 +532,7 @@ min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35
 short_gap_mean_correlation_secs = 2.0
 fill_length_slack_secs = 5.0
+fill_extract_tail_slack_secs = 5.0
 fill_seam_search_secs = 0.25
 gap_signature_context_secs = 3.0           # structure context per side; raise to 10–30 (e.g. 15.0) for hard gaps (heavy drift / multiple nearby pauses)
 gap_signature_bin_ms = 50

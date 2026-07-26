@@ -26,6 +26,8 @@ pub struct PatchGeometryParams {
     pub fill_align_margin_secs: f64,
     pub gap_signature_context_secs: f64,
     pub fill_length_slack_secs: f64,
+    /// B haystack tail slack; mirrors `RepairConfig.fill_extract_tail_slack_secs`.
+    pub fill_extract_tail_slack_secs: f64,
     pub gap_end_extend_max_ms: u64,
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
@@ -297,7 +299,7 @@ pub fn preview_patch_geometry(
         - margin_secs
         - extend_slack_secs)
         .max(0.0);
-    let length_slack_secs = params.fill_length_slack_secs.max(margin_secs);
+    let length_slack_secs = params.fill_extract_tail_slack_secs.max(margin_secs);
     let b_extract_end_secs = refined_b_end_secs
         + params.gap_signature_context_secs
         + search_radius_secs

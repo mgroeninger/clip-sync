@@ -118,6 +118,7 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         fill_border_search_secs: 0.05,
         fill_align_margin_secs: 0.02,
         fill_length_slack_secs: 0.1,
+        fill_extract_tail_slack_secs: 0.1,
         fill_seam_search_secs: 0.05,
         border_standoff_secs: 0.0,
         max_anchor_bracket_secs: 0.2,

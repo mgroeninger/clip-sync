@@ -295,6 +295,8 @@ pub struct FingerprintConfig {
     pub fill_border_search_secs: f64,
     pub fill_align_margin_secs: f64,
     pub fill_length_slack_secs: f64,
+    /// B haystack tail slack (extract / `pad_tail`); see `RepairConfig.fill_extract_tail_slack_secs`.
+    pub fill_extract_tail_slack_secs: f64,
     pub border_secs: f64,
     pub border_standoff_secs: f64,
     pub max_anchor_bracket_secs: f64,
@@ -323,6 +325,7 @@ impl Default for FingerprintConfig {
             fill_border_search_secs: 10.0,
             fill_align_margin_secs: 1.0,
             fill_length_slack_secs: 0.05,
+            fill_extract_tail_slack_secs: 0.05,
             border_secs: 1.0,
             border_standoff_secs: 0.35,
             max_anchor_bracket_secs: 5.0,
@@ -1523,6 +1526,7 @@ impl FingerprintConfig {
             fill_border_search_secs: request.fill_border_search_secs,
             fill_align_margin_secs: request.fill_align_margin_secs,
             fill_length_slack_secs: request.fill_length_slack_secs,
+            fill_extract_tail_slack_secs: request.fill_extract_tail_slack_secs,
             border_secs: request.normalize_window_secs,
             border_standoff_secs: request.border_standoff_secs,
             max_anchor_bracket_secs: request.max_anchor_bracket_secs,
@@ -1945,7 +1949,7 @@ pub fn characterize_gaps_from_decode(
     let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
     let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
     let pad_tail = cfg.gap_signature_context_secs
-        + cfg.fill_length_slack_secs.max(cfg.fill_align_margin_secs)
+        + cfg.fill_extract_tail_slack_secs.max(cfg.fill_align_margin_secs)
         + cfg.fill_border_search_secs
         + cfg.fill_align_margin_secs;
 
@@ -2096,7 +2100,7 @@ pub fn characterize_gaps(
     let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
     let pad_tail = cfg.gap_signature_context_secs
         + cfg.fill_border_search_secs
-        + cfg.fill_length_slack_secs.max(cfg.fill_align_margin_secs)
+        + cfg.fill_extract_tail_slack_secs.max(cfg.fill_align_margin_secs)
         + cfg.fill_align_margin_secs;
 
     let take_all = select.is_empty();
@@ -2898,6 +2902,7 @@ mod tests {
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
             fill_length_slack_secs: 0.1,
+            fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
             border_standoff_secs: 0.0,
             max_anchor_bracket_secs: 0.2,

@@ -260,6 +260,7 @@ pub fn production_geometry_params(repair: &RepairConfig) -> crate::patch_geometr
         fill_align_margin_secs: repair.fill_align_margin_secs,
         gap_signature_context_secs: repair.gap_signature_context_secs,
         fill_length_slack_secs: repair.fill_length_slack_secs,
+        fill_extract_tail_slack_secs: repair.fill_extract_tail_slack_secs,
         gap_end_extend_max_ms: repair.gap_end_extend_max_ms,
         gap_end_extend_on_post_seam_fail: repair.gap_end_extend_on_post_seam_fail,
         gap_start_extend_on_pre_seam_fail: repair.gap_start_extend_on_pre_seam_fail,
@@ -411,6 +412,7 @@ pub fn w5_anchor_rescue_repair(
     repair.strong_structure_trust = 0.90;
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
+    repair.fill_extract_tail_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
     repair.fill_border_search_secs = fill_border_search_secs;

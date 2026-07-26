@@ -157,9 +157,14 @@ pub struct Args {
     pub gap_signature_context_secs: Option<f64>,
 
     /// Override: how far B fill end may differ from A gap length when locating post-border
-    /// (seconds) [default: 5].
+    /// (seconds; end-search only) [default: 5].
     #[arg(long, value_name = "SECS")]
     pub fill_length_slack_secs: Option<f64>,
+
+    /// Override: extra B haystack tail beyond the refined mapped end (seconds; extract /
+    /// fingerprint pad_tail only, before max with fill-align-margin) [default: 5].
+    #[arg(long, value_name = "SECS")]
+    pub fill_extract_tail_slack_secs: Option<f64>,
 
     /// Unified fit scorer: structure term weight (`fill_mode = fit` only) [default: 0.35].
     #[arg(long, value_name = "N")]
@@ -458,6 +463,7 @@ mod tests {
             &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
             &format!("[default: {}]", defaults.repair.gap_signature_context_secs),
             &format!("[default: {}]", defaults.repair.fill_length_slack_secs),
+            &format!("[default: {}]", defaults.repair.fill_extract_tail_slack_secs),
             &format!("[default: {}]", defaults.repair.fill_fit_structure_weight),
             &format!("[default: {}]", defaults.repair.fill_fit_waveform_weight),
             &format!("[default: {}]", defaults.repair.fill_repeat_penalty_weight),
@@ -477,6 +483,7 @@ mod tests {
             "fill-align-margin-secs",
             "gap-signature-context-secs",
             "fill-length-slack-secs",
+            "fill-extract-tail-slack-secs",
             "[default: fit]",
             "[fill-mode: gate only]",
             "[default: 2]",

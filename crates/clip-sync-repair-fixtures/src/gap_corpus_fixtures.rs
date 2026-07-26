@@ -1098,6 +1098,7 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
     repair.fill_fit_waveform_weight = 0.65;
     repair.normalize_fill = false;
     repair.fill_length_slack_secs = 0.05;
+    repair.fill_extract_tail_slack_secs = 0.05;
     repair.min_border_discovery_secs = 0.25;
     repair.border_standoff_secs = 0.0;
     repair.gap_end_extend_on_post_seam_fail = false;
