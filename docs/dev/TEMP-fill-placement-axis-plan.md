@@ -32,6 +32,16 @@ Re-tuning `fill_length_slack_secs`. Touching the seam gate or the dual-fit path.
 carries `FillAlignment { start_frame, fill_frames, pre_correlation, post_correlation }` — exactly the
 four numbers an end-search change moves. Phase A is a projection, not new machinery.
 
+**But placement is an output, not a decision — do not confuse the strategy with the tags.**
+`GapRepairStrategy` is the *executor's input* and carries the alignment. `GapRepairTags`
+(`{ registration, seam_local, donor_nominal, donor_aligned, gate, levels }`) is the *decision*
+carrier, and deliberately does not: no gate, tier, or verdict reads a frame index. So the media-free
+`gap_repair_spec_diff` differential — whose contract is *tags are a complete decision carrier* —
+must **not** assert on `fill_*`, and widening `GapRepairTags` to make it able to would be inverting
+the test's purpose. The placement tripwire belongs on the **media corpus** golden
+(`baseline_from_report`), where the values are measured. `GoldenBaseline::without_placement()`
+scopes the projection path accordingly.
+
 ---
 
 ## Should the fingerprint get a production-weights mode?
@@ -40,19 +50,21 @@ four numbers an end-search change moves. Phase A is a projection, not new machin
 
 ### The corpus is already multi-placement, and seam-chosen placement is already in it
 
-`splice_dualfit_at` (`measure.rs:967`) places **each shoulder independently at the lag maximizing its
+`splice_dualfit_at` (`measure.rs:985`) places **each shoulder independently at the lag maximizing its
 own seam** (`seam_local_peak` over ±`SEAM_LOCAL_SEARCH_MS`), and derives
 `bridge_frames = b_post_seam - b_pre_seam`, `trim_frames = bridge_frames - gap_frames` — a
 *discovered* gap length, deliberately unequal to the original. It runs unconditionally for every gap
-(`measure.rs:1785`). So "the best seam we could find anywhere in the search radius" is not a
+(`measure.rs:1809`). So "the best seam we could find anywhere in the search radius" is not a
 contaminant the fingerprint avoids; it is an axis the fingerprint already ships, because for gaps
 whose surroundings are silent there is no structurally-correct placement to measure against.
 
 **The estimator-bias concern is handled by publishing validators, not by abstaining.** Directly below
-that argmax: `pre_seam_prom` / `post_seam_prom` (*"is each seam a unique (non-periodic) match?
-Prominence of the placement peak over its best rival within ±30 ms"*), `pre_seam_z` / `post_seam_z`,
-and `post_seam_global_r` (*"is the step necessary?"*). Prominence is the guard against max-of-noise
-inflation. Any seam-chosen placement axis must ship the same guards — see Phase B.
+that argmax: `pre_seam_z` / `post_seam_z` (whole-curve z of each seam's peak over the ±
+`SEAM_LOCAL_SEARCH_MS` search — the **primary** alias guard: a search that locked onto a far
+*periodic* rival reads low), `pre_seam_prom` / `post_seam_prom` (the ±30 ms single-rival margin —
+**secondary**, and it false-flags correct-but-periodic content, e.g. 5·g6), and `post_seam_global_r`
+(*"is the step necessary?"*). z is the guard against max-of-noise inflation; prominence is a
+tiebreaker that must not be read alone. Any seam-chosen placement axis must ship both — see Phase B.
 
 ### What the `waveform_weight: 0.0` is actually protecting
 
@@ -82,29 +94,73 @@ there. Three placement models, three repair models, each measured on its own ter
 
 ---
 
-## Phase A — project the placement (no behavior change)
+## Phase A — project the placement (no behavior change) — **code complete 2026-07-25**
 
-- [ ] Add `fill_frames` (and `end_frame`) to `PlacementScores`; carry `matched.alignment.fill_frames`
-      through `place_on_b`.
-- [ ] Emit per-bracket `fill_frames` in the fingerprint JSON alongside `seam_pre` / `seam_post`.
-- [ ] Add to `GoldenRecord`: `fill_start_frame`, `fill_frames` (**Tier-1**, bit-exact) and
-      `fill_pre_r`, `fill_post_r` (**Tier-2**, within ε). Update the `schema` string.
-- [ ] Document the `waveform_weight: 0.0` rationale in `gap-fingerprint.md` and as a comment at
-      `measure.rs:551`.
-- [ ] Re-baseline the goldens (additive fields ⇒ existing axes must not move; assert that).
+- [x] Add `fill_frames` to `PlacementScores`; carry `matched.alignment.fill_frames` through
+      `place_on_b`. (`end_frame` dropped as redundant — it is `start_frame + fill_frames`.)
+- [x] Emit per-bracket `start_frame` / `fill_frames` in the fingerprint JSON alongside `seam_pre` /
+      `seam_post` (`BracketInfo`, `Option`, `skip_serializing_if` ⇒ old dumps still parse).
+- [x] Carry them to `GapRow` as `best_bracket_{start_frame,fill_frames,seam_pre,seam_post}`, selected
+      by the **same highest-min-seam rule** `best_bracket_seam` and `closest_failure_stage` already
+      use (`best_seam_bracket`), so "the chosen bracket" means one thing across the analyzer.
+- [x] Add to `GoldenRecord`: `fill_start_frame`, `fill_frames` (**Tier-1**, bit-exact — frame indices
+      are integers, so there is no ε to hide in) and `fill_pre_r`, `fill_post_r` (**Tier-2**).
+      `schema` string updated.
+- [x] Document the `waveform_weight: 0.0` rationale in `gap-fingerprint.md` (new *Bracket placement*
+      section) and as a comment at the `UnifiedFitWeights` literal in `measure.rs`.
+- [x] Tripwire test: `diff_catches_tier1_flip` now also asserts a **one-frame** change to
+      `fill_frames` or `fill_start_frame` produces exactly one diff error.
+- [x] **Emit the *production-weights* placement, not the structure-only one.** There are two dump
+      paths. `characterize_gap_region` (`measure.rs:1447`) places via `place_on_b`, which runs at
+      `waveform_weight: 0.0` — blind to end-search scoring changes by construction (the very blindness
+      this plan exists to fix), so a placement recorded there guards nothing. The from-decode path
+      `compute_region_measurements` scores each bracket with `oracle_score_fit_candidate`, i.e. the
+      **production gate**, and its `SeamGateOutcome.alignment` already carries `start_frame` /
+      `fill_frames`. `oracle_score_fit_candidate` now returns `OracleFitScores` (named struct — the
+      5-tuple was already at its limit) including that alignment, and `compute_region_measurements`
+      writes it onto each `BracketInfo`. Cost: zero — same search, one field stops being discarded.
+      `None` on gate failure, where there is no chosen placement.
+- [x] Scope the projection differential with `GoldenBaseline::without_placement()` — placement is a
+      search output, not a tag-carried decision (see above).
+- [ ] **Re-baseline the goldens** — the only remaining step; see below.
 
-**Exit:** a golden diff turns red when a fill length changes. That is the whole point of Phase A.
+**Exit:** a golden diff turns red when a fill length changes. Proven at unit level; proven end-to-end
+once the goldens carry non-null `fill_*`.
+
+### The re-baseline is a separate commit — and needs the fixtures regenerated first
+
+**`CURATED_GOLDEN_REGEN=1` alone is not sufficient.** `curated_gap_cell_rows()` reads *committed
+fixture JSONs*, which predate `start_frame` / `fill_frames`. Regenerating the golden against them
+populates only `fill_pre_r` / `fill_post_r` (which read the pre-existing `seam_pre` / `seam_post`) and
+re-baselines the Tier-1 placement axes as `null` — an all-null column, i.e. exactly the silent-failure
+mode property 2 below is meant to catch. Order: **regenerate the curated fixtures from media, then
+regenerate the golden.** Current `golden_baseline_invariance` failure is 12 mismatches, all
+`fill_*_r`, with `fill_start_frame` / `fill_frames` absent from the list — that is this problem, not a
+regression.
+
+`curated.golden.json` currently has no `fill_*` keys. Regenerating adds them, and the values arrive
+non-null only where a bracket was actually measured. Two properties to assert in that commit:
+
+1. **Every pre-existing axis is bit-identical.** The fields are additive; if any Tier-1 axis moves,
+   something is wrong with the projection, not with the baseline.
+2. The new `fill_*` fields are populated for gaps with measured brackets — an all-null column would
+   mean the projection silently failed and the tripwire guards nothing.
+
+Because a golden re-baseline is the durable reference, that diff deserves review on its own rather
+than buried in the code change.
 
 ## Phase B — production-weights second placement (opt-in)
 
 - [ ] `place_on_b` optionally computes a **second** match with production `UnifiedFitWeights` (from
       config, not hardcoded), emitted as `placement_production.{start_frame,fill_frames,seam_pre,seam_post}`.
-- [ ] **Ship the validators with it.** A seam-influenced placement without a prominence companion is
-      the max-of-noise estimator, and the dual-fit path already sets the precedent for how to avoid
-      that: emit `seam_prom` / `seam_z` for the production placement, reusing `seam_prominence` and the
-      `DUALFIT_SEAM_UNIQ_LAG_MS` convention so the numbers are comparable to `splice_dualfit`'s.
-      Non-negotiable — without it the Phase B roll-up cannot distinguish a real placement gain from
-      search freedom.
+- [ ] **Ship the validators with it.** A seam-influenced placement without an alias companion is the
+      max-of-noise estimator, and the dual-fit path already sets the precedent for how to avoid that.
+      Emit **`seam_z` (primary)** — whole-curve z over the placement search, the periodicity-robust
+      guard — and `seam_prom` (secondary, ±30 ms single-rival margin) for the production placement,
+      reusing `seam_prominence` and the `DUALFIT_SEAM_UNIQ_LAG_MS` convention so the numbers are
+      comparable to `splice_dualfit`'s. Non-negotiable — without `seam_z` the Phase B roll-up cannot
+      distinguish a real placement gain from search freedom, and prominence alone cannot: it reads low
+      on correct-but-periodic content.
 - [ ] Gate behind a fingerprint flag (default **off**) — the default dump must stay byte-identical to
       Phase A, and the cost objection must not land on routine runs.
 - [ ] Roll-up: report the `structure` vs `production` vs `splice_dualfit` placement delta

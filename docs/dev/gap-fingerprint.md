@@ -64,7 +64,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `silence` | always | collar RMS/peak ratio + whether it clears the **relative** silence test (border walk-off discriminator) |
 | `contour` | always | `has_anchor_seam_contour`, pre/post envelope flatness |
 | `anchors` | always | pre/post candidates `{ time, source, prominence, rms_db }` |
-| `brackets` | full | feasible brackets `{ span, move, structure_*, seam_*, failure_stage }` |
+| `brackets` | full | feasible brackets `{ span, move, structure_*, seam_*, start_frame, fill_frames, failure_stage }` (see *Bracket placement* below) |
 | `structure` / `seams` | B present | baseline scores; seams carry per-channel + selected channels |
 | `lag` | full, B present | **diagnostic** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat (see below) |
 | `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
@@ -79,6 +79,35 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
 | `equivalence` | B present | **gap-equivalence class (fine)** — does this gap need patching? (silence-character; see below) |
 | `scan_equivalence` | scan classified | the **coarse 250 ms production** verdict for the same gap (`GapReport::gap_equivalence`), copied in so one dump holds both granularities for calibration |
+
+### Bracket placement — `start_frame`, `fill_frames`, and why the seam does not choose them
+
+`place_on_b` runs the unified structure+waveform search with **`waveform_weight: 0.0`** — a
+structure-only placement, deliberately not production's weights.
+
+The reason is narrow and specific. The `seam_pre` / `seam_post` recorded per bracket feed
+`classify_bracket_stage`, and **those two fields ship with no prominence or z companion.** Read at a
+structure-chosen placement they mean *"structure found a placement; does the waveform corroborate?"* —
+which is what makes `waveform_floor` a meaningful failure stage. Let the seam influence the placement
+and they become an unguarded argmax over the search radius: max-of-noise, and the stage stops
+distinguishing anything.
+
+**This is not an argument against seam-chosen placement in general.** `splice_dualfit` places each
+shoulder at its own seam peak, unconditionally, for every gap — and answers the same estimator-bias
+concern by *publishing validators* rather than by abstaining: `*_seam_z` (**primary** — whole-curve z
+over the placement search, periodicity-robust), `pre_seam_prom` / `post_seam_prom` (secondary ±30 ms
+single-rival margin, which reads low on correct-but-periodic content), and `post_seam_global_r`. A
+production-weights placement is therefore fine to add — as **additional** fields carrying their own
+`seam_z` *and* prominence, never by flipping this weight in place, which would also make the committed
+goldens a function of every waveform-weight retune. See
+[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md) Phase B.
+
+`start_frame` and `fill_frames` (added 2026-07-25) are the placement that search chose:
+`fill_frames` is the B-derived fill length, which differs from the gap length by up to
+`fill_length_slack_secs` (default 5.0 s). **They are the only projection of the end search's
+decision.** Before they existed, a change that moved every fill length on the corpus left the golden
+diff green — nothing anywhere recorded fill placement. They are `None` on dumps written before that
+date and on projected (non-measured) brackets.
 
 ### `equivalence` — does this gap need patching?
 

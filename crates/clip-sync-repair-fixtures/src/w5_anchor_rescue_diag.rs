@@ -381,18 +381,18 @@ fn score_brackets(ctx: &W5CellContext) -> Vec<W5BracketGateScore> {
         .iter()
         .map(|bracket| {
             match oracle_score_fit_candidate(&params, &cache, bracket.refined, ctx.baseline, true) {
-                Ok((pre, post, confidence, ranking_score, _structure_start_frame)) => W5BracketGateScore {
+                Ok(s) => W5BracketGateScore {
                     pre_frame: bracket.pre.frame,
                     post_frame: bracket.post.frame,
                     move_frames: bracket.move_frames,
                     pre_prominence: bracket.pre.prominence,
                     post_prominence: bracket.post.prominence,
                     passed_gate: true,
-                    pre_pearson: Some(pre),
-                    post_pearson: Some(post),
-                    min_pearson: Some(pre.min(post)),
-                    confidence: Some(confidence),
-                    ranking_score: Some(ranking_score),
+                    pre_pearson: Some(s.report_pre),
+                    post_pearson: Some(s.report_post),
+                    min_pearson: Some(s.report_pre.min(s.report_post)),
+                    confidence: Some(s.confidence),
+                    ranking_score: Some(s.ranking_score),
                     failure_stage: None,
                 },
                 Err(failure) => {

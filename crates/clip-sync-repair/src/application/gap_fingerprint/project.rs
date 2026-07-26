@@ -234,6 +234,9 @@ fn synth_brackets(
         structure_post: None,
         seam_pre: seam,
         seam_post: seam,
+        // Projection is a synthetic reconstruction from roll-up counts — it has no placement.
+        start_frame: None,
+        fill_frames: None,
         failure_stage,
     };
     (0..total)

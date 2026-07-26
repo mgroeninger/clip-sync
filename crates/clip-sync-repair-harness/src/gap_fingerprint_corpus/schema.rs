@@ -185,6 +185,16 @@ pub struct GapRow {
     pub seam_min: Option<f64>,
     /// Best `min(pre,post)` waveform seam any bracket reached (how close it got to passing).
     pub best_bracket_seam: Option<f64>,
+    /// Placement chosen for that best-min-seam bracket: B start frame, and the fill length the end
+    /// sweep picked (differs from the gap length by up to `fill_length_slack_secs`). `None` on dumps
+    /// written before 2026-07-25. The only record of the end search's decision — a change that moved
+    /// every fill length on the corpus used to leave the golden diff green.
+    pub best_bracket_start_frame: Option<usize>,
+    pub best_bracket_fill_frames: Option<usize>,
+    /// That bracket's two seam correlations, unaggregated — `best_bracket_seam` is their `min`, which
+    /// cannot show a placement change that trades one shoulder against the other.
+    pub best_bracket_seam_pre: Option<f64>,
+    pub best_bracket_seam_post: Option<f64>,
     /// Anchor/grid brackets the gate scored, and how many **passed** (no `failure_stage`). Patch/skip is
     /// **bracket-pass success, not step magnitude** (review C1): ≥1 passing ⇒ patch; 0 passing ⇒ skip. The
     /// dual-fit target is the *bracket-exhausted* skips, not all stepped gaps.

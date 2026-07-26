@@ -185,8 +185,29 @@ struct Bracket {
     seam_pre: Option<f64>,
     #[serde(default)]
     seam_post: Option<f64>,
+    /// Chosen placement — `None` on pre-2026-07-25 dumps and on projected (non-measured) brackets.
+    #[serde(default)]
+    start_frame: Option<usize>,
+    #[serde(default)]
+    fill_frames: Option<usize>,
     #[serde(default)]
     failure_stage: Option<String>,
+}
+
+/// The bracket with the highest min-seam — the same "closest to chosen" rule `best_bracket_seam`
+/// and `closest_failure_stage` already use. Brackets with an incomplete seam pair are ineligible.
+fn best_seam_bracket(brackets: &[Bracket]) -> Option<&Bracket> {
+    brackets
+        .iter()
+        .filter_map(|b| match (b.seam_pre, b.seam_post) {
+            (Some(a), Some(c)) => Some((a.min(c), b)),
+            _ => None,
+        })
+        .fold(None, |acc: Option<(f64, &Bracket)>, (v, b)| match acc {
+            Some((best, _)) if best >= v => acc,
+            _ => Some((v, b)),
+        })
+        .map(|(_, b)| b)
 }
 
 #[derive(Deserialize)]
@@ -513,6 +534,12 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
                 _ => None,
             })
             .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v)))),
+        // Placement of that same best-min-seam bracket — the fill the end sweep actually chose.
+        // Nothing else in the corpus records it; see docs/dev/TEMP-fill-placement-axis-plan.md.
+        best_bracket_start_frame: best_seam_bracket(&gap.brackets).and_then(|b| b.start_frame),
+        best_bracket_fill_frames: best_seam_bracket(&gap.brackets).and_then(|b| b.fill_frames),
+        best_bracket_seam_pre: best_seam_bracket(&gap.brackets).and_then(|b| b.seam_pre),
+        best_bracket_seam_post: best_seam_bracket(&gap.brackets).and_then(|b| b.seam_post),
         brackets_total: gap.brackets.len(),
         brackets_passing: gap.brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
         // Failure stage of the bracket with the highest min-seam (the closest to passing).

@@ -1266,26 +1266,42 @@ pub fn oracle_build_fit_cache(params: &SeamGateParams<'_>) -> FitHaystackCache {
 /// Pearson `(pre, post)` + confidence + ranking score, or the gate failure. See
 /// docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md §5.1b.
 #[doc(hidden)]
-/// The 5th element is the structure-aligned placement (`GateStructureAlign::unified.alignment.start_frame`,
-/// already computed inside the gate) — callers that also need the throat placement (e.g. the zero-move
-/// bracket read in `compute_region_measurements`) can reuse it instead of a second `gate_structure_align`
-/// call via `oracle_throat_structure_frame` for the same `(refined, baseline)` pair.
+pub struct OracleFitScores {
+    pub report_pre: f64,
+    pub report_post: f64,
+    pub confidence: FillConfidence,
+    pub ranking_score: f64,
+    /// Structure-aligned placement (`GateStructureAlign::unified.alignment.start_frame`, already
+    /// computed inside the gate) — callers that also need the throat placement (e.g. the zero-move
+    /// bracket read in `compute_region_measurements`) can reuse it instead of a second
+    /// `gate_structure_align` call via `oracle_throat_structure_frame` for the same
+    /// `(refined, baseline)` pair.
+    pub structure_start_frame: usize,
+    /// The placement the gate actually chose, at **production weights** — `start_frame` and the
+    /// B-derived `fill_frames` the end sweep settled on. Free: the gate computed it to reach its
+    /// verdict, this only stops discarding it. The fingerprint's other placement (`place_on_b`) runs
+    /// at `waveform_weight: 0.0` and so cannot observe an end-search scoring change; this one can.
+    /// See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+    pub alignment: FillAlignment,
+}
+
 pub fn oracle_score_fit_candidate(
     params: &SeamGateParams<'_>,
     cache: &FitHaystackCache,
     refined: RefinedGapFrames,
     baseline: RefinedGapFrames,
     anchor_seam_bracket: bool,
-) -> Result<(f64, f64, FillConfidence, f64, usize), SeamGateFailure> {
+) -> Result<OracleFitScores, SeamGateFailure> {
     let (outcome, ranking_score) =
         evaluate_seam_gate_fit_candidate(refined, baseline, params, cache, anchor_seam_bracket)?;
-    Ok((
-        outcome.report_pre,
-        outcome.report_post,
-        outcome.confidence,
+    Ok(OracleFitScores {
+        report_pre: outcome.report_pre,
+        report_post: outcome.report_post,
+        confidence: outcome.confidence,
         ranking_score,
-        outcome.structure_start_frame,
-    ))
+        structure_start_frame: outcome.structure_start_frame,
+        alignment: outcome.alignment,
+    })
 }
 
 /// Production-faithful joint-pool outcome for one oracle cell (W5 discovery, Phase 2). `patched`

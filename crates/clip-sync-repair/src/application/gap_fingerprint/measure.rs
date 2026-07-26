@@ -459,6 +459,9 @@ fn structure_params_for(cfg: &FingerprintConfig, gap_frames: usize, bin_frames: 
 /// Owned result of a structure+waveform placement on B at one A bracket.
 struct PlacementScores {
     start_frame: usize,
+    /// B-derived fill length the end sweep chose. Differs from `gap_frames` by up to
+    /// `fill_length_slack_frames`; the only observable of the end search's decision.
+    fill_frames: usize,
     structure_pre: f64,
     structure_post: f64,
     seam_pre: f64,
@@ -547,6 +550,20 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
         GapSignatureMode::Energy,
     );
     let nominal_fill_end = nominal_fill_start + gap_frames;
+    // Structure-only placement, deliberately — NOT production's weights.
+    //
+    // `seam_pre`/`seam_post` recorded here feed `classify_bracket_stage`, and those two fields ship
+    // with no prominence or z companion. Read at a structure-chosen placement they mean "structure
+    // found a placement; does the waveform corroborate?", which is what makes `waveform_floor` a
+    // meaningful failure stage. Let the seam influence the placement and they become an unguarded
+    // argmax over the search radius — max-of-noise, and the stage stops distinguishing anything.
+    //
+    // This is an argument about *these two fields*, not about seam-chosen placement in general:
+    // `splice_dualfit_at` places each shoulder at its own seam peak unconditionally, and answers the
+    // same bias concern by publishing validators (`*_seam_prom`, `*_seam_z`, `post_seam_global_r`)
+    // rather than by abstaining. A production-weights placement is therefore fine to add — as
+    // *additional* fields carrying their own prominence, never by flipping this weight in place.
+    // See docs/dev/TEMP-fill-placement-axis-plan.md, Phase B.
     let weights = UnifiedFitWeights {
         structure_weight: 1.0,
         waveform_weight: 0.0,
@@ -572,6 +589,7 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
     );
     Some(PlacementScores {
         start_frame: start,
+        fill_frames: matched.alignment.fill_frames,
         structure_pre: matched.structure_pre,
         structure_post: matched.structure_post,
         seam_pre: matched.alignment.pre_correlation,
@@ -1345,6 +1363,8 @@ pub fn build_gap_fingerprint(
             structure_post: None,
             seam_pre: None,
             seam_post: None,
+            start_frame: None,
+            fill_frames: None,
             failure_stage: None,
         })
         .collect();
@@ -1424,6 +1444,8 @@ pub fn build_gap_fingerprint(
                     brackets[i].structure_post = Some(p.structure_post);
                     brackets[i].seam_pre = Some(p.seam_pre);
                     brackets[i].seam_post = Some(p.seam_post);
+                    brackets[i].start_frame = Some(p.start_frame);
+                    brackets[i].fill_frames = Some(p.fill_frames);
                     brackets[i].failure_stage = classify_bracket_stage(p.structure_pre, p.structure_post, p.seam_pre, p.seam_post, cfg);
                     let energy_pair = br.pre.source == AnchorSource::EnergyPeak && br.post.source == AnchorSource::EnergyPeak;
                     let smin = p.structure_pre.min(p.structure_post);
@@ -1665,18 +1687,23 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     let bracket_total = brackets.len() as u64;
     for (bn, br) in brackets.iter().enumerate() {
         progress.progress("fingerprint-scoring", bn as u64 + 1, bracket_total);
-        let (seam_pre, seam_post, stage) =
+        // `placement` is the gate's own chosen alignment at **production weights** — the only
+        // placement in the dump that can observe an end-search scoring change. (The `place_on_b`
+        // placement recorded by `characterize_gap_region` runs at `waveform_weight: 0.0` and is
+        // blind to those terms by construction.) It costs nothing here: the gate already computed
+        // it. `None` on a gate failure — there is no chosen placement to report.
+        let (seam_pre, seam_post, stage, placement) =
             match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
-                Ok((pre, post, _, _, structure_start_frame)) => {
+                Ok(sc) => {
                     any_ok = true;
                     if br.refined == refined {
-                        throat_structure_frame = Some(structure_start_frame);
+                        throat_structure_frame = Some(sc.structure_start_frame);
                     }
-                    (Some(pre), Some(post), None)
+                    (Some(sc.report_pre), Some(sc.report_post), None, Some(sc.alignment))
                 }
                 Err(f) => {
                     let (stage, pre, post) = stage_of(&f);
-                    (pre, post, Some(stage))
+                    (pre, post, Some(stage), None)
                 }
             };
         infos.push(BracketInfo {
@@ -1688,6 +1715,8 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
             structure_post: None,
             seam_pre,
             seam_post,
+            start_frame: placement.map(|a| a.start_frame),
+            fill_frames: placement.map(|a| a.fill_frames),
             failure_stage: stage,
         });
         if include_diagnostics
@@ -2275,6 +2304,8 @@ mod tests {
             structure_post: None,
             seam_pre: seam,
             seam_post: seam,
+            start_frame: None,
+            fill_frames: None,
             failure_stage: stage,
         };
         let m = RegionMeasurements {

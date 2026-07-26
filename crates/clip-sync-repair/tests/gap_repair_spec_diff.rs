@@ -8,7 +8,7 @@
 //! committed, and after routing its corpus through the tags→fingerprint projection
 //! (`corpus_projection::project_corpus`) — and assert the golden-baseline D/R axes are identical (Tier-1
 //! bit-exact, Tier-2 within ε). This proves `GapRepairTags` is a complete decision carrier and the projection
-//! is faithful, without any real media.
+//! is faithful, without any real media. (Placement axes are excluded — see the call site.)
 
 use clip_sync_repair_harness::gap_fingerprint_corpus::{
     curated_gap_cell_projected_rows, curated_gap_cell_rows,
@@ -17,9 +17,12 @@ use clip_sync_repair_harness::golden_baseline::{baseline_from_rows, diff_baselin
 
 #[test]
 fn projection_preserves_curated_golden_baseline() {
-    let old = baseline_from_rows(&curated_gap_cell_rows());
+    // `.without_placement()`: fill placement is a bracket-search *output*, not a decision input, so
+    // `GapRepairTags` does not carry it and this differential does not assert on it. See
+    // `GoldenBaseline::without_placement` and docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+    let old = baseline_from_rows(&curated_gap_cell_rows()).without_placement();
     assert!(old.gap_count > 0, "no curated fixtures");
-    let new = baseline_from_rows(&curated_gap_cell_projected_rows());
+    let new = baseline_from_rows(&curated_gap_cell_projected_rows()).without_placement();
 
     let diffs = diff_baselines(&old, &new, TIER2_ABS_EPS);
     assert!(

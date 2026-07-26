@@ -285,6 +285,13 @@ pub struct BracketInfo {
     pub seam_pre: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seam_post: Option<f64>,
+    /// B frame where the placement starts, and the fill length the end sweep chose. `fill_frames`
+    /// differs from the gap length by up to the slack; it is the *only* projection of the end
+    /// search's decision, which nothing else records. See TEMP-fill-placement-axis-plan.md.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub start_frame: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fill_frames: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub failure_stage: Option<FailureStage>,
 }

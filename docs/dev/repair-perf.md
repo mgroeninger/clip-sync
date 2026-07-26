@@ -163,7 +163,7 @@ measurement fault; it cleared when the run finished.
 and the start-search repeat window becomes the only remaining lever-1b target.
 Re-measure to confirm — this is arithmetic, not a measurement.
 
-### Lever 1b(c) — end-search repeat hoist (implemented 2026-07-25, unmeasured)
+### Lever 1b(c) — end-search repeat hoist (implemented + validated 2026-07-25)
 
 The table above says `unified_refine_end` is 32.9% of root and 99.8% repeat.
 **All of it was recomputing one identical `f64`.** In the end search:
@@ -184,7 +184,64 @@ construction, pinned by
 `end_search_repeat_penalty_is_invariant_to_fill_end` (bit-equality across the
 whole slack range). Expected saving on the full 17-pair run: **2672 s of 8449 s**
 (`unified_refine_end` 2595 + `unified_coarse_end` 78), **31.6% of instrumented
-repair time**, with no approximation. Re-measure to confirm.
+repair time**, with no approximation.
+
+#### Media spot check — 4 pairs, pre/post, same recipe (2026-07-25)
+
+Pairs 1, 14, 6, 9 re-run on the hoisted binary and compared line-by-line against
+the 17-pair baseline logs. No `-RepairArgs` on either run; the `Gap scan:` /
+`Gap fill:` recipe lines diff clean, so the comparison is like-for-like.
+
+**Behavior — byte-equivalent on all four pairs.**
+
+| Pair | Decision lines | Candidate-count entries | End spans w/ nonzero `repeat_us` |
+|------|----------------|-------------------------|----------------------------------|
+| 1    | 40/40, 0 diffs | 960, 0 diffs            | 0 of 384 |
+| 14   | 51/51, 0 diffs¹| 125, 0 diffs            | 0 of 50  |
+| 6    | 49/49, 0 diffs | 800, 0 diffs            | 0 of 320 |
+| 9    | 34/34, 0 diffs | 750, 0 diffs            | 0 of 300 |
+
+¹ after normalizing the timestamp prefix and the output filename; the `WARN`
+text itself (`marginal waveform seam`, same gap, same `pre`/`post`/`min`) is
+identical. **2635 candidate-count entries compared, zero divergence** — the
+per-candidate search structure is unchanged, which is what byte-identical
+substitution predicts.
+
+**Cost — root `patch_audio` instrumented time.**
+
+| Pair | Baseline | Hoisted | Delta |
+|------|---------:|--------:|------:|
+| 1    | 529.0 s  | 423.0 s | −106.0 s (−20.0%) |
+| 14   | 180.0 s  | 153.0 s |  −27.0 s (−15.0%) |
+| 6    | 404.0 s  | 284.0 s | −120.0 s (−29.7%) |
+| 9    | 719.0 s  | 464.0 s | −255.0 s (−35.5%) |
+| **Total** | **1832.0 s** | **1324.0 s** | **−508.0 s (−27.7%)** |
+
+The end-loop busy actually deleted was 576.6 s (146.6 + 42.9 + 123.9 + 263.2),
+matched to within 0.3 s per pair. The 69 s shortfall against that is run-to-run
+noise, independently pinned on **untouched** spans in the same logs:
+`patch_decode_a` +10.8 s / `patch_decode_b` +11.3 s on pair 1 (~+16% on pure
+ffmpeg decode) and `unified_refine_start` +1.9 s on pair 14 (~+5% on untouched
+search). So the 31.6% projection reads as confirmed at 27.7% observed, with the
+difference attributable to machine load rather than to the change. **The span
+partition, not wall clock, is the verdict here** — wall clock is a cross-run
+comparison on a machine whose load we do not control.
+
+**The post-hoist profile (4-pair aggregate) confirms the predicted shape:**
+
+- `unified_refine_start` **43.14%** of root, **99.4% Repeat** — was ~31% before,
+  now unambiguously the top cost. Lever 1b(b) (band the start-search repeat
+  window) is the next target.
+- `patch_decode_b` 17.59% + `patch_decode_a` 17.47% — decode is now #2, as the
+  projection said.
+- `local_anchor_xcorr` 9.94% — distant third.
+- `unified_refine_end` **0.85 s total, 0.07% of root**, and its remaining time is
+  **66% structure** — the loop now pays only for the structural evidence it was
+  always actually deciding on. `unified_coarse_end` has fallen below the
+  roll-up's display threshold entirely (~54 µs/bracket).
+
+Pair 1 exits 4 on both sides (pre-existing unfillable gap, identical decisions);
+the nonzero exit is not introduced by this change.
 
 **If the post seam ever becomes end-dependent** (Phase C of
 [TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md)), this hoist
@@ -305,6 +362,13 @@ argue against, not as motivation for one.
 
 ## 5. Open candidates
 
+0. **Lever 1b(b) — band the *start*-search repeat window.** Promoted to #1 by the
+   lever 1b(c) spot check: with the end loops gone, `unified_refine_start` is
+   **43.1% of root and 99.4% of it is `fill_repeat_correlations`**. Unlike the end
+   search this is *not* loop-invariant — the repeat window moves with the
+   candidate `start` — so it needs the lever-1 FFT banding treatment
+   (`fill_seam_correlations_band`), not a hoist. Largest remaining single target
+   by a wide margin.
 1. **`gate_anchor_search` holds 910.8 s (9.9%) of exclusive time.** A tenth of
    all runtime is inside the anchor search but inside *no* child span — anchor
    enumeration, feasibility filtering, or per-bracket setup, between

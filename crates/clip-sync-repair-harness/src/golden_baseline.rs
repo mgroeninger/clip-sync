@@ -35,7 +35,17 @@ pub struct GoldenRecord {
     pub nominal_donor_continuous: Option<bool>,
     pub brackets_total: usize,
     pub brackets_passing: usize,
+    /// Fill placement of the closest-to-chosen bracket. **Tier 1** — these are frame indices, exact
+    /// integers, not continuous scores, so any drift is a real decision change. Added 2026-07-25 to
+    /// close the blind spot where an end-search change could move every fill length on the corpus
+    /// and leave this diff green (docs/dev/TEMP-fill-placement-axis-plan.md, Phase A).
+    pub fill_start_frame: Option<usize>,
+    pub fill_frames: Option<usize>,
     // --- Tier 2: within ε ---
+    /// Seam correlations at that placement, unaggregated — a placement change that trades one
+    /// shoulder for the other moves these while `throat_structure_min` stays put.
+    pub fill_pre_r: Option<f64>,
+    pub fill_post_r: Option<f64>,
     pub gross_frac_lag_pre_ms: Option<f64>,
     pub gross_frac_lag_post_ms: Option<f64>,
     pub gross_peak_r_pre: Option<f64>,
@@ -74,6 +84,10 @@ fn record_from_row(r: &GapRow) -> GoldenRecord {
         nominal_donor_continuous: r.donor_nominal_cont,
         brackets_total: r.brackets_total,
         brackets_passing: r.brackets_passing,
+        fill_start_frame: r.best_bracket_start_frame,
+        fill_frames: r.best_bracket_fill_frames,
+        fill_pre_r: r.best_bracket_seam_pre,
+        fill_post_r: r.best_bracket_seam_post,
         gross_frac_lag_pre_ms: r.frac_lag_pre_ms,
         gross_frac_lag_post_ms: r.frac_lag_post_ms,
         gross_peak_r_pre: r.peak_r_pre,
@@ -104,9 +118,11 @@ pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> Gol
     let gaps: Vec<GoldenRecord> = rows.into_iter().map(record_from_row).collect();
     GoldenBaseline {
         schema: "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/\
-                 *continuous/edge_pinned/brackets_*) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/\
-                 nominal_*/aligned_*/throat_* continuous) assert WITHIN ε. Tier-3 diagnostics \
-                 (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = measurement placement."
+                 *continuous/edge_pinned/brackets_*/fill_start_frame/fill_frames) assert BIT-EXACT. \
+                 Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_*/fill_*_r continuous) assert \
+                 WITHIN ε. \
+                 Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = \
+                 measurement placement. fill_* are frame indices (integers) — Tier-1, not Tier-2."
             .into(),
         gap_count: gaps.len(),
         dualfit_targets: gaps
@@ -115,6 +131,26 @@ pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> Gol
             .map(|g| format!("{}·g{}", g.pair, g.index))
             .collect(),
         gaps,
+    }
+}
+
+impl GoldenBaseline {
+    /// This snapshot with the `fill_*` placement axes nulled on every record.
+    ///
+    /// Placement (`fill_start_frame` / `fill_frames` and the seam correlations read at it) is an
+    /// **output of the bracket search**, not a decision input: no gate, tier, or verdict reads it.
+    /// `GapRepairTags` therefore does not carry it, and the media-free projection differential —
+    /// whose contract is *tags are a complete decision carrier* — must not assert on it. The
+    /// tripwire for placement lives on the **media corpus** golden ([`baseline_from_report`]),
+    /// where the values are measured rather than reconstructed.
+    pub fn without_placement(mut self) -> Self {
+        for g in &mut self.gaps {
+            g.fill_start_frame = None;
+            g.fill_frames = None;
+            g.fill_pre_r = None;
+            g.fill_post_r = None;
+        }
+        self
     }
 }
 
@@ -195,6 +231,8 @@ fn diff_record(key: &str, exp: &GoldenRecord, act: &GoldenRecord, eps: f64, errs
     tier1!(nominal_donor_continuous);
     tier1!(brackets_total);
     tier1!(brackets_passing);
+    tier1!(fill_start_frame);
+    tier1!(fill_frames);
 
     macro_rules! tier2 {
         ($field:ident) => {
@@ -216,6 +254,8 @@ fn diff_record(key: &str, exp: &GoldenRecord, act: &GoldenRecord, eps: f64, errs
     tier2!(aligned_donor_silence);
     tier2!(aligned_donor_rms_db);
     tier2!(throat_residual_headroom_db);
+    tier2!(fill_pre_r);
+    tier2!(fill_post_r);
     tier2!(throat_structure_min);
     tier2!(a_gap_floor_db);
     tier2!(a_noise_floor_db);
@@ -261,6 +301,8 @@ mod tests {
                 nominal_donor_continuous: Some(true),
                 brackets_total: 4,
                 brackets_passing: 0,
+                fill_start_frame: Some(1000),
+                fill_frames: Some(4410),
                 gross_frac_lag_pre_ms: None,
                 gross_frac_lag_post_ms: None,
                 gross_peak_r_pre: None,
@@ -276,6 +318,8 @@ mod tests {
                 aligned_donor_silence: None,
                 aligned_donor_rms_db: None,
                 throat_residual_headroom_db: None,
+                fill_pre_r: Some(0.8),
+                fill_post_r: Some(0.7),
                 throat_structure_min: None,
                 a_gap_floor_db: None,
                 a_noise_floor_db: None,
@@ -288,5 +332,21 @@ mod tests {
         let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
         assert_eq!(errs.len(), 1);
         assert!(errs[0].contains("dualfit_target"));
+
+        // Phase A exit criterion: a fill-placement change must turn the diff red. Before these two
+        // fields existed, an end-search change could move every fill length on the corpus and leave
+        // this diff green — the blind spot TEMP-fill-placement-axis-plan.md was written to close.
+        // A one-frame move is enough; these are Tier 1, so there is no epsilon to hide in.
+        let mut act = exp.clone();
+        act.gaps[0].fill_frames = Some(4411);
+        let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
+        assert_eq!(errs.len(), 1, "a 1-frame fill-length change must be caught: {errs:?}");
+        assert!(errs[0].contains("fill_frames"));
+
+        let mut act = exp.clone();
+        act.gaps[0].fill_start_frame = Some(1001);
+        let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
+        assert_eq!(errs.len(), 1, "a 1-frame placement move must be caught: {errs:?}");
+        assert!(errs[0].contains("fill_start_frame"));
     }
 }
