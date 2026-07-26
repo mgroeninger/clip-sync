@@ -60,3 +60,42 @@ fn curated_golden_baseline_invariance() {
         diffs.iter().take(20).cloned().collect::<Vec<_>>().join("\n"),
     );
 }
+
+/// **Property 2 of the fill-placement re-baseline, asserted in the negative** — see
+/// docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+///
+/// `fill_start_frame` / `fill_frames` are Tier-1 axes whose purpose is to turn the golden red when a
+/// fill length changes. They are currently **null on every curated gap**, because the committed
+/// fixtures were extracted before `compute_region_measurements` emitted the gate's chosen placement.
+/// A null column is indistinguishable from a passing one, so the gap is asserted rather than left to
+/// be discovered.
+///
+/// **When the fixtures are regenerated from media, this test will fail — that is the point.** Replace
+/// it with the positive form (placement is `Some` wherever the gap had a bracket with a complete seam
+/// pair), which is the assertion that actually arms the tripwire. Deleting it instead re-opens the
+/// blind spot the plan exists to close.
+///
+/// `fill_pre_r` / `fill_post_r` are *not* covered here: they read the pre-existing `seam_pre` /
+/// `seam_post` and are already populated on the 6 gaps that have an eligible bracket.
+#[test]
+fn curated_golden_fill_placement_is_not_yet_armed() {
+    let live = baseline_from_rows(&curated_gap_cell_rows());
+    // Without this the emptiness assertion below would pass vacuously on an empty fixture set.
+    assert!(live.gap_count > 0, "no curated fixtures analyzed");
+    let armed: Vec<String> = live
+        .gaps
+        .iter()
+        .filter(|g| g.fill_start_frame.is_some() || g.fill_frames.is_some())
+        .map(|g| format!("{}·g{}", g.pair, g.index))
+        .collect();
+    assert!(
+        armed.is_empty(),
+        "fill placement is now populated on {} curated gap(s): {}\n\
+         The fixtures have been regenerated — replace this test with the positive assertion \
+         (placement present wherever the bracket had a complete seam pair) and regenerate the golden. \
+         See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.",
+        armed.len(),
+        armed.join(", "),
+    );
+}
+

@@ -1,8 +1,15 @@
 # Fill placement axis — measure the end search before changing it
 
-> **Status:** Proposed (2026-07-25). No code written. Prerequisite for any change to the end
-> search's scoring; **not** a prerequisite for lever 1b(c) (the end-search repeat hoist), which is
-> byte-identical and already landed.
+> **Status (2026-07-25):** Phase A is **code-complete, exit criterion unmet.** The placement is
+> emitted, carried to `GapRow`, recorded in `GoldenRecord`, and the golden is re-baselined — but
+> `fill_start_frame` / `fill_frames` are **null on all 10 curated gaps**, because the committed
+> fixtures predate the emit. So the tripwire is proven at unit level (`diff_catches_tier1_flip`) and
+> **not** end-to-end. `curated_golden_fill_placement_is_not_yet_armed` asserts that null column so the
+> gap stays loud; it is designed to fail when the fixtures are regenerated. Arming it needs media —
+> see *Remaining work* below.
+>
+> Prerequisite for any change to the end search's scoring; **not** a prerequisite for lever 1b(c)
+> (the end-search repeat hoist), which is byte-identical and already landed.
 
 **Problem:** the unified fill search picks `end` (and therefore fill length) over a ±5 s slack using
 **structure evidence only** — every waveform term in `unified_search_best_fill_end` is loop-constant
@@ -122,10 +129,32 @@ there. Three placement models, three repair models, each measured on its own ter
       `None` on gate failure, where there is no chosen placement.
 - [x] Scope the projection differential with `GoldenBaseline::without_placement()` — placement is a
       search output, not a tag-carried decision (see above).
-- [ ] **Re-baseline the goldens** — the only remaining step; see below.
+- [x] **Re-baseline the golden** (`CURATED_GOLDEN_REGEN=1`). Purely additive: 40 new keys plus the
+      `schema` line, **zero pre-existing values changed** — property 1 below holds exactly, because the
+      fixtures were not touched. Populated: `fill_pre_r` / `fill_post_r` on the 6 gaps with a bracket
+      carrying a complete seam pair (they read the pre-existing `seam_pre` / `seam_post`, so this is a
+      re-read of committed data through a new selector, not a new measurement). Null: both Tier-1
+      placement axes, everywhere.
+- [x] Assert the null column (`curated_golden_fill_placement_is_not_yet_armed`) rather than leaving it
+      to be discovered — a null Tier-1 column is indistinguishable from a passing one.
+- [ ] **Regenerate the curated fixtures from media, then re-arm.** The only remaining step; needs media
+      this repo does not record. See *Remaining work*.
 
-**Exit:** a golden diff turns red when a fill length changes. Proven at unit level; proven end-to-end
-once the goldens carry non-null `fill_*`.
+**Exit:** a golden diff turns red when a fill length changes. **Proven at unit level; NOT proven
+end-to-end** — and it cannot be until the fixtures carry non-null `fill_start_frame` / `fill_frames`.
+
+### Remaining work — needs media
+
+The fixtures come from three provenances (`curated/manifest.json`): `re-anchor-dual-fit-on-nominal`
+(pairs 1, 4, 6, 7), `equiv-coarse-vs-fine` (pairs 1, 2) — **different media, so two runs, not one** —
+and one synthetic (`10_decorrelated`, `derived-from`, may need no run at all). Neither corpus survives
+in `gap-files/`; both are ephemeral. Steps: run those pairs → re-extract the 10 fixtures and update
+manifest provenance → review as a **content** change (see the property-1 caveat below) → regenerate
+the golden → replace `curated_golden_fill_placement_is_not_yet_armed` with its positive form.
+
+**Deferred deliberately.** The payoff lands only when the end search's scoring changes — Phase C,
+which is gated on Phase B. If Phase B shows the ±5 s slack is barely used, the plan stops and this
+work is never needed.
 
 ### The re-baseline is a separate commit — and needs the fixtures regenerated first
 
@@ -143,6 +172,12 @@ non-null only where a bracket was actually measured. Two properties to assert in
 
 1. **Every pre-existing axis is bit-identical.** The fields are additive; if any Tier-1 axis moves,
    something is wrong with the projection, not with the baseline.
+   **This held for the golden re-baseline (fixtures untouched) and will NOT hold for the fixture
+   refresh.** Regenerating fixtures from media re-runs code and config that have moved since they were
+   extracted — `skip_equivalent_gaps` flipped on-by-default (2026-07-20) and dual-fit re-anchored onto
+   nominal `b_mapped`. Unrelated axes *will* move. The reviewable question for that commit is not
+   "did anything change" but **"did every axis that moved have a known cause"** — so the fixture
+   refresh must be its own commit, not folded into a code change.
 2. The new `fill_*` fields are populated for gaps with measured brackets — an all-null column would
    mean the projection silently failed and the tripwire guards nothing.
 
@@ -210,7 +245,9 @@ a new seam term. Settle that before writing any Phase C code.
 
 | Risk | Mitigation |
 |------|------------|
-| Phase A goldens churn on unrelated axes | Fields are additive; assert existing axes bit-identical in the re-baseline commit |
+| Golden re-baseline churns unrelated axes | Held: purely additive, zero pre-existing values changed (fixtures untouched) |
+| **Fixture refresh** churns unrelated axes | Expected, not preventable — separate commit, reviewed as a content change with a known cause per moved axis |
+| Tier-1 placement ships as a null column that reads as coverage | `curated_golden_fill_placement_is_not_yet_armed` asserts the null and fails when fixtures are regenerated |
 | Phase B doubles fingerprint runtime | Default off; run once per A/B, not per sweep |
 | Phase C ships on a green harness with no listening | Listening is an explicit Phase C exit item, not optional |
 | Phase C double-counts with the splice trim | Called out above; resolve before implementing |

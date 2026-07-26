@@ -49,8 +49,14 @@ cost.
 
 Measured on a real 5.1 dump (a licensed HE-AAC 5.1 pair, 2026-07-11): **per-bracket oracle ≈ 82 % of wall-clock**
 (decode ≈ 12 %), **~8.4 s per bracket** score, 11–22 brackets per short skip gap. Cost scales with the
-**bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free). Later instrumented
-runs are lower; treat this as a dated upper-bound snapshot, not a current SLA.
+**bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free). Treat that as a
+dated upper-bound snapshot, not a current SLA.
+
+The current figure is **4.3–5.0 s per bracket** (~4.23 s avg over 5061 brackets), from the 17-pair
+characterize baseline in [repair-perf.md §2](repair-perf.md) (2026-07-23) — flat across 15 of 17 pairs.
+Fingerprint mode enumerates brackets exhaustively, so even that is an upper bound on the production
+path, which §3 measures at 2.7–4.1 s/bracket. Both numbers are snapshots; cite §2 rather than copying
+a bare figure forward.
 
 Why it resisted a cheap speedup: on the licensed corpus, the expensive gaps are **timing-offset skips**
 (same audio shifted ~150–200 ms, lag-corr ≥ 0.98) that score every bracket only to fail the lag-0
