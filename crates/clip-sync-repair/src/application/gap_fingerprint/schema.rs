@@ -500,10 +500,12 @@ pub struct SpliceSummary {
 
 /// **Dual-fit viability** — the offline repair simulation promoted into the scan (ledger C3/C7; supersedes
 /// the `diag_splice_dualfit` harness, which decoded B separately and drifted from the scan). Each shoulder
-/// is placed at its own `baseline_lag` (`b_mapped_start + L_pre`, `b_mapped_end + L_post_gross`) and the
-/// pre/post seams are scored at lag 0 against the gate thresholds — i.e. *would a length-reconciled fill
-/// pass the gate?* The trim/pad is interior, so it does not move the shoulder seams: `trim_frames`
-/// (`bridge − gap`) equals the registration step in frames. Computed on the scan's own decode.
+/// is placed with `seam_local_peak` re-anchored on nominal `b_mapped` (pre at `b_mapped_start`, post at
+/// `b_mapped_start + gap_frames`, ±`SEAM_LOCAL_SEARCH_MS`) — **not** on the gross 1 s `baseline_lag` —
+/// and the pre/post seams are scored at those placements against the gate thresholds — i.e. *would a
+/// length-reconciled fill pass the gate?* The trim/pad is interior, so it does not move the shoulder
+/// seams: `trim_frames` (`bridge − gap`) equals the registration step in frames. Computed on the scan's
+/// own decode.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SpliceDualfit {
     pub pre_seam_r: f64,

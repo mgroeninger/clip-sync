@@ -5,10 +5,12 @@ floor, energy contour, editorial anchors, structure/seam scores, and a lag finge
 samples, no transcripts**. Fingerprints from real (licensed) media can be committed as a
 regression/calibration corpus.
 
-Source: `application/gap_fingerprint.rs`. Plan (archived): [TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md).
+Source: `application/gap_fingerprint/` (`mod.rs`, `measure.rs`, `schema.rs`, `project.rs`). Plan
+(archived): [TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md).
 
-> Status: **P1 complete** — schema + builder + oracle `failure_stage` + `--gap-fingerprints`
-> bin path + per-gap corpus library, all wired. Validated on real media.
+> Status: **shipped** — schema + builder + from-decode dump (`characterize_gaps_from_decode`) +
+> oracle `failure_stage` + `--gap-fingerprints` corpus library + equivalence / dual-fit /
+> fill-placement axes. Validated on real media. Requires the `calibration` feature for the CLI flags.
 
 ## Producing fingerprints
 
@@ -20,7 +22,8 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
   gaps), one self-contained single-gap JSON **per gap** (the library), and a non-identifying
   `manifest.json`.
 - `--fingerprint-gap IDX` (repeatable) — characterize **only** these gaps. Omit it to characterize
-  **all** gaps. Each characterized gap gets full detail (per-bracket gate `failure_stage` + lag).
+  **all** gaps. Each characterized gap gets full decision/repair detail (per-bracket gate
+  `failure_stage`, `baseline_lag`, `splice_dualfit`, …).
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
@@ -28,7 +31,8 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
 every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in
 the API (`characterize_gaps`) but the bin path always characterizes its selected gaps at full detail,
-because only the full tier carries the A-vs-B verdict (lag / `failure_stage`) needed to build a fixture.
+because only the full tier carries the A-vs-B verdict (`failure_stage` / registration) needed to build
+a fixture.
 
 **Repair takes priority.** This is a repair tool first, so a real repair wins over the diagnostic:
 if `--mux` is set, fingerprinting is **skipped** (with a warning if `--gap-fingerprints` was also
@@ -38,13 +42,15 @@ with `--wav` currently runs both and decodes A/B twice — fine, but not free.)*
 ## Performance
 
 The dump characterizes **every selected gap at full detail** — it runs the **full per-bracket oracle**
-(`oracle_score_fit_candidate` over all feasible brackets, `gap_fingerprint.rs`), with **no routing or
-short-circuit** like the production patch path. That per-bracket structure+seam search over the
-`--fill-border-search-secs` haystack is the dominant cost.
+(`oracle_score_fit_candidate` over all feasible brackets via `compute_region_measurements` in
+`gap_fingerprint/measure.rs`), with **no routing or short-circuit** like the production patch path.
+That per-bracket structure+seam search over the `--fill-border-search-secs` haystack is the dominant
+cost.
 
 Measured on a real 5.1 dump (a licensed HE-AAC 5.1 pair, 2026-07-11): **per-bracket oracle ≈ 82 % of wall-clock**
 (decode ≈ 12 %), **~8.4 s per bracket** score, 11–22 brackets per short skip gap. Cost scales with the
-**bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free).
+**bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free). Later instrumented
+runs are lower; treat this as a dated upper-bound snapshot, not a current SLA.
 
 Why it resisted a cheap speedup: on the licensed corpus, the expensive gaps are **timing-offset skips**
 (same audio shifted ~150–200 ms, lag-corr ≥ 0.98) that score every bracket only to fail the lag-0
@@ -66,48 +72,53 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `anchors` | always | pre/post candidates `{ time, source, prominence, rms_db }` |
 | `brackets` | full | feasible brackets `{ span, move, structure_*, seam_*, start_frame, fill_frames, failure_stage }` (see *Bracket placement* below) |
 | `structure` / `seams` | B present | baseline scores; seams carry per-channel + selected channels |
-| `lag` | full, B present | **diagnostic** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat (see below) |
 | `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
 | `splice` | full, B present | first-class registration step derived from `baseline_lag` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
 | `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
-| `wide_envelope` | full, B present | 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
-| `seam_probe` | full, B present | **diagnostic** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not gated on |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
-| `b_levels` | full, B present | symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
 | `equivalence` | B present | **gap-equivalence class (fine)** — does this gap need patching? (silence-character; see below) |
 | `scan_equivalence` | scan classified | the **coarse 250 ms production** verdict for the same gap (`GapReport::gap_equivalence`), copied in so one dump holds both granularities for calibration |
+| `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
+| `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
+| `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
+| `b_levels` | diagnostics | **Tier-3** symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 
 ### Bracket placement — `start_frame`, `fill_frames`, and why the seam does not choose them
 
-`place_on_b` runs the unified structure+waveform search with **`waveform_weight: 0.0`** — a
-structure-only placement, deliberately not production's weights.
+There are two placement paths in the fingerprint code; only one feeds the dump's
+`brackets[].start_frame` / `fill_frames`.
 
-The reason is narrow and specific. The `seam_pre` / `seam_post` recorded per bracket feed
+**`place_on_b` (structure-only).** Runs the unified search with **`waveform_weight: 0.0`**. The reason
+is narrow and specific: `seam_pre` / `seam_post` recorded at that placement feed
 `classify_bracket_stage`, and **those two fields ship with no prominence or z companion.** Read at a
 structure-chosen placement they mean *"structure found a placement; does the waveform corroborate?"* —
-which is what makes `waveform_floor` a meaningful failure stage. Let the seam influence the placement
-and they become an unguarded argmax over the search radius: max-of-noise, and the stage stops
-distinguishing anything.
+which is what makes `waveform_floor` a meaningful failure stage. Let the seam influence *those* fields'
+placement and they become an unguarded argmax over the search radius: max-of-noise, and the stage stops
+distinguishing anything. Do **not** flip this weight in place.
+
+**From-decode dump (`compute_region_measurements`).** The live `--gap-fingerprints` path scores each
+bracket with `oracle_score_fit_candidate` (the **production-weights** gate). Its
+`SeamGateOutcome.alignment` already carries `start_frame` / `fill_frames`; the dump projects them onto
+each `BracketInfo` on gate **pass** (`None` on gate failure — no chosen placement). That is the
+placement that can observe an end-search scoring change. Cost is zero: same search, stop discarding the
+field. See [TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md) Phase A.
 
 **This is not an argument against seam-chosen placement in general.** `splice_dualfit` places each
 shoulder at its own seam peak, unconditionally, for every gap — and answers the same estimator-bias
 concern by *publishing validators* rather than by abstaining: `*_seam_z` (**primary** — whole-curve z
 over the placement search, periodicity-robust), `pre_seam_prom` / `post_seam_prom` (secondary ±30 ms
 single-rival margin, which reads low on correct-but-periodic content), and `post_seam_global_r`. A
-production-weights placement is therefore fine to add — as **additional** fields carrying their own
-`seam_z` *and* prominence, never by flipping this weight in place, which would also make the committed
-goldens a function of every waveform-weight retune. See
-[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md) Phase B.
+second production-weights placement with its own validators is fine to add as **additional** fields —
+never by overwriting the structure-only seam pair. See that plan's Phase B.
 
-`start_frame` and `fill_frames` (added 2026-07-25) are the placement that search chose:
 `fill_frames` is the B-derived fill length, which differs from the gap length by up to
-`fill_length_slack_secs` (default 5.0 s). **They are the only projection of the end search's
-decision.** Before they existed, a change that moved every fill length on the corpus left the golden
-diff green — nothing anywhere recorded fill placement. They are `None` on dumps written before that
-date and on projected (non-measured) brackets.
+`fill_length_slack_secs` (default 5.0 s). **On the dump path they are the only projection of the end
+search's decision.** Before they existed, a change that moved every fill length on the corpus left the
+golden diff green. They are `None` on dumps written before that date, on projected (non-measured)
+brackets, and on brackets that failed the gate.
 
 ### `equivalence` — does this gap need patching?
 
@@ -128,8 +139,11 @@ floor** (a dropout sits far below it; room tone sits at it — self-calibrating)
 **Classes:** `repairable_dropout` = A's signal died (≥ `dropout_margin_db` below the noise floor) **and** B
 occupied → **keep**; `shared_silence` = B silent → nothing to fill → **drop**; `ambient_quiet` = A is only room
 tone (not a dropout) though B has content → genuine quiet → **drop**. Thresholds (`dropout_margin_db ≈ 35`,
-`donor_silence_thresh ≈ 0.5`) are tunable; the gate is **off by default** and the dump is **emit-only** (the
-production plan-time drop is a later v1 step).
+`donor_silence_thresh ≈ 0.5`) are tunable.
+
+The fingerprint **always emits** `equivalence` (fine) and `scan_equivalence` (coarse) for calibration —
+the dump itself never drops gaps. Production plan-time drop is separate and **on by default**
+(`skip_equivalent_gaps = true`; `--no-skip-equivalent-gaps` to patch all). See [gap-scan.md](../gap-scan.md).
 
 **`equivalence` vs `scan_equivalence` (fine vs coarse):** `equivalence` is the **fine reference** —
 sample-level A gap RMS, fine-bin noise floor, 50 ms donor bins, on the full decode. `scan_equivalence` is the
@@ -153,12 +167,15 @@ parabolic-interpolated (fractional) peak, and a verdict:
 This is what distinguishes a sub-sample/timing offset (recoverable) from genuine A/B decorrelation
 (the seam gate is right to refuse) — see [seam-scoring.md](../seam-scoring.md) §3–4.
 
+The diagnostic `lag` field (Tier-3) is emitted only with `--fingerprint-diagnostics`. Decision
+registration is always in `baseline_lag` below.
+
 ## Registration & dual-fit measurements
 
-The `lag` field above sits at the **diagnostic** placement (best-energy bracket / structure throat) and
-can wander on quiet gaps. The **decision** registration lives in `baseline_lag`, and the dual-fit repair
-predicate is built from it. **Read each field at the placement it defines — never compare across
-placements.**
+The diagnostic `lag` field sits at the **diagnostic** placement (best-energy bracket / structure throat)
+and can wander on quiet gaps. The **decision** registration lives in `baseline_lag`, and the dual-fit
+repair predicate is built from seam-local placement (not from `baseline_lag` itself). **Read each field
+at the placement it defines — never compare across placements.**
 
 ### `baseline_lag` — decision registration at `b_mapped`
 
@@ -194,9 +211,11 @@ program time ⇒ nothing to fill, not a dropout; ledger D11). Both carry `rms_db
 ### `splice_dualfit` — would a length-reconciled fill pass the gate?
 
 The **offline predictor** of the dual-fit repair (the repair algorithm itself is
-[seam-scoring.md](../seam-scoring.md) § 6 — Dual-fit repair). Computed on the scan's own decode: each shoulder
-is placed at its own `baseline_lag`; the pre/post seams are scored at lag 0 against the **unchanged** gate
-thresholds:
+[seam-scoring.md](../seam-scoring.md) § 6 — Dual-fit repair). Computed on the scan's own decode: each
+shoulder is placed with `seam_local_peak` re-anchored on **nominal `b_mapped`** (pre butts at
+`b_mapped_start`, post at `b_mapped_start + gap_frames`, ±`SEAM_LOCAL_SEARCH_MS`) — **not** on the gross
+1 s `baseline_lag` (that older anchor clipped live seams whose lag diverged from the 1 s peak). Seams are
+scored at those placements against the **unchanged** gate thresholds:
 
 - `pre_seam_r` / `post_seam_r` and **`gate_pass`** — do both clear `min_fill_correlation` and
   `fill_absolute_floor`?
@@ -205,15 +224,17 @@ thresholds:
 - **`post_seam_global_r`** — the post seam scored at the *pre* offset (step forced to 0). If it also passes,
   a single constant shift suffices and the step is a registration artifact; if only the own-lag post passes,
   the step is real.
-- `pre_seam_prom` / `post_seam_prom` — per-seam placement-peak prominence (±30 ms); low ⇒ periodic/alias, so
-  a PASS is not a trustworthy registration.
+- **`pre_seam_z` / `post_seam_z`** — whole-curve z-score of each seam's peak over the ±600 ms search
+  (**primary** alias guard; periodicity-robust).
+- `pre_seam_prom` / `post_seam_prom` — prominence over the best rival within ±30 ms (secondary; low on
+  correct-but-periodic content).
 
 ### Diagnostic-only fields
 
-`wide_envelope` (100 ms-bin envelope lag peak at `b_mapped`, a cross-scale confirmer of `baseline_lag`),
-`seam_probe` (encoding-robust R2/R4/spectrum/env/recovered metrics, retained from the archived cross-codec
-plan), and `b_levels` (symmetric B `LevelProfile`) are **not gated on** — they explain decisions and validate
-hypotheses. See the analyzer's `legend_text()` for the authoritative placement/window of every field.
+`wide_envelope`, `seam_probe`, diagnostic `lag`, and `b_levels` are **Tier-3** — emitted only with
+`--fingerprint-diagnostics`. They are **not gated on** by any repair decision; they explain decisions and
+validate hypotheses. See the analyzer's `legend_text()` for the authoritative placement/window of every
+field.
 
 ## Source identity & the corpus library
 
