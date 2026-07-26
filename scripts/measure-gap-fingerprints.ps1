@@ -9,6 +9,7 @@
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/anchor-bracket-corpus
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
+#   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair args]
@@ -43,6 +44,10 @@ param(
 
     # Include Tier-3 X-set (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`).
     [switch]$FingerprintDiagnostics,
+
+    # After all pairs succeed, run `gap-fingerprint-stats --check` on -CorpusRoot (dump integrity).
+    # Does not run the prevalence analyzer. Failures exit non-zero.
+    [switch]$Check,
 
     # Skip `cargo build` and use an existing binary under target/<profile>/.
     [switch]$SkipBuild,
@@ -174,4 +179,18 @@ Write-Host "Docs:        docs/dev/gap-fingerprint.md" -ForegroundColor DarkGray
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 if ($failed.Count -gt 0) {
     throw "$($failed.Count) pair(s) failed: $($failed.Label -join ', ')"
+}
+
+if ($Check) {
+    Write-Host ''
+    Write-Host "Running gap-fingerprint-stats --check on $CorpusRoot ..." -ForegroundColor Cyan
+    Push-Location $RepoRoot
+    try {
+        # Stats bin lives on the harness crate; calibration feature matches the dump path.
+        & cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- --check $CorpusRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "gap-fingerprint-stats --check failed (exit $LASTEXITCODE)"
+        }
+    }
+    finally { Pop-Location }
 }

@@ -7,18 +7,26 @@
 //! how many gaps are `timing_offset` (a recoverable seam the gate skipped), split **constant** vs
 //! **drift**, vs genuinely `decorrelated` skips.
 //!
+//! **`--check` mode** ([`check_dirs`]) asserts dump writer invariants (placement ↔ gate, outcome ↔
+//! brackets, library packaging) — a post-dump health check, not a prevalence scan.
+//!
 //! Parses a **minimal** projection of the schema (ids, index, geometry duration, lag, outcome) so it is
 //! robust to unrelated `GapCorpus` schema drift. Prefers each pair dir's `corpus.json` (authoritative,
 //! all gaps, no per-gap-file accumulation); falls back to globbing per-gap `*.json` and de-duping by
 //! gap index when `corpus.json` is absent.
 
 mod analysis;
+mod check;
 mod report;
 mod schema;
 
 pub use analysis::{
     analyze_dirs, curated_gap_cell_projected_rows, curated_gap_cell_rows, drift_eps_from_env,
     gap_rows_from_corpus_json, tail_secs_from_env,
+};
+pub use check::{
+    check_dirs, fill_slack_from_env, HealthCheckOptions, HealthCheckReport, HealthIssue,
+    IssueSeverity, DEFAULT_FILL_SLACK_SECS,
 };
 pub use report::CorpusReport;
 pub use schema::{GapKind, GapRow, SeamDiag, SkewClass, SpliceDiag};

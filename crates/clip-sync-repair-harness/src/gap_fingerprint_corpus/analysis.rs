@@ -316,7 +316,7 @@ pub fn analyze_dirs(roots: &[PathBuf], drift_eps_ms: f64, tail_secs: f64) -> Cor
 /// A pair dir holds either a `corpus.json` or loose per-gap `*.json` library files. `root` itself
 /// counts, as do its immediate subdirs (so `gap-files/` with `1/`..`6/` resolves to six pairs in one
 /// call).
-fn pair_dirs(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn pair_dirs(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if is_pair_dir(root) {
         out.push(root.to_path_buf());
@@ -334,7 +334,7 @@ fn pair_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 /// True if `dir` holds a `corpus.json`, or any non-`manifest` `*.json` (per-gap library files).
-fn is_pair_dir(dir: &Path) -> bool {
+pub(crate) fn is_pair_dir(dir: &Path) -> bool {
     if dir.join("corpus.json").is_file() {
         return true;
     }
@@ -350,7 +350,7 @@ fn is_pair_dir(dir: &Path) -> bool {
         })
 }
 
-fn pair_label(root: &Path, pair_dir: &Path) -> String {
+pub(crate) fn pair_label(root: &Path, pair_dir: &Path) -> String {
     pair_dir
         .strip_prefix(root.parent().unwrap_or(root))
         .unwrap_or(pair_dir)

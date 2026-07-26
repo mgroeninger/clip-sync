@@ -37,7 +37,19 @@ Requires `--features …,calibration`. Prefer gitignored `gap-files/` for corpor
 ```powershell
 ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/my-corpus
 ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
+./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check   # post-dump integrity via gap-fingerprint-stats --check
 ```
+
+**Dump health check** (after a bulk run, or with `-Check` on the measure script):
+
+```powershell
+cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- --check gap-files/fingerprint-corpus
+```
+
+Asserts writer invariants: gate Ok ↔ `start_frame`/`fill_frames`, patch/skip ↔ bracket passes, library
+file count / manifest consistency, `|fill−gap|` within slack (default 5.1 s; override
+`GAP_FP_FILL_SLACK_SECS`). Incomplete pair dirs are warnings. This is **not** the prevalence analyzer
+(omit `--check` for that).
 
 To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
 every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in
