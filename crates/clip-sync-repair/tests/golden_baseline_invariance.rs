@@ -70,10 +70,16 @@ fn curated_golden_baseline_invariance() {
 /// A null column is indistinguishable from a passing one, so the gap is asserted rather than left to
 /// be discovered.
 ///
-/// **When the fixtures are regenerated from media, this test will fail — that is the point.** Replace
-/// it with the positive form (placement is `Some` wherever the gap had a bracket with a complete seam
-/// pair), which is the assertion that actually arms the tripwire. Deleting it instead re-opens the
-/// blind spot the plan exists to close.
+/// **When a fixture carrying placement is added, this test will fail — that is the point.** Replace it
+/// with the positive form, which is the assertion that actually arms the tripwire. Deleting it instead
+/// re-opens the blind spot the plan exists to close.
+///
+/// **Scope the positive form to gaps whose best bracket *passed the gate*, not to gaps with a complete
+/// seam pair.** `compute_region_measurements` records placement only on the `Ok` branch, while
+/// `seam_pre` / `seam_post` are also populated from gate *failures* (`stage_of`). Across the 17-pair
+/// corpus, 200 of 360 gaps with an eligible bracket have a failed best bracket, so a seam-pair-scoped
+/// assertion would demand placement that cannot exist. The tripwire therefore covers the **patch path
+/// only** — which is the only path where a fill placement is used.
 ///
 /// `fill_pre_r` / `fill_post_r` are *not* covered here: they read the pre-existing `seam_pre` /
 /// `seam_post` and are already populated on the 6 gaps that have an eligible bracket.
@@ -91,9 +97,10 @@ fn curated_golden_fill_placement_is_not_yet_armed() {
     assert!(
         armed.is_empty(),
         "fill placement is now populated on {} curated gap(s): {}\n\
-         The fixtures have been regenerated — replace this test with the positive assertion \
-         (placement present wherever the bracket had a complete seam pair) and regenerate the golden. \
-         See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.",
+         A fixture carrying placement has been added — replace this test with the positive assertion \
+         (placement present wherever the best bracket PASSED THE GATE — not wherever it had a complete \
+         seam pair; failed brackets carry seams but no placement) and regenerate the golden. \
+         See docs/dev/TEMP-fill-placement-axis-plan.md Phase A, property 2.",
         armed.len(),
         armed.join(", "),
     );
