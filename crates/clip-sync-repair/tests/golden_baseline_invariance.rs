@@ -97,8 +97,15 @@ fn curated_golden_fill_placement_is_armed() {
         !armed.is_empty(),
         "no curated gap carries fill placement — the Tier-1 fill_start_frame / fill_frames tripwire is \
          disarmed and would pass vacuously. A fixture whose BEST-by-min-seam bracket passes the gate \
-         must be present (fixtures 11/12). See docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A, \
-         property 2.",
+         must be present (fixtures 11/12).\n\
+         \n\
+         BEFORE assuming a regression: check the predicate. `best_seam_bracket` ranks by min-seam over \
+         every bracket with a complete seam pair, FAILURES INCLUDED — so a gap whose min-seam winner \
+         failed the gate yields null fill_* even when other brackets in that gap placed. On the 17-pair \
+         fingerprint corpus that shape occurs in ~2.5% of patch gaps (3 of 121), so a newly harvested \
+         fixture hits it roughly 1 time in 40. Verify the candidate fixture's best-by-min-seam bracket \
+         passed before treating this failure as a code regression. See docs/dev/gap-fingerprint.md \
+         (Bracket placement) and docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A, property 2.",
     );
 
     // The two axes are read from one `FillAlignment`, so they are populated or absent together. A gap

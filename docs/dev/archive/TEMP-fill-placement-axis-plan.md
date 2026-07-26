@@ -16,7 +16,7 @@
 
 **Problem:** the unified fill search picks `end` (and therefore fill length) over a ±5 s slack using
 **structure evidence only** — every waveform term in `unified_search_best_fill_end` is loop-constant
-(see [repair-perf.md §1a](repair-perf.md)). Whether that is right is an open question. We cannot
+(see [repair-perf.md §1a](../repair-perf.md)). Whether that is right is an open question. We cannot
 answer it, because **no harness records the chosen fill placement.** A change that moved every fill
 length on the corpus would leave the golden diff green.
 
@@ -206,6 +206,13 @@ post−pre after anchor widening — **not** the original silent-run gap
 (`geometry.duration_secs` / `splice_dualfit.gap_frames`). Slack use is
 `|fill_frames − span| / fill_length_slack_secs`.
 
+**Code anchor:** `gate_structure_align` sets `gap_frames = refined.end_frame − refined.start_frame`
+from the **candidate bracket** (`patch_region.rs:1398`), and `end_min` / `end_max` center the sweep on
+it (`gap_fill_fit.rs:966-970`). Reproducible from any dump without reading code:
+`span_secs × rate == splice_dualfit.gap_frames + move_frames` exactly, and within a multi-bracket gap
+`corr(move_frames, fill_frames) == 1.00`. Also stated in
+[gap-fingerprint.md](../gap-fingerprint.md) *Bracket placement*, which is the live home for this rule.
+
 **Denominator trap:** `|fill − original gap|` is almost entirely **anchor widening**
 (`|span − gap|`). On the 17-pair corpus those two medians both read ~2.0 s and look like a saturated
 ±5 s slack; against span the median excursion is tens of milliseconds. Inside a multi-bracket gap,
@@ -214,25 +221,36 @@ hole. This distinction decides the Phase C go/no-go and belongs in every roll-up
 
 ### Corpus roll-up (17/17 pairs, 2026-07-26) — slack exit **MET → Phase C NO-GO**
 
-Corpus: 297 gaps (121 patch / 176 skip), 5064 brackets, **1044** with recorded placement (gate Ok ↔
-placement, property 2 held corpus-wide). Dumps are from-decode / production-weights
-(`compute_region_measurements`); no `structure_pre`/`structure_post` fields.
+Corpus: 297 gaps (121 patch / 176 skip), 5064 brackets, **1044** with recorded placement. Dumps are
+from-decode / production-weights (`compute_region_measurements`); no `structure_pre`/`structure_post`
+fields.
+
+Property 2 has two halves and they landed differently:
+
+- **The `Ok`-branch rule held exactly** — 1044 placed = 5064 − 4020 gate failures, no bracket carrying
+  one axis without the other.
+- **The *best-bracket* predicate failed 3 times** — 3 of 121 patch gaps (~2.5%) have a best-by-min-seam
+  bracket that failed the gate while other brackets in the same gap placed, so the gap reads null
+  `fill_*`. The "future fixture" risk below is therefore **measured, not hypothetical**: ~1 in 40.
 
 | Axis | What it measures | Result |
 |------|------------------|--------|
-| \|fill − **span**\| | end-search excursion (Phase B exit) | median **0–24 ms**, p95 ~80–90 ms, **max 388 ms**; nothing ≥1 s (~8% of ±5 s) |
+| \|fill − **span**\| | end-search excursion (Phase B exit) | signed median **0 ms** (abs median 24 ms), p95 **77 ms** (all 1044) / **105 ms** (best-by-min-seam), **max 388 ms**; nothing ≥1 s (~8% of ±5 s) |
 | \|fill − **gap**\| | widening + excursion (trap) | median **~2.0 s** — do not use for the exit |
 | \|span − gap\| | anchor widening alone | median **~2.1 s** — explains the trap |
 | throat (`span == gap`, n=65): end excursion vs `splice_dualfit` trim | length-correction agreement | same order of magnitude (medians ~3 ms / ~6 ms) but **r ≈ 0.06**, sign agreement at chance — **not redundant** |
 
 So: the end sweep is not inert (~72% of placed brackets move >10 ms off span), but the slack is
-**50–200× wider than the search ever needs.** Per the exit wording below, Phase C stops here.
+**~13× wider than the observed max excursion** (388 ms) and ~65× its p95. Per the exit wording below,
+Phase C stops here.
 
 **Residue (not Phase C):** (1) the r≈0.06 disagreement — at least one of end-search length vs dual-fit
 trim is reading noise (open research question; no plan); (2) `fill_length_slack_secs = 5.0` vs
 388 ms observed max — **tracked in [repair-perf.md §5 #3](../repair-perf.md)** and
-[BACKLOG.md](../../../BACKLOG.md) (narrow default → ~1.0 s; golden A/B + bound-pin check). Not a
-Phase C item and not byte-identical (`search_coarse_step` depends on span extent).
+[BACKLOG.md](../../../BACKLOG.md) (narrow default → ~1.0 s). Not a Phase C item, and **not**
+byte-identical — but not for the reason first recorded here: `search_coarse_step` does *not* move with
+the default (it saturates at `bin_frames` for any realistic slack), the **B extract window** does. See
+[repair-perf.md §5 #3](../repair-perf.md) for the corrected mechanism and exit checks.
 
 ### Optional second placement — **deferred outside this plan**
 
@@ -278,7 +296,7 @@ small length corrections (if either) is signal.
 | Adding a placement cohort churns the golden | **Closed:** 79 insertions, 1 deletion (`gap_count`); legacy fixtures bit-identical |
 | Tier-1 placement ships as a null column that reads as coverage | **Closed:** `curated_golden_fill_placement_is_armed` fails if *no* gap carries placement, so the column cannot regress to all-null |
 | Placement axes drift apart (one set, one null) | `curated_golden_fill_placement_is_armed` also asserts they are populated together — both project from one `FillAlignment` |
-| A future fixture is added whose min-seam winner failed the gate | Its `fill_*` would be null and the positive assert would read as a regression — check `best_seam_bracket` before selecting (property 2) |
+| A future fixture is added whose min-seam winner failed the gate | **Measured at ~2.5% of patch gaps (3/121) — expect it ~1 in 40.** Its `fill_*` would be null and the positive assert would read as a regression; check `best_seam_bracket` before selecting (property 2). `curated_golden_fill_placement_is_armed`'s failure message now says so |
 | Trying to re-extract 01–10 from dead provenance | Don't — expand from media still on disk (`anchor-bracket-corpus` / dedicated dumps) |
 | Phase B doubles fingerprint runtime | Default off; run once per A/B, not per sweep |
 | Phase C ships on a green harness with no listening | Listening is an explicit Phase C exit item, not optional — **moot:** Phase C NO-GO |

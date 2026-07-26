@@ -30,9 +30,37 @@ Last updated: 2026-07-26.
 From [archive/TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) Phase B
 residue; tracked as [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
+**One knob, two jobs — split the config (no hardcode).** `fill_length_slack_secs` and
+`fill_extract_tail_slack_secs` are separate knobs (both default **5.0** today — pure fan-out,
+byte-identical to the old single dial). (1) end-search range (`gap ± slack` in `gap_fill_fit`);
+(2) B haystack tail (`length_slack = extract_tail.max(margin)` → `b_extract_end_secs` /
+fingerprint `pad_tail`). Those are different risks: (1) only drops far end candidates; (2)
+shortens `total_frames`, which can invalidate late *start* candidates
+(`start + gap + post_span > total_frames`) and move seam/gate outcomes. Corpus max
+`|fill − span|` is 388 ms (nothing ≥1 s; ±5 s is ~13× that max), so narrowing **search**
+to 1.0 s keeps every observed winner inside a strict subset of today's end range
+(`search_coarse_step` still saturates at `bin_frames`). Shrinking the extract is what creates
+the wide blast radius — and it does **not** cut the #2 full-track decode cost (extract is a
+slice). **Why decouple:** the corpus answers "how far may fill end slide?"; the extract only
+needs enough tail for search radius + post context + that slide.
+
 | Item | Direction |
 |------|-----------|
-| Narrow `fill_length_slack_secs` default 5.0 → **1.0 s** | Corpus max end excursion vs bracket span is 388 ms; ±5 s is ~50–200× over-provisioned. Not byte-identical (`search_coarse_step` scales with window). Exit: golden A/B + fingerprint `|fill−span|` bound-pin check + spot listen. Then consider 0.5 s only if clean. |
+| **Config split** | **Done** — `fill_extract_tail_slack_secs` (CLI `--fill-extract-tail-slack-secs`) wires extract / `pad_tail`; `fill_length_slack_secs` is end-sweep / `max_fill` only. Both default 5.0. |
+| **Phase 1 — narrow search** | Narrow `fill_length_slack_secs` 5.0 → **1.0 s** (leave extract-tail at 5.0). Expected near byte-identical if corpus bound holds; exit: golden A/B on `fill_*` + outcome (patch/skip) + spot-listen largest-excursion patches. Then consider 0.5 s on the **search** key only if clean. |
+| **Phase 2 — extract shrink (optional)** | Lower `fill_extract_tail_slack_secs` only if Phase 1 is clean *and* shorter timelines are still worth chasing. Independent A/B from Phase 1. |
+
+### Dual-fit confidence axis
+
+**Fingerprint / analysis only** — not a production dual-fit scope change. Do not wire
+into `try_dual_fit` / rescue gating (seam ledger A5/D8: uniqueness stays diagnostic until a
+labeled false positive). From [archive/TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md)
+Phase B residue (the `gate_pass` / end-search correlation). Axis semantics:
+[gap-fingerprint.md](docs/dev/gap-fingerprint.md).
+
+| Item | Direction |
+|------|-----------|
+| **Dual-fit `gate_pass` is a production mirror, not a discriminator — add a fingerprint confidence axis** | `gate_pass = min(pre_seam_r, post_seam_r) ≥ max(0.35, 0.12)` passes **263/263** on the 17-pair corpus. That is faithful, not broken: it reproduces the production gate exactly, and production's threshold sits far below the observed distribution (p05 of `smin` = 0.892) because `smin` is a ±600 ms argmax with no uniqueness term. Its value is provenance — "what did production decide" — so it should **not** be tightened. What's missing is a *separate fingerprint read* on whether the seam lag was unambiguous (analyzer / corpus roll-up strata — not a repair gate). The validators that discriminate are already emitted but ungated: `pre/post_seam_z` (p05 3.14, p25 4.91, median 7.86) and `pre/post_seam_prom` (p25 0.123). **Direction:** leave `gate_pass` alone (the goldens and corpus history read it); add derived fingerprint field `dualfit_confident` from min-z + min-prominence. **Do not** consolidate end-search length into dual-fit: on the throat cohort (n=65, where `span == gap`) the two disagree genuinely, not by dilution — `corr(fill−span, bridge−gap)` = +0.06, and tightening the amplitude floor drives it to −0.10; stratifying by min z reaches r = +0.68 only at n=8 / p=0.053, one of ~25 strata swept. In the z ≥ 6 cohort, 8 of 19 gaps show an end excursion of exactly 0 ms while dual-fit trims 4–28 ms. |
 
 ### Repair R6 follow-ups
 

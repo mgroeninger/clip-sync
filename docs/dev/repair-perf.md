@@ -386,21 +386,40 @@ argue against, not as motivation for one.
    **never been investigated**. Most plausible next candidate.
 3. **Narrow `fill_length_slack_secs` (default 5.0 → ~1.0 s).** Fingerprint corpus
    roll-up (17/17 pairs, 2026-07-26): end-search excursion is `|fill − bracket
-   span|` — median tens of ms, **max 388 ms**; nothing ≥1 s. The ±5 s window is
-   ~50–200× wider than observed need. **Not byte-identical** —
-   `search_coarse_step(bin_frames, span)` depends on the end-search window
-   (`span = 2×slack`), so the coarse grid moves with the default, not only its
-   clip. Candidate count scales roughly with slack while `coarse_step = bin`
-   (50 ms bins @ 48 kHz).
+   span|` — median tens of ms, p95 **77 ms** (all 1044 placed brackets) / **105 ms**
+   (best-by-min-seam cohort), **max 388 ms**; nothing ≥1 s. The ±5 s window is
+   **~13× the observed max** and ~65× its p95.
+
+   **Not byte-identical — but *not* via the coarse grid.** An earlier version of
+   this entry blamed `search_coarse_step`; that is wrong.
+   `search_coarse_step(bin, span) = (span / bin / 2_000).max(1) * bin`
+   (`gap_structure.rs:284`) with `span = 2×slack`: at 50 ms bins @ 48 kHz, slack
+   5.0 s gives 200 steps and slack 1.0 s gives 40 — **both floor to 0**, so
+   `coarse_step == bin_frames` either way. The multiplier only exceeds 1 above
+   ~100 s of slack. `end_min` also shifts by exactly 4.0 s = 80 bins, so the grid
+   *phase* is preserved and the narrowed candidate set is a strict **subset** of the
+   wide one (`gap_fill_fit.rs:1067`). The end sweep is the low-risk half.
+
+   **The divergence risk is the B extract window.** `fill_length_slack_secs` also
+   sizes the extracted/decoded B tail: `length_slack_secs =
+   fill_length_slack_secs.max(margin_secs)` → `b_extract_end_secs`
+   (`patch_audio/region.rs:1496`), and the same term in `pad_tail`
+   (`gap_fingerprint/measure.rs:1948`, `:2099`). With `fill_align_margin_secs` = 1.0,
+   5.0 → 1.0 shortens the B tail by **exactly 4.0 s per gap**, changing
+   `total_frames` and therefore the **start** search's bounds. Below 1.0 s the
+   extract is pinned by the margin, so a later 0.5 s step moves the end range only —
+   the two effects decouple there. Unbudgeted upside: less B extract per gap, against
+   decode now being the #2 cost (#2 above).
 
    **Proposed:** ship **1.0 s** first (~2.5× corpus max); consider **0.5 s** only
    if that A/B is clean. Do not chase the 388 ms sample max.
 
    **Exit checks:** (1) curated golden A/B — Phase A Tier-1 `fill_*` tripwire
-   shows any length moves; (2) re-roll `|fill − span|` on the fingerprint corpus
-   under the new slack — fail if fills pile up at the new bound; (3) spot-listen
-   a few largest-excursion patches. Tracked also in [BACKLOG.md](../../BACKLOG.md).
-   Measurement provenance:
+   shows any length moves; (2) **diff `start_frame`, not the fill bound** — the risk
+   is the haystack, not the end range. Note the fingerprint's own `pad_tail` shrinks
+   too, so a re-rolled `|fill − span|` is measured on a *different* haystack and is
+   not a clean before/after; (3) spot-listen a few largest-excursion patches.
+   Tracked also in [BACKLOG.md](../../BACKLOG.md). Measurement provenance:
    [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)
    Phase B.
 

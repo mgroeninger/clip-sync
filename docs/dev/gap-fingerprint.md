@@ -154,6 +154,29 @@ existed, a change that moved every fill length on the corpus left the golden dif
 `None` on dumps written before that date, on projected (non-measured) brackets, and on brackets that
 failed the gate.
 
+**Where the bracket-span nominal comes from (cite this, do not re-derive it).**
+`gate_structure_align` computes `gap_frames = refined.end_frame − refined.start_frame` where `refined`
+is the **candidate bracket**, not the baseline gap (`patch_region.rs:1398`); the end sweep's
+`end_min` / `end_max` are then centered on that value (`gap_fill_fit.rs:966-970`). Two checks
+reproduce it straight from any dump, without reading code:
+
+- `span_secs × sample_rate == splice_dualfit.gap_frames + move_frames`, exactly, per bracket.
+- Within a multi-bracket gap, `corr(move_frames, fill_frames) == 1.00` — the fill tracks the
+  per-bracket widening, not an independent length hunt over the original hole.
+
+This trap has been walked into twice. `|fill − original gap|` reads a ~2 s median on the 17-pair
+corpus and looks like a saturated ±5 s slack; against the bracket span the median excursion is 0 ms
+(p95 77 ms, max 388 ms).
+
+**Which bracket the golden reads — the predicate is the *best* one, not *any* one.**
+`best_seam_bracket` ranks by min-seam over every bracket with a complete seam pair, **gate failures
+included** (`seam_pre` / `seam_post` are populated on failures via `stage_of`; `fill_*` is not). So a
+gap whose min-seam winner failed the gate carries **null** `fill_*` even when other brackets in that
+same gap placed. On the 17-pair corpus that shape occurs in **3 of 121 patch gaps (~2.5%)**, so a
+newly harvested fixture hits it roughly **1 time in 40**. Verify a candidate fixture's
+best-by-min-seam bracket passed *before* adding it, or `curated_golden_fill_placement_is_armed` will
+fail for a reason that has nothing to do with a regression.
+
 ### `equivalence` — does this gap need patching?
 
 Classifies each scanned gap from its **silence character** (no seam/lag math — that failed on drifting
