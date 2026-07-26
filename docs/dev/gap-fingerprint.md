@@ -77,7 +77,7 @@ Measured on a real 5.1 dump (a licensed HE-AAC 5.1 pair, 2026-07-11): **per-brac
 **bracket count**, not gap duration (a 228 s gap with 0 feasible brackets is ~free). Treat that as a
 dated upper-bound snapshot, not a current SLA.
 
-The current figure is **4.3–5.0 s per bracket** (~4.23 s avg over 5061 brackets), from the 17-pair
+The current figure is **4.3–5.0 s per bracket** (~4.33 s avg over 5064 brackets), from the 17-pair
 characterize baseline in [repair-perf.md §2](repair-perf.md) (2026-07-23) — flat across 15 of 17 pairs.
 Fingerprint mode enumerates brackets exhaustively, so even that is an upper bound on the production
 path, which §3 measures at 2.7–4.1 s/bracket. Both numbers are snapshots; cite §2 rather than copying
@@ -147,7 +147,9 @@ never by overwriting the structure-only seam pair. See that plan's Phase B.
 
 `fill_frames` is the B-derived fill length. The end search's nominal is the **bracket span**
 (`span_secs` / refined post−pre), not the original silent-run gap; `fill_frames` differs from that
-span by up to `fill_length_slack_secs` (default 5.0 s). Measuring `|fill − original gap|` mostly
+span by up to `fill_length_slack_secs` (default 5.0 s; end-search only). The B haystack tail is
+sized separately by `fill_extract_tail_slack_secs` (default 5.0 s; `max` with
+`fill_align_margin_secs`). Measuring `|fill − original gap|` mostly
 reads anchor widening, not slack use — see [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)
 Phase B. **On the dump path they are the only projection of the end search's decision.** Before they
 existed, a change that moved every fill length on the corpus left the golden diff green. They are
@@ -165,8 +167,8 @@ reproduce it straight from any dump, without reading code:
   per-bracket widening, not an independent length hunt over the original hole.
 
 This trap has been walked into twice. `|fill − original gap|` reads a ~2 s median on the 17-pair
-corpus and looks like a saturated ±5 s slack; against the bracket span the median excursion is 0 ms
-(p95 77 ms, max 388 ms).
+corpus and looks like a saturated ±5 s slack; against the bracket span the signed median excursion is
+0 ms (abs median 24 ms, p95 91 ms, max 388 ms).
 
 **Which bracket the golden reads — the predicate is the *best* one, not *any* one.**
 `best_seam_bracket` ranks by min-seam over every bracket with a complete seam pair, **gate failures

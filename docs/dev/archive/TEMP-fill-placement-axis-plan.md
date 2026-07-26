@@ -244,6 +244,13 @@ So: the end sweep is not inert (~72% of placed brackets move >10 ms off span), b
 **~13× wider than the observed max excursion** (388 ms) and ~65× its p95. Per the exit wording below,
 Phase C stops here.
 
+> **Correction (2026-07-26), left inline rather than rewriting the table above:** the two p95 cells
+> are wrong. Recomputed over the same 1044 placed brackets in `gap-files/fingerprint-corpus`, p95 is
+> **91 ms** (all) / **157 ms** (best-by-min-seam); 77 ms is the p93. The slack ratio is therefore ~55×
+> p95, not ~65×. Median (24 ms) and max (388 ms) stand, and the Phase C NO-GO — which rests on the
+> max, not the p95 — is unaffected. Current figures live in
+> [repair-perf.md §5 #3](../repair-perf.md).
+
 **Residue (not Phase C):** (1) the r≈0.06 disagreement — at least one of end-search length vs dual-fit
 trim is reading noise (open research question; no plan); (2) `fill_length_slack_secs = 5.0` vs
 388 ms observed max — **tracked in [repair-perf.md §5 #3](../repair-perf.md)** and

@@ -1,8 +1,11 @@
 # Repair performance — measurement reference
 
 **Durable reference, not a plan.** Where repair time goes, how to measure it, and
-which candidates are already settled. Last full measurement **2026-07-24**
-(17 corpus pairs, production `--wav` path).
+which candidates are already settled. Last full 17-pair measurement
+**2026-07-25** (§1a, production `--wav` path, Level F instrumentation).
+**Everything measured on 17 pairs predates lever 1b(c)** — the only post-hoist
+data is the 4-pair spot check in §1b. Read §1a + §1b together for the current
+shape; §1 (2026-07-24) is kept for the pre-Level-F span partition.
 
 Update this doc when a new sweep lands — do not start a second baseline
 elsewhere. Campaign-specific reasoning belongs in a `TEMP-*` plan; the *numbers*
@@ -18,9 +21,11 @@ deliberately not in this repository; it exists only in the gitignored source map
 (`*.sources.local.toml`) alongside the gitignored `gap-files/`.
 
 Raw logs contain absolute media paths and **must not be committed**. The logs
-backing the tables below live in `gap-files/perf-baseline-2026-07-23/`, which
-`.gitignore` covers. When recording a result, carry over the derived numbers and
-the pair index — nothing else. Grep before committing.
+backing the tables below live under `gap-files/`, which `.gitignore` covers —
+`perf-baseline-2026-07-23/` (§2), `perf-gate-2026-07-24/` (§1, §3),
+`perf-gate-2026-07-25-2/` (§1a), `perf-gate-hoist/` (§1b), plus the fingerprint
+dumps in `fingerprint-corpus/` (§5 #3). When recording a result, carry over the
+derived numbers and the pair index — nothing else. Grep before committing.
 
 ## How to measure
 
@@ -60,6 +65,12 @@ parent holding ≥10%.
 ---
 
 ## 1. Where the time goes — 17 pairs, production path (2026-07-24)
+
+**Historical: pre-Level-F and pre-lever-1b(c).** The span names here no longer
+exist (see "Span renames" below) and the end loops this table charges for have
+since been hoisted away. Kept because it is the last full 17-pair *tree*, and
+because §3's no-regression rows are measured against it. For the current shape
+read §1a (full corpus, Level F) and §1b (post-hoist, 4 pairs).
 
 Exclusive time, merged by span name. Root = `patch_audio`, **9215 s**.
 
@@ -143,7 +154,8 @@ partial read (33.0/32.9%, 290 µs/cand) held up: the full set lands at
 
 What this settles:
 
-- **The repeat correlation is ~72% of total repair time.** Not the structure
+- **The repeat correlation is ~66% of instrumented repair time** (5601 s of
+  8449 s — the per-loop Repeat shares summed). Not the structure
   scan (0.2–0.3%), not the score arithmetic (0.0%). `Unacct` ≈ 0 everywhere, so
   the four buckets account for the loops completely — no further split needed.
 - **Lever 1 worked, and that is exactly why repeat now dominates.** Where seam is
@@ -165,9 +177,11 @@ measurement fault; it cleared when the run finished.
 and the start-search repeat window becomes the only remaining lever-1b target.
 Re-measure to confirm — this is arithmetic, not a measurement.
 
-### Lever 1b(c) — end-search repeat hoist (implemented + validated 2026-07-25)
+## 1b. Lever 1b(c) — end-search repeat hoist (implemented + validated 2026-07-25)
 
-The table above says `unified_refine_end` is 32.9% of root and 99.8% repeat.
+The §1a table says `unified_refine_end` is **30.71%** of root and 99.7% repeat
+(the 9-pair partial read 32.9% / 99.8%, which is where that pair of figures came
+from in earlier drafts).
 **All of it was recomputing one identical `f64`.** In the end search:
 
 - the placement start is `fill_bracket_placement(fill_start, end, ..).start`, so
@@ -188,7 +202,7 @@ whole slack range). Expected saving on the full 17-pair run: **2672 s of 8449 s*
 (`unified_refine_end` 2595 + `unified_coarse_end` 78), **31.6% of instrumented
 repair time**, with no approximation.
 
-#### Media spot check — 4 pairs, pre/post, same recipe (2026-07-25)
+### Media spot check — 4 pairs, pre/post, same recipe (2026-07-25)
 
 Pairs 1, 14, 6, 9 re-run on the hoisted binary and compared line-by-line against
 the 17-pair baseline logs. No `-RepairArgs` on either run; the `Gap scan:` /
@@ -245,6 +259,10 @@ comparison on a machine whose load we do not control.
 Pair 1 exits 4 on both sides (pre-existing unfillable gap, identical decisions);
 the nonzero exit is not introduced by this change.
 
+**There is still no post-hoist 17-pair sweep.** The 4-pair aggregate above is the
+best current profile; §1/§1a are both pre-hoist. Land a full sweep before quoting
+a post-hoist corpus percentage.
+
 **If the post seam ever becomes end-dependent** (Phase C of
 [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)), this hoist
 needs revisiting — but only its cheap half. `repeat_penalty_at_placement` takes
@@ -287,39 +305,44 @@ perf residue (§5 #3).
 
 Fingerprint mode, so brackets are enumerated exhaustively — treat `search s` as
 an **upper bound** on the production path (§3 measures 2.7–4.1 s/bracket in
-production). `search s` sums the per-bracket `search_us` field; `wall s` spans
-first to last `bracket_stats` line, i.e. characterize only.
+production). `search s` sums the per-bracket `search_us` field. Two walls, both
+from the log timestamps: **`char s`** is first → last `bracket_stats` line
+(characterize only, the like-for-like denominator for `search s`); **`run s`** is
+first log line → last `bracket_stats` and additionally carries the Gap scan and
+setup that precede the first bracket.
 
-| pair | brackets | search s | wall s | s/bracket |
-|------|----------|----------|--------|-----------|
-| 1  | 287 | 841.8  | 1104 | 2.93 |
-| 2  | 219 | 1027.5 | 1164 | 4.69 |
-| 3  | 219 | 954.4  | 1436 | 4.36 |
-| 4  | 169 | 810.0  | 838  | 4.79 |
-| 5  | 198 | 949.8  | 1282 | 4.80 |
-| 6  | 307 | 778.9  | 1178 | 2.54 |
-| 7  | 148 | 710.6  | 1087 | 4.80 |
-| 8  | 174 | 668.1  | 1059 | 3.84 |
-| 9  | 209 | 1019.6 | 1425 | 4.88 |
-| 10 | 258 | 1217.0 | 1666 | 4.72 |
-| 11 | 94  | 474.6  | 489  | 5.05 |
-| 12 | 164 | 818.1  | 1178 | 4.99 |
-| 13 | 701 | 2896.7 | 3715 | 4.13 |
-| 14 | 542 | 2613.1 | 3162 | 4.82 |
-| 15 | 80  | 387.5  | 745  | 4.84 |
-| 16 | 538 | 2316.2 | 2950 | 4.31 |
-| 17 | 757 | 3424.9 | 4464 | 4.52 |
-| **total** | **5061** | **21 409** | **28 922** | **4.23 avg** |
+| pair | brackets | search s | char s | run s | s/bracket |
+|------|----------|----------|--------|-------|-----------|
+| 1  | 287 | 841.8  | 1104 | 1104 | 2.93 |
+| 2  | 219 | 1027.5 | 1164 | 1164 | 4.69 |
+| 3  | 219 | 954.4  | 1057 | 1436 | 4.36 |
+| 4  | 169 | 810.0  | 838  | 838  | 4.79 |
+| 5  | 198 | 949.8  | 968  | 1280 | 4.80 |
+| 6  | 307 | 778.9  | 940  | 1178 | 2.54 |
+| 7  | 148 | 710.6  | 774  | 1087 | 4.80 |
+| 8  | 174 | 668.1  | 745  | 1056 | 3.84 |
+| 9  | 209 | 1019.6 | 1134 | 1425 | 4.88 |
+| 10 | 258 | 1217.0 | 1336 | 1661 | 4.72 |
+| 11 | 94  | 474.6  | 486  | 486  | 5.05 |
+| 12 | 164 | 818.1  | 904  | 1178 | 4.99 |
+| 13 | 701 | 2896.7 | 3352 | 3715 | 4.13 |
+| 14 | 542 | 2613.1 | 2977 | 3162 | 4.82 |
+| 15 | 80  | 387.5  | 424  | 737  | 4.84 |
+| 16 | 538 | 2316.2 | 2645 | 2950 | 4.31 |
+| 17 | 757 | 3424.9 | 4170 | 4455 | 4.52 |
+| **total** | **5064** | **21 908.8** | **25 018** | **28 942** | **4.33 avg** |
 
-**Anchor search is 74% of characterize wall-clock**, consistent with the
-2026-07-20 finding that `char_gate_search` is 93% of a production repair and
-`gate_anchor_search` 88–96% of that.
+**Anchor search is 88% of characterize wall-clock** (21 908.8 / 25 018),
+consistent with the 2026-07-20 finding that `char_gate_search` is 93% of a
+production repair and `gate_anchor_search` 88–96% of that. Against `run s` it is
+76%, but that denominator includes scan and setup, which the anchor search was
+never part of — earlier drafts quoted 74% off that mismatched pair.
 
 **Per-bracket cost is flat** — 4.3–5.0 s on 15 of 17 pairs; only pairs 1 (2.93)
 and 6 (2.54) sit outside. Two consequences:
 
-- Bracket **count** (94 → 757, an 8× spread) is what separates an 8-minute pair
-  from a 74-minute one, not per-bracket difficulty.
+- Bracket **count** (94 → 757, an 8× spread) is what separates an 8-minute
+  characterize from a 70-minute one, not per-bracket difficulty.
 - Any future per-bracket speedup scales linearly across the corpus, with no
   pair-specific structure to special-case. That is a property of the workload,
   not an endorsement of a candidate.
@@ -362,8 +385,9 @@ Already landed and **on by default**: the hoisted placement-invariant channel
 selection (lever 2) and the FFT seam band on the dense refine (lever 1,
 `RepairConfig.fft_seam_search`; `--no-fft-seam-search` opts out).
 
-**The cheap wins are spent.** Treat §1 as the reference a new candidate must
-argue against, not as motivation for one.
+**The cheap wins are spent.** Treat §1a + §1b as the reference a new candidate
+must argue against, not as motivation for one. (§1 is the pre-hoist, pre-Level-F
+tree; do not size a candidate against it.)
 
 ## 5. Open candidates
 
@@ -374,52 +398,64 @@ argue against, not as motivation for one.
    candidate `start` — so it needs the lever-1 FFT banding treatment
    (`fill_seam_correlations_band`), not a hoist. Largest remaining single target
    by a wide margin.
-1. **`gate_anchor_search` holds 910.8 s (9.9%) of exclusive time.** A tenth of
-   all runtime is inside the anchor search but inside *no* child span — anchor
-   enumeration, feasibility filtering, or per-bracket setup, between
-   `try_anchor_seam_joint_search`'s entry and the per-bracket
-   `bracket_unified_search` calls. This is an **instrumentation gap, not a
-   located cost**: span it before theorizing about it.
-2. **Decode is 25.6% combined (2354.7 s), the #2 cost.** It has not got slower —
+1. **`local_anchor_xcorr` — 358 s (4.23%) on the full corpus, 9.94% post-hoist.**
+   This is what the old "`gate_anchor_search` holds 910.8 s (9.9%) of exclusive
+   time" entry was actually pointing at. That 910.8 s was an **instrumentation
+   gap** in the 2026-07-24 binary, which had no span under the gate; once
+   `anchor_matchability` / `local_anchor_xcorr` were added, `gate_anchor_search`'s
+   own exclusive time collapsed into the roll-up's "everything else" bucket
+   (≤140 s total across 17 pairs on 2026-07-25-2) and the cost resolved to the
+   local cross-correlation, 99.3% of `anchor_matchability`. It rises to a
+   **distant third at 9.94%** once the end loops are hoisted away (§1b). Now a
+   located cost, not a mystery — but still unattacked.
+2. **Decode is 25.2% combined (2131 s), the #2 cost.** It has not got slower —
    the gate got ~5× faster, so decode's share grew from the 6.5% of the
-   2026-07-20 baseline. It is 34 calls of ~69 s each, not a long tail, and it has
-   **never been investigated**. Most plausible next candidate.
-3. **Narrow `fill_length_slack_secs` (default 5.0 → ~1.0 s).** Fingerprint corpus
-   roll-up (17/17 pairs, 2026-07-26): end-search excursion is `|fill − bracket
-   span|` — median tens of ms, p95 **77 ms** (all 1044 placed brackets) / **105 ms**
-   (best-by-min-seam cohort), **max 388 ms**; nothing ≥1 s. The ±5 s window is
-   **~13× the observed max** and ~65× its p95.
+   2026-07-20 baseline, and post-hoist it is **~35%** of root (§1b). It is 34
+   calls of ~63 s each, not a long tail, and it has **never been investigated**.
+   Most plausible next candidate.
+3. **Narrow end-search slack (`fill_length_slack_secs` 5.0 → ~1.0 s).** The
+   decoupling from B extract is already done (below); only the narrowing is open.
+   Fingerprint corpus roll-up (17/17 pairs, 2026-07-26): end-search excursion is
+   `|fill − bracket span|` — median **24 ms**, p95 **91 ms** (all 1044 placed
+   brackets) / **157 ms** (best-by-min-seam cohort, n=121), **max 388 ms**;
+   nothing ≥1 s. The ±5 s window is **~13× the observed max** and ~55× its p95.
+   (`archive/TEMP-fill-placement-axis-plan.md` Phase B quotes 77 / 105 ms for
+   these two p95s; recomputed from the same 1044 brackets they are 91 / 157 —
+   77 ms is the p93. Nothing downstream of it turns on the difference.)
 
-   **Not byte-identical — but *not* via the coarse grid.** An earlier version of
-   this entry blamed `search_coarse_step`; that is wrong.
-   `search_coarse_step(bin, span) = (span / bin / 2_000).max(1) * bin`
-   (`gap_structure.rs:284`) with `span = 2×slack`: at 50 ms bins @ 48 kHz, slack
-   5.0 s gives 200 steps and slack 1.0 s gives 40 — **both floor to 0**, so
-   `coarse_step == bin_frames` either way. The multiplier only exceeds 1 above
-   ~100 s of slack. `end_min` also shifts by exactly 4.0 s = 80 bins, so the grid
-   *phase* is preserved and the narrowed candidate set is a strict **subset** of the
-   wide one (`gap_fill_fit.rs:1067`). The end sweep is the low-risk half.
+   **Two jobs, now two knobs.** `fill_length_slack_secs` used to size both (1) the
+   end sweep (`gap ± slack` in `gap_fill_fit`) and (2) the B haystack tail; the
+   split has since landed, so (2) is `fill_extract_tail_slack_secs.max(margin)` →
+   `b_extract_end_secs` (`patch_audio/region.rs:1496`) and fingerprint `pad_tail`
+   (`gap_fingerprint/measure.rs:1951`, `:2101`). The two carry different risk:
+   (1) only drops far end candidates; (2) shortens `total_frames` and can
+   invalidate late *start* candidates / move gate outcomes. Full-track decode is
+   unchanged either way (extract is a slice) — which is why they had to be
+   decoupled: one dial bought (2)'s blast radius without the decode win once
+   hoped for.
 
-   **The divergence risk is the B extract window.** `fill_length_slack_secs` also
-   sizes the extracted/decoded B tail: `length_slack_secs =
-   fill_length_slack_secs.max(margin_secs)` → `b_extract_end_secs`
-   (`patch_audio/region.rs:1496`), and the same term in `pad_tail`
-   (`gap_fingerprint/measure.rs:1948`, `:2099`). With `fill_align_margin_secs` = 1.0,
-   5.0 → 1.0 shortens the B tail by **exactly 4.0 s per gap**, changing
-   `total_frames` and therefore the **start** search's bounds. Below 1.0 s the
-   extract is pinned by the margin, so a later 0.5 s step moves the end range only —
-   the two effects decouple there. Unbudgeted upside: less B extract per gap, against
-   decode now being the #2 cost (#2 above).
+   **Coarse grid is not the issue.** `search_coarse_step(bin, span) =
+   (span / bin / 2_000).max(1) * bin` (`gap_structure.rs:284`) with `span =
+   2×slack`: at 50 ms bins @ 48 kHz, slack 5.0 s and 1.0 s both floor to
+   `coarse_step == bin_frames`. The narrowed end range is a strict **subset** of
+   the wide one.
 
-   **Proposed:** ship **1.0 s** first (~2.5× corpus max); consider **0.5 s** only
-   if that A/B is clean. Do not chase the 388 ms sample max.
+   **Proposed (see [BACKLOG.md](../../BACKLOG.md)) — split the config, do not
+   hardcode an extract floor:**
+   - **Config split — done:** `fill_extract_tail_slack_secs` (default **5.0**) wires
+     `b_extract_end` / `pad_tail` (`max` with margin); `fill_length_slack_secs` is
+     end-sweep / `max_fill` only. Both at 5.0 = byte-identical to the old single dial.
+   - **Phase 1:** narrow `fill_length_slack_secs` → **1.0 s** (~2.5× corpus max); leave
+     extract-tail at 5.0. Expected near byte-identical if the corpus bound holds.
+     Consider **0.5 s** on the search key only if that A/B is clean. Do not chase the
+     388 ms sample max.
+   - **Phase 2:** optionally lower `fill_extract_tail_slack_secs`; independent A/B, only
+     if Phase 1 is clean and shorter timelines are still worth chasing.
 
-   **Exit checks:** (1) curated golden A/B — Phase A Tier-1 `fill_*` tripwire
-   shows any length moves; (2) **diff `start_frame`, not the fill bound** — the risk
-   is the haystack, not the end range. Note the fingerprint's own `pad_tail` shrinks
-   too, so a re-rolled `|fill − span|` is measured on a *different* haystack and is
-   not a clean before/after; (3) spot-listen a few largest-excursion patches.
-   Tracked also in [BACKLOG.md](../../BACKLOG.md). Measurement provenance:
+   **Exit checks (Phase 1):** (1) curated golden A/B — Tier-1 `fill_*` plus
+   patch/skip outcome; (2) spot-listen a few largest-excursion patches. A
+   re-rolled `|fill − span|` on a shrunk `pad_tail` is **not** a Phase 1
+   before/after (that mixes in Phase 2). Measurement provenance:
    [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)
    Phase B.
 
