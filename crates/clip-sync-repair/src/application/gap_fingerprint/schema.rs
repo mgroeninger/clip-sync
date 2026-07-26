@@ -289,7 +289,7 @@ pub struct BracketInfo {
     ///
     /// The end search's nominal is this bracket's refined span (`span_secs` /
     /// `params.gap_frames` = post−pre), **not** the original silent-run gap.
-    /// `fill_frames` differs from that span by up to `fill_length_slack_secs` (default 5.0 s;
+    /// `fill_frames` differs from that span by up to `fill_length_slack_secs` (default 1.0 s;
     /// end-search only). Haystack tail is sized by `fill_extract_tail_slack_secs`.
     /// Comparing `fill_frames` to the original gap conflates **anchor widening** with end-search
     /// excursion — the Phase B denominator trap; see docs/dev/archive/TEMP-fill-placement-axis-plan.md.

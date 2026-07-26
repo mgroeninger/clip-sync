@@ -86,7 +86,7 @@ impl Default for PatchTestOptions {
             fill_border_search_secs: 30.0,
             fill_align_margin_secs: 1.0,
             gap_signature_context_secs: 3.0,
-            fill_length_slack_secs: 5.0,
+            fill_length_slack_secs: 1.0,
             fill_extract_tail_slack_secs: 5.0,
             gap_end_extend_max_ms: 500,
             gap_end_extend_step_ms: 20,

@@ -157,7 +157,7 @@ pub struct Args {
     pub gap_signature_context_secs: Option<f64>,
 
     /// Override: how far B fill end may differ from A gap length when locating post-border
-    /// (seconds; end-search only) [default: 5].
+    /// (seconds; end-search only) [default: 1].
     #[arg(long, value_name = "SECS")]
     pub fill_length_slack_secs: Option<f64>,
 

@@ -330,7 +330,7 @@ fn default_short_gap_mean_correlation_secs() -> f64 {
     2.0
 }
 fn default_fill_length_slack_secs() -> f64 {
-    5.0
+    1.0
 }
 fn default_fill_extract_tail_slack_secs() -> f64 {
     5.0

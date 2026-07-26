@@ -440,15 +440,13 @@ tree; do not size a candidate against it.)
    `coarse_step == bin_frames`. The narrowed end range is a strict **subset** of
    the wide one.
 
-   **Proposed (see [BACKLOG.md](../../BACKLOG.md)) — split the config, do not
-   hardcode an extract floor:**
+   **Proposed (see [BACKLOG.md](../../BACKLOG.md)):**
    - **Config split — done:** `fill_extract_tail_slack_secs` (default **5.0**) wires
-     `b_extract_end` / `pad_tail` (`max` with margin); `fill_length_slack_secs` is
-     end-sweep / `max_fill` only. Both at 5.0 = byte-identical to the old single dial.
-   - **Phase 1:** narrow `fill_length_slack_secs` → **1.0 s** (~2.5× corpus max); leave
-     extract-tail at 5.0. Expected near byte-identical if the corpus bound holds.
-     Consider **0.5 s** on the search key only if that A/B is clean. Do not chase the
-     388 ms sample max.
+     `b_extract_end` / `pad_tail`; `fill_length_slack_secs` is end-sweep only.
+   - **Phase 1 — in progress:** `fill_length_slack_secs` default **1.0 s** (~2.5×
+     corpus max); extract-tail left at 5.0. Verify goldens → fingerprint corpus A/B →
+     spot-listen if needed → then perf. Consider **0.5 s** on the search key only if
+     1.0 is clean. Do not chase the 388 ms sample max.
    - **Phase 2:** optionally lower `fill_extract_tail_slack_secs`; independent A/B, only
      if Phase 1 is clean and shorter timelines are still worth chasing.
 

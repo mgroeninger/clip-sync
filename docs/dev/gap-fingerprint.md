@@ -147,7 +147,7 @@ never by overwriting the structure-only seam pair. See that plan's Phase B.
 
 `fill_frames` is the B-derived fill length. The end search's nominal is the **bracket span**
 (`span_secs` / refined post−pre), not the original silent-run gap; `fill_frames` differs from that
-span by up to `fill_length_slack_secs` (default 5.0 s; end-search only). The B haystack tail is
+span by up to `fill_length_slack_secs` (default 1.0 s; end-search only). The B haystack tail is
 sized separately by `fill_extract_tail_slack_secs` (default 5.0 s; `max` with
 `fill_align_margin_secs`). Measuring `|fill − original gap|` mostly
 reads anchor widening, not slack use — see [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)
