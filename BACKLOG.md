@@ -30,25 +30,23 @@ Last updated: 2026-07-26.
 From [archive/TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) Phase B
 residue; tracked as [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
-**One knob, two jobs — split the config (no hardcode).** `fill_length_slack_secs` and
-`fill_extract_tail_slack_secs` are separate knobs (both default **5.0** today — pure fan-out,
-byte-identical to the old single dial). (1) end-search range (`gap ± slack` in `gap_fill_fit`);
-(2) B haystack tail (`length_slack = extract_tail.max(margin)` → `b_extract_end_secs` /
-fingerprint `pad_tail`). Those are different risks: (1) only drops far end candidates; (2)
-shortens `total_frames`, which can invalidate late *start* candidates
-(`start + gap + post_span > total_frames`) and move seam/gate outcomes. Corpus max
-`|fill − span|` is 388 ms (nothing ≥1 s; ±5 s is ~13× that max), so narrowing **search**
-to 1.0 s keeps every observed winner inside a strict subset of today's end range
-(`search_coarse_step` still saturates at `bin_frames`). Shrinking the extract is what creates
-the wide blast radius — and it does **not** cut the #2 full-track decode cost (extract is a
-slice). **Why decouple:** the corpus answers "how far may fill end slide?"; the extract only
-needs enough tail for search radius + post context + that slide.
+**Status:** config split **done**; both knobs still default **5.0 s** — same behavior as the
+old single dial. Curated goldens green after the split
+(`curated_golden_baseline_invariance`, `curated_golden_fill_placement_is_armed`). **Next:**
+narrow search slack and verify behavior (then perf).
+
+**Why two knobs.** (1) `fill_length_slack_secs` — end-search range (`gap ± slack` /
+`max_fill`). (2) `fill_extract_tail_slack_secs` — B haystack tail
+(`extract_tail.max(margin)` → `b_extract_end` / fingerprint `pad_tail`). Narrowing (1) only
+drops far end candidates (corpus max `|fill − span|` = 388 ms; ±5 s is ~13× that). Narrowing
+(2) shortens `total_frames` and can move start/gate outcomes — separate, optional later.
+Extract shrink does **not** cut full-track decode cost.
 
 | Item | Direction |
 |------|-----------|
-| **Config split** | **Done** — `fill_extract_tail_slack_secs` (CLI `--fill-extract-tail-slack-secs`) wires extract / `pad_tail`; `fill_length_slack_secs` is end-sweep / `max_fill` only. Both default 5.0. |
-| **Phase 1 — narrow search** | Narrow `fill_length_slack_secs` 5.0 → **1.0 s** (leave extract-tail at 5.0). Expected near byte-identical if corpus bound holds; exit: golden A/B on `fill_*` + outcome (patch/skip) + spot-listen largest-excursion patches. Then consider 0.5 s on the **search** key only if clean. |
-| **Phase 2 — extract shrink (optional)** | Lower `fill_extract_tail_slack_secs` only if Phase 1 is clean *and* shorter timelines are still worth chasing. Independent A/B from Phase 1. |
+| **Config split** | **Done** — `fill_extract_tail_slack_secs` (CLI `--fill-extract-tail-slack-secs`) wires extract / `pad_tail`; `fill_length_slack_secs` is end-sweep only. Both default **5.0**; behavior unchanged (goldens OK). |
+| **Phase 1 — narrow search + verify** | Change `fill_length_slack_secs` 5.0 → **1.0 s**; leave extract-tail at 5.0. **Verify behavior first:** curated goldens (`fill_*` + patch/skip); fingerprint corpus A/B (clean — haystack unchanged) for placement/outcome diffs; spot-listen if anything moves. **Then** `measure-repair-perf.ps1` / `CLIP_SYNC_SPAN_TIMING` for end-search win (not fingerprint wall-clock). Consider 0.5 s search-only only if 1.0 is clean. |
+| **Phase 2 — extract shrink (optional)** | Lower `fill_extract_tail_slack_secs` only if Phase 1 is clean *and* shorter timelines are still worth chasing. Independent A/B. |
 
 ### Dual-fit confidence axis
 
