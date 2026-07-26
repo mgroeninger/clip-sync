@@ -24,6 +24,7 @@
 #   * A real write path (`--wav`). `--repair-preview` stops after characterize, so nothing on the executor
 #     side runs at all. `--gap-fingerprints` is the dump/oracle path, which has a different shape from
 #     production (it enumerates brackets exhaustively instead of short-circuiting at the first winner).
+#     For bulk fingerprint dumps (same manifest format, no span timing), use `measure-gap-fingerprints.ps1`.
 #   * `CLIP_SYNC_SPAN_TIMING` set, or no timings emit.
 #
 # Two modes:

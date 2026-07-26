@@ -28,6 +28,17 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
   `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
 
+**Bulk runs (many pairs):** use [`scripts/measure-gap-fingerprints.ps1`](../../scripts/measure-gap-fingerprints.ps1)
+with the same manifest format as [`measure-repair-perf.ps1`](../../scripts/measure-repair-perf.ps1)
+(`label, A, B [, extra]`). One `--gap-fingerprints` dump per row under `-CorpusRoot/<label>/`.
+Requires `--features …,calibration`. Prefer gitignored `gap-files/` for corpora; keep manifests/logs
+(which contain media paths) out of git — same media-hygiene rule as [repair-perf.md](repair-perf.md).
+
+```powershell
+./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/my-corpus
+./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
+```
+
 To decide *which* gaps are worth characterizing, use the **normal repair run's gap table** — it lists
 every gap's authoritative patch/skip + reason. A summary tier (cheap, no gate detail) still exists in
 the API (`characterize_gaps`) but the bin path always characterizes its selected gaps at full detail,

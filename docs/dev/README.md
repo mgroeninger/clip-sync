@@ -25,7 +25,7 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 | Doc | Covers |
 |-----|--------|
 | [gap-vocabulary.md](gap-vocabulary.md) | Gap cells, silence-character pre-gate, fixture mapping |
-| [gap-fingerprint.md](gap-fingerprint.md) | Gap fingerprint dump schema and corpus format |
+| [gap-fingerprint.md](gap-fingerprint.md) | Gap fingerprint dump schema and corpus format; bulk dump via `measure-gap-fingerprints.ps1` |
 
 ## Plans
 
