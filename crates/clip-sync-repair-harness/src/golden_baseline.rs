@@ -38,7 +38,7 @@ pub struct GoldenRecord {
     /// Fill placement of the closest-to-chosen bracket. **Tier 1** — these are frame indices, exact
     /// integers, not continuous scores, so any drift is a real decision change. Added 2026-07-25 to
     /// close the blind spot where an end-search change could move every fill length on the corpus
-    /// and leave this diff green (docs/dev/TEMP-fill-placement-axis-plan.md, Phase A).
+    /// and leave this diff green (docs/dev/archive/TEMP-fill-placement-axis-plan.md, Phase A).
     pub fill_start_frame: Option<usize>,
     pub fill_frames: Option<usize>,
     // --- Tier 2: within ε ---
@@ -335,7 +335,7 @@ mod tests {
 
         // Phase A exit criterion: a fill-placement change must turn the diff red. Before these two
         // fields existed, an end-search change could move every fill length on the corpus and leave
-        // this diff green — the blind spot TEMP-fill-placement-axis-plan.md was written to close.
+        // this diff green — the blind spot docs/dev/archive/TEMP-fill-placement-axis-plan.md was written to close.
         // A one-frame move is enough; these are Tier 1, so there is no epsilon to hide in.
         let mut act = exp.clone();
         act.gaps[0].fill_frames = Some(4411);

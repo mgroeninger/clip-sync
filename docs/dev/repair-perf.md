@@ -246,7 +246,7 @@ Pair 1 exits 4 on both sides (pre-existing unfillable gap, identical decisions);
 the nonzero exit is not introduced by this change.
 
 **If the post seam ever becomes end-dependent** (Phase C of
-[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md)), this hoist
+[archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)), this hoist
 needs revisiting — but only its cheap half. `repeat_penalty_at_placement` takes
 the seams as *arguments* and branches on them (`wave_min`,
 `asymmetric_post_dup`), so an end-varying `post_seam` makes the penalty
@@ -276,9 +276,12 @@ corr(A_post_border, B_fill_tail)` — the *fill tail*, end-dependent by
 definition. Pinning the tail at `start + gap_frames` is exact when
 `fill_len == gap_frames` and drifts with `|end − nominal_end|`, which the 5.0 s
 `default_fill_length_slack_secs` makes reachable. Whether the search's end sweep
-should carry its own seam evidence is an open **behavior** question, and no
-harness currently records fill placement at all — see
-[TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md).
+should carry its own seam evidence was the open **behavior** question in
+[archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md);
+Phase A armed the placement observable, Phase B's corpus roll-up (slack vs
+**bracket span**, not original gap) made Phase C a **NO-GO** — the end sweep
+rarely leaves nominal (max excursion 388 ms). Slack over-provisioning is the
+perf residue (§5 #3).
 
 ## 2. Per-pair characterize baseline, 17 pairs (2026-07-23)
 
@@ -381,6 +384,25 @@ argue against, not as motivation for one.
    the gate got ~5× faster, so decode's share grew from the 6.5% of the
    2026-07-20 baseline. It is 34 calls of ~69 s each, not a long tail, and it has
    **never been investigated**. Most plausible next candidate.
+3. **Narrow `fill_length_slack_secs` (default 5.0 → ~1.0 s).** Fingerprint corpus
+   roll-up (17/17 pairs, 2026-07-26): end-search excursion is `|fill − bracket
+   span|` — median tens of ms, **max 388 ms**; nothing ≥1 s. The ±5 s window is
+   ~50–200× wider than observed need. **Not byte-identical** —
+   `search_coarse_step(bin_frames, span)` depends on the end-search window
+   (`span = 2×slack`), so the coarse grid moves with the default, not only its
+   clip. Candidate count scales roughly with slack while `coarse_step = bin`
+   (50 ms bins @ 48 kHz).
+
+   **Proposed:** ship **1.0 s** first (~2.5× corpus max); consider **0.5 s** only
+   if that A/B is clean. Do not chase the 388 ms sample max.
+
+   **Exit checks:** (1) curated golden A/B — Phase A Tier-1 `fill_*` tripwire
+   shows any length moves; (2) re-roll `|fill − span|` on the fingerprint corpus
+   under the new slack — fail if fills pile up at the new bound; (3) spot-listen
+   a few largest-excursion patches. Tracked also in [BACKLOG.md](../../BACKLOG.md).
+   Measurement provenance:
+   [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)
+   Phase B.
 
 ## 6. Not covered
 

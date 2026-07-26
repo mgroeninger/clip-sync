@@ -1,5 +1,5 @@
 {
-  "note": "Curated gap fingerprint fixtures, at least one per representable cell. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/dev/archive/gap-fixture-corpus-plan.md. NOT one-per-cell: fixtures 11/12 duplicate the bracket_patch_donor_broken and bracket_patch_clean cells of 02/01 on purpose, because 01-10 predate compute_region_measurements emitting the gate's chosen fill placement and so carry null fill_start_frame/fill_frames. Duplicates are legal - the coverage test asserts cell membership, not uniqueness. See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.",
+  "note": "Curated gap fingerprint fixtures, at least one per representable cell. Non-identifying (hashed source ids); safe to commit. Extracted from ephemeral gap-files/ before deletion. See docs/dev/archive/gap-fixture-corpus-plan.md. NOT one-per-cell: fixtures 11/12 duplicate the bracket_patch_donor_broken and bracket_patch_clean cells of 02/01 on purpose, because 01-10 predate compute_region_measurements emitting the gate's chosen fill placement and so carry null fill_start_frame/fill_frames. Duplicates are legal - the coverage test asserts cell membership, not uniqueness. See docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A.",
   "fixtures": [
     {
       "file": "01_bracket_patch_clean.json",

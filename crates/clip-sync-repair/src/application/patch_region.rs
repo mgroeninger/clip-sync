@@ -1281,7 +1281,7 @@ pub struct OracleFitScores {
     /// B-derived `fill_frames` the end sweep settled on. Free: the gate computed it to reach its
     /// verdict, this only stops discarding it. The fingerprint's other placement (`place_on_b`) runs
     /// at `waveform_weight: 0.0` and so cannot observe an end-search scoring change; this one can.
-    /// See docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+    /// See docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A.
     pub alignment: FillAlignment,
 }
 

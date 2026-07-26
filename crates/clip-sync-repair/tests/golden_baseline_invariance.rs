@@ -61,7 +61,7 @@ fn curated_golden_baseline_invariance() {
     );
 }
 
-/// **Property 2 of the fill-placement re-baseline** — see docs/dev/TEMP-fill-placement-axis-plan.md
+/// **Property 2 of the fill-placement re-baseline** — see docs/dev/archive/TEMP-fill-placement-axis-plan.md
 /// Phase A.
 ///
 /// `fill_start_frame` / `fill_frames` are Tier-1 axes whose purpose is to turn the golden red when a
@@ -97,7 +97,7 @@ fn curated_golden_fill_placement_is_armed() {
         !armed.is_empty(),
         "no curated gap carries fill placement — the Tier-1 fill_start_frame / fill_frames tripwire is \
          disarmed and would pass vacuously. A fixture whose BEST-by-min-seam bracket passes the gate \
-         must be present (fixtures 11/12). See docs/dev/TEMP-fill-placement-axis-plan.md Phase A, \
+         must be present (fixtures 11/12). See docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A, \
          property 2.",
     );
 

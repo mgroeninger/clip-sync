@@ -1,16 +1,18 @@
 # Fill placement axis — measure the end search before changing it
 
-> **Status (2026-07-26):** Phase A is **COMPLETE — exit criterion met.** Phase B's slack-use exit is
-> also **met on the 17-pair fingerprint corpus** (denominator = bracket span, not original gap) →
-> **Phase C is a NO-GO.** The placement is emitted, carried to `GapRow`, recorded in `GoldenRecord`,
-> and the golden is armed end-to-end: fixtures **11** (`bracket_patch_donor_broken`) and **12**
-> (`bracket_patch_clean`), harvested from `gap-files/fill-placement-arm`, carry non-null
-> `fill_start_frame` / `fill_frames`, so a golden diff now turns red when a fill length moves.
-> `curated_golden_fill_placement_is_armed` replaced the negative assert. Legacy fixtures 01–10 remain
-> null (their provenance media is gone) and untouched.
+> **Status (2026-07-26): ARCHIVED.** Phase A **COMPLETE** (placement observable armed). Phase B
+> slack-use exit **MET** on the 17-pair fingerprint corpus (denominator = bracket span, not original
+> gap) → **Phase C NO-GO.** Optional structure-vs-production second placement was never required for
+> that exit and is deferred outside this plan (only if a weight A/B is planned later). Perf residue —
+> narrowing `fill_length_slack_secs` — lives in [repair-perf.md §5 #3](../repair-perf.md) and
+> [BACKLOG.md](../../../BACKLOG.md), not here.
 >
-> Prerequisite for any change to the end search's scoring; **not** a prerequisite for lever 1b(c)
-> (the end-search repeat hoist), which is byte-identical and already landed.
+> The placement is emitted, carried to `GapRow`, recorded in `GoldenRecord`, and the
+> golden is armed end-to-end: fixtures **11** (`bracket_patch_donor_broken`) and **12**
+> (`bracket_patch_clean`), harvested from `gap-files/fill-placement-arm`, carry non-null
+> `fill_start_frame` / `fill_frames`. Legacy fixtures 01–10 remain null (provenance media
+> gone) and untouched. Lever 1b(c) (end-search repeat hoist) was byte-identical and
+> already landed independently of this plan.
 
 **Problem:** the unified fill search picks `end` (and therefore fill length) over a ±5 s slack using
 **structure evidence only** — every waveform term in `unified_search_best_fill_end` is loop-constant
@@ -20,8 +22,9 @@ length on the corpus would leave the golden diff green.
 
 **Goal:** make fill placement an observable, then use it to A/B the end-search scoring on media.
 
-**Non-goals:** changing the end search's objective in Phase A or B — those are pure measurement.
-Re-tuning `fill_length_slack_secs`. Touching the seam gate or the dual-fit path.
+**Non-goals (of this plan):** changing the end search's objective in Phase A or B — those are pure
+measurement. Re-tuning `fill_length_slack_secs` (now a separate perf candidate — see
+[repair-perf.md §5 #3](../repair-perf.md)). Touching the seam gate or the dual-fit path.
 
 ---
 
@@ -226,30 +229,23 @@ So: the end sweep is not inert (~72% of placed brackets move >10 ms off span), b
 **50–200× wider than the search ever needs.** Per the exit wording below, Phase C stops here.
 
 **Residue (not Phase C):** (1) the r≈0.06 disagreement — at least one of end-search length vs dual-fit
-trim is reading noise; (2) `fill_length_slack_secs = 5.0` vs 388 ms observed max — narrowing is a
-separate lever (not byte-identical: `search_coarse_step` depends on span extent), gated by the Phase A
-golden tripwire.
+trim is reading noise (open research question; no plan); (2) `fill_length_slack_secs = 5.0` vs
+388 ms observed max — **tracked in [repair-perf.md §5 #3](../repair-perf.md)** and
+[BACKLOG.md](../../../BACKLOG.md) (narrow default → ~1.0 s; golden A/B + bound-pin check). Not a
+Phase C item and not byte-identical (`search_coarse_step` depends on span extent).
 
-### Optional second placement (still open; not required for the exit above)
+### Optional second placement — **deferred outside this plan**
 
-The Phase A dump already carries **production-weights** placement on brackets. A structure-only second
-placement remains useful for A/B if someone retunes weights later, but it is **not** needed to decide
-Phase C — the slack number is already in hand.
+The Phase A dump already carries **production-weights** placement on brackets. A structure-only /
+validated second placement remains useful only if someone retunes weights later; it was **not**
+needed to decide Phase C. Checklist cancelled here — reopen only with an explicit weight A/B.
 
-- [ ] `place_on_b` optionally computes a **second** match with production `UnifiedFitWeights` (from
-      config, not hardcoded), emitted as `placement_production.{start_frame,fill_frames,seam_pre,seam_post}`.
-      *(Revisit only if weight A/B is planned; default dump already has production placement.)*
-- [ ] **Ship the validators with it.** A seam-influenced placement without an alias companion is the
-      max-of-noise estimator, and the dual-fit path already sets the precedent for how to avoid that.
-      Emit **`seam_z` (primary)** — whole-curve z over the placement search, the periodicity-robust
-      guard — and `seam_prom` (secondary, ±30 ms single-rival margin) for the production placement,
-      reusing `seam_prominence` and the `DUALFIT_SEAM_UNIQ_LAG_MS` convention so the numbers are
-      comparable to `splice_dualfit`'s. Non-negotiable for any seam-chosen placement axis.
-- [ ] Gate behind a fingerprint flag (default **off**) — the default dump must stay byte-identical to
-      Phase A, and the cost objection must not land on routine runs.
+- [ ] ~~`place_on_b` optionally computes a second match with production `UnifiedFitWeights`…~~ —
+      deferred outside plan.
+- [ ] ~~Ship `seam_z` / `seam_prom` validators with it~~ — deferred with the above.
+- [ ] ~~Gate behind a fingerprint flag (default off)~~ — deferred with the above.
 - [x] Roll-up: `|fill − span|` (slack use), `|span − gap|` (widening), and end-excursion vs
-      `splice_dualfit.trim` on throat brackets — **done on the 17-pair corpus above.** A future
-      structure-vs-production table is additive, not blocking.
+      `splice_dualfit.trim` on throat brackets — **done on the 17-pair corpus above.**
 
 **Exit (slack):** we can state, on real media, how much of the ±5 s slack is actually being used
 **against the bracket-span nominal.** **This is the number that decides whether Phase C is worth
@@ -291,10 +287,11 @@ small length corrections (if either) is signal.
 
 ## Related reading
 
-- [repair-perf.md §1a](repair-perf.md) — the measurement that raised this, and the git-history finding
-  that the end search's waveform terms were loop-constant from `e849e64` onward
-- [archive/fill-fitting-plan.md](archive/fill-fitting-plan.md) — origin design, Phase B objective and
+- [repair-perf.md §1a](../repair-perf.md) — the measurement that raised this, and the git-history finding
+  that the end search's waveform terms were loop-constant from `e849e64` onward; slack-narrowing
+  candidate is §5 #3
+- [fill-fitting-plan.md](fill-fitting-plan.md) — origin design, Phase B objective and
   Phase D repeat-window spec
-- [archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) — levers 1
+- [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) — levers 1
   / 1b, and the corpus placement-diff that was specified but never built
-- [gap-fingerprint.md](gap-fingerprint.md), [corpus-validation.md](corpus-validation.md)
+- [gap-fingerprint.md](../gap-fingerprint.md), [corpus-validation.md](../corpus-validation.md)

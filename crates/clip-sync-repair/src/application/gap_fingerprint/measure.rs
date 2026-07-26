@@ -563,7 +563,7 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
     // same bias concern by publishing validators (`*_seam_prom`, `*_seam_z`, `post_seam_global_r`)
     // rather than by abstaining. A production-weights placement is therefore fine to add — as
     // *additional* fields carrying their own prominence, never by flipping this weight in place.
-    // See docs/dev/TEMP-fill-placement-axis-plan.md, Phase B.
+    // See docs/dev/archive/TEMP-fill-placement-axis-plan.md, Phase B.
     let weights = UnifiedFitWeights {
         structure_weight: 1.0,
         waveform_weight: 0.0,

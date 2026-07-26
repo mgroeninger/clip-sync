@@ -291,7 +291,7 @@ pub struct BracketInfo {
     /// `params.gap_frames` = post−pre), **not** the original silent-run gap.
     /// `fill_frames` differs from that span by up to `fill_length_slack_secs` (default 5.0 s).
     /// Comparing `fill_frames` to the original gap conflates **anchor widening** with end-search
-    /// excursion — the Phase B denominator trap; see TEMP-fill-placement-axis-plan.md.
+    /// excursion — the Phase B denominator trap; see docs/dev/archive/TEMP-fill-placement-axis-plan.md.
     /// On the dump path this is the *only* projection of the end search's decision.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub start_frame: Option<usize>,

@@ -535,7 +535,7 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             })
             .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v)))),
         // Placement of that same best-min-seam bracket — the fill the end sweep actually chose.
-        // Nothing else in the corpus records it; see docs/dev/TEMP-fill-placement-axis-plan.md.
+        // Nothing else in the corpus records it; see docs/dev/archive/TEMP-fill-placement-axis-plan.md.
         best_bracket_start_frame: best_seam_bracket(&gap.brackets).and_then(|b| b.start_frame),
         best_bracket_fill_frames: best_seam_bracket(&gap.brackets).and_then(|b| b.fill_frames),
         best_bracket_seam_pre: best_seam_bracket(&gap.brackets).and_then(|b| b.seam_pre),

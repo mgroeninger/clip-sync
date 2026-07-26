@@ -19,7 +19,7 @@ use clip_sync_repair_harness::golden_baseline::{baseline_from_rows, diff_baselin
 fn projection_preserves_curated_golden_baseline() {
     // `.without_placement()`: fill placement is a bracket-search *output*, not a decision input, so
     // `GapRepairTags` does not carry it and this differential does not assert on it. See
-    // `GoldenBaseline::without_placement` and docs/dev/TEMP-fill-placement-axis-plan.md Phase A.
+    // `GoldenBaseline::without_placement` and docs/dev/archive/TEMP-fill-placement-axis-plan.md Phase A.
     let old = baseline_from_rows(&curated_gap_cell_rows()).without_placement();
     assert!(old.gap_count > 0, "no curated fixtures");
     let new = baseline_from_rows(&curated_gap_cell_projected_rows()).without_placement();
