@@ -2,6 +2,7 @@
 name = "clip-sync-cli"
 version.workspace = true
 edition = "2021"
+publish = false
 description = "Analyzer CLI for clip-sync"
 authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]
 license = "PolyForm-Noncommercial-1.0.0"

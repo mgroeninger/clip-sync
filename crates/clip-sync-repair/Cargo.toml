@@ -2,6 +2,7 @@
 name = "clip-sync-repair"
 version.workspace = true
 edition = "2021"
+publish = false
 description = "Gap scan and repair tool for clip-sync"
 authors = ["Matt Groeninger <1166231+mgroeninger@users.noreply.github.com>"]
 license = "PolyForm-Noncommercial-1.0.0"

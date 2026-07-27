@@ -40,12 +40,13 @@
 > **M-HARNESS complete 2026-07-24** (P2): all five recommended items done — shared interior
 > oracle + NeverCalledAligner/builders + RFC 4180 CSV + production `FillWindowFrames` for
 > harness geometry. No open M-HARNESS work remains.
-> **P3 CLI hygiene: five mechanical items fixed 2026-07-27** — L-CLI-DEP, L-PIPE, L-QV, L-EXIT,
-> L-MSG (see Fixed (P3) table). **L-PUBLISH deliberately not done**: the ledger's "match sibling
-> internal crates" premise was wrong, and it is now a publish-intent decision spanning all three
-> publishable crates.
-> **Open set is now: L-PUBLISH (decision) + M-RESAMPLE (P1, partial) + optional M-SILENT report
-> flags + deferred `align_videos` split / prepare-clone stretch.**
+> **P3 CLI hygiene: CLOSED 2026-07-27.** L-CLI-DEP, L-PIPE, L-QV, L-EXIT, L-MSG landed as a
+> batch; a review follow-up then tightened L-PIPE so non-`BrokenPipe` stdout failures exit
+> non-zero instead of warning (new `AppError::Output`, shared `clip_sync::write_report_to_stdout`).
+> **L-PUBLISH** closed the same day by owner decision — never publishing to crates.io, so
+> `publish = false` went on all three publishable crates, not the CLI alone.
+> **Open set is now: M-RESAMPLE (P1, partial) + optional M-SILENT report flags + deferred
+> `align_videos` split / prepare-clone stretch.** No P3 work remains.
 >
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
@@ -102,11 +103,10 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | L-PUBLISH | P3 | `publish = false` — blocked on publish intent, not mechanical | `Cargo.toml` ×3 |
-| 2 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
+| 1 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
 
-*(The five mechanical CLI hygiene items — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG — landed
-2026-07-27; see the Fixed (P3) table.)*
+*(**All P3 CLI hygiene is now closed** — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG landed
+2026-07-27, and L-PUBLISH closed the same day by owner decision. See the Fixed (P3) table.)*
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
@@ -650,18 +650,27 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 | L-QV | ~~`--quiet --verbose` compose incoherently~~ | **done 2026-07-27** — clap `conflicts_with` on both CLIs |
 | L-EXIT | ~~Redundant `NoAudioTracks` exit-code arm~~ | **done 2026-07-27** — shadowed arm deleted (code 3 unchanged) |
 | L-MSG | ~~Fingerprinter "greater than 1001" vs check `< MIN`~~ | **done 2026-07-27** — now "at least 1001 Hz" |
-| L-PUBLISH | CLI missing `publish = false` | **open — needs a decision, not a mechanical fix.** See below |
+| L-PUBLISH | ~~CLI missing `publish = false`~~ | **done 2026-07-27** — applied to all three publishable crates, not the CLI alone. See below |
 
-### L-PUBLISH — open, blocked on publish intent
+### L-PUBLISH — closed 2026-07-27
 
-The original "match sibling internal crates" framing is wrong. Only `clip-sync-repair-harness`
-and `clip-sync-repair-fixtures` carry `publish = false`, and both are genuinely internal test
+The original "match sibling internal crates" framing was wrong. Only `clip-sync-repair-harness`
+and `clip-sync-repair-fixtures` carried `publish = false`, and both are genuinely internal test
 crates. `clip-sync`, `clip-sync-repair`, and `clip-sync-cli` all carry full
-`description` / `license` / `repository` metadata — they read as publishable *by intent*.
-Adding `publish = false` to the CLI alone would make the set **less** consistent than it is now.
+`description` / `license` / `repository` metadata — they read as publishable *by intent*, so
+adding the flag to the CLI alone would have made the set **less** consistent, not more.
 
-Decide first: if the crates are never going to crates.io, add `publish = false` to all three;
-if they might, leave all three as they are. Do not change the CLI in isolation.
+**Resolved by decision (owner, 2026-07-27): these crates are never going to crates.io.**
+`publish = false` therefore lands on **all three**, at the same position as the sibling crates
+(after `edition`, before `description`). All five workspace crates now carry it.
+
+The descriptive metadata stays — it is useful in `cargo metadata`, `--help`, and the repo itself
+regardless of registry intent. `publish = false` is what makes intent unambiguous.
+
+**Verified:** `cargo publish -p clip-sync-cli --dry-run` now refuses with
+`` `clip-sync-cli` cannot be published `` — the guard bites rather than merely being present.
+`cargo build`/`test`/`clippy` are unaffected: path dependencies inside a workspace never consult
+the registry, and no crate here was ever consumed from one.
 
 ### Fixed (P3 CLI hygiene) — 2026-07-27
 
@@ -748,9 +757,8 @@ module splits are closed (`align_videos` deferred only).
 5. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#3 2026-07-23; #2 TLS `FftPlanner` +
    17-pair verify: `local_anchor_xcorr` 846 s/9.5% → 358 s/4.2%). Prepare-clone stretch
    deferred only.
-6. ~~**P3** CLI hygiene~~ — **five mechanical items done 2026-07-27** (broken-pipe / quiet-verbose /
-   unused dep / redundant exit arm / fingerprinter message). **L-PUBLISH** stays open pending a
-   publish-intent decision covering all three publishable crates.
+6. ~~**P3** CLI hygiene~~ — **fully closed 2026-07-27** (broken-pipe / quiet-verbose / unused dep /
+   redundant exit arm / fingerprinter message / `publish = false` on all three publishable crates).
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
@@ -768,8 +776,7 @@ module splits are closed (`align_videos` deferred only).
    2026-07-24 (`align_videos` deferred); ~~**M-HARNESS**~~ **complete 2026-07-24** (all five
    items; no open remainder).
 7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
-8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27** (broken-pipe, quiet/verbose, unused dep, exit arm,
-   fingerprinter message). Only **L-PUBLISH** remains, reframed as a decision.
+8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27**, all six items including L-PUBLISH. Nothing open.
 
 ---
 
