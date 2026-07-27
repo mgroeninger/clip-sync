@@ -84,7 +84,7 @@ fn validate_clip(clip: &MonoPcmClip) -> Result<(), FingerprintError> {
 fn map_reset_error(error: ResetError) -> FingerprintError {
     match error {
         ResetError::SampleRateTooLow => FingerprintError::InvalidPcm(format!(
-            "sample rate must be greater than {MIN_SAMPLE_RATE} Hz"
+            "sample rate must be at least {MIN_SAMPLE_RATE} Hz"
         )),
         ResetError::NoChannels => {
             FingerprintError::InvalidPcm("channel count must be at least 1".into())

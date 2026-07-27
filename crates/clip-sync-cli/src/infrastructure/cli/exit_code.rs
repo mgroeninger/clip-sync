@@ -1,11 +1,10 @@
 use std::process::ExitCode;
 
-use clip_sync::{AppError, DomainError};
+use clip_sync::AppError;
 
 pub fn exit_code_for(error: &AppError) -> ExitCode {
     let code = match error {
         AppError::Config(_) => 2,
-        AppError::Domain(DomainError::NoAudioTracks) => 3,
         AppError::Domain(_) => 3,
         AppError::Media(_) => 4,
         AppError::Fingerprint(_) => 5,

@@ -322,7 +322,7 @@ pub struct Args {
     pub verbose: bool,
 
     /// Suppress progress output.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "verbose")]
     pub quiet: bool,
 
     /// Log level for tracing [default: info].
@@ -440,6 +440,18 @@ mod tests {
     #[test]
     fn parse_duration_seconds() {
         assert_eq!(parse_duration("90s").unwrap().as_secs(), 90);
+    }
+
+    /// Mirrors the analyzer guard: quiet progress plus verbose report output is incoherent.
+    #[test]
+    fn quiet_and_verbose_together_are_rejected() {
+        let error =
+            Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "--quiet", "--verbose"])
+                .expect_err("--quiet --verbose must not parse");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert!(Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "--quiet"]).is_ok());
+        assert!(Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "--verbose"]).is_ok());
     }
 
     #[test]

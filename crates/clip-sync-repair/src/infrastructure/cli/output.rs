@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use clip_sync::{
@@ -644,11 +645,28 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         query_localization: None,
         end_clip_anchor: None,
     };
-    print!(
-        "{}",
-        format_human(report, &alignment, None, None, false, None)
-    );
+    write_stdout(&format_human(report, &alignment, None, None, false, None));
     Ok(())
+}
+
+/// Write rendered output to stdout without panicking when the reader has gone away.
+///
+/// `println!` / `print!` panic on a broken pipe, so `clip-sync-repair … | head` aborted with a
+/// panic message instead of exiting cleanly. A closed downstream pipe is a normal way for a
+/// reader to stop, so it is treated as success; any other write failure goes to stderr, which
+/// is the only stream left that could carry it.
+fn write_stdout(rendered: &str) {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    let written = handle
+        .write_all(rendered.as_bytes())
+        .and_then(|()| handle.flush());
+
+    match written {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        Err(error) => tracing::warn!(%error, "failed to write repair report to stdout"),
+    }
 }
 
 fn print_json(report: &GapReport) -> Result<(), RepairError> {
@@ -758,17 +776,14 @@ pub fn print_repair_output(
 ) -> Result<(), RepairError> {
     match format {
         OutputFormat::Human => {
-            print!(
-                "{}",
-                format_human(
-                    report,
-                    alignment_detail,
-                    patch,
-                    patch_result,
-                    show_diagnostics,
-                    output_written,
-                )
-            );
+            write_stdout(&format_human(
+                report,
+                alignment_detail,
+                patch,
+                patch_result,
+                show_diagnostics,
+                output_written,
+            ));
             Ok(())
         }
         OutputFormat::Json => print_json_with_patch(report, alignment_detail, patch),
@@ -780,10 +795,10 @@ fn print_json_with_patch(
     alignment_detail: &clip_sync::AlignmentResult,
     patch: Option<&PatchSummary>,
 ) -> Result<(), RepairError> {
-    println!(
-        "{}",
+    write_stdout(&format!(
+        "{}\n",
         format_repair_json_output(report, alignment_detail, patch)?
-    );
+    ));
     Ok(())
 }
 

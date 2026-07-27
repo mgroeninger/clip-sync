@@ -1,6 +1,6 @@
 # Rust review findings — prioritized recommendations
 
-> **Status:** Active ledger (updated 2026-07-25). Workspace review of `clip-sync`,
+> **Status:** Active ledger (updated 2026-07-27). Workspace review of `clip-sync`,
 > `clip-sync-repair`, `clip-sync-cli`, `clip-sync-repair-harness`, and
 > `clip-sync-repair-fixtures`. Findings were verified in source where marked
 > **confirmed**.
@@ -40,6 +40,13 @@
 > **M-HARNESS complete 2026-07-24** (P2): all five recommended items done — shared interior
 > oracle + NeverCalledAligner/builders + RFC 4180 CSV + production `FillWindowFrames` for
 > harness geometry. No open M-HARNESS work remains.
+> **P3 CLI hygiene: five mechanical items fixed 2026-07-27** — L-CLI-DEP, L-PIPE, L-QV, L-EXIT,
+> L-MSG (see Fixed (P3) table). **L-PUBLISH deliberately not done**: the ledger's "match sibling
+> internal crates" premise was wrong, and it is now a publish-intent decision spanning all three
+> publishable crates.
+> **Open set is now: L-PUBLISH (decision) + M-RESAMPLE (P1, partial) + optional M-SILENT report
+> flags + deferred `align_videos` split / prepare-clone stretch.**
+>
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
 >
@@ -95,7 +102,11 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | L-* | P3 | CLI hygiene (broken-pipe / quiet-verbose / deps / publish) | misc |
+| 1 | L-PUBLISH | P3 | `publish = false` — blocked on publish intent, not mechanical | `Cargo.toml` ×3 |
+| 2 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
+
+*(The five mechanical CLI hygiene items — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG — landed
+2026-07-27; see the Fixed (P3) table.)*
 
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
@@ -547,6 +558,10 @@ clippy --workspace --all-targets` clean; policies tests still 55/55 with unchang
 seams left at extraction boundaries: the crate is not rustfmt-managed (752 `Diff in` hunks
 workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
+> **Stale as of 2026-07-27:** the workspace *did* adopt rustfmt (commit `7906c8ea`, now CI-enforced),
+> so the "not rustfmt-managed" rationale above no longer holds — the double-blank-line seams were
+> swept up by that adoption. Kept for the record of why they were declined at the time.
+
 ### M-HARNESS. Drift from production — **complete 2026-07-24**
 
 **Recommended order (all done):**
@@ -630,12 +645,38 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
-| L-CLI-DEP | Unused `thiserror` in `clip-sync-cli` | Remove from `Cargo.toml` |
-| L-PIPE | `println!` panics on broken pipe | `writeln!(stdout)`; treat `BrokenPipe` as success |
-| L-QV | `--quiet --verbose` compose incoherently | clap `conflicts_with`, or a single verbosity enum |
-| L-EXIT | Redundant `NoAudioTracks` exit-code arm | Distinct code or delete the specific arm |
-| L-MSG | Fingerprinter "greater than 1001" vs check `< MIN` | Align message with the check ("at least") |
-| L-PUBLISH | CLI missing `publish = false` | Match sibling internal crates |
+| L-CLI-DEP | ~~Unused `thiserror` in `clip-sync-cli`~~ | **done 2026-07-27** — dropped from `Cargo.toml` (zero `src` references) |
+| L-PIPE | ~~`println!` panics on broken pipe~~ | **done 2026-07-27** — `write_stdout` helper in both CLIs |
+| L-QV | ~~`--quiet --verbose` compose incoherently~~ | **done 2026-07-27** — clap `conflicts_with` on both CLIs |
+| L-EXIT | ~~Redundant `NoAudioTracks` exit-code arm~~ | **done 2026-07-27** — shadowed arm deleted (code 3 unchanged) |
+| L-MSG | ~~Fingerprinter "greater than 1001" vs check `< MIN`~~ | **done 2026-07-27** — now "at least 1001 Hz" |
+| L-PUBLISH | CLI missing `publish = false` | **open — needs a decision, not a mechanical fix.** See below |
+
+### L-PUBLISH — open, blocked on publish intent
+
+The original "match sibling internal crates" framing is wrong. Only `clip-sync-repair-harness`
+and `clip-sync-repair-fixtures` carry `publish = false`, and both are genuinely internal test
+crates. `clip-sync`, `clip-sync-repair`, and `clip-sync-cli` all carry full
+`description` / `license` / `repository` metadata — they read as publishable *by intent*.
+Adding `publish = false` to the CLI alone would make the set **less** consistent than it is now.
+
+Decide first: if the crates are never going to crates.io, add `publish = false` to all three;
+if they might, leave all three as they are. Do not change the CLI in isolation.
+
+### Fixed (P3 CLI hygiene) — 2026-07-27
+
+| ID | What | Evidence |
+|----|------|----------|
+| **L-CLI-DEP** | `thiserror = "1"` removed from `clip-sync-cli/Cargo.toml` — it was declared but never referenced in `src` | `cargo clippy --workspace --all-targets` clean; workspace tests green |
+| **L-PIPE** | Both CLIs render to a `String`, then a private `write_stdout(&str)` does `write_all` + `flush` on a locked stdout: `BrokenPipe` → silent success, any other error → `tracing::warn!` to stderr. Replaces 1 `println!` + 1 `print!` (analyzer `cli/output.rs`) and 1 `println!` + 2 `print!` (repair `cli/output.rs`). **Output bytes unchanged** — the JSON path's `println!` newline is now an explicit `\n` in the rendered string | Existing golden output tests (`clip-sync-cli/tests/cli_output.rs`) green unchanged; measurement bin `equivalence_calibration.rs` deliberately left on `println!` (not user-facing) |
+| **L-QV** | `#[arg(short, long, conflicts_with = "verbose")]` on `quiet` in **both** CLIs. Analyzer was the incoherent case (verbose set `show_diagnostics = true`, then quiet overrode only `progress`); repair had the same shape via `args.verbose` reaching `print_repair_output` independently of `progress` | `quiet_and_verbose_together_are_rejected` in both `cli/args.rs` test modules — asserts `ErrorKind::ArgumentConflict` plus each flag still parsing alone |
+| **L-EXIT** | `AppError::Domain(DomainError::NoAudioTracks) => 3` deleted; it was fully shadowed by the `Domain(_) => 3` arm on the next line. Now-unused `DomainError` import dropped. Exit codes are byte-identical — no distinct code invented | `cli_output.rs` exit-code tests green |
+| **L-MSG** | `map_reset_error`'s `SampleRateTooLow` message now reads "must be at least 1001 Hz", matching the `sample_rate < MIN_SAMPLE_RATE` guard (1001 itself is *accepted*). The sibling message in `validate_clip` ("below minimum") was already correct and is untouched | `fingerprinter.rs`; no test asserted the old string |
+
+**Not covered by a test:** the broken-pipe path itself. Reproducing a closed downstream pipe
+needs a real spawned-process-plus-`head` harness that neither CLI test suite currently has, and
+on Windows the failure mode differs from Unix `EPIPE`. The change is small and the byte-identity
+of normal output *is* covered by the existing goldens.
 | M-DEAD / L-pregate | ~~Pregate measurement stack~~ | **done 2026-07-23** (B2 full remove) |
 | M-DEAD / L-slide | ~~Unused `slide_template_scores`~~ | **done 2026-07-23** |
 
@@ -673,8 +714,9 @@ module splits are closed (`align_videos` deferred only).
 5. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#3 2026-07-23; #2 TLS `FftPlanner` +
    17-pair verify: `local_anchor_xcorr` 846 s/9.5% → 358 s/4.2%). Prepare-clone stretch
    deferred only.
-6. **P3** CLI hygiene whenever convenient — broken-pipe / quiet / verbose / unused deps /
-   publish flag
+6. ~~**P3** CLI hygiene~~ — **five mechanical items done 2026-07-27** (broken-pipe / quiet-verbose /
+   unused dep / redundant exit arm / fingerprinter message). **L-PUBLISH** stays open pending a
+   publish-intent decision covering all three publishable crates.
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
@@ -692,7 +734,8 @@ module splits are closed (`align_videos` deferred only).
    2026-07-24 (`align_videos` deferred); ~~**M-HARNESS**~~ **complete 2026-07-24** (all five
    items; no open remainder).
 7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
-8. **P3 CLI hygiene** — broken-pipe, quiet/verbose, unused deps, publish flag.
+8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27** (broken-pipe, quiet/verbose, unused dep, exit arm,
+   fingerprinter message). Only **L-PUBLISH** remains, reframed as a decision.
 
 ---
 
