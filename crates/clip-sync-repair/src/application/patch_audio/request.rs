@@ -125,7 +125,7 @@ pub struct PatchRequestSettings {
     pub fill_repeat_penalty_weight: f64,
     /// Lever 1 (§2.5): FFT seam band in the unified start-search refine (perf; on by default).
     pub fft_seam_search: bool,
-    /// Lever 1b(b): FFT repeat-window band in the same refine (perf; off by default until plan §4 belt + §6).
+    /// Lever 1b(b): FFT repeat-window band in the same refine (perf; on by default; `--no-fft-repeat-band` opts out).
     pub fft_repeat_band: bool,
     /// Minimum seam score for a pass-1 patch to become an offset anchor.
     pub fill_anchor_min_correlation: f32,

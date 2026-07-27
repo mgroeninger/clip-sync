@@ -1,11 +1,10 @@
 # Repair performance — measurement reference
 
 **Durable reference, not a plan.** Where repair time goes, how to measure it, and
-which candidates are already settled. Last full 17-pair measurement
-**2026-07-25** (§1a, production `--wav` path, Level F instrumentation).
-**Everything measured on 17 pairs predates lever 1b(c)** — the only post-hoist
-data is the 4-pair spot check in §1b. Read §1a + §1b together for the current
-shape; §1 (2026-07-24) is kept for the pre-Level-F span partition.
+which candidates are already settled. Current production shape: **lever 1b(b) ON
+by default** (2026-07-26) — see §1c for the post-band 17-pair profile and §3 for
+the before/after. Earlier tables (§1 / §1a / §1b / plan §0 baseline) are
+pre-1b(b) and kept for provenance.
 
 Update this doc when a new sweep lands — do not start a second baseline
 elsewhere. Campaign-specific reasoning belongs in a `TEMP-*` plan; the *numbers*
@@ -23,8 +22,10 @@ deliberately not in this repository; it exists only in the gitignored source map
 Raw logs contain absolute media paths and **must not be committed**. The logs
 backing the tables below live under `gap-files/`, which `.gitignore` covers —
 `perf-baseline-2026-07-23/` (§2), `perf-gate-2026-07-24/` (§1, §3),
-`perf-gate-2026-07-25-2/` (§1a), `perf-gate-hoist/` (§1b), plus the fingerprint
-dumps in `fingerprint-corpus/` (§5 #3). When recording a result, carry over the
+`perf-gate-2026-07-25-2/` (§1a), `perf-gate-hoist/` (§1b),
+`fill_length_slack_secs_narrow_perf/` (pre-1b(b) 17-pair, plan §0 / §1b note),
+`fft-repeat-band/` (§1c / §3 lever 1b(b)), plus the fingerprint dumps in
+`fingerprint-corpus/` (§5 #3). When recording a result, carry over the
 derived numbers and the pair index — nothing else. Grep before committing.
 
 ## How to measure
@@ -259,8 +260,35 @@ comparison on a machine whose load we do not control.
 Pair 1 exits 4 on both sides (pre-existing unfillable gap, identical decisions);
 the nonzero exit is not introduced by this change.
 
-**Post-hoist 17-pair profile:** [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) §0
-(`fill_length_slack_secs_narrow_perf`, 2026-07-26) — root 5724 s; see also §5 #0.
+**Post-hoist 17-pair profile (pre-1b(b)):** [TEMP-repeat-band-plan.md](archive/TEMP-repeat-band-plan.md) §0
+(`fill_length_slack_secs_narrow_perf`, 2026-07-26) — root 5724 s. **Post-1b(b):** §1c below.
+
+### 1c. After lever 1b(b) — 17 pairs, production path (2026-07-26)
+
+Source: `gap-files/fft-repeat-band/{1..17}.log` (`--fft-repeat-band` at measurement time; now the
+production default). Same recipe as plan §0 / `fill_length_slack_secs_narrow_perf`. Outcome A/B vs that
+baseline: **17/17 identical** gap tables (header + rows + seam warns).
+
+Exclusive time, merged by span name. Root = `patch_audio`, **2724.5 s**.
+
+| Span | Exclusive | Share | Calls |
+|------|-----------|-------|-------|
+| `patch_decode_b` | 884.7 s | **32.5%** | 17 |
+| `patch_decode_a` | 883.8 s | **32.4%** | 17 |
+| `unified_coarse_start` | 303.1 s | **11.1%** | 1758 |
+| `local_anchor_xcorr` | 302.7 s | **11.1%** | 1335 |
+| `unified_fine_polish` | 199.1 s | **7.3%** | 1758 |
+| `bracket_unified_search` (own) | 47.8 s | 1.8% | 1758 |
+| `patch_audio` (own) | 34.8 s | 1.3% | 17 |
+| `unified_refine_start` | **4.6 s** | **0.17%** | 1758 |
+| everything else | ~64 s | ~2.3% | — |
+
+Level F on `unified_refine_start`: **0.5 µs/cand**, Repeat **0%**, Structure 68%, Seam 5.5%, Score 7.1%
+(was 301 µs/cand / Repeat 99.5%). Coarse + fine-polish stay naive (Repeat still ~63–64%), as designed.
+The +22 s on `bracket_unified_search` exclusive is the FFT *build* cost.
+
+**Current top costs:** decode (~65% combined, still sequential) → coarse/polish naive repeat →
+`local_anchor_xcorr`. See §5.
 
 **If the post seam ever becomes end-dependent** (Phase C of
 [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)), this hoist
@@ -371,6 +399,28 @@ Two recurring worries, both measured and unfounded:
   lever 1/2 cut the numerator (`char_gate_search` 1746 s → 330 s, 5.3×), so decode
   and the rest occupy a larger share of a much smaller total.
 
+### Lever 1b(b) — FFT repeat band (2026-07-26)
+
+Production `--wav` path, 17 pairs. Baseline `fill_length_slack_secs_narrow_perf`
+(flag off) vs `fft-repeat-band` (flag on). Same candidate counts (8.44 M refine-start).
+**0** FFT belt divergence warns. Gap outcome tables **17/17 identical**. Default
+flipped **ON** (`RepairConfig.fft_repeat_band`; `--no-fft-repeat-band` opts out).
+
+| Span | Baseline | Banded | Δ |
+|------|---------:|-------:|--:|
+| root `patch_audio` | 5724 s | 2725 s | **−3000 s (−52%)** |
+| `unified_refine_start` | 2541 s (44.4%) | **4.6 s (0.17%)** | **−2537 s** |
+| `unified_refine_start` Repeat share | 99.5% | **0%** | — |
+| `bracket_unified_search` excl. | 26 s | 48 s | +22 s (FFT build) |
+| `unified_coarse_start` | 322 s | 303 s | −19 s |
+| `unified_fine_polish` | 211 s | 199 s | −12 s |
+| `patch_decode_a`+`_b` | 2145 s | 1769 s | −377 s (run variance) |
+| `local_anchor_xcorr` | 365 s | 303 s | −63 s (run variance) |
+
+The lever's credit is the refine-start collapse (−2537 s). Extra root savings beyond
+that are mostly decode/xcorr abs noise across runs — treat the **span partition** as
+the verdict, same rule as §1b. Plan: [TEMP-repeat-band-plan.md](archive/TEMP-repeat-band-plan.md).
+
 ## 4. Settled — do not re-propose without new measurement
 
 | Candidate | Verdict | Evidence |
@@ -379,57 +429,47 @@ Two recurring worries, both measured and unfounded:
 | Cut bracket count *k* (anchor pre-gate) | **NO-GO** 2026-07-23 | realizable pre-gate fraction over this 17-pair run = **0%** (0/~4939 brackets), vs a 46% theoretical ceiling |
 | Fill-assembly double-derivation (M0) | **immaterial** 2026-07-24 | **0.053%** of wall-clock, worst pair 0.35% |
 | "FFT the haystack sweep" | **not a thing** | there is no full haystack sweep; the unified search is already windowed and coarse-stepped |
+| Lever 1b(b) FFT repeat band | **SHIPPED** 2026-07-26 | refine-start 2541→4.6 s; root 5724→2725 s (−52%); outcomes 17/17 identical (§1c / §3) |
 
 Already landed and **on by default**: the hoisted placement-invariant channel
-selection (lever 2) and the FFT seam band on the dense refine (lever 1,
-`RepairConfig.fft_seam_search`; `--no-fft-seam-search` opts out).
+selection (lever 2), the FFT seam band on the dense refine (lever 1,
+`RepairConfig.fft_seam_search`; `--no-fft-seam-search` opts out), and the FFT
+**repeat**-window band on the same refine (lever 1b(b),
+`RepairConfig.fft_repeat_band`; `--no-fft-repeat-band` opts out) — see §1c / §3.
 
-**The cheap wins are spent.** Treat §1a + §1b as the reference a new candidate
-must argue against, not as motivation for one. (§1 is the pre-hoist, pre-Level-F
-tree; do not size a candidate against it.)
+**The cheap wins on the refine-start Pearson are spent.** Treat §1c as the
+reference a new candidate must argue against. (§1 / §1a / §1b / plan §0 are
+pre-1b(b); do not size a candidate against them.)
 
 ## 5. Open candidates
 
-0. **Lever 1b(b) — band the *start*-search repeat window.**
-   **→ Design: [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) (2026-07-26).**
-   Promoted to #1 by the
-   lever 1b(c) spot check: with the end loops gone, `unified_refine_start` is
-   **43.1% of root and 99.4% of it is `fill_repeat_correlations`**. Unlike the end
-   search this is *not* loop-invariant — the repeat window moves with the
-   candidate `start` — so it needs the lever-1 FFT banding treatment
-   (`fill_seam_correlations_band`), not a hoist. Largest remaining single target
-   by a wide margin.
-
-   **Re-measured on the full 17-pair post-narrowing run (2026-07-26,**
-   `fill_length_slack_secs_narrow_perf`, 1758 brackets, root 5724 s): the figures
-   firm up to **44.4% of root, 99.6% `repeat_us`** (2530 s of 2541 s). `repeat_us`
-   across *all* phases is 2870 s = **50.2%** of root. Supersedes the 43.1/99.4
-   partial above; conclusion unchanged. Full table + design in the plan §0.
-1. **`local_anchor_xcorr` — 358 s (4.23%) on the full corpus, 9.94% post-hoist.**
+0. ~~**Lever 1b(b) — band the *start*-search repeat window.**~~
+   **SHIPPED 2026-07-26 (default ON).** See §1c / §3 and
+   [TEMP-repeat-band-plan.md](archive/TEMP-repeat-band-plan.md). Pre-band (plan §0):
+   refine-start **44.4% / Repeat 99.5%**. Post-band: **4.6 s / 0.17% / Repeat 0%**.
+1. **`local_anchor_xcorr` — 303 s (11.1% post-1b(b)); was 365 s / 6.4% pre-band.**
    This is what the old "`gate_anchor_search` holds 910.8 s (9.9%) of exclusive
    time" entry was actually pointing at. That 910.8 s was an **instrumentation
    gap** in the 2026-07-24 binary, which had no span under the gate; once
    `anchor_matchability` / `local_anchor_xcorr` were added, `gate_anchor_search`'s
    own exclusive time collapsed into the roll-up's "everything else" bucket
    (≤140 s total across 17 pairs on 2026-07-25-2) and the cost resolved to the
-   local cross-correlation, 99.3% of `anchor_matchability`. It rises to a
-   **distant third at 9.94%** once the end loops are hoisted away (§1b). Now a
-   located cost, not a mystery — but still unattacked.
-2. **Decode is 25.2% combined (2131 s), the #2 cost.** It has not got slower —
-   the gate got ~5× faster, so decode's share grew from the 6.5% of the
-   2026-07-20 baseline, and post-hoist it is **~35%** of root (§1b). It is 34
-   calls of ~63 s each, not a long tail, and it has **never been investigated**.
-   Most plausible next candidate.
+   local cross-correlation, 99.3% of `anchor_matchability`. Still unattacked;
+   now ~tied with coarse-start for #3 after decode.
+2. **Decode is ~65% combined post-1b(b) (1769 s on the banded run; 2145 s / 37.5%
+   pre-band), the #1 cost.** Abs times move with machine load; the sequential
+   shape does not. It is 34 calls of ~50–60 s each, not a long tail, and it has
+   **never been investigated**. **Largest remaining target.**
 
-   **Confirmed on the 2026-07-26 run: 2145 s = 37.5% of root, and the two decodes
-   are strictly sequential in all 17 pairs** (`patch_decode_b` starts at or after
-   `patch_decode_a` closes). `decode.rs:24-80` does open A → decode all of A →
-   open B → decode all of B; B's track pick is
-   `select_track_for_reference(&track_a, ..)`, which needs only A's track
-   *metadata*, not the decoded `a_pcm` — so the two `extract_interleaved` calls
-   are separable and ~1072 s (~19% of root) is nominally recoverable. Caveat
-   before any refactor: both files sit on one drive, so if decode is I/O-bound
-   rather than CPU-bound the win collapses. **Measure one pair both ways first.**
+   **Confirmed on the 2026-07-26 runs: the two decodes are strictly sequential in
+   all 17 pairs** (`patch_decode_b` starts at or after `patch_decode_a` closes).
+   `decode.rs:24-80` does open A → decode all of A → open B → decode all of B;
+   B's track pick is `select_track_for_reference(&track_a, ..)`, which needs only
+   A's track *metadata*, not the decoded `a_pcm` — so the two `extract_interleaved`
+   calls are separable and ~half of decode (~19% of the pre-band root) is
+   nominally recoverable. Caveat before any refactor: both files sit on one drive,
+   so if decode is I/O-bound rather than CPU-bound the win collapses. **Measure
+   one pair both ways first.**
 3. **Narrow end-search slack (`fill_length_slack_secs` 5.0 → ~1.0 s).** The
    decoupling from B extract is already done (below); only the narrowing is open.
    Fingerprint corpus roll-up (17/17 pairs, 2026-07-26): end-search excursion is

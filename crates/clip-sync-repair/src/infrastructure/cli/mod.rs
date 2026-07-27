@@ -150,8 +150,8 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.no_fft_seam_search {
         config.repair.fft_seam_search = false;
     }
-    if args.fft_repeat_band {
-        config.repair.fft_repeat_band = true;
+    if args.no_fft_repeat_band {
+        config.repair.fft_repeat_band = false;
     }
     if args.no_gap_end_extend {
         config.repair.gap_end_extend_on_post_seam_fail = false;

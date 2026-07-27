@@ -1532,9 +1532,8 @@ fn gate_structure_align(
             // opts out to the exact naive search. Output-neutral up to a sub-ms near-tie (exact naive re-score +
             // placement-diff test guard); the flag-OFF path stays byte-identical to pre-lever-1.
             params.settings.fft_seam_search,
-            // Lever 1b(b) FFT repeat band (TEMP-repeat-band-plan.md): OFF by default until the exact re-score
-            // belt covers the repeat correlations (§4) and the corpus validation (§6) has run; `--fft-repeat-band`
-            // opts in. Independent of the seam band above.
+            // Lever 1b(b) FFT repeat band (TEMP-repeat-band-plan.md): on by default (`RepairConfig.fft_repeat_band`);
+            // `--no-fft-repeat-band` opts out. Independent of the seam band above.
             params.settings.fft_repeat_band,
         )
     }

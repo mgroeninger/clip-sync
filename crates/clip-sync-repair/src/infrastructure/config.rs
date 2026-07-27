@@ -197,10 +197,10 @@ pub struct RepairConfig {
     /// re-score + placement-diff test). On by default; `--no-fft-seam-search` opts out to the exact naive search.
     #[serde(default = "default_true")]
     pub fft_seam_search: bool,
-    /// Lever 1b(b) (docs/dev/TEMP-repeat-band-plan.md): FFT-accelerated *repeat-window* band in the same refine
-    /// loop. Independent of `fft_seam_search`. OFF by default until the exact re-score belt covers the repeat
-    /// correlations (plan §4) and the corpus validation in §6 has run; `--fft-repeat-band` opts in.
-    #[serde(default)]
+    /// Lever 1b(b) (docs/dev/archive/TEMP-repeat-band-plan.md): FFT-accelerated *repeat-window* band in the same refine
+    /// loop. Independent of `fft_seam_search`. On by default (belt + 17-pair outcome A/B green); `--no-fft-repeat-band`
+    /// opts out to the exact naive per-candidate Pearson.
+    #[serde(default = "default_true")]
     pub fft_repeat_band: bool,
     /// Minimum `min(pre, post)` for a pass-1 patch to become an offset anchor (`anchored_retry`).
     #[serde(default = "default_fill_anchor_min_correlation")]
@@ -510,7 +510,7 @@ impl Default for RepairConfig {
             fill_absolute_floor: default_fill_absolute_floor(),
             fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
             fft_seam_search: true,
-            fft_repeat_band: false,
+            fft_repeat_band: true,
             fill_anchor_min_correlation: default_fill_anchor_min_correlation(),
             fill_anchor_exclude_structure_trusted: true,
             fill_anchor_max_adjustment_frac: default_fill_anchor_max_adjustment_frac(),

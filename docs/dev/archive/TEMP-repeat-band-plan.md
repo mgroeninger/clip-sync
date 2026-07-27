@@ -1,9 +1,12 @@
-# Lever 1b(b) — band the start-search repeat window — plan
+# Lever 1b(b) — band the start-search repeat window — plan (ARCHIVED)
 
-**Status: Phase 1–2 DONE (2026-07-26); Phase 3–4 next.** Successor to lever 1
-(`archive/TEMP-production-repair-perf-plan.md` §2.5) and lever 1b(c) (`repair-perf.md` §1b). Largest remaining
-single perf target on the production repair path. Flag `fft_repeat_band` is wired but **defaults OFF** until
-§4 (belt) + §6 (corpus) are green.
+> **Archived historical record.** Shipped 2026-07-26; default ON. Live numbers and open candidates live in
+> [repair-perf.md](../repair-perf.md) §1c / §3 / §5.
+
+**Status: SHIPPED (2026-07-26) — default ON.** Successor to lever 1
+(`TEMP-production-repair-perf-plan.md` §2.5) and lever 1b(c) (`repair-perf.md` §1b). Phases 1–4 and
+§6 validation are green; `RepairConfig.fft_repeat_band` defaults **true** (`--no-fft-repeat-band` opts out).
+Measured speedup recorded in [repair-perf.md](../repair-perf.md) §3.
 
 **Media hygiene:** as everywhere in this repo, no media filenames / titles / paths. Corpus pairs by index only;
 raw logs stay in gitignored `gap-files/`.
@@ -182,8 +185,7 @@ a zero-weight bracket does not pay for an FFT it discards (the per-candidate pat
 
 The old "no hoist available" comment on the start refine was rewritten to name banding as the other route.
 
-Flag plumbing from §5 landed early with this phase (`RepairConfig.fft_repeat_band` default `false`,
-`--fft-repeat-band`, harness mirror) so the wired path is opt-in until §4 + §6.
+Flag plumbing from §5 landed early with Phase 2; default flipped ON after §6 (see §5).
 
 ---
 
@@ -221,14 +223,13 @@ Pinned by `band_agreement_treats_infinities_as_equal_and_nan_as_divergence` (`:2
 
 ---
 
-## 5. Phase 4 — flag and defaulting
+## 5. Phase 4 — flag and defaulting **(DONE 2026-07-26 — default ON)**
 
-**Plumbing landed with Phase 2** (`RepairConfig.fft_repeat_band`, `--fft-repeat-band`, harness mirror of the
-production default). Still **default `false`**. §4 (belt) is now green, so the only remaining precondition for
-flipping to `true` is **§6 (3)** — the 17-pair corpus run diffed against the committed goldens.
+**Plumbing landed with Phase 2**; default flipped to **`true`** after §4 (belt) and §6 (3) (17-pair outcome
+A/B vs `fill_length_slack_secs_narrow_perf`) went green. Opt-out: `--no-fft-repeat-band`.
 
-- Config: `infrastructure/config.rs` (`fft_repeat_band` beside `fft_seam_search`). Harness:
-  `clip-sync-repair-harness/src/patch_audio.rs`.
+- Config: `infrastructure/config.rs` (`fft_repeat_band` beside `fft_seam_search`, `serde(default = "default_true")`).
+  Harness mirrors `RepairConfig::default()`.
 - Same scoping rule as lever 1 (`archive/TEMP-production-repair-perf-plan.md` §2.4): **production search only.**
   The fingerprint dump / committed corpus / goldens stay on the naive path — no golden re-freeze.
 
@@ -243,24 +244,31 @@ flipping to `true` is **§6 (3)** — the 17-pair corpus run diffed against the 
    can only be the repeat band, uses `repeat_penalty_weight = 0.4` (at 0.0 the band is never built and the test
    would be vacuous), and gives the templates **two channels of unequal border length** — the §2.1 #2/#3
    configuration a per-channel-bounds-only band would get wrong.
-3. 17-pair corpus run flag-on, gap outcome tables diffed against the **committed goldens** (the durable
-   reference; `gap-files/` is ephemeral). Placement must be **identical**, not merely close — the belt makes
-   divergence loud, but the goldens are what proves it.
-4. Re-run the §0 recipe (`measure-repair-perf.ps1`) for the measured speedup, and record it in
-   `repair-perf.md` §3 no-regression record.
+3. **DONE (2026-07-26).** 17-pair production A/B: `fft-repeat-band` vs
+   `fill_length_slack_secs_narrow_perf` gap outcome tables (header + every status row + seam warn lines) —
+   **17/17 identical**. (Fingerprint dump stays naive by design; this is the production-path check.)
+4. **DONE (2026-07-26).** Re-ran the §0 recipe; measured speedup recorded in
+   [repair-perf.md](../repair-perf.md) §3.
 
 Like lever 1, this changes the numeric path at ~1e-10, so it is **not** strictly byte-identical and is the same
 declared exception to the `patch_audio_integration` byte-parity rule — gated by (1)+(2)+(3) instead.
 
 ---
 
-## 7. Expected payoff
+## 7. Expected payoff → measured
 
-If the band approaches the seam band's per-candidate cost, `unified_refine_start` drops from 2541 s toward its
-`structure_us` + `score_us` floor (~10 s): **~44% off total wall**, 1.59 h → ~0.89 h across 17 pairs. Discount
-for §2.1 #2 (per-channel FFTs). The FFT *build* cost lands in `bracket_unified_search`'s own exclusive time
-(same place as the seam-band build today, currently ~26 s) — so the loop floor is not the whole story, but
-build cost should still be small vs 2529 s. Measure the span partition, not just wall clock.
+**Predicted:** `unified_refine_start` 2541 s → ~10 s floor ⇒ ~44% off root (5724 → ~3200 s).
+
+**Measured (17 pairs, `fft-repeat-band` vs `fill_length_slack_secs_narrow_perf`):**
+
+| | Baseline | Banded | Δ |
+|---|---:|---:|---:|
+| root `patch_audio` | 5724 s | 2725 s | **−3000 s (−52%)** |
+| `unified_refine_start` | 2541 s (44.4%, Repeat 99.5%) | **4.6 s (0.17%, Repeat 0%)** | **−2537 s** |
+| `bracket_unified_search` excl. | 26 s | 48 s | +22 s (FFT build) |
+
+Refine-start alone accounts for −2537 s of the wall cut; remaining decode/xcorr abs deltas are run variance.
+Post-band profile is decode-dominated (~65%), then naive coarse/polish repeat. Full record: `repair-perf.md` §3.
 
 ---
 
@@ -285,8 +293,8 @@ build cost should still be small vs 2529 s. Measure the span partition, not just
 
 ## 9. References
 
-- [repair-perf.md](repair-perf.md) — live profile; §1a Level F buckets, §1b the 1b(c) hoist, §5 open candidates.
-- [archive/TEMP-production-repair-perf-plan.md](archive/TEMP-production-repair-perf-plan.md) §2.5 — lever 1
+- [repair-perf.md](../repair-perf.md) — live profile; §1a Level F buckets, §1b the 1b(c) hoist, §5 open candidates.
+- [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) §2.5 — lever 1
   design (FFT + exact re-score belt), §2.4 calibration-safety scoping.
 - `policies/seam_scoring.rs:100` `fill_repeat_correlations` · `:852` `fill_seam_correlations_band` (the model)
   · `:347` `fill_repeat_correlations_band`.

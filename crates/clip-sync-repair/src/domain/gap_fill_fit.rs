@@ -354,9 +354,9 @@ struct UnifiedSearchCtx<'a> {
     use_fft_seam_search: bool,
     /// Lever 1b(b) (`TEMP-repeat-band-plan.md`): route the dense start-search *refine* repeat-window
     /// correlations through [`fill_repeat_correlations_band`] instead of a per-candidate naive Pearson. Same
-    /// scoping rules as `use_fft_seam_search` (production path only, coarse and fine-polish stay naive), but a
-    /// separate switch: the two bands decline independently, and until the exact re-score belt is extended to
-    /// cover the repeat winner (plan §4) this one defaults OFF.
+    /// scoping rules as `use_fft_seam_search` (production path only, coarse and fine-polish stay naive). The two
+    /// bands decline independently. On by default in production (`RepairConfig.fft_repeat_band`); dump/oracle
+    /// always passes `false`.
     use_fft_repeat_band: bool,
 }
 

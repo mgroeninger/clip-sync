@@ -185,10 +185,12 @@ pub struct Args {
     #[arg(long)]
     pub no_fft_seam_search: bool,
 
-    /// Enable the FFT-accelerated repeat-window band in the unified start-search refine (`fill_mode = fit`
-    /// only). Opt-in while the exact re-score belt is extended to cover it; independent of the seam band.
+    /// Disable the FFT-accelerated repeat-window band and use the exact naive per-candidate Pearson
+    /// (`fill_mode = fit` only). The FFT path is on by default and output-neutral up to FFT ε (exact re-score
+    /// belt + 17-pair outcome A/B); this opt-out trades speed for a bit-identical-to-naive search. Independent
+    /// of `--no-fft-seam-search`.
     #[arg(long)]
-    pub fft_repeat_band: bool,
+    pub no_fft_repeat_band: bool,
 
     /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
     /// [default: 0.35].
