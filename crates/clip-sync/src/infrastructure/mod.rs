@@ -3,4 +3,5 @@ pub mod config;
 pub mod correlation;
 pub mod logging;
 pub mod resample;
+pub mod stdout;
 pub mod symphonia;

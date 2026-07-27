@@ -53,6 +53,7 @@ pub use infrastructure::logging::{
     LogLevel, LoggingConfig, ProgressMode, StderrProgressReporter, FINGERPRINT_ALIGN_STAGE,
 };
 pub use infrastructure::resample::{resample_interleaved, RubatoResampler};
+pub use infrastructure::stdout::write_report_to_stdout;
 pub use infrastructure::symphonia::SymphoniaMediaReader;
 
 #[cfg(feature = "test-utils")]

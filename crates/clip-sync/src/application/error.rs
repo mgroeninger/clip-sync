@@ -35,6 +35,12 @@ pub enum AppError {
     Alignment(#[from] AlignmentError),
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// Failed to write the report to stdout — e.g. a full disk on `clip-sync … > out.json`.
+    ///
+    /// A closed downstream pipe (`| head`) is **not** this error: it is success. See
+    /// [`write_report_to_stdout`](crate::write_report_to_stdout).
+    #[error("failed to write report to stdout: {0}")]
+    Output(#[source] std::io::Error),
 }
 
 #[derive(Debug, Clone)]

@@ -668,15 +668,49 @@ if they might, leave all three as they are. Do not change the CLI in isolation.
 | ID | What | Evidence |
 |----|------|----------|
 | **L-CLI-DEP** | `thiserror = "1"` removed from `clip-sync-cli/Cargo.toml` — it was declared but never referenced in `src` | `cargo clippy --workspace --all-targets` clean; workspace tests green |
-| **L-PIPE** | Both CLIs render to a `String`, then a private `write_stdout(&str)` does `write_all` + `flush` on a locked stdout: `BrokenPipe` → silent success, any other error → `tracing::warn!` to stderr. Replaces 1 `println!` + 1 `print!` (analyzer `cli/output.rs`) and 1 `println!` + 2 `print!` (repair `cli/output.rs`). **Output bytes unchanged** — the JSON path's `println!` newline is now an explicit `\n` in the rendered string | Existing golden output tests (`clip-sync-cli/tests/cli_output.rs`) green unchanged; measurement bin `equivalence_calibration.rs` deliberately left on `println!` (not user-facing) |
-| **L-QV** | `#[arg(short, long, conflicts_with = "verbose")]` on `quiet` in **both** CLIs. Analyzer was the incoherent case (verbose set `show_diagnostics = true`, then quiet overrode only `progress`); repair had the same shape via `args.verbose` reaching `print_repair_output` independently of `progress` | `quiet_and_verbose_together_are_rejected` in both `cli/args.rs` test modules — asserts `ErrorKind::ArgumentConflict` plus each flag still parsing alone |
-| **L-EXIT** | `AppError::Domain(DomainError::NoAudioTracks) => 3` deleted; it was fully shadowed by the `Domain(_) => 3` arm on the next line. Now-unused `DomainError` import dropped. Exit codes are byte-identical — no distinct code invented | `cli_output.rs` exit-code tests green |
+| **L-PIPE** | Both CLIs render to a `String`, then call the **shared** `clip_sync::write_report_to_stdout` (`infrastructure/stdout.rs`), which does `write_all` + `flush` on a locked stdout and returns `io::Result`: `BrokenPipe` → `Ok(())`, **any other error propagates**. Analyzer maps it to a new `AppError::Output` (exit **4**); repair to the existing `RepairError::Io` (exit **4**). Replaces 1 `println!` + 1 `print!` (analyzer) and 1 `println!` + 2 `print!` (repair). **Output bytes unchanged** — the JSON path's `println!` newline is now an explicit `\n` in the rendered string | `infrastructure::stdout::tests::{broken_pipe_is_success, other_write_failures_propagate, successful_write_emits_exact_bytes}`; existing golden output tests (`clip-sync-cli/tests/cli_output.rs`) green unchanged; measurement bin `equivalence_calibration.rs` deliberately left on `println!` (not user-facing) |
+| **L-QV** | `#[arg(short, long, conflicts_with = "verbose")]` on `quiet` in **both** CLIs. Analyzer was the incoherent case (verbose set `show_diagnostics = true`, then quiet overrode only `progress`); repair had the same shape via `args.verbose` reaching `print_repair_output` independently of `progress` | `quiet_and_verbose_together_are_rejected` in both `cli/args.rs` test modules — asserts `ErrorKind::ArgumentConflict` for **both** `--quiet --verbose` and `-q -v`, plus all four spellings still parsing alone |
+| **L-EXIT** | `AppError::Domain(DomainError::NoAudioTracks) => 3` deleted. It was **redundant, not shadowed** — being first, it did match, but it produced the same `3` as the `Domain(_)` catch-all behind it, so removing it cannot change any exit code. Now-unused `DomainError` import dropped | `cli_output.rs` exit-code tests green |
 | **L-MSG** | `map_reset_error`'s `SampleRateTooLow` message now reads "must be at least 1001 Hz", matching the `sample_rate < MIN_SAMPLE_RATE` guard (1001 itself is *accepted*). The sibling message in `validate_clip` ("below minimum") was already correct and is untouched | `fingerprinter.rs`; no test asserted the old string |
 
-**Not covered by a test:** the broken-pipe path itself. Reproducing a closed downstream pipe
-needs a real spawned-process-plus-`head` harness that neither CLI test suite currently has, and
-on Windows the failure mode differs from Unix `EPIPE`. The change is small and the byte-identity
-of normal output *is* covered by the existing goldens.
+**Not covered by a test:** the broken-pipe path *end to end*. The `ErrorKind` classification is
+now unit-tested against a synthetic failing writer (`broken_pipe_is_success` /
+`other_write_failures_propagate`), but no test spawns a real process into a closed pipe —
+that needs a harness neither CLI suite has, and the Windows failure mode differs from Unix
+`EPIPE`. Byte-identity of normal output *is* covered by the existing goldens.
+
+#### Review follow-up (2026-07-27): stdout failures are no longer silent
+
+The first cut of L-PIPE warned via `tracing::warn!` and returned `Ok(())` for **every** non-pipe
+write failure, so `clip-sync … > out.json` on a full disk exited **0** next to a truncated file.
+That is the one combination a script cannot defend against, so it was tightened:
+
+- `write_report_to_stdout` returns `io::Result`; only `BrokenPipe` is swallowed.
+- Analyzer gained `AppError::Output(#[source] io::Error)` → exit **4**.
+- Repair reuses `RepairError::Io` → exit **4** (its doc comment already read "Output or report
+  I/O failure").
+- Both map to **4**, matching each CLI's existing I/O bucket. A distinct code was considered and
+  declined: it would fork the two binaries over one failure mode without telling a script
+  anything it could act on differently.
+- `docs/error-mapping.md` updated — including the previously absolute claim that no report is
+  printed on failure, which `Output` makes untrue (stdout may hold a partial report; that is
+  precisely why it exits non-zero).
+
+The helper was also **de-duplicated** into `clip_sync::write_report_to_stdout` rather than living
+twice — with the error path now load-bearing, two copies could drift into two different
+exit-code behaviors for the same failure.
+
+**Reviewed and deliberately not changed:**
+
+- **`--quiet` + TOML `show_diagnostics = true` still compose.** This is correct, not a leftover.
+  `quiet` governs *progress noise on stderr*; `show_diagnostics` governs *report detail on
+  stdout*. They are orthogonal, and the original L-QV defect was precisely that `--verbose`
+  **conflated** them. Forcing `--quiet` to clear an explicitly configured `show_diagnostics`
+  would re-introduce the conflation in the opposite direction.
+- **Repair's `--verbose` help text.** "Show diagnostics and verbose progress" is accurate: the
+  progress half goes through `apply_cli_overrides`, and the diagnostics half through
+  `args.verbose` reaching `print_repair_output` directly. Two paths, both real — the help
+  describes the observable effect correctly.
 | M-DEAD / L-pregate | ~~Pregate measurement stack~~ | **done 2026-07-23** (B2 full remove) |
 | M-DEAD / L-slide | ~~Unused `slide_template_scores`~~ | **done 2026-07-23** |
 

@@ -35,11 +35,15 @@ Implementation references:
 | 0 | Success | Alignment report printed to stdout |
 | 2 | Config | Invalid or unreadable configuration |
 | 3 | Domain | Business rule violation (e.g. no audio tracks selected) |
-| 4 | Media | File I/O, probe, decode, or seek failure |
+| 4 | Media, Output | File I/O, probe, decode, or seek failure; **or** failure writing the report to stdout |
 | 5 | Fingerprint | Fingerprint generation failure |
 | 6 | Alignment | Alignment engine failure |
 
-All non-zero codes print a single user-safe line to **stderr**. The process does not print a report to stdout on failure.
+All non-zero codes print a single user-safe line to **stderr**. The process does not print a report to stdout on failure, with one exception: `AppError::Output` means the report was being written and the write failed, so stdout may hold a **partial** report. That is exactly why it is a non-zero exit rather than a warning — a script redirecting to a file must not see exit 0 next to a truncated file.
+
+### Broken pipe is not an error
+
+Both CLIs treat a closed downstream pipe (`clip-sync … | head`) as **success, exit 0**. The reader chose to stop reading; the report was correct as far as it was consumed. Every other stdout write failure — a full disk on `> out.json`, a closed handle — is a real error and exits non-zero (analyzer **4** via `AppError::Output`; repair **4** via `RepairError::Io`). Shared implementation: `clip_sync::write_report_to_stdout`.
 
 ## Exit codes — `clip-sync-repair` (repair)
 
@@ -50,7 +54,7 @@ All non-zero codes print a single user-safe line to **stderr**. The process does
 | 0 | — | Gap analysis or write path complete (scan-only, WAV patch, or mux) |
 | 2 | `Config(String)` | Invalid config, argument, or validation failure (including `--mux` without `ffmpeg-mux` build feature) |
 | 3 | `Domain(DomainError)` | No decodable audio track in A or B, or video A duration unknown during gap scan (`InvalidDuration`) |
-| 4 | `Media(MediaError)`, `Io(std::io::Error)`, or `Write(std::io::Error)` | File I/O, decode failure during gap scan/patch, or WAV write failure |
+| 4 | `Media(MediaError)`, `Io(std::io::Error)`, or `Write(std::io::Error)` | File I/O, decode failure during gap scan/patch, WAV write failure, or failure writing the report to stdout (`Io`) |
 | 5 | `Align(AppError)` | Any failure from the alignment sub-flow |
 | 6 | `Mux(String)` | ffmpeg missing on PATH, non-zero ffmpeg exit, or mux stderr message (R5, `--mux` / `repair.output.video_path`) |
 
@@ -93,8 +97,9 @@ Messages come from the error enums' `Display` implementations (`application/erro
 | `Fingerprint(InvalidPcm(detail))` | `invalid PCM: <detail>` |
 | `Fingerprint(EngineFailed { detail, .. })` | `fingerprint engine failed: <detail>` |
 | `Alignment(EngineFailed(detail))` | `alignment engine failed: <detail>` |
+| `Output(io)` | `failed to write report to stdout: <detail>` |
 
-Variants whose failures originate in a library or the OS additionally carry that error as `source()` (`UnsupportedFormat`, `OpenFailed`, `DecodeFailed`, `SeekFailed`, `Fingerprint::EngineFailed`, `Config::FileRead`, `Config::Parse`). `FileNotFound`, `Unsupported`, `InvalidPcm`, `InvalidValue`, and the domain errors have no underlying error and return `None`.
+Variants whose failures originate in a library or the OS additionally carry that error as `source()` (`UnsupportedFormat`, `OpenFailed`, `DecodeFailed`, `SeekFailed`, `Fingerprint::EngineFailed`, `Config::FileRead`, `Config::Parse`, `Output`). `FileNotFound`, `Unsupported`, `InvalidPcm`, `InvalidValue`, and the domain errors have no underlying error and return `None`.
 
 ### Alignment vs “no match”
 

@@ -450,8 +450,18 @@ mod tests {
                 .expect_err("--quiet --verbose must not parse");
 
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-        assert!(Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "--quiet"]).is_ok());
-        assert!(Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "--verbose"]).is_ok());
+
+        // Short spellings resolve to the same args, so the conflict must reject them too.
+        let short = Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", "-q", "-v"])
+            .expect_err("-q -v must not parse");
+        assert_eq!(short.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        for flag in ["--quiet", "--verbose", "-q", "-v"] {
+            assert!(
+                Args::try_parse_from(["clip-sync-repair", "a.wav", "b.wav", flag]).is_ok(),
+                "{flag} must still parse on its own"
+            );
+        }
     }
 
     #[test]

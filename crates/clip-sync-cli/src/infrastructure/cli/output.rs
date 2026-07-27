@@ -1,11 +1,9 @@
-use std::io::{self, Write};
-
 use clip_sync::{
     format_end_clip_anchor_line, format_high_rate_refinement_lines,
     format_offset_verification_lines, format_periodic_ambiguity_line,
     format_query_localization_lines, format_symmetric_clip_window_line, format_timestamp,
-    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
-    RepetitionFindingReport,
+    write_report_to_stdout, AlignmentReport, AlignmentResult, AppError, ClipLabelReport,
+    ClipMatchReport, RepetitionFindingReport,
 };
 
 use crate::infrastructure::config::{OutputConfig, OutputFormat};
@@ -21,29 +19,8 @@ pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<
         OutputFormat::Human => format_human_output(output.show_diagnostics, result),
         OutputFormat::Json => format!("{}\n", format_json_output(result)),
     };
-    write_stdout(&rendered);
 
-    Ok(())
-}
-
-/// Write the rendered report to stdout without panicking when the reader has gone away.
-///
-/// `println!` / `print!` panic on a broken pipe, so `clip-sync … | head` aborted with a
-/// panic message instead of exiting cleanly. A closed downstream pipe is a normal way for
-/// a reader to stop, so it is treated as success; any other write failure goes to stderr,
-/// which is the only stream left that could carry it.
-fn write_stdout(rendered: &str) {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    let written = handle
-        .write_all(rendered.as_bytes())
-        .and_then(|()| handle.flush());
-
-    match written {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-        Err(error) => tracing::warn!(%error, "failed to write alignment report to stdout"),
-    }
+    write_report_to_stdout(&rendered).map_err(AppError::Output)
 }
 
 pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResult) -> String {
