@@ -10,9 +10,9 @@
 //! them so the public path `crate::application::gap_fingerprint::*` is unchanged. See
 //! `docs/dev/archive/TEMP-gap-fingerprint-module-split-plan.md`.
 
-mod schema;
-mod project;
 mod measure;
+mod project;
+mod schema;
 
 pub use measure::*;
 pub use project::*;

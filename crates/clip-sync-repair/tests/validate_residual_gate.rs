@@ -7,14 +7,14 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features validation-tests --test validate_residual_gate`
 
-use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
+use clip_sync_repair::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use clip_sync_repair::domain::{
     gap_tags::ResidualBand, GapPatchStatus, GapSignatureMode, ResidualGateMode,
 };
-use clip_sync_repair::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_production, build_f4_decoy_production, structure_slide_secs,
@@ -276,4 +276,3 @@ fn f4_decoy_energy_recovers_at_low_bias() {
          ({slide:.3}s vs {truth_slide:.3}s)",
     );
 }
-

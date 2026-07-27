@@ -3,8 +3,8 @@ use crate::application::error::{AlignmentError, FingerprintError, MediaError};
 use std::time::Duration;
 
 use crate::domain::{
-    AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, InterleavedScanBucket,
-    MediaSource, MonoPcmClip, MonoScanBucket, MultiChannelPcm, RepetitionFinding,
+    AudioTrack, ClipMatchEstimate, ClipWindow, Fingerprint, InterleavedScanBucket, MediaSource,
+    MonoPcmClip, MonoScanBucket, MultiChannelPcm, RepetitionFinding,
 };
 
 pub trait ProgressReporter {
@@ -92,7 +92,12 @@ pub trait MediaSession {
         on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
     ) -> Result<(), MediaError> {
         crate::application::media_scan::scan_mono_buckets_via_windows(
-            self, track, bucket_secs, progress, label, on_bucket,
+            self,
+            track,
+            bucket_secs,
+            progress,
+            label,
+            on_bucket,
         )
     }
 
@@ -113,7 +118,12 @@ pub trait MediaSession {
     ) -> Result<(), MediaError> {
         let _ = timeline_skew;
         crate::application::media_scan::scan_interleaved_buckets_via_windows(
-            self, track, bucket_secs, progress, label, on_bucket,
+            self,
+            track,
+            bucket_secs,
+            progress,
+            label,
+            on_bucket,
         )
     }
 }

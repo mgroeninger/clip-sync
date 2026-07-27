@@ -7,8 +7,8 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --test integration_energy_smoke`
 
-use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::GapSignatureMode;
@@ -55,7 +55,12 @@ fn scan_detects_f1_production_gap() {
     let (expected_start, expected_end, _, _, _) = gap_report_times(&fixture);
     let report = scan_gaps_for_fixture(&fixture, temp.path());
     let fillable: Vec<_> = report.gaps.iter().filter(|g| g.is_fillable()).collect();
-    assert_eq!(fillable.len(), 1, "expected one fillable gap: {:#?}", report.gaps);
+    assert_eq!(
+        fillable.len(),
+        1,
+        "expected one fillable gap: {:#?}",
+        report.gaps
+    );
     let gap = fillable[0];
     const TOL: f64 = 0.35;
     assert!(

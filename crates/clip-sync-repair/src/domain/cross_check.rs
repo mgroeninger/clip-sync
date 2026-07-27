@@ -1,7 +1,7 @@
 use crate::domain::align::TimelineOverlap;
 
-use crate::domain::gap::{Gap, GapOffsetAgreement};
 use crate::domain::gap::interval_fully_within_window;
+use crate::domain::gap::{Gap, GapOffsetAgreement};
 
 /// A silence interval on a single file's native timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -128,8 +128,7 @@ pub fn silence_based_offset(
         return None;
     }
 
-    let mut candidates: Vec<f64> =
-        Vec::with_capacity(2 * a_intervals.len() * b_intervals.len());
+    let mut candidates: Vec<f64> = Vec::with_capacity(2 * a_intervals.len() * b_intervals.len());
     for a in a_intervals {
         for b in b_intervals {
             candidates.push(b.start_secs - a.start_secs);
@@ -175,7 +174,10 @@ mod tests {
     use super::*;
 
     fn interval(start: f64, end: f64) -> SilenceInterval {
-        SilenceInterval { start_secs: start, end_secs: end }
+        SilenceInterval {
+            start_secs: start,
+            end_secs: end,
+        }
     }
 
     use crate::domain::gap::Gap;
@@ -207,10 +209,7 @@ mod tests {
     #[test]
     fn cross_check_ignores_a_only_dropouts_when_spurious_shift_would_win() {
         // Dropout on A would spuriously align with unrelated B quiet at Δ≈341; mutual quiet agrees at −7.
-        let a_with_dropout = [
-            interval(10.0, 30.0),
-            interval(100.0, 110.0),
-        ];
+        let a_with_dropout = [interval(10.0, 30.0), interval(100.0, 110.0)];
         let a_mutual_only = [interval(100.0, 110.0)];
         let b_spurious = [interval(93.0, 103.0), interval(351.0, 371.0)];
         let b_mutual = [interval(93.0, 103.0)];
@@ -266,7 +265,11 @@ mod tests {
         let a = [interval(10.0, 20.0)];
         let b = [interval(15.0, 25.0)]; // true offset = 5.0
         let result = check_gap_offset_agreement(&a, &b, 5.05, 0.5).expect("should compute");
-        assert!(result.agrees, "delta {} should be within tolerance 0.5", result.delta_secs);
+        assert!(
+            result.agrees,
+            "delta {} should be within tolerance 0.5",
+            result.delta_secs
+        );
         assert!((result.delta_secs - 0.05).abs() < 1e-3);
     }
 
@@ -274,9 +277,13 @@ mod tests {
     fn gap_offset_disagreement_flagged() {
         let a = [interval(10.0, 20.0)];
         let b = [interval(15.0, 25.0)]; // silence-based offset = 5.0
-        // Alignment says offset is 8.0 — well outside tolerance.
+                                        // Alignment says offset is 8.0 — well outside tolerance.
         let result = check_gap_offset_agreement(&a, &b, 8.0, 0.5).expect("should compute");
-        assert!(!result.agrees, "delta {} should exceed tolerance 0.5", result.delta_secs);
+        assert!(
+            !result.agrees,
+            "delta {} should exceed tolerance 0.5",
+            result.delta_secs
+        );
         assert!((result.delta_secs - 3.0).abs() < 1e-3);
     }
 
@@ -293,8 +300,8 @@ mod tests {
             shared_length_secs: 889.044,
         };
         let a = [
-            interval(0.0, 16.0),    // pre-roll — outside overlap
-            interval(100.0, 101.0), // inside overlap
+            interval(0.0, 16.0),      // pre-roll — outside overlap
+            interval(100.0, 101.0),   // inside overlap
             interval(5979.0, 6180.0), // tail — outside overlap
         ];
         let b = [
@@ -305,12 +312,20 @@ mod tests {
 
         let (a_in, b_in) = filter_intervals_for_cross_check(&a, &b, &overlap);
         assert_eq!(a_in.len(), 1, "A pre-roll and tail should be excluded");
-        assert_eq!(b_in.len(), 2, "B leading silence is still inside B overlap [0, 889]");
+        assert_eq!(
+            b_in.len(),
+            2,
+            "B leading silence is still inside B overlap [0, 889]"
+        );
         assert!((a_in[0].start_secs - 100.0).abs() < 1e-6);
 
         let result = check_gap_offset_agreement_in_overlap(&a, &b, Some(&overlap), -10.956, 0.5)
             .expect("overlap-contained pair should agree");
-        assert!(result.agrees, "expected agreement, got delta {}", result.delta_secs);
+        assert!(
+            result.agrees,
+            "expected agreement, got delta {}",
+            result.delta_secs
+        );
     }
 
     #[test]

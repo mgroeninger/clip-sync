@@ -100,9 +100,7 @@ pub fn build_gap_fill_plan(
         // Equivalence gate (lowest precedence — after fillable + coverage, per plan §4): drop gaps whose
         // silence is already equivalent to B's (mutual/ambient silence), so the decode/patch path is never
         // entered for them. Only when `skip_equivalent_gaps`; the classification is advisory otherwise.
-        if skip_equivalent_gaps
-            && report.gap_equivalence_at(index).is_some_and(|v| v.drop)
-        {
+        if skip_equivalent_gaps && report.gap_equivalence_at(index).is_some_and(|v| v.drop) {
             skipped.push(GapFillSkipped {
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
@@ -166,9 +164,7 @@ pub(crate) fn format_scan_fillable_followup(report: &GapReport) -> Option<String
 pub(crate) fn format_align_fill_regions_phase(plan: &GapFillPlan) -> String {
     let region_count = plan.regions.len();
     if plan.skipped.is_empty() {
-        return format!(
-            "Aligning {region_count} fill region(s) (structure match + splice)..."
-        );
+        return format!("Aligning {region_count} fill region(s) (structure match + splice)...");
     }
 
     let skipped = plan.skipped.len();
@@ -333,10 +329,7 @@ mod tests {
     fn build_gap_fill_plan_includes_gaps_outside_start_overlap() {
         let mut report = base_report(
             Some(stereo_identical()),
-            vec![
-                fillable_gap(1.0, 4.0),
-                fillable_gap(5979.0, 6180.0),
-            ],
+            vec![fillable_gap(1.0, 4.0), fillable_gap(5979.0, 6180.0)],
         );
         report.alignment.start_overlap = Some(TimelineOverlap {
             video_a_start_secs: 0.0,
@@ -385,7 +378,10 @@ mod tests {
     fn equivalence_drops_gap_only_when_flag_enabled() {
         use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
 
-        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+        let on = GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
         // Two fillable gaps; the first classifies as shared silence (drop), the second as a repairable
         // dropout (keep). Index-parallel to `gaps`.
         let mut report = base_report(
@@ -408,7 +404,10 @@ mod tests {
         assert_eq!(plan_on.regions.len(), 1);
         assert!((plan_on.regions[0].a_start_secs - 20.0).abs() < 1e-9);
         assert_eq!(plan_on.skipped.len(), 1);
-        assert_eq!(plan_on.skipped[0].reason, GapFillSkipReason::AlreadyMatchesReference);
+        assert_eq!(
+            plan_on.skipped[0].reason,
+            GapFillSkipReason::AlreadyMatchesReference
+        );
         assert!((plan_on.skipped[0].a_start_secs - 3.0).abs() < 1e-9);
     }
 
@@ -418,7 +417,10 @@ mod tests {
 
         // An unfillable gap (no B energy) whose (hypothetical) verdict says keep must still be NotFillable —
         // equivalence is lowest precedence and only ever *drops* fillable gaps.
-        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+        let on = GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
         let mut report = base_report(
             Some(stereo_identical()),
             vec![Gap {
@@ -429,7 +431,12 @@ mod tests {
                 b_has_energy: false,
             }],
         );
-        report.gap_equivalence = vec![classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on)];
+        report.gap_equivalence = vec![classify_gap_equivalence(
+            Some(-106.0),
+            Some(-47.0),
+            Some(0.0),
+            &on,
+        )];
         let plan = build_gap_fill_plan(&report, 0, true);
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped[0].reason, GapFillSkipReason::NotFillable);

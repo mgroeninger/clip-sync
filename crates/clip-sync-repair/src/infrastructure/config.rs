@@ -450,7 +450,9 @@ fn apply_profile_bundle_fields(
     }
 }
 
-pub(crate) fn repair_profile_field_mask_from_toml(repair_table: &toml::Table) -> RepairProfileFieldMask {
+pub(crate) fn repair_profile_field_mask_from_toml(
+    repair_table: &toml::Table,
+) -> RepairProfileFieldMask {
     RepairProfileFieldMask {
         fill_border_search_secs: repair_table.contains_key("fill_border_search_secs"),
         gap_end_extend_on_post_seam_fail: repair_table
@@ -671,7 +673,10 @@ impl RepairConfig {
         // NaN/Inf pass ordinary range comparisons (`NaN < 0.0` is false), so reject
         // non-finite floats before any threshold check.
         for (field, value) in [
-            ("silence_peak_fraction", f64::from(self.silence_peak_fraction)),
+            (
+                "silence_peak_fraction",
+                f64::from(self.silence_peak_fraction),
+            ),
             ("absolute_silence_rms", f64::from(self.absolute_silence_rms)),
             ("gap_offset_tolerance_secs", self.gap_offset_tolerance_secs),
             ("min_fill_correlation", f64::from(self.min_fill_correlation)),
@@ -693,7 +698,10 @@ impl RepairConfig {
                 self.fill_extract_tail_slack_secs,
             ),
             ("fill_seam_search_secs", self.fill_seam_search_secs),
-            ("gap_signature_context_secs", self.gap_signature_context_secs),
+            (
+                "gap_signature_context_secs",
+                self.gap_signature_context_secs,
+            ),
             (
                 "min_structure_match_score",
                 f64::from(self.min_structure_match_score),
@@ -721,7 +729,10 @@ impl RepairConfig {
             ),
             ("fill_marginal_margin", f64::from(self.fill_marginal_margin)),
             ("fill_absolute_floor", f64::from(self.fill_absolute_floor)),
-            ("fill_repeat_penalty_weight", self.fill_repeat_penalty_weight),
+            (
+                "fill_repeat_penalty_weight",
+                self.fill_repeat_penalty_weight,
+            ),
             (
                 "fill_anchor_min_correlation",
                 f64::from(self.fill_anchor_min_correlation),
@@ -947,8 +958,7 @@ impl RepairConfig {
                 reason: "must be >= 0".into(),
             });
         }
-        if self.fill_anchor_max_adjustment_frac <= 0.0
-            || self.fill_anchor_max_adjustment_frac > 1.0
+        if self.fill_anchor_max_adjustment_frac <= 0.0 || self.fill_anchor_max_adjustment_frac > 1.0
         {
             return Err(ConfigError::InvalidValue {
                 field: "fill_anchor_max_adjustment_frac".into(),

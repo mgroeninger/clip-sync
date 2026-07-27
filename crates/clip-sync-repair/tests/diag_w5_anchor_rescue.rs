@@ -44,10 +44,7 @@ fn print_cell_csv(scores: &W5AnchorRescueCellScores) {
     );
     // One row per bracket.
     for b in &scores.brackets {
-        let confidence = b
-            .confidence
-            .map(|c| format!("{c:?}"))
-            .unwrap_or_default();
+        let confidence = b.confidence.map(|c| format!("{c:?}")).unwrap_or_default();
         println!(
             "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{},{},{},{},{},{},{},{},{},,{}",
             c.peak_offset_secs,
@@ -109,8 +106,12 @@ fn print_human_summary(scores: &W5AnchorRescueCellScores) {
                 b.post_frame,
                 b.move_frames,
                 b.failure_stage.unwrap_or("?"),
-                b.pre_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
-                b.post_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
+                b.pre_pearson
+                    .map(|v| format!("{v:.4}"))
+                    .unwrap_or_else(|| "—".into()),
+                b.post_pearson
+                    .map(|v| format!("{v:.4}"))
+                    .unwrap_or_else(|| "—".into()),
             );
         }
     }
@@ -160,7 +161,10 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
     eprintln!("  anchor_seam_would_run: {}", s.anchor_seam_would_run);
     eprintln!("  brackets: {}", s.brackets.len());
     for b in &s.brackets {
-        let prom = format!("prom(pre={:.3},post={:.3})", b.pre_prominence, b.post_prominence);
+        let prom = format!(
+            "prom(pre={:.3},post={:.3})",
+            b.pre_prominence, b.post_prominence
+        );
         if b.passed_gate {
             eprintln!(
                 "    move={} {prom} -> PASS pre={:.4} post={:.4} min={:.4} conf={:?}",
@@ -175,8 +179,12 @@ fn print_fixture_scores(label: &str, s: &W5FixtureScores) {
                 "    move={} {prom} -> FAIL [{}] pre={} post={}",
                 b.move_frames,
                 b.failure_stage.unwrap_or("?"),
-                b.pre_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
-                b.post_pearson.map(|v| format!("{v:.4}")).unwrap_or_else(|| "—".into()),
+                b.pre_pearson
+                    .map(|v| format!("{v:.4}"))
+                    .unwrap_or_else(|| "—".into()),
+                b.post_pearson
+                    .map(|v| format!("{v:.4}"))
+                    .unwrap_or_else(|| "—".into()),
             );
         }
     }
@@ -200,7 +208,9 @@ fn diag_w5_noise_collar() {
         repair.anchor_seam_min_prominence = prom;
         let scores = score_w5_fixture(&fixture, &repair);
         print_fixture_scores(
-            &format!("noise_collar off={off} collar={collar} burst={burst} radius={radius} prom={prom}"),
+            &format!(
+                "noise_collar off={off} collar={collar} burst={burst} radius={radius} prom={prom}"
+            ),
             &scores,
         );
     }

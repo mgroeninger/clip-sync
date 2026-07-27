@@ -188,11 +188,13 @@ pub fn diff_baselines(expected: &GoldenBaseline, actual: &GoldenBaseline, eps: f
         ));
     }
 
-    let mut exp_by_key: std::collections::BTreeMap<String, &GoldenRecord> = std::collections::BTreeMap::new();
+    let mut exp_by_key: std::collections::BTreeMap<String, &GoldenRecord> =
+        std::collections::BTreeMap::new();
     for g in &expected.gaps {
         exp_by_key.insert(gap_key(&g.pair, g.index), g);
     }
-    let mut act_by_key: std::collections::BTreeMap<String, &GoldenRecord> = std::collections::BTreeMap::new();
+    let mut act_by_key: std::collections::BTreeMap<String, &GoldenRecord> =
+        std::collections::BTreeMap::new();
     for g in &actual.gaps {
         act_by_key.insert(gap_key(&g.pair, g.index), g);
     }
@@ -212,11 +214,22 @@ pub fn diff_baselines(expected: &GoldenBaseline, actual: &GoldenBaseline, eps: f
     errs
 }
 
-fn diff_record(key: &str, exp: &GoldenRecord, act: &GoldenRecord, eps: f64, errs: &mut Vec<String>) {
+fn diff_record(
+    key: &str,
+    exp: &GoldenRecord,
+    act: &GoldenRecord,
+    eps: f64,
+    errs: &mut Vec<String>,
+) {
     macro_rules! tier1 {
         ($field:ident) => {
             if exp.$field != act.$field {
-                errs.push(format!("{key}.{}: expected {:?} actual {:?}", stringify!($field), exp.$field, act.$field));
+                errs.push(format!(
+                    "{key}.{}: expected {:?} actual {:?}",
+                    stringify!($field),
+                    exp.$field,
+                    act.$field
+                ));
             }
         };
     }
@@ -263,11 +276,20 @@ fn diff_record(key: &str, exp: &GoldenRecord, act: &GoldenRecord, eps: f64, errs
     tier2!(b_noise_floor_db);
 }
 
-fn diff_f64_opt(key: &str, field: &str, exp: Option<f64>, act: Option<f64>, eps: f64, errs: &mut Vec<String>) {
+fn diff_f64_opt(
+    key: &str,
+    field: &str,
+    exp: Option<f64>,
+    act: Option<f64>,
+    eps: f64,
+    errs: &mut Vec<String>,
+) {
     match (exp, act) {
         (None, None) => {}
         (Some(e), Some(a)) if (e - a).abs() <= eps => {}
-        (e, a) => errs.push(format!("{key}.{field}: expected {e:?} actual {a:?} (eps {eps})")),
+        (e, a) => errs.push(format!(
+            "{key}.{field}: expected {e:?} actual {a:?} (eps {eps})"
+        )),
     }
 }
 
@@ -340,13 +362,21 @@ mod tests {
         let mut act = exp.clone();
         act.gaps[0].fill_frames = Some(4411);
         let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
-        assert_eq!(errs.len(), 1, "a 1-frame fill-length change must be caught: {errs:?}");
+        assert_eq!(
+            errs.len(),
+            1,
+            "a 1-frame fill-length change must be caught: {errs:?}"
+        );
         assert!(errs[0].contains("fill_frames"));
 
         let mut act = exp.clone();
         act.gaps[0].fill_start_frame = Some(1001);
         let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
-        assert_eq!(errs.len(), 1, "a 1-frame placement move must be caught: {errs:?}");
+        assert_eq!(
+            errs.len(),
+            1,
+            "a 1-frame placement move must be caught: {errs:?}"
+        );
         assert!(errs[0].contains("fill_start_frame"));
     }
 }

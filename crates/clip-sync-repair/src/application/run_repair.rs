@@ -110,14 +110,20 @@ where
         PendingAfterScan::Preview {
             patch_settings,
             crossfade_ms,
-        } => run_preview(media_reader, progress, patch_settings, crossfade_ms, report.clone())
-            .map(Some),
-        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone()).and_then(
-            |write_request| {
+        } => run_preview(
+            media_reader,
+            progress,
+            patch_settings,
+            crossfade_ms,
+            report.clone(),
+        )
+        .map(Some),
+        PendingAfterScan::Write(pending) => {
+            into_write_request(pending, report.clone()).and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request, muxer).map(Some)
-            },
-        ),
+            })
+        }
     };
 
     Ok(RepairRunOutcome {
@@ -149,14 +155,20 @@ where
         PendingAfterScan::Preview {
             patch_settings,
             crossfade_ms,
-        } => run_preview(media_reader, progress, patch_settings, crossfade_ms, report.clone())
-            .map(Some),
-        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone()).and_then(
-            |write_request| {
+        } => run_preview(
+            media_reader,
+            progress,
+            patch_settings,
+            crossfade_ms,
+            report.clone(),
+        )
+        .map(Some),
+        PendingAfterScan::Write(pending) => {
+            into_write_request(pending, report.clone()).and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request).map(Some)
-            },
-        ),
+            })
+        }
     };
 
     Ok(RepairRunOutcome {

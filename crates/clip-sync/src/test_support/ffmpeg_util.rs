@@ -42,7 +42,10 @@ pub fn decode_to_mono_wav(
     if let Some(secs) = max_duration_secs {
         command.args(["-t", &secs.to_string()]);
     }
-    command.arg(output).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .arg(output)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 
     command
         .status()
@@ -100,7 +103,15 @@ pub fn encode_audio(input_wav: &Path, output: &Path, format: EncodeFormat) -> bo
             ]);
         }
         EncodeFormat::Mp4Aac => {
-            command.args(["-vn", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]);
+            command.args([
+                "-vn",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+            ]);
         }
         EncodeFormat::Mp4AacStereo => {
             command.args([
@@ -186,7 +197,15 @@ pub fn encode_dual_track_mp4(
         .arg("-i")
         .arg(&decoy_resampled)
         .args(["-map", "0:a", "-map", "1:a"])
-        .args(["-vn", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
+        .args([
+            "-vn",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+        ])
         .arg("-f")
         .arg("mp4")
         .arg(output)
@@ -232,11 +251,9 @@ fn patch_mkv_container_duration(path: &Path, multiplier: f64) -> bool {
     if let Some(pos) = data[..search_limit].windows(3).position(|w| w == pattern) {
         let start = pos + 3;
         if start + 8 <= data.len() {
-            let old =
-                f64::from_be_bytes(data[start..start + 8].try_into().unwrap());
+            let old = f64::from_be_bytes(data[start..start + 8].try_into().unwrap());
             if old > 0.0 {
-                data[start..start + 8]
-                    .copy_from_slice(&(old * multiplier).to_be_bytes());
+                data[start..start + 8].copy_from_slice(&(old * multiplier).to_be_bytes());
                 return std::fs::write(path, &data).is_ok();
             }
         }
@@ -303,7 +320,15 @@ pub fn encode_he_aac_mp4_from_wav(input_wav: &Path, output: &Path) -> bool {
     }
 
     let attempts: &[&[&str]] = &[
-        &["-vn", "-c:a", "libfdk_aac", "-profile:a", "aac_he", "-b:a", "64k"],
+        &[
+            "-vn",
+            "-c:a",
+            "libfdk_aac",
+            "-profile:a",
+            "aac_he",
+            "-b:a",
+            "64k",
+        ],
         &["-vn", "-c:a", "aac", "-profile:a", "aac_he", "-b:a", "64k"],
     ];
 
@@ -390,7 +415,13 @@ pub fn encode_he_aac_adts_sweep(sample_rate: u32, seconds: u32, f0: f64, f1: f64
 /// `ffmpeg -c copy`, which needs no libfdk (copy, not re-encode) — so this works on stock
 /// ffmpeg locally and in CI. Returns `false` if ffmpeg is unavailable or the remux fails.
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
-pub fn write_he_aac_sweep_mp4(path: &Path, sample_rate: u32, seconds: u32, f0: f64, f1: f64) -> bool {
+pub fn write_he_aac_sweep_mp4(
+    path: &Path,
+    sample_rate: u32,
+    seconds: u32,
+    f0: f64,
+    f1: f64,
+) -> bool {
     use std::io::Write;
 
     if !ffmpeg_available() {
@@ -586,8 +617,7 @@ fn encode_oxideav_eac3_surround_es(duration_secs: u32) -> Option<Vec<u8>> {
     let mut s16 = Vec::with_capacity(frame_count * CHANNELS as usize * 2);
     for index in 0..frame_count {
         let t = index as f32 / SAMPLE_RATE as f32;
-        let sample =
-            ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.8)) as i16;
+        let sample = ((TAU * 440.0 * t).sin() * (i16::MAX as f32 * 0.8)) as i16;
         for _ in 0..CHANNELS as usize {
             s16.extend_from_slice(&sample.to_le_bytes());
         }
@@ -685,7 +715,16 @@ pub fn write_he_aac_surround_mp4_fixture(path: &Path) -> bool {
             "-b:a",
             "128k",
         ],
-        &["-c:a", "aac", "-profile:a", "aac_he", "-ac", "6", "-b:a", "128k"],
+        &[
+            "-c:a",
+            "aac",
+            "-profile:a",
+            "aac_he",
+            "-ac",
+            "6",
+            "-b:a",
+            "128k",
+        ],
     ];
 
     for audio_codec_args in attempts {

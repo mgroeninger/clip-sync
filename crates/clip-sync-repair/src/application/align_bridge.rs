@@ -1,6 +1,8 @@
 //! Map clip-sync alignment DTOs to repair-domain [`ScanAlignment`].
 
-use clip_sync::{AlignmentResult, AudioTimelineSkew as ClipAudioTimelineSkew, ClipLabel, TimelineOverlap};
+use clip_sync::{
+    AlignmentResult, AudioTimelineSkew as ClipAudioTimelineSkew, ClipLabel, TimelineOverlap,
+};
 
 use crate::domain::align::{
     AlignedClip, AudioTimelineSkew, ClipRole, ScanAlignment, TimelineOverlap as DomainOverlap,

@@ -96,9 +96,7 @@ fn wav_writer_24bit_sample_values_round_trip() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("out.wav");
-    WavPatchedAudioWriter
-        .write(&pcm, &path)
-        .expect("write");
+    WavPatchedAudioWriter.write(&pcm, &path).expect("write");
 
     let mut reader = WavReader::open(&path).expect("open");
     let out: Vec<i32> = reader

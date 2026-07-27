@@ -156,10 +156,8 @@ impl FloorOracleCase {
     }
 
     pub fn expect_informative(&self) -> bool {
-        self.expect_informative_floor.unwrap_or(matches!(
-            self.variant(),
-            OracleVariant::SameMaster
-        ))
+        self.expect_informative_floor
+            .unwrap_or(matches!(self.variant(), OracleVariant::SameMaster))
     }
 }
 
@@ -191,18 +189,16 @@ pub struct BuiltFloorOracle {
 /// binary (the crate root), not the harness crate manifest dir.
 pub fn floor_oracle_corpus_root(repair_tests_dir: &Path) -> PathBuf {
     if let Ok(root) = std::env::var("CLIP_SYNC_WORKSPACE_ROOT") {
-        return PathBuf::from(root)
-            .join("crates/clip-sync-repair/tests/floor_oracle");
+        return PathBuf::from(root).join("crates/clip-sync-repair/tests/floor_oracle");
     }
     repair_tests_dir.join("tests/floor_oracle")
 }
 
 pub fn load_manifest(repair_tests_dir: &Path) -> FloorOracleManifest {
     let path = floor_oracle_corpus_root(repair_tests_dir).join("manifest.toml");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    toml::from_str(&text)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
 pub fn case_sources_ready(case: &FloorOracleCase) -> bool {
@@ -236,7 +232,10 @@ pub(crate) fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
     (secs * sample_rate as f64).round().max(0.0) as usize
 }
 
-pub fn gap_frames_for_case(case: &FloorOracleCase, defaults: &FloorOracleDefaults) -> (usize, usize) {
+pub fn gap_frames_for_case(
+    case: &FloorOracleCase,
+    defaults: &FloorOracleDefaults,
+) -> (usize, usize) {
     let total_secs = f64::from(case.total_secs.unwrap_or(defaults.total_secs));
     let context_secs = case
         .gap_signature_context_secs
@@ -305,7 +304,12 @@ pub(crate) fn output_path(dir: &Path, stem: &str, format: FloorOracleFormat) -> 
     dir.join(format!("{stem}.{ext}"))
 }
 
-pub(crate) fn encode_with_format(input_wav: &Path, output: &Path, format: FloorOracleFormat, bitrate: &str) -> bool {
+pub(crate) fn encode_with_format(
+    input_wav: &Path,
+    output: &Path,
+    format: FloorOracleFormat,
+    bitrate: &str,
+) -> bool {
     if !ffmpeg_available() {
         return false;
     }
@@ -364,7 +368,15 @@ fn encode_aac_mp4(input_wav: &Path, output: &Path, bitrate: &str) -> bool {
         .arg("error")
         .arg("-i")
         .arg(input_wav)
-        .args(["-vn", "-c:a", "aac", "-b:a", bitrate, "-movflags", "+faststart"])
+        .args([
+            "-vn",
+            "-c:a",
+            "aac",
+            "-b:a",
+            bitrate,
+            "-movflags",
+            "+faststart",
+        ])
         .arg("-f")
         .arg("mp4")
         .arg(output)
@@ -403,7 +415,10 @@ pub fn build_floor_oracle_pair(
     case: &FloorOracleCase,
     defaults: &FloorOracleDefaults,
 ) -> BuiltFloorOracle {
-    assert!(ffmpeg_available(), "floor oracle build requires ffmpeg on PATH");
+    assert!(
+        ffmpeg_available(),
+        "floor oracle build requires ffmpeg on PATH"
+    );
     std::fs::create_dir_all(dir).expect("create case output dir");
 
     let sample_rate = case.sample_rate.unwrap_or(defaults.sample_rate);
@@ -512,7 +527,10 @@ pub fn build_floor_oracle_pair(
     };
 
     validate_built_oracle(&built, defaults).unwrap_or_else(|e| {
-        panic!("floor oracle post-encode validation failed for {}: {e}", case.id)
+        panic!(
+            "floor oracle post-encode validation failed for {}: {e}",
+            case.id
+        )
     });
 
     built

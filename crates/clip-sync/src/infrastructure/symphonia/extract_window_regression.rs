@@ -12,9 +12,7 @@ use super::extract::sample_count_tolerance;
 use super::probe::probe_media_reusable;
 use super::session::SymphoniaMediaReader;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
-use crate::domain::{
-    AudioTrack, ClipLabel, ClipWindow, MediaSource, MonoPcmClip, MultiChannelPcm,
-};
+use crate::domain::{AudioTrack, ClipLabel, ClipWindow, MediaSource, MonoPcmClip, MultiChannelPcm};
 
 struct NoopProgress;
 
@@ -39,11 +37,9 @@ enum WindowKind {
 impl WindowKind {
     fn window(self) -> ClipWindow {
         match self {
-            Self::StartSilence => ClipWindow::new(
-                Duration::ZERO,
-                Duration::from_millis(500),
-                ClipLabel::Start,
-            ),
+            Self::StartSilence => {
+                ClipWindow::new(Duration::ZERO, Duration::from_millis(500), ClipLabel::Start)
+            }
             Self::InteriorLoud => ClipWindow::new(
                 Duration::from_secs(1),
                 Duration::from_secs(2),
@@ -181,7 +177,12 @@ fn build_stereo_mp4_fixture(dir: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-fn session_extract_mono(path: &Path, track: &AudioTrack, window: &ClipWindow, label: &str) -> MonoPcmClip {
+fn session_extract_mono(
+    path: &Path,
+    track: &AudioTrack,
+    window: &ClipWindow,
+    label: &str,
+) -> MonoPcmClip {
     let reader = SymphoniaMediaReader;
     let mut session = reader
         .open(&MediaSource::new(path))
@@ -203,15 +204,26 @@ fn session_extract_interleaved(
         .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
     session
         .extract_interleaved(track, window, &NoopProgress, label)
-        .unwrap_or_else(|error| panic!("interleaved extract {label} from {}: {error}", path.display()))
+        .unwrap_or_else(|error| {
+            panic!(
+                "interleaved extract {label} from {}: {error}",
+                path.display()
+            )
+        })
 }
 
 fn peak_abs(samples: &[f32]) -> f32 {
-    samples.iter().map(|sample| sample.abs()).fold(0.0f32, f32::max)
+    samples
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0f32, f32::max)
 }
 
 fn peak_abs_i16(samples: &[i16]) -> f32 {
-    samples.iter().map(|&s| s.abs() as f32 / 32767.0).fold(0.0f32, f32::max)
+    samples
+        .iter()
+        .map(|&s| s.abs() as f32 / 32767.0)
+        .fold(0.0f32, f32::max)
 }
 
 fn assert_sample_count(actual: usize, expected: usize, rate: u32, context: &str) {
@@ -222,8 +234,16 @@ fn assert_sample_count(actual: usize, expected: usize, rate: u32, context: &str)
 }
 
 fn assert_content_oracle(peak: f32, expect_loud: bool, lossy: bool, context: &str) {
-    let loud_threshold = if lossy { 200.0_f32 / 32767.0 } else { 1_000.0 / 32767.0 };
-    let silence_threshold = if lossy { 2_000.0_f32 / 32767.0 } else { 100.0 / 32767.0 };
+    let loud_threshold = if lossy {
+        200.0_f32 / 32767.0
+    } else {
+        1_000.0 / 32767.0
+    };
+    let silence_threshold = if lossy {
+        2_000.0_f32 / 32767.0
+    } else {
+        100.0 / 32767.0
+    };
     if expect_loud {
         assert!(
             peak > loud_threshold,
@@ -248,7 +268,12 @@ fn run_mono_window_matrix(format: MonoFixtureFormat) {
     let lossy = !matches!(format, MonoFixtureFormat::Wav);
 
     let (tracks, _, _) = probe_media_reusable(&path).expect("probe");
-    assert_eq!(tracks.len(), 1, "{}: expected one audio track", format.name());
+    assert_eq!(
+        tracks.len(),
+        1,
+        "{}: expected one audio track",
+        format.name()
+    );
     assert!(
         tracks[0].decodable,
         "{}: track should be decodable",
@@ -257,7 +282,11 @@ fn run_mono_window_matrix(format: MonoFixtureFormat) {
     let track = &tracks[0];
     let rate = track.sample_rate;
 
-    for kind in [WindowKind::StartSilence, WindowKind::InteriorLoud, WindowKind::EndLoud] {
+    for kind in [
+        WindowKind::StartSilence,
+        WindowKind::InteriorLoud,
+        WindowKind::EndLoud,
+    ] {
         let window = kind.window();
         let label = format!("{}_{:?}", format.name(), kind);
         let clip = session_extract_mono(&path, track, &window, &label);
@@ -280,7 +309,11 @@ fn run_interleaved_window_matrix(path: &Path, lossy: bool, label_prefix: &str) {
     let track = &tracks[0];
     let rate = track.sample_rate;
 
-    for kind in [WindowKind::StartSilence, WindowKind::InteriorLoud, WindowKind::EndLoud] {
+    for kind in [
+        WindowKind::StartSilence,
+        WindowKind::InteriorLoud,
+        WindowKind::EndLoud,
+    ] {
         let window = kind.window();
         let label = format!("{label_prefix}_{kind:?}");
         let pcm = session_extract_interleaved(path, track, &window, &label);
@@ -362,13 +395,8 @@ fn mkv_aac_anchored_end_window_extract_succeeds() {
     const OFFSET_SECS: u32 = 3;
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let (_wav_a, wav_b) = write_anchored_end_symmetric_pair(
-        temp.path(),
-        11_025,
-        SHARED_SECS,
-        LONG_SECS,
-        OFFSET_SECS,
-    );
+    let (_wav_a, wav_b) =
+        write_anchored_end_symmetric_pair(temp.path(), 11_025, SHARED_SECS, LONG_SECS, OFFSET_SECS);
     let path_b = temp.path().join("b.mkv");
     assert!(
         ffmpeg_util::encode_audio(&wav_b, &path_b, EncodeFormat::MkvAac),
@@ -483,7 +511,9 @@ fn fdk_reset_backward_seek_reprimes_to_identical_steady_state() {
 
     let steady_divergent = |a: &[i16], b: &[i16]| -> usize {
         let n = a.len().min(b.len());
-        (STEADY_STATE_FROM.min(n)..n).filter(|&i| a[i] != b[i]).count()
+        (STEADY_STATE_FROM.min(n)..n)
+            .filter(|&i| a[i] != b[i])
+            .count()
     };
 
     // Control: decoding is deterministic, so two fresh extracts of B are identical.

@@ -51,7 +51,9 @@ pub fn residual_max_lag_frames(sample_rate: u32, residual_lag_secs: f64) -> i64 
     if sample_rate == 0 || residual_lag_secs <= 0.0 {
         return 0;
     }
-    (residual_lag_secs * f64::from(sample_rate)).round().max(0.0) as i64
+    (residual_lag_secs * f64::from(sample_rate))
+        .round()
+        .max(0.0) as i64
 }
 
 #[cfg(test)]

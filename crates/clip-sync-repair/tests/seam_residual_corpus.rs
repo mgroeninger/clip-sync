@@ -123,12 +123,25 @@ fn seam_residual_center_dominant_follows_center_channel() {
         .fold(0.0f32, |m, &s| m.max(s.abs()));
     let surr_amp = center_peak * 0.05;
     let surrounds: Vec<usize> = (0..channels).filter(|&c| c != center).collect();
-    overwrite_channels(&mut fixture.a_samples, channels, &surrounds, channel_noise(0xA1, surr_amp));
-    overwrite_channels(&mut fixture.b_samples, channels, &surrounds, channel_noise(0xB2, surr_amp));
+    overwrite_channels(
+        &mut fixture.a_samples,
+        channels,
+        &surrounds,
+        channel_noise(0xA1, surr_amp),
+    );
+    overwrite_channels(
+        &mut fixture.b_samples,
+        channels,
+        &surrounds,
+        channel_noise(0xB2, surr_amp),
+    );
 
     let truth = fixture.true_fill_start;
     let (pearson_sel, residual_sel) = pearson_and_residual_selected_channels(&fixture, truth);
-    assert_eq!(pearson_sel, residual_sel, "Pearson and residual selection must match");
+    assert_eq!(
+        pearson_sel, residual_sel,
+        "Pearson and residual selection must match"
+    );
     let mc = score_placement_multichannel(&fixture, truth);
     let mono = score_placement(&fixture, truth);
 
@@ -143,8 +156,7 @@ fn seam_residual_center_dominant_follows_center_channel() {
     assert!(
         mc.verdict.informative,
         "center cancellation should be informative: floor pre={:.1} post={:.1}",
-        mc.verdict.floor_pre_db,
-        mc.verdict.floor_post_db,
+        mc.verdict.floor_pre_db, mc.verdict.floor_post_db,
     );
     assert!(
         mc.verdict.worst_headroom_db() <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -171,7 +183,11 @@ fn seam_residual_disagreement_oracles() {
         "F4 decoy Pearson should pass production floor"
     );
     assert!(f4_decoy.informative, "F4 decoy floor should be informative");
-    assert_eq!(f4_decoy.veto_outcome, GateOutcomeLabel::Veto, "F4 decoy veto case");
+    assert_eq!(
+        f4_decoy.veto_outcome,
+        GateOutcomeLabel::Veto,
+        "F4 decoy veto case"
+    );
     assert!(
         f4_decoy.pearson_patches && f4_decoy.veto_outcome == GateOutcomeLabel::Veto,
         "F4 decoy: Pearson pass → veto skip"

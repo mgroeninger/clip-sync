@@ -9,8 +9,8 @@
 
 use std::time::Instant;
 
-use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::GapSignatureMode;
@@ -33,7 +33,9 @@ fn energy_signature_mode_matrix() {
     let repair_defaults = RepairConfig::default();
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
 
-    eprintln!("fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason");
+    eprintln!(
+        "fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason"
+    );
 
     let fixture = build_f1_production(48_000, 2, 3.0);
     run_oracle_control_row(&patch, &temp, "F1-long", &fixture, 3.0, &repair_defaults);
@@ -118,7 +120,9 @@ fn f2_production_weights_diagnostic() {
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
     let fixture = build_f2_production(48_000, 2, 90.0, 3.0);
 
-    eprintln!("fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason");
+    eprintln!(
+        "fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason"
+    );
     run_oracle_matrix_rows(
         &patch,
         &temp,
@@ -199,7 +203,8 @@ fn f4_decoy_bias_boundary() {
     eprintln!("nominal_bias,patched,slide_secs,wall_ms");
 
     for bias in [0.1, 0.2, 0.25, 0.35] {
-        let repair = production_weight_sweep_config(GapSignatureMode::Energy, 3.0, 0.35, 0.65, bias);
+        let repair =
+            production_weight_sweep_config(GapSignatureMode::Energy, 3.0, 0.35, 0.65, bias);
         let report = gap_report_from_energy_fixture(temp.path(), &fixture);
         let started = Instant::now();
         let result = patch
@@ -225,9 +230,13 @@ fn f4_decoy_patch_diagnostic() {
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
     let fixture = build_f4_decoy_production(48_000, 2, 90.0, 3.0);
     let truth_slide = structure_slide_secs(&fixture, fixture.true_fill_start);
-    eprintln!("F4 decoy: truth slide ≈ {truth_slide:.3}s (energy target), decoy slide ≈ 0 (bool target)");
+    eprintln!(
+        "F4 decoy: truth slide ≈ {truth_slide:.3}s (energy target), decoy slide ≈ 0 (bool target)"
+    );
 
-    eprintln!("fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason");
+    eprintln!(
+        "fixture,source,mode,context_secs,patched,skipped,marginal,wall_ms,slide_secs,skip_reason"
+    );
     run_oracle_matrix_rows(
         &patch,
         &temp,
@@ -247,4 +256,3 @@ fn f4_decoy_patch_diagnostic() {
         &repair_defaults,
     );
 }
-

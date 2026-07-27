@@ -124,4 +124,3 @@ fn curated_golden_fill_placement_is_armed() {
         half.join(", "),
     );
 }
-

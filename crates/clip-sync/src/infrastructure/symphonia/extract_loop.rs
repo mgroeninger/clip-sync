@@ -17,7 +17,7 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     append_frames_in_window, append_interleaved_frames_in_window, decode_shortfall_limit,
-    media_duration_to_frames, seek_with_recovery, seek_to_window_start, shortfall_disposition,
+    media_duration_to_frames, seek_to_window_start, seek_with_recovery, shortfall_disposition,
     timestamp_to_sample, timestamp_to_std_duration, window_sample_bounds,
     InterleavedCollectContext, ShortfallDisposition, WindowCollectContext,
     MAX_CONSECUTIVE_DECODE_ERRORS, MAX_INTERIOR_PARTIAL_DECODE_RETRIES,
@@ -117,7 +117,12 @@ fn read_next_packet(
             Ok(Some(pkt)) => return Ok(PacketRead::Got(pkt)),
             Ok(None) => return Ok(PacketRead::Eof),
             Err(SymphoniaError::ResetRequired) => {
-                state.decoders.get_mut(&track_id).expect("decoder cached").decoder.reset();
+                state
+                    .decoders
+                    .get_mut(&track_id)
+                    .expect("decoder cached")
+                    .decoder
+                    .reset();
             }
             Err(e) => return Err(map_decode_loop_error(path, track_index, e)),
         }
@@ -142,7 +147,9 @@ fn packet_window_pos(
     resolved_rate: Option<u32>,
     window: &ClipWindow,
 ) -> PacketWindowPos {
-    let Some(tb) = time_base else { return PacketWindowPos::Within };
+    let Some(tb) = time_base else {
+        return PacketWindowPos::Within;
+    };
     if let Some(rate) = resolved_rate {
         let (start_sample, end_sample) = window_sample_bounds(window, rate);
         let pkt_start = timestamp_to_sample(pts, tb, rate);
@@ -191,7 +198,13 @@ fn decode_packet_or_skip<'dec>(
     decode_error_skips: &mut u32,
     consecutive_decode_errors: &mut u32,
 ) -> Result<DecodeOutcome<'dec>, MediaError> {
-    match state.decoders.get_mut(&track_id).expect("decoder cached").decoder.decode(packet) {
+    match state
+        .decoders
+        .get_mut(&track_id)
+        .expect("decoder cached")
+        .decoder
+        .decode(packet)
+    {
         Ok(decoded) => {
             *consecutive_decode_errors = 0;
             Ok(DecodeOutcome::Decoded(decoded))
@@ -244,8 +257,7 @@ enum ExtractSeekMode {
 
 /// Non-zero start windows: initial seek, optional sequential fallback (empty output), optional
 /// reopen+seek after a hard interior shortfall.
-const MAX_EXTRACT_ATTEMPTS_NONZERO_START: usize =
-    2 + MAX_INTERIOR_PARTIAL_DECODE_RETRIES as usize;
+const MAX_EXTRACT_ATTEMPTS_NONZERO_START: usize = 2 + MAX_INTERIOR_PARTIAL_DECODE_RETRIES as usize;
 
 /// Shared seek/retry/decode/progress driver. Steps 1–10 of the duplication map are owned here;
 /// per-mode differences (buffer, target unit, finalize order) are delegated to `sink`.
@@ -258,7 +270,14 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
     sink: &mut S,
     scratch: &mut Vec<f32>,
 ) -> Result<S::Output, MediaError> {
-    let ExtractLoopParams { path, state, track, window, progress, label } = params;
+    let ExtractLoopParams {
+        path,
+        state,
+        track,
+        window,
+        progress,
+        label,
+    } = params;
 
     if window.end <= window.start {
         return Err(fail_media(
@@ -304,9 +323,20 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
         if seek_mode == ExtractSeekMode::WindowStart {
             seek_with_recovery(path, state, track, seek_start)?;
         } else {
-            seek_to_window_start(path, state.format.as_mut(), track_id, seek_start, track.duration)?;
+            seek_to_window_start(
+                path,
+                state.format.as_mut(),
+                track_id,
+                seek_start,
+                track.duration,
+            )?;
         }
-        state.decoders.get_mut(&track_id).expect("decoder cached").decoder.reset();
+        state
+            .decoders
+            .get_mut(&track_id)
+            .expect("decoder cached")
+            .decoder
+            .reset();
 
         sink.reset_attempt(
             sample_rate_hint,
@@ -386,7 +416,12 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                     break;
                 }
                 DecodeOutcome::NeedReset => {
-                    state.decoders.get_mut(&track_id).expect("decoder cached").decoder.reset();
+                    state
+                        .decoders
+                        .get_mut(&track_id)
+                        .expect("decoder cached")
+                        .decoder
+                        .reset();
                     continue;
                 }
             };
@@ -410,8 +445,13 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 .map(|tb| media_duration_to_frames(packet.trim_start, tb, rate))
                 .unwrap_or(0);
 
-            finished =
-                sink.append_packet(decoded, packet_start_unit, trim_start_frames, window, scratch);
+            finished = sink.append_packet(
+                decoded,
+                packet_start_unit,
+                trim_start_frames,
+                window,
+                scratch,
+            );
 
             let collected = sink.collected_units();
             let target = sink.target_units().unwrap_or(0);
@@ -518,7 +558,10 @@ fn track_sample_rate_hint(state: &MediaIoState, track: &AudioTrack) -> Option<u3
 }
 
 fn decoder_time_base(state: &MediaIoState, track_id: u32) -> Option<TimeBase> {
-    state.decoders.get(&track_id).and_then(|cached| cached.time_base)
+    state
+        .decoders
+        .get(&track_id)
+        .and_then(|cached| cached.time_base)
 }
 
 // ---------------------------------------------------------------------------
@@ -648,7 +691,8 @@ impl ExtractSink for MonoExtractSink {
     }
 
     fn target_reached(&self) -> bool {
-        self.target_samples.is_some_and(|target| self.mono_samples.len() >= target)
+        self.target_samples
+            .is_some_and(|target| self.mono_samples.len() >= target)
     }
 
     fn append_packet(
@@ -694,7 +738,14 @@ impl ExtractSink for MonoExtractSink {
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MonoPcmClip, MediaError> {
-        let ExtractFinalizeContext { path, track, window, progress, label, .. } = ctx;
+        let ExtractFinalizeContext {
+            path,
+            track,
+            window,
+            progress,
+            label,
+            ..
+        } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,
@@ -935,7 +986,8 @@ impl ExtractSink for InterleavedExtractSink {
         if self.channels.is_none() {
             let ch = channels.max(1);
             self.channels = Some(ch);
-            self.out.reserve(self.target_frames.unwrap_or(0).saturating_mul(ch));
+            self.out
+                .reserve(self.target_frames.unwrap_or(0).saturating_mul(ch));
             debug!(
                 path = %path.display(),
                 track = track_index,
@@ -1011,7 +1063,14 @@ impl ExtractSink for InterleavedExtractSink {
         allow_tail_padding: bool,
         decode_error_skips: u32,
     ) -> Result<MultiChannelPcm, MediaError> {
-        let ExtractFinalizeContext { path, track, window, progress, label, .. } = ctx;
+        let ExtractFinalizeContext {
+            path,
+            track,
+            window,
+            progress,
+            label,
+            ..
+        } = ctx;
         let rate = self.resolved_rate.ok_or_else(|| {
             fail_media(
                 path,
@@ -1163,18 +1222,28 @@ mod tests {
         // validated yet, so the driver must still call `on_first_decode`.
         assert_eq!(sink.resolved_rate(), Some(24_000));
         assert_eq!(sink.target_units(), Some(24_000));
-        assert!(!sink.metadata_ready(), "hint alone must not satisfy metadata_ready");
+        assert!(
+            !sink.metadata_ready(),
+            "hint alone must not satisfy metadata_ready"
+        );
 
         // First decoded packet reports the true (doubled) rate.
         sink.on_first_decode(48_000, 1, &window, path, 0).unwrap();
 
-        assert_eq!(sink.resolved_rate(), Some(48_000), "rate must rebase to decoded");
+        assert_eq!(
+            sink.resolved_rate(),
+            Some(48_000),
+            "rate must rebase to decoded"
+        );
         assert_eq!(
             sink.target_units(),
             Some(48_000),
             "one-second window must re-size to the decoded rate"
         );
-        assert!(sink.metadata_ready(), "ready once the decoded rate is validated");
+        assert!(
+            sink.metadata_ready(),
+            "ready once the decoded rate is validated"
+        );
     }
 
     #[test]
@@ -1211,16 +1280,26 @@ mod tests {
         assert_eq!(sink.target_units(), Some(24_000));
         // Channels come from the container hint, but the decoded rate is still
         // unvalidated, so metadata is not yet ready.
-        assert!(!sink.metadata_ready(), "hint alone must not satisfy metadata_ready");
+        assert!(
+            !sink.metadata_ready(),
+            "hint alone must not satisfy metadata_ready"
+        );
 
         sink.on_first_decode(48_000, 2, &window, path, 0).unwrap();
 
-        assert_eq!(sink.resolved_rate(), Some(48_000), "rate must rebase to decoded");
+        assert_eq!(
+            sink.resolved_rate(),
+            Some(48_000),
+            "rate must rebase to decoded"
+        );
         assert_eq!(
             sink.target_units(),
             Some(48_000),
             "one-second window must re-size to the decoded rate"
         );
-        assert!(sink.metadata_ready(), "ready once the decoded rate is validated");
+        assert!(
+            sink.metadata_ready(),
+            "ready once the decoded rate is validated"
+        );
     }
 }

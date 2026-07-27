@@ -21,7 +21,11 @@ fn seam_residual_broadband_csv() {
          residual_pre_db,residual_post_db,floor_pre_db,floor_post_db,\
          headroom_pre_db,headroom_post_db,floor_source_pre,floor_source_post"
     );
-    for variant in [Variant::Clean, Variant::CodecNoise, Variant::CodecNoiseShift] {
+    for variant in [
+        Variant::Clean,
+        Variant::CodecNoise,
+        Variant::CodecNoiseShift,
+    ] {
         run_fixture(&build_broadband(16_000, variant), variant.label());
     }
 }
@@ -91,4 +95,3 @@ fn seam_residual_disagreement_csv() {
         run_disagreement_fixture(&build_broadband(16_000, variant), variant.label());
     }
 }
-

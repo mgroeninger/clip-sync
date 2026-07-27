@@ -3,31 +3,28 @@
 use clip_sync::MultiChannelPcm;
 
 use crate::domain::fill_mode::FillMode;
-use crate::domain::repair_profile::FitBoundarySearch;
-use crate::domain::gap_fill_fit::{
-    anchor_trust_applies, boundary_search_step_frames, apply_residual_to_confidence,
-    classify_fill_waveform_confidence, fit_anchor_candidate_ranking_score,
-    fit_candidate_ranking_score,
-    match_gap_fill_unified_in_b_with_timeline, FillConfidence, ResidualGateError,
-    UnifiedFillMatch, UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
-};
-use crate::domain::patch_anchor::AnchorSearchPrior;
-use crate::domain::patch_result::{SeamScoreAttempt, SeamScoreSource};
-use crate::domain::gap_seam_extend::{
-    post_seam_extension_candidate, pre_seam_extension_candidate,
-    short_gap_one_strong_seam_passes,
-};
-use crate::domain::gap_structure::{self, StructureMatchParams};
-use crate::domain::gap_signature::{
-    build_gap_signature, GapSignature, StructureTimeline,
-};
 use crate::domain::gap_anchor_seam::{
-    list_anchor_candidates_a, list_feasible_anchor_brackets, anchor_bracket_both_matchable,
+    anchor_bracket_both_matchable, list_anchor_candidates_a, list_feasible_anchor_brackets,
     should_run_anchor_seam, AnchorBracket, AnchorSeamMode, AnchorSeamParams,
 };
 use crate::domain::gap_energy::EnergyTimeline;
+use crate::domain::gap_fill_fit::{
+    anchor_trust_applies, apply_residual_to_confidence, boundary_search_step_frames,
+    classify_fill_waveform_confidence, fit_anchor_candidate_ranking_score,
+    fit_candidate_ranking_score, match_gap_fill_unified_in_b_with_timeline, FillConfidence,
+    ResidualGateError, UnifiedFillMatch, UnifiedFillSearchInput, UnifiedFitWeights,
+    WaveformSeamContext,
+};
+use crate::domain::gap_seam_extend::{
+    post_seam_extension_candidate, pre_seam_extension_candidate, short_gap_one_strong_seam_passes,
+};
+use crate::domain::gap_signature::{build_gap_signature, GapSignature, StructureTimeline};
+use crate::domain::gap_structure::{self, StructureMatchParams};
+use crate::domain::patch_anchor::AnchorSearchPrior;
+use crate::domain::patch_result::{SeamScoreAttempt, SeamScoreSource};
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{self, FillAlignment, GapBorderSpec, RefinedGapFrames};
+use crate::domain::repair_profile::FitBoundarySearch;
 
 use crate::application::fit_routing;
 
@@ -324,11 +321,7 @@ struct FitJointConfig {
 /// wraps the existing audio functions; production behaviour is unchanged.
 trait FitCandidateSource {
     /// Score one A-side seam bracket → Pearson-confidence outcome + ranking, or a gate failure.
-    fn score(
-        &mut self,
-        refined: RefinedGapFrames,
-        anchor_seam_bracket: bool,
-    ) -> SeamGateScore;
+    fn score(&mut self, refined: RefinedGapFrames, anchor_seam_bracket: bool) -> SeamGateScore;
     /// Editorial anchor brackets to try (empty = gate closed / mode off / none feasible).
     fn anchor_brackets(&mut self, baseline_pre: f64, baseline_post: f64) -> Vec<AnchorBracket>;
     /// Apply the residual/floor verdict at selection (identity when residual is off; may `Err` on veto).
@@ -346,11 +339,7 @@ struct AudioFitSource<'a> {
 }
 
 impl FitCandidateSource for AudioFitSource<'_> {
-    fn score(
-        &mut self,
-        refined: RefinedGapFrames,
-        anchor_seam_bracket: bool,
-    ) -> SeamGateScore {
+    fn score(&mut self, refined: RefinedGapFrames, anchor_seam_bracket: bool) -> SeamGateScore {
         evaluate_seam_gate_fit_candidate(
             refined,
             self.baseline,
@@ -469,24 +458,20 @@ fn fit_residual_geometry(
     params: &SeamGateParams<'_>,
 ) -> (usize, usize, usize) {
     let border_spec = gap_border_spec(params, refined);
-    let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.derived.channels, &border_spec);
+    let (a_pre_border, a_post_border) = policies::border_templates_for_gap(
+        &params.geom.a_pcm.samples,
+        params.derived.channels,
+        &border_spec,
+    );
     let start_delta_secs = (refined.start_frame as i64 - baseline.start_frame as i64) as f64
         / params.derived.sample_rate as f64;
     let refined_b_start_secs = params.geom.refined_b_start_secs + start_delta_secs;
     let offset_nominal_start = ((refined_b_start_secs - params.geom.b_extract_start_secs)
         * params.derived.sample_rate as f64)
         .round() as usize;
-    let waveform_gate_frames = params
-        .geom
-        .seam_gate_frames
-        .min(a_pre_border.len().max(1));
+    let waveform_gate_frames = params.geom.seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = seam_post_gate_frames(params.geom.seam_gate_frames, a_post_border.len());
-    (
-        offset_nominal_start,
-        waveform_gate_frames,
-        post_gate_frames,
-    )
+    (offset_nominal_start, waveform_gate_frames, post_gate_frames)
 }
 
 fn log_residual_verdict_debug(
@@ -725,21 +710,27 @@ fn baseline_seam_scores(
     }
 }
 
-fn anchor_seam_gate_params(params: &SeamGateParams<'_>, baseline: RefinedGapFrames) -> AnchorSeamParams {
+fn anchor_seam_gate_params(
+    params: &SeamGateParams<'_>,
+    baseline: RefinedGapFrames,
+) -> AnchorSeamParams {
     let gap_frames = baseline.end_frame.saturating_sub(baseline.start_frame);
     AnchorSeamParams {
         context_frames: params.derived.context_frames,
         max_anchors_per_side: params.settings.max_anchors_per_side,
-        max_bracket_frames: (params.settings.max_anchor_bracket_secs * f64::from(params.derived.sample_rate))
-            .round()
-            .max(1.0) as usize,
+        max_bracket_frames: (params.settings.max_anchor_bracket_secs
+            * f64::from(params.derived.sample_rate))
+        .round()
+        .max(1.0) as usize,
         min_prominence: params.settings.anchor_seam_min_prominence,
         structure: StructureMatchParams {
             gap_frames,
             bin_frames: params.derived.bin_frames.max(1),
             search_radius_frames: params.derived.search_radius_frames,
             fill_length_slack_frames: params.derived.fill_length_slack_frames,
-            max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.derived.bin_frames),
+            max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(
+                params.derived.bin_frames,
+            ),
             silence_peak_fraction: params.derived.silence_peak_fraction,
             absolute_silence_rms: params.settings.absolute_silence_rms,
         },
@@ -885,10 +876,8 @@ fn try_anchor_seam_joint_search(
 
     // E4: under baseline-only, an anchor bracket that ranks best overall is accepted without the grid.
     if let Some(candidate) = best_anchor_joint_candidate(state.pool) {
-        if accepts_baseline_without_boundary_grid(
-            fit_boundary_search,
-            candidate.outcome.confidence,
-        ) {
+        if accepts_baseline_without_boundary_grid(fit_boundary_search, candidate.outcome.confidence)
+        {
             let outcome = candidate.outcome.clone();
             let mut outcome = source.finalize_residual(outcome)?;
             outcome.fit_haystack_secs = haystack_secs;
@@ -903,10 +892,13 @@ fn evaluate_seam_gate_fit_joint(
     baseline: RefinedGapFrames,
     params: &SeamGateParams<'_>,
 ) -> Result<SeamGateOutcome, SeamGateFailure> {
-    let step = boundary_search_step_frames(params.derived.max_extend_frames, params.derived.step_frames);
+    let step =
+        boundary_search_step_frames(params.derived.max_extend_frames, params.derived.step_frames);
     let total_frames = params.geom.a_pcm.samples.len() / params.derived.channels.max(1);
     let start_min = if params.settings.gap_start_extend_on_pre_seam_fail {
-        baseline.start_frame.saturating_sub(params.derived.max_extend_frames)
+        baseline
+            .start_frame
+            .saturating_sub(params.derived.max_extend_frames)
     } else {
         baseline.start_frame
     };
@@ -1148,11 +1140,14 @@ fn measure_fit_residual_verdict(
     // surrounds. Selection is a pure function of (params, refined) — recomputed here, same border
     // spec Pearson uses (residual-channel-alignment-plan §4b). Empty ⇒ mono downmix path.
     let border_spec = gap_border_spec(params, refined);
-    let selected: Vec<usize> =
-        policies::selected_seam_channels(&params.geom.a_pcm.samples, params.derived.channels, &border_spec)
-            .into_iter()
-            .filter(|&ch| ch < cache.b_ch.len())
-            .collect();
+    let selected: Vec<usize> = policies::selected_seam_channels(
+        &params.geom.a_pcm.samples,
+        params.derived.channels,
+        &border_spec,
+    )
+    .into_iter()
+    .filter(|&ch| ch < cache.b_ch.len())
+    .collect();
 
     if selected.is_empty() {
         let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
@@ -1242,7 +1237,8 @@ fn log_residual_channel_breakdown(
     if !tracing::enabled!(tracing::Level::DEBUG) {
         return;
     }
-    let headroom = |c: &policies::SeamChannelResidual| (c.channel, c.chosen.residual_db - c.floor.residual_db);
+    let headroom =
+        |c: &policies::SeamChannelResidual| (c.channel, c.chosen.residual_db - c.floor.residual_db);
     let pre_headroom: Vec<(usize, f64)> = pre.iter().map(headroom).collect();
     let post_headroom: Vec<(usize, f64)> = post.iter().map(headroom).collect();
     tracing::debug!(
@@ -1440,7 +1436,9 @@ fn gate_structure_align(
         bin_frames: params.derived.bin_frames.max(1),
         search_radius_frames: params.derived.search_radius_frames,
         fill_length_slack_frames: params.derived.fill_length_slack_frames,
-        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.derived.bin_frames),
+        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(
+            params.derived.bin_frames,
+        ),
         silence_peak_fraction: params.derived.silence_peak_fraction,
         absolute_silence_rms: params.settings.absolute_silence_rms,
     };
@@ -1695,11 +1693,7 @@ fn evaluate_seam_gate_fit_candidate(
         }
     } else {
         pearson.map_err(|_| {
-            waveform_below_threshold(
-                pre_corr,
-                post_corr,
-                params.settings.fill_absolute_floor,
-            )
+            waveform_below_threshold(pre_corr, post_corr, params.settings.fill_absolute_floor)
         })?
     };
 
@@ -1759,8 +1753,11 @@ fn evaluate_seam_gate_legacy(
 
     let gap_secs = gap_frames as f64 / params.derived.sample_rate as f64;
     let border_spec = gap_border_spec(params, refined);
-    let (a_pre_border, a_post_border) =
-        policies::border_templates_for_gap(&params.geom.a_pcm.samples, params.derived.channels, &border_spec);
+    let (a_pre_border, a_post_border) = policies::border_templates_for_gap(
+        &params.geom.a_pcm.samples,
+        params.derived.channels,
+        &border_spec,
+    );
     let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
         &params.geom.a_pcm.samples,
         params.derived.channels,
@@ -1769,7 +1766,8 @@ fn evaluate_seam_gate_legacy(
     let b_mono = interleaved_to_mono(params.geom.b_samples, params.derived.channels);
     let b_ch = interleaved_to_channels(params.geom.b_samples, params.derived.channels);
 
-    let offset_nominal_start = ((params.geom.refined_b_start_secs - params.geom.b_extract_start_secs)
+    let offset_nominal_start = ((params.geom.refined_b_start_secs
+        - params.geom.b_extract_start_secs)
         * params.derived.sample_rate as f64)
         .round() as usize;
     let gap_end_in_haystack = ((params.geom.refined_b_end_secs - params.geom.b_extract_start_secs)
@@ -1781,7 +1779,9 @@ fn evaluate_seam_gate_legacy(
         bin_frames: params.derived.bin_frames.max(1),
         search_radius_frames: params.derived.search_radius_frames,
         fill_length_slack_frames: params.derived.fill_length_slack_frames,
-        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(params.derived.bin_frames),
+        max_fine_adjustment_frames: gap_structure::structure_fine_polish_frames(
+            params.derived.bin_frames,
+        ),
         silence_peak_fraction: params.derived.silence_peak_fraction,
         absolute_silence_rms: params.settings.absolute_silence_rms,
     };
@@ -1828,11 +1828,9 @@ fn evaluate_seam_gate_legacy(
     let (report_pre, report_post, patched_structure_trusted) = if structure_trusted {
         (structure_pre, structure_post, true)
     } else {
-        let waveform_gate_frames = params
-            .geom
-            .seam_gate_frames
-            .min(a_pre_border.len().max(1));
-        let post_gate_frames = seam_post_gate_frames(params.geom.seam_gate_frames, a_post_border.len());
+        let waveform_gate_frames = params.geom.seam_gate_frames.min(a_pre_border.len().max(1));
+        let post_gate_frames =
+            seam_post_gate_frames(params.geom.seam_gate_frames, a_post_border.len());
         let templates = policies::SeamTemplates {
             a_pre: &a_pre_border,
             a_post: &a_post_border,
@@ -1875,7 +1873,11 @@ fn evaluate_seam_gate_legacy(
             params.settings.short_gap_one_strong_seam_fallback,
             params.settings.disable_structure_trust,
         ) {
-            return Err(waveform_below_threshold(pre_corr, post_corr, effective_min_corr));
+            return Err(waveform_below_threshold(
+                pre_corr,
+                post_corr,
+                effective_min_corr,
+            ));
         }
         (pre_corr, post_corr, false)
     };
@@ -1932,7 +1934,8 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
     while try_end + step_frames <= max_end {
         try_end += step_frames;
         refined.end_frame = try_end;
-        let refined_b_end_secs = try_end as f64 / params.derived.sample_rate as f64 + gap_offset_secs;
+        let refined_b_end_secs =
+            try_end as f64 / params.derived.sample_rate as f64 + gap_offset_secs;
         let try_params = SeamGateParams {
             geom: SeamGateGeometry {
                 refined_b_end_secs,
@@ -1951,12 +1954,7 @@ pub(crate) fn try_extend_gap_end_for_post_seam(
                 return Ok(outcome);
             }
             Err(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => {
-                consider_waveform_attempt(
-                    best_waveform,
-                    pre,
-                    post,
-                    SeamScoreSource::Extension,
-                );
+                consider_waveform_attempt(best_waveform, pre, post, SeamScoreSource::Extension);
                 last_fail = waveform_below_threshold(pre, post, min);
             }
             Err(other) => {
@@ -1999,7 +1997,8 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
     while try_start >= step_frames && try_start - step_frames >= min_start {
         try_start -= step_frames;
         refined.start_frame = try_start;
-        let refined_b_start_secs = try_start as f64 / params.derived.sample_rate as f64 + gap_offset_secs;
+        let refined_b_start_secs =
+            try_start as f64 / params.derived.sample_rate as f64 + gap_offset_secs;
         let try_params = SeamGateParams {
             geom: SeamGateGeometry {
                 refined_b_start_secs,
@@ -2018,12 +2017,7 @@ pub(crate) fn try_extend_gap_start_for_pre_seam(
                 return Ok(outcome);
             }
             Err(SeamGateFailure::WaveformBelowThreshold { pre, post, .. }) => {
-                consider_waveform_attempt(
-                    best_waveform,
-                    pre,
-                    post,
-                    SeamScoreSource::Extension,
-                );
+                consider_waveform_attempt(best_waveform, pre, post, SeamScoreSource::Extension);
                 last_fail = waveform_below_threshold(pre, post, min);
             }
             Err(other) => {
@@ -2057,12 +2051,7 @@ pub(crate) fn retry_waveform_seam_extensions(
     };
 
     let mut best_waveform = None;
-    consider_waveform_attempt(
-        &mut best_waveform,
-        pre,
-        post,
-        SeamScoreSource::Baseline,
-    );
+    consider_waveform_attempt(&mut best_waveform, pre, post, SeamScoreSource::Baseline);
     let step = retry.step_frames.max(1);
     let mut last_fail = waveform_below_threshold(pre, post, min);
 
@@ -2171,12 +2160,7 @@ mod tests {
             post_correlation: 0.17,
         };
         assert!(seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            true,
-            false,
+            &alignment, 0.12, 1.0, 2.0, true, false,
         ));
     }
 
@@ -2189,12 +2173,7 @@ mod tests {
             post_correlation: -0.13,
         };
         assert!(!seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            true,
-            false,
+            &alignment, 0.12, 1.0, 2.0, true, false,
         ));
     }
 
@@ -2207,20 +2186,10 @@ mod tests {
             post_correlation: -0.90,
         };
         assert!(!seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            false,
-            false,
+            &alignment, 0.12, 1.0, 2.0, false, false,
         ));
         assert!(seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            true,
-            false,
+            &alignment, 0.12, 1.0, 2.0, true, false,
         ));
     }
 
@@ -2233,20 +2202,10 @@ mod tests {
             post_correlation: 0.08,
         };
         assert!(seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            false,
-            false,
+            &alignment, 0.12, 1.0, 2.0, false, false,
         ));
         assert!(!seams_pass_correlation_gate(
-            &alignment,
-            0.12,
-            1.0,
-            2.0,
-            false,
-            true,
+            &alignment, 0.12, 1.0, 2.0, false, true,
         ));
     }
 
@@ -2521,7 +2480,10 @@ mod tests {
     fn route_e1_baseline_high_short_circuits_anchor_never_invoked() {
         let baseline = rgf(1_000, 2_000);
         let mut source = ScriptedFitSource::new()
-            .score_at(baseline, ok_score(baseline, FillConfidence::High, 0.99, 0.99, 0.99))
+            .score_at(
+                baseline,
+                ok_score(baseline, FillConfidence::High, 0.99, 0.99, 0.99),
+            )
             .brackets(vec![scripted_bracket(rgf(800, 2_200), 400)]);
         let out = evaluate_seam_gate_fit_joint_core(
             baseline,
@@ -2531,15 +2493,20 @@ mod tests {
         .expect("E1 patch");
         assert_eq!(out.confidence, FillConfidence::High);
         assert!(!out.anchor_seam_used);
-        assert_eq!(source.anchor_calls, 0, "anchor search must not run when baseline is High");
+        assert_eq!(
+            source.anchor_calls, 0,
+            "anchor search must not run when baseline is High"
+        );
     }
 
     /// W2/E2: a Marginal baseline is accepted without grid or anchor under baseline-only.
     #[test]
     fn route_e2_baseline_marginal_accepts_under_baseline_only() {
         let baseline = rgf(1_000, 2_000);
-        let mut source = ScriptedFitSource::new()
-            .score_at(baseline, ok_score(baseline, FillConfidence::Marginal, 0.30, 0.32, 0.30));
+        let mut source = ScriptedFitSource::new().score_at(
+            baseline,
+            ok_score(baseline, FillConfidence::Marginal, 0.30, 0.32, 0.30),
+        );
         let out = evaluate_seam_gate_fit_joint_core(
             baseline,
             &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
@@ -2548,7 +2515,10 @@ mod tests {
         .expect("E2 patch");
         assert_eq!(out.confidence, FillConfidence::Marginal);
         assert!(!out.anchor_seam_used);
-        assert_eq!(source.anchor_calls, 0, "Marginal baseline accepts before anchor search");
+        assert_eq!(
+            source.anchor_calls, 0,
+            "Marginal baseline accepts before anchor search"
+        );
     }
 
     /// W5/E5: symmetric-weak throat with no anchors → skip.
@@ -2585,8 +2555,7 @@ mod tests {
     #[test]
     fn route_w5_symmetric_weak_skips() {
         let baseline = rgf(1_000, 2_000);
-        let mut source =
-            ScriptedFitSource::new().score_at(baseline, waveform_skip(0.14, 0.14));
+        let mut source = ScriptedFitSource::new().score_at(baseline, waveform_skip(0.14, 0.14));
         let result = evaluate_seam_gate_fit_joint_core(
             baseline,
             &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Auto),
@@ -2606,7 +2575,10 @@ mod tests {
         let anchor = rgf(800, 2_200);
         let mut source = ScriptedFitSource::new()
             .score_at(baseline, waveform_skip(0.14, 0.14))
-            .score_at(anchor, ok_score(anchor, FillConfidence::High, 0.55, 0.55, 0.31))
+            .score_at(
+                anchor,
+                ok_score(anchor, FillConfidence::High, 0.55, 0.55, 0.31),
+            )
             .brackets(vec![scripted_bracket(anchor, 400)]);
         let out = evaluate_seam_gate_fit_joint_core(
             baseline,
@@ -2615,7 +2587,10 @@ mod tests {
         )
         .expect("E3 anchor rescue patch");
         assert_eq!(out.confidence, FillConfidence::High);
-        assert!(out.anchor_seam_used, "the anchor path must be what patched this gap");
+        assert!(
+            out.anchor_seam_used,
+            "the anchor path must be what patched this gap"
+        );
         assert!(out.anchor_bracket_move_frames > 0);
     }
 
@@ -2627,7 +2602,10 @@ mod tests {
         let anchor = rgf(800, 2_200);
         let mut source = ScriptedFitSource::new()
             .score_at(baseline, waveform_skip(0.14, 0.14))
-            .score_at(anchor, ok_score(anchor, FillConfidence::Marginal, 0.30, 0.30, 0.20))
+            .score_at(
+                anchor,
+                ok_score(anchor, FillConfidence::Marginal, 0.30, 0.30, 0.20),
+            )
             .brackets(vec![scripted_bracket(anchor, 400)]);
         let out = evaluate_seam_gate_fit_joint_core(
             baseline,
@@ -2636,7 +2614,10 @@ mod tests {
         )
         .expect("E4 anchor marginal accept");
         assert_eq!(out.confidence, FillConfidence::Marginal);
-        assert!(out.anchor_seam_used, "the Marginal anchor must be what patched this gap");
+        assert!(
+            out.anchor_seam_used,
+            "the Marginal anchor must be what patched this gap"
+        );
         assert!(out.anchor_bracket_move_frames > 0);
     }
 
@@ -2645,8 +2626,10 @@ mod tests {
     #[test]
     fn route_force_marginal_fallthrough_patches_marginal() {
         let baseline = rgf(1_000, 2_000);
-        let mut source = ScriptedFitSource::new()
-            .score_at(baseline, ok_score(baseline, FillConfidence::Marginal, 0.30, 0.30, 0.30));
+        let mut source = ScriptedFitSource::new().score_at(
+            baseline,
+            ok_score(baseline, FillConfidence::Marginal, 0.30, 0.30, 0.30),
+        );
         let out = evaluate_seam_gate_fit_joint_core(
             baseline,
             &config(FitBoundarySearch::BaselineOnly, AnchorSeamMode::Force),
@@ -2655,7 +2638,10 @@ mod tests {
         .expect("force fall-through patches the marginal baseline");
         assert_eq!(out.confidence, FillConfidence::Marginal);
         assert!(!out.anchor_seam_used);
-        assert_eq!(source.anchor_calls, 1, "force must consult anchor search before falling back");
+        assert_eq!(
+            source.anchor_calls, 1,
+            "force must consult anchor search before falling back"
+        );
     }
 
     /// E6: full grid scored; a moved-edge cell scores High and wins.
@@ -2674,9 +2660,13 @@ mod tests {
             step: 100,
             haystack_secs: 0.0,
         };
-        let out = evaluate_seam_gate_fit_joint_core(baseline, &cfg, &mut source).expect("E6 grid patch");
+        let out =
+            evaluate_seam_gate_fit_joint_core(baseline, &cfg, &mut source).expect("E6 grid patch");
         assert_eq!(out.confidence, FillConfidence::High);
-        assert!(out.fit_used_boundary_grid, "grid winner must be tagged boundary_grid");
+        assert!(
+            out.fit_used_boundary_grid,
+            "grid winner must be tagged boundary_grid"
+        );
         assert!(!out.anchor_seam_used);
     }
 

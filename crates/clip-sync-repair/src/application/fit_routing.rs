@@ -101,7 +101,11 @@ pub(crate) fn winner_cmp(a: &CandidateScore, b: &CandidateScore) -> Ordering {
 mod tests {
     use super::*;
 
-    fn cand(confidence: FillConfidence, boundary_move: usize, ranking_score: f64) -> CandidateScore {
+    fn cand(
+        confidence: FillConfidence,
+        boundary_move: usize,
+        ranking_score: f64,
+    ) -> CandidateScore {
         CandidateScore {
             confidence,
             boundary_move,
@@ -113,8 +117,14 @@ mod tests {
     fn high_screens_in_any_mode() {
         assert!(terminates_high(FillConfidence::High));
         // E1 is mode-independent: a High baseline short-circuits even with the grid enabled.
-        assert!(baseline_only_accepts(FitBoundarySearch::BaselineOnly, FillConfidence::High));
-        assert!(!baseline_only_accepts(FitBoundarySearch::FullGrid, FillConfidence::High));
+        assert!(baseline_only_accepts(
+            FitBoundarySearch::BaselineOnly,
+            FillConfidence::High
+        ));
+        assert!(!baseline_only_accepts(
+            FitBoundarySearch::FullGrid,
+            FillConfidence::High
+        ));
     }
 
     #[test]
@@ -140,9 +150,15 @@ mod tests {
         assert_eq!(best.ranking_score, 0.55);
 
         // Tie on ranking_score → max_by keeps the LARGER boundary_move.
-        let tied = [cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
+        let tied = [
+            cand(FillConfidence::High, 3, 0.5),
+            cand(FillConfidence::High, 7, 0.5),
+        ];
         assert_eq!(
-            tied.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().boundary_move,
+            tied.iter()
+                .max_by(|a, b| selection_cmp(a, b))
+                .unwrap()
+                .boundary_move,
             7
         );
     }
@@ -172,9 +188,11 @@ mod tests {
     #[test]
     fn winner_sort_is_ranking_desc_then_smaller_move() {
         // The driver walks this order applying residual; a vetoed top candidate falls through.
-        let mut pool = [cand(FillConfidence::High, 0, 0.40),
+        let mut pool = [
+            cand(FillConfidence::High, 0, 0.40),
             cand(FillConfidence::High, 20, 0.51),
-            cand(FillConfidence::Marginal, 0, 0.30)];
+            cand(FillConfidence::Marginal, 0, 0.30),
+        ];
         pool.sort_by(winner_cmp);
         let order: Vec<f64> = pool.iter().map(|c| c.ranking_score).collect();
         assert_eq!(order, vec![0.51, 0.40, 0.30]);
@@ -183,10 +201,16 @@ mod tests {
     #[test]
     fn selection_and_winner_tie_break_in_opposite_directions() {
         // The asymmetry is load-bearing and must survive the extraction:
-        let mut pool = [cand(FillConfidence::High, 3, 0.5), cand(FillConfidence::High, 7, 0.5)];
+        let mut pool = [
+            cand(FillConfidence::High, 3, 0.5),
+            cand(FillConfidence::High, 7, 0.5),
+        ];
         // selection (E3) keeps the LARGER move:
         assert_eq!(
-            pool.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().boundary_move,
+            pool.iter()
+                .max_by(|a, b| selection_cmp(a, b))
+                .unwrap()
+                .boundary_move,
             7
         );
         // winner (E5/E7) puts the SMALLER move first:
@@ -205,7 +229,10 @@ mod tests {
     fn composed_dead_zone_baseline_does_not_screen_or_accept() {
         // Baseline below acceptance → driver proceeds to anchor/grid; an anchor High would screen.
         assert!(!terminates_high(FillConfidence::Marginal));
-        assert!(!baseline_only_accepts(FitBoundarySearch::FullGrid, FillConfidence::Marginal));
+        assert!(!baseline_only_accepts(
+            FitBoundarySearch::FullGrid,
+            FillConfidence::Marginal
+        ));
         assert!(terminates_high(FillConfidence::High));
     }
 
@@ -284,7 +311,10 @@ mod tests {
             cand(FillConfidence::High, 0, 0.5),
         ];
         assert_eq!(
-            pool.iter().max_by(|a, b| selection_cmp(a, b)).unwrap().ranking_score,
+            pool.iter()
+                .max_by(|a, b| selection_cmp(a, b))
+                .unwrap()
+                .ranking_score,
             0.5,
             "NaN must not win selection (max_by)"
         );

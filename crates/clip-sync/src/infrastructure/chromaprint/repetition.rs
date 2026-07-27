@@ -114,11 +114,7 @@ pub(crate) fn detect_clip_repetition(
         return None;
     }
 
-    if is_short_lag_after_tail_trim(
-        best_lag,
-        source_duration_secs,
-        prepared_duration_secs,
-    ) {
+    if is_short_lag_after_tail_trim(best_lag, source_duration_secs, prepared_duration_secs) {
         return None;
     }
 
@@ -146,10 +142,8 @@ fn is_short_lag_after_tail_trim(
     source_duration_secs: f64,
     prepared_duration_secs: f64,
 ) -> bool {
-    let tail_trimmed =
-        source_duration_secs - prepared_duration_secs >= TAIL_TRIM_DETECT_MIN_SECS;
-    let short_lag =
-        best_lag <= MIN_LAG_ITEMS.saturating_add(SHORT_LAG_AFTER_TRIM_ITEM_MARGIN);
+    let tail_trimmed = source_duration_secs - prepared_duration_secs >= TAIL_TRIM_DETECT_MIN_SECS;
+    let short_lag = best_lag <= MIN_LAG_ITEMS.saturating_add(SHORT_LAG_AFTER_TRIM_ITEM_MARGIN);
     tail_trimmed && short_lag
 }
 
@@ -314,14 +308,19 @@ mod tests {
         let duration = clip.samples.len() as f64 / f64::from(SAMPLE_RATE);
         let fp = fingerprint_untrimmed(&clip);
 
-        let finding = detect(&fp, duration, MIN_CONFIDENCE, duration).expect("expected repetition finding");
+        let finding =
+            detect(&fp, duration, MIN_CONFIDENCE, duration).expect("expected repetition finding");
 
         assert!(
             (finding.lag_secs - 30.0).abs() <= 1.0,
             "lag_secs={} (expected ~30s)",
             finding.lag_secs
         );
-        assert!(finding.confidence >= MIN_CONFIDENCE, "confidence={}", finding.confidence);
+        assert!(
+            finding.confidence >= MIN_CONFIDENCE,
+            "confidence={}",
+            finding.confidence
+        );
     }
 
     #[test]
@@ -330,14 +329,19 @@ mod tests {
         let clip = non_midpoint_repeat_clip();
         let fp = fingerprint_untrimmed(&clip);
 
-        let finding = detect(&fp, 60.0, MIN_CONFIDENCE, 60.0).expect("expected repetition finding at ~15s");
+        let finding =
+            detect(&fp, 60.0, MIN_CONFIDENCE, 60.0).expect("expected repetition finding at ~15s");
 
         assert!(
             (finding.lag_secs - 15.0).abs() <= 2.0,
             "lag_secs={} expected ~15s",
             finding.lag_secs
         );
-        assert!(finding.confidence >= MIN_CONFIDENCE, "confidence={}", finding.confidence);
+        assert!(
+            finding.confidence >= MIN_CONFIDENCE,
+            "confidence={}",
+            finding.confidence
+        );
     }
 
     #[test]
@@ -350,13 +354,8 @@ mod tests {
             .fingerprint(&prepared)
             .unwrap();
 
-        let finding = detect(
-            &fp,
-            prepared.duration_secs(),
-            MIN_CONFIDENCE,
-            source_secs,
-        )
-        .expect("expected repetition finding with default prep");
+        let finding = detect(&fp, prepared.duration_secs(), MIN_CONFIDENCE, source_secs)
+            .expect("expected repetition finding with default prep");
 
         assert!(
             (finding.lag_secs - 15.0).abs() <= 2.0,
@@ -398,13 +397,7 @@ mod tests {
             .fingerprint(&prepared)
             .unwrap();
         assert!(
-            detect(
-                &fp,
-                prepared.duration_secs(),
-                MIN_CONFIDENCE,
-                source_secs,
-            )
-            .is_none(),
+            detect(&fp, prepared.duration_secs(), MIN_CONFIDENCE, source_secs,).is_none(),
             "short-lag detections after significant tail trim are edge artifacts"
         );
     }
@@ -420,7 +413,8 @@ mod tests {
             "default min_confidence should accept a strong repeat"
         );
 
-        let finding = detect(&fp, 60.0, 0.0, 60.0).expect("fixture must produce a repetition finding");
+        let finding =
+            detect(&fp, 60.0, 0.0, 60.0).expect("fixture must produce a repetition finding");
         let threshold = finding.confidence.next_up();
         assert!(
             threshold > finding.confidence,
@@ -478,8 +472,7 @@ mod tests {
         use hound::WavReader;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) =
-            write_repeated_segment_wav_pair(temp.path(), 11_025, 65, 3);
+        let (path_a, path_b) = write_repeated_segment_wav_pair(temp.path(), 11_025, 65, 3);
 
         let read_clip = |path: &std::path::Path| -> MonoPcmClip {
             let mut reader = WavReader::open(path).expect("wav");
@@ -508,12 +501,7 @@ mod tests {
             let fp = ChromaprintFingerprinter::default()
                 .fingerprint(&prepared)
                 .unwrap();
-            let finding = detect(
-                &fp,
-                prepared.duration_secs(),
-                MIN_CONFIDENCE,
-                source_secs,
-            );
+            let finding = detect(&fp, prepared.duration_secs(), MIN_CONFIDENCE, source_secs);
             eprintln!("{label}: finding={finding:?}");
             let finding = finding.unwrap_or_else(|| {
                 panic!("{label}: expected repetition finding on corpus repeated_segment fixture")

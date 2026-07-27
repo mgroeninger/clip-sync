@@ -84,7 +84,10 @@ const ENV_BIN_MS: [f64; 3] = [20.0, 50.0, 100.0];
 /// re-run with `SPLICE_EXP_FINE_LAG_MS=600` to see whether it peaks beyond 200 ms (clipped offset) or
 /// stays low everywhere (truly decorrelated).
 fn fine_max_lag_ms() -> f64 {
-    std::env::var("SPLICE_EXP_FINE_LAG_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(200.0)
+    std::env::var("SPLICE_EXP_FINE_LAG_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200.0)
 }
 /// ± lag search (wider) for the wide-envelope segment curve.
 const WIDE_MAX_LAG_MS: f64 = 400.0;
@@ -100,11 +103,17 @@ const ANCHOR_STEP_MS: f64 = 50.0;
 /// How far outward the anchor search reaches; override with `SPLICE_EXP_ANCHOR_OUT_MS` for long quiet
 /// pockets (7·g3's quiet section runs > 2 s, so the loudest feature is further out). The decode pad scales.
 fn anchor_max_out_ms() -> f64 {
-    std::env::var("SPLICE_EXP_ANCHOR_OUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2000.0)
+    std::env::var("SPLICE_EXP_ANCHOR_OUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000.0)
 }
 
 fn sr() -> u32 {
-    std::env::var("SPLICE_EXP_SR").ok().and_then(|v| v.parse().ok()).unwrap_or(48_000)
+    std::env::var("SPLICE_EXP_SR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(48_000)
 }
 
 /// Resolve a path: absolute as-is, relative against the **repo root** (cargo runs tests from the crate
@@ -114,7 +123,10 @@ fn resolve(p: &str) -> PathBuf {
     if p.is_absolute() {
         p.to_path_buf()
     } else {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(p)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(p)
     }
 }
 
@@ -139,7 +151,10 @@ impl Pcm {
     /// Straight unweighted mono downmix (sum/N) — today's `interleaved_to_mono`.
     fn mono(&self) -> Vec<f64> {
         let n = self.channels.max(1);
-        self.samples.chunks(n).map(|f| f.iter().map(|&s| s as f64).sum::<f64>() / n as f64).collect()
+        self.samples
+            .chunks(n)
+            .map(|f| f.iter().map(|&s| s as f64).sum::<f64>() / n as f64)
+            .collect()
     }
     /// Energy-weighted downmix: weight each channel by its RMS so a dominant channel isn't divided by N.
     fn weighted_mono(&self) -> Vec<f64> {
@@ -152,7 +167,12 @@ impl Pcm {
         let w: Vec<f64> = rms.iter().map(|r| r / total).collect();
         self.samples
             .chunks(n)
-            .map(|f| f.iter().enumerate().map(|(c, &s)| s as f64 * w.get(c).copied().unwrap_or(0.0)).sum())
+            .map(|f| {
+                f.iter()
+                    .enumerate()
+                    .map(|(c, &s)| s as f64 * w.get(c).copied().unwrap_or(0.0))
+                    .sum()
+            })
             .collect()
     }
 }
@@ -184,7 +204,16 @@ fn probe_audio_channels(input: &Path) -> Vec<usize> {
         _ => 0,
     };
     Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=channels,channel_layout", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=channels,channel_layout",
+            "-of",
+            "json",
+        ])
         .arg(input)
         .output()
         .ok()
@@ -192,7 +221,11 @@ fn probe_audio_channels(input: &Path) -> Vec<usize> {
         .map(|p| {
             p.streams
                 .into_iter()
-                .map(|s| s.channels.filter(|&c| c > 0).unwrap_or_else(|| layout_ch(s.channel_layout.as_deref())))
+                .map(|s| {
+                    s.channels
+                        .filter(|&c| c > 0)
+                        .unwrap_or_else(|| layout_ch(s.channel_layout.as_deref()))
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -200,7 +233,13 @@ fn probe_audio_channels(input: &Path) -> Vec<usize> {
 
 /// Decode `[start_secs, start_secs+dur_secs]` of audio stream `a:{stream}` of `input` to interleaved f32
 /// at `sample_rate`, native channel layout. Fast-seeks (`-ss` before `-i`). `None` on any failure.
-fn decode_span(input: &Path, stream: usize, start_secs: f64, dur_secs: f64, sample_rate: u32) -> Option<Pcm> {
+fn decode_span(
+    input: &Path,
+    stream: usize,
+    start_secs: f64,
+    dur_secs: f64,
+    sample_rate: u32,
+) -> Option<Pcm> {
     let tmp = std::env::temp_dir().join(format!("splice_exp_{}.wav", std::process::id()));
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
@@ -208,12 +247,25 @@ fn decode_span(input: &Path, stream: usize, start_secs: f64, dur_secs: f64, samp
         .args(["-t", &format!("{:.6}", dur_secs.max(0.0))])
         .arg("-i")
         .arg(input)
-        .args(["-vn", "-map", &format!("0:a:{stream}"), "-c:a", "pcm_f32le", "-ar", &sample_rate.to_string(), "-f", "wav"])
+        .args([
+            "-vn",
+            "-map",
+            &format!("0:a:{stream}"),
+            "-c:a",
+            "pcm_f32le",
+            "-ar",
+            &sample_rate.to_string(),
+            "-f",
+            "wav",
+        ])
         .arg(&tmp)
         .status()
         .ok()?;
     if !status.success() {
-        eprintln!("ffmpeg decode failed: {} @ {start_secs:.2}s+{dur_secs:.2}s", input.display());
+        eprintln!(
+            "ffmpeg decode failed: {} @ {start_secs:.2}s+{dur_secs:.2}s",
+            input.display()
+        );
         return None;
     }
     let mut reader = hound::WavReader::open(&tmp).ok()?;
@@ -222,11 +274,18 @@ fn decode_span(input: &Path, stream: usize, start_secs: f64, dur_secs: f64, samp
         hound::SampleFormat::Float => reader.samples::<f32>().filter_map(Result::ok).collect(),
         hound::SampleFormat::Int => {
             let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
-            reader.samples::<i32>().filter_map(Result::ok).map(|s| s as f32 / max).collect()
+            reader
+                .samples::<i32>()
+                .filter_map(Result::ok)
+                .map(|s| s as f32 / max)
+                .collect()
         }
     };
     let _ = std::fs::remove_file(&tmp);
-    Some(Pcm { samples, channels: spec.channels as usize })
+    Some(Pcm {
+        samples,
+        channels: spec.channels as usize,
+    })
 }
 
 // ── metric helpers (the candidates under test) ───────────────────────────────────
@@ -283,7 +342,14 @@ fn top_peaks(curve: &[(i64, f64)], sample_rate: u32, k: usize) -> Vec<Peak> {
         }
     }
     maxima.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    maxima.into_iter().take(k).map(|(lag, r)| Peak { lag_ms: lag as f64 * 1000.0 / rate, r }).collect()
+    maxima
+        .into_iter()
+        .take(k)
+        .map(|(lag, r)| Peak {
+            lag_ms: lag as f64 * 1000.0 / rate,
+            r,
+        })
+        .collect()
 }
 
 /// `(prominence, peak_z, top2_spacing_ms)`: prominence = r1−r2; peak_z = (r1−mean)/std over the curve;
@@ -308,7 +374,15 @@ fn uniqueness_stats(curve: &[(i64, f64)], peaks: &[Peak]) -> (f64, f64, f64) {
 
 /// A pre-border window of `w` samples ending at frame `end`, and the matching B context spanning
 /// `±max_lag` around B frame `b_anchor` (B's position aligned to the gap edge). `None` if out of range.
-fn seam_windows(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize, max_lag: usize, pre: bool) -> Option<(Vec<f64>, Vec<f64>)> {
+fn seam_windows(
+    a: &[f64],
+    b: &[f64],
+    a_edge: usize,
+    b_anchor: usize,
+    w: usize,
+    max_lag: usize,
+    pre: bool,
+) -> Option<(Vec<f64>, Vec<f64>)> {
     if pre {
         if a_edge < w || b_anchor < w + max_lag || b_anchor + max_lag > b.len() {
             return None;
@@ -327,7 +401,16 @@ fn seam_windows(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize, 
 }
 
 /// Lag-search at one placement: `(rms_db, peak_r, peak_lag_ms, peak_z)`.
-fn lag_probe(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize, max_lag: usize, pre: bool, rate: f64) -> Option<(f64, f64, f64, f64)> {
+fn lag_probe(
+    a: &[f64],
+    b: &[f64],
+    a_edge: usize,
+    b_anchor: usize,
+    w: usize,
+    max_lag: usize,
+    pre: bool,
+    rate: f64,
+) -> Option<(f64, f64, f64, f64)> {
     let (a_win, b_ctx) = seam_windows(a, b, a_edge, b_anchor, w, max_lag, pre)?;
     let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
     if curve.is_empty() {
@@ -342,7 +425,16 @@ fn lag_probe(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize, max
 /// **Outward-anchor**: scan a shoulder outward (away from the gap) to the loudest `ANCHOR_WIN_MS` window
 /// within `ANCHOR_MAX_OUT_MS`, then lag-search there. Returns `(offset_ms, rms_db, peak_r, peak_lag_ms,
 /// peak_z)` — the distant loud feature's registration, which should be far more unique than the quiet edge.
-fn outward_anchor(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize, max_lag: usize, pre: bool, rate: f64) -> Option<(f64, f64, f64, f64, f64)> {
+fn outward_anchor(
+    a: &[f64],
+    b: &[f64],
+    a_edge: usize,
+    b_anchor: usize,
+    w: usize,
+    max_lag: usize,
+    pre: bool,
+    rate: f64,
+) -> Option<(f64, f64, f64, f64, f64)> {
     let step = ((ANCHOR_STEP_MS / 1000.0 * rate).round() as usize).max(1);
     let max_out = (anchor_max_out_ms() / 1000.0 * rate).round() as usize;
     let mut best: Option<(usize, f64)> = None; // (offset frames, rms) of the loudest reachable window
@@ -364,9 +456,19 @@ fn outward_anchor(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize
         off += step;
     }
     let (off, _) = best?;
-    let (ae, ba) = if pre { (a_edge - off, b_anchor - off) } else { (a_edge + off, b_anchor + off) };
+    let (ae, ba) = if pre {
+        (a_edge - off, b_anchor - off)
+    } else {
+        (a_edge + off, b_anchor + off)
+    };
     let (rms_db, peak_r, peak_lag_ms, peak_z) = lag_probe(a, b, ae, ba, w, max_lag, pre, rate)?;
-    Some((off as f64 * 1000.0 / rate, rms_db, peak_r, peak_lag_ms, peak_z))
+    Some((
+        off as f64 * 1000.0 / rate,
+        rms_db,
+        peak_r,
+        peak_lag_ms,
+        peak_z,
+    ))
 }
 
 // ── report ───────────────────────────────────────────────────────────────────────
@@ -374,18 +476,34 @@ fn outward_anchor(a: &[f64], b: &[f64], a_edge: usize, b_anchor: usize, w: usize
 const A_PAD_SECS: f64 = 2.3; // ≥ max window
 const LAG_PAD_SECS: f64 = 0.5; // ≥ WIDE_MAX_LAG_MS
 
-fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: usize, b_stream: usize, rate: u32) {
+fn run_gap(
+    geo: &Geometry,
+    idx: usize,
+    a_path: &Path,
+    b_path: &Path,
+    a_stream: usize,
+    b_stream: usize,
+    rate: u32,
+) {
     let r = f64::from(rate);
-    let dur = geo.duration_secs.unwrap_or(geo.a_refined_end_secs - geo.a_refined_start_secs);
+    let dur = geo
+        .duration_secs
+        .unwrap_or(geo.a_refined_end_secs - geo.a_refined_start_secs);
     println!(
         "\n──────── gap {idx}  (A {:.3}..{:.3}s, dur {dur:.3}s → B {:.3}..{:.3}s) ────────",
-        geo.a_refined_start_secs, geo.a_refined_end_secs, geo.b_mapped_start_secs, geo.b_mapped_end_secs
+        geo.a_refined_start_secs,
+        geo.a_refined_end_secs,
+        geo.b_mapped_start_secs,
+        geo.b_mapped_end_secs
     );
 
     // Decode the few seconds of A and B that span the gap ± windows/lag. The pad must cover the widest
     // window, the (possibly widened) fine lag, the wide-envelope lag, AND the outward-anchor reach.
-    let lag_pad = LAG_PAD_SECS.max(fine_max_lag_ms() / 1000.0 + 0.1).max(WIDE_MAX_LAG_MS / 1000.0 + 0.1);
-    let a_pad = A_PAD_SECS.max((anchor_max_out_ms() + ANCHOR_WIN_MS) / 1000.0 + fine_max_lag_ms() / 1000.0 + 0.1);
+    let lag_pad = LAG_PAD_SECS
+        .max(fine_max_lag_ms() / 1000.0 + 0.1)
+        .max(WIDE_MAX_LAG_MS / 1000.0 + 0.1);
+    let a_pad = A_PAD_SECS
+        .max((anchor_max_out_ms() + ANCHOR_WIN_MS) / 1000.0 + fine_max_lag_ms() / 1000.0 + 0.1);
     let a_start = geo.a_refined_start_secs - a_pad;
     let a_span = (geo.a_refined_end_secs + a_pad) - a_start;
     let b_start = geo.b_mapped_start_secs - a_pad - lag_pad;
@@ -397,7 +515,13 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
         println!("  (decode failed — skipping)");
         return;
     };
-    println!("  A {} ch, {} frames | B {} ch, {} frames", a_pcm.channels, a_pcm.frames(), b_pcm.channels, b_pcm.frames());
+    println!(
+        "  A {} ch, {} frames | B {} ch, {} frames",
+        a_pcm.channels,
+        a_pcm.frames(),
+        b_pcm.channels,
+        b_pcm.frames()
+    );
 
     // Edge frames within the decoded spans.
     let a_pre_edge = ((geo.a_refined_start_secs - a_start) * r).round() as usize;
@@ -415,10 +539,15 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
         let lo = a_pre_edge - w;
         let mono = db(rms(&a_pcm.mono()[lo..a_pre_edge]));
         let weighted = db(rms(&a_pcm.weighted_mono()[lo..a_pre_edge]));
-        let per: Vec<f64> = (0..a_pcm.channels).map(|c| db(rms(&a_pcm.channel(c)[lo..a_pre_edge]))).collect();
+        let per: Vec<f64> = (0..a_pcm.channels)
+            .map(|c| db(rms(&a_pcm.channel(c)[lo..a_pre_edge])))
+            .collect();
         let loudest = per.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let per_str: Vec<String> = per.iter().map(|d| format!("{d:6.1}")).collect();
-        println!("    {wm:6.0} | {mono:6.1} | {weighted:8.1} | {loudest:7.1} | {}", per_str.join(" "));
+        println!(
+            "    {wm:6.0} | {mono:6.1} | {weighted:8.1} | {loudest:7.1} | {}",
+            per_str.join(" ")
+        );
     }
 
     // (2) UNIQUENESS — fine waveform lag curve on mono, per window size, pre + post seams.
@@ -426,13 +555,21 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
     let mono_b = b_pcm.mono();
     let b_pre_anchor = ((geo.b_mapped_start_secs - b_start) * r).round() as usize;
     let b_post_anchor = ((geo.b_mapped_end_secs - b_start) * r).round() as usize;
-    println!("  [fine uniqueness] mono waveform, ±{:.0}ms:  peak@lag | prom | peak_z | top2_gap_ms", fine_max_lag_ms());
-    for (label, a_edge, b_anchor, pre) in
-        [("pre", a_pre_edge, b_pre_anchor, true), ("post", a_post_edge, b_post_anchor, false)]
-    {
+    println!(
+        "  [fine uniqueness] mono waveform, ±{:.0}ms:  peak@lag | prom | peak_z | top2_gap_ms",
+        fine_max_lag_ms()
+    );
+    for (label, a_edge, b_anchor, pre) in [
+        ("pre", a_pre_edge, b_pre_anchor, true),
+        ("post", a_post_edge, b_post_anchor, false),
+    ] {
         for &wm in &WINDOW_MS {
             let w = (wm / 1000.0 * r).round() as usize;
-            let Some((a_win, b_ctx)) = seam_windows(&mono_a, &mono_b, a_edge, b_anchor, w, max_lag, pre) else { continue };
+            let Some((a_win, b_ctx)) =
+                seam_windows(&mono_a, &mono_b, a_edge, b_anchor, w, max_lag, pre)
+            else {
+                continue;
+            };
             let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
             if curve.is_empty() {
                 continue;
@@ -456,7 +593,9 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
         .filter(|_| a_pre_edge >= rep_w)
         .max_by(|&c1, &c2| {
             let e = |c: usize| rms(&a_pcm.channel(c)[a_pre_edge - rep_w..a_pre_edge]);
-            e(c1).partial_cmp(&e(c2)).unwrap_or(std::cmp::Ordering::Equal)
+            e(c1)
+                .partial_cmp(&e(c2))
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap_or(0);
     let reps: [(String, Vec<f64>); 3] = [
@@ -464,18 +603,22 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
         ("weighted".into(), a_pcm.weighted_mono()),
         (format!("loud-ch{loudest_ch}"), a_pcm.channel(loudest_ch)),
     ];
-    let peak_prom = |sig: &[f64], a_edge: usize, b_anchor: usize, pre: bool| -> Option<(f64, f64)> {
-        let (a_win, b_ctx) = seam_windows(sig, &mono_b, a_edge, b_anchor, rep_w, max_lag, pre)?;
-        let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
-        if curve.is_empty() {
-            return None;
-        }
-        let pk = top_peaks(&curve, rate, TOP_K);
-        let (prom, _, _) = uniqueness_stats(&curve, &pk);
-        Some((pk.first().map(|p| p.r).unwrap_or(f64::NAN), prom))
-    };
+    let peak_prom =
+        |sig: &[f64], a_edge: usize, b_anchor: usize, pre: bool| -> Option<(f64, f64)> {
+            let (a_win, b_ctx) = seam_windows(sig, &mono_b, a_edge, b_anchor, rep_w, max_lag, pre)?;
+            let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
+            if curve.is_empty() {
+                return None;
+            }
+            let pk = top_peaks(&curve, rate, TOP_K);
+            let (prom, _, _) = uniqueness_stats(&curve, &pk);
+            Some((pk.first().map(|p| p.r).unwrap_or(f64::NAN), prom))
+        };
     println!("  [repr @1s] A-downmix vs B-mono:  repr     | pre peak/prom | post peak/prom");
-    let fmt = |o: Option<(f64, f64)>| o.map(|(r, p)| format!("{r:.3}/{p:.3}")).unwrap_or_else(|| "   -   ".into());
+    let fmt = |o: Option<(f64, f64)>| {
+        o.map(|(r, p)| format!("{r:.3}/{p:.3}"))
+            .unwrap_or_else(|| "   -   ".into())
+    };
     for (label, sig) in &reps {
         let pre = peak_prom(sig, a_pre_edge, b_pre_anchor, true);
         let post = peak_prom(sig, a_post_edge, b_post_anchor, false);
@@ -491,16 +634,19 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
         ANCHOR_WIN_MS, anchor_max_out_ms()
     );
     println!("    side | edge:  rms   peak@lag   z | anchor: off     rms   peak@lag   z");
-    for (label, a_edge, b_anchor, pre) in
-        [("pre", a_pre_edge, b_pre_anchor, true), ("post", a_post_edge, b_post_anchor, false)]
-    {
+    for (label, a_edge, b_anchor, pre) in [
+        ("pre", a_pre_edge, b_pre_anchor, true),
+        ("post", a_post_edge, b_post_anchor, false),
+    ] {
         let edge = lag_probe(&mono_a, &mono_b, a_edge, b_anchor, anch_w, max_lag, pre, r);
         let anc = outward_anchor(&mono_a, &mono_b, a_edge, b_anchor, anch_w, max_lag, pre, r);
         let fe = edge
             .map(|(rms, pr, lag, z)| format!("{rms:6.1} {pr:.3}@{lag:+7.1} z{z:5.1}"))
             .unwrap_or_else(|| "        -        ".into());
         let fa = anc
-            .map(|(off, rms, pr, lag, z)| format!("{off:+5.0}ms {rms:6.1} {pr:.3}@{lag:+7.1} z{z:5.1}"))
+            .map(|(off, rms, pr, lag, z)| {
+                format!("{off:+5.0}ms {rms:6.1} {pr:.3}@{lag:+7.1} z{z:5.1}")
+            })
             .unwrap_or_else(|| "           -           ".into());
         println!("    {label:<4} | {fe} | {fa}");
     }
@@ -509,7 +655,15 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
     println!("  [wide-env segment] 2 s window, ±{WIDE_MAX_LAG_MS:.0}ms:  bin_ms | peak@lag | prom | peak_z");
     let wide_w = (2.0 * r).round() as usize;
     let wide_lag = (WIDE_MAX_LAG_MS / 1000.0 * r).round() as usize;
-    if let Some((a_win, b_ctx)) = seam_windows(&mono_a, &mono_b, a_pre_edge, b_pre_anchor, wide_w, wide_lag, true) {
+    if let Some((a_win, b_ctx)) = seam_windows(
+        &mono_a,
+        &mono_b,
+        a_pre_edge,
+        b_pre_anchor,
+        wide_w,
+        wide_lag,
+        true,
+    ) {
         for &bm in &ENV_BIN_MS {
             let bin = (bm / 1000.0 * r).round() as usize;
             let ea = rms_envelope(&a_win, bin);
@@ -523,7 +677,10 @@ fn run_gap(geo: &Geometry, idx: usize, a_path: &Path, b_path: &Path, a_stream: u
             // = (returned / 1000) · bin / sr · 1000 = returned · bin / sr.
             let peaks: Vec<Peak> = top_peaks(&curve, 1, TOP_K)
                 .into_iter()
-                .map(|p| Peak { lag_ms: p.lag_ms * bin as f64 / r, r: p.r })
+                .map(|p| Peak {
+                    lag_ms: p.lag_ms * bin as f64 / r,
+                    r: p.r,
+                })
                 .collect();
             let (prom, z, _) = uniqueness_stats(&curve, &peaks);
             let p0 = peaks.first();
@@ -557,29 +714,41 @@ fn diag_splice_timescale() {
         .unwrap_or_else(|e| panic!("read SPLICE_EXP_CORPUS {}: {e}", corpus_path.display()));
     let file: CorpusFile = serde_json::from_str(&text).expect("parse corpus.json");
 
-    let only: Option<Vec<usize>> = std::env::var("SPLICE_EXP_GAPS").ok().map(|s| {
-        s.split(',').filter_map(|x| x.trim().parse().ok()).collect()
-    });
+    let only: Option<Vec<usize>> = std::env::var("SPLICE_EXP_GAPS")
+        .ok()
+        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect());
 
     // Match the pipeline's track selection: A = its highest-channel audio stream (the 5.1), B = the audio
     // stream with the same channel count (B's 5.1, NOT its years-old stereo downmix at a:0). Overridable.
     let a_ch = probe_audio_channels(&a_path);
     let b_ch = probe_audio_channels(&b_path);
     let env_stream = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok());
-    let a_stream = env_stream("SPLICE_EXP_A_STREAM")
-        .unwrap_or_else(|| a_ch.iter().enumerate().max_by_key(|(_, &c)| c).map(|(i, _)| i).unwrap_or(0));
-    let target_ch = a_ch.get(a_stream).copied().unwrap_or(0);
-    let b_stream = env_stream("SPLICE_EXP_B_STREAM").unwrap_or_else(|| {
-        b_ch.iter().position(|&c| c == target_ch).unwrap_or(0)
+    let a_stream = env_stream("SPLICE_EXP_A_STREAM").unwrap_or_else(|| {
+        a_ch.iter()
+            .enumerate()
+            .max_by_key(|(_, &c)| c)
+            .map(|(i, _)| i)
+            .unwrap_or(0)
     });
+    let target_ch = a_ch.get(a_stream).copied().unwrap_or(0);
+    let b_stream = env_stream("SPLICE_EXP_B_STREAM")
+        .unwrap_or_else(|| b_ch.iter().position(|&c| c == target_ch).unwrap_or(0));
 
     println!("=== splice timescale experiment ===");
-    println!("A: {}\nB: {}\nsr: {rate}", a_path.display(), b_path.display());
+    println!(
+        "A: {}\nB: {}\nsr: {rate}",
+        a_path.display(),
+        b_path.display()
+    );
     println!(
         "A audio streams (ch): {a_ch:?} → using a:{a_stream} ({target_ch}ch)\n\
          B audio streams (ch): {b_ch:?} → using a:{b_stream} ({}ch){}",
         b_ch.get(b_stream).copied().unwrap_or(0),
-        if b_ch.get(b_stream).copied() == Some(target_ch) { " [channel-matched]" } else { " [!! NO channel match — set SPLICE_EXP_B_STREAM]" }
+        if b_ch.get(b_stream).copied() == Some(target_ch) {
+            " [channel-matched]"
+        } else {
+            " [!! NO channel match — set SPLICE_EXP_B_STREAM]"
+        }
     );
     let mut ran = 0;
     for g in &file.gaps {

@@ -52,7 +52,13 @@ pub fn write_offset_chirp_wav_pair(
     total_secs: u32,
     offset_secs: u32,
 ) -> (PathBuf, PathBuf) {
-    write_offset_chirp_wav_pair_with_delay(dir, sample_rate, total_secs, offset_secs, ChirpDelayOn::B)
+    write_offset_chirp_wav_pair_with_delay(
+        dir,
+        sample_rate,
+        total_secs,
+        offset_secs,
+        ChirpDelayOn::B,
+    )
 }
 
 pub fn write_offset_chirp_wav_pair_with_delay(
@@ -380,7 +386,8 @@ pub fn write_query_reference_chirp_pair(
     write_mono_wav(
         &path_b,
         sample_rate,
-        (0..query_samples).map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
+        (0..query_samples)
+            .map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
     );
     (path_a, path_b)
 }
@@ -409,7 +416,8 @@ pub fn write_query_reference_b_longer_chirp_pair(
     write_mono_wav(
         &path_a,
         sample_rate,
-        (0..query_samples).map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
+        (0..query_samples)
+            .map(|offset| bounded_chirp_sample(sample_rate, start_index + offset, sweep_secs)),
     );
     (path_a, path_b)
 }
@@ -548,16 +556,14 @@ mod anchored_end_symmetric_tests {
         let mut reader_b = WavReader::open(&path_b).expect("open b");
         let delay_samples = u64::from(sample_rate) * u64::from(offset_secs);
 
-        let samples_a: Vec<i16> = reader_a
-            .samples()
-            .map(|s| s.expect("sample"))
-            .collect();
-        let samples_b: Vec<i16> = reader_b
-            .samples()
-            .map(|s| s.expect("sample"))
-            .collect();
+        let samples_a: Vec<i16> = reader_a.samples().map(|s| s.expect("sample")).collect();
+        let samples_b: Vec<i16> = reader_b.samples().map(|s| s.expect("sample")).collect();
 
-        let a_lead: i32 = samples_a.iter().take(100).map(|s| s.unsigned_abs() as i32).sum();
+        let a_lead: i32 = samples_a
+            .iter()
+            .take(100)
+            .map(|s| s.unsigned_abs() as i32)
+            .sum();
         let b_lead: i32 = samples_b
             .iter()
             .take(delay_samples as usize)

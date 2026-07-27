@@ -94,11 +94,7 @@ pub struct FillWindowFrames {
 
 impl FillWindowFrames {
     /// Derive the trio from a gap length. See the type docs for which gap length to pass.
-    pub fn for_gap(
-        settings: &PatchRequestSettings,
-        gap_frames: usize,
-        sample_rate: u32,
-    ) -> Self {
+    pub fn for_gap(settings: &PatchRequestSettings, gap_frames: usize, sample_rate: u32) -> Self {
         let correlate_frames = correlate_frames_for_gap(
             settings.normalize_window_secs,
             settings.min_border_discovery_secs,

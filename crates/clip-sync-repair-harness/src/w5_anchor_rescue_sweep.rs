@@ -137,7 +137,10 @@ pub fn refine_w5_boundaries(cells: &[W5SweepCell]) -> Vec<W5SweepCell> {
     // Regime lookup by quantized (offset, search).
     let mut regime_at = std::collections::HashMap::new();
     for c in cells {
-        regime_at.insert((key(c.peak_offset_secs()), key(c.fill_border_search_secs())), c.regime);
+        regime_at.insert(
+            (key(c.peak_offset_secs()), key(c.fill_border_search_secs())),
+            c.regime,
+        );
     }
     let existing: BTreeSet<(i64, i64)> = regime_at.keys().copied().collect();
 

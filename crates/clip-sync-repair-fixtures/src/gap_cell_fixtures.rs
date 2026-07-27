@@ -182,7 +182,8 @@ pub fn load_gap_cell_fixtures() -> Vec<GapCellFixture> {
         .into_iter()
         .map(|entry| {
             let path = dir.join(&entry.file);
-            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let bytes =
+                std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
             let corpus: GapCorpus = serde_json::from_slice(&bytes)
                 .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
             assert_eq!(
@@ -214,7 +215,12 @@ mod tests {
         assert!(!fixtures.is_empty(), "no curated fixtures loaded");
         for f in &fixtures {
             assert_eq!(f.corpus.gaps.len(), 1, "{} not single-gap", f.file);
-            assert_eq!(f.gap().index, f.provenance.gap_index, "{} gap index != provenance", f.file);
+            assert_eq!(
+                f.gap().index,
+                f.provenance.gap_index,
+                "{} gap index != provenance",
+                f.file
+            );
             assert!(!f.expected.is_empty(), "{} missing expected note", f.file);
         }
     }
@@ -223,11 +229,17 @@ mod tests {
     /// member can't silently vanish, and `residual_veto`/`unfillable` can't sneak in a fabricated fixture).
     #[test]
     fn representable_cells_have_a_fixture_and_others_do_not() {
-        let present: BTreeSet<&str> =
-            load_gap_cell_fixtures().iter().map(|f| f.cell_type.as_str()).collect();
+        let present: BTreeSet<&str> = load_gap_cell_fixtures()
+            .iter()
+            .map(|f| f.cell_type.as_str())
+            .collect();
         for &cell in GapCellType::ALL {
             if cell.is_fingerprint_representable() {
-                assert!(present.contains(cell.as_str()), "missing representable cell {}", cell.as_str());
+                assert!(
+                    present.contains(cell.as_str()),
+                    "missing representable cell {}",
+                    cell.as_str()
+                );
             } else {
                 assert!(
                     !present.contains(cell.as_str()),
@@ -241,8 +253,10 @@ mod tests {
     #[test]
     fn manifest_and_on_disk_fixture_files_agree() {
         let dir = curated_fixtures_dir();
-        let manifest_files: BTreeSet<String> =
-            load_gap_cell_fixtures().into_iter().map(|f| f.file).collect();
+        let manifest_files: BTreeSet<String> = load_gap_cell_fixtures()
+            .into_iter()
+            .map(|f| f.file)
+            .collect();
         let disk_files: BTreeSet<String> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read dir {}: {e}", dir.display()))
             .filter_map(|e| e.ok())

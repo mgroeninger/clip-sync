@@ -1,7 +1,8 @@
 use clip_sync::{
-    format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_periodic_ambiguity_line, format_query_localization_lines, format_symmetric_clip_window_line,
-    format_timestamp, AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
+    format_end_clip_anchor_line, format_high_rate_refinement_lines,
+    format_offset_verification_lines, format_periodic_ambiguity_line,
+    format_query_localization_lines, format_symmetric_clip_window_line, format_timestamp,
+    AlignmentReport, AlignmentResult, AppError, ClipLabelReport, ClipMatchReport,
     RepetitionFindingReport,
 };
 
@@ -9,7 +10,8 @@ use crate::infrastructure::config::{OutputConfig, OutputFormat};
 
 /// JSON report for stdout (`--format json`). Golden-tested in `clip-sync-cli/tests/cli_output.rs`.
 pub fn format_json_output(result: &AlignmentResult) -> String {
-    serde_json::to_string_pretty(&AlignmentReport::from(result)).expect("serialize alignment report")
+    serde_json::to_string_pretty(&AlignmentReport::from(result))
+        .expect("serialize alignment report")
 }
 
 pub fn print_success(output: &OutputConfig, result: &AlignmentResult) -> Result<(), AppError> {
@@ -53,12 +55,13 @@ pub fn format_human_output(show_diagnostics: bool, domain_result: &AlignmentResu
             .map(|o| format!("{o:+.3}s"))
             .unwrap_or_else(|| "n/a".into());
         let confidence = headline_confidence;
-        out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+        out.push_str(&format!(
+            "Alignment: offset {offset}  confidence {confidence}\n"
+        ));
     }
 
     let show_per_clip_offsets = !query_mode && result.clips.len() > 1;
-    let show_clip_window_lines = show_diagnostics
-        || result.clips.iter().any(|clip| !clip.aligned);
+    let show_clip_window_lines = show_diagnostics || result.clips.iter().any(|clip| !clip.aligned);
 
     if show_per_clip_offsets {
         for clip in &result.clips {

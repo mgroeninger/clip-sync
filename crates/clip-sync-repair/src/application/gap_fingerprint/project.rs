@@ -50,9 +50,10 @@ pub fn spec_to_fingerprint_summary(
 
     let (tier, skip_reason) = match &spec.verdict {
         GapRepairVerdict::Patch(_) => ("patch".to_string(), None),
-        GapRepairVerdict::Skip { reason, .. } => {
-            ("skip".to_string(), Some(skip_reason_tag(reason).to_string()))
-        }
+        GapRepairVerdict::Skip { reason, .. } => (
+            "skip".to_string(),
+            Some(skip_reason_tag(reason).to_string()),
+        ),
     };
 
     let reg = &tags.registration;
@@ -69,15 +70,28 @@ pub fn spec_to_fingerprint_summary(
     };
     let baseline_lag = if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
         Some(LagFingerprint {
-            pre_anchor: projected_lag_entry(reg.pre_peak_r, reg.pre_frac_lag_ms, reg.pre_peak_z, reg.pre_prominence),
-            post_anchor: projected_lag_entry(reg.post_peak_r, reg.post_frac_lag_ms, reg.post_peak_z, reg.post_prominence),
+            pre_anchor: projected_lag_entry(
+                reg.pre_peak_r,
+                reg.pre_frac_lag_ms,
+                reg.pre_peak_z,
+                reg.pre_prominence,
+            ),
+            post_anchor: projected_lag_entry(
+                reg.post_peak_r,
+                reg.post_frac_lag_ms,
+                reg.post_peak_z,
+                reg.post_prominence,
+            ),
         })
     } else {
         None
     };
 
     let gate = &tags.gate;
-    let structure = gate.structure_min.map(|m| StructureScores { baseline_pre: m, baseline_post: m });
+    let structure = gate.structure_min.map(|m| StructureScores {
+        baseline_pre: m,
+        baseline_post: m,
+    });
     let seams = gate.seam_min.map(|m| SeamScores {
         baseline_pre: m,
         baseline_post: m,
@@ -105,7 +119,10 @@ pub fn spec_to_fingerprint_summary(
         )
     });
 
-    let gap_frames = spec.refined.end_frame.saturating_sub(spec.refined.start_frame);
+    let gap_frames = spec
+        .refined
+        .end_frame
+        .saturating_sub(spec.refined.start_frame);
     let splice_dualfit = tags.seam_local.as_ref().map(|sl| SpliceDualfit {
         pre_seam_r: sl.pre_seam_r,
         post_seam_r: sl.post_seam_r,
@@ -247,7 +264,11 @@ fn synth_brackets(
             } else if i == passing {
                 // First failing bracket is the "closest": a seam so the reader selects it, plus the stage.
                 // When there are no passing brackets it also carries `best` (the reader's max sees it here).
-                let seam = if passing == 0 { best } else { best.map(|b| b - 0.01) };
+                let seam = if passing == 0 {
+                    best
+                } else {
+                    best.map(|b| b - 0.01)
+                };
                 mk(seam, closest_stage)
             } else {
                 mk(None, Some(FailureStage::StructureAlign))
@@ -309,7 +330,9 @@ fn skip_reason_tag(reason: &GapPatchSkipReason) -> &'static str {
 // (baseline_lag-preferred registration, per-side donor, brackets → counts/best/closest).
 
 fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
-    v.iter().find(|e| e.channel == LagChannel::Mono).or_else(|| v.first())
+    v.iter()
+        .find(|e| e.channel == LagChannel::Mono)
+        .or_else(|| v.first())
 }
 
 /// [`FailureStage`] → corpus-reader tag (inverse of [`failure_stage_from_tag`]).
@@ -349,21 +372,31 @@ pub(crate) fn tags_from_fields(
     let pre = lag.and_then(|l| mono_lag(&l.pre_anchor));
     let post = lag.and_then(|l| mono_lag(&l.post_anchor));
 
-    let pre_peak_r = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|p| p.peak_r));
-    let post_peak_r = splice.map(|s| s.post_peak_r).or_else(|| post.map(|p| p.peak_r));
+    let pre_peak_r = splice
+        .map(|s| s.pre_peak_r)
+        .or_else(|| pre.map(|p| p.peak_r));
+    let post_peak_r = splice
+        .map(|s| s.post_peak_r)
+        .or_else(|| post.map(|p| p.peak_r));
     let pre_frac_lag_ms = pre.map(|p| p.frac_lag_ms);
     let post_frac_lag_ms = post.map(|p| p.frac_lag_ms);
-    let step_ms = splice.map(|s| s.step_ms).or(match (post_frac_lag_ms, pre_frac_lag_ms) {
-        (Some(a), Some(b)) => Some(a - b),
-        _ => None,
-    });
+    let step_ms = splice
+        .map(|s| s.step_ms)
+        .or(match (post_frac_lag_ms, pre_frac_lag_ms) {
+            (Some(a), Some(b)) => Some(a - b),
+            _ => None,
+        });
     let registration = RegistrationTags {
         pre_peak_r,
         post_peak_r,
         pre_frac_lag_ms,
         post_frac_lag_ms,
-        pre_peak_z: splice.and_then(|s| s.pre_peak_z).or_else(|| pre.and_then(|p| p.peak_z)),
-        post_peak_z: splice.and_then(|s| s.post_peak_z).or_else(|| post.and_then(|p| p.peak_z)),
+        pre_peak_z: splice
+            .and_then(|s| s.pre_peak_z)
+            .or_else(|| pre.and_then(|p| p.peak_z)),
+        post_peak_z: splice
+            .and_then(|s| s.post_peak_z)
+            .or_else(|| post.and_then(|p| p.peak_z)),
         pre_prominence: pre.and_then(|p| p.prominence),
         post_prominence: post.and_then(|p| p.prominence),
         step_ms,
@@ -415,7 +448,10 @@ pub(crate) fn tags_from_fields(
     });
     let gate = GateTags {
         brackets_total: brackets.len(),
-        brackets_passing: brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
+        brackets_passing: brackets
+            .iter()
+            .filter(|b| b.failure_stage.is_none())
+            .count(),
         closest_failure_stage,
         structure_min: structure.map(|s| s.baseline_pre.min(s.baseline_post)),
         seam_min: seams.map(|s| s.baseline_pre.min(s.baseline_post)),
@@ -464,7 +500,11 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
     };
     use crate::domain::policies::RefinedGapFrames;
 
-    let is_skip = fp.outcome.as_ref().map(|o| o.tier == "skip").unwrap_or(false);
+    let is_skip = fp
+        .outcome
+        .as_ref()
+        .map(|o| o.tier == "skip")
+        .unwrap_or(false);
     let verdict = if is_skip {
         GapRepairVerdict::Skip {
             cell: GapRepairCell::Decorrelated,
@@ -494,10 +534,16 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
         a_end_secs: fp.geometry.a_end_secs,
         gap_offset_secs: fp.geometry.fill_offset_secs.unwrap_or(0.0),
         refined: RefinedGapFrames {
-            start_frame: (fp.geometry.a_refined_start_secs * f64::from(fp.sample_rate)).round() as usize,
-            end_frame: (fp.geometry.a_refined_end_secs * f64::from(fp.sample_rate)).round() as usize,
+            start_frame: (fp.geometry.a_refined_start_secs * f64::from(fp.sample_rate)).round()
+                as usize,
+            end_frame: (fp.geometry.a_refined_end_secs * f64::from(fp.sample_rate)).round()
+                as usize,
         },
-        b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+        b_extract: BExtractWindow {
+            start_frame: 0,
+            end_frame: 0,
+            b_mapped_start_frame: 0,
+        },
         crossfade_secs: 0.0,
         verdict,
         tags_ctx: tags_from_fingerprint(fp),
@@ -557,8 +603,15 @@ mod tests {
             a_start_secs: 10.0,
             a_end_secs: 10.5,
             gap_offset_secs: 0.25,
-            refined: RefinedGapFrames { start_frame: 480_000, end_frame: 504_000 },
-            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            refined: RefinedGapFrames {
+                start_frame: 480_000,
+                end_frame: 504_000,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
             crossfade_secs: 0.01,
             verdict: GapRepairVerdict::Skip {
                 cell: GapRepairCell::SilenceSplice,
@@ -577,7 +630,10 @@ mod tests {
         // outcome: a skip (tier is patch/skip, matching the scan path).
         let o = fp.outcome.as_ref().unwrap();
         assert_eq!(o.tier, "skip");
-        assert_eq!(o.skip_reason.as_deref(), Some("correlation_below_threshold"));
+        assert_eq!(
+            o.skip_reason.as_deref(),
+            Some("correlation_below_threshold")
+        );
 
         // splice_dualfit — single-source copies of seam_local (A7), gate_pass + step-real inputs preserved.
         let df = fp.splice_dualfit.expect("splice_dualfit projected");
@@ -594,6 +650,12 @@ mod tests {
 
         // brackets: synthesized to read back total=4, passing=0 (bracket-exhausted).
         assert_eq!(fp.brackets.len(), 4);
-        assert_eq!(fp.brackets.iter().filter(|b| b.failure_stage.is_none()).count(), 0);
+        assert_eq!(
+            fp.brackets
+                .iter()
+                .filter(|b| b.failure_stage.is_none())
+                .count(),
+            0
+        );
     }
 }

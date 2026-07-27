@@ -7,13 +7,17 @@ use crate::application::patch_region::{
     SeamExtensionRetry, SeamGateDerived, SeamGateFailure, SeamGateOutcome, SeamGateParams,
 };
 use crate::domain::{
-    fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     fill_mode::FillMode,
+    fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     gap_extension_slack_secs,
     gap_fill::{FillRegion, GapFillPlan},
     gap_fill_fit::{
         classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames,
         FillConfidence,
+    },
+    gap_repair_spec::{
+        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
+        SeamLocalTags,
     },
     gap_signature::build_gap_signature,
     gap_structure::StructureMatchParams,
@@ -30,10 +34,6 @@ use crate::domain::{
         GapPatchStatus,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
-    gap_repair_spec::{
-        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
-        SeamLocalTags,
-    },
     Gap,
 };
 
@@ -136,11 +136,8 @@ fn anchor_search_prior_for_gap(
         return None;
     }
     let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
-    let predicted_offset = interpolate_anchored_offset_secs(
-        &request.report.alignment,
-        gap_time_on_a,
-        table,
-    )?;
+    let predicted_offset =
+        interpolate_anchored_offset_secs(&request.report.alignment, gap_time_on_a, table)?;
     let predicted_b_start = region.a_start_secs + predicted_offset;
     let predicted_start_frame = ((predicted_b_start - b_extract_start_secs) * sample_rate as f64)
         .round()
@@ -234,23 +231,19 @@ pub(super) fn outcomes_in_report_order(
         tags_by_gap.insert(key, tags.clone());
     }
 
-    gaps
-        .iter()
+    gaps.iter()
         .map(|gap| {
             let key = gap_key(gap.video_a_start_secs, gap.video_a_end_secs);
-            let status = status_by_gap.remove(&key).unwrap_or(GapPatchStatus::NotPlanned {
-                reason: GapFillSkipReason::NotFillable,
-            });
-            let tags = tags_by_gap.remove(&key).unwrap_or_else(|| {
-                derive_gap_tags_from_status(&status, fill_mode, thresholds)
-            });
-            GapPatchOutcome::new(
-                gap.video_a_start_secs,
-                gap.video_a_end_secs,
-                status,
-                tags,
-            )
-            .with_residual(residual_by_gap.remove(&key))
+            let status = status_by_gap
+                .remove(&key)
+                .unwrap_or(GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable,
+                });
+            let tags = tags_by_gap
+                .remove(&key)
+                .unwrap_or_else(|| derive_gap_tags_from_status(&status, fill_mode, thresholds));
+            GapPatchOutcome::new(gap.video_a_start_secs, gap.video_a_end_secs, status, tags)
+                .with_residual(residual_by_gap.remove(&key))
         })
         .collect()
 }
@@ -281,9 +274,8 @@ pub(super) fn region_outcome_gap_tags(
         tag_ctx.dual_fit_used = *dual_fit_used;
     }
     tag_ctx.residual = match outcome {
-        RegionPatchOutcome::Patched { residual, .. } | RegionPatchOutcome::Skipped { residual, .. } => {
-            *residual
-        }
+        RegionPatchOutcome::Patched { residual, .. }
+        | RegionPatchOutcome::Skipped { residual, .. } => *residual,
     };
     let input = match outcome {
         RegionPatchOutcome::Patched {
@@ -386,7 +378,11 @@ fn a_gap_floor_db(a_samples: &[f32], channels: usize, gap_start: usize, gap_end:
     let sum_sq: f64 = (lo..hi)
         .map(|f| {
             let base = f * ch;
-            let m = a_samples[base..base + ch].iter().map(|&x| x as f64).sum::<f64>() / ch as f64;
+            let m = a_samples[base..base + ch]
+                .iter()
+                .map(|&x| x as f64)
+                .sum::<f64>()
+                / ch as f64;
             m * m
         })
         .sum();
@@ -403,7 +399,8 @@ fn b_mapped_start_frame(
     b_extract_start_secs: f64,
     sample_rate: u32,
 ) -> usize {
-    (((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as i64).max(0) as usize
+    (((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as i64).max(0)
+        as usize
 }
 
 /// Everything the A3 dual-fit algorithm needs, built once from the decoded window — only when `--dual-fit`
@@ -471,7 +468,11 @@ fn build_dual_fit_input<'a>(spec: DualFitInputSpec<'a>) -> Option<DualFitRepairI
         (lo..hi)
             .map(|f| {
                 let base = f * ch;
-                a_samples[base..base + ch].iter().map(|&x| x as f64).sum::<f64>() / ch as f64
+                a_samples[base..base + ch]
+                    .iter()
+                    .map(|&x| x as f64)
+                    .sum::<f64>()
+                    / ch as f64
             })
             .collect()
     };
@@ -481,8 +482,10 @@ fn build_dual_fit_input<'a>(spec: DualFitInputSpec<'a>) -> Option<DualFitRepairI
         .chunks(ch)
         .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
         .collect();
-    let b_mapped_start = b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
-    let a_gap_floor_db = a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
+    let b_mapped_start =
+        b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
+    let a_gap_floor_db =
+        a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
 
     Some(DualFitRepairInput {
         params: crate::domain::dual_fit::DualFitParams {
@@ -665,11 +668,13 @@ fn skip_or_dual_fit(
                                     margin_db,
                                     "dual-fit candidate rejected by residual headroom gate; falling back to skip"
                                 );
-                                dual_fit_attempt = Some(crate::domain::patch_result::SeamScoreAttempt {
-                                    pre_correlation: splice_pre,
-                                    post_correlation: splice_post,
-                                    source: crate::domain::patch_result::SeamScoreSource::DualFit,
-                                });
+                                dual_fit_attempt =
+                                    Some(crate::domain::patch_result::SeamScoreAttempt {
+                                        pre_correlation: splice_pre,
+                                        post_correlation: splice_post,
+                                        source:
+                                            crate::domain::patch_result::SeamScoreSource::DualFit,
+                                    });
                                 let (_, outcome, tag_ctx) = seam_failure_outcome(
                                     progress,
                                     request,
@@ -1024,10 +1029,10 @@ struct ExecuteBracketOutputCtx {
 /// for a bracket. **The authoritative bracket output path since 6b.3b** (was shadow-validated byte-identical
 /// across the full suite in 6b.3a before the inline construction was removed).
 fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionPatchOutcome) {
-    let structure_slide_secs =
-        (ctx.structure_start_frame as f64 - ctx.offset_nominal_start as f64) / ctx.sample_rate as f64;
-    let waveform_slide_secs =
-        (ctx.alignment_start_frame as f64 - ctx.structure_start_frame as f64) / ctx.sample_rate as f64;
+    let structure_slide_secs = (ctx.structure_start_frame as f64 - ctx.offset_nominal_start as f64)
+        / ctx.sample_rate as f64;
+    let waveform_slide_secs = (ctx.alignment_start_frame as f64 - ctx.structure_start_frame as f64)
+        / ctx.sample_rate as f64;
     let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
     let patch = RegionPatch {
         b_samples: ctx.fill,
@@ -1094,7 +1099,12 @@ fn finalize_dual_fit(
 ) -> GapRepairSpec {
     match decision {
         DualFitDecision::Rescued(rescue) => {
-            let DualFitRescue { strategy, tags_ctx, refined, crossfade_secs } = *rescue;
+            let DualFitRescue {
+                strategy,
+                tags_ctx,
+                refined,
+                crossfade_secs,
+            } = *rescue;
             GapRepairSpec {
                 gap_index: 0,
                 a_start_secs: region.a_start_secs,
@@ -1108,7 +1118,12 @@ fn finalize_dual_fit(
             }
         }
         DualFitDecision::Skipped { reason, residual } => skip_region_spec(
-            reason, residual, region, gap_offset_secs, gap_refined, b_extract,
+            reason,
+            residual,
+            region,
+            gap_offset_secs,
+            gap_refined,
+            b_extract,
         ),
     }
 }
@@ -1175,10 +1190,10 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
-            let structure_slide_secs = (*structure_start_frame as f64 - offset_nominal_start as f64)
-                / sample_rate as f64;
-            let waveform_slide_secs = (alignment.start_frame as f64 - *structure_start_frame as f64)
-                / sample_rate as f64;
+            let structure_slide_secs =
+                (*structure_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
+            let waveform_slide_secs =
+                (alignment.start_frame as f64 - *structure_start_frame as f64) / sample_rate as f64;
             RegionPatchOutcome::Patched {
                 pre_correlation: *seam_pre,
                 post_correlation: *seam_post,
@@ -1251,8 +1266,19 @@ pub(super) fn execute_region_spec(
     media: &RegionPatchMedia<'_>,
     ctx: &RegionPatchContext,
 ) -> (Option<RegionPatch>, RegionPatchOutcome) {
-    let &RegionPatchContext { channels, sample_rate, silence_peak_fraction, .. } = ctx;
-    let GapRepairSpec { refined, crossfade_secs, b_extract, verdict, .. } = spec;
+    let &RegionPatchContext {
+        channels,
+        sample_rate,
+        silence_peak_fraction,
+        ..
+    } = ctx;
+    let GapRepairSpec {
+        refined,
+        crossfade_secs,
+        b_extract,
+        verdict,
+        ..
+    } = spec;
     match verdict {
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
@@ -1276,7 +1302,8 @@ pub(super) fn execute_region_spec(
             // `window_gap_frames` the spec carries (S0's helper, same call characterize made); the length the
             // fill is assembled TO is the *post*-gate gap on `refined`. Mixing those two up is the one way
             // this reconstruction can silently diverge, which is why they read from different fields here.
-            let windows = FillWindowFrames::for_gap(&request.settings, window_gap_frames, sample_rate);
+            let windows =
+                FillWindowFrames::for_gap(&request.settings, window_gap_frames, sample_rate);
             let fill = execute_bracket_fill(ExecuteBracketFillCtx {
                 alignment,
                 b_samples: slice_b_extract(
@@ -1285,7 +1312,9 @@ pub(super) fn execute_region_spec(
                     b_extract.start_frame,
                     b_extract.end_frame,
                 )
-                .expect("a Bracket verdict's B extract window is the one characterize sliced non-empty"),
+                .expect(
+                    "a Bracket verdict's B extract window is the one characterize sliced non-empty",
+                ),
                 a_samples: &media.a_pcm.samples,
                 a_frames: media.a_pcm.frames(),
                 refined,
@@ -1360,7 +1389,9 @@ pub(super) fn execute_region_spec(
             (Some(patch), outcome)
         }
         GapRepairVerdict::Skip { .. } => {
-            unreachable!("skips are not executed — the loop derives their outcome from the spec (§2.5.5)")
+            unreachable!(
+                "skips are not executed — the loop derives their outcome from the spec (§2.5.5)"
+            )
         }
     }
 }
@@ -1481,10 +1512,8 @@ pub(super) fn characterize_region(
         );
     }
 
-    let context_frames =
-        (gap_signature_context_secs * sample_rate as f64).round() as usize;
-    let bin_frames =
-        ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
+    let context_frames = (gap_signature_context_secs * sample_rate as f64).round() as usize;
+    let bin_frames = ((gap_signature_bin_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
     let search_radius_secs = border_search_secs.max(margin_secs);
     let extend_slack_secs = gap_extension_slack_secs(repair_patch_config_view(request));
     let b_extract_start_secs = (refined_b_start_secs
@@ -1566,8 +1595,16 @@ pub(super) fn characterize_region(
         // window — full geometry for such skips is an 8f concern; the outcome ignores it).
         return (
             skip_region_spec(
-                GapPatchSkipReason::ZeroLengthGap, None, region, gap_offset_secs, refined,
-                BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+                GapPatchSkipReason::ZeroLengthGap,
+                None,
+                region,
+                gap_offset_secs,
+                refined,
+                BExtractWindow {
+                    start_frame: 0,
+                    end_frame: 0,
+                    b_mapped_start_frame: 0,
+                },
             ),
             tag_ctx,
         );
@@ -1607,8 +1644,16 @@ pub(super) fn characterize_region(
             );
             return (
                 skip_region_spec(
-                    reason, None, region, gap_offset_secs, refined,
-                    BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+                    reason,
+                    None,
+                    region,
+                    gap_offset_secs,
+                    refined,
+                    BExtractWindow {
+                        start_frame: 0,
+                        end_frame: 0,
+                        b_mapped_start_frame: 0,
+                    },
                 ),
                 tag_ctx,
             );
@@ -1616,10 +1661,8 @@ pub(super) fn characterize_region(
     };
 
     let border_frames = windows.border_frames;
-    let border_standoff_frames =
-        (border_standoff_secs * sample_rate as f64).round() as usize;
-    let search_radius_frames =
-        (border_search_secs * sample_rate as f64).round() as usize;
+    let border_standoff_frames = (border_standoff_secs * sample_rate as f64).round() as usize;
+    let search_radius_frames = (border_search_secs * sample_rate as f64).round() as usize;
     let max_extend_frames =
         (gap_end_extend_max_ms as f64 / 1000.0 * sample_rate as f64).round() as usize;
     let step_frames =
@@ -1686,7 +1729,10 @@ pub(super) fn characterize_region(
     let silence_splice_b_extract = BExtractWindow {
         start_frame: b_extract_start_frame,
         end_frame: b_extract_end_frame,
-        b_mapped_start_frame: dual_fit_input.as_ref().map(|d| d.b_mapped_start).unwrap_or(0),
+        b_mapped_start_frame: dual_fit_input
+            .as_ref()
+            .map(|d| d.b_mapped_start)
+            .unwrap_or(0),
     };
 
     let gate_result = {
@@ -1725,7 +1771,13 @@ pub(super) fn characterize_region(
                                 dual_fit_input.as_ref(),
                             );
                             return (
-                                finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                                finalize_dual_fit(
+                                    decision,
+                                    region,
+                                    gap_offset_secs,
+                                    silence_splice_b_extract,
+                                    refined,
+                                ),
                                 tag_ctx,
                             );
                         }
@@ -1742,7 +1794,13 @@ pub(super) fn characterize_region(
                         dual_fit_input.as_ref(),
                     );
                     return (
-                        finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                        finalize_dual_fit(
+                            decision,
+                            region,
+                            gap_offset_secs,
+                            silence_splice_b_extract,
+                            refined,
+                        ),
                         tag_ctx,
                     );
                 }
@@ -1759,7 +1817,13 @@ pub(super) fn characterize_region(
                 dual_fit_input.as_ref(),
             );
             return (
-                finalize_dual_fit(decision, region, gap_offset_secs, silence_splice_b_extract, refined),
+                finalize_dual_fit(
+                    decision,
+                    region,
+                    gap_offset_secs,
+                    silence_splice_b_extract,
+                    refined,
+                ),
                 tag_ctx,
             );
         }
@@ -1810,8 +1874,8 @@ pub(super) fn characterize_region(
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
 
-    let structure_slide_secs = (structure_start_frame as f64 - offset_nominal_start as f64)
-        / sample_rate as f64;
+    let structure_slide_secs =
+        (structure_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
     let waveform_slide_secs =
         (alignment.start_frame as f64 - structure_start_frame as f64) / sample_rate as f64;
     // `align_adjustment_secs` (= structure + waveform slide) is recomputed inside `execute_bracket_output`
@@ -1847,7 +1911,12 @@ pub(super) fn characterize_region(
         );
         return (
             skip_region_spec(
-                reason, None, region, gap_offset_secs, refined, silence_splice_b_extract,
+                reason,
+                None,
+                region,
+                gap_offset_secs,
+                refined,
+                silence_splice_b_extract,
             ),
             tag_ctx,
         );
@@ -1878,11 +1947,8 @@ pub(super) fn characterize_region(
     };
     let (a_pre_border, a_post_border) =
         policies::border_templates_for_gap(&a_pcm.samples, channels, &border_spec);
-    let (a_pre_ch, a_post_ch) = policies::border_templates_per_channel_for_gap(
-        &a_pcm.samples,
-        channels,
-        &border_spec,
-    );
+    let (a_pre_ch, a_post_ch) =
+        policies::border_templates_per_channel_for_gap(&a_pcm.samples, channels, &border_spec);
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = if a_post_border.is_empty() {
         0
@@ -1908,7 +1974,10 @@ pub(super) fn characterize_region(
     // assembly itself. `char_gate_search` closes well before this point, so the assembly was previously
     // unmeasured — this span decides whether re-deriving the fill in execute needs a dedup hoist first.
     // `fill_mode` is request-level, so the Fit/Gate split comes from running one measurement per mode.
-    let BracketFill { pcm: b_fill, extended_frames } = {
+    let BracketFill {
+        pcm: b_fill,
+        extended_frames,
+    } = {
         let _s = tracing::info_span!("char_fill_assembly").entered();
         assemble_bracket_fill(BracketFillAssembly {
             b_fill_raw,
@@ -2085,8 +2154,7 @@ pub(super) fn characterize_region(
     (
         // F2: the fill is NOT handed over — `b_fill` was built for the reconciliation and the gain above, and
         // dies here. The executor rebuilds its own from the spec.
-        spec,
-        tag_ctx,
+        spec, tag_ctx,
     )
 }
 
@@ -2115,7 +2183,10 @@ fn characterize_all_regions(
                 region,
                 request,
                 ctx,
-                RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
+                RegionPatchOpts {
+                    anchored_retry_pass: AnchoredRetryPass::First,
+                    patch_anchors: None,
+                },
             );
             spec
         })
@@ -2221,7 +2292,11 @@ fn compute_a_border_rms(
         .sum();
 
     let rms = (sum_sq / total as f64).sqrt() as f32;
-    if rms == 0.0 { fallback } else { rms }
+    if rms == 0.0 {
+        fallback
+    } else {
+        rms
+    }
 }
 
 /// Splice B samples into A's interleaved sample buffer at the gap location.
@@ -2236,9 +2311,7 @@ pub(super) fn splice_into_a(
 ) {
     let channels = channels.max(1);
 
-    if gap_start_frame * channels >= a_samples.len()
-        || gap_end_frame * channels > a_samples.len()
-    {
+    if gap_start_frame * channels >= a_samples.len() || gap_end_frame * channels > a_samples.len() {
         tracing::warn!(
             gap_start_frame,
             gap_end_frame,
@@ -2299,7 +2372,8 @@ mod tests {
 
         // A window whose nominal end runs 50 frames past the buffer yields the same slice as one that
         // stops exactly at the end — this is the equality the executor's reconstruction depends on.
-        let overrun = slice_b_extract(&b, channels, 10, frames + 50).expect("overrunning window slices");
+        let overrun =
+            slice_b_extract(&b, channels, 10, frames + 50).expect("overrunning window slices");
         let exact = slice_b_extract(&b, channels, 10, frames).expect("exact window slices");
         assert_eq!(overrun, exact);
         assert_eq!(overrun.len(), (frames - 10) * channels);
@@ -2334,7 +2408,8 @@ mod tests {
         let (g0, g1) = (secs(1.0), secs(2.0));
         let sine = |buf: &mut [f32], start: usize, end: usize, freq: f64| {
             for (f, slot) in buf.iter_mut().enumerate().take(end.min(total)).skip(start) {
-                *slot = (std::f64::consts::TAU * freq * (f as f64) / f64::from(rate)).sin() as f32 * 0.2;
+                *slot = (std::f64::consts::TAU * freq * (f as f64) / f64::from(rate)).sin() as f32
+                    * 0.2;
             }
         };
         // A: content outside the gap, silent inside. B: content everywhere (fill available in the gap).
@@ -2412,11 +2487,18 @@ mod tests {
             global_a_rms: policies::rms_interleaved(&a_pcm.samples),
             silence_peak_fraction: 0.05,
         };
-        let media = RegionPatchMedia { b_samples_full: &b, a_pcm: &a_pcm };
+        let media = RegionPatchMedia {
+            b_samples_full: &b,
+            a_pcm: &a_pcm,
+        };
         let progress = NoOpProgressReporter;
 
         let specs = characterize_all_regions(&progress, &media, &regions, &request, &ctx);
-        assert_eq!(specs.len(), regions.len(), "one spec per region (region-infallible)");
+        assert_eq!(
+            specs.len(),
+            regions.len(),
+            "one spec per region (region-infallible)"
+        );
 
         for (spec, region) in specs.iter().zip(regions.iter()) {
             let (patch, outcome, _tags) = prepare_region_patch(
@@ -2425,10 +2507,17 @@ mod tests {
                 region,
                 &request,
                 &ctx,
-                RegionPatchOpts { anchored_retry_pass: AnchoredRetryPass::First, patch_anchors: None },
+                RegionPatchOpts {
+                    anchored_retry_pass: AnchoredRetryPass::First,
+                    patch_anchors: None,
+                },
             );
             let is_patch = spec.verdict.is_patch();
-            assert_eq!(is_patch, patch.is_some(), "Patch verdict ⟺ executor emits a RegionPatch");
+            assert_eq!(
+                is_patch,
+                patch.is_some(),
+                "Patch verdict ⟺ executor emits a RegionPatch"
+            );
             assert_eq!(
                 !is_patch,
                 matches!(outcome, RegionPatchOutcome::Skipped { .. }),
@@ -2449,12 +2538,21 @@ mod tests {
         // A2: `StructureAlignmentFailed` means structure search never scored a bracket, so there is
         // nothing "exhausted" for dual-fit to rescue — it must fall through to the ordinary skip
         // regardless of whether `--dual-fit` is on.
-        assert!(!dual_fit_eligible(true, SeamGateFailure::StructureAlignmentFailed));
-        assert!(!dual_fit_eligible(false, SeamGateFailure::StructureAlignmentFailed));
+        assert!(!dual_fit_eligible(
+            true,
+            SeamGateFailure::StructureAlignmentFailed
+        ));
+        assert!(!dual_fit_eligible(
+            false,
+            SeamGateFailure::StructureAlignmentFailed
+        ));
 
         // Other seam-gate failure variants are scored-but-failed skips, so they DO qualify when
         // `--dual-fit` is on, and never qualify when it's off.
-        let scored_but_failed = SeamGateFailure::StructureBelowThreshold { pre: 0.1, post: 0.1 };
+        let scored_but_failed = SeamGateFailure::StructureBelowThreshold {
+            pre: 0.1,
+            post: 0.1,
+        };
         assert!(dual_fit_eligible(true, scored_but_failed));
         assert!(!dual_fit_eligible(false, scored_but_failed));
     }
@@ -2572,7 +2670,10 @@ mod tests {
             request.settings.fill_anchor_min_correlation
         );
         assert_eq!(request.anchor_seam_mode, request.settings.anchor_seam_mode);
-        assert_eq!(request.gap_signature_mode, request.settings.gap_signature_mode);
+        assert_eq!(
+            request.gap_signature_mode,
+            request.settings.gap_signature_mode
+        );
         assert_eq!(request.residual_gate, request.settings.residual_gate);
         assert_eq!(request.normalize_fill, request.settings.normalize_fill);
         assert_eq!(request.dual_fit, request.settings.dual_fit);
@@ -2623,7 +2724,9 @@ mod tests {
 
         let mut seed = 0xDEAD_BEEF_1234_5678u64;
         let mut rng = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         let bn = 40_000usize;
@@ -2655,8 +2758,14 @@ mod tests {
             &params,
         )
         .expect("dual-fit target");
-        assert_eq!(r.pre_lag, 0, "pre shoulder matches at nominal lag in this fixture");
-        assert_eq!(r.post_lag, step, "post shoulder's seam-local match sits at +step in B");
+        assert_eq!(
+            r.pre_lag, 0,
+            "pre shoulder matches at nominal lag in this fixture"
+        );
+        assert_eq!(
+            r.post_lag, step,
+            "post shoulder's seam-local match sits at +step in B"
+        );
 
         // A's raw audio around the (arbitrary, far-away) gap position: the pre/post border windows
         // are literal copies of the B content at the matched placement, so chosen == floor.

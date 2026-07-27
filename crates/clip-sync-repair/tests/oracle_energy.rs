@@ -10,25 +10,27 @@
 //! Ignored: `.\scripts\test-tier.ps1 -Tier oracle`
 
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
-    build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate, build_f2_integration,
-    build_f2_production, build_f3_drone, build_f3_drone_production, build_f3_silence,
-    build_f4_decoy_production, structure_heavy_weights, BOOL_AMBIGUITY_EPS, ENERGY_PAUSE_MARGIN,
-    MODE_SCORE_EPS,
+    build_f1, build_f1_integration, build_f1_production, build_f2, build_f2_at_rate,
+    build_f2_integration, build_f2_production, build_f3_drone, build_f3_drone_production,
+    build_f3_silence, build_f4_decoy_production, structure_heavy_weights, BOOL_AMBIGUITY_EPS,
+    ENERGY_PAUSE_MARGIN, MODE_SCORE_EPS,
 };
 
-use clip_sync_repair_fixtures::energy_signature_production::{
-    gap_report_from_energy_fixture, patch_request_from_repair,
-    production_geometry_params, production_repair_config, scan_gaps_for_fixture,
-};
-use clip_sync_repair_fixtures::energy_signature_fixtures::gap_report_times;
-use clip_sync_repair_fixtures::patch_geometry_preview::preview_patch_geometry;
-use clip_sync_repair_fixtures::energy_signature_fixtures::structure_slide_secs;
-use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::SymphoniaMediaReader;
 use clip_sync_repair::application::PatchAudio;
+use clip_sync_repair::domain::gap_signature::{
+    build_gap_signature, GapSignature, GapSignatureMode,
+};
 use clip_sync_repair::domain::GapPatchStatus;
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
+use clip_sync_repair_fixtures::energy_signature_fixtures::gap_report_times;
+use clip_sync_repair_fixtures::energy_signature_fixtures::structure_slide_secs;
+use clip_sync_repair_fixtures::energy_signature_production::{
+    gap_report_from_energy_fixture, patch_request_from_repair, production_geometry_params,
+    production_repair_config, scan_gaps_for_fixture,
+};
+use clip_sync_repair_fixtures::patch_geometry_preview::preview_patch_geometry;
 
 #[test]
 fn f1_integration_energy_scores_are_finite() {
@@ -368,7 +370,6 @@ fn p4_f4_decoy_unified_search_diverges() {
     );
 }
 
-
 #[test]
 #[ignore = "tier:oracle — F1 haystack scan vs oracle; test-tier.ps1 -Tier oracle"]
 fn f1_production_haystack_scan_vs_oracle() {
@@ -410,10 +411,10 @@ fn f1_production_haystack_scan_vs_oracle() {
     eprintln!("{}", scan_preview.format_diagnostic(&fixture));
     eprintln!("{}", oracle_preview.format_diagnostic(&fixture));
 
-    let scan_haystack = scan_preview
-        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
-    let oracle_haystack = oracle_preview
-        .unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
+    let scan_haystack =
+        scan_preview.unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
+    let oracle_haystack =
+        oracle_preview.unified_match_on_haystack(&fixture, GapSignatureMode::Energy, weights);
 
     assert!(
         oracle_preview.true_within_search_radius,

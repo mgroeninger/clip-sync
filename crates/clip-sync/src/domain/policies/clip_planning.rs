@@ -65,11 +65,7 @@ pub fn clip_windows_with_options(
         if end.is_zero() {
             return Err(DomainError::EmptyClip);
         }
-        return Ok(vec![ClipWindow::new(
-            Duration::ZERO,
-            end,
-            ClipLabel::Start,
-        )]);
+        return Ok(vec![ClipWindow::new(Duration::ZERO, end, ClipLabel::Start)]);
     }
 
     let timeline_end = effective_timeline_end(extent, options.end_tail_inset);
@@ -78,11 +74,7 @@ pub fn clip_windows_with_options(
         if end.is_zero() {
             return Err(DomainError::EmptyClip);
         }
-        return Ok(vec![ClipWindow::new(
-            Duration::ZERO,
-            end,
-            ClipLabel::Start,
-        )]);
+        return Ok(vec![ClipWindow::new(Duration::ZERO, end, ClipLabel::Start)]);
     }
 
     let n = effective_num_clips;
@@ -103,11 +95,7 @@ pub fn clip_windows_with_options(
     }
 
     let end_start = timeline_end.saturating_sub(clip_length);
-    windows.push(ClipWindow::new(
-        end_start,
-        timeline_end,
-        ClipLabel::End,
-    ));
+    windows.push(ClipWindow::new(end_start, timeline_end, ClipLabel::End));
 
     for window in &windows {
         if window.duration().is_zero() {
@@ -188,9 +176,7 @@ pub fn clip_windows_paired(
     let timeline_end_b = effective_timeline_end(extent_b, options.end_tail_inset);
     let t_anchor = timeline_end_a.min(timeline_end_b);
 
-    if t_anchor < clip_length
-        || extent_a.declared < clip_length
-        || extent_b.declared < clip_length
+    if t_anchor < clip_length || extent_a.declared < clip_length || extent_b.declared < clip_length
     {
         let end = t_anchor.min(clip_length);
         if end.is_zero() {
@@ -202,21 +188,25 @@ pub fn clip_windows_paired(
 
     let n = plan.num_clips;
     let start = ClipWindow::new(Duration::ZERO, clip_length, ClipLabel::Start);
-    let end_a = end_window_for_file(timeline_end_a, t_anchor, clip_length, options.end_clip_anchor);
-    let end_b = end_window_for_file(timeline_end_b, t_anchor, clip_length, options.end_clip_anchor);
+    let end_a = end_window_for_file(
+        timeline_end_a,
+        t_anchor,
+        clip_length,
+        options.end_clip_anchor,
+    );
+    let end_b = end_window_for_file(
+        timeline_end_b,
+        t_anchor,
+        clip_length,
+        options.end_clip_anchor,
+    );
 
     let (interiors_a, interiors_b) = match options.end_clip_anchor {
         EndClipAnchor::FileTail => {
-            let interiors_a = interior_windows_along_timeline(
-                timeline_end_a.as_secs_f64(),
-                clip_length,
-                n,
-            );
-            let interiors_b = interior_windows_along_timeline(
-                timeline_end_b.as_secs_f64(),
-                clip_length,
-                n,
-            );
+            let interiors_a =
+                interior_windows_along_timeline(timeline_end_a.as_secs_f64(), clip_length, n);
+            let interiors_b =
+                interior_windows_along_timeline(timeline_end_b.as_secs_f64(), clip_length, n);
             filter_overlapping_interiors_paired(
                 interiors_a,
                 interiors_b,
@@ -420,8 +410,12 @@ mod tests {
     #[test]
     fn clip_windows_short_media_single_start_clip() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows =
-            clip_windows_with_options(&MediaExtent::from_declared(mins(12)), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows = clip_windows_with_options(
+            &MediaExtent::from_declared(mins(12)),
+            &plan,
+            ClipPlanningOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -432,8 +426,12 @@ mod tests {
     #[test]
     fn clip_windows_two_clips_start_and_end() {
         let plan = ClipPlan::new(mins(15), 2);
-        let windows =
-            clip_windows_with_options(&MediaExtent::from_declared(mins(45)), &plan, ClipPlanningOptions::default()).unwrap();
+        let windows = clip_windows_with_options(
+            &MediaExtent::from_declared(mins(45)),
+            &plan,
+            ClipPlanningOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].start, Duration::ZERO);
@@ -612,21 +610,27 @@ mod tests {
     fn interior_windows_along_timeline_matches_three_clip_fixture() {
         let from_helper = interior_windows_along_timeline(3600.0, mins(10), 3);
         let plan = ClipPlan::new(mins(10), 3);
-        let windows =
-            clip_windows_with_options(&MediaExtent::from_declared(mins(60)), &plan, ClipPlanningOptions::default())
-                .unwrap();
+        let windows = clip_windows_with_options(
+            &MediaExtent::from_declared(mins(60)),
+            &plan,
+            ClipPlanningOptions::default(),
+        )
+        .unwrap();
         assert_eq!(from_helper.len(), 1);
         assert_eq!(from_helper[0], windows[1]);
     }
 
     #[test]
     fn attach_symmetric_planning_report_metadata_sets_anchor_and_b_windows() {
-        use crate::domain::alignment::{build_alignment_result, ClipMatchEstimate, ClipPairReportInput};
+        use crate::domain::alignment::{
+            build_alignment_result, ClipMatchEstimate, ClipPairReportInput,
+        };
 
         let plan = ClipPlan::new(mins(15), 2);
         let short = MediaExtent::from_declared(mins(40));
         let long = MediaExtent::from_declared(mins(300));
-        let windows = clip_windows_with_options(&short, &plan, ClipPlanningOptions::default()).unwrap();
+        let windows =
+            clip_windows_with_options(&short, &plan, ClipPlanningOptions::default()).unwrap();
         let estimates = windows
             .iter()
             .map(|_| ClipMatchEstimate {

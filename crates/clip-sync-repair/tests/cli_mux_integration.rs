@@ -19,9 +19,9 @@ use std::path::Path;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 #[cfg(feature = "ffmpeg-mux")]
-use clip_sync::{BitDepth, MultiChannelPcm};
-#[cfg(feature = "ffmpeg-mux")]
 use clip_sync::testing::fakes::FakeProgressReporter;
+#[cfg(feature = "ffmpeg-mux")]
+use clip_sync::{BitDepth, MultiChannelPcm};
 #[cfg(feature = "ffmpeg-mux")]
 use clip_sync_repair::application::ports::{MediaMuxer, MuxOptions};
 #[cfg(feature = "ffmpeg-mux")]
@@ -109,12 +109,8 @@ fn wav_to_mp4_with_black_video(wav: &Path, mp4: &Path) -> bool {
 #[cfg(not(feature = "ffmpeg-mux"))]
 fn mux_arg_rejected_without_feature() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
     let out = temp.path().join("out.mp4");
     let bin = env!("CARGO_BIN_EXE_clip-sync-repair");
 
@@ -146,18 +142,9 @@ fn mux_writes_video() {
     }
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
-    zero_wav_segment(
-        &path_a,
-        SAMPLE_RATE,
-        SILENT_START_SECS,
-        SILENT_END_SECS,
-    );
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
 
     let mp4_a = temp.path().join("a.mp4");
     assert!(
@@ -196,7 +183,10 @@ scan_both = false
         .status()
         .expect("run clip-sync-repair");
 
-    assert!(status.success(), "CLI should exit 0 on successful scan + mux");
+    assert!(
+        status.success(),
+        "CLI should exit 0 on successful scan + mux"
+    );
     assert!(out_mp4.exists(), "muxed MP4 should exist");
     assert!(
         out_mp4.metadata().expect("stat").len() > 1024,
@@ -241,12 +231,28 @@ fn mux_24bit_source_pipe_completes_successfully() {
     let mp4_path = temp.path().join("source.mp4");
     let ok = Command::new("ffmpeg")
         .args([
-            "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", &format!("color=c=black:s=320x240:d={SECS}"),
-            "-i", wav_path.to_str().expect("wav utf8"),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-shortest", "-movflags", "+faststart",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("color=c=black:s=320x240:d={SECS}"),
+            "-i",
+            wav_path.to_str().expect("wav utf8"),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
             mp4_path.to_str().expect("mp4 utf8"),
         ])
         .status()
@@ -273,13 +279,7 @@ fn mux_24bit_source_pipe_completes_successfully() {
     };
 
     FfmpegMediaMuxer
-        .mux_video_with_replaced_audio(
-            &mp4_path,
-            &pcm,
-            &out_mp4,
-            &options,
-            &FakeProgressReporter,
-        )
+        .mux_video_with_replaced_audio(&mp4_path, &pcm, &out_mp4, &options, &FakeProgressReporter)
         .expect("mux should succeed with 24-bit source");
 
     assert!(out_mp4.exists(), "output MP4 should exist");

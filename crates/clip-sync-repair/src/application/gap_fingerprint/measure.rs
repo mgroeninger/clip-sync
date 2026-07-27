@@ -5,8 +5,8 @@
 //! [`write_corpus_dir`]. Depends on [`super::schema`] (types) and [`super::project`]
 //! (`tags_from_fields`) — never the reverse.
 
-use super::schema::*;
 use super::project::*;
+use super::schema::*;
 
 use clip_sync::normalized_correlation;
 
@@ -19,12 +19,12 @@ use crate::domain::gap_fill_fit::{
 };
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::gap_structure::StructureMatchParams;
+use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, refine_gap_frames,
     seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
-use crate::domain::patch_result::GapPatchSkipReason;
 
 /// Span args for [`level_profile`]: the gap window and the surrounding context window (in frames).
 struct LevelProfileSpan {
@@ -38,7 +38,12 @@ struct LevelProfileSpan {
 /// context bins *outside* `[gap_start, gap_end)` and `gap_floor` the loudest bin *inside* it. `bin_rms(f,
 /// end)` returns the mono RMS (linear) over `[f, end)`. Shared by the A-side (interleaved downmix) and the
 /// symmetric B-side (mono) paths so the two profiles are computed by *identical* logic (D11) and cannot drift.
-fn level_profile(bin_rms: impl Fn(usize, usize) -> f32, span: LevelProfileSpan, bin_frames: usize, bin_ms: u32) -> LevelProfile {
+fn level_profile(
+    bin_rms: impl Fn(usize, usize) -> f32,
+    span: LevelProfileSpan,
+    bin_frames: usize,
+    bin_ms: u32,
+) -> LevelProfile {
     let mut profile_db = Vec::new();
     let mut context_bins_db = Vec::new();
     let mut f = span.context_start;
@@ -140,7 +145,6 @@ fn seam_prominence(a_win: &[f64], b_ctx: &[f64], max_lag: i64, sample_rate: u32)
     summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono).and_then(|s| s.prominence)
 }
 
-
 /// Build the D/R tag payload from the shared [`RegionMeasurements`] (computed from decode) + the A-side levels
 /// (8g.3b). Mirrors [`tags_from_fingerprint`] via [`tags_from_fields`]; `structure`/`seams` are omitted
 /// (`None`) to match the `skip_baseline_placement` summary the dump uses — so from-decode tags equal the
@@ -164,7 +168,6 @@ fn tags_from_measurements(
     )
 }
 
-
 // ---------------------------------------------------------------------------------------------
 // Lag-correlation probe
 // ---------------------------------------------------------------------------------------------
@@ -172,7 +175,9 @@ fn tags_from_measurements(
 /// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
 /// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
 /// existing call sites / tests keep their paths.
-pub use crate::domain::seam_local::{lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak};
+pub use crate::domain::seam_local::{
+    lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak,
+};
 
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.
@@ -236,7 +241,8 @@ pub fn summarize_lag_curve(
         second_peak_r: second.map(|(_, r)| r),
         peak_z: (std > 1e-9).then(|| (peak_r - mean) / std),
         prominence: second.map(|(_, r)| peak_r - r),
-        top2_spacing_ms: second.map(|(lag, _)| (peak_lag - lag).unsigned_abs() as f64 * 1000.0 / rate),
+        top2_spacing_ms: second
+            .map(|(lag, _)| (peak_lag - lag).unsigned_abs() as f64 * 1000.0 / rate),
         peak_lag_samples: peak_lag,
         frac_lag_samples: frac_lag,
         frac_lag_ms: frac_lag * 1000.0 / rate,
@@ -445,7 +451,13 @@ fn flatness(bins: &[f32]) -> f32 {
     (1.0 - (peak - min) / peak).clamp(0.0, 1.0)
 }
 
-fn structure_params_for(cfg: &FingerprintConfig, gap_frames: usize, bin_frames: usize, search_radius_frames: usize, slack: usize) -> StructureMatchParams {
+fn structure_params_for(
+    cfg: &FingerprintConfig,
+    gap_frames: usize,
+    bin_frames: usize,
+    search_radius_frames: usize,
+    slack: usize,
+) -> StructureMatchParams {
     StructureMatchParams {
         gap_frames,
         bin_frames: bin_frames.max(1),
@@ -453,7 +465,9 @@ fn structure_params_for(cfg: &FingerprintConfig, gap_frames: usize, bin_frames: 
         fill_length_slack_frames: slack,
         // Bounded sample polish — NOT `slack`/`bin_frames`: a large value makes the unified search's
         // fine-polish loop run multi-second exhaustive scans per candidate (see gap_structure docs).
-        max_fine_adjustment_frames: crate::domain::gap_structure::structure_fine_polish_frames(bin_frames),
+        max_fine_adjustment_frames: crate::domain::gap_structure::structure_fine_polish_frames(
+            bin_frames,
+        ),
         silence_peak_fraction: cfg.silence_peak_fraction,
         absolute_silence_rms: cfg.absolute_silence_rms,
     }
@@ -542,7 +556,13 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
         repeat_window_frames: bin_frames.max(1),
         repeat_penalty_weight: 0.0,
     };
-    let structure_params = structure_params_for(cfg, gap_frames, bin_frames, search_radius_frames, bin_frames);
+    let structure_params = structure_params_for(
+        cfg,
+        gap_frames,
+        bin_frames,
+        search_radius_frames,
+        bin_frames,
+    );
     let signature = build_gap_signature(
         a_samples,
         ch,
@@ -588,7 +608,12 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
     let start = matched.alignment.start_frame;
     let diag = seam_channel_diagnostics(
         &templates,
-        SeamPlacement { start, gap_frames, pre_window, post_window },
+        SeamPlacement {
+            start,
+            gap_frames,
+            pre_window,
+            post_window,
+        },
     );
     Some(PlacementScores {
         start_frame: start,
@@ -648,7 +673,13 @@ fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagS
     };
     let curve = lag_correlation_curve_auto(a_win, &side.b_signal[lo..hi], params.max_lag);
     if side.gross_lag_shift == 0 {
-        summarize_lag_curve(&curve, params.sample_rate, params.win_ms(), params.max_lag_ms(), params.channel)
+        summarize_lag_curve(
+            &curve,
+            params.sample_rate,
+            params.win_ms(),
+            params.max_lag_ms(),
+            params.channel,
+        )
     } else {
         let gross_curve: Vec<(i64, f64)> = curve
             .into_iter()
@@ -770,7 +801,11 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     add(pre, post);
 
     if let Some(sel) = selected {
-        if sel < b_ch.len() && sel < a_pre_ch.len() && sel < a_post_ch.len() && !a_pre_ch[sel].is_empty() {
+        if sel < b_ch.len()
+            && sel < a_pre_ch.len()
+            && sel < a_post_ch.len()
+            && !a_pre_ch[sel].is_empty()
+        {
             let (pre, post) = lag_pair(
                 &a_pre_ch[sel],
                 &a_post_ch[sel],
@@ -838,7 +873,15 @@ fn weighted_downmix_rms(samples: &[f32], channels: usize, lo: usize, hi: usize) 
 /// envelope correlation, and level/SNR. Correlation is on the mono `a_win`; the level/SNR is taken from
 /// `level_rms` (the energy-weighted-downmix RMS at the raw seam, computed by the caller). `b_ctx` spans
 /// `±fine_max_lag` around the seam (lag 0 ⇒ `b_ctx[fine_max_lag .. + a_win.len()]`).
-fn seam_probe_side(a_win: &[f64], b_ctx: &[f64], level_rms: f64, fine_max_lag: i64, sample_rate: u32, fine_bin: usize, gap_floor_db: f64) -> Option<SeamProbe> {
+fn seam_probe_side(
+    a_win: &[f64],
+    b_ctx: &[f64],
+    level_rms: f64,
+    fine_max_lag: i64,
+    sample_rate: u32,
+    fine_bin: usize,
+    gap_floor_db: f64,
+) -> Option<SeamProbe> {
     let w = a_win.len();
     let ml = fine_max_lag.max(0) as usize;
     let rate = f64::from(sample_rate).max(1.0);
@@ -849,15 +892,24 @@ fn seam_probe_side(a_win: &[f64], b_ctx: &[f64], level_rms: f64, fine_max_lag: i
     if curve.is_empty() {
         return None;
     }
-    let waveform_r = curve.iter().find(|(l, _)| *l == 0).map(|(_, r)| *r).unwrap_or(f64::NAN);
+    let waveform_r = curve
+        .iter()
+        .find(|(l, _)| *l == 0)
+        .map(|(_, r)| *r)
+        .unwrap_or(f64::NAN);
     let &(peak_lag, recovered_r) = curve
         .iter()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
     let b0 = &b_ctx[ml..ml + w];
-    let envelope_r =
-        normalized_correlation(&fine_rms_envelope(a_win, fine_bin), &fine_rms_envelope(b0, fine_bin));
+    let envelope_r = normalized_correlation(
+        &fine_rms_envelope(a_win, fine_bin),
+        &fine_rms_envelope(b0, fine_bin),
+    );
     let bandlimited_r = crate::domain::seam_robust::bandlimited_pearson(
-        a_win, b0, sample_rate, crate::domain::seam_robust::BANDLIMITED_CUTOFF_HZ,
+        a_win,
+        b0,
+        sample_rate,
+        crate::domain::seam_robust::BANDLIMITED_CUTOFF_HZ,
     );
     let spectrum_r = crate::domain::seam_robust::spectrum_correlation(a_win, b0);
     let rms_db = f64::from(to_db(level_rms as f32));
@@ -942,11 +994,20 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
         }
         // Level over the raw seam span (the w frames ending at the gap), on the energy-weighted downmix.
         let level_rms = weighted_downmix_rms(a_samples, ch, start_frame - w, start_frame);
-        seam_probe_side(&a_pre[a_pre.len() - w..], &b_mono[lo..hi], level_rms, fine_max_lag, sample_rate, fine_bin, gap_floor_db)
+        seam_probe_side(
+            &a_pre[a_pre.len() - w..],
+            &b_mono[lo..hi],
+            level_rms,
+            fine_max_lag,
+            sample_rate,
+            fine_bin,
+            gap_floor_db,
+        )
     })();
     let post = (|| {
         let w = window.min(a_post.len());
-        let post_base = (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
+        let post_base =
+            (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
         if w < 8 || post_base < post_ml {
             return None;
         }
@@ -957,7 +1018,15 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
         }
         // Level over the raw seam span (the w frames starting at the gap end), energy-weighted downmix.
         let level_rms = weighted_downmix_rms(a_samples, ch, post_base, post_base + w);
-        seam_probe_side(&a_post[..w], &b_mono[lo..hi], level_rms, post_max_lag, sample_rate, fine_bin, gap_floor_db)
+        seam_probe_side(
+            &a_post[..w],
+            &b_mono[lo..hi],
+            level_rms,
+            post_max_lag,
+            sample_rate,
+            fine_bin,
+            gap_floor_db,
+        )
     })();
     let post_shift_ms = post_shift_frames as f64 * 1000.0 / rate;
     let post = post.map(|mut sp| {
@@ -1039,18 +1108,41 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
     // if the post seam also clears there, one constant shift fixes both ⇒ registration artifact, not a splice.
     let b_post_global = b_pre_seam + gap_frames;
-    let post_seam_global_r = if w_post >= 8 && b_post_global + w_post <= b_mono.len() { finite_corr(normalized_correlation(&a_post[..w_post], &b_mono[b_post_global..b_post_global + w_post])) } else { f64::NAN };
+    let post_seam_global_r = if w_post >= 8 && b_post_global + w_post <= b_mono.len() {
+        finite_corr(normalized_correlation(
+            &a_post[..w_post],
+            &b_mono[b_post_global..b_post_global + w_post],
+        ))
+    } else {
+        f64::NAN
+    };
 
     // Validator 2 — is each seam a unique (non-periodic) match? Prominence of the placement peak over its
     // best rival within ±30 ms.
     let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
     let mlu = ml.max(0) as usize;
-    let pre_seam_prom = (w_pre >= 8 && b_pre_seam >= w_pre + mlu && b_pre_seam + mlu <= b_mono.len())
-        .then(|| seam_prominence(&a_pre[a_pre.len() - w_pre..], &b_mono[b_pre_seam - w_pre - mlu..b_pre_seam + mlu], ml, sample_rate))
-        .flatten();
-    let post_seam_prom = (w_post >= 8 && b_post_seam >= mlu && b_post_seam + w_post + mlu <= b_mono.len())
-        .then(|| seam_prominence(&a_post[..w_post], &b_mono[b_post_seam - mlu..b_post_seam + w_post + mlu], ml, sample_rate))
-        .flatten();
+    let pre_seam_prom =
+        (w_pre >= 8 && b_pre_seam >= w_pre + mlu && b_pre_seam + mlu <= b_mono.len())
+            .then(|| {
+                seam_prominence(
+                    &a_pre[a_pre.len() - w_pre..],
+                    &b_mono[b_pre_seam - w_pre - mlu..b_pre_seam + mlu],
+                    ml,
+                    sample_rate,
+                )
+            })
+            .flatten();
+    let post_seam_prom =
+        (w_post >= 8 && b_post_seam >= mlu && b_post_seam + w_post + mlu <= b_mono.len())
+            .then(|| {
+                seam_prominence(
+                    &a_post[..w_post],
+                    &b_mono[b_post_seam - mlu..b_post_seam + w_post + mlu],
+                    ml,
+                    sample_rate,
+                )
+            })
+            .flatten();
 
     Some(SpliceDualfit {
         pre_seam_r,
@@ -1074,7 +1166,11 @@ const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
 
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
 fn mono_lag_side(lag: &LagFingerprint, pre: bool) -> Option<&LagSummary> {
-    let entries = if pre { &lag.pre_anchor } else { &lag.post_anchor };
+    let entries = if pre {
+        &lag.pre_anchor
+    } else {
+        &lag.post_anchor
+    };
     entries.iter().find(|s| s.channel == LagChannel::Mono)
 }
 
@@ -1127,7 +1223,9 @@ fn wide_envelope_side(
         .iter()
         .enumerate()
         .max_by(|(_, (_, x)), (_, (_, y))| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
-    let prominence = secondary_peak(&curve, pi).map(|(_, r)| peak_r - r).unwrap_or(0.0);
+    let prominence = secondary_peak(&curve, pi)
+        .map(|(_, r)| peak_r - r)
+        .unwrap_or(0.0);
     let peak_lag_ms = peak_lag_bin as f64 * env_bin as f64 * 1000.0 / rate;
     Some(EnvPeak {
         peak_r: finite_corr(peak_r),
@@ -1200,7 +1298,8 @@ fn wide_envelope_at_placement(input: &WideEnvelopeAtPlacementInput<'_>) -> WideE
     })();
     let post = (|| {
         let w = window.min(a_post.len());
-        let post_base = (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
+        let post_base =
+            (start_frame as i64 + gap_frames as i64 + post_shift_frames).max(0) as usize;
         if w < env_bin || post_base < post_wide_lag {
             return None;
         }
@@ -1209,7 +1308,13 @@ fn wide_envelope_at_placement(input: &WideEnvelopeAtPlacementInput<'_>) -> WideE
         if hi <= lo {
             return None;
         }
-        wide_envelope_side(&a_post[..w], &b_mono[lo..hi], sample_rate, env_bin, post_wide_lag)
+        wide_envelope_side(
+            &a_post[..w],
+            &b_mono[lo..hi],
+            sample_rate,
+            env_bin,
+            post_wide_lag,
+        )
     })();
     let post_shift_ms = post_shift_frames as f64 * 1000.0 / rate;
     let post = post.map(|mut ep| {
@@ -1251,7 +1356,9 @@ pub fn build_gap_fingerprint(
     let rate = f64::from(inputs.sample_rate).max(1.0);
     let total_a = inputs.a_samples.len() / ch;
 
-    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate).round().max(1.0) as usize;
+    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate)
+        .round()
+        .max(1.0) as usize;
     let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
     let border_frames = (cfg.border_secs * rate).round() as usize;
     let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
@@ -1300,7 +1407,11 @@ pub fn build_gap_fingerprint(
     let collar_start = refined.start_frame.saturating_sub(border_frames);
     let collar_rms = mono_rms(inputs.a_samples, ch, collar_start, refined.start_frame);
     let collar_peak = mono_peak(inputs.a_samples, ch, collar_start, refined.start_frame);
-    let collar_ratio = if collar_peak > 0.0 { collar_rms / collar_peak } else { 0.0 };
+    let collar_ratio = if collar_peak > 0.0 {
+        collar_rms / collar_peak
+    } else {
+        0.0
+    };
     let silence = SilenceProfile {
         collar_rms_peak_ratio: collar_ratio,
         collar_above_relative_floor: collar_ratio >= cfg.silence_peak_fraction,
@@ -1317,8 +1428,24 @@ pub fn build_gap_fingerprint(
         &sig_params,
         GapSignatureMode::Energy,
     );
-    let pre_env = energy_bins(inputs.a_samples, ch, pre_start, refined.start_frame, bin_frames.max(1), cfg.silence_peak_fraction, cfg.absolute_silence_rms);
-    let post_env = energy_bins(inputs.a_samples, ch, refined.end_frame, post_end, bin_frames.max(1), cfg.silence_peak_fraction, cfg.absolute_silence_rms);
+    let pre_env = energy_bins(
+        inputs.a_samples,
+        ch,
+        pre_start,
+        refined.start_frame,
+        bin_frames.max(1),
+        cfg.silence_peak_fraction,
+        cfg.absolute_silence_rms,
+    );
+    let post_env = energy_bins(
+        inputs.a_samples,
+        ch,
+        refined.end_frame,
+        post_end,
+        bin_frames.max(1),
+        cfg.silence_peak_fraction,
+        cfg.absolute_silence_rms,
+    );
     let contour = ContourInfo {
         has_anchor_seam_contour: signature.has_anchor_seam_contour(),
         pre_flatness: flatness(&pre_env),
@@ -1375,7 +1502,8 @@ pub fn build_gap_fingerprint(
     if let Some(b_haystack) = inputs.b_haystack {
         let b_mono = interleaved_to_mono(b_haystack, ch);
         let b_ch = interleaved_to_channels(b_haystack, ch);
-        let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
+        let search_radius_frames =
+            ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
         // Each A boundary maps to its own B nominal: a_time + gap_offset, in haystack frame coords.
         let gap_offset_secs = inputs.gap_offset_secs;
         let b_mapped_start = |a_start_frame: usize| -> usize {
@@ -1401,7 +1529,10 @@ pub fn build_gap_fingerprint(
                 search_radius_frames,
                 cfg,
             }) {
-                structure = Some(StructureScores { baseline_pre: base.structure_pre, baseline_post: base.structure_post });
+                structure = Some(StructureScores {
+                    baseline_pre: base.structure_pre,
+                    baseline_post: base.structure_post,
+                });
                 seams = Some(SeamScores {
                     baseline_pre: base.seam_pre,
                     baseline_post: base.seam_post,
@@ -1449,11 +1580,23 @@ pub fn build_gap_fingerprint(
                     brackets[i].seam_post = Some(p.seam_post);
                     brackets[i].start_frame = Some(p.start_frame);
                     brackets[i].fill_frames = Some(p.fill_frames);
-                    brackets[i].failure_stage = classify_bracket_stage(p.structure_pre, p.structure_post, p.seam_pre, p.seam_post, cfg);
-                    let energy_pair = br.pre.source == AnchorSource::EnergyPeak && br.post.source == AnchorSource::EnergyPeak;
+                    brackets[i].failure_stage = classify_bracket_stage(
+                        p.structure_pre,
+                        p.structure_post,
+                        p.seam_pre,
+                        p.seam_post,
+                        cfg,
+                    );
+                    let energy_pair = br.pre.source == AnchorSource::EnergyPeak
+                        && br.post.source == AnchorSource::EnergyPeak;
                     let smin = p.structure_pre.min(p.structure_post);
                     if energy_pair && best.is_none_or(|(bs, ..)| smin > bs) {
-                        best = Some((smin, p.start_frame, refined_b, p.selected_channels.first().copied()));
+                        best = Some((
+                            smin,
+                            p.start_frame,
+                            refined_b,
+                            p.selected_channels.first().copied(),
+                        ));
                     }
                 } else {
                     brackets[i].failure_stage = Some(FailureStage::StructureAlign);
@@ -1555,9 +1698,15 @@ fn stage_of(
     use crate::application::patch_region::SeamGateFailure as F;
     match failure {
         F::StructureAlignmentFailed => (FailureStage::StructureAlign, None, None),
-        F::StructureBelowThreshold { pre, post } => (FailureStage::StructureFloor, Some(*pre), Some(*post)),
-        F::WaveformBelowThreshold { pre, post, .. } => (FailureStage::WaveformFloor, Some(*pre), Some(*post)),
-        F::ResidualHeadroomExceeded { pre, post, .. } => (FailureStage::Residual, Some(*pre), Some(*post)),
+        F::StructureBelowThreshold { pre, post } => {
+            (FailureStage::StructureFloor, Some(*pre), Some(*post))
+        }
+        F::WaveformBelowThreshold { pre, post, .. } => {
+            (FailureStage::WaveformFloor, Some(*pre), Some(*post))
+        }
+        F::ResidualHeadroomExceeded { pre, post, .. } => {
+            (FailureStage::Residual, Some(*pre), Some(*post))
+        }
     }
 }
 
@@ -1703,7 +1852,12 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
                     if br.refined == refined {
                         throat_structure_frame = Some(sc.structure_start_frame);
                     }
-                    (Some(sc.report_pre), Some(sc.report_post), None, Some(sc.alignment))
+                    (
+                        Some(sc.report_pre),
+                        Some(sc.report_post),
+                        None,
+                        Some(sc.alignment),
+                    )
                 }
                 Err(f) => {
                     let (stage, pre, post) = stage_of(&f);
@@ -1739,7 +1893,11 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     let patched = any_ok;
     let outcome = GateOutcome {
         plan_kind: "fillable".into(),
-        tier: if patched { "patch".into() } else { "skip".into() },
+        tier: if patched {
+            "patch".into()
+        } else {
+            "skip".into()
+        },
         seam_shape: String::new(),
         fit_path: None,
         signature_mode: None,
@@ -1749,9 +1907,15 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
     let b_mono = interleaved_to_mono(b_slice, ch);
     let b_ch = interleaved_to_channels(b_slice, ch);
-    let b_mapped_start = b_mapped_frame_in_haystack(refined.start_frame, rate, gap_offset, b_extract_start_secs);
+    let b_mapped_start =
+        b_mapped_frame_in_haystack(refined.start_frame, rate, gap_offset, b_extract_start_secs);
     let b_mapped_bracket = |refined_b: RefinedGapFrames| {
-        b_mapped_frame_in_haystack(refined_b.start_frame, rate, gap_offset, b_extract_start_secs)
+        b_mapped_frame_in_haystack(
+            refined_b.start_frame,
+            rate,
+            gap_offset,
+            b_extract_start_secs,
+        )
     };
 
     // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag sweep.
@@ -1795,11 +1959,21 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     let b_post_aligned = post_gross_frames
         .map(|g| (b_mapped_start as i64 + gap_frames as i64 + g).max(0) as usize)
         .unwrap_or(b_mapped_start + gap_frames);
-    let donor_interior =
-        donor_interior_at(&b_mono, b_pre_aligned, b_post_aligned, f64::from(gap_floor_db), sample_rate);
+    let donor_interior = donor_interior_at(
+        &b_mono,
+        b_pre_aligned,
+        b_post_aligned,
+        f64::from(gap_floor_db),
+        sample_rate,
+    );
     let b_gap_end = b_mapped_start + gap_frames;
-    let donor_interior_nominal =
-        donor_interior_at(&b_mono, b_mapped_start, b_gap_end, f64::from(gap_floor_db), sample_rate);
+    let donor_interior_nominal = donor_interior_at(
+        &b_mono,
+        b_mapped_start,
+        b_gap_end,
+        f64::from(gap_floor_db),
+        sample_rate,
+    );
     let b_levels = if include_diagnostics {
         Some(level_profile(
             |f, end| mono_slice_rms(&b_mono, f, end),
@@ -1925,13 +2099,22 @@ pub fn characterize_gaps_from_decode(
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
-        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict, LevelTags,
+        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
+        LevelTags,
     };
 
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
     let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
-    let mut corpus = characterize_gaps(report, &a_pcm.samples, b_samples_full, sample_rate, channels, &cfg, select);
+    let mut corpus = characterize_gaps(
+        report,
+        &a_pcm.samples,
+        b_samples_full,
+        sample_rate,
+        channels,
+        &cfg,
+        select,
+    );
 
     let mut gate_derived = crate::application::patch_region::SeamGateDerived::from_repair(
         request,
@@ -1945,11 +2128,17 @@ pub fn characterize_gaps_from_decode(
     let b_total = b_samples_full.len() / ch;
     let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
     let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
-    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate).round().max(1.0) as usize;
-    let search_radius_frames = ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
-    let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
+    let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate)
+        .round()
+        .max(1.0) as usize;
+    let search_radius_frames =
+        ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
+    let pad_lead =
+        cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
     let pad_tail = cfg.gap_signature_context_secs
-        + cfg.fill_extract_tail_slack_secs.max(cfg.fill_align_margin_secs)
+        + cfg
+            .fill_extract_tail_slack_secs
+            .max(cfg.fill_align_margin_secs)
         + cfg.fill_border_search_secs
         + cfg.fill_align_margin_secs;
 
@@ -1958,7 +2147,9 @@ pub fn characterize_gaps_from_decode(
         progress.progress("fingerprint-gap", gn as u64 + 1, total_gaps);
         let i = fp.index;
         let gap = &report.gaps[i];
-        let Some(b_start) = gap.video_b_start_secs else { continue };
+        let Some(b_start) = gap.video_b_start_secs else {
+            continue;
+        };
         let refined = refine_gap_frames(
             &a_pcm.samples,
             ch,
@@ -2041,7 +2232,11 @@ pub fn characterize_gaps_from_decode(
                 start_frame: (fp.geometry.a_refined_start_secs * rate).round() as usize,
                 end_frame: (fp.geometry.a_refined_end_secs * rate).round() as usize,
             },
-            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
             crossfade_secs: 0.0,
             verdict,
             tags_ctx: tags_from_measurements(&m, Some(levels)),
@@ -2054,7 +2249,13 @@ pub fn characterize_gaps_from_decode(
         };
         // Carry the REAL per-bracket rows (8g.4b) so the flipped dump is byte-faithful to the oracle's
         // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
-        *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), Some(m.brackets));
+        *fp = spec_to_fingerprint_summary(
+            &spec,
+            sample_rate,
+            channels as u16,
+            Some(x),
+            Some(m.brackets),
+        );
 
         // Gap-equivalence classification overlay (gap-equivalence plan §7.4) — emitted for tuning/categorizing.
         // Silence-character signals: A gap RMS vs the recording's noise floor + donor silence at nominal.
@@ -2065,7 +2266,9 @@ pub fn characterize_gaps_from_decode(
             refined.start_frame,
             refined.end_frame,
             f64::from(fp.levels.noise_floor_db),
-            fp.donor_interior_nominal.as_ref().map(|d| d.silence_fraction),
+            fp.donor_interior_nominal
+                .as_ref()
+                .map(|d| d.silence_fraction),
             &crate::domain::gap_equivalence::GapEquivalenceParams {
                 enabled: true,
                 ..Default::default()
@@ -2097,10 +2300,13 @@ pub fn characterize_gaps(
     let b_total = b_samples.len() / ch;
     // Per-gap B haystack pad: context + border search + margin/slack on each side (mirrors
     // `prepare_region_patch`). Bounds the unified search so it does not build a timeline over all of B.
-    let pad_lead = cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
+    let pad_lead =
+        cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
     let pad_tail = cfg.gap_signature_context_secs
         + cfg.fill_border_search_secs
-        + cfg.fill_extract_tail_slack_secs.max(cfg.fill_align_margin_secs)
+        + cfg
+            .fill_extract_tail_slack_secs
+            .max(cfg.fill_align_margin_secs)
         + cfg.fill_align_margin_secs;
 
     let take_all = select.is_empty();
@@ -2237,8 +2443,7 @@ pub(crate) fn write_corpus_dir(
     corpus: &GapCorpus,
     dir: &std::path::Path,
 ) -> std::io::Result<usize> {
-    let to_io =
-        |e: serde_json::Error| std::io::Error::other(e);
+    let to_io = |e: serde_json::Error| std::io::Error::other(e);
     std::fs::create_dir_all(dir)?;
     // Combined corpus (all gaps) for quick inspection / scripting.
     let combined = std::fs::File::create(dir.join("corpus.json"))?;
@@ -2313,7 +2518,10 @@ mod tests {
             failure_stage: stage,
         };
         let m = RegionMeasurements {
-            brackets: vec![bracket(None, Some(0.7)), bracket(Some(FailureStage::WaveformFloor), Some(0.4))],
+            brackets: vec![
+                bracket(None, Some(0.7)),
+                bracket(Some(FailureStage::WaveformFloor), Some(0.4)),
+            ],
             outcome: GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "patch".into(),
@@ -2358,7 +2566,10 @@ mod tests {
             }),
             lag: None,
         };
-        let levels = LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 };
+        let levels = LevelTags {
+            a_gap_floor_db: -70.0,
+            a_noise_floor_db: -60.0,
+        };
 
         let tags = tags_from_measurements(&m, Some(levels));
 
@@ -2427,8 +2638,16 @@ mod tests {
         let curve = lag_correlation_curve(&a, &b_ctx, 64);
         let s = summarize_lag_curve(&curve, 48_000, 83, 1, LagChannel::Mono).expect("summary");
         assert_eq!(s.peak_lag_samples, 17, "peak at the true integer lag");
-        assert!(s.peak_r > 0.95, "shared signal correlates ~1 at the lag, got {}", s.peak_r);
-        assert!(s.lag0_r < 0.5, "lag-0 is depressed by the offset, got {}", s.lag0_r);
+        assert!(
+            s.peak_r > 0.95,
+            "shared signal correlates ~1 at the lag, got {}",
+            s.peak_r
+        );
+        assert!(
+            s.lag0_r < 0.5,
+            "lag-0 is depressed by the offset, got {}",
+            s.lag0_r
+        );
         assert_eq!(s.verdict, LagVerdict::TimingOffset);
     }
 
@@ -2464,7 +2683,9 @@ mod tests {
     #[test]
     fn lag_summary_flags_competing_peak_for_periodic_curve() {
         // Unique peak: one hump, monotonic falloff → no rival local maximum.
-        let unique: Vec<(i64, f64)> = (-5..=5).map(|l| (l, 1.0 - 0.1 * (l as f64).abs())).collect();
+        let unique: Vec<(i64, f64)> = (-5..=5)
+            .map(|l| (l, 1.0 - 0.1 * (l as f64).abs()))
+            .collect();
         let s = summarize_lag_curve(&unique, 48_000, 10, 1, LagChannel::Mono).expect("summary");
         assert!(
             s.second_peak_r.is_none_or(|r| r < s.peak_r - 0.3),
@@ -2474,7 +2695,15 @@ mod tests {
 
         // Periodic-like: two humps of similar height → a rival near peak_r (low uniqueness margin).
         let periodic = vec![
-            (-4, 0.2), (-3, 0.9), (-2, 0.5), (-1, 0.3), (0, 0.85), (1, 0.4), (2, 0.2), (3, 0.1), (4, 0.05),
+            (-4, 0.2),
+            (-3, 0.9),
+            (-2, 0.5),
+            (-1, 0.3),
+            (0, 0.85),
+            (1, 0.4),
+            (2, 0.2),
+            (3, 0.1),
+            (4, 0.05),
         ];
         let s2 = summarize_lag_curve(&periodic, 48_000, 10, 1, LagChannel::Mono).expect("summary");
         assert!(
@@ -2486,15 +2715,32 @@ mod tests {
         // Robust uniqueness fields: the unique (monotonic) curve has NO rival → prominence `None` (best
         // case); the periodic one has a rival near the peak → low prominence. peak_z stands out further for
         // the unique curve. Spacing is the lag gap to the rival.
-        assert!(s.prominence.is_none(), "a unrivalled peak has no prominence value: {:?}", s.prominence);
-        assert!(s2.prominence.is_some_and(|p| p < 0.1), "periodic: low prominence {:?}", s2.prominence);
+        assert!(
+            s.prominence.is_none(),
+            "a unrivalled peak has no prominence value: {:?}",
+            s.prominence
+        );
+        assert!(
+            s2.prominence.is_some_and(|p| p < 0.1),
+            "periodic: low prominence {:?}",
+            s2.prominence
+        );
         // peak_z is computed (finite, positive) whenever the curve has spread; its discriminating power is
         // validated on real flat-floor curves in the §3.6a experiment, not these broad toy humps.
-        assert!(s.peak_z.is_some_and(|z| z.is_finite() && z > 0.0), "peak_z computed: {:?}", s.peak_z);
-        assert!(s2.peak_z.is_some_and(|z| z.is_finite() && z > 0.0), "peak_z computed: {:?}", s2.peak_z);
+        assert!(
+            s.peak_z.is_some_and(|z| z.is_finite() && z > 0.0),
+            "peak_z computed: {:?}",
+            s.peak_z
+        );
+        assert!(
+            s2.peak_z.is_some_and(|z| z.is_finite() && z > 0.0),
+            "peak_z computed: {:?}",
+            s2.peak_z
+        );
         // periodic peak at lag 0, rival at lag −3 → spacing 3 samples = 62.5 µs at 48 kHz.
         assert!(
-            s2.top2_spacing_ms.is_some_and(|ms| (ms - 3.0 * 1000.0 / 48_000.0).abs() < 1e-6),
+            s2.top2_spacing_ms
+                .is_some_and(|ms| (ms - 3.0 * 1000.0 / 48_000.0).abs() < 1e-6),
             "spacing to the rival lag: {:?}",
             s2.top2_spacing_ms
         );
@@ -2591,7 +2837,11 @@ mod tests {
             "gross post lag {} should land near {gross_post_expected}",
             post_seq.frac_lag_samples
         );
-        assert!(post_seq.peak_r > 0.95, "sequential post peak_r {}", post_seq.peak_r);
+        assert!(
+            post_seq.peak_r > 0.95,
+            "sequential post peak_r {}",
+            post_seq.peak_r
+        );
 
         let post_naive = naive_lag_pair_post(&a_post, &b_signal, start_frame, gap_frames, sweep)
             .expect("naive post summary");
@@ -2611,19 +2861,32 @@ mod tests {
         let n = 480;
         let mut s = vec![0.0f32; n * ch];
         for f in 0..n {
-            s[f * ch + 2] = (std::f64::consts::TAU * 200.0 * f as f64 / 48_000.0).sin() as f32 * 0.5;
+            s[f * ch + 2] =
+                (std::f64::consts::TAU * 200.0 * f as f64 / 48_000.0).sin() as f32 * 0.5;
             s[f * ch] = 0.005;
             s[f * ch + 1] = -0.005;
         }
         let weighted = weighted_downmix_rms(&s, ch, 0, n);
-        let mono: Vec<f64> = s.chunks(ch).map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64).collect();
+        let mono: Vec<f64> = s
+            .chunks(ch)
+            .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
+            .collect();
         let mono_rms = (mono.iter().map(|v| v * v).sum::<f64>() / mono.len() as f64).sqrt();
         // The straight 1/6 mix buries the center; the energy-weighted mix keeps it (~0.5/√2 ≈ 0.35).
-        assert!(weighted > 0.2, "weighted preserves center level: {weighted}");
-        assert!(weighted > mono_rms * 3.0, "weighted {weighted} ≫ straight mono {mono_rms}");
+        assert!(
+            weighted > 0.2,
+            "weighted preserves center level: {weighted}"
+        );
+        assert!(
+            weighted > mono_rms * 3.0,
+            "weighted {weighted} ≫ straight mono {mono_rms}"
+        );
         // Over-range / empty spans are guarded.
         assert_eq!(weighted_downmix_rms(&s, ch, 10, 10), 0.0);
-        assert_eq!(weighted_downmix_rms(&s, ch, n - 5, n + 100), weighted_downmix_rms(&s, ch, n - 5, n));
+        assert_eq!(
+            weighted_downmix_rms(&s, ch, n - 5, n + 100),
+            weighted_downmix_rms(&s, ch, n - 5, n)
+        );
     }
 
     #[test]
@@ -2675,7 +2938,9 @@ mod tests {
         let mut pinned = lag.clone();
         pinned.post_anchor[0].edge_pinned = Some(true);
         assert_eq!(
-            splice_summary_from_lag(&pinned).expect("splice").edge_pinned,
+            splice_summary_from_lag(&pinned)
+                .expect("splice")
+                .edge_pinned,
             Some(true),
         );
 
@@ -2684,7 +2949,9 @@ mod tests {
         legacy.pre_anchor[0].edge_pinned = None;
         legacy.post_anchor[0].edge_pinned = None;
         assert_eq!(
-            splice_summary_from_lag(&legacy).expect("splice").edge_pinned,
+            splice_summary_from_lag(&legacy)
+                .expect("splice")
+                .edge_pinned,
             None,
         );
     }
@@ -2699,8 +2966,9 @@ mod tests {
         assert_eq!(s.edge_pinned, Some(true), "boundary peak is edge-pinned");
 
         // A curve peaking in the interior is not edge-pinned.
-        let interior: Vec<(i64, f64)> =
-            (-4800..=4800).map(|l| (l, -((l as f64) / 4800.0).powi(2))).collect();
+        let interior: Vec<(i64, f64)> = (-4800..=4800)
+            .map(|l| (l, -((l as f64) / 4800.0).powi(2)))
+            .collect();
         let s2 = summarize_lag_curve(&interior, sr, 1000, 100, LagChannel::Mono).expect("summary");
         assert_eq!(s2.peak_lag_samples, 0, "peak in the interior");
         assert_eq!(s2.edge_pinned, Some(false), "interior peak not edge-pinned");
@@ -2726,7 +2994,10 @@ mod tests {
             peak.peak_lag_ms
         );
         // Non-vacuous: `finite_corr` guarantees finite outputs even on a flat/degenerate envelope.
-        assert!(peak.prominence.is_finite() && peak.peak_r.is_finite(), "finite: {peak:?}");
+        assert!(
+            peak.prominence.is_finite() && peak.peak_r.is_finite(),
+            "finite: {peak:?}"
+        );
     }
 
     fn write_speech(buf: &mut [f32], start: usize, end: usize, freq: f64, amp: f32) {
@@ -2791,16 +3062,30 @@ mod tests {
         };
         let fp = build_gap_fingerprint(0, &inputs, DetailTier::Full, false);
 
-        assert!((fp.geometry.duration_secs - 1.5).abs() < 0.05, "duration {}", fp.geometry.duration_secs);
         assert!(
-            fp.anchors.pre.iter().any(|p| p.source == AnchorSourceKind::EnergyPeak),
+            (fp.geometry.duration_secs - 1.5).abs() < 0.05,
+            "duration {}",
+            fp.geometry.duration_secs
+        );
+        assert!(
+            fp.anchors
+                .pre
+                .iter()
+                .any(|p| p.source == AnchorSourceKind::EnergyPeak),
             "expected a pre energy-peak anchor: {:?}",
             fp.anchors.pre
         );
-        assert!(fp.contour.has_anchor_seam_contour, "speech bursts give contour");
+        assert!(
+            fp.contour.has_anchor_seam_contour,
+            "speech bursts give contour"
+        );
 
         let s = fp.structure.expect("structure present with B");
-        assert!(s.baseline_pre > 0.5, "structure aligns at the throat: {}", s.baseline_pre);
+        assert!(
+            s.baseline_pre > 0.5,
+            "structure aligns at the throat: {}",
+            s.baseline_pre
+        );
         let seam = fp.seams.expect("seams present with B");
         assert!(
             seam.baseline_pre < 0.2 && seam.baseline_post < 0.2,
@@ -2809,7 +3094,9 @@ mod tests {
             seam.baseline_post
         );
         assert!(
-            fp.brackets.iter().any(|b| b.seam_pre.is_some_and(|v| v > 0.5) && b.seam_post.is_some_and(|v| v > 0.5)),
+            fp.brackets.iter().any(
+                |b| b.seam_pre.is_some_and(|v| v > 0.5) && b.seam_post.is_some_and(|v| v > 0.5)
+            ),
             "a speech-anchored bracket should score a strong seam where the throat cannot"
         );
         assert!(fp.lag.is_some(), "lag computed at the best speech bracket");
@@ -2912,24 +3199,47 @@ mod tests {
         let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
         let progress = NoOpProgressReporter;
 
-        let off = characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], false, &progress);
+        let off =
+            characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], false, &progress);
         let on = characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], true, &progress);
 
         let fp_off = off.gaps.first().expect("one gap (off)");
-        assert!(fp_off.seam_probe.is_none(), "diagnostics off: seam_probe must be absent");
-        assert!(fp_off.wide_envelope.is_none(), "diagnostics off: wide_envelope must be absent");
-        assert!(fp_off.b_levels.is_none(), "diagnostics off: b_levels must be absent");
+        assert!(
+            fp_off.seam_probe.is_none(),
+            "diagnostics off: seam_probe must be absent"
+        );
+        assert!(
+            fp_off.wide_envelope.is_none(),
+            "diagnostics off: wide_envelope must be absent"
+        );
+        assert!(
+            fp_off.b_levels.is_none(),
+            "diagnostics off: b_levels must be absent"
+        );
 
         let fp_on = on.gaps.first().expect("one gap (on)");
-        assert!(fp_on.seam_probe.is_some(), "diagnostics on: seam_probe must be populated");
-        assert!(fp_on.wide_envelope.is_some(), "diagnostics on: wide_envelope must be populated");
-        assert!(fp_on.b_levels.is_some(), "diagnostics on: b_levels must be populated");
+        assert!(
+            fp_on.seam_probe.is_some(),
+            "diagnostics on: seam_probe must be populated"
+        );
+        assert!(
+            fp_on.wide_envelope.is_some(),
+            "diagnostics on: wide_envelope must be populated"
+        );
+        assert!(
+            fp_on.b_levels.is_some(),
+            "diagnostics on: b_levels must be populated"
+        );
     }
 
     fn mk_fp(index: usize, full: bool) -> GapFingerprint {
         GapFingerprint {
             index,
-            tier: if full { DetailTier::Full } else { DetailTier::Summary },
+            tier: if full {
+                DetailTier::Full
+            } else {
+                DetailTier::Summary
+            },
             sample_rate: 48_000,
             channels: 2,
             geometry: GapGeometry {
@@ -3042,9 +3352,9 @@ mod tests {
             "summary gap named na: {names:?}"
         );
         // No leaking identifiers; per-gap files are opaque-id prefixed.
-        assert!(names
-            .iter()
-            .all(|f| f == "manifest.json" || f == "corpus.json" || f.starts_with("aaaaaaaa_bbbb_")));
+        assert!(names.iter().all(|f| f == "manifest.json"
+            || f == "corpus.json"
+            || f.starts_with("aaaaaaaa_bbbb_")));
 
         // Each per-gap file is a self-contained single-gap corpus.
         let full = names.iter().find(|f| f.contains("g003")).unwrap();

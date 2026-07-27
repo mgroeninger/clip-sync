@@ -110,9 +110,27 @@ mod tests {
         assert_eq!(report.total_gaps(), 6);
 
         // Region kinds: 4 matched (the lag-bearing gaps), 1 tail (200 s), 1 no-lag (3 s).
-        assert_eq!(report.matched().len(), 4, "four lag-bearing gaps are matched");
-        assert_eq!(report.rows.iter().filter(|r| r.kind == GapKind::Tail).count(), 1);
-        assert_eq!(report.rows.iter().filter(|r| r.kind == GapKind::NoLag).count(), 1);
+        assert_eq!(
+            report.matched().len(),
+            4,
+            "four lag-bearing gaps are matched"
+        );
+        assert_eq!(
+            report
+                .rows
+                .iter()
+                .filter(|r| r.kind == GapKind::Tail)
+                .count(),
+            1
+        );
+        assert_eq!(
+            report
+                .rows
+                .iter()
+                .filter(|r| r.kind == GapKind::NoLag)
+                .count(),
+            1
+        );
 
         // Addressable = matched + timing_offset + skipped (the patched and decorrelated excluded).
         let matched = report.matched();
@@ -121,37 +139,58 @@ mod tests {
             .filter(|r| r.verdict.as_deref() == Some("timing_offset") && !r.patched())
             .collect();
         assert_eq!(addr.len(), 2, "two timing_offset skips");
-        assert_eq!(addr.iter().filter(|r| r.skew == SkewClass::Drift).count(), 1, "−16/−8 is drift");
-        assert_eq!(addr.iter().filter(|r| r.skew == SkewClass::Constant).count(), 1, "−5/−5.2 is constant");
+        assert_eq!(
+            addr.iter().filter(|r| r.skew == SkewClass::Drift).count(),
+            1,
+            "−16/−8 is drift"
+        );
+        assert_eq!(
+            addr.iter()
+                .filter(|r| r.skew == SkewClass::Constant)
+                .count(),
+            1,
+            "−5/−5.2 is constant"
+        );
 
         // Uniqueness margin = peak_r − second_peak_r = 0.95 − 0.20 = 0.75 on the lag-bearing gaps.
         assert!(
-            matched.iter().all(|r| r.uniqueness_margin.is_some_and(|mgn| (mgn - 0.75).abs() < 1e-6)),
+            matched.iter().all(|r| r
+                .uniqueness_margin
+                .is_some_and(|mgn| (mgn - 0.75).abs() < 1e-6)),
             "matched gaps carry a 0.75 uniqueness margin"
         );
         // Residual headroom = worst of (−42−(−40), −41−(−39)) = −2 dB; informative ⇒ same-source.
         assert!(
             matched.iter().all(|r| {
-                r.residual_headroom_db.is_some_and(|h| (h - (-2.0)).abs() < 1e-6)
+                r.residual_headroom_db
+                    .is_some_and(|h| (h - (-2.0)).abs() < 1e-6)
                     && r.residual_informative == Some(true)
             }),
             "matched gaps carry a −2 dB informative residual headroom"
         );
 
         // Plan kind surfaced; summary + CSV render and carry the new columns.
-        assert!(report.rows.iter().all(|r| r.plan_kind.as_deref() == Some("fillable")));
+        assert!(report
+            .rows
+            .iter()
+            .all(|r| r.plan_kind.as_deref() == Some("fillable")));
         // Registration decomposition: the −16/−8 drift gap → step +8, mid −12.
         let drift_gap = matched
             .iter()
             .find(|r| r.frac_lag_pre_ms == Some(-16.0))
             .expect("the −16/−8 gap");
-        assert!(drift_gap.seam_step_ms().is_some_and(|v| (v - 8.0).abs() < 1e-6));
-        assert!(drift_gap.seam_mid_ms().is_some_and(|v| (v - (-12.0)).abs() < 1e-6));
+        assert!(drift_gap
+            .seam_step_ms()
+            .is_some_and(|v| (v - 8.0).abs() < 1e-6));
+        assert!(drift_gap
+            .seam_mid_ms()
+            .is_some_and(|v| (v - (-12.0)).abs() < 1e-6));
 
         // Silence-splice view: both lag-bearing skips have peak_r 0.95 ≥ 0.85 and margin 0.75 ≥ 0.30 ⇒
         // `splice` (both-sides-recoverable). None are one-sided-dead.
         assert!(
-            addr.iter().all(|r| r.splice_diag() == Some(SpliceDiag::Splice) && r.both_sides_recoverable()),
+            addr.iter()
+                .all(|r| r.splice_diag() == Some(SpliceDiag::Splice) && r.both_sides_recoverable()),
             "clean high-peak unique skips classify as recoverable splices"
         );
         let splice = report.splice_text();
@@ -201,7 +240,12 @@ mod tests {
             "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}],
                     "post_anchor":[{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-5.0,"verdict":"timing_offset"}]},
             "outcome":{"tier":"skip"}}"#.to_string();
-        write_corpus(&root.path().join("1"), "aaaa", "bbbb", &format!("[{gap_json}]"));
+        write_corpus(
+            &root.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!("[{gap_json}]"),
+        );
         let row = &analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows[0];
         assert_eq!(row.splice_diag(), Some(SpliceDiag::AliasSuspect));
         assert!(!row.both_sides_recoverable());
@@ -239,14 +283,23 @@ mod tests {
         assert!(dropout.bracket_exhausted() && dropout.both_sides_recoverable());
 
         // D11 classification: B-silent ⇒ program-quiet, out of the addressable set and not a repair target.
-        assert!(quiet.program_quiet_skip(), "B silent at program time ⇒ program-quiet");
+        assert!(
+            quiet.program_quiet_skip(),
+            "B silent at program time ⇒ program-quiet"
+        );
         assert!(!quiet.addressable_dropout());
-        assert!(!quiet.dualfit_candidate(), "program-quiet must not be a dual-fit target");
+        assert!(
+            !quiet.dualfit_candidate(),
+            "program-quiet must not be a dual-fit target"
+        );
 
         // The real dropout (B occupied) keeps its place in the denominator and stays a candidate.
         assert!(!dropout.program_quiet_skip());
         assert!(dropout.addressable_dropout());
-        assert!(dropout.dualfit_candidate(), "occupied-donor dropout is a candidate");
+        assert!(
+            dropout.dualfit_candidate(),
+            "occupied-donor dropout is a candidate"
+        );
     }
 
     #[test]
@@ -270,17 +323,32 @@ mod tests {
                     "post_anchor":[{"peak_r":0.95,"frac_lag_ms":-9.5,"verdict":"timing_offset"}]},
             "outcome":{"tier":"skip"}}"#;
 
-        write_corpus(&root.path().join("1"), "aaaa", "bbbb", &format!("[{disagree},{legacy}]"));
+        write_corpus(
+            &root.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!("[{disagree},{legacy}]"),
+        );
         let report = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0);
         let (g0, g1) = (&report.rows[0], &report.rows[1]);
 
         // C-harness-2 + C-harness-1.
-        assert_eq!(g0.skew, SkewClass::NotApplicable, "disagreeing shoulders are not a timing skew");
-        assert_eq!(g0.uniqueness_z, None, "robust uniqueness needs both shoulders' peak_z");
+        assert_eq!(
+            g0.skew,
+            SkewClass::NotApplicable,
+            "disagreeing shoulders are not a timing skew"
+        );
+        assert_eq!(
+            g0.uniqueness_z, None,
+            "robust uniqueness needs both shoulders' peak_z"
+        );
 
         // C-harness-3.
         assert!(!g0.registration_from_legacy_lag, "g0 has baseline_lag");
-        assert!(g1.registration_from_legacy_lag, "g1 fell back to legacy `lag`");
+        assert!(
+            g1.registration_from_legacy_lag,
+            "g1 fell back to legacy `lag`"
+        );
         assert!(
             report.summary_text().contains("registration schema mix"),
             "mixed-schema corpus must warn"
@@ -292,7 +360,11 @@ mod tests {
         // The A3 predicate: gate_pass ∧ step-real (post_own − post@pre ≥ margin) ∧ donor-continuous ∧
         // ¬program-quiet. Each non-target row flips exactly one condition, holding the others at pass.
         // (post_seam_r = 0.95, so step-spurious needs post_global ≳ 0.80 to make Δ < 0.15.)
-        let gap = |index: usize, gate_pass: bool, post_global: f64, cont: bool, nominal_sil: f64| {
+        let gap = |index: usize,
+                   gate_pass: bool,
+                   post_global: f64,
+                   cont: bool,
+                   nominal_sil: f64| {
             format!(
                 r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
                 "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
@@ -323,19 +395,25 @@ mod tests {
             "bbbb",
             &format!(
                 "[{},{},{},{},{},{patched}]",
-                gap(0, true, 0.05, true, 0.02),   // clean target
-                gap(1, true, 0.90, true, 0.02),   // step spurious: post@pre 0.90 vs post_own 0.95 (Δ 0.05) → not a target
-                gap(2, true, 0.05, false, 0.02),  // donor BROKEN (nothing to bridge) → not a target
-                gap(3, true, 0.05, true, 0.95),   // program-quiet (nothing to fill) → not a target
-                gap(4, false, 0.05, true, 0.02),  // gate FAIL → not a target
+                gap(0, true, 0.05, true, 0.02),  // clean target
+                gap(1, true, 0.90, true, 0.02), // step spurious: post@pre 0.90 vs post_own 0.95 (Δ 0.05) → not a target
+                gap(2, true, 0.05, false, 0.02), // donor BROKEN (nothing to bridge) → not a target
+                gap(3, true, 0.05, true, 0.95), // program-quiet (nothing to fill) → not a target
+                gap(4, false, 0.05, true, 0.02), // gate FAIL → not a target
             ),
         );
         let rows = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0).rows;
-        assert!(rows[0].dualfit_target(), "gate_pass + real step + continuous donor + occupied");
+        assert!(
+            rows[0].dualfit_target(),
+            "gate_pass + real step + continuous donor + occupied"
+        );
         assert!(!rows[1].dualfit_target(), "spurious step excluded");
         assert!(!rows[2].dualfit_target(), "broken donor excluded");
         assert!(!rows[3].dualfit_target(), "program-quiet excluded");
         assert!(!rows[4].dualfit_target(), "gate fail excluded");
-        assert!(!rows[5].dualfit_target(), "already-patched gap excluded (bracket-exhausted skips only)");
+        assert!(
+            !rows[5].dualfit_target(),
+            "already-patched gap excluded (bracket-exhausted skips only)"
+        );
     }
 }

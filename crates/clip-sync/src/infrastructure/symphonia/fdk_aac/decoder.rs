@@ -6,22 +6,22 @@ use fdk_aac::dec::{Decoder, DecoderError, Transport};
 use symphonia::core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia::core::codecs::CodecInfo;
-use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia::core::codecs::audio::well_known::profiles::{
     CODEC_PROFILE_AAC_HE, CODEC_PROFILE_AAC_HE_V2,
 };
+use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia::core::codecs::audio::{
     AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
 };
 use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia::core::errors::{Error, unsupported_error};
+use symphonia::core::codecs::CodecInfo;
+use symphonia::core::errors::{unsupported_error, Error};
 use symphonia::core::packet::PacketRef;
 use symphonia::core::{codec_profile, support_audio_codec};
 use tracing::warn;
 
 use super::adts::construct_adts_header;
-use super::meta::{M4AInfo, M4AType, m4a_type_from_index, map_to_channels, sample_rate_index};
+use super::meta::{m4a_type_from_index, map_to_channels, sample_rate_index, M4AInfo, M4AType};
 
 type Result<T> = symphonia::core::errors::Result<T>;
 

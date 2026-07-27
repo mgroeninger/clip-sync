@@ -429,8 +429,8 @@ fn parse_duration(raw: &str) -> Result<std::time::Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
     use crate::infrastructure::config::RepairAppConfig;
+    use clap::CommandFactory;
 
     #[test]
     fn parse_duration_minutes() {
@@ -465,20 +465,32 @@ mod tests {
             &format!("[default: {}]", defaults.repair.silence_hold_ms),
             &format!("[default: {}]", defaults.repair.absolute_silence_rms as u32),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
-            &format!("[default: {}]", defaults.repair.max_fill_align_adjustment_secs),
+            &format!(
+                "[default: {}]",
+                defaults.repair.max_fill_align_adjustment_secs
+            ),
             &format!("[default: {}]", defaults.repair.fill_border_search_secs),
             &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
             &format!("[default: {}]", defaults.repair.gap_signature_context_secs),
             &format!("[default: {}]", defaults.repair.fill_length_slack_secs),
-            &format!("[default: {}]", defaults.repair.fill_extract_tail_slack_secs),
+            &format!(
+                "[default: {}]",
+                defaults.repair.fill_extract_tail_slack_secs
+            ),
             &format!("[default: {}]", defaults.repair.fill_fit_structure_weight),
             &format!("[default: {}]", defaults.repair.fill_fit_waveform_weight),
             &format!("[default: {}]", defaults.repair.fill_repeat_penalty_weight),
             &format!("[default: {}]", defaults.repair.border_standoff_secs),
             &format!("[default: {}]", defaults.repair.crossfade_ms),
             &format!("[default: {}]", defaults.repair.fill_anchor_min_correlation),
-            &format!("[default: {}]", defaults.repair.fill_anchor_max_adjustment_frac),
-            &format!("[default: {}]", defaults.repair.fill_anchor_search_prior_weight),
+            &format!(
+                "[default: {}]",
+                defaults.repair.fill_anchor_max_adjustment_frac
+            ),
+            &format!(
+                "[default: {}]",
+                defaults.repair.fill_anchor_search_prior_weight
+            ),
             "[default: auto]",
             "anchored-retry",
             "gap-signature-mode",
@@ -501,19 +513,13 @@ mod tests {
             "no-dual-fit",
             "[default: on]",
         ] {
-            assert!(
-                help.contains(needle),
-                "help missing {needle:?}:\n{help}"
-            );
+            assert!(help.contains(needle), "help missing {needle:?}:\n{help}");
         }
 
         // The calibration producer flags are only present when the `calibration` feature is on.
         #[cfg(feature = "calibration")]
         for needle in ["gap-fingerprints", "fingerprint-diagnostics"] {
-            assert!(
-                help.contains(needle),
-                "help missing {needle:?}:\n{help}"
-            );
+            assert!(help.contains(needle), "help missing {needle:?}:\n{help}");
         }
     }
 }

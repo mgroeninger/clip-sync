@@ -251,8 +251,12 @@ impl GapRepairSpec {
     /// `Skip { cell: SilenceSplice, .. }`.
     pub fn cell(&self) -> GapRepairCell {
         match &self.verdict {
-            GapRepairVerdict::Patch(GapRepairStrategy::Bracket { .. }) => GapRepairCell::BracketPatch,
-            GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice { .. }) => GapRepairCell::SilenceSplice,
+            GapRepairVerdict::Patch(GapRepairStrategy::Bracket { .. }) => {
+                GapRepairCell::BracketPatch
+            }
+            GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice { .. }) => {
+                GapRepairCell::SilenceSplice
+            }
             GapRepairVerdict::Skip { cell, .. } => *cell,
         }
     }
@@ -323,7 +327,9 @@ pub fn skip_cell_from_tags(reason: &GapPatchSkipReason, tags: &GapRepairTags) ->
         GapPatchSkipReason::BExtractFailed
         | GapPatchSkipReason::AlignedSegmentOutOfRange
         | GapPatchSkipReason::ZeroLengthGap => GapRepairCell::Unfillable,
-        GapPatchSkipReason::CorrelationBelowThreshold { .. } => classify_bracket_exhausted_skip(tags),
+        GapPatchSkipReason::CorrelationBelowThreshold { .. } => {
+            classify_bracket_exhausted_skip(tags)
+        }
     }
 }
 
@@ -341,8 +347,8 @@ fn classify_bracket_exhausted_skip(tags: &GapRepairTags) -> GapRepairCell {
     }
     let donor_bridges = tags.donor_aligned.is_some_and(|d| d.continuous);
     if let Some(sl) = &tags.seam_local {
-        let step_real =
-            sl.post_seam_r - sl.post_seam_global_r >= crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
+        let step_real = sl.post_seam_r - sl.post_seam_global_r
+            >= crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
         if sl.gate_pass && step_real && donor_bridges {
             return GapRepairCell::SilenceSplice;
         }
@@ -367,7 +373,10 @@ impl GapRepairVerdict {
     /// A skip whose cell is the reason's default (`cell_for_skip_reason`). Use when characterize has no
     /// richer classification than the reason implies.
     pub fn skip(reason: GapPatchSkipReason) -> Self {
-        GapRepairVerdict::Skip { cell: cell_for_skip_reason(&reason), reason }
+        GapRepairVerdict::Skip {
+            cell: cell_for_skip_reason(&reason),
+            reason,
+        }
     }
 
     /// A skip with an explicit (sub-classified) cell — e.g. a `CorrelationBelowThreshold` narrowed to
@@ -406,12 +415,24 @@ mod tests {
             margin_db: 0.0,
         };
         let cases = [
-            (GapPatchSkipReason::BoundaryAlignmentFailed, GapRepairCell::NoPlacement),
-            (GapPatchSkipReason::ProgramQuiet, GapRepairCell::ProgramQuiet),
+            (
+                GapPatchSkipReason::BoundaryAlignmentFailed,
+                GapRepairCell::NoPlacement,
+            ),
+            (
+                GapPatchSkipReason::ProgramQuiet,
+                GapRepairCell::ProgramQuiet,
+            ),
             (corr, GapRepairCell::Decorrelated),
             (residual, GapRepairCell::ResidualVeto),
-            (GapPatchSkipReason::BExtractFailed, GapRepairCell::Unfillable),
-            (GapPatchSkipReason::AlignedSegmentOutOfRange, GapRepairCell::Unfillable),
+            (
+                GapPatchSkipReason::BExtractFailed,
+                GapRepairCell::Unfillable,
+            ),
+            (
+                GapPatchSkipReason::AlignedSegmentOutOfRange,
+                GapRepairCell::Unfillable,
+            ),
             (GapPatchSkipReason::ZeroLengthGap, GapRepairCell::Unfillable),
         ];
         for (reason, want) in cases {
@@ -425,8 +446,15 @@ mod tests {
             a_start_secs: 0.0,
             a_end_secs: 1.0,
             gap_offset_secs: 0.0,
-            refined: RefinedGapFrames { start_frame: 0, end_frame: 48_000 },
-            b_extract: BExtractWindow { start_frame: 0, end_frame: 96_000, b_mapped_start_frame: 24_000 },
+            refined: RefinedGapFrames {
+                start_frame: 0,
+                end_frame: 48_000,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 96_000,
+                b_mapped_start_frame: 24_000,
+            },
             crossfade_secs: 0.01,
             verdict,
             tags_ctx: GapRepairTags {
@@ -435,14 +463,22 @@ mod tests {
                 donor_nominal: None,
                 donor_aligned: None,
                 gate: GateTags::default(),
-                levels: Some(LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 }),
+                levels: Some(LevelTags {
+                    a_gap_floor_db: -70.0,
+                    a_noise_floor_db: -60.0,
+                }),
             },
         }
     }
 
     fn bracket() -> GapRepairStrategy {
         GapRepairStrategy::Bracket {
-            alignment: FillAlignment { start_frame: 0, fill_frames: 48_000, pre_correlation: 0.99, post_correlation: 0.99 },
+            alignment: FillAlignment {
+                start_frame: 0,
+                fill_frames: 48_000,
+                pre_correlation: 0.99,
+                post_correlation: 0.99,
+            },
             window_gap_frames: 48_000,
             structure_start_frame: 0,
             structure_trusted: true,
@@ -478,8 +514,14 @@ mod tests {
     /// `cell()` is a total projection of the verdict — all three arms.
     #[test]
     fn cell_reads_the_stored_verdict_cell() {
-        assert_eq!(spec_with(GapRepairVerdict::Patch(bracket())).cell(), GapRepairCell::BracketPatch);
-        assert_eq!(spec_with(GapRepairVerdict::Patch(silence_splice())).cell(), GapRepairCell::SilenceSplice);
+        assert_eq!(
+            spec_with(GapRepairVerdict::Patch(bracket())).cell(),
+            GapRepairCell::BracketPatch
+        );
+        assert_eq!(
+            spec_with(GapRepairVerdict::Patch(silence_splice())).cell(),
+            GapRepairCell::SilenceSplice
+        );
         let decorrelated = spec_with(GapRepairVerdict::Skip {
             cell: GapRepairCell::Decorrelated,
             reason: GapPatchSkipReason::CorrelationBelowThreshold {
@@ -509,7 +551,11 @@ mod tests {
         });
         assert_eq!(patched.cell(), GapRepairCell::SilenceSplice);
         assert_eq!(declined.cell(), GapRepairCell::SilenceSplice);
-        assert_eq!(patched.cell(), declined.cell(), "cell must not depend on the dual_fit flag");
+        assert_eq!(
+            patched.cell(),
+            declined.cell(),
+            "cell must not depend on the dual_fit flag"
+        );
     }
 
     /// `GapRepairVerdict::skip` stamps the reason's default cell; `reason_admits_cell` bounds sub-classification.
@@ -518,11 +564,17 @@ mod tests {
         // Default cell for a reason.
         assert!(matches!(
             GapRepairVerdict::skip(GapPatchSkipReason::ZeroLengthGap),
-            GapRepairVerdict::Skip { cell: GapRepairCell::Unfillable, .. }
+            GapRepairVerdict::Skip {
+                cell: GapRepairCell::Unfillable,
+                ..
+            }
         ));
 
         let corr = || GapPatchSkipReason::CorrelationBelowThreshold {
-            pre_correlation: 0.0, post_correlation: 0.0, min_correlation: 0.0, best_attempt: None,
+            pre_correlation: 0.0,
+            post_correlation: 0.0,
+            min_correlation: 0.0,
+            best_attempt: None,
         };
         // CorrelationBelowThreshold admits its three sub-classifications...
         assert!(reason_admits_cell(&corr(), GapRepairCell::Decorrelated));
@@ -533,8 +585,14 @@ mod tests {
         assert!(!reason_admits_cell(&corr(), GapRepairCell::Unfillable));
         assert!(!reason_admits_cell(&corr(), GapRepairCell::NoPlacement));
         // A mechanical reason admits only Unfillable.
-        assert!(reason_admits_cell(&GapPatchSkipReason::BExtractFailed, GapRepairCell::Unfillable));
-        assert!(!reason_admits_cell(&GapPatchSkipReason::BExtractFailed, GapRepairCell::Decorrelated));
+        assert!(reason_admits_cell(
+            &GapPatchSkipReason::BExtractFailed,
+            GapRepairCell::Unfillable
+        ));
+        assert!(!reason_admits_cell(
+            &GapPatchSkipReason::BExtractFailed,
+            GapRepairCell::Decorrelated
+        ));
     }
 
     /// The finding-#3 guard fires on a nonsensical pair (debug builds).
@@ -558,11 +616,18 @@ mod tests {
             GapPatchSkipReason::AlignedSegmentOutOfRange,
             GapPatchSkipReason::ZeroLengthGap,
             GapPatchSkipReason::CorrelationBelowThreshold {
-                pre_correlation: 0.0, post_correlation: 0.0, min_correlation: 0.0, best_attempt: None,
+                pre_correlation: 0.0,
+                post_correlation: 0.0,
+                min_correlation: 0.0,
+                best_attempt: None,
             },
             GapPatchSkipReason::ResidualHeadroomExceeded {
-                pre_correlation: 0.0, post_correlation: 0.0, headroom_db: 0.0,
-                floor_pre_db: 0.0, floor_post_db: 0.0, margin_db: 0.0,
+                pre_correlation: 0.0,
+                post_correlation: 0.0,
+                headroom_db: 0.0,
+                floor_pre_db: 0.0,
+                floor_post_db: 0.0,
+                margin_db: 0.0,
             },
         ];
         for reason in reasons {
@@ -576,14 +641,27 @@ mod tests {
     // --- 6b.2 projection classifier: `skip_cell_from_tags` across the §4.1a bracket-exhausted classes ---
 
     fn donor(silence_fraction: f64, continuous: bool) -> DonorInterior {
-        DonorInterior { rms_db: -60.0, silence_fraction, longest_silence_ms: 0.0, continuous }
+        DonorInterior {
+            rms_db: -60.0,
+            silence_fraction,
+            longest_silence_ms: 0.0,
+            continuous,
+        }
     }
 
     fn seam(gate_pass: bool, post_seam_r: f64, post_seam_global_r: f64) -> SeamLocalTags {
         SeamLocalTags {
-            pre_seam_r: 0.98, post_seam_r, post_seam_global_r,
-            trim_frames: 480, gate_pass, pre_lag: 24, post_lag: -600,
-            pre_seam_prom: None, post_seam_prom: None, pre_seam_z: None, post_seam_z: None,
+            pre_seam_r: 0.98,
+            post_seam_r,
+            post_seam_global_r,
+            trim_frames: 480,
+            gate_pass,
+            pre_lag: 24,
+            post_lag: -600,
+            pre_seam_prom: None,
+            post_seam_prom: None,
+            pre_seam_z: None,
+            post_seam_z: None,
         }
     }
 
@@ -598,26 +676,49 @@ mod tests {
             seam_local,
             donor_nominal,
             donor_aligned,
-            gate: GateTags { brackets_total: 3, brackets_passing: 0, ..GateTags::default() },
-            levels: Some(LevelTags { a_gap_floor_db: -70.0, a_noise_floor_db: -60.0 }),
+            gate: GateTags {
+                brackets_total: 3,
+                brackets_passing: 0,
+                ..GateTags::default()
+            },
+            levels: Some(LevelTags {
+                a_gap_floor_db: -70.0,
+                a_noise_floor_db: -60.0,
+            }),
         }
     }
 
     fn corr() -> GapPatchSkipReason {
         GapPatchSkipReason::CorrelationBelowThreshold {
-            pre_correlation: 0.0, post_correlation: 0.0, min_correlation: 0.5, best_attempt: None,
+            pre_correlation: 0.0,
+            post_correlation: 0.0,
+            min_correlation: 0.5,
+            best_attempt: None,
         }
     }
 
     #[test]
     fn classifier_1to1_reasons() {
         let t = corr_tags(None, None, None);
-        assert_eq!(skip_cell_from_tags(&GapPatchSkipReason::BoundaryAlignmentFailed, &t), GapRepairCell::NoPlacement);
-        assert_eq!(skip_cell_from_tags(&GapPatchSkipReason::ProgramQuiet, &t), GapRepairCell::ProgramQuiet);
-        assert_eq!(skip_cell_from_tags(&GapPatchSkipReason::BExtractFailed, &t), GapRepairCell::Unfillable);
+        assert_eq!(
+            skip_cell_from_tags(&GapPatchSkipReason::BoundaryAlignmentFailed, &t),
+            GapRepairCell::NoPlacement
+        );
+        assert_eq!(
+            skip_cell_from_tags(&GapPatchSkipReason::ProgramQuiet, &t),
+            GapRepairCell::ProgramQuiet
+        );
+        assert_eq!(
+            skip_cell_from_tags(&GapPatchSkipReason::BExtractFailed, &t),
+            GapRepairCell::Unfillable
+        );
         let resid = GapPatchSkipReason::ResidualHeadroomExceeded {
-            pre_correlation: 0.9, post_correlation: 0.9, headroom_db: 3.0,
-            floor_pre_db: -40.0, floor_post_db: -40.0, margin_db: 1.0,
+            pre_correlation: 0.9,
+            post_correlation: 0.9,
+            headroom_db: 3.0,
+            floor_pre_db: -40.0,
+            floor_post_db: -40.0,
+            margin_db: 1.0,
         };
         assert_eq!(skip_cell_from_tags(&resid, &t), GapRepairCell::ResidualVeto);
     }
@@ -625,29 +726,57 @@ mod tests {
     #[test]
     fn classifier_class3_silence_splice() {
         // seams recover (gate_pass), real step (0.98 - 0.30 ≥ 0.15), aligned donor bridges, nominal occupied.
-        let t = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), Some(seam(true, 0.98, 0.30)));
-        assert_eq!(skip_cell_from_tags(&corr(), &t), GapRepairCell::SilenceSplice);
+        let t = corr_tags(
+            Some(donor(0.05, false)),
+            Some(donor(0.05, true)),
+            Some(seam(true, 0.98, 0.30)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &t),
+            GapRepairCell::SilenceSplice
+        );
     }
 
     #[test]
     fn classifier_class4_donor_aligned_decline_is_program_quiet() {
         // Same strong seams + real step, but aligned donor BROKEN (not continuous) ⇒ Program-quiet/donor-dead.
-        let t = corr_tags(Some(donor(0.05, false)), Some(donor(0.6, false)), Some(seam(true, 0.98, 0.30)));
-        assert_eq!(skip_cell_from_tags(&corr(), &t), GapRepairCell::ProgramQuiet);
+        let t = corr_tags(
+            Some(donor(0.05, false)),
+            Some(donor(0.6, false)),
+            Some(seam(true, 0.98, 0.30)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &t),
+            GapRepairCell::ProgramQuiet
+        );
     }
 
     #[test]
     fn classifier_class5_nominal_quiet_wins_over_good_seams() {
         // Nominal donor 100% silent ⇒ Program-quiet even though seams score well (nominal wins).
-        let t = corr_tags(Some(donor(1.0, false)), Some(donor(0.05, true)), Some(seam(true, 0.99, 0.30)));
-        assert_eq!(skip_cell_from_tags(&corr(), &t), GapRepairCell::ProgramQuiet);
+        let t = corr_tags(
+            Some(donor(1.0, false)),
+            Some(donor(0.05, true)),
+            Some(seam(true, 0.99, 0.30)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &t),
+            GapRepairCell::ProgramQuiet
+        );
     }
 
     #[test]
     fn classifier_decorrelated_when_step_not_real() {
         // Donor bridges, seams "pass", but step is NOT real (0.98 - 0.95 < 0.15) ⇒ decorrelated (§4.6).
-        let t = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), Some(seam(true, 0.98, 0.95)));
-        assert_eq!(skip_cell_from_tags(&corr(), &t), GapRepairCell::Decorrelated);
+        let t = corr_tags(
+            Some(donor(0.05, false)),
+            Some(donor(0.05, true)),
+            Some(seam(true, 0.98, 0.95)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &t),
+            GapRepairCell::Decorrelated
+        );
     }
 
     // --- 8b: pin the `seam_local` dependency (carried item d). `classify_bracket_exhausted_skip` can only
@@ -663,8 +792,15 @@ mod tests {
     fn classifier_none_seam_local_collapses_class3_to_decorrelated() {
         // Axes that WOULD be class-3 SilenceSplice (donor bridges, nominal occupied) but seams UNMEASURED.
         // Without `seam_local` the step-real / gate_pass test is unreachable ⇒ Decorrelated, NOT SilenceSplice.
-        let would_be_class3 = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), Some(seam(true, 0.98, 0.30)));
-        assert_eq!(skip_cell_from_tags(&corr(), &would_be_class3), GapRepairCell::SilenceSplice);
+        let would_be_class3 = corr_tags(
+            Some(donor(0.05, false)),
+            Some(donor(0.05, true)),
+            Some(seam(true, 0.98, 0.30)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &would_be_class3),
+            GapRepairCell::SilenceSplice
+        );
         let seams_dropped = corr_tags(Some(donor(0.05, false)), Some(donor(0.05, true)), None);
         assert_eq!(
             skip_cell_from_tags(&corr(), &seams_dropped),
@@ -678,8 +814,15 @@ mod tests {
         // Axes that WOULD be class-4 donor-dead ProgramQuiet (aligned donor broken, nominal occupied) but
         // seams UNMEASURED. The `if !donor_bridges ⇒ ProgramQuiet` arm lives INSIDE `if let Some(seam_local)`,
         // so dropping seams also loses the donor-dead classification ⇒ Decorrelated.
-        let would_be_class4 = corr_tags(Some(donor(0.05, false)), Some(donor(0.6, false)), Some(seam(true, 0.98, 0.30)));
-        assert_eq!(skip_cell_from_tags(&corr(), &would_be_class4), GapRepairCell::ProgramQuiet);
+        let would_be_class4 = corr_tags(
+            Some(donor(0.05, false)),
+            Some(donor(0.6, false)),
+            Some(seam(true, 0.98, 0.30)),
+        );
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &would_be_class4),
+            GapRepairCell::ProgramQuiet
+        );
         let seams_dropped = corr_tags(Some(donor(0.05, false)), Some(donor(0.6, false)), None);
         assert_eq!(
             skip_cell_from_tags(&corr(), &seams_dropped),
@@ -694,6 +837,9 @@ mod tests {
         // still correctly ProgramQuiet even with seams unmeasured — the dependency is specific to the
         // seam-recovery / donor-dead branches, not the whole classifier.
         let nominal_quiet = corr_tags(Some(donor(1.0, false)), Some(donor(0.05, true)), None);
-        assert_eq!(skip_cell_from_tags(&corr(), &nominal_quiet), GapRepairCell::ProgramQuiet);
+        assert_eq!(
+            skip_cell_from_tags(&corr(), &nominal_quiet),
+            GapRepairCell::ProgramQuiet
+        );
     }
 }

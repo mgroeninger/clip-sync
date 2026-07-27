@@ -77,18 +77,42 @@ mod tests {
 
     #[test]
     fn resolve_output_depth_lossless_hi_depth_to_int24() {
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Int24)), WavBitDepth::Int24);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Int32)), WavBitDepth::Int24);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Float32)), WavBitDepth::Int24);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Other(20))), WavBitDepth::Int24);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Other(32))), WavBitDepth::Int24);
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Int24)),
+            WavBitDepth::Int24
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Int32)),
+            WavBitDepth::Int24
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Float32)),
+            WavBitDepth::Int24
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Other(20))),
+            WavBitDepth::Int24
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Other(32))),
+            WavBitDepth::Int24
+        );
     }
 
     #[test]
     fn resolve_output_depth_lossy_and_16bit_to_int16() {
         assert_eq!(resolve_output_bit_depth(None), WavBitDepth::Int16);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Int16)), WavBitDepth::Int16);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Other(8))), WavBitDepth::Int16);
-        assert_eq!(resolve_output_bit_depth(Some(BitDepth::Other(16))), WavBitDepth::Int16);
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Int16)),
+            WavBitDepth::Int16
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Other(8))),
+            WavBitDepth::Int16
+        );
+        assert_eq!(
+            resolve_output_bit_depth(Some(BitDepth::Other(16))),
+            WavBitDepth::Int16
+        );
     }
 }

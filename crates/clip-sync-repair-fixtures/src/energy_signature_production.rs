@@ -4,17 +4,17 @@ use std::path::Path;
 
 use clip_sync::SymphoniaMediaReader;
 
-use crate::NoOpProgressReporter;
 use crate::test_align::{oracle_injected_alignment, zero_offset_alignment, NeverCalledAligner};
+use crate::NoOpProgressReporter;
 
+use crate::energy_signature_fixtures::{
+    gap_report_times, write_fixture_wavs, EnergySignatureFixture,
+};
 use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::{GapReport, GapSignatureMode};
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use crate::energy_signature_fixtures::{
-    gap_report_times, write_fixture_wavs, EnergySignatureFixture,
-};
 
 /// Minimum fixture length for a valid production patch matrix context (lead-in + gap + tail).
 ///
@@ -32,14 +32,13 @@ pub fn min_total_secs_for_signature_context(context_secs: f64) -> f64 {
 pub fn production_matrix_contexts(total_secs: f64) -> Vec<f64> {
     [3.0, 10.0, 30.0]
         .into_iter()
-        .filter(|&context| total_secs + f64::EPSILON >= min_total_secs_for_signature_context(context))
+        .filter(|&context| {
+            total_secs + f64::EPSILON >= min_total_secs_for_signature_context(context)
+        })
         .collect()
 }
 
-pub fn gap_report_from_energy_fixture(
-    temp: &Path,
-    fixture: &EnergySignatureFixture,
-) -> GapReport {
+pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixture) -> GapReport {
     use clip_sync_repair::domain::gap::Gap;
 
     let (path_a, path_b) = write_fixture_wavs(temp, fixture);
@@ -89,8 +88,7 @@ pub fn gap_report_from_floor_oracle(
     use clip_sync_repair::domain::policies::refine_gap_frames;
 
     const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
-    let max_refine_frames =
-        (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+    let max_refine_frames = (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
     let refined_a = refine_gap_frames(
         decoded_a_mono,
         1,
@@ -251,9 +249,11 @@ pub fn patch_request_from_repair(report: GapReport, repair: &RepairConfig) -> Pa
 }
 
 /// Patch geometry params mirroring [`production_repair_config`] for haystack diagnostics.
-pub fn production_geometry_params(repair: &RepairConfig) -> crate::patch_geometry_preview::PatchGeometryParams {
-    use clip_sync_repair::domain::FillMode;
+pub fn production_geometry_params(
+    repair: &RepairConfig,
+) -> crate::patch_geometry_preview::PatchGeometryParams {
     use crate::patch_geometry_preview::PatchGeometryParams;
+    use clip_sync_repair::domain::FillMode;
 
     PatchGeometryParams {
         fill_border_search_secs: repair.fill_border_search_secs,
@@ -276,13 +276,13 @@ pub fn oracle_nominal_throat_pearson(
     fixture: &EnergySignatureFixture,
     repair: &RepairConfig,
 ) -> (f64, f64) {
+    use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
     use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
     use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
     use clip_sync_repair::domain::policies::{
         border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
         GapBorderSpec, SeamPlacement, SeamTemplates,
     };
-    use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     let alignment = scan_alignment_from_result(&oracle_injected_alignment(total_secs));
@@ -296,7 +296,10 @@ pub fn oracle_nominal_throat_pearson(
         &production_geometry_params(repair),
     );
     let ch = fixture.channels.max(1);
-    let gap_frames = preview.refined.end_frame.saturating_sub(preview.refined.start_frame);
+    let gap_frames = preview
+        .refined
+        .end_frame
+        .saturating_sub(preview.refined.start_frame);
     let border_frames = preview.patch_structure_params.bin_frames * 3;
     let border_spec = GapBorderSpec {
         gap_start_frame: preview.refined.start_frame,
@@ -364,9 +367,9 @@ pub fn oracle_baseline_throat_pearson_opt(
     fixture: &EnergySignatureFixture,
     repair: &RepairConfig,
 ) -> Option<(f64, f64)> {
-    use clip_sync_repair::domain::gap_fill_fit::UnifiedFitWeights;
     use crate::energy_signature_fixtures::gap_report_times;
     use crate::patch_geometry_preview::preview_patch_geometry;
+    use clip_sync_repair::domain::gap_fill_fit::UnifiedFitWeights;
 
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     let alignment = scan_alignment_from_result(&oracle_injected_alignment(total_secs));

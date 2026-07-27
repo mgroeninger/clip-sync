@@ -81,7 +81,9 @@ mod tests {
     use super::*;
 
     fn tone(freq: f64, n: usize, sr: u32) -> Vec<f64> {
-        (0..n).map(|i| (2.0 * std::f64::consts::PI * freq * i as f64 / f64::from(sr)).sin()).collect()
+        (0..n)
+            .map(|i| (2.0 * std::f64::consts::PI * freq * i as f64 / f64::from(sr)).sin())
+            .collect()
     }
 
     fn noise(seed: u64, n: usize) -> Vec<f64> {

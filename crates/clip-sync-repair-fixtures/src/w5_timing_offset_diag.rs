@@ -9,11 +9,9 @@
 //! `peak ≥ 0.5` floor. Shared by the Phase B self-validation test and the `diag_w5_timing_offset`
 //! binary so both characterize the fixture against the same discriminator.
 
+use crate::energy_signature_fixtures::{build_w5_timing_offset_seam, EnergySignatureFixture};
 use clip_sync_repair::application::gap_fingerprint::{
     lag_correlation_curve, summarize_lag_curve, LagChannel, LagSummary, LagVerdict,
-};
-use crate::energy_signature_fixtures::{
-    build_w5_timing_offset_seam, EnergySignatureFixture,
 };
 
 /// Default sample rate for the timing-offset fixture sweep.
@@ -47,7 +45,13 @@ fn to_f64(samples: &[f32]) -> Vec<f64> {
 /// [`lag_correlation_curve`]'s convention: `b_ctx` starts `max_lag` before the A window so curve lag
 /// `L` compares `a[a_win_start + k]` with `b[a_win_start + L + k]` (positive `L` ⇒ B delayed). `None`
 /// if the windows fall outside the buffers.
-fn seam_lag(a: &[f64], b: &[f64], a_win_start: usize, w: usize, max_lag: i64) -> Option<LagSummary> {
+fn seam_lag(
+    a: &[f64],
+    b: &[f64],
+    a_win_start: usize,
+    w: usize,
+    max_lag: i64,
+) -> Option<LagSummary> {
     let ml = max_lag.max(0) as usize;
     if a_win_start < ml || a_win_start + w + ml > a.len() || a_win_start + w + ml > b.len() {
         return None;
@@ -73,7 +77,13 @@ pub fn w5_timing_offset_seam_lag(
     let w = (window_secs * f64::from(SR)) as usize;
     let max_lag = (max_lag_secs * f64::from(SR)) as i64;
     let guard = max_lag.max(0) as usize;
-    let pre = seam_lag(&a, &b, fixture.gap_start.checked_sub(guard + w)?, w, max_lag)?;
+    let pre = seam_lag(
+        &a,
+        &b,
+        fixture.gap_start.checked_sub(guard + w)?,
+        w,
+        max_lag,
+    )?;
     let post = seam_lag(&a, &b, fixture.gap_end + guard, w, max_lag)?;
     Some(W5SeamLag { pre, post })
 }
@@ -134,7 +144,9 @@ pub fn w5_timing_offset_grid(offsets_ms: &[f64], drifts_ppm: &[f64]) -> Vec<W5Ti
 /// `drift_ppm` (negative = g003 direction, `|pre| > |post|`) from none to a peak-smearing skew.
 pub fn w5_timing_offset_grid_default() -> Vec<W5TimingOffsetCell> {
     let offsets = [2.0, 4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0];
-    let drifts = [0.0, -1_500.0, -3_000.0, -4_500.0, -9_000.0, -18_000.0, -36_000.0];
+    let drifts = [
+        0.0, -1_500.0, -3_000.0, -4_500.0, -9_000.0, -18_000.0, -36_000.0,
+    ];
     w5_timing_offset_grid(&offsets, &drifts)
 }
 

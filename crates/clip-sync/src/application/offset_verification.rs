@@ -10,12 +10,12 @@ use crate::application::ports::{
     Resampler,
 };
 use crate::domain::{
-    holdout_b_window_for_offset, holdout_extract_sufficient, holdout_pick_duration,
-    holdout_window_feasible,
-    parallel_holdout_window_candidates, periodic_ambiguity_period, periodic_recheck_period_multiple,
-    display_repeat_period, prepare_clip_for_fingerprint, resolve_holdout_candidates,
-    should_downgrade_repetition_confidence, AlignmentResult, AudioTrack, ClipWindow, MediaExtent,
-    OffsetVerification, PcmPreparationOptions, OFFSET_AGREEMENT_TOLERANCE_SECS,
+    display_repeat_period, holdout_b_window_for_offset, holdout_extract_sufficient,
+    holdout_pick_duration, holdout_window_feasible, parallel_holdout_window_candidates,
+    periodic_ambiguity_period, periodic_recheck_period_multiple, prepare_clip_for_fingerprint,
+    resolve_holdout_candidates, should_downgrade_repetition_confidence, AlignmentResult,
+    AudioTrack, ClipWindow, MediaExtent, OffsetVerification, PcmPreparationOptions,
+    OFFSET_AGREEMENT_TOLERANCE_SECS,
 };
 pub struct OffsetVerificationInput<'a, MS: MediaSession> {
     pub session_a: &'a mut MS,
@@ -300,11 +300,7 @@ pub fn apply_offset_verification<MS, FP, AL>(
             window_start_secs + clip_length_secs,
             confidence,
             estimate.offset_secs,
-            if verified {
-                "verified"
-            } else {
-                "not verified"
-            }
+            if verified { "verified" } else { "not verified" }
         ));
 
         scored_attempts.push(OffsetVerification {
@@ -431,7 +427,8 @@ where
         if result.offset_ambiguous_mod_secs.is_none() {
             result.offset_ambiguous_mod_secs = Some(normalized);
         } else if let Some(existing) = result.offset_ambiguous_mod_secs {
-            result.offset_ambiguous_mod_secs = Some(display_repeat_period(existing, clip_length_secs));
+            result.offset_ambiguous_mod_secs =
+                Some(display_repeat_period(existing, clip_length_secs));
         }
     }
     (period_secs, parallel)
@@ -655,11 +652,8 @@ where
                 ),
             };
             if period_secs.is_none() {
-                *period_secs = periodic_ambiguity_period(
-                    &repetition_report,
-                    min_conf,
-                    Some(clip_length_secs),
-                );
+                *period_secs =
+                    periodic_ambiguity_period(&repetition_report, min_conf, Some(clip_length_secs));
             }
         }
 
@@ -720,13 +714,16 @@ where
 }
 
 fn pick_best_scored_attempt(attempts: &[OffsetVerification]) -> Option<&OffsetVerification> {
-    attempts.iter().enumerate().max_by(|(left_idx, left), (right_idx, right)| {
-        left.confidence
-            .partial_cmp(&right.confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| right_idx.cmp(left_idx))
-    })
-    .map(|(_, attempt)| attempt)
+    attempts
+        .iter()
+        .enumerate()
+        .max_by(|(left_idx, left), (right_idx, right)| {
+            left.confidence
+                .partial_cmp(&right.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right_idx.cmp(left_idx))
+        })
+        .map(|(_, attempt)| attempt)
 }
 
 #[cfg(test)]
@@ -1070,12 +1067,8 @@ mod tests {
     fn skipped_with_periodic_context_sets_inconclusive() {
         let mut result = result_with_offset(13.0);
         result.offset_ambiguous_mod_secs = Some(10.0);
-        let verify = skipped_with_periodic_context(
-            "hold-out window unavailable",
-            13.0,
-            Some(3.0),
-            &result,
-        );
+        let verify =
+            skipped_with_periodic_context("hold-out window unavailable", 13.0, Some(3.0), &result);
         assert!(verify.skipped);
         assert!(verify.verify_inconclusive);
         assert_eq!(verify.independent_offset_secs, Some(3.0));
@@ -1105,13 +1098,8 @@ mod tests {
         validation.check_clip_repetition = true;
 
         // True offset −3 s; period alias −13 s (−3 − 10 s loop).
-        let result = run_real_pipeline_verification(
-            &path_a,
-            &path_b,
-            -13.0,
-            validation,
-            Some(10.0),
-        );
+        let result =
+            run_real_pipeline_verification(&path_a, &path_b, -13.0, validation, Some(10.0));
         let v = result
             .offset_verification
             .expect("offset_verification must be set");
@@ -1227,7 +1215,8 @@ mod tests {
         let (path_a, path_b) =
             write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
 
-        let result = run_real_pipeline_verification(&path_a, &path_b, 8.0, verification_validation(), None);
+        let result =
+            run_real_pipeline_verification(&path_a, &path_b, 8.0, verification_validation(), None);
         let v = result
             .offset_verification
             .expect("offset_verification must be set when flag on");
@@ -1392,7 +1381,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &config,
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1434,7 +1430,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &verification_align_config(),
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1479,7 +1482,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &verification_align_config(),
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1515,7 +1525,8 @@ mod tests {
             decode_error_skips: 0,
             decoded_sample_count: Some(SAMPLE_RATE as usize * 10),
         };
-        let mut session_a = FakeMediaSession::with_duration(duration).with_fixed_extract(short_clip);
+        let mut session_a =
+            FakeMediaSession::with_duration(duration).with_fixed_extract(short_clip);
         let mut session_b = session_a.clone();
 
         let mut result = result_with_offset(3.0);
@@ -1528,7 +1539,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &verification_align_config(),
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1572,7 +1590,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &config,
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1609,7 +1634,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &verification_align_config(),
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1621,7 +1653,10 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
         let ov = &value["offset_verification"];
-        assert!(ov.is_object(), "offset_verification must be present when flag on");
+        assert!(
+            ov.is_object(),
+            "offset_verification must be present when flag on"
+        );
         assert!(ov["verified"].is_boolean());
         assert!(ov["skipped"].is_boolean());
         assert!(ov["confidence"].is_number());
@@ -1653,7 +1688,14 @@ mod tests {
         let progress = FakeProgressReporter;
 
         apply_offset_verification(
-            &mut verification_input(&mut session_a, &mut session_b, &track, &track, &windows, duration),
+            &mut verification_input(
+                &mut session_a,
+                &mut session_b,
+                &track,
+                &track,
+                &windows,
+                duration,
+            ),
             &config,
             &mut result,
             &verification_deps(&fingerprinter, &aligner),
@@ -1676,8 +1718,7 @@ mod tests {
         const ALIGN_OFFSET: f64 = 30.0;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) =
-            write_pure_tone_repeat_wav_pair(temp.path(), 44_100, 130, 30);
+        let (path_a, path_b) = write_pure_tone_repeat_wav_pair(temp.path(), 44_100, 130, 30);
 
         let baseline = run_real_pipeline_verification(
             &path_a,
@@ -1695,13 +1736,8 @@ mod tests {
 
         let mut validation = verification_validation();
         validation.check_clip_repetition = true;
-        let downgraded_result = run_real_pipeline_verification(
-            &path_a,
-            &path_b,
-            ALIGN_OFFSET,
-            validation,
-            None,
-        );
+        let downgraded_result =
+            run_real_pipeline_verification(&path_a, &path_b, ALIGN_OFFSET, validation, None);
         let downgraded = downgraded_result
             .offset_verification
             .as_ref()

@@ -73,12 +73,9 @@ pub fn holdout_window_candidates(
         if window.end <= window.start {
             return;
         }
-        if candidates
-            .iter()
-            .any(|existing: &ClipWindow| {
-                (existing.start.as_secs_f64() - window.start.as_secs_f64()).abs() < 0.001
-            })
-        {
+        if candidates.iter().any(|existing: &ClipWindow| {
+            (existing.start.as_secs_f64() - window.start.as_secs_f64()).abs() < 0.001
+        }) {
             return;
         }
         candidates.push(window);
@@ -94,7 +91,9 @@ pub fn holdout_window_candidates(
         ));
     }
     let overlap_interior = min_a_start + 30.0;
-    if overlap_interior + segment_secs <= duration_secs && overlap_interior > min_a_start + segment_secs {
+    if overlap_interior + segment_secs <= duration_secs
+        && overlap_interior > min_a_start + segment_secs
+    {
         push_unique(ClipWindow::new(
             secs_to_duration(overlap_interior),
             secs_to_duration(overlap_interior + segment_secs),
@@ -149,10 +148,7 @@ pub fn parallel_holdout_window_candidates(
         return Vec::new();
     }
 
-    let max_start = duration_a
-        .as_secs_f64()
-        .min(duration_b.as_secs_f64())
-        - segment_secs;
+    let max_start = duration_a.as_secs_f64().min(duration_b.as_secs_f64()) - segment_secs;
     if max_start < 0.0 {
         return Vec::new();
     }
@@ -162,9 +158,10 @@ pub fn parallel_holdout_window_candidates(
         if start_secs < 0.0 || start_secs > max_start + 0.001 {
             return;
         }
-        if candidates.iter().any(|w: &ClipWindow| {
-            (w.start.as_secs_f64() - start_secs).abs() < 0.001
-        }) {
+        if candidates
+            .iter()
+            .any(|w: &ClipWindow| (w.start.as_secs_f64() - start_secs).abs() < 0.001)
+        {
             return;
         }
         candidates.push(ClipWindow::new(
@@ -240,9 +237,10 @@ pub fn anchor_holdout_candidates(
         ) {
             return;
         }
-        if candidates.iter().any(|window: &ClipWindow| {
-            (window.start.as_secs_f64() - start_secs).abs() < 0.001
-        }) {
+        if candidates
+            .iter()
+            .any(|window: &ClipWindow| (window.start.as_secs_f64() - start_secs).abs() < 0.001)
+        {
             return;
         }
         candidates.push(ClipWindow::new(
@@ -348,8 +346,7 @@ pub fn mapped_region_holdout_candidates(
         .map(|window| rebase_clip_window_to_region(*window, region_a_start, region_a_len_secs))
         .collect();
 
-    let relative =
-        holdout_window_candidates(region_duration, &rebased, segment_length, 0.0);
+    let relative = holdout_window_candidates(region_duration, &rebased, segment_length, 0.0);
 
     relative
         .into_iter()
@@ -379,7 +376,12 @@ pub fn resolve_holdout_candidates(
     }
 
     let pick_duration = extent_a.effective().min(extent_b.effective());
-    holdout_window_candidates(pick_duration, discovery_windows, segment_length, offset_secs)
+    holdout_window_candidates(
+        pick_duration,
+        discovery_windows,
+        segment_length,
+        offset_secs,
+    )
 }
 
 fn rebase_clip_window_to_region(
@@ -416,7 +418,11 @@ mod tests {
 
     #[test]
     fn pick_holdout_window_middle_for_single_clip() {
-        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(15), ClipLabel::Start)];
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(15),
+            ClipLabel::Start,
+        )];
         let window =
             pick_holdout_window(Duration::from_secs(60), &discovery, Duration::from_secs(3))
                 .unwrap();
@@ -428,7 +434,11 @@ mod tests {
     fn pick_holdout_window_fits_two_clip_gap() {
         let discovery = vec![
             ClipWindow::new(Duration::ZERO, Duration::from_secs(15), ClipLabel::Start),
-            ClipWindow::new(Duration::from_secs(45), Duration::from_secs(60), ClipLabel::End),
+            ClipWindow::new(
+                Duration::from_secs(45),
+                Duration::from_secs(60),
+                ClipLabel::End,
+            ),
         ];
         let window =
             pick_holdout_window(Duration::from_secs(60), &discovery, Duration::from_secs(3))
@@ -439,8 +449,15 @@ mod tests {
 
     #[test]
     fn pick_holdout_window_none_when_shorter_than_segment() {
-        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(2), ClipLabel::Start)];
-        assert!(pick_holdout_window(Duration::from_secs(2), &discovery, Duration::from_secs(3)).is_none());
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(2),
+            ClipLabel::Start,
+        )];
+        assert!(
+            pick_holdout_window(Duration::from_secs(2), &discovery, Duration::from_secs(3))
+                .is_none()
+        );
     }
 
     #[test]
@@ -479,13 +496,8 @@ mod tests {
     #[test]
     fn anchor_holdout_candidates_prefer_overlap_safe_window_start() {
         let start = ClipWindow::new(Duration::ZERO, Duration::from_secs(900), ClipLabel::Start);
-        let candidates = anchor_holdout_candidates(
-            &start,
-            Duration::from_secs(3),
-            -7.326,
-            7_547.0,
-            7_547.0,
-        );
+        let candidates =
+            anchor_holdout_candidates(&start, Duration::from_secs(3), -7.326, 7_547.0, 7_547.0);
         assert!(!candidates.is_empty());
         let first = candidates[0].start.as_secs_f64();
         assert!(
@@ -493,9 +505,10 @@ mod tests {
             "first candidate should be near window start, got {first}"
         );
         assert!(
-            !candidates.iter().any(|window| {
-                (window.start.as_secs_f64() - 448.5).abs() < 1.0
-            }) || candidates[0].start.as_secs_f64() < 100.0,
+            !candidates
+                .iter()
+                .any(|window| { (window.start.as_secs_f64() - 448.5).abs() < 1.0 })
+                || candidates[0].start.as_secs_f64() < 100.0,
             "centered mid-window seek should not be first choice"
         );
 
@@ -504,13 +517,8 @@ mod tests {
             Duration::from_secs(7_547),
             ClipLabel::End,
         );
-        let end_candidates = anchor_holdout_candidates(
-            &end,
-            Duration::from_secs(3),
-            -6.674,
-            7_547.0,
-            7_547.0,
-        );
+        let end_candidates =
+            anchor_holdout_candidates(&end, Duration::from_secs(3), -6.674, 7_547.0, 7_547.0);
         assert!(!end_candidates.is_empty());
         assert!((end_candidates[0].start.as_secs_f64() - 6_647.0).abs() < 1.0);
     }
@@ -531,13 +539,7 @@ mod tests {
         assert!(!candidates.is_empty());
         assert!(
             candidates.iter().all(|window| {
-                !holdout_window_feasible(
-                    window.start.as_secs_f64(),
-                    3.0,
-                    3.0,
-                    120.0,
-                    5.0,
-                )
+                !holdout_window_feasible(window.start.as_secs_f64(), 3.0, 3.0, 120.0, 5.0)
             }),
             "short B duration should make every candidate infeasible"
         );
@@ -545,8 +547,11 @@ mod tests {
 
     #[test]
     fn holdout_candidates_include_early_fallback() {
-        let discovery =
-            vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start)];
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(600),
+            ClipLabel::Start,
+        )];
         let candidates = holdout_window_candidates(
             Duration::from_secs(203),
             &discovery,
@@ -554,13 +559,18 @@ mod tests {
             0.0,
         );
         assert!(candidates.len() >= 2);
-        assert!(candidates.iter().any(|window| window.start.as_secs_f64() < 50.0));
+        assert!(candidates
+            .iter()
+            .any(|window| window.start.as_secs_f64() < 50.0));
     }
 
     #[test]
     fn holdout_candidates_prefer_overlap_safe_start_for_negative_offset() {
-        let discovery =
-            vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(600), ClipLabel::Start)];
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(600),
+            ClipLabel::Start,
+        )];
         let candidates = holdout_window_candidates(
             Duration::from_secs(600),
             &discovery,
@@ -582,8 +592,7 @@ mod tests {
             ClipLabel::Start,
         )];
         let segment = Duration::from_secs(3);
-        let candidates =
-            mapped_region_holdout_candidates(&mapped, &discovery, segment);
+        let candidates = mapped_region_holdout_candidates(&mapped, &discovery, segment);
         assert!(!candidates.is_empty());
         let region_end = mapped.video_a_start_secs + mapped.shared_length_secs;
         for window in &candidates {
@@ -610,10 +619,13 @@ mod tests {
             video_b_end_secs: pseudo.video_a_end_secs,
             shared_length_secs: pseudo.shared_length_secs,
         };
-        let discovery = vec![ClipWindow::new(Duration::ZERO, Duration::from_secs(420), ClipLabel::Start)];
+        let discovery = vec![ClipWindow::new(
+            Duration::ZERO,
+            Duration::from_secs(420),
+            ClipLabel::Start,
+        )];
         let segment = Duration::from_secs(3);
-        let candidates =
-            mapped_region_holdout_candidates(&mapped, &discovery, segment);
+        let candidates = mapped_region_holdout_candidates(&mapped, &discovery, segment);
         assert!(!candidates.is_empty());
         let region_end = mapped.shared_length_secs;
         for window in &candidates {
@@ -641,11 +653,9 @@ mod tests {
             Duration::from_secs(102),
             ClipLabel::Start,
         )];
-        assert!(mapped_region_holdout_candidates(
-            &mapped,
-            &discovery,
-            Duration::from_secs(3),
-        )
-        .is_empty());
+        assert!(
+            mapped_region_holdout_candidates(&mapped, &discovery, Duration::from_secs(3),)
+                .is_empty()
+        );
     }
 }

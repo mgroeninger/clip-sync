@@ -9,9 +9,11 @@ use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::PatchAudio;
 use clip_sync_repair::domain::gap_fill_fit::FillConfidence;
-use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
 use clip_sync_repair::domain::policies::SeamResidualVerdict;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode};
+use clip_sync_repair::domain::policies::DEFAULT_RESIDUAL_FLOOR_OK_DB;
+use clip_sync_repair::domain::{
+    GapPatchSkipReason, GapPatchStatus, GapSignatureMode, ResidualGateMode,
+};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair_fixtures::energy_signature_production::{
     gap_report_from_floor_oracle, patch_request_from_repair, production_repair_config,
@@ -126,7 +128,10 @@ pub fn run_built_floor_oracle_cfg(
         None,
     ));
     let (_, decoded_a_mono_i16) = read_mono_wav(&decoded_a);
-    let decoded_a_mono: Vec<f32> = decoded_a_mono_i16.iter().map(|&s| s as f32 / 32767.0).collect();
+    let decoded_a_mono: Vec<f32> = decoded_a_mono_i16
+        .iter()
+        .map(|&s| s as f32 / 32767.0)
+        .collect();
 
     let report = gap_report_from_floor_oracle(
         &built.path_a,
@@ -162,7 +167,10 @@ pub fn run_built_floor_oracle_cfg(
     let (seam_pre, seam_post) = seam_pre_post(&gap.status);
     let dual_fit_used = matches!(
         &gap.status,
-        GapPatchStatus::Patched { dual_fit_used: true, .. }
+        GapPatchStatus::Patched {
+            dual_fit_used: true,
+            ..
+        }
     );
 
     FloorOracleRun {

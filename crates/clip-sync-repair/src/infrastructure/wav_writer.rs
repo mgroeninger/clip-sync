@@ -3,7 +3,7 @@ use std::path::Path;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
 
-use clip_sync::{MultiChannelPcm, WavBitDepth, resolve_output_bit_depth};
+use clip_sync::{resolve_output_bit_depth, MultiChannelPcm, WavBitDepth};
 
 use crate::application::error::RepairError;
 use crate::application::ports::PatchedAudioWriter;
@@ -46,7 +46,9 @@ impl PatchedAudioWriter for WavPatchedAudioWriter {
         match depth {
             WavBitDepth::Int16 => {
                 for &s in &audio.samples {
-                    let v = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+                    let v = (s * 32767.0)
+                        .round()
+                        .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
                     writer.write_sample(v).map_err(write_err)?;
                 }
             }

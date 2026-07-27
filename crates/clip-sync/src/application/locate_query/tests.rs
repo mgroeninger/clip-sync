@@ -26,7 +26,9 @@ fn chirp_sample(index: u64) -> i16 {
 
 /// Deterministic pseudo-noise unrelated to the chirp (LCG), for the no-match case.
 fn noise_sample(index: u64) -> i16 {
-    let x = index.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+    let x = index
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1);
     ((x >> 33) as i32 as i16) / 2
 }
 
@@ -171,7 +173,11 @@ fn run(
     QueryLocalization::from_reference_outcome(outcome, reference_is_a, extent_a, extent_b)
 }
 
-fn run_a_long(reference: &mut FakeSession, query: &mut FakeSession, config: &AlignConfig) -> QueryLocalization {
+fn run_a_long(
+    reference: &mut FakeSession,
+    query: &mut FakeSession,
+    config: &AlignConfig,
+) -> QueryLocalization {
     let extent_a = extent(reference.duration_secs);
     let extent_b = extent(query.duration_secs);
     run(reference, query, config, true, extent_a, extent_b)
@@ -185,7 +191,11 @@ fn locate_query_passes_mid_file_embed() {
 
     let loc = run_a_long(&mut reference, &mut query, &config);
 
-    assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
+    assert!(
+        loc.skip_reason.is_none(),
+        "unexpected skip: {:?}",
+        loc.skip_reason
+    );
     // Refined tier: post-PCM anchor within ±0.05 s of truth.
     assert!(
         (loc.anchor_ref_secs - 90.0).abs() <= 0.05,
@@ -218,7 +228,11 @@ fn locate_query_passes_mid_file_embed_when_b_is_reference() {
         extent_b,
     );
 
-    assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
+    assert!(
+        loc.skip_reason.is_none(),
+        "unexpected skip: {:?}",
+        loc.skip_reason
+    );
     assert!(
         (loc.anchor_ref_secs - anchor_secs).abs() <= 0.05,
         "anchor {} not within ±0.05 s of {anchor_secs}",
@@ -233,9 +247,7 @@ fn locate_query_passes_mid_file_embed_when_b_is_reference() {
     assert!((loc.mapped_region.video_a_start_secs - 0.0).abs() < 0.01);
     assert!((loc.mapped_region.video_a_end_secs - query_secs).abs() < 0.5);
     assert!((loc.mapped_region.video_b_start_secs - anchor_secs).abs() <= 0.05);
-    assert!(
-        (loc.mapped_region.video_b_end_secs - (anchor_secs + query_secs)).abs() < 0.5
-    );
+    assert!((loc.mapped_region.video_b_end_secs - (anchor_secs + query_secs)).abs() < 0.5);
     assert!(
         (loc.mapped_region.video_b_start_secs - (loc.mapped_region.video_a_start_secs + offset))
             .abs()
@@ -269,7 +281,10 @@ fn select_best_cluster_shoulder_within_query_is_not_ambiguous() {
     ];
     let (best, ambiguous) = super::select_best_cluster(&cands, 480.0).expect("cluster");
     assert!((best.anchor_ref_secs - 2700.0).abs() < 1e-9);
-    assert!(!ambiguous, "decaying shoulders within query length must not be ambiguous");
+    assert!(
+        !ambiguous,
+        "decaying shoulders within query length must not be ambiguous"
+    );
 }
 
 #[test]
@@ -277,7 +292,10 @@ fn select_best_cluster_distant_strong_peak_is_ambiguous() {
     // Two comparably strong peaks a full query length apart (genuine repeated content).
     let cands = vec![candidate(0.0, 0.98), candidate(600.0, 0.95)];
     let (_, ambiguous) = super::select_best_cluster(&cands, 480.0).expect("cluster");
-    assert!(ambiguous, "two strong peaks at distinct locations must be ambiguous");
+    assert!(
+        ambiguous,
+        "two strong peaks at distinct locations must be ambiguous"
+    );
 }
 
 #[test]
@@ -326,7 +344,11 @@ fn locate_query_respects_window_cap() {
         "stride {} should widen past base 60",
         loc.search_stride_secs
     );
-    assert!(loc.windows_scored <= 2, "windows_scored={}", loc.windows_scored);
+    assert!(
+        loc.windows_scored <= 2,
+        "windows_scored={}",
+        loc.windows_scored
+    );
 }
 
 #[test]
@@ -376,11 +398,25 @@ fn resolve_mode_auto_stays_symmetric_for_equal_pair() {
 fn resolve_mode_explicit_overrides() {
     use crate::application::config::AlignmentMode;
     assert_eq!(
-        resolve_alignment_mode(AlignmentMode::Symmetric, &extent(10.0), &extent(3600.0), 1, 1, 0.5),
+        resolve_alignment_mode(
+            AlignmentMode::Symmetric,
+            &extent(10.0),
+            &extent(3600.0),
+            1,
+            1,
+            0.5
+        ),
         AlignmentModeUsed::Symmetric
     );
     assert_eq!(
-        resolve_alignment_mode(AlignmentMode::QueryReference, &extent(1000.0), &extent(1000.0), 2, 2, 0.5),
+        resolve_alignment_mode(
+            AlignmentMode::QueryReference,
+            &extent(1000.0),
+            &extent(1000.0),
+            2,
+            2,
+            0.5
+        ),
         AlignmentModeUsed::QueryReference
     );
 }
@@ -395,6 +431,9 @@ fn locate_query_ambiguous_repeat_lowers_confidence() {
     let loc = run_a_long(&mut reference, &mut query, &config);
 
     if loc.skip_reason.is_none() {
-        assert!(loc.ambiguous, "expected ambiguous localization on repeated content");
+        assert!(
+            loc.ambiguous,
+            "expected ambiguous localization on repeated content"
+        );
     }
 }

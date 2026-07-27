@@ -7,7 +7,10 @@ use clip_sync::LogLevel;
 use crate::infrastructure::config::OutputFormat;
 
 #[derive(Debug, Parser)]
-#[command(name = "clip-sync", about = "Align two videos by comparing audio fingerprints")]
+#[command(
+    name = "clip-sync",
+    about = "Align two videos by comparing audio fingerprints"
+)]
 pub struct Cli {
     /// Path to the first video file
     pub video_a: PathBuf,
@@ -202,10 +205,7 @@ mod tests {
             "[default: 60]",
             "[default: disabled]",
         ] {
-            assert!(
-                help.contains(needle),
-                "help missing {needle:?}:\n{help}"
-            );
+            assert!(help.contains(needle), "help missing {needle:?}:\n{help}");
         }
     }
 }

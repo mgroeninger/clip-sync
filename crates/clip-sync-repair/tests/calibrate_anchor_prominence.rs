@@ -60,7 +60,10 @@ fn calibrate_anchor_prominence_csv() {
         let src_path = source_cache_path(source);
         let master = temp.path().join(format!("{source_id}.wav"));
         if !prepare_source_master_wav(&src_path, &master, SAMPLE_RATE, Some(MASTER_SECS)) {
-            eprintln!("SKIP {label}: ffmpeg decode failed for {}", src_path.display());
+            eprintln!(
+                "SKIP {label}: ffmpeg decode failed for {}",
+                src_path.display()
+            );
             continue;
         }
         let (rate, samples) = read_mono_wav(&master);

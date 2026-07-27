@@ -8,12 +8,12 @@
 
 use serde::Serialize;
 
+use crate::domain::policies::EndClipAnchor;
 use crate::domain::{
     format_time_range, AlignmentModeUsed, AlignmentResult, ClipLabel, ClipMatch,
     ClipRepetitionReport, HighRateRefinement, OffsetVerification, QueryLocalization,
     RepetitionFinding, TimelineOverlap,
 };
-use crate::domain::policies::EndClipAnchor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -387,10 +387,7 @@ pub fn format_end_clip_anchor_line(anchor: EndClipAnchorReport) -> String {
 }
 
 /// Clip window line for symmetric runs; end clip may show separate A and B absolute windows.
-pub fn format_symmetric_clip_window_line(
-    clip: &ClipMatchReport,
-    show_diagnostics: bool,
-) -> String {
+pub fn format_symmetric_clip_window_line(clip: &ClipMatchReport, show_diagnostics: bool) -> String {
     let label = clip_label_report_name(clip.label);
     let window = format_time_range(clip.window_start_secs, clip.window_end_secs);
     let window_prefix = if clip.label == ClipLabelReport::End {
@@ -420,17 +417,12 @@ pub fn format_symmetric_clip_window_line(
                     || (be - clip.window_end_secs).abs() > 1e-9
         );
         if show_diagnostics || b_differs {
-            let (b_start, b_end) = match (
-                clip.video_b_window_start_secs,
-                clip.video_b_window_end_secs,
-            ) {
-                (Some(start), Some(end)) => (start, end),
-                _ => (clip.window_start_secs, clip.window_end_secs),
-            };
-            line.push_str(&format!(
-                "; B {}",
-                format_time_range(b_start, b_end)
-            ));
+            let (b_start, b_end) =
+                match (clip.video_b_window_start_secs, clip.video_b_window_end_secs) {
+                    (Some(start), Some(end)) => (start, end),
+                    _ => (clip.window_start_secs, clip.window_end_secs),
+                };
+            line.push_str(&format!("; B {}", format_time_range(b_start, b_end)));
         }
     }
 

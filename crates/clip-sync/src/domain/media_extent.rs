@@ -48,19 +48,13 @@ mod tests {
 
     #[test]
     fn effective_uses_decodable_when_shorter() {
-        let extent = MediaExtent::new(
-            Duration::from_secs(100),
-            Some(Duration::from_secs(60)),
-        );
+        let extent = MediaExtent::new(Duration::from_secs(100), Some(Duration::from_secs(60)));
         assert_eq!(extent.effective(), Duration::from_secs(60));
     }
 
     #[test]
     fn effective_clamps_decodable_to_declared() {
-        let extent = MediaExtent::new(
-            Duration::from_secs(30),
-            Some(Duration::from_secs(60)),
-        );
+        let extent = MediaExtent::new(Duration::from_secs(30), Some(Duration::from_secs(60)));
         assert_eq!(extent.effective(), Duration::from_secs(30));
     }
 

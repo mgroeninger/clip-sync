@@ -55,7 +55,8 @@ fn diag_w5_timing_offset_gate_probe() {
         (8.0, -4_500.0, true),
         (32.0, -9_000.0, true),
     ] {
-        let fixture = build_w5_timing_offset_seam(SR, 1, PEAK_OFFSET_SECS, COLLAR_SECS, off_ms, drift_ppm);
+        let fixture =
+            build_w5_timing_offset_seam(SR, 1, PEAK_OFFSET_SECS, COLLAR_SECS, off_ms, drift_ppm);
         let repair = w5_anchor_rescue_repair(AnchorSeamMode::Auto, 1.0);
         let scores = score_w5_fixture(&fixture, &repair);
 
@@ -69,7 +70,11 @@ fn diag_w5_timing_offset_gate_probe() {
         }
         eprintln!("  joint_winner: {:?}", scores.joint_winner);
         let passed = scores.brackets.iter().filter(|b| b.passed_gate).count();
-        eprintln!("  brackets: {} ({} passed gate)", scores.brackets.len(), passed);
+        eprintln!(
+            "  brackets: {} ({} passed gate)",
+            scores.brackets.len(),
+            passed
+        );
         let mut stages = std::collections::BTreeMap::<&str, usize>::new();
         for b in scores.brackets.iter().filter(|b| !b.passed_gate) {
             *stages.entry(b.failure_stage.unwrap_or("?")).or_default() += 1;
@@ -109,16 +114,28 @@ fn report_grid(label: &str, cells: &[W5TimingOffsetCell]) {
     use std::collections::BTreeMap;
     let mut by_drift: BTreeMap<i64, (f64, f64)> = BTreeMap::new(); // drift -> (max recoverable off, min broken off)
     for c in cells {
-        let e = by_drift.entry(c.drift_ppm as i64).or_insert((f64::NAN, f64::NAN));
+        let e = by_drift
+            .entry(c.drift_ppm as i64)
+            .or_insert((f64::NAN, f64::NAN));
         if c.recoverable() {
-            e.0 = if e.0.is_nan() { c.seam_offset_ms } else { e.0.max(c.seam_offset_ms) };
+            e.0 = if e.0.is_nan() {
+                c.seam_offset_ms
+            } else {
+                e.0.max(c.seam_offset_ms)
+            };
         } else if c.lag.is_some() {
-            e.1 = if e.1.is_nan() { c.seam_offset_ms } else { e.1.min(c.seam_offset_ms) };
+            e.1 = if e.1.is_nan() {
+                c.seam_offset_ms
+            } else {
+                e.1.min(c.seam_offset_ms)
+            };
         }
     }
     eprintln!("  boundary (max recoverable offset → first broken offset), per drift:");
     for (drift, (max_ok, min_broken)) in &by_drift {
-        eprintln!("    drift={drift:>7} ppm: recoverable ≤ {max_ok:.0} ms, breaks at {min_broken:.0} ms");
+        eprintln!(
+            "    drift={drift:>7} ppm: recoverable ≤ {max_ok:.0} ms, breaks at {min_broken:.0} ms"
+        );
     }
 }
 

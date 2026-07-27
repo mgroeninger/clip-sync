@@ -15,7 +15,9 @@
 fn from_decode_dump_projection_preserves_golden_baseline() {
     for diagnostics in [false, true] {
         let corpus =
-            clip_sync_repair_fixtures::fingerprint_corpus_fixtures::synth_ab_from_decode_corpus(diagnostics);
+            clip_sync_repair_fixtures::fingerprint_corpus_fixtures::synth_ab_from_decode_corpus(
+                diagnostics,
+            );
         assert!(
             !corpus.gaps.is_empty(),
             "synthetic from-decode dump produced no gaps (diagnostics={diagnostics})"

@@ -8,10 +8,9 @@ use crate::application::offset_refinement::refine_holdout_segment_lag;
 use crate::application::ports::{MediaSession, PcmCorrelator, ProgressReporter, Resampler};
 use crate::domain::clip_window::ClipLabel;
 use crate::domain::{
-    alignment::clip_with_label,
-    anchor_holdout_candidates, holdout_b_window_for_offset, holdout_extract_sufficient,
-    holdout_pick_duration, holdout_window_feasible, refresh_alignment_drift_summary,
-    refresh_recommended_offset, refresh_start_overlap,
+    alignment::clip_with_label, anchor_holdout_candidates, holdout_b_window_for_offset,
+    holdout_extract_sufficient, holdout_pick_duration, holdout_window_feasible,
+    refresh_alignment_drift_summary, refresh_recommended_offset, refresh_start_overlap,
     resolve_holdout_candidates, AlignmentModeUsed, AlignmentResult, AudioTrack, ClipWindow,
     HighRateAnchorRefinement, HighRateRefinement, MediaExtent, MonoPcmClip,
 };
@@ -55,8 +54,7 @@ pub fn apply_high_rate_refinement<MS: MediaSession>(
     if segment_length.is_zero() || pick_duration < segment_length {
         debug!(
             pick_duration_secs = pick_duration.as_secs_f64(),
-            segment_length_secs,
-            "high-rate refine skipped: hold-out longer than available region"
+            segment_length_secs, "high-rate refine skipped: hold-out longer than available region"
         );
         result.high_rate_refinement = Some(skipped_refinement(
             0.0,
@@ -102,12 +100,7 @@ struct HighRateRunParams {
 }
 
 impl HighRateRunParams {
-    fn new(
-        alignment: &AlignmentConfig,
-        segment_length: Duration,
-        dur_a: f64,
-        dur_b: f64,
-    ) -> Self {
+    fn new(alignment: &AlignmentConfig, segment_length: Duration, dur_a: f64, dur_b: f64) -> Self {
         Self {
             segment_length,
             segment_length_secs: segment_length.as_secs_f64(),
@@ -148,7 +141,9 @@ fn dual_anchor_eligible(result: &AlignmentResult, discovery_windows: &[ClipWindo
         .is_some_and(|clip| clip.aligned && clip.offset_secs.is_some());
     let end_ready = clip_with_label(&result.clips, ClipLabel::End)
         .is_some_and(|clip| clip.aligned && clip.offset_secs.is_some());
-    let has_windows = discovery_windows.iter().any(|w| w.label == ClipLabel::Start)
+    let has_windows = discovery_windows
+        .iter()
+        .any(|w| w.label == ClipLabel::Start)
         && discovery_windows.iter().any(|w| w.label == ClipLabel::End);
     start_ready && end_ready && has_windows
 }
@@ -286,8 +281,7 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
             continue;
         }
 
-        let Some(b_window) =
-            holdout_b_window_for_offset(holdout, run.segment_length, offset_secs)
+        let Some(b_window) = holdout_b_window_for_offset(holdout, run.segment_length, offset_secs)
         else {
             continue;
         };
@@ -327,7 +321,10 @@ fn apply_single_holdout_high_rate_refinement<MS: MediaSession>(
                 }
             }
             Err(e) => {
-                debug_media_error(&e, "high-rate hold-out extract A failed, trying next candidate");
+                debug_media_error(
+                    &e,
+                    "high-rate hold-out extract A failed, trying next candidate",
+                );
                 last_failure = format!("{e}");
             }
         }
@@ -418,8 +415,7 @@ fn refine_at_discovery_anchor<MS: MediaSession>(
         );
     }
 
-    let mut last_failure =
-        String::from("hold-out extract failed for all anchor candidates");
+    let mut last_failure = String::from("hold-out extract failed for all anchor candidates");
     let mut last_window_start = 0.0;
 
     for holdout in &candidates {
@@ -532,11 +528,7 @@ fn discovery_window(windows: &[ClipWindow], label: ClipLabel) -> &ClipWindow {
 }
 
 fn apply_anchor_adjustment(result: &mut AlignmentResult, label: ClipLabel, adjustment_secs: f64) {
-    if let Some(clip) = result
-        .clips
-        .iter_mut()
-        .find(|clip| clip.label == label)
-    {
+    if let Some(clip) = result.clips.iter_mut().find(|clip| clip.label == label) {
         if let Some(offset) = clip.offset_secs.as_mut() {
             *offset += adjustment_secs;
         }
@@ -548,7 +540,10 @@ fn dual_skip_reason(
     end: &HighRateAnchorRefinement,
 ) -> Option<String> {
     if start.skipped && end.skipped {
-        let start_reason = start.skip_reason.as_deref().unwrap_or("start anchor skipped");
+        let start_reason = start
+            .skip_reason
+            .as_deref()
+            .unwrap_or("start anchor skipped");
         let end_reason = end.skip_reason.as_deref().unwrap_or("end anchor skipped");
         Some(format!("start: {start_reason}; end: {end_reason}"))
     } else {

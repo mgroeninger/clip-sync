@@ -2,17 +2,21 @@
 
 use clip_sync_repair::domain::align::ScanAlignment;
 
-use clip_sync_repair::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode};
-use clip_sync_repair::domain::gap_fill_fit::{match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights};
+use clip_sync_repair::domain::fill_offset::{
+    resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode,
+};
+use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
+use clip_sync_repair::domain::gap_fill_fit::{
+    match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights,
+};
 use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use clip_sync_repair::domain::gap_structure::{self, StructureMatchParams};
-use clip_sync_repair::domain::repair_profile::gap_extension_slack_secs;
 use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
     self, border_templates_for_gap, border_templates_per_channel_for_gap, GapBorderSpec,
     RefinedGapFrames, SeamTemplates,
 };
-use clip_sync_repair::domain::gap_fill_fit::WaveformSeamContext;
+use clip_sync_repair::domain::repair_profile::gap_extension_slack_secs;
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
 
@@ -101,8 +105,7 @@ impl PatchGeometryPreview {
             silence_peak_fraction: self.patch_structure_params.silence_peak_fraction,
             absolute_rms_floor: self.patch_structure_params.absolute_silence_rms,
         };
-        let (a_pre, a_post) =
-            border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
+        let (a_pre, a_post) = border_templates_for_gap(&fixture.a_samples, ch, &border_spec);
         let (a_pre_ch, a_post_ch) =
             border_templates_per_channel_for_gap(&fixture.a_samples, ch, &border_spec);
         let b_mono = interleaved_to_mono(&haystack, ch);
@@ -271,28 +274,28 @@ pub fn preview_patch_geometry(
     let refined_b_end_secs = refined_a_end_secs + gap_offset_secs;
 
     let context_frames = (params.gap_signature_context_secs * rate as f64).round() as usize;
-    let bin_frames =
-        ((params.gap_signature_bin_ms as f64 / 1000.0) * rate as f64).round() as usize;
+    let bin_frames = ((params.gap_signature_bin_ms as f64 / 1000.0) * rate as f64).round() as usize;
     let margin_secs = params.fill_align_margin_secs;
     let border_search_secs = params.fill_border_search_secs;
     let search_radius_secs = border_search_secs.max(margin_secs);
-    let extend_slack_secs = gap_extension_slack_secs(clip_sync_repair::domain::RepairPatchConfigView {
-        fill_mode: if params.fill_mode_fit {
-            clip_sync_repair::domain::FillMode::Fit
-        } else {
-            clip_sync_repair::domain::FillMode::Gate
-        },
-        fit_boundary_search: params.fit_boundary_search,
-        gap_end_extend_on_post_seam_fail: params.gap_end_extend_on_post_seam_fail,
-        gap_start_extend_on_pre_seam_fail: params.gap_start_extend_on_pre_seam_fail,
-        gap_end_extend_max_ms: params.gap_end_extend_max_ms,
-        disable_structure_trust: false,
-        short_gap_one_strong_seam_fallback: true,
-        fill_anchor_search_prior_weight: 0.0,
-        fill_anchor_retry_marginal: false,
-        fill_offset_mode: params.fill_offset_mode,
-        anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode::Off,
-    });
+    let extend_slack_secs =
+        gap_extension_slack_secs(clip_sync_repair::domain::RepairPatchConfigView {
+            fill_mode: if params.fill_mode_fit {
+                clip_sync_repair::domain::FillMode::Fit
+            } else {
+                clip_sync_repair::domain::FillMode::Gate
+            },
+            fit_boundary_search: params.fit_boundary_search,
+            gap_end_extend_on_post_seam_fail: params.gap_end_extend_on_post_seam_fail,
+            gap_start_extend_on_pre_seam_fail: params.gap_start_extend_on_pre_seam_fail,
+            gap_end_extend_max_ms: params.gap_end_extend_max_ms,
+            disable_structure_trust: false,
+            short_gap_one_strong_seam_fallback: true,
+            fill_anchor_search_prior_weight: 0.0,
+            fill_anchor_retry_marginal: false,
+            fill_offset_mode: params.fill_offset_mode,
+            anchor_seam_mode: clip_sync_repair::domain::AnchorSeamMode::Off,
+        });
     let b_extract_start_secs = (refined_b_start_secs
         - params.gap_signature_context_secs
         - search_radius_secs
@@ -320,10 +323,10 @@ pub fn preview_patch_geometry(
         absolute_silence_rms,
     };
 
-    let offset_nominal_start = ((refined_b_start_secs - b_extract_start_secs) * rate as f64)
-        .round() as usize;
-    let gap_end_in_haystack = ((refined_b_end_secs - b_extract_start_secs) * rate as f64)
-        .round() as usize;
+    let offset_nominal_start =
+        ((refined_b_start_secs - b_extract_start_secs) * rate as f64).round() as usize;
+    let gap_end_in_haystack =
+        ((refined_b_end_secs - b_extract_start_secs) * rate as f64).round() as usize;
 
     let haystack_frames = slice_b_interleaved(
         &fixture.b_samples,

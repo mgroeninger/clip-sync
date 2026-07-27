@@ -40,7 +40,11 @@ pub struct ReferenceLocalizationOutcome {
 
 impl ReferenceLocalizationOutcome {
     /// A search outcome carrying no anchor (no match / skipped), with a reason.
-    pub fn skipped(reason: impl Into<String>, windows_scored: u32, search_stride_secs: f64) -> Self {
+    pub fn skipped(
+        reason: impl Into<String>,
+        windows_scored: u32,
+        search_stride_secs: f64,
+    ) -> Self {
         Self {
             anchor_ref_secs: 0.0,
             query_duration_secs: 0.0,
@@ -159,7 +163,11 @@ impl QueryLocalization {
     }
 
     /// A localization carrying no recommendation (no match / skipped), with a reason.
-    pub fn skipped(reason: impl Into<String>, windows_scored: u32, search_stride_secs: f64) -> Self {
+    pub fn skipped(
+        reason: impl Into<String>,
+        windows_scored: u32,
+        search_stride_secs: f64,
+    ) -> Self {
         let empty = TimelineOverlap {
             video_a_start_secs: 0.0,
             video_a_end_secs: 0.0,
@@ -198,10 +206,7 @@ pub fn query_reference_is_a(loc: &QueryLocalization) -> bool {
 
 /// Assert stored offset matches orientation: `-anchor_ref` when A is reference, `+anchor_ref` when B is.
 #[cfg(test)]
-pub fn assert_recommended_offset_matches_orientation(
-    loc: &QueryLocalization,
-    tolerance_secs: f64,
-) {
+pub fn assert_recommended_offset_matches_orientation(loc: &QueryLocalization, tolerance_secs: f64) {
     let offset = loc
         .recommended_offset_secs()
         .expect("expected recommended offset");
@@ -371,12 +376,8 @@ mod tests {
     #[test]
     fn from_reference_outcome_a_reference_maps_anchor() {
         let outcome = sample_outcome(2700.0);
-        let loc = QueryLocalization::from_reference_outcome(
-            outcome,
-            true,
-            extent(3600.0),
-            extent(480.0),
-        );
+        let loc =
+            QueryLocalization::from_reference_outcome(outcome, true, extent(3600.0), extent(480.0));
         assert_eq!(loc.recommended_offset_secs(), Some(-2700.0));
         assert_b_equals_a_plus_offset(&loc);
     }
@@ -401,12 +402,8 @@ mod tests {
     #[test]
     fn from_reference_outcome_skipped_matches_skipped() {
         let outcome = ReferenceLocalizationOutcome::skipped("no match", 40, 60.0);
-        let loc = QueryLocalization::from_reference_outcome(
-            outcome,
-            true,
-            extent(3600.0),
-            extent(480.0),
-        );
+        let loc =
+            QueryLocalization::from_reference_outcome(outcome, true, extent(3600.0), extent(480.0));
         assert_eq!(loc.skip_reason.as_deref(), Some("no match"));
         assert_eq!(loc.recommended_offset_secs(), None);
     }
@@ -416,12 +413,8 @@ mod tests {
     #[should_panic(expected = "reference_is_a")]
     fn from_reference_outcome_debug_asserts_when_reference_is_a_wrong() {
         let outcome = sample_outcome(90.0);
-        let _ = QueryLocalization::from_reference_outcome(
-            outcome,
-            true,
-            extent(70.0),
-            extent(180.0),
-        );
+        let _ =
+            QueryLocalization::from_reference_outcome(outcome, true, extent(70.0), extent(180.0));
     }
 
     #[test]
@@ -484,10 +477,7 @@ mod tests {
     #[test]
     fn mapped_region_clamps_to_effective_duration() {
         // Decodable extent shorter than declared clips the A end.
-        let extent_a = MediaExtent::new(
-            Duration::from_secs(3600),
-            Some(Duration::from_secs(3000)),
-        );
+        let extent_a = MediaExtent::new(Duration::from_secs(3600), Some(Duration::from_secs(3000)));
         let region = compute_mapped_region(2700.0, 480.0, extent_a, extent(480.0));
         assert!((region.video_a_end_secs - 3000.0).abs() < 1e-9);
         // B end follows in B-space: 3000 - 2700 = 300.
@@ -509,7 +499,10 @@ mod tests {
             extent(3600.0),
             extent(480.0),
         );
-        assert_eq!(loc.clip_on_a_start_secs, loc.mapped_region.video_a_start_secs);
+        assert_eq!(
+            loc.clip_on_a_start_secs,
+            loc.mapped_region.video_a_start_secs
+        );
         assert_eq!(loc.clip_on_a_end_secs, loc.mapped_region.video_a_end_secs);
         assert_eq!(loc.clip_on_b_end_secs, loc.mapped_region.video_b_end_secs);
         assert_eq!(loc.recommended_offset_secs(), Some(-2700.0));
@@ -531,7 +524,10 @@ mod tests {
         );
         let result = build_query_alignment_result(loc, 0.3);
 
-        assert_eq!(result.alignment_mode_used, Some(AlignmentModeUsed::QueryReference));
+        assert_eq!(
+            result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference)
+        );
         assert!(result.start_aligned);
         assert_eq!(result.recommended_offset_secs, Some(-2700.0));
         let start = result.start_clip().expect("synthetic start clip");
@@ -550,7 +546,10 @@ mod tests {
         assert_eq!(result.recommended_offset_secs, None);
         assert!(result.start_overlap.is_none());
         // Still records that query mode ran (for reporting) + the skip reason.
-        assert_eq!(result.alignment_mode_used, Some(AlignmentModeUsed::QueryReference));
+        assert_eq!(
+            result.alignment_mode_used,
+            Some(AlignmentModeUsed::QueryReference)
+        );
         assert!(result
             .query_localization
             .as_ref()

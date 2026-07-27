@@ -303,7 +303,10 @@ impl GapRow {
             }
             return Some(SpliceDiag::Splice);
         }
-        if self.uniqueness_margin.is_some_and(|m| m < LOW_UNIQUENESS_MARGIN) {
+        if self
+            .uniqueness_margin
+            .is_some_and(|m| m < LOW_UNIQUENESS_MARGIN)
+        {
             Some(SpliceDiag::AliasSuspect)
         } else {
             Some(SpliceDiag::Splice)
@@ -392,7 +395,8 @@ impl GapRow {
     /// dropout? Uses the registration-independent nominal-span B occupancy: `silence ≈ 1` ⇒ B is quiet at
     /// the same program time as A's gap ⇒ nothing to fill, not a repair failure. `None` if not captured.
     pub fn program_quiet(&self) -> Option<bool> {
-        self.donor_nominal_silence.map(|s| s >= PROGRAM_QUIET_SILENCE_FRAC)
+        self.donor_nominal_silence
+            .map(|s| s >= PROGRAM_QUIET_SILENCE_FRAC)
     }
 
     /// Nominal vs aligned donor occupancy disagree strongly ⇒ the per-shoulder registration moved the span

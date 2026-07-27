@@ -561,8 +561,16 @@ mod tests {
     fn write_healthy_pair(dir: &Path) {
         let corpus = healthy_corpus();
         write(dir, "corpus.json", &corpus);
-        write(dir, "aaaaaaaa_bbbb_t00-00-00_g000_full_patch.json", &single_gap(&corpus, 0));
-        write(dir, "aaaaaaaa_bbbb_t00-00-10_g001_full_skip.json", &single_gap(&corpus, 1));
+        write(
+            dir,
+            "aaaaaaaa_bbbb_t00-00-00_g000_full_patch.json",
+            &single_gap(&corpus, 0),
+        );
+        write(
+            dir,
+            "aaaaaaaa_bbbb_t00-00-10_g001_full_skip.json",
+            &single_gap(&corpus, 1),
+        );
         write(
             dir,
             "manifest.json",
@@ -612,7 +620,10 @@ mod tests {
 
         let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
         assert!(!report.ok());
-        assert!(report.issues.iter().any(|i| i.message.contains("gate Ok but placement missing")));
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("gate Ok but placement missing")));
     }
 
     #[test]

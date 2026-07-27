@@ -284,7 +284,6 @@ struct Outcome {
 const DEFAULT_DRIFT_EPS_MS: f64 = 1.0;
 const DEFAULT_TAIL_SECS: f64 = 30.0;
 
-
 /// Aggregate every A/B-pair `corpus.json` found under `roots` (each root is scanned for its own
 /// `corpus.json` and for immediate subdirs that have one). `drift_eps_ms` splits constant vs drift;
 /// `tail_secs` is the long-tail (P6) duration cutoff.
@@ -301,9 +300,13 @@ pub fn analyze_dirs(roots: &[PathBuf], drift_eps_ms: f64, tail_secs: f64) -> Cor
                 Some(file) => {
                     report.pairs.push(label.clone());
                     for gap in &file.gaps {
-                        report
-                            .rows
-                            .push(gap_row(&label, &file.source, gap, drift_eps_ms, tail_secs));
+                        report.rows.push(gap_row(
+                            &label,
+                            &file.source,
+                            gap,
+                            drift_eps_ms,
+                            tail_secs,
+                        ));
                     }
                 }
                 None => eprintln!("warn: no parseable corpus in {}", pair_dir.display()),
@@ -392,10 +395,7 @@ fn read_corpus_json(path: &Path) -> Option<CorpusFile> {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
-            eprintln!(
-                "warning: failed to read corpus {}: {err}",
-                path.display()
-            );
+            eprintln!("warning: failed to read corpus {}: {err}", path.display());
             return None;
         }
     };
@@ -403,10 +403,7 @@ fn read_corpus_json(path: &Path) -> Option<CorpusFile> {
         Ok(file) => Some(file),
         Err(err) => {
             // Do not silently fall back to stale per-gap files when schema drifts.
-            eprintln!(
-                "warning: failed to parse corpus {}: {err}",
-                path.display()
-            );
+            eprintln!("warning: failed to parse corpus {}: {err}", path.display());
             None
         }
     }
@@ -455,12 +452,19 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         _ => None,
     };
     let base_uniqueness_z = both(pre.and_then(|s| s.peak_z), post.and_then(|s| s.peak_z));
-    let uniqueness_prom = worst(pre.and_then(|s| s.prominence), post.and_then(|s| s.prominence));
+    let uniqueness_prom = worst(
+        pre.and_then(|s| s.prominence),
+        post.and_then(|s| s.prominence),
+    );
 
     // First-class splice / donor / wide-envelope when present (post-rescan).
     let splice = gap.splice.as_ref();
-    let peak_r_pre = splice.map(|s| s.pre_peak_r).or_else(|| pre.map(|s| s.peak_r));
-    let peak_r_post = splice.map(|s| s.post_peak_r).or_else(|| post.map(|s| s.peak_r));
+    let peak_r_pre = splice
+        .map(|s| s.pre_peak_r)
+        .or_else(|| pre.map(|s| s.peak_r));
+    let peak_r_post = splice
+        .map(|s| s.post_peak_r)
+        .or_else(|| post.map(|s| s.peak_r));
     let splice_step_ms = splice.map(|s| s.step_ms);
     let splice_edge_pinned = splice.and_then(|s| s.edge_pinned);
     // Prefer the splice's per-shoulder z (same `baseline_lag` source), but stay two-sided: fall back to the
@@ -514,11 +518,22 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         registration_from_legacy_lag,
         donor_continuous: gap.donor_interior.as_ref().map(|d| d.continuous),
         donor_rms_db: gap.donor_interior.as_ref().map(|d| d.rms_db),
-        wide_env_pre_lag_ms: gap.wide_envelope.as_ref().and_then(|w| w.pre.map(|p| p.peak_lag_ms)),
-        wide_env_post_lag_ms: gap.wide_envelope.as_ref().and_then(|w| w.post.map(|p| p.peak_lag_ms)),
+        wide_env_pre_lag_ms: gap
+            .wide_envelope
+            .as_ref()
+            .and_then(|w| w.pre.map(|p| p.peak_lag_ms)),
+        wide_env_post_lag_ms: gap
+            .wide_envelope
+            .as_ref()
+            .and_then(|w| w.post.map(|p| p.peak_lag_ms)),
         // Worst (least-cancelling) side: max of the two headrooms. `None` if any dB was null (non-finite).
         residual_headroom_db: gap.residual.as_ref().and_then(|r| {
-            match (r.chosen_pre_db, r.floor_pre_db, r.chosen_post_db, r.floor_post_db) {
+            match (
+                r.chosen_pre_db,
+                r.floor_pre_db,
+                r.chosen_post_db,
+                r.floor_post_db,
+            ) {
                 (Some(cp), Some(fp), Some(cq), Some(fq)) => Some((cp - fp).max(cq - fq)),
                 _ => None,
             }
@@ -541,7 +556,11 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         best_bracket_seam_pre: best_seam_bracket(&gap.brackets).and_then(|b| b.seam_pre),
         best_bracket_seam_post: best_seam_bracket(&gap.brackets).and_then(|b| b.seam_post),
         brackets_total: gap.brackets.len(),
-        brackets_passing: gap.brackets.iter().filter(|b| b.failure_stage.is_none()).count(),
+        brackets_passing: gap
+            .brackets
+            .iter()
+            .filter(|b| b.failure_stage.is_none())
+            .count(),
         // Failure stage of the bracket with the highest min-seam (the closest to passing).
         closest_failure_stage: gap
             .brackets
@@ -552,7 +571,9 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
                     (Some(a), Some(c)) => a.min(c),
                     _ => f64::NEG_INFINITY,
                 };
-                mn(x).partial_cmp(&mn(y)).unwrap_or(std::cmp::Ordering::Equal)
+                mn(x)
+                    .partial_cmp(&mn(y))
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .and_then(|b| b.failure_stage.clone()),
         seam_recovered_r: seam.map(|p| p.recovered_r),
@@ -566,13 +587,18 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         dualfit_post_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_r),
         dualfit_pass: gap.splice_dualfit.as_ref().map(|d| d.gate_pass),
         dualfit_post_global_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_global_r),
-        dualfit_seam_prom: gap.splice_dualfit.as_ref().and_then(|d| match (d.pre_seam_prom, d.post_seam_prom) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
+        dualfit_seam_prom: gap.splice_dualfit.as_ref().and_then(|d| {
+            match (d.pre_seam_prom, d.post_seam_prom) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            }
         }),
-        donor_nominal_silence: gap.donor_interior_nominal.as_ref().map(|d| d.silence_fraction),
+        donor_nominal_silence: gap
+            .donor_interior_nominal
+            .as_ref()
+            .map(|d| d.silence_fraction),
         donor_nominal_cont: gap.donor_interior_nominal.as_ref().map(|d| d.continuous),
         donor_aligned_silence: gap.donor_interior.as_ref().map(|d| d.silence_fraction),
         b_gap_floor_db: gap.b_levels.as_ref().map(|l| l.gap_floor_db),
@@ -650,13 +676,16 @@ fn curated_row_label(file: &str) -> &str {
 /// Each row is labelled by its fixture file stem, so golden keys are unique despite colliding source-gap
 /// indices. Media-free — reads the committed fixture bytes directly.
 pub fn curated_gap_cell_rows() -> Vec<GapRow> {
-    use clip_sync_repair_fixtures::gap_cell_fixtures::{curated_fixtures_dir, load_gap_cell_fixtures};
+    use clip_sync_repair_fixtures::gap_cell_fixtures::{
+        curated_fixtures_dir, load_gap_cell_fixtures,
+    };
     let dir = curated_fixtures_dir();
     load_gap_cell_fixtures()
         .into_iter()
         .map(|fx| {
             let path = dir.join(&fx.file);
-            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let bytes =
+                std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
             curated_single_row(&bytes, curated_row_label(&fx.file))
         })
         .collect()

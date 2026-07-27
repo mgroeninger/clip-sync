@@ -27,7 +27,6 @@ pub(super) fn patch_anchor_policy(request: &PatchAudioRequest) -> PatchAnchorPol
     }
 }
 
-
 pub(super) fn build_patch_anchor_candidates(
     request: &PatchAudioRequest,
     regions: &[FillRegion],
@@ -139,7 +138,6 @@ pub(super) struct AnchoredRetryState<'a> {
     pub(super) region_results: &'a mut [(f64, f64, RegionPatchOutcome, GapTags)],
 }
 
-
 pub(super) fn run_anchored_retry_pass(
     progress: &dyn ProgressReporter,
     state: &mut AnchoredRetryState<'_>,
@@ -149,8 +147,7 @@ pub(super) fn run_anchored_retry_pass(
     media: &RegionPatchMedia<'_>,
     table: &PatchAnchorTable,
 ) {
-    let retry_marginal =
-        request.fill_anchor_retry_marginal && request.fill_mode == FillMode::Fit;
+    let retry_marginal = request.fill_anchor_retry_marginal && request.fill_mode == FillMode::Fit;
     let retry_indices = anchored_retry_gap_indices(state.region_results, retry_marginal);
     if retry_indices.is_empty() {
         return;
@@ -214,12 +211,7 @@ pub(super) fn run_anchored_retry_pass(
             state.region_results[index].2 = outcome;
             state.region_results[index].3 = tags;
             if let Some(patch) = patch {
-                store_anchored_retry_patch(
-                    state.patches,
-                    state.patch_slot_by_gap,
-                    index,
-                    patch,
-                );
+                store_anchored_retry_patch(state.patches, state.patch_slot_by_gap, index, patch);
             }
         }
     }
@@ -232,8 +224,8 @@ mod tests {
         anchored_retry_gap_indices, should_apply_anchored_retry_outcome, RegionPatchOutcome,
     };
     use crate::domain::gap_fill_fit::FillConfidence;
-    use crate::domain::patch_result::GapPatchSkipReason;
     use crate::domain::gap_tags::{GapTags, PatchTier, PlanKind, SeamShape};
+    use crate::domain::patch_result::GapPatchSkipReason;
 
     fn dummy_region_tags() -> GapTags {
         GapTags {

@@ -8,16 +8,19 @@
 //! Ignored: `.\scripts\test-tier.ps1 -Tier validation` (generated/external/patch_timing; not regenerate)
 
 use clip_sync_repair_fixtures::gap_corpus_fixtures::{
-    corpus_root, load_manifest, run_gap_corpus_manifest_cases,
-    run_gap_corpus_patch_timing_cases, run_gap_corpus_patch_timing_production_cases,
-    run_gap_corpus_w5_anchor_seam_case, write_committed_wav_fixtures, GapCorpusTier,
+    corpus_root, load_manifest, run_gap_corpus_manifest_cases, run_gap_corpus_patch_timing_cases,
+    run_gap_corpus_patch_timing_production_cases, run_gap_corpus_w5_anchor_seam_case,
+    write_committed_wav_fixtures, GapCorpusTier,
 };
 
 #[test]
 #[ignore = "tier:validation — manual fixture regen (overwrites committed WAVs); run ad hoc only"]
 fn gap_corpus_regenerate_committed_wav_fixtures() {
     write_committed_wav_fixtures();
-    eprintln!("wrote fixtures under {}", corpus_root().join("wav").display());
+    eprintln!(
+        "wrote fixtures under {}",
+        corpus_root().join("wav").display()
+    );
 }
 
 #[test]

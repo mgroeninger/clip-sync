@@ -180,8 +180,8 @@ impl MediaSession for FakeMediaSession {
             (0..count)
                 .map(|index| {
                     let t = index as f32 / sample_rate as f32;
-                    (f32::sin(440.0 * t * std::f32::consts::TAU) * (i16::MAX as f32 * 0.25))
-                        .round() as i16
+                    (f32::sin(440.0 * t * std::f32::consts::TAU) * (i16::MAX as f32 * 0.25)).round()
+                        as i16
                 })
                 .collect()
         };
@@ -252,13 +252,10 @@ impl FakeAligner {
     }
 
     pub fn with_estimates(estimates: Vec<ClipMatchEstimate>) -> Self {
-        let fallback = estimates
-            .last()
-            .copied()
-            .unwrap_or(ClipMatchEstimate {
-                offset_secs: 0.0,
-                confidence: 0.0,
-            });
+        let fallback = estimates.last().copied().unwrap_or(ClipMatchEstimate {
+            offset_secs: 0.0,
+            confidence: 0.0,
+        });
         Self {
             estimates: RefCell::new(estimates),
             fallback,
@@ -308,4 +305,3 @@ fn test_track(duration: Duration) -> AudioTrack {
         bit_depth: None,
     }
 }
-

@@ -37,7 +37,11 @@ pub struct GapEquivalenceParams {
 
 impl Default for GapEquivalenceParams {
     fn default() -> Self {
-        Self { enabled: false, dropout_margin_db: 35.0, donor_silence_thresh: 0.5 }
+        Self {
+            enabled: false,
+            dropout_margin_db: 35.0,
+            donor_silence_thresh: 0.5,
+        }
     }
 }
 
@@ -117,10 +121,21 @@ pub fn classify_gap_equivalence(
     params: &GapEquivalenceParams,
 ) -> GapEquivalenceVerdict {
     if !params.enabled {
-        return GapEquivalenceVerdict::of(GapEquivalenceClass::NotEvaluated, a_gap_rms_db, noise_floor_db, donor_silence_fraction);
+        return GapEquivalenceVerdict::of(
+            GapEquivalenceClass::NotEvaluated,
+            a_gap_rms_db,
+            noise_floor_db,
+            donor_silence_fraction,
+        );
     }
-    let (Some(a), Some(nf), Some(ds)) = (a_gap_rms_db, noise_floor_db, donor_silence_fraction) else {
-        return GapEquivalenceVerdict::of(GapEquivalenceClass::NotEvaluated, a_gap_rms_db, noise_floor_db, donor_silence_fraction);
+    let (Some(a), Some(nf), Some(ds)) = (a_gap_rms_db, noise_floor_db, donor_silence_fraction)
+    else {
+        return GapEquivalenceVerdict::of(
+            GapEquivalenceClass::NotEvaluated,
+            a_gap_rms_db,
+            noise_floor_db,
+            donor_silence_fraction,
+        );
     };
     let is_dropout = a < nf - params.dropout_margin_db;
     let b_occupied = ds < params.donor_silence_thresh;
@@ -150,7 +165,11 @@ fn aggregate_rms_db(levels: impl Iterator<Item = f64>) -> Option<f64> {
         return None;
     }
     let rms = (sum_sq / n as f64).sqrt();
-    Some(if rms <= 1e-9 { BLOCK_LEVEL_FLOOR_DB } else { 20.0 * rms.log10() })
+    Some(if rms <= 1e-9 {
+        BLOCK_LEVEL_FLOOR_DB
+    } else {
+        20.0 * rms.log10()
+    })
 }
 
 /// Median of a set of dB values (used for A's local noise floor). `None` when empty.
@@ -189,7 +208,9 @@ pub fn derive_gap_equivalence(
             .filter(|b| block_center(b) >= a_start_secs && block_center(b) < a_end_secs)
     };
     let a_gap_rms_db = aggregate_rms_db(gap_blocks().map(|b| b.rms_db));
-    let gap_floor_db = gap_blocks().map(|b| b.rms_db).fold(f64::NEG_INFINITY, f64::max);
+    let gap_floor_db = gap_blocks()
+        .map(|b| b.rms_db)
+        .fold(f64::NEG_INFINITY, f64::max);
 
     // A context blocks: within the context window but outside the gap → median = local noise floor.
     let ctx_lo = a_start_secs - EQUIVALENCE_CONTEXT_SECS;
@@ -233,7 +254,10 @@ mod tests {
     use GapEquivalenceClass::*;
 
     fn on() -> GapEquivalenceParams {
-        GapEquivalenceParams { enabled: true, ..Default::default() }
+        GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        }
     }
 
     fn class(a: f64, nf: f64, ds: f64) -> GapEquivalenceClass {
@@ -276,9 +300,24 @@ mod tests {
 
     #[test]
     fn disabled_or_missing_signal_is_not_evaluated() {
-        assert_eq!(classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &GapEquivalenceParams::default()).class, NotEvaluated);
-        assert_eq!(classify_gap_equivalence(None, Some(-47.0), Some(0.0), &on()).class, NotEvaluated);
-        assert_eq!(classify_gap_equivalence(Some(-106.0), Some(-47.0), None, &on()).class, NotEvaluated);
+        assert_eq!(
+            classify_gap_equivalence(
+                Some(-106.0),
+                Some(-47.0),
+                Some(0.0),
+                &GapEquivalenceParams::default()
+            )
+            .class,
+            NotEvaluated
+        );
+        assert_eq!(
+            classify_gap_equivalence(None, Some(-47.0), Some(0.0), &on()).class,
+            NotEvaluated
+        );
+        assert_eq!(
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), None, &on()).class,
+            NotEvaluated
+        );
     }
 
     #[test]
@@ -292,7 +331,11 @@ mod tests {
 
     /// One 250 ms block at `[t, t+0.25)` with level `db`.
     fn blk(t: f64, db: f64) -> BlockLevel {
-        BlockLevel { start_secs: t, end_secs: t + 0.25, rms_db: db }
+        BlockLevel {
+            start_secs: t,
+            end_secs: t + 0.25,
+            rms_db: db,
+        }
     }
 
     /// A dropout gap (A blocks far below a −50 floor) with an occupied B donor → RepairableDropout, and
@@ -300,7 +343,13 @@ mod tests {
     #[test]
     fn derive_dropout_with_occupied_donor() {
         // Context blocks at −50 dB flank a 0.5 s gap of silence-floored blocks; B is loud across the span.
-        let a = vec![blk(9.5, -50.0), blk(9.75, -50.0), blk(10.0, -119.0), blk(10.25, -119.0), blk(10.5, -50.0)];
+        let a = vec![
+            blk(9.5, -50.0),
+            blk(9.75, -50.0),
+            blk(10.0, -119.0),
+            blk(10.25, -119.0),
+            blk(10.5, -50.0),
+        ];
         let b = vec![blk(10.0, -20.0), blk(10.25, -20.0)];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
         assert_eq!(v.class, RepairableDropout);
@@ -313,7 +362,13 @@ mod tests {
     /// dropout's gap floor still sits above B's true silence (−120), so B reads as silent below it.
     #[test]
     fn derive_dropout_with_silent_donor_is_shared_silence() {
-        let a = vec![blk(9.5, -48.0), blk(9.75, -48.0), blk(10.0, -100.0), blk(10.25, -100.0), blk(10.5, -48.0)];
+        let a = vec![
+            blk(9.5, -48.0),
+            blk(9.75, -48.0),
+            blk(10.0, -100.0),
+            blk(10.25, -100.0),
+            blk(10.5, -48.0),
+        ];
         let b = vec![blk(10.0, -120.0), blk(10.25, -120.0)];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
         assert_eq!(v.class, SharedSilence);
@@ -325,7 +380,13 @@ mod tests {
     /// not a dropout) — the self-calibrating A-side at scan-block granularity.
     #[test]
     fn derive_roomtone_with_occupied_donor_is_ambient_quiet() {
-        let a = vec![blk(9.5, -47.0), blk(9.75, -47.0), blk(10.0, -52.0), blk(10.25, -52.0), blk(10.5, -47.0)];
+        let a = vec![
+            blk(9.5, -47.0),
+            blk(9.75, -47.0),
+            blk(10.0, -52.0),
+            blk(10.25, -52.0),
+            blk(10.5, -47.0),
+        ];
         let b = vec![blk(10.0, -20.0), blk(10.25, -20.0)];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
         assert_eq!(v.class, AmbientQuiet);
@@ -346,7 +407,14 @@ mod tests {
     fn derive_respects_disabled_params() {
         let a = vec![blk(9.75, -48.0), blk(10.0, -119.0), blk(10.5, -48.0)];
         let b = vec![blk(10.0, -20.0)];
-        let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &GapEquivalenceParams::default());
+        let v = derive_gap_equivalence(
+            &a,
+            10.0,
+            10.5,
+            Some(&b),
+            Some((10.0, 10.5)),
+            &GapEquivalenceParams::default(),
+        );
         assert_eq!(v.class, NotEvaluated);
     }
 }

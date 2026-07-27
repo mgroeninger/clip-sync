@@ -124,7 +124,8 @@ pub(crate) fn track_duration_from_track(track: &Track) -> Option<Duration> {
                 if let Some(rate) = params.sample_rate.filter(|rate| *rate > 0) {
                     candidates.push(Duration::from_secs_f64(num_frames as f64 / f64::from(rate)));
                 }
-            } else if let Some(time) = media_ticks_to_time(MediaDuration::new(num_frames), time_base)
+            } else if let Some(time) =
+                media_ticks_to_time(MediaDuration::new(num_frames), time_base)
             {
                 candidates.push(symphonia_time_to_std(time));
             }

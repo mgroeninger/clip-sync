@@ -2,7 +2,9 @@ use crate::application::align_videos::{AlignVideos, AlignVideosRequest};
 use crate::application::error::AppError;
 use crate::application::ports::ProgressReporter;
 use crate::domain::AlignmentResult;
-use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter};
+use crate::infrastructure::chromaprint::{
+    ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
+};
 use crate::infrastructure::correlation::FftCorrelator;
 use crate::infrastructure::resample::RubatoResampler;
 use crate::infrastructure::symphonia::SymphoniaMediaReader;

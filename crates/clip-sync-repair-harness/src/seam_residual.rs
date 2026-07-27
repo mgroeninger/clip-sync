@@ -9,8 +9,8 @@ use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, fill_seam_correlations,
     seam_channel_diagnostics, seam_chosen_and_floor, seam_chosen_and_floor_multichannel,
-    selected_seam_channels, GapBorderSpec, DEFAULT_RESIDUAL_FLOOR_OK_DB, SeamChannelResidual,
-    SeamFloorParams, SeamFloorProbe, SeamPlacement, SeamResidualVerdict, SeamSide, SeamTemplates,
+    selected_seam_channels, GapBorderSpec, SeamChannelResidual, SeamFloorParams, SeamFloorProbe,
+    SeamPlacement, SeamResidualVerdict, SeamSide, SeamTemplates, DEFAULT_RESIDUAL_FLOOR_OK_DB,
 };
 use clip_sync_repair::domain::{
     residual_max_lag_frames, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB, DEFAULT_RESIDUAL_LAG_SECS,
@@ -59,7 +59,10 @@ mod geometry_tests {
             let harness = geometry_for(gap_frames, rate);
             assert_eq!(harness.border_frames, prod.border_frames);
             assert_eq!(harness.seam_gate_frames, prod.seam_gate_frames);
-            assert_eq!(correlate_frames_for_gap(gap_frames, rate), prod.correlate_frames);
+            assert_eq!(
+                correlate_frames_for_gap(gap_frames, rate),
+                prod.correlate_frames
+            );
             assert_eq!(harness.standoff_frames, 0);
         }
     }
@@ -170,10 +173,7 @@ pub struct DisagreementRow {
     pub rescue_patches: bool,
 }
 
-pub fn production_pearson(
-    pearson_pre: f64,
-    pearson_post: f64,
-) -> Result<FillConfidence, f64> {
+pub fn production_pearson(pearson_pre: f64, pearson_post: f64) -> Result<FillConfidence, f64> {
     let repair = RepairConfig::default();
     classify_fill_waveform_confidence(
         pearson_pre,
@@ -245,7 +245,11 @@ pub fn disagreement_row(placement: &ScoredPlacement) -> DisagreementRow {
 /// Best-lag seam Pearson per side over ±`max_lag`, mirroring the residual's lag search so Pearson
 /// is a *fair* baseline: in production the unified search aligns the placement, so scoring without
 /// any lag would unfairly penalize Pearson for the A template's standoff/low-energy-trim offsets.
-pub fn best_lag_seam(templates: &SeamTemplates<'_>, placement: SeamPlacement, max_lag: i64) -> (f64, f64) {
+pub fn best_lag_seam(
+    templates: &SeamTemplates<'_>,
+    placement: SeamPlacement,
+    max_lag: i64,
+) -> (f64, f64) {
     let mut best_pre = f64::NEG_INFINITY;
     let mut best_post = f64::NEG_INFINITY;
     for lag in -max_lag..=max_lag {
@@ -253,8 +257,13 @@ pub fn best_lag_seam(templates: &SeamTemplates<'_>, placement: SeamPlacement, ma
         if start < 0 {
             continue;
         }
-        let (pre, post) =
-            fill_seam_correlations(templates, SeamPlacement { start: start as usize, ..placement });
+        let (pre, post) = fill_seam_correlations(
+            templates,
+            SeamPlacement {
+                start: start as usize,
+                ..placement
+            },
+        );
         best_pre = best_pre.max(pre);
         best_post = best_post.max(post);
     }
@@ -296,7 +305,12 @@ pub fn score_placement(fixture: &EnergySignatureFixture, start: usize) -> Scored
         b_mono: &b_mono,
         b_ch: &b_ch,
     };
-    let placement = SeamPlacement { start, gap_frames, pre_window, post_window };
+    let placement = SeamPlacement {
+        start,
+        gap_frames,
+        pre_window,
+        post_window,
+    };
     let max_lag = residual_max_lag_frames(rate, DEFAULT_RESIDUAL_LAG_SECS);
     let (pearson_pre, pearson_post) = fill_seam_correlations(&templates, placement);
     let (seam_pre, seam_post) = best_lag_seam(&templates, placement, max_lag);
@@ -535,29 +549,67 @@ pub fn score_placement_multichannel(
     );
 
     let (pre, post, verdict) = if selected.is_empty() {
-        let (chosen_pre, floor_pre) =
-            seam_chosen_and_floor(&floor_params(pre_window), SeamSide::Pre, gap_start, gap_end, chosen_delta);
-        let (chosen_post, floor_post) =
-            seam_chosen_and_floor(&floor_params(post_window), SeamSide::Post, gap_start, gap_end, chosen_delta);
+        let (chosen_pre, floor_pre) = seam_chosen_and_floor(
+            &floor_params(pre_window),
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            chosen_delta,
+        );
+        let (chosen_post, floor_post) = seam_chosen_and_floor(
+            &floor_params(post_window),
+            SeamSide::Post,
+            gap_start,
+            gap_end,
+            chosen_delta,
+        );
         let verdict = SeamResidualVerdict::from_parts_with_placement(
-            &chosen_pre, &chosen_post, &floor_pre, &floor_post,
-            DEFAULT_RESIDUAL_FLOOR_OK_DB, placement_slide, max_lag,
+            &chosen_pre,
+            &chosen_post,
+            &floor_pre,
+            &floor_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            placement_slide,
+            max_lag,
         );
         (Vec::new(), Vec::new(), verdict)
     } else {
         let pre = seam_chosen_and_floor_multichannel(
-            &floor_params(pre_window), b_ch, &selected, SeamSide::Pre, gap_start, gap_end, chosen_delta,
+            &floor_params(pre_window),
+            b_ch,
+            &selected,
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            chosen_delta,
         );
         let post = seam_chosen_and_floor_multichannel(
-            &floor_params(post_window), b_ch, &selected, SeamSide::Post, gap_start, gap_end, chosen_delta,
+            &floor_params(post_window),
+            b_ch,
+            &selected,
+            SeamSide::Post,
+            gap_start,
+            gap_end,
+            chosen_delta,
         );
         let verdict = SeamResidualVerdict::from_channel_residuals(
-            &pre, &post, DEFAULT_RESIDUAL_FLOOR_OK_DB, placement_slide, max_lag,
+            &pre,
+            &post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            placement_slide,
+            max_lag,
         );
         (pre, post, verdict)
     };
 
-    ScoredPlacementMultichannel { pearson_pre, pearson_post, selected_channels: selected, verdict, pre, post }
+    ScoredPlacementMultichannel {
+        pearson_pre,
+        pearson_post,
+        selected_channels: selected,
+        verdict,
+        pre,
+        post,
+    }
 }
 
 pub fn score_at(fixture: &EnergySignatureFixture, start: usize) -> Scored {
@@ -732,7 +784,11 @@ pub fn build_broadband_with(rate: u32, noise_amp: f64, b_shift: f64) -> EnergySi
     let mut b = vec![0.0f32; total];
     for f in 0..total {
         let in_gap = (gap_start..gap_end).contains(&f);
-        let a_val = if in_gap { 0.0 } else { master[f] + lcg(&mut seed_a) * noise_amp };
+        let a_val = if in_gap {
+            0.0
+        } else {
+            master[f] + lcg(&mut seed_a) * noise_amp
+        };
         let b_val = interp(&master, f as f64 - b_shift) + lcg(&mut seed_b) * noise_amp;
         a[f] = (a_val / 32767.0).clamp(-1.0, 1.0) as f32;
         b[f] = (b_val / 32767.0).clamp(-1.0, 1.0) as f32;

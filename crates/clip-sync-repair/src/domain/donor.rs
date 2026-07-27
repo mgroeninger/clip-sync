@@ -50,7 +50,9 @@ pub fn donor_interior_at(
     }
     let span = &b_mono[start_frame..end];
     let rms = (span.iter().map(|v| v * v).sum::<f64>() / span.len() as f64).sqrt();
-    let bin = ((DONOR_BIN_MS / 1000.0) * f64::from(sample_rate)).round().max(1.0) as usize;
+    let bin = ((DONOR_BIN_MS / 1000.0) * f64::from(sample_rate))
+        .round()
+        .max(1.0) as usize;
     let floor_amp = 10f64.powf(gap_floor_db / 20.0);
     let (mut total, mut silent, mut run, mut longest) = (0usize, 0usize, 0usize, 0usize);
     for chunk in span.chunks(bin) {
@@ -104,7 +106,10 @@ mod tests {
 
         // Continuous donor: B carries audio across the whole span → bridges the hole.
         let d = donor_interior_at(&tone, 0, half, floor_db, sr).expect("donor");
-        assert!(d.continuous && d.silence_fraction < 0.05, "bridged donor: {d:?}");
+        assert!(
+            d.continuous && d.silence_fraction < 0.05,
+            "bridged donor: {d:?}"
+        );
         assert!(d.rms_db > floor_db);
 
         // Donor with its OWN hole: 250 ms of silence inside the span breaks continuity.

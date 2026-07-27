@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::domain::{BitDepth, resolve_output_bit_depth};
+use crate::domain::{resolve_output_bit_depth, BitDepth};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioTrack {
@@ -44,7 +44,11 @@ impl AudioTrack {
             self.codec,
             self.sample_rate,
             channel_layout_label(self.channels),
-            if self.decodable { "decodable" } else { "not decodable" },
+            if self.decodable {
+                "decodable"
+            } else {
+                "not decodable"
+            },
             depth_label,
         )
     }

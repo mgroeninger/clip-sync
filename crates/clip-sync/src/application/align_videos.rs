@@ -3,38 +3,35 @@ use std::time::Duration;
 
 use crate::application::config::{AlignConfig, AlignmentMode};
 use crate::application::error::{AppError, FingerprintError};
-use crate::application::high_rate_refinement::{apply_high_rate_refinement, HighRateRefinementInput};
+use crate::application::extraction_progress::ExtractionProgressScope;
+use crate::application::high_rate_refinement::{
+    apply_high_rate_refinement, HighRateRefinementInput,
+};
 use crate::application::locate_query::{
     locate_query_in_reference, resolve_alignment_mode, LocateQueryDeps, LocateQueryFile,
 };
+use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::offset_verification::{
     apply_offset_verification, OffsetVerificationDeps, OffsetVerificationInput,
 };
-use crate::application::offset_refinement::{refine_offset_around_prior, refine_offset_estimate};
 use crate::application::ports::MediaSession;
 use crate::application::ports::{
     Aligner, ClipRepetitionDetector, Fingerprinter, MediaReader, PcmCorrelator, ProgressReporter,
     Resampler,
 };
 use crate::domain::{
-    build_alignment_result, build_query_alignment_result, clip_windows_paired,
-    clip_windows_with_options,
-    winning_window_on_a_timeline,
-    compute_clip_timeline_overlap,
-    end_clip_extract_unreliable, expand_window_for_slide,
-    prepare_clip_for_fingerprint, select_aligned_subclip_pair,
-    select_best_track, attach_symmetric_planning_report_metadata,
-    select_track_for_reference, order_track_pairs_for_alignment,
-    set_offset_ambiguous_mod_from_start_clip,
-    should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence, truncate_padded_tail,
-    AlignmentMergePolicy, AlignmentModeUsed, AlignmentResult, AudioTrack,
-    ClipLabel, ClipMatchEstimate, ClipPairReportInput, ClipRepetitionReport,
-    ClipWindow, DomainError, EndClipAnchor, MediaExtent, MediaSource, MonoPcmClip,
+    alignment::clip_with_label, attach_symmetric_planning_report_metadata, build_alignment_result,
+    build_query_alignment_result, clip_windows_paired, clip_windows_with_options,
+    compute_clip_timeline_overlap, end_clip_extract_unreliable, expand_window_for_slide,
+    order_track_pairs_for_alignment, prepare_clip_for_fingerprint, select_aligned_subclip_pair,
+    select_best_track, select_track_for_reference, set_offset_ambiguous_mod_from_start_clip,
+    should_downgrade_periodic_ambiguity, should_downgrade_repetition_confidence,
+    truncate_padded_tail, winning_window_on_a_timeline, AlignmentMergePolicy, AlignmentModeUsed,
+    AlignmentResult, AudioTrack, ClipLabel, ClipMatchEstimate, ClipPairReportInput,
+    ClipRepetitionReport, ClipWindow, DomainError, EndClipAnchor, MediaExtent, MediaSource,
+    MonoPcmClip, PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
     OFFSET_AGREEMENT_TOLERANCE_SECS,
-    PcmPreparationOptions, QueryLocalization, RepetitionFinding, TimelineOverlap,
-    alignment::clip_with_label,
 };
-use crate::application::extraction_progress::ExtractionProgressScope;
 pub struct AlignVideosRequest {
     pub video_a: PathBuf,
     pub video_b: PathBuf,
@@ -96,8 +93,8 @@ where
         let mode_used = self.resolve_mode(&mut session_a, &mut session_b, &request)?;
 
         let outcome = match mode_used {
-            Some((AlignmentModeUsed::QueryReference, track_a, extent_a, track_b, extent_b)) => {
-                self.align_query_reference(
+            Some((AlignmentModeUsed::QueryReference, track_a, extent_a, track_b, extent_b)) => self
+                .align_query_reference(
                     &mut session_a,
                     &mut session_b,
                     ResolvedMediaSide {
@@ -109,8 +106,7 @@ where
                         extent: extent_b,
                     },
                     &request,
-                )?
-            }
+                )?,
             _ => {
                 if request.config.alignment.try_all_tracks {
                     self.align_best_track_pair(&mut session_a, &mut session_b, &request)?
@@ -193,7 +189,13 @@ where
         session_b: &mut MR::Session,
         request: &AlignVideosRequest,
     ) -> Result<
-        Option<(AlignmentModeUsed, AudioTrack, MediaExtent, AudioTrack, MediaExtent)>,
+        Option<(
+            AlignmentModeUsed,
+            AudioTrack,
+            MediaExtent,
+            AudioTrack,
+            MediaExtent,
+        )>,
         AppError,
     > {
         if request.config.alignment.mode == AlignmentMode::Symmetric {
@@ -284,9 +286,12 @@ where
                 }
             }
         };
-        let duration = track.duration.filter(|value| !value.is_zero()).ok_or(
-            AppError::Domain(crate::domain::DomainError::InvalidDuration),
-        )?;
+        let duration = track
+            .duration
+            .filter(|value| !value.is_zero())
+            .ok_or(AppError::Domain(
+                crate::domain::DomainError::InvalidDuration,
+            ))?;
         let mut extent = MediaExtent::from_declared(duration);
         if config.needs_tail_extent_scan(plan) {
             if let Ok(tail) = session.track_decodable_extent(&track) {
@@ -300,7 +305,8 @@ where
         if tracks.is_empty() {
             return;
         }
-        self.progress.phase_verbose(&format!("Audio tracks on {label}:"));
+        self.progress
+            .phase_verbose(&format!("Audio tracks on {label}:"));
         for track in tracks {
             self.progress.phase_verbose(&format!(
                 "  track {}: {}",
@@ -333,16 +339,16 @@ where
         }
         let first = select_best_track(tracks).ok()?;
         if first.index != selected.index {
-            return Some(format!(
-                "channel-matched to A ({}ch)",
-                reference.channels
-            ));
+            return Some(format!("channel-matched to A ({}ch)", reference.channels));
         }
         None
     }
 
     fn log_decodable_extent(&self, label: &str, extent: &MediaExtent) {
-        if extent.decodable.is_some_and(|tail| tail + Duration::from_secs(1) < extent.declared) {
+        if extent
+            .decodable
+            .is_some_and(|tail| tail + Duration::from_secs(1) < extent.declared)
+        {
             self.progress.phase_verbose(&format!(
                 "{label}: decodable extent {:.0}s (container {:.0}s)",
                 extent.decodable.unwrap().as_secs_f64(),
@@ -416,8 +422,10 @@ where
             Duration::from_secs_f64(win_end),
             ClipLabel::Start,
         );
-        let result =
-            build_query_alignment_result(localization, request.config.alignment.query_min_match_score);
+        let result = build_query_alignment_result(
+            localization,
+            request.config.alignment.query_min_match_score,
+        );
         Ok(AlignmentOutcome {
             result,
             track_a: side_a.track,
@@ -510,8 +518,10 @@ where
     ) -> Result<AlignmentOutcome, AppError> {
         let tracks_a = session_a.list_tracks()?;
         let tracks_b = session_b.list_tracks()?;
-        let decodable_a: Vec<&AudioTrack> = tracks_a.iter().filter(|track| track.decodable).collect();
-        let decodable_b: Vec<&AudioTrack> = tracks_b.iter().filter(|track| track.decodable).collect();
+        let decodable_a: Vec<&AudioTrack> =
+            tracks_a.iter().filter(|track| track.decodable).collect();
+        let decodable_b: Vec<&AudioTrack> =
+            tracks_b.iter().filter(|track| track.decodable).collect();
 
         if decodable_a.is_empty() || decodable_b.is_empty() {
             return Err(crate::domain::DomainError::NoDecodableAudioTracks.into());
@@ -613,7 +623,10 @@ where
             match pair_outcome {
                 Ok(candidate) => {
                     let score = candidate.3;
-                    if best.as_ref().is_none_or(|(_, _, _, best_score)| score > *best_score) {
+                    if best
+                        .as_ref()
+                        .is_none_or(|(_, _, _, best_score)| score > *best_score)
+                    {
                         best = Some(candidate);
                     }
                 }
@@ -651,8 +664,7 @@ where
 
         // Run repetition check on the winning pair only.
         if request.config.validation.check_clip_repetition {
-            let rep_result =
-                self.align_extracted_pair(&winning_a, &winning_b, &request.config)?;
+            let rep_result = self.align_extracted_pair(&winning_a, &winning_b, &request.config)?;
             outcome.result = rep_result;
         }
 
@@ -681,8 +693,10 @@ where
 
         self.progress.phase("Searching for match...");
         let mut estimates = Vec::with_capacity(extracted_a.raw_clips.len());
-        let mut repetition_diagnostics: Vec<(Option<RepetitionFinding>, Option<RepetitionFinding>)> =
-            Vec::with_capacity(extracted_a.raw_clips.len());
+        let mut repetition_diagnostics: Vec<(
+            Option<RepetitionFinding>,
+            Option<RepetitionFinding>,
+        )> = Vec::with_capacity(extracted_a.raw_clips.len());
         let mut start_prior: Option<ClipMatchEstimate> = None;
 
         for (index, (raw_a, raw_b)) in extracted_a
@@ -715,8 +729,7 @@ where
             let prepared_a = prepare_clip_for_fingerprint(clip_a, prep_options);
             let prepared_b = prepare_clip_for_fingerprint(clip_b, prep_options);
 
-            if is_skippable_prepare_error(&prepared_a) || is_skippable_prepare_error(&prepared_b)
-            {
+            if is_skippable_prepare_error(&prepared_a) || is_skippable_prepare_error(&prepared_b) {
                 self.progress.phase_verbose(&format!(
                     "{} clip [{}–{}]: skipped (insufficient audio)",
                     clip_label_name(window.label),
@@ -962,11 +975,8 @@ where
         let mut raw_clips: Vec<Option<MonoPcmClip>> = vec![None; windows.len()];
         for (step, &index) in extract_order.iter().enumerate() {
             let window = &windows[index];
-            let extract_window = expand_window_for_slide(
-                window,
-                config.clip.window_slide_secs,
-                timeline_end,
-            );
+            let extract_window =
+                expand_window_for_slide(window, config.clip.window_slide_secs, timeline_end);
             let progress_label = format!(
                 "Extracting clip {}/{} ({}, {})",
                 step + 1,
@@ -975,12 +985,8 @@ where
                 format_duration(window.duration())
             );
             let clip_progress = side.progress.for_clip(step as u64);
-            let mut clip = session.extract_mono(
-                track,
-                &extract_window,
-                &clip_progress,
-                &progress_label,
-            )?;
+            let mut clip =
+                session.extract_mono(track, &extract_window, &clip_progress, &progress_label)?;
             if let Some(target_rate) = config.clip.target_sample_rate {
                 clip = self.resampler.resample_mono(&clip, target_rate);
             }
@@ -1055,11 +1061,9 @@ fn is_skippable_prepare_error(result: &Result<MonoPcmClip, DomainError>) -> bool
 
 fn map_prepare_error(error: DomainError) -> AppError {
     match error {
-        DomainError::InsufficientAudio | DomainError::EmptyClip => {
-            AppError::Fingerprint(FingerprintError::InvalidPcm(
-                "insufficient audio content for fingerprinting".into(),
-            ))
-        }
+        DomainError::InsufficientAudio | DomainError::EmptyClip => AppError::Fingerprint(
+            FingerprintError::InvalidPcm("insufficient audio content for fingerprinting".into()),
+        ),
         other => AppError::Domain(other),
     }
 }
@@ -1120,7 +1124,9 @@ fn log_alignment_summary(
 
     if let Some(refine) = &result.high_rate_refinement {
         let refine_report = crate::application::report::HighRateRefinementReport::from(refine);
-        for line in crate::application::report::format_high_rate_refinement_lines(&refine_report, false) {
+        for line in
+            crate::application::report::format_high_rate_refinement_lines(&refine_report, false)
+        {
             progress.phase_verbose(&line);
         }
         if refine.skipped {
@@ -1221,7 +1227,11 @@ fn format_overlap_window(start_secs: f64, end_secs: f64) -> String {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn format_clip_plan(side: &ClipExtractionSideContext<'_>, windows: &[ClipWindow]) -> String {
@@ -1289,17 +1299,21 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::config::{AlignConfig, AlignmentConfig, AlignmentMode, ClipConfig, ValidationConfig};
-    use crate::application::error::{AlignmentError, AppError, ConfigError, FingerprintError, MediaError};
+    use crate::application::config::{
+        AlignConfig, AlignmentConfig, AlignmentMode, ClipConfig, ValidationConfig,
+    };
+    use crate::application::error::{
+        AlignmentError, AppError, ConfigError, FingerprintError, MediaError,
+    };
     use crate::application::testing::fakes::{
-        FakeAligner, FakePcmCorrelator, FakeFingerprinter, FakeMediaReader, FakeMediaSession,
+        FakeAligner, FakeFingerprinter, FakeMediaReader, FakeMediaSession, FakePcmCorrelator,
         FakeProgressReporter,
     };
     use crate::domain::{
         ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, DomainError, EndClipAnchor,
     };
     use crate::infrastructure::chromaprint::repetition::{
-        test_reset_repetition_detect_calls, test_repetition_detect_calls,
+        test_repetition_detect_calls, test_reset_repetition_detect_calls,
     };
     use crate::infrastructure::chromaprint::ChromaprintClipRepetitionDetector;
     use crate::infrastructure::correlation::FftCorrelator;
@@ -1342,9 +1356,7 @@ mod tests {
         offset_secs: f64,
         expected_secs: f64,
     ) {
-        let close = |rep: &RepetitionFinding| {
-            (rep.lag_secs - offset_secs.abs()).abs() <= 1.0
-        };
+        let close = |rep: &RepetitionFinding| (rep.lag_secs - offset_secs.abs()).abs() <= 1.0;
         let matching = report
             .a
             .as_ref()
@@ -1406,10 +1418,7 @@ mod tests {
             .with_session("b.wav", FakeMediaSession::with_duration(mins(3)))
     }
 
-    fn execute_fake_repetition_case(
-        config: AlignConfig,
-        offset_secs: f64,
-    ) -> AlignVideosResponse {
+    fn execute_fake_repetition_case(config: AlignConfig, offset_secs: f64) -> AlignVideosResponse {
         let reader = matched_reader();
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
@@ -1564,7 +1573,10 @@ mod tests {
     fn execute_symmetric_paired_planning_aligns_unequal_lengths() {
         let reader = FakeMediaReader::new()
             .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
-            .with_session("b.wav", FakeMediaSession::with_duration(Duration::from_secs(45)));
+            .with_session(
+                "b.wav",
+                FakeMediaSession::with_duration(Duration::from_secs(45)),
+            );
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 0.0,
@@ -1597,7 +1609,10 @@ mod tests {
         // than MIN_CLIP_LENGTH, so query mode skips gracefully and records that query mode ran.
         let reader = FakeMediaReader::new()
             .with_session("a.wav", FakeMediaSession::with_duration(mins(3)))
-            .with_session("b.wav", FakeMediaSession::with_duration(Duration::from_secs(45)));
+            .with_session(
+                "b.wav",
+                FakeMediaSession::with_duration(Duration::from_secs(45)),
+            );
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 0.0,
@@ -1683,7 +1698,11 @@ mod tests {
             .query_localization
             .as_ref()
             .expect("localization");
-        assert!(loc.skip_reason.is_none(), "unexpected skip: {:?}", loc.skip_reason);
+        assert!(
+            loc.skip_reason.is_none(),
+            "unexpected skip: {:?}",
+            loc.skip_reason
+        );
         let offset = response
             .result
             .recommended_offset_secs
@@ -1702,8 +1721,8 @@ mod tests {
 
     #[test]
     fn execute_propagates_media_open_error() {
-        let reader =
-            FakeMediaReader::new().with_open_error(MediaError::FileNotFound(PathBuf::from("a.wav")));
+        let reader = FakeMediaReader::new()
+            .with_open_error(MediaError::FileNotFound(PathBuf::from("a.wav")));
         let fingerprinter = FakeFingerprinter::new();
         let aligner = FakeAligner::with_estimate(ClipMatchEstimate {
             offset_secs: 0.0,
@@ -1722,7 +1741,10 @@ mod tests {
         );
 
         let error = use_case.execute(request(two_clip_config())).unwrap_err();
-        assert!(matches!(error, AppError::Media(MediaError::FileNotFound(_))));
+        assert!(matches!(
+            error,
+            AppError::Media(MediaError::FileNotFound(_))
+        ));
     }
 
     #[test]
@@ -1757,9 +1779,8 @@ mod tests {
     fn execute_propagates_alignment_engine_error() {
         let reader = matched_reader();
         let fingerprinter = FakeFingerprinter::new();
-        let aligner = FakeAligner::with_error(AlignmentError::EngineFailed(
-            "matcher exploded".into(),
-        ));
+        let aligner =
+            FakeAligner::with_error(AlignmentError::EngineFailed("matcher exploded".into()));
         let progress = FakeProgressReporter;
         let correlator = FakePcmCorrelator::new();
         let use_case = AlignVideos::new(
@@ -2046,8 +2067,8 @@ mod tests {
 
     #[test]
     fn execute_detects_known_offset_through_real_wav_pipeline() {
-        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
@@ -2056,12 +2077,8 @@ mod tests {
         const OFFSET_SECS: u32 = 3;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) = write_offset_chirp_wav_pair(
-            temp.path(),
-            SAMPLE_RATE,
-            TOTAL_SECS,
-            OFFSET_SECS,
-        );
+        let (path_a, path_b) =
+            write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
 
         let config = AlignConfig {
             clip: ClipConfig {
@@ -2136,8 +2153,8 @@ mod tests {
         refine_pcm: bool,
         high_rate: bool,
     ) -> (f64, Option<crate::domain::HighRateRefinement>) {
-        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
@@ -2146,12 +2163,8 @@ mod tests {
         const OFFSET_SECS: u32 = 3;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) = write_offset_chirp_wav_pair(
-            temp.path(),
-            SAMPLE_RATE,
-            TOTAL_SECS,
-            OFFSET_SECS,
-        );
+        let (path_a, path_b) =
+            write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
 
         let media_reader = SymphoniaMediaReader;
         let preset = ChromaprintPreset::default();
@@ -2263,8 +2276,8 @@ mod tests {
 
     #[test]
     fn two_clip_end_refines_around_start_on_constant_offset_wav() {
-        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_offset_chirp_wav_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
@@ -2274,12 +2287,8 @@ mod tests {
         const OFFSET_SECS: f64 = 3.0;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let (path_a, path_b) = write_offset_chirp_wav_pair(
-            temp.path(),
-            SAMPLE_RATE,
-            TOTAL_SECS,
-            OFFSET_SECS as u32,
-        );
+        let (path_a, path_b) =
+            write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS as u32);
 
         let config = AlignConfig {
             clip: ClipConfig {
@@ -2322,12 +2331,8 @@ mod tests {
         assert_eq!(response.result.end_aligned, Some(true));
         assert!(response.result.offsets_consistent);
 
-        let start_offset = response.result.clips[0]
-            .offset_secs
-            .expect("start offset");
-        let end_offset = response.result.clips[1]
-            .offset_secs
-            .expect("end offset");
+        let start_offset = response.result.clips[0].offset_secs.expect("start offset");
+        let end_offset = response.result.clips[1].offset_secs.expect("end offset");
         assert!(
             (start_offset - OFFSET_SECS).abs() < 1.0,
             "start_offset={start_offset}"
@@ -2394,7 +2399,10 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         for clip in value["clips"].as_array().unwrap() {
             let repetition = &clip["repetition"];
-            assert!(repetition.is_object(), "repetition must be an object when flag on");
+            assert!(
+                repetition.is_object(),
+                "repetition must be an object when flag on"
+            );
             assert!(
                 repetition["a"].is_null() && repetition["b"].is_null(),
                 "fake fingerprints must serialize null findings"
@@ -2614,17 +2622,11 @@ mod tests {
             .expect("repetition execute");
 
         assert!(response_rep.result.start_aligned);
-        let offset = response_rep
-            .result
-            .recommended_offset_secs
-            .unwrap_or(0.0);
+        let offset = response_rep.result.recommended_offset_secs.unwrap_or(0.0);
         assert!(offset.abs() < 0.5, "offset={offset}");
 
         let clip = &response_rep.result.clips[0];
-        let report = clip
-            .repetition
-            .as_ref()
-            .expect("repetition report");
+        let report = clip.repetition.as_ref().expect("repetition report");
         assert_repetition_lag_near_secs(report, PURE_TONE_REPEAT_LAG_SECS);
         let finding = report
             .a
@@ -2634,7 +2636,11 @@ mod tests {
         assert!(finding.confidence >= 0.5);
         // Repeat lag (~30 s) differs from offset (~0 s) — downgrade must not apply in the pipeline.
         assert!(
-            !should_downgrade_repetition_confidence(&report.a, &report.b, clip.offset_secs.unwrap_or(0.0)),
+            !should_downgrade_repetition_confidence(
+                &report.a,
+                &report.b,
+                clip.offset_secs.unwrap_or(0.0)
+            ),
             "offset-aligned pair should not trigger confidence downgrade"
         );
         assert!(
@@ -2789,10 +2795,11 @@ mod tests {
             })
             .expect("baseline execute");
 
-        assert!(response_base.result.start_aligned, "expected aligned at +30s");
-        let base_offset = response_base.result.clips[0]
-            .offset_secs
-            .expect("offset");
+        assert!(
+            response_base.result.start_aligned,
+            "expected aligned at +30s"
+        );
+        let base_offset = response_base.result.clips[0].offset_secs.expect("offset");
         assert!(
             (base_offset - ALIGN_OFFSET).abs() < 0.01,
             "offset={base_offset}"
@@ -2823,7 +2830,10 @@ mod tests {
             response_rep.result.start_aligned,
             "start_aligned must not flip after confidence downgrade"
         );
-        assert!(clip.aligned, "clip.aligned must not flip after confidence downgrade");
+        assert!(
+            clip.aligned,
+            "clip.aligned must not flip after confidence downgrade"
+        );
         assert!(
             clip.confidence < base_confidence,
             "confidence must be downgraded: base={base_confidence}, after={}",
@@ -2888,7 +2898,10 @@ mod tests {
         );
         assert_downgrade_trigger_lag_near_secs(report, offset, PURE_TONE_REPEAT_LAG_SECS);
         assert!(response.result.start_aligned);
-        assert!(clip.aligned, "aligned is computed before downgrade and must stay true");
+        assert!(
+            clip.aligned,
+            "aligned is computed before downgrade and must stay true"
+        );
         assert!(
             (clip.confidence - BASE_CONFIDENCE * 0.5).abs() < 0.01,
             "confidence after downgrade: {}",
@@ -2936,8 +2949,8 @@ mod tests {
         offset_secs: u32,
         config: AlignConfig,
     ) -> AlignVideosResponse {
-        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
         use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
@@ -3026,8 +3039,8 @@ mod tests {
     #[cfg(feature = "ffmpeg-tests")]
     #[test]
     fn symmetric_shared_timeline_end_clips_agree_on_unequal_mkv_aac_pair() {
-        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
         use crate::application::config::ChromaprintPreset;
+        use crate::application::testing::audio_fixtures::write_anchored_end_symmetric_pair;
         use crate::infrastructure::chromaprint::{ChromaprintAligner, ChromaprintFingerprinter};
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
         use crate::test_support::ffmpeg_util::{self, EncodeFormat};

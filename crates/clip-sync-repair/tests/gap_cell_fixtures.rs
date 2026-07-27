@@ -18,7 +18,9 @@ use clip_sync_repair::domain::gap_equivalence::{
 use clip_sync_repair_fixtures::gap_cell_fixtures::{
     curated_fixtures_dir, load_gap_cell_fixtures, GapCellFixture, GapCellType,
 };
-use clip_sync_repair_harness::gap_fingerprint_corpus::{gap_rows_from_corpus_json, GapKind, GapRow};
+use clip_sync_repair_harness::gap_fingerprint_corpus::{
+    gap_rows_from_corpus_json, GapKind, GapRow,
+};
 
 /// Build the analyzer `GapRow` for a fixture from its **committed** JSON bytes (not a re-serialization), so
 /// the contract is checked against the exact artifact that ships.
@@ -38,11 +40,19 @@ fn assert_equivalence_class(fx: &GapCellFixture, expected: GapEquivalenceClass) 
         .equivalence
         .as_ref()
         .unwrap_or_else(|| panic!("{}: fixture carries no equivalence verdict", fx.file));
-    let params = GapEquivalenceParams { enabled: true, ..Default::default() };
-    let reclassified =
-        classify_gap_equivalence(v.a_gap_rms_db, v.noise_floor_db, v.donor_silence_fraction, &params);
+    let params = GapEquivalenceParams {
+        enabled: true,
+        ..Default::default()
+    };
+    let reclassified = classify_gap_equivalence(
+        v.a_gap_rms_db,
+        v.noise_floor_db,
+        v.donor_silence_fraction,
+        &params,
+    );
     assert_eq!(
-        reclassified.class, expected,
+        reclassified.class,
+        expected,
         "{} ({}): classify_gap_equivalence gave {:?}, expected {expected:?} [{}]",
         fx.file,
         fx.cell_type.as_str(),
@@ -69,8 +79,17 @@ fn each_fixture_matches_its_declared_cell() {
             GapCellType::BracketPatchClean => {
                 let r = row_of(fx);
                 assert!(r.patched(), "{}: expected a patched gap", ctx());
-                assert!(!r.dualfit_target(), "{}: a patched gap is never a dual-fit target", ctx());
-                assert_ne!(r.program_quiet(), Some(true), "{}: clean patch donor should be occupied", ctx());
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: a patched gap is never a dual-fit target",
+                    ctx()
+                );
+                assert_ne!(
+                    r.program_quiet(),
+                    Some(true),
+                    "{}: clean patch donor should be occupied",
+                    ctx()
+                );
             }
             GapCellType::BracketPatchDonorBroken => {
                 // Footgun: a bracket that cleared the gate patches the gap even though the donor is broken
@@ -83,36 +102,70 @@ fn each_fixture_matches_its_declared_cell() {
                     "{}: expected a broken/dead nominal donor (the footgun premise)",
                     ctx()
                 );
-                assert!(!r.dualfit_target(), "{}: patched gaps are not dual-fit targets", ctx());
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: patched gaps are not dual-fit targets",
+                    ctx()
+                );
             }
             GapCellType::SilenceSpliceDualfitTarget => {
                 // Footgun A: this IS a dual-fit target.
                 let r = row_of(fx);
-                assert!(r.dualfit_target(), "{}: expected dualfit_target()==true", ctx());
-                assert!(!r.patched(), "{}: a dual-fit target is a bracket-exhausted skip", ctx());
-                assert!(r.bracket_exhausted(), "{}: expected bracket-exhausted", ctx());
+                assert!(
+                    r.dualfit_target(),
+                    "{}: expected dualfit_target()==true",
+                    ctx()
+                );
+                assert!(
+                    !r.patched(),
+                    "{}: a dual-fit target is a bracket-exhausted skip",
+                    ctx()
+                );
+                assert!(
+                    r.bracket_exhausted(),
+                    "{}: expected bracket-exhausted",
+                    ctx()
+                );
             }
             GapCellType::ProgramQuiet => {
                 // Footgun B: the seams PASS the gate (high correlation — looks patchable) yet the donor is
                 // dead, so it must be excluded by donor state, not by seam score. The `dualfit_pass` premise
                 // is the teeth: without it the "not a target" assertion could pass on a trivially-bad gap.
                 let r = row_of(fx);
-                assert_eq!(r.program_quiet(), Some(true), "{}: expected program_quiet()", ctx());
+                assert_eq!(
+                    r.program_quiet(),
+                    Some(true),
+                    "{}: expected program_quiet()",
+                    ctx()
+                );
                 assert_eq!(
                     r.dualfit_pass,
                     Some(true),
                     "{}: footgun premise — seams must PASS the gate (high corr), so exclusion is donor-driven",
                     ctx()
                 );
-                assert!(!r.dualfit_target(), "{}: program-quiet must not be a dual-fit target", ctx());
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: program-quiet must not be a dual-fit target",
+                    ctx()
+                );
                 assert!(!r.patched(), "{}: program-quiet is a skip", ctx());
             }
             GapCellType::NoPlacement => {
                 // Structure/anchor search found no candidate — never reached seam scoring.
                 let r = row_of(fx);
                 assert!(!r.patched(), "{}: no-placement is a skip", ctx());
-                assert_eq!(r.brackets_total, 0, "{}: expected zero scored brackets", ctx());
-                assert!(!r.dualfit_target(), "{}: no-placement is not a dual-fit target", ctx());
+                assert_eq!(
+                    r.brackets_total,
+                    0,
+                    "{}: expected zero scored brackets",
+                    ctx()
+                );
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: no-placement is not a dual-fit target",
+                    ctx()
+                );
             }
             GapCellType::RepairableDropout => {
                 assert_equivalence_class(fx, GapEquivalenceClass::RepairableDropout);
@@ -167,7 +220,11 @@ fn each_fixture_matches_its_declared_cell() {
                         ctx()
                     );
                 }
-                assert!(!r.dualfit_target(), "{}: seams recover at no lag ⇒ not a dual-fit target", ctx());
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: seams recover at no lag ⇒ not a dual-fit target",
+                    ctx()
+                );
             }
             GapCellType::TailGeometryMismatch => {
                 // A length-mismatch tail: filtered before per-gap scoring, excluded from the matched denom.
@@ -179,8 +236,17 @@ fn each_fixture_matches_its_declared_cell() {
                     ctx(),
                     r.duration_secs
                 );
-                assert_eq!(r.brackets_total, 0, "{}: a tail is filtered before seam scoring (unscored)", ctx());
-                assert!(!r.dualfit_target(), "{}: a tail is not a dual-fit target", ctx());
+                assert_eq!(
+                    r.brackets_total,
+                    0,
+                    "{}: a tail is filtered before seam scoring (unscored)",
+                    ctx()
+                );
+                assert!(
+                    !r.dualfit_target(),
+                    "{}: a tail is not a dual-fit target",
+                    ctx()
+                );
             }
             // Not fingerprint-representable — the dump path sets `outcome.tier` from seam scoring (`any_ok`,
             // gap_fingerprint.rs), never from residual gating or plan/execution failures, so neither cell can
@@ -190,7 +256,10 @@ fn each_fixture_matches_its_declared_cell() {
             // C1b** item (`tests/residual_gate_catalog/README.md`). `unfillable` is covered by
             // `GapPatchSkipReason` unit tests. No manifest entry should declare either type.
             GapCellType::ResidualVeto | GapCellType::Unfillable => {
-                panic!("{}: not a fingerprint-representable cell — must not have a curated fixture", ctx());
+                panic!(
+                    "{}: not a fingerprint-representable cell — must not have a curated fixture",
+                    ctx()
+                );
             }
         }
     }

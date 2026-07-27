@@ -79,10 +79,7 @@ mod tests {
 
     #[test]
     fn format_time_range_verbose_keeps_seconds_for_long_spans() {
-        assert_eq!(
-            format_time_range_verbose(50.0, 80.0),
-            "0:50 – 1:20"
-        );
+        assert_eq!(format_time_range_verbose(50.0, 80.0), "0:50 – 1:20");
     }
 
     #[test]

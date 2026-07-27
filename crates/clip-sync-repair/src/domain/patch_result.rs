@@ -82,7 +82,11 @@ pub fn better_seam_score_attempt(
     b: Option<SeamScoreAttempt>,
 ) -> Option<SeamScoreAttempt> {
     match (a, b) {
-        (Some(a), Some(b)) => Some(if b.min_pearson() > a.min_pearson() { b } else { a }),
+        (Some(a), Some(b)) => Some(if b.min_pearson() > a.min_pearson() {
+            b
+        } else {
+            a
+        }),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
@@ -209,12 +213,7 @@ pub fn format_gap_fill_skip_verbose_line(reason: &GapPatchSkipReason) -> String 
 }
 
 /// Human-readable marginal patch detail for stdout gap tables and verbose stderr (`-v`).
-pub fn format_gap_fill_marginal_detail(
-    pre: f64,
-    post: f64,
-    min: f32,
-    anchor_seam: bool,
-) -> String {
+pub fn format_gap_fill_marginal_detail(pre: f64, post: f64, min: f32, anchor_seam: bool) -> String {
     let kind = if anchor_seam {
         "marginal anchor seam"
     } else {
@@ -261,12 +260,7 @@ pub struct GapPatchOutcome {
 }
 
 impl GapPatchOutcome {
-    pub fn new(
-        a_start_secs: f64,
-        a_end_secs: f64,
-        status: GapPatchStatus,
-        tags: GapTags,
-    ) -> Self {
+    pub fn new(a_start_secs: f64, a_end_secs: f64, status: GapPatchStatus, tags: GapTags) -> Self {
         Self {
             a_start_secs,
             a_end_secs,
@@ -415,7 +409,10 @@ impl PatchSummary {
         }
     }
 
-    pub fn with_patch_anchors(mut self, anchors: Vec<crate::domain::patch_anchor::PatchAnchorReport>) -> Self {
+    pub fn with_patch_anchors(
+        mut self,
+        anchors: Vec<crate::domain::patch_anchor::PatchAnchorReport>,
+    ) -> Self {
         if anchors.is_empty() {
             self.patch_anchors_used = None;
         } else {
@@ -525,6 +522,9 @@ mod format_tests {
 
     #[test]
     fn format_seam_score_source_covers_dual_fit() {
-        assert_eq!(format_seam_score_source(SeamScoreSource::DualFit), "dual_fit");
+        assert_eq!(
+            format_seam_score_source(SeamScoreSource::DualFit),
+            "dual_fit"
+        );
     }
 }

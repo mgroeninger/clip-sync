@@ -43,7 +43,15 @@ fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
 /// (`seam_probe`/`wide_envelope`/`b_levels`/`lag`).
 pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
     let (a_pcm, b, report, request) = synth_ab_inputs();
-    characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], diagnostics, &NoOpProgressReporter)
+    characterize_gaps_from_decode(
+        &report,
+        &a_pcm,
+        &b,
+        &request,
+        &[],
+        diagnostics,
+        &NoOpProgressReporter,
+    )
 }
 
 /// The synthetic A/B pair + report/request the two `synth_ab_*` helpers share: same-master speech bursts,

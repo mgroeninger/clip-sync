@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clip_sync::{
     select_best_track, select_track_for_reference, AlignConfig, AlignVideosRequest,
-    AlignmentResult, AudioTrack, DomainError, InterleavedScanBucket,
-    MediaError, MediaReader, MediaSession, MediaSource, ProgressReporter,
+    AlignmentResult, AudioTrack, DomainError, InterleavedScanBucket, MediaError, MediaReader,
+    MediaSession, MediaSource, ProgressReporter,
 };
 
 use crate::application::align_bridge::{
@@ -118,7 +118,10 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let alignment_detail = alignment;
         let scan_alignment = scan_alignment_from_result(&alignment_detail);
         let source_a = MediaSource::new(request.video_a.clone());
-        let mut session_a = self.media_reader.open(&source_a).map_err(RepairError::Media)?;
+        let mut session_a = self
+            .media_reader
+            .open(&source_a)
+            .map_err(RepairError::Media)?;
         let tracks_a = session_a.list_tracks().map_err(RepairError::Media)?;
         let track_a = select_best_track(&tracks_a)?.clone();
 
@@ -131,12 +134,18 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // marked unfillable with no compatibility. Energy probing additionally requires an offset.
         let offset_secs = alignment_detail.recommended_offset_secs;
         let mut b_session = self.open_best_track(&request.video_b, &track_a);
-        let track_compatibility = b_session
-            .as_ref()
-            .map(|(_, track_b)| assess_track_compatibility(
-                TrackDescriptor { channels: track_a.channels, sample_rate: track_a.sample_rate },
-                TrackDescriptor { channels: track_b.channels, sample_rate: track_b.sample_rate },
-            ));
+        let track_compatibility = b_session.as_ref().map(|(_, track_b)| {
+            assess_track_compatibility(
+                TrackDescriptor {
+                    channels: track_a.channels,
+                    sample_rate: track_a.sample_rate,
+                },
+                TrackDescriptor {
+                    channels: track_b.channels,
+                    sample_rate: track_b.sample_rate,
+                },
+            )
+        });
 
         // Step 4: sequential decode + block-level silence-run detection on A.
         let decode_chunk_secs = request.decode_chunk_secs as f64;
@@ -158,8 +167,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let mut last_fed_end_secs: Option<f64> = None;
 
         let mut scan_a = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
-            if last_fed_end_secs
-                .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
+            if last_fed_end_secs.is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
             {
                 scanner_a.note_pcm_discontinuity();
             }
@@ -268,15 +276,17 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 check_gap_offset_agreement_in_overlap(
                     &a_intervals,
                     &b_intervals,
-                    alignment_detail.start_overlap.as_ref().map(|ov| {
-                        crate::domain::align::TimelineOverlap {
+                    alignment_detail
+                        .start_overlap
+                        .as_ref()
+                        .map(|ov| crate::domain::align::TimelineOverlap {
                             video_a_start_secs: ov.video_a_start_secs,
                             video_a_end_secs: ov.video_a_end_secs,
                             video_b_start_secs: ov.video_b_start_secs,
                             video_b_end_secs: ov.video_b_end_secs,
                             shared_length_secs: ov.shared_length_secs,
-                        }
-                    }).as_ref(),
+                        })
+                        .as_ref(),
                     offset,
                     request.gap_offset_tolerance_secs,
                 )
@@ -327,8 +337,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let mut last_fed_end_secs: Option<f64> = None;
 
         let mut on_bucket = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
-            if last_fed_end_secs
-                .is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
+            if last_fed_end_secs.is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
             {
                 scanner.note_pcm_discontinuity();
             }
@@ -367,7 +376,11 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
     /// file is missing, unreadable, or has no decodable audio — keeps the scan report-only safe.
-    fn open_best_track(&self, path: &Path, track_a: &AudioTrack) -> Option<(MR::Session, AudioTrack)> {
+    fn open_best_track(
+        &self,
+        path: &Path,
+        track_a: &AudioTrack,
+    ) -> Option<(MR::Session, AudioTrack)> {
         let source = MediaSource::new(path.to_path_buf());
         let session = self.media_reader.open(&source).ok()?;
         let tracks = session.list_tracks().ok()?;
@@ -383,8 +396,8 @@ mod tests {
 
     use clip_sync::testing::fakes::FakeProgressReporter;
     use clip_sync::{
-        AlignmentResult, AudioTrack, ClipWindow, MediaError, MediaSession,
-        MediaSource, MonoPcmClip, MultiChannelPcm,
+        AlignmentResult, AudioTrack, ClipWindow, MediaError, MediaSession, MediaSource,
+        MonoPcmClip, MultiChannelPcm,
     };
 
     use super::*;
@@ -403,8 +416,7 @@ mod tests {
             };
         }
 
-        let mut samples =
-            Vec::with_capacity(clip.samples.len().saturating_mul(channels as usize));
+        let mut samples = Vec::with_capacity(clip.samples.len().saturating_mul(channels as usize));
         for sample in clip.samples {
             let s = sample as f32 / 32767.0;
             for _ in 0..channels {
@@ -517,9 +529,14 @@ mod tests {
         Loud,
         Silent,
         /// Loud until `window.start >= fail_from_secs`, then `SeekFailed`.
-        TailSeekFail { fail_from_secs: f64 },
+        TailSeekFail {
+            fail_from_secs: f64,
+        },
         /// Silent except `DecodeFailed` when `skip_start <= window.start < skip_end`.
-        SkipWindow { skip_start: f64, skip_end: f64 },
+        SkipWindow {
+            skip_start: f64,
+            skip_end: f64,
+        },
     }
 
     struct FixedReader(HashMap<PathBuf, (SessionKind, Duration)>);
@@ -560,7 +577,10 @@ mod tests {
         ) -> Result<MonoPcmClip, MediaError> {
             let start = window.start.as_secs_f64();
             if start >= self.skip_start && start < self.skip_end {
-                return Err(MediaError::decode_failed(track.index, "skipped scan window"));
+                return Err(MediaError::decode_failed(
+                    track.index,
+                    "skipped scan window",
+                ));
             }
             SilentSession(self.duration).extract_mono(track, window, progress, label)
         }
@@ -770,7 +790,11 @@ mod tests {
             decode_error_skips: 0,
             decoded_sample_count: None,
         };
-        let loud_samples_f32: Vec<f32> = loud_clip.samples.iter().map(|&s| s as f32 / 32767.0).collect();
+        let loud_samples_f32: Vec<f32> = loud_clip
+            .samples
+            .iter()
+            .map(|&s| s as f32 / 32767.0)
+            .collect();
         assert!(!policies::is_silent(&loud_samples_f32, 0.01, 0.0));
 
         let dur = Duration::from_secs(120);
@@ -793,7 +817,10 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
             .expect("scan should succeed");
 
         assert_eq!(report.gaps.len(), 1);
@@ -802,7 +829,10 @@ mod tests {
             .track_compatibility
             .as_ref()
             .expect("compatibility should be present when B opens");
-        assert_eq!(compat.verdict, crate::domain::CompatibilityVerdict::Identical);
+        assert_eq!(
+            compat.verdict,
+            crate::domain::CompatibilityVerdict::Identical
+        );
         assert!((report.gaps[0].video_a_start_secs - 0.0).abs() < 0.001);
         assert!((report.gaps[0].video_a_end_secs - 60.0).abs() < 0.001);
         assert!((report.gaps[0].video_b_start_secs.unwrap() - 0.0).abs() < 0.001);
@@ -820,7 +850,10 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
             .expect("scan should succeed");
 
         assert!(report.gaps.is_empty());
@@ -856,7 +889,10 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(3.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(3.0)),
+            )
             .expect("scan should succeed");
 
         assert_eq!(report.gaps.len(), 1);
@@ -874,10 +910,16 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let err = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
             .expect_err("missing duration should fail");
 
-        assert!(matches!(err, RepairError::Domain(DomainError::InvalidDuration)));
+        assert!(matches!(
+            err,
+            RepairError::Domain(DomainError::InvalidDuration)
+        ));
         assert_eq!(exit_code_for(&err), ExitCode::from(3));
     }
 
@@ -981,7 +1023,10 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
             .expect("scan should succeed");
 
         assert!(report.gap_offset_agreement.is_none());
@@ -1013,7 +1058,9 @@ mod tests {
             .with("a.wav", SessionKind::Loud, dur)
             .with(
                 "b.wav",
-                SessionKind::TailSeekFail { fail_from_secs: 118.0 },
+                SessionKind::TailSeekFail {
+                    fail_from_secs: 118.0,
+                },
                 dur,
             );
         let progress = FakeProgressReporter;
@@ -1046,7 +1093,10 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let report = scan
-            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(Some(0.0)))
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
             .expect("scan should succeed");
 
         assert_eq!(

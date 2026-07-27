@@ -1,11 +1,17 @@
 //! Synthetic timelines for energy vs bool structure acceptance (plan F1–F3).
 
-use clip_sync_repair::domain::gap_energy::{build_gap_energy_signature, score_pre_energy_match, EnergyTimeline};
+use clip_sync_repair::domain::gap_energy::{
+    build_gap_energy_signature, score_pre_energy_match, EnergyTimeline,
+};
 use clip_sync_repair::domain::gap_fill_fit::{
     match_gap_fill_unified_in_b, UnifiedFillMatch, UnifiedFitWeights, WaveformSeamContext,
 };
-use clip_sync_repair::domain::gap_signature::{build_gap_signature, GapSignature, GapSignatureMode};
-use clip_sync_repair::domain::gap_structure::{score_pre_match, ActivityTimeline, StructureMatchParams};
+use clip_sync_repair::domain::gap_signature::{
+    build_gap_signature, GapSignature, GapSignatureMode,
+};
+use clip_sync_repair::domain::gap_structure::{
+    score_pre_match, ActivityTimeline, StructureMatchParams,
+};
 use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, is_silent_frame,
@@ -49,7 +55,8 @@ impl EnergySignatureFixture {
     /// B-side decoy dropout start (F1 shifted duplicate); equals nominal when shift is zero.
     pub fn b_decoy_fill_start(&self) -> usize {
         if self.b_dropout_shift_frames > 0 {
-            self.true_fill_start.saturating_sub(self.b_dropout_shift_frames)
+            self.true_fill_start
+                .saturating_sub(self.b_dropout_shift_frames)
         } else {
             self.nominal_fill_start
         }
@@ -178,8 +185,7 @@ impl EnergySignatureFixture {
             silence_peak_fraction: self.structure_params.silence_peak_fraction,
             absolute_rms_floor: self.structure_params.absolute_silence_rms,
         };
-        let (a_pre, a_post) =
-            border_templates_for_gap(&self.a_samples, ch, &border_spec);
+        let (a_pre, a_post) = border_templates_for_gap(&self.a_samples, ch, &border_spec);
         let (a_pre_ch, a_post_ch) =
             border_templates_per_channel_for_gap(&self.a_samples, ch, &border_spec);
         let b_mono = interleaved_to_mono(&self.b_samples, ch);
@@ -400,21 +406,8 @@ pub fn build_f1() -> EnergySignatureFixture {
     for f in 70..gap_end + shift_frames {
         write_frame(&mut b, channels, f, 0.0);
     }
-    write_post_with_rise(
-        &mut b,
-        channels,
-        gap_end + shift_frames,
-        150,
-        post_amp,
-        12,
-    );
-    ensure_nominal_b_occupied(
-        &mut b,
-        channels,
-        gap_start,
-        gap_end,
-        post_amp * 0.15,
-    );
+    write_post_with_rise(&mut b, channels, gap_end + shift_frames, 150, post_amp, 12);
+    ensure_nominal_b_occupied(&mut b, channels, gap_start, gap_end, post_amp * 0.15);
 
     let structure_params = StructureMatchParams {
         gap_frames,
@@ -678,13 +671,7 @@ fn build_f1_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
             post_rise_frames: scaled_usize(12, scale).max(1),
         },
     );
-    ensure_nominal_b_occupied(
-        &mut b,
-        ch,
-        gap_start,
-        gap_end,
-        post_amp * 0.15,
-    );
+    ensure_nominal_b_occupied(&mut b, ch, gap_start, gap_end, post_amp * 0.15);
 
     let structure_params = StructureMatchParams {
         gap_frames,
@@ -733,7 +720,14 @@ fn build_f2_scaled(sample_rate: u32, channels: usize) -> EnergySignatureFixture 
         let amp = ramp_amp(frame, pause1_start - ramp_len, 200.0 / 32767.0, post_amp);
         write_frame(&mut a, ch, frame, amp);
     }
-    write_post_with_rise(&mut a, ch, pause1_end, total_frames, post_amp, scaled_usize(15, scale).max(1));
+    write_post_with_rise(
+        &mut a,
+        ch,
+        pause1_end,
+        total_frames,
+        post_amp,
+        scaled_usize(15, scale).max(1),
+    );
 
     let mut b = vec![0.0f32; total_frames * ch];
     let rise = scaled_usize(15, scale).max(1);
@@ -940,7 +934,11 @@ pub fn gap_anchor_secs(spec: &ProductionScenarioSpec) -> f64 {
 }
 
 /// F1 decoy shift (half gap) for production geometry checks.
-pub fn f1_decoy_shift_frames(_spec: &ProductionScenarioSpec, _sample_rate: u32, gap_frames: usize) -> usize {
+pub fn f1_decoy_shift_frames(
+    _spec: &ProductionScenarioSpec,
+    _sample_rate: u32,
+    gap_frames: usize,
+) -> usize {
     gap_frames / 2
 }
 
@@ -992,13 +990,7 @@ fn b_gap_bounds_for_report(
     if retains_audio {
         refined_a
     } else {
-        patch_refine_gap_frames(
-            &fixture.b_samples,
-            ch,
-            fixture.sample_rate,
-            start,
-            end,
-        )
+        patch_refine_gap_frames(&fixture.b_samples, ch, fixture.sample_rate, start, end)
     }
 }
 
@@ -1012,7 +1004,11 @@ fn secs_to_frames(secs: f64, sample_rate: u32) -> usize {
 /// `refine_gap_frames` does not walk back into the ramp. [`gap_report_times`] applies refine
 /// for patch integration.
 pub fn build_f1_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
-    build_f1_with_spec(sample_rate, channels, ProductionScenarioSpec::integration_fast())
+    build_f1_with_spec(
+        sample_rate,
+        channels,
+        ProductionScenarioSpec::integration_fast(),
+    )
 }
 
 /// **F1-long** @ 60 s with production border/context sizing (energy corpus Phase B).
@@ -1103,13 +1099,7 @@ fn build_f1_with_spec(
     if b_guard > 0 {
         write_frame(&mut b, ch, b_guard - 1, post_amp / 2.0);
     }
-    ensure_nominal_b_occupied(
-        &mut b,
-        ch,
-        silence_start,
-        gap_end,
-        post_amp * 0.15,
-    );
+    ensure_nominal_b_occupied(&mut b, ch, silence_start, gap_end, post_amp * 0.15);
 
     let search_radius = if spec.integration_legacy_search {
         (gap_frames * 2).max(shift_frames * 2)
@@ -1151,7 +1141,11 @@ fn build_f1_with_spec(
 /// Unit F2 pause spacing placed ~2.35 s into an 8 s timeline (room for patch context),
 /// refine guards at pause edges, scaled bins for domain search (U5 parity).
 pub fn build_f2_integration(sample_rate: u32, channels: usize) -> EnergySignatureFixture {
-    build_f2_with_spec(sample_rate, channels, ProductionScenarioSpec::integration_fast())
+    build_f2_with_spec(
+        sample_rate,
+        channels,
+        ProductionScenarioSpec::integration_fast(),
+    )
 }
 
 /// **F2-long** with production border/context sizing (default 90 s timeline).
@@ -1330,7 +1324,12 @@ pub fn build_f3_drone_production(
     total_secs: f64,
     gap_signature_context_secs: f64,
 ) -> EnergySignatureFixture {
-    build_f3_drone_with_total_secs(sample_rate, channels, total_secs, Some(gap_signature_context_secs))
+    build_f3_drone_with_total_secs(
+        sample_rate,
+        channels,
+        total_secs,
+        Some(gap_signature_context_secs),
+    )
 }
 
 fn build_f3_drone_with_total_secs(
@@ -1339,7 +1338,8 @@ fn build_f3_drone_with_total_secs(
     total_secs: f64,
     gap_signature_context_secs: Option<f64>,
 ) -> EnergySignatureFixture {
-    let spec = gap_signature_context_secs.map(|ctx| ProductionScenarioSpec::production_standard(total_secs, ctx));
+    let spec = gap_signature_context_secs
+        .map(|ctx| ProductionScenarioSpec::production_standard(total_secs, ctx));
     let mut fixture = build_f3_drone_scaled(sample_rate, channels);
     let ch = fixture.channels.max(1);
     let total_frames = secs_to_frames(total_secs, sample_rate);
@@ -1436,11 +1436,11 @@ pub fn build_f4_decoy_production(
     };
 
     // A: content baseline with a single dropout at the decoy time (rising pre contour).
-    let mut a = vec![hi; total_frames * ch];  // f32 hi
+    let mut a = vec![hi; total_frames * ch]; // f32 hi
     write_pause(&mut a, decoy_start, decoy_end, false);
 
     // B: content baseline with the decoy (descending pre) and the true pause (rising pre).
-    let mut b = vec![hi; total_frames * ch];  // f32 hi
+    let mut b = vec![hi; total_frames * ch]; // f32 hi
     write_pause(&mut b, decoy_start, decoy_end, true);
     write_pause(&mut b, truth_start, truth_end, false);
 
@@ -1465,7 +1465,13 @@ pub fn build_f4_decoy_production(
     }
 }
 
-fn fill_speech_like(samples: &mut [f32], channels: usize, sample_rate: u32, start: usize, end: usize) {
+fn fill_speech_like(
+    samples: &mut [f32],
+    channels: usize,
+    sample_rate: u32,
+    start: usize,
+    end: usize,
+) {
     fill_speech_like_at_freq(samples, channels, sample_rate, start, end, 440.0, 0.45);
 }
 
@@ -1491,8 +1497,8 @@ fn fill_speech_like_triangular(
         let t = (frame - start) as f64 / span;
         let env = 1.0 - (2.0 * t - 1.0).abs(); // triangle: 0 → 1 → 0
         let time = frame as f64 / sample_rate as f64;
-        let amp = (f64::from(amplitude) * env * (2.0 * std::f64::consts::PI * 440.0 * time).sin())
-            as f32;
+        let amp =
+            (f64::from(amplitude) * env * (2.0 * std::f64::consts::PI * 440.0 * time).sin()) as f32;
         for c in 0..ch {
             samples[frame * ch + c] = amp;
         }
@@ -1823,8 +1829,11 @@ pub fn build_speech_peaks_offset_from_throat(
         0.45 * 0.15,
     );
 
-    let structure_params =
-        spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
+    let structure_params = spec.structure_match_params(
+        sample_rate,
+        gap_frames,
+        spec.search_radius_frames(sample_rate),
+    );
 
     EnergySignatureFixture {
         id: "speech_peaks_offset_throat",
@@ -1957,15 +1966,43 @@ pub fn build_w5_noise_collar_anchor_rescue(
 
     let mut a = vec![0.0f32; total_frames * ch];
     // Triangular bursts → one clean high-prominence anchor each (a flat burst has no strict peak).
-    fill_speech_like_triangular(&mut a, ch, sample_rate, pre_burst_start, pre_burst_inner, 0.45);
-    fill_speech_like_triangular(&mut a, ch, sample_rate, post_burst_inner, post_burst_end, 0.45);
-    fill_noise(&mut a, ch, gap_start.saturating_sub(collar), gap_start, 0.18, 0xA1);
+    fill_speech_like_triangular(
+        &mut a,
+        ch,
+        sample_rate,
+        pre_burst_start,
+        pre_burst_inner,
+        0.45,
+    );
+    fill_speech_like_triangular(
+        &mut a,
+        ch,
+        sample_rate,
+        post_burst_inner,
+        post_burst_end,
+        0.45,
+    );
+    fill_noise(
+        &mut a,
+        ch,
+        gap_start.saturating_sub(collar),
+        gap_start,
+        0.18,
+        0xA1,
+    );
     fill_noise(&mut a, ch, gap_end, gap_end + collar, 0.18, 0xA2);
     zero_frames(&mut a, ch, gap_start, gap_end);
 
     // B: same bursts (anchor match), independent collar noise (baseline decorrelates), speech fill.
     let mut b = a.clone();
-    fill_noise(&mut b, ch, gap_start.saturating_sub(collar), gap_start, 0.18, 0xB1);
+    fill_noise(
+        &mut b,
+        ch,
+        gap_start.saturating_sub(collar),
+        gap_start,
+        0.18,
+        0xB1,
+    );
     fill_noise(&mut b, ch, gap_end, gap_end + collar, 0.18, 0xB2);
     fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
 
@@ -2023,8 +2060,11 @@ pub fn build_c3_speech_boundary_asymmetric_post(
     b.copy_from_slice(&a);
     fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
 
-    let structure_params =
-        spec.structure_match_params(sample_rate, gap_frames, spec.search_radius_frames(sample_rate));
+    let structure_params = spec.structure_match_params(
+        sample_rate,
+        gap_frames,
+        spec.search_radius_frames(sample_rate),
+    );
 
     EnergySignatureFixture {
         id: "c3_speech_boundary_asymmetric_post",
@@ -2056,7 +2096,9 @@ pub fn write_pcm_wav(path: &std::path::Path, sample_rate: u32, channels: usize, 
     };
     let mut writer = WavWriter::create(path, spec).expect("create wav");
     for &s in samples {
-        let v = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        let v = (s * 32767.0)
+            .round()
+            .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
         writer.write_sample(v).expect("write sample");
     }
     writer.finalize().expect("finalize wav");
@@ -2092,8 +2134,18 @@ pub fn write_fixture_wavs(
 ) -> (std::path::PathBuf, std::path::PathBuf) {
     let path_a = dir.join(format!("{}_a.wav", fixture.id));
     let path_b = dir.join(format!("{}_b.wav", fixture.id));
-    write_pcm_wav(&path_a, fixture.sample_rate, fixture.channels, &fixture.a_samples);
-    write_pcm_wav(&path_b, fixture.sample_rate, fixture.channels, &fixture.b_samples);
+    write_pcm_wav(
+        &path_a,
+        fixture.sample_rate,
+        fixture.channels,
+        &fixture.a_samples,
+    );
+    write_pcm_wav(
+        &path_b,
+        fixture.sample_rate,
+        fixture.channels,
+        &fixture.b_samples,
+    );
     (path_a, path_b)
 }
 
@@ -2137,11 +2189,17 @@ mod production_spec_tests {
     fn overwrite_channels_replaces_only_named_channels() {
         let channels = 3usize;
         let mut buf = vec![1.0f32; 4 * channels]; // 4 frames, all channels = 1.0
-        overwrite_channels(&mut buf, channels, &[0, 2, 9], |ch, frame| (ch * 10 + frame) as f32);
+        overwrite_channels(&mut buf, channels, &[0, 2, 9], |ch, frame| {
+            (ch * 10 + frame) as f32
+        });
         for frame in 0..4 {
             assert_eq!(buf[frame * channels], (frame) as f32, "ch0 replaced");
             assert_eq!(buf[frame * channels + 1], 1.0, "ch1 untouched");
-            assert_eq!(buf[frame * channels + 2], (20 + frame) as f32, "ch2 replaced");
+            assert_eq!(
+                buf[frame * channels + 2],
+                (20 + frame) as f32,
+                "ch2 replaced"
+            );
         }
     }
 
@@ -2165,9 +2223,9 @@ mod production_spec_tests {
     #[test]
     fn speech_peaks_fixture_unified_match_finds_truth() {
         use super::build_speech_peaks_offset_from_throat;
+        use crate::energy_signature_fixtures::structure_heavy_weights;
         use clip_sync_repair::domain::donor::program_quiet_at_nominal;
         use clip_sync_repair::domain::GapSignatureMode;
-        use crate::energy_signature_fixtures::structure_heavy_weights;
 
         let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
         let (_, _, b0, b1, _) = gap_report_times(&fixture);

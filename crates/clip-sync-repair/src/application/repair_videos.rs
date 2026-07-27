@@ -3,15 +3,15 @@ use std::path::PathBuf;
 use clip_sync::{MediaReader, MultiChannelPcm, ProgressReporter};
 
 use crate::application::error::RepairError;
-use crate::application::patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
-use crate::application::ports::PatchedAudioWriter;
-#[cfg(feature = "ffmpeg-mux")]
-use crate::application::ports::{MediaMuxer, MuxOptions};
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::mux_bitrate::{
     format_mux_bitrate_policy, format_optional_bitrate_kbps, resolve_mux_audio_bitrate,
     MuxAudioBitratePolicy,
 };
+use crate::application::patch_audio::{PatchAudio, PatchAudioRequest, PatchAudioResult};
+use crate::application::ports::PatchedAudioWriter;
+#[cfg(feature = "ffmpeg-mux")]
+use crate::application::ports::{MediaMuxer, MuxOptions};
 
 pub struct RepairWriteRequest {
     /// Video A path — used as the video source for mux.

@@ -47,7 +47,6 @@ fn silent_run(
     })
 }
 
-
 /// Tighten a reported gap against A's decoded PCM.
 ///
 /// - Retracts `start` through leading silence before the reported boundary (scanner block
@@ -194,7 +193,9 @@ fn gap_border_frame_range(
 
     // Skip audio immediately adjacent to the dropout (A-side templates only).
     if border_standoff_frames > 0 {
-        pre_end = pre_end.saturating_sub(border_standoff_frames).max(pre_start);
+        pre_end = pre_end
+            .saturating_sub(border_standoff_frames)
+            .max(pre_start);
         post_start = (post_start + border_standoff_frames).min(post_end);
     }
 
@@ -309,11 +310,20 @@ pub fn border_templates_per_channel_for_gap(
 /// returns the **lowest-index** passing channel — index order, an arbitrary pick that lands on L over a
 /// louder C in a center-dominant mix. The gate's multichannel decision still uses the full
 /// `selected_seam_channels` set; this only changes which single channel a diagnostic follows.
-pub fn loudest_seam_channel(a_samples: &[f32], channels: usize, spec: &GapBorderSpec) -> Option<usize> {
+pub fn loudest_seam_channel(
+    a_samples: &[f32],
+    channels: usize,
+    spec: &GapBorderSpec,
+) -> Option<usize> {
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, channels, spec);
     let n = a_pre_ch.len().min(a_post_ch.len());
     (0..n)
-        .map(|ch| (ch, template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch]))))
+        .map(|ch| {
+            (
+                ch,
+                template_mean_square(&a_pre_ch[ch]).max(template_mean_square(&a_post_ch[ch])),
+            )
+        })
         .filter(|&(_, e)| e > f64::EPSILON)
         .max_by(|(_, x), (_, y)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(ch, _)| ch)
@@ -335,9 +345,7 @@ pub fn selected_seam_channels(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{
-        seam_channel_diagnostics, SeamPlacement, SeamTemplates,
-    };
+    use crate::domain::policies::{seam_channel_diagnostics, SeamPlacement, SeamTemplates};
 
     #[test]
     fn refine_gap_frames_retracts_through_leading_silence_before_reported_start() {
@@ -391,15 +399,7 @@ mod tests {
         samples.extend([3.0_f32 / 32767.0; 8]);
         samples.extend([loud; 2]);
 
-        let refined = refine_gap_frames(
-            &samples,
-            channels,
-            2,
-            10,
-            0.01,
-            0.0,
-            20,
-        );
+        let refined = refine_gap_frames(&samples, channels, 2, 10, 0.01, 0.0, 20);
         assert!(
             refined.start_frame < 10,
             "start should not advance all the way to reported end"
@@ -435,7 +435,8 @@ mod tests {
         samples.extend(vec![low; 4]);
         samples.extend(vec![loud; 8]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(16, 20, 12, 0));
+        let (pre, post) =
+            border_templates_for_gap(&samples, channels, &test_border_spec(16, 20, 12, 0));
         assert!(!pre.is_empty());
         assert!(pre.iter().all(|&v| v.abs() > 1_000.0 / 32767.0));
         assert!(!post.is_empty());
@@ -466,13 +467,13 @@ mod tests {
         samples.extend(vec![0.0f32; 5]);
         samples.extend(vec![loud; 5]);
 
-        let (pre, post) = border_templates_for_gap(&samples, channels, &test_border_spec(5, 10, 5, 0));
+        let (pre, post) =
+            border_templates_for_gap(&samples, channels, &test_border_spec(5, 10, 5, 0));
         assert_eq!(pre.len(), 5);
         assert!(pre.iter().all(|&v| (v - loud as f64).abs() < 0.001));
         assert_eq!(post.len(), 5);
         assert!(post.iter().all(|&v| (v - loud as f64).abs() < 0.001));
     }
-
 
     // ---- Per-channel (multichannel) residual ----------------------------------------------------
 
@@ -488,7 +489,6 @@ mod tests {
         }
         out
     }
-
 
     /// Pearson (`seam_channel_diagnostics`) and residual (`selected_seam_channels`) must agree on
     /// which A-side channels carry border energy for a gap.
@@ -545,19 +545,20 @@ mod tests {
         {
             let total = 2000usize;
             let channels = 2usize;
-            let l: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 4000.0).collect();
-            let r: Vec<f64> = (0..total).map(|i| (i as f64 * 0.4).cos() * 4000.0).collect();
+            let l: Vec<f64> = (0..total)
+                .map(|i| (i as f64 * 0.17).sin() * 4000.0)
+                .collect();
+            let r: Vec<f64> = (0..total)
+                .map(|i| (i as f64 * 0.4).cos() * 4000.0)
+                .collect();
             let a_samples = interleave_a(&[l.clone(), r.clone()], 4000.0);
             let b_ch = vec![l, r];
             let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
-            assert_channel_selection_parity(
-                &a_samples,
-                channels,
-                &spec,
-                &b_ch,
-                placement(),
+            assert_channel_selection_parity(&a_samples, channels, &spec, &b_ch, placement());
+            assert_eq!(
+                selected_seam_channels(&a_samples, channels, &spec),
+                vec![0, 1]
             );
-            assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![0, 1]);
         }
 
         // Center-dominant 3ch: only FC crosses the ~20 dB energy gate in the border templates.
@@ -567,8 +568,12 @@ mod tests {
             let fc_b: Vec<f64> = (0..total)
                 .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
                 .collect();
-            let fl_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.53).sin() * 2000.0).collect();
-            let fr_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.91).cos() * 2000.0).collect();
+            let fl_b: Vec<f64> = (0..total)
+                .map(|i| (i as f64 * 0.53).sin() * 2000.0)
+                .collect();
+            let fr_b: Vec<f64> = (0..total)
+                .map(|i| (i as f64 * 0.91).cos() * 2000.0)
+                .collect();
             let b_ch = vec![fl_b.clone(), fr_b.clone(), fc_b.clone()];
             let fc_a: Vec<f64> = fc_b.iter().map(|s| s * 0.5).collect();
             // Fronts well below FC in the border region (>20 dB down) so only the center is selected.
@@ -576,13 +581,7 @@ mod tests {
             let fr_a: Vec<f64> = vec![5.0; total];
             let a_samples = interleave_a(&[fl_a, fr_a, fc_a], 4000.0);
             let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
-            assert_channel_selection_parity(
-                &a_samples,
-                channels,
-                &spec,
-                &b_ch,
-                placement(),
-            );
+            assert_channel_selection_parity(&a_samples, channels, &spec, &b_ch, placement());
             assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![2]);
         }
 
@@ -593,20 +592,15 @@ mod tests {
             let a_samples = vec![0.0f32; total * channels];
             let b_ch = vec![vec![0.0f64; total], vec![0.0f64; total]];
             let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
-            assert_channel_selection_parity(
-                &a_samples,
-                channels,
-                &spec,
-                &b_ch,
-                placement(),
-            );
+            assert_channel_selection_parity(&a_samples, channels, &spec, &b_ch, placement());
             assert!(selected_seam_channels(&a_samples, channels, &spec).is_empty());
         }
     }
 
     #[test]
     fn loudest_seam_channel_picks_by_energy_not_index() {
-        let (gap_start, gap_end, border_frames, standoff) = (800usize, 1000usize, 128usize, 16usize);
+        let (gap_start, gap_end, border_frames, standoff) =
+            (800usize, 1000usize, 128usize, 16usize);
         let total = 2000usize;
         let channels = 3usize;
         let spec = test_border_spec(gap_start, gap_end, border_frames, standoff);
@@ -614,14 +608,23 @@ mod tests {
         // ch0 (L) moderate, ch1 (R) silent, ch2 (C) loudest. Both 0 and 2 pass the −20 dB energy gate,
         // so `selected_seam_channels` returns [0, 2] in index order and `.first()` = 0 (the *quieter*
         // channel). `loudest_seam_channel` must instead return 2 (the channel that carries the level).
-        let l_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 2000.0).collect();
+        let l_a: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.17).sin() * 2000.0)
+            .collect();
         let r_a: Vec<f64> = vec![5.0; total];
-        let c_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.31).sin() * 4000.0).collect();
+        let c_a: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.31).sin() * 4000.0)
+            .collect();
         let a_samples = interleave_a(&[l_a, r_a, c_a], 4000.0);
 
-        assert_eq!(selected_seam_channels(&a_samples, channels, &spec), vec![0, 2]);
         assert_eq!(
-            selected_seam_channels(&a_samples, channels, &spec).first().copied(),
+            selected_seam_channels(&a_samples, channels, &spec),
+            vec![0, 2]
+        );
+        assert_eq!(
+            selected_seam_channels(&a_samples, channels, &spec)
+                .first()
+                .copied(),
             Some(0),
             ".first() picks the lowest-index passing channel (the quieter L)"
         );
@@ -631,6 +634,4 @@ mod tests {
             "loudest_seam_channel follows the level to the center channel"
         );
     }
-
-
 }

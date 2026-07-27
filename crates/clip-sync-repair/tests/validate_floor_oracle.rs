@@ -15,12 +15,12 @@ use clip_sync_repair_harness::floor_oracle::{
 };
 use clip_sync_repair_harness::residual_gate::{
     assert_deadzone_punch_inert, assert_floor_expectations,
-    assert_production_fit_gate_no_worse_than_off_baseline,
-    assert_production_fit_pearson_deadzone,
+    assert_production_fit_gate_no_worse_than_off_baseline, assert_production_fit_pearson_deadzone,
     assert_production_fit_veto_rescue_matches_veto_baseline, assert_truth_patches,
-    assert_veto_rescue_matches_veto_on_truth, check_floor_expectations, production_fit_repair_config,
-    rescue_trigger, run_built_floor_oracle, run_built_floor_oracle_cfg,
-    run_built_floor_oracle_production_fit, run_pearson_min, FloorOracleRun,
+    assert_veto_rescue_matches_veto_on_truth, check_floor_expectations,
+    production_fit_repair_config, rescue_trigger, run_built_floor_oracle,
+    run_built_floor_oracle_cfg, run_built_floor_oracle_production_fit, run_pearson_min,
+    FloorOracleRun,
 };
 
 fn variant_label(variant: OracleVariant) -> &'static str {
@@ -119,7 +119,11 @@ fn floor_oracle_vorbis_64k_veto_no_false_veto() {
     let temp = tempfile::tempdir().expect("tempdir");
     let built = build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
     let off = run_built_floor_oracle(&built, ResidualGateMode::Off);
-    assert_eq!(off.status, "patched", "vorbis_64k should patch (skip={})", off.skip_reason);
+    assert_eq!(
+        off.status, "patched",
+        "vorbis_64k should patch (skip={})",
+        off.skip_reason
+    );
     let veto = run_built_floor_oracle(&built, ResidualGateMode::Veto);
     assert_eq!(
         veto.status, "patched",
@@ -250,8 +254,7 @@ fn floor_oracle_veto_rescue_real_broadband_codec() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     for case in cases {
-        let built =
-            build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+        let built = build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
         assert_veto_rescue_matches_veto_on_truth(&case.id, &built);
         let rescue = run_built_floor_oracle(&built, ResidualGateMode::VetoRescue);
         assert_floor_expectations(&case.id, &built, &rescue);
@@ -291,8 +294,7 @@ fn gate_real_codec_production_fit() {
 
     for case in shaped_speech_ambient {
         eprintln!("gate_real_codec_production_fit: {}", case.id);
-        let built =
-            build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+        let built = build_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
         let off = run_built_floor_oracle_production_fit(&built, ResidualGateMode::Off);
         let veto = run_built_floor_oracle_production_fit(&built, ResidualGateMode::Veto);
         let rescue = run_built_floor_oracle_production_fit(&built, ResidualGateMode::VetoRescue);
@@ -313,8 +315,7 @@ fn gate_real_codec_production_fit() {
         music_control,
         &manifest.defaults,
     );
-    let control_off =
-        run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::Off);
+    let control_off = run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::Off);
     let control_veto =
         run_built_floor_oracle_production_fit(&control_built, ResidualGateMode::Veto);
     let control_rescue =
@@ -350,7 +351,8 @@ fn gate_real_codec_production_fit() {
         build_floor_oracle_pair(&temp.path().join(&two_mic.id), two_mic, &manifest.defaults);
     let off = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::Off);
     let veto = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::Veto);
-    let rescue = run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::VetoRescue);
+    let rescue =
+        run_built_floor_oracle_production_fit(&two_mic_built, ResidualGateMode::VetoRescue);
     for (gate, run) in [
         (ResidualGateMode::Veto, &veto),
         (ResidualGateMode::VetoRescue, &rescue),
@@ -495,4 +497,3 @@ fn source_gap_oracle_transient_csv() {
         }
     }
 }
-

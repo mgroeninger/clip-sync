@@ -30,8 +30,7 @@ impl<'a> ExtractionProgressScope<'a> {
     }
 
     pub fn register_batch(&self, clip_count: u64) {
-        self.global_total
-            .set(self.global_total.get() + clip_count);
+        self.global_total.set(self.global_total.get() + clip_count);
 
         if self.inner.detailed_extraction_progress() {
             return;
@@ -46,8 +45,7 @@ impl<'a> ExtractionProgressScope<'a> {
     }
 
     pub fn finish_batch(&self, clip_count: u64) {
-        self.global_done
-            .set(self.global_done.get() + clip_count);
+        self.global_done.set(self.global_done.get() + clip_count);
     }
 
     pub fn for_clip(&self, clip_in_batch: u64) -> ClipExtractProgress<'_> {
@@ -88,11 +86,9 @@ impl ProgressReporter for ClipExtractProgress<'_> {
         let within = (current.min(clip_total) * UNITS_PER_CLIP) / clip_total;
         let global_clip_index = self.scope.global_done.get() + self.clip_in_batch;
         let global_current = (global_clip_index * UNITS_PER_CLIP + within).min(unit_total);
-        self.scope.inner.progress(
-            &self.scope.stage_label,
-            global_current,
-            unit_total,
-        );
+        self.scope
+            .inner
+            .progress(&self.scope.stage_label, global_current, unit_total);
     }
 
     fn flush_progress(&self) {
@@ -139,9 +135,11 @@ mod tests {
         scope.register_batch(2);
 
         assert_eq!(
-            inner.last.borrow().as_ref().map(|(label, current, total)| {
-                (label.as_str(), *current, *total)
-            }),
+            inner
+                .last
+                .borrow()
+                .as_ref()
+                .map(|(label, current, total)| { (label.as_str(), *current, *total) }),
             Some((FINGERPRINT_ALIGN_STAGE, 0, 2000))
         );
     }
@@ -157,9 +155,11 @@ mod tests {
         scope.for_clip(0).progress("extract", 500, 1000);
 
         assert_eq!(
-            inner.last.borrow().as_ref().map(|(label, current, total)| {
-                (label.as_str(), *current, *total)
-            }),
+            inner
+                .last
+                .borrow()
+                .as_ref()
+                .map(|(label, current, total)| { (label.as_str(), *current, *total) }),
             Some(("Aligning audio fingerprints (video A)...", 500, 1000))
         );
     }
@@ -170,21 +170,29 @@ mod tests {
         let scope = ExtractionProgressScope::new(&inner);
 
         scope.register_batch(1);
-        scope.for_clip(0).progress("Extracting clip 1/1 (video A)", 500, 1000);
+        scope
+            .for_clip(0)
+            .progress("Extracting clip 1/1 (video A)", 500, 1000);
         assert_eq!(
-            inner.last.borrow().as_ref().map(|(label, current, total)| {
-                (label.as_str(), *current, *total)
-            }),
+            inner
+                .last
+                .borrow()
+                .as_ref()
+                .map(|(label, current, total)| { (label.as_str(), *current, *total) }),
             Some((FINGERPRINT_ALIGN_STAGE, 500, 1000))
         );
 
         scope.finish_batch(1);
         scope.register_batch(1);
-        scope.for_clip(0).progress("Extracting clip 1/1 (video B)", 250, 1000);
+        scope
+            .for_clip(0)
+            .progress("Extracting clip 1/1 (video B)", 250, 1000);
         assert_eq!(
-            inner.last.borrow().as_ref().map(|(label, current, total)| {
-                (label.as_str(), *current, *total)
-            }),
+            inner
+                .last
+                .borrow()
+                .as_ref()
+                .map(|(label, current, total)| { (label.as_str(), *current, *total) }),
             Some((FINGERPRINT_ALIGN_STAGE, 1250, 2000))
         );
     }
@@ -200,9 +208,11 @@ mod tests {
             .progress("Extracting clip 1/1 (video A, 10:00)", 99, 100);
 
         assert_eq!(
-            inner.last.borrow().as_ref().map(|(label, current, total)| {
-                (label.as_str(), *current, *total)
-            }),
+            inner
+                .last
+                .borrow()
+                .as_ref()
+                .map(|(label, current, total)| { (label.as_str(), *current, *total) }),
             Some(("Extracting clip 1/1 (video A, 10:00)", 99, 100))
         );
     }

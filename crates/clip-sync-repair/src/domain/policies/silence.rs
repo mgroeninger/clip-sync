@@ -111,16 +111,13 @@ impl SilenceRunScanner {
 
         let channels = pcm.channels().max(1) as usize;
         let rate = pcm.sample_rate();
-        let block_frames = (self.block_secs * f64::from(rate))
-            .round()
-            .max(1.0) as usize;
+        let block_frames = (self.block_secs * f64::from(rate)).round().max(1.0) as usize;
         let total_frames = pcm.frames();
 
         let mut offset_frames = 0usize;
         while offset_frames < total_frames {
             let end_frames = (offset_frames + block_frames).min(total_frames);
-            let block_start_secs =
-                timeline_start_secs + offset_frames as f64 / f64::from(rate);
+            let block_start_secs = timeline_start_secs + offset_frames as f64 / f64::from(rate);
             let block_end_secs = timeline_start_secs + end_frames as f64 / f64::from(rate);
             let block_start = offset_frames * channels;
             let block_end = end_frames * channels;
@@ -161,8 +158,7 @@ impl SilenceRunScanner {
                     {
                         edge -= 1;
                     }
-                    self.run_start =
-                        Some(timeline_start_secs + edge as f64 / f64::from(rate));
+                    self.run_start = Some(timeline_start_secs + edge as f64 / f64::from(rate));
                     // Core onset is the block edge (unwalked) — this whole block is silent.
                     self.core_start = Some(block_start_secs);
                 }
@@ -436,12 +432,25 @@ mod tests {
         // Peak-floor check: peak < floor(2/32767) → silent.
         let v = 1.0_f32 / 32767.0;
         let floor = 2.0_f32 / 32767.0;
-        let samples: Vec<f32> = (0..11_025).map(|i| if i % 2 == 0 { v } else { -v }).collect();
-        assert!(!is_silent(&samples, 0.01, 0.0), "no floor: should not be silent");
-        assert!(is_silent(&samples, 0.01, floor), "floor: peak < floor → silent");
+        let samples: Vec<f32> = (0..11_025)
+            .map(|i| if i % 2 == 0 { v } else { -v })
+            .collect();
+        assert!(
+            !is_silent(&samples, 0.01, 0.0),
+            "no floor: should not be silent"
+        );
+        assert!(
+            is_silent(&samples, 0.01, floor),
+            "floor: peak < floor → silent"
+        );
         let loud_v = 5.0_f32 / 32767.0;
-        let loud_samples: Vec<f32> = (0..11_025).map(|i| if i % 2 == 0 { loud_v } else { -loud_v }).collect();
-        assert!(!is_silent(&loud_samples, 0.01, floor), "floor: peak > floor → not silent by floor");
+        let loud_samples: Vec<f32> = (0..11_025)
+            .map(|i| if i % 2 == 0 { loud_v } else { -loud_v })
+            .collect();
+        assert!(
+            !is_silent(&loud_samples, 0.01, floor),
+            "floor: peak > floor → not silent by floor"
+        );
     }
 
     fn sine_samples(rate: u32, secs: f64) -> Vec<f32> {
@@ -456,7 +465,10 @@ mod tests {
         let rate = 11_025u32;
         let block_secs = 0.25;
         let mut samples = sine_samples(rate, 5.0);
-        samples.extend(std::iter::repeat_n(0.0f32, (rate as f64 * 3.0).round() as usize));
+        samples.extend(std::iter::repeat_n(
+            0.0f32,
+            (rate as f64 * 3.0).round() as usize,
+        ));
         samples.extend(sine_samples(rate, 5.0));
 
         let pcm = mono_pcm(rate, samples);
@@ -479,7 +491,8 @@ mod tests {
         samples.extend(std::iter::repeat_n(0.0f32, rate as usize));
         let pcm = mono_pcm(rate, samples);
 
-        let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0).retain_block_levels();
+        let mut scanner =
+            SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0).retain_block_levels();
         scanner.feed(&pcm, 0.0);
         let (_runs, levels) = scanner.finish_with_levels();
 
@@ -487,9 +500,17 @@ mod tests {
         assert!(levels.len() >= 8, "one block per 0.25 s: {}", levels.len());
         // First block is loud; a mid-silence block reads the floor exactly.
         assert!(levels[0].rms_db > -30.0, "loud block: {:?}", levels[0]);
-        assert_eq!(levels[6].rms_db, BLOCK_LEVEL_FLOOR_DB, "silent block floors: {:?}", levels[6]);
+        assert_eq!(
+            levels[6].rms_db, BLOCK_LEVEL_FLOOR_DB,
+            "silent block floors: {:?}",
+            levels[6]
+        );
         assert!((levels[0].start_secs - 0.0).abs() < 1e-9);
-        assert_eq!(levels.last().unwrap().rms_db, BLOCK_LEVEL_FLOOR_DB, "tail is silent");
+        assert_eq!(
+            levels.last().unwrap().rms_db,
+            BLOCK_LEVEL_FLOOR_DB,
+            "tail is silent"
+        );
     }
 
     #[test]
@@ -558,10 +579,21 @@ mod tests {
         scanner.feed(&pcm, 0.0);
         let runs = scanner.finish();
 
-        assert_eq!(runs.len(), 1, "sub-block-margin silence should be detected, not dropped");
+        assert_eq!(
+            runs.len(),
+            1,
+            "sub-block-margin silence should be detected, not dropped"
+        );
         let dur = runs[0].end_secs - runs[0].start_secs;
-        assert!(dur >= min_gap, "refined span {dur}s must clear min_gap {min_gap}s");
-        assert!((runs[0].start_secs - 2.05).abs() < 0.001, "start {} ≈ 2.05", runs[0].start_secs);
+        assert!(
+            dur >= min_gap,
+            "refined span {dur}s must clear min_gap {min_gap}s"
+        );
+        assert!(
+            (runs[0].start_secs - 2.05).abs() < 0.001,
+            "start {} ≈ 2.05",
+            runs[0].start_secs
+        );
         assert!((dur - 0.543).abs() < 0.001, "duration {dur} ≈ 0.543");
     }
 
@@ -584,10 +616,17 @@ mod tests {
         scanner.feed(&pcm, 0.0);
         let runs = scanner.finish();
 
-        assert_eq!(runs.len(), 1, "hold=1 should merge across the single noisy block");
+        assert_eq!(
+            runs.len(),
+            1,
+            "hold=1 should merge across the single noisy block"
+        );
         // Total span is 17 blocks = 4.25s; duration should be close to that.
-        assert!(runs[0].end_secs - runs[0].start_secs >= 4.0,
-            "merged run should span most of the 4.25s signal, got {}s", runs[0].end_secs - runs[0].start_secs);
+        assert!(
+            runs[0].end_secs - runs[0].start_secs >= 4.0,
+            "merged run should span most of the 4.25s signal, got {}s",
+            runs[0].end_secs - runs[0].start_secs
+        );
     }
 
     #[test]
@@ -605,7 +644,11 @@ mod tests {
 
         let mut scanner = SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, 0.0);
         scanner.feed(&pcm, 0.0);
-        assert_eq!(scanner.finish().len(), 2, "hold=0 should split at the noisy block");
+        assert_eq!(
+            scanner.finish().len(),
+            2,
+            "hold=0 should split at the noisy block"
+        );
     }
 
     #[test]
@@ -635,7 +678,10 @@ mod tests {
         let v = 1000.0_f32 / 32767.0;
         let samples = vec![v; 100];
         let result = rms_interleaved(&samples);
-        assert!((result - v).abs() < 0.001, "rms of constant {v} should be ~{v}, got {result}");
+        assert!(
+            (result - v).abs() < 0.001,
+            "rms of constant {v} should be ~{v}, got {result}"
+        );
     }
 
     #[test]
@@ -643,7 +689,10 @@ mod tests {
         // a=1000, b=1 => raw gain=1000; max_db=12 => max_gain=10^(12/20)≈3.981
         let gain = compute_fill_gain(1000.0, 1.0, 12.0);
         let expected_max = 10f32.powf(12.0 / 20.0);
-        assert!((gain - expected_max).abs() < 0.001, "gain should be clamped to {expected_max}, got {gain}");
+        assert!(
+            (gain - expected_max).abs() < 0.001,
+            "gain should be clamped to {expected_max}, got {gain}"
+        );
     }
 
     #[test]

@@ -16,7 +16,9 @@ use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
 use crate::domain::{ClipLabel, ClipWindow, MediaSource};
 use crate::infrastructure::symphonia::probe::probe_media_reusable;
 use crate::infrastructure::symphonia::session::SymphoniaMediaReader;
-use crate::test_support::ac3_pcm_analysis::{peak_abs, peak_abs_f32, railed_sample_count, railed_sample_count_f32};
+use crate::test_support::ac3_pcm_analysis::{
+    peak_abs, peak_abs_f32, railed_sample_count, railed_sample_count_f32,
+};
 use crate::test_support::audio_fixtures::write_corpus_chirp_wav;
 use crate::test_support::ffmpeg_util::{
     encode_wav_to_ac3_mp4, extract_pcm_s16le_ffmpeg, ffmpeg_available,
@@ -71,14 +73,9 @@ fn oxideav_ac3_corpus_chirp_ffmpeg_reference_has_no_railed_samples() {
         return;
     };
 
-    let reference = extract_pcm_s16le_ffmpeg(
-        &path,
-        SAMPLE_RATE,
-        CHANNELS,
-        0.0,
-        f64::from(DURATION_SECS),
-    )
-    .expect("ffmpeg reference decode should succeed");
+    let reference =
+        extract_pcm_s16le_ffmpeg(&path, SAMPLE_RATE, CHANNELS, 0.0, f64::from(DURATION_SECS))
+            .expect("ffmpeg reference decode should succeed");
 
     let railed = railed_sample_count(&reference);
     let peak = peak_abs(&reference);
@@ -119,14 +116,9 @@ fn oxideav_ac3_corpus_chirp_decode_has_no_railed_samples() {
     assert_eq!(pcm.sample_rate, SAMPLE_RATE);
     assert_eq!(pcm.channels, CHANNELS);
 
-    let ffmpeg_pcm = extract_pcm_s16le_ffmpeg(
-        &path,
-        SAMPLE_RATE,
-        CHANNELS,
-        0.0,
-        f64::from(DURATION_SECS),
-    )
-    .expect("ffmpeg reference decode");
+    let ffmpeg_pcm =
+        extract_pcm_s16le_ffmpeg(&path, SAMPLE_RATE, CHANNELS, 0.0, f64::from(DURATION_SECS))
+            .expect("ffmpeg reference decode");
 
     let oxideav_railed = railed_sample_count_f32(&pcm.samples);
     let ffmpeg_railed = railed_sample_count(&ffmpeg_pcm);
@@ -146,7 +138,8 @@ fn oxideav_ac3_corpus_chirp_decode_has_no_railed_samples() {
         "sanity: ffmpeg reference must be clean (got {ffmpeg_railed} railed)"
     );
     assert_eq!(
-        oxideav_railed, 0,
+        oxideav_railed,
+        0,
         "oxideav-ac3 decode of corpus chirp AC-3 should have zero full-scale (|s|>=1.0) \
          samples; got {oxideav_railed} railed of {} total (peak={oxideav_peak}).",
         pcm.samples.len()

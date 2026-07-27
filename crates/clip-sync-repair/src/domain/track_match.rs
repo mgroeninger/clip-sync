@@ -60,7 +60,10 @@ mod tests {
     use super::*;
 
     fn descriptor(channels: u16, sample_rate: u32) -> TrackDescriptor {
-        TrackDescriptor { channels, sample_rate }
+        TrackDescriptor {
+            channels,
+            sample_rate,
+        }
     }
 
     #[test]

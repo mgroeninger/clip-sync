@@ -409,7 +409,10 @@ mod tests {
         strong.post_correlation = 0.95;
         let table = PatchAnchorTable::from_candidates(&[weak, strong], &policy());
         let mid = interpolate_anchored_offset_secs(&alignment, 20.0, &table).unwrap();
-        assert!(mid > 1.3, "weighted mid should lean toward strong anchor, got {mid}");
+        assert!(
+            mid > 1.3,
+            "weighted mid should lean toward strong anchor, got {mid}"
+        );
     }
 
     #[test]

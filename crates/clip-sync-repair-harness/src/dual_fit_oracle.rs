@@ -19,7 +19,9 @@ use clip_sync::testing::corpus_sources::{
     find_source, load_sources, prepare_source_master_wav, source_cache_path, source_ready,
 };
 use clip_sync::testing::ffmpeg_util::ffmpeg_available;
-use clip_sync_repair_fixtures::energy_signature_fixtures::{gap_anchor_secs, ProductionScenarioSpec};
+use clip_sync_repair_fixtures::energy_signature_fixtures::{
+    gap_anchor_secs, ProductionScenarioSpec,
+};
 use hound::{WavReader, WavWriter};
 use serde::Deserialize;
 
@@ -67,8 +69,8 @@ pub struct DualFitOracleCase {
 
 pub fn load_manifest(repair_tests_dir: &Path) -> DualFitOracleManifest {
     let path = floor_oracle_corpus_root(repair_tests_dir).join("dual_fit_manifest.toml");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     toml::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
@@ -107,7 +109,10 @@ pub fn build_stepped_floor_oracle_pair(
     case: &DualFitOracleCase,
     defaults: &FloorOracleDefaults,
 ) -> BuiltFloorOracle {
-    assert!(ffmpeg_available(), "dual-fit oracle build requires ffmpeg on PATH");
+    assert!(
+        ffmpeg_available(),
+        "dual-fit oracle build requires ffmpeg on PATH"
+    );
     std::fs::create_dir_all(dir).expect("create case output dir");
 
     let sample_rate = case.sample_rate.unwrap_or(defaults.sample_rate);
@@ -135,7 +140,11 @@ pub fn build_stepped_floor_oracle_pair(
     let step_frames = secs_to_frames(case.step_ms / 1000.0, sample_rate) as i64;
 
     let mut reader = WavReader::open(&master).expect("open master wav");
-    assert_eq!(reader.spec().channels, 1, "dual-fit oracle expects mono WAV");
+    assert_eq!(
+        reader.spec().channels,
+        1,
+        "dual-fit oracle expects mono WAV"
+    );
     let spec = reader.spec();
     let mut samples: Vec<i16> = reader
         .samples::<i16>()
@@ -176,8 +185,20 @@ pub fn build_stepped_floor_oracle_pair(
     };
     let patch_frames = secs_to_frames(0.1, sample_rate);
     let fade_frames = secs_to_frames(0.02, sample_rate);
-    inject_quiet_patch(&mut samples, &quiet_donor, gap_start, patch_frames, fade_frames);
-    inject_quiet_patch(&mut samples, &quiet_donor, post_start, patch_frames, fade_frames);
+    inject_quiet_patch(
+        &mut samples,
+        &quiet_donor,
+        gap_start,
+        patch_frames,
+        fade_frames,
+    );
+    inject_quiet_patch(
+        &mut samples,
+        &quiet_donor,
+        post_start,
+        patch_frames,
+        fade_frames,
+    );
 
     let mut a_samples: Vec<i16> =
         Vec::with_capacity(gap_start + (gap_end - gap_start) + (samples.len() - post_start));
@@ -235,7 +256,10 @@ pub fn build_stepped_floor_oracle_pair(
     };
 
     validate_stepped_oracle(&built, defaults).unwrap_or_else(|e| {
-        panic!("dual-fit oracle post-encode validation failed for {}: {e}", case.id)
+        panic!(
+            "dual-fit oracle post-encode validation failed for {}: {e}",
+            case.id
+        )
     });
 
     built
@@ -267,11 +291,16 @@ fn inject_quiet_patch(
             1.0
         };
         let mixed = orig * (1.0 - w) + donor_v * w;
-        samples[start + i] = mixed.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+        samples[start + i] = mixed
+            .round()
+            .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
     }
 }
 
-fn validate_stepped_oracle(built: &BuiltFloorOracle, defaults: &FloorOracleDefaults) -> Result<(), String> {
+fn validate_stepped_oracle(
+    built: &BuiltFloorOracle,
+    defaults: &FloorOracleDefaults,
+) -> Result<(), String> {
     if !ffmpeg_available() {
         return Err("ffmpeg unavailable".into());
     }

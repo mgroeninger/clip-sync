@@ -5,8 +5,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::gap_energy::{
-    build_gap_energy_signature, score_post_energy_match, score_pre_energy_match,
-    EnergyTimeline, GapEnergySignature,
+    build_gap_energy_signature, score_post_energy_match, score_pre_energy_match, EnergyTimeline,
+    GapEnergySignature,
 };
 use crate::domain::gap_structure::{
     self, build_gap_context_signature, score_post_match, score_pre_match, ActivityTimeline,
@@ -56,9 +56,7 @@ impl GapSignature {
                 !energy_envelope_is_flat(&sig.pre_energy)
                     || !energy_envelope_is_flat(&sig.post_energy)
             }
-            GapSignature::Bool(sig) => {
-                bool_bins_have_anchor_contour(&sig.pre_bins, &sig.post_bins)
-            }
+            GapSignature::Bool(sig) => bool_bins_have_anchor_contour(&sig.pre_bins, &sig.post_bins),
         }
     }
 
@@ -92,8 +90,15 @@ pub fn build_gap_signature(
     params: &StructureMatchParams,
     mode: GapSignatureMode,
 ) -> GapSignature {
-    match effective_mode(samples, channels, gap_start_frame, gap_end_frame, context_frames, params, mode)
-    {
+    match effective_mode(
+        samples,
+        channels,
+        gap_start_frame,
+        gap_end_frame,
+        context_frames,
+        params,
+        mode,
+    ) {
         GapSignatureMode::Bool => GapSignature::Bool(build_gap_context_signature(
             samples,
             channels,
@@ -102,16 +107,16 @@ pub fn build_gap_signature(
             context_frames,
             params,
         )),
-        GapSignatureMode::Energy | GapSignatureMode::Auto => GapSignature::Energy(
-            build_gap_energy_signature(
+        GapSignatureMode::Energy | GapSignatureMode::Auto => {
+            GapSignature::Energy(build_gap_energy_signature(
                 samples,
                 channels,
                 gap_start_frame,
                 gap_end_frame,
                 context_frames,
                 params,
-            ),
-        ),
+            ))
+        }
     }
 }
 
@@ -243,7 +248,15 @@ mod tests {
     #[test]
     fn auto_falls_back_to_bool_on_flat_envelope() {
         let samples = vec![0.0f32; 400];
-        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
+        let sig = build_gap_signature(
+            &samples,
+            1,
+            100,
+            120,
+            50,
+            &flat_params(),
+            GapSignatureMode::Auto,
+        );
         assert!(matches!(sig, GapSignature::Bool(_)));
     }
 
@@ -253,14 +266,30 @@ mod tests {
         for sample in samples.iter_mut().take(120).skip(100) {
             *sample = 0.0;
         }
-        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Auto);
+        let sig = build_gap_signature(
+            &samples,
+            1,
+            100,
+            120,
+            50,
+            &flat_params(),
+            GapSignatureMode::Auto,
+        );
         assert!(matches!(sig, GapSignature::Bool(_)));
     }
 
     #[test]
     fn flat_bool_signature_has_no_anchor_contour() {
         let samples = vec![0.0f32; 400];
-        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Bool);
+        let sig = build_gap_signature(
+            &samples,
+            1,
+            100,
+            120,
+            50,
+            &flat_params(),
+            GapSignatureMode::Bool,
+        );
         assert!(!sig.has_anchor_seam_contour());
     }
 
@@ -270,7 +299,15 @@ mod tests {
         for sample in samples.iter_mut().skip(130) {
             *sample = 8_000.0_f32 / 32767.0;
         }
-        let sig = build_gap_signature(&samples, 1, 100, 120, 50, &flat_params(), GapSignatureMode::Bool);
+        let sig = build_gap_signature(
+            &samples,
+            1,
+            100,
+            120,
+            50,
+            &flat_params(),
+            GapSignatureMode::Bool,
+        );
         assert!(sig.has_anchor_seam_contour());
     }
 }

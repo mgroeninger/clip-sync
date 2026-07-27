@@ -213,8 +213,14 @@ fn ac3_channels_from_dac3(extra: &[u8]) -> u16 {
     let acmod = (extra[1] >> 3) & 0x7;
     let lfeon = (extra[1] >> 2) & 0x1;
     let base: u16 = match acmod {
-        0 => 2, 1 => 1, 2 => 2, 3 => 3,
-        4 => 3, 5 => 4, 6 => 4, 7 => 5,
+        0 => 2,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        4 => 3,
+        5 => 4,
+        6 => 4,
+        7 => 5,
         _ => 0,
     };
     base + u16::from(lfeon)
@@ -231,8 +237,14 @@ fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
     let acmod = (extra[3] >> 1) & 0x7;
     let lfeon = extra[3] & 0x1;
     let base: u16 = match acmod {
-        0 => 2, 1 => 1, 2 => 2, 3 => 3,
-        4 => 3, 5 => 4, 6 => 4, 7 => 5,
+        0 => 2,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        4 => 3,
+        5 => 4,
+        6 => 4,
+        7 => 5,
         _ => 0,
     };
     base + u16::from(lfeon)

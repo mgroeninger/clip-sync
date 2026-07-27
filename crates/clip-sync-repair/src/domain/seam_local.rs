@@ -69,18 +69,23 @@ pub fn lag_correlation_curve_fft(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<
     // Circular cross-correlation via FFT: IFFT(conj(FFT(a_pad)) .* FFT(b_pad))[k] = Σ a[i]·b_ctx[i+k] for
     // k in the valid (non-wrapping) range, since M >= n + nb - 1 zero-pads away any wraparound there.
     let m = (n + nb).next_power_of_two();
-    let mut a_buf: Vec<Complex<f64>> =
-        (0..m).map(|i| Complex::new(if i < n { a[i] } else { 0.0 }, 0.0)).collect();
-    let mut b_buf: Vec<Complex<f64>> =
-        (0..m).map(|i| Complex::new(if i < nb { b_ctx[i] } else { 0.0 }, 0.0)).collect();
+    let mut a_buf: Vec<Complex<f64>> = (0..m)
+        .map(|i| Complex::new(if i < n { a[i] } else { 0.0 }, 0.0))
+        .collect();
+    let mut b_buf: Vec<Complex<f64>> = (0..m)
+        .map(|i| Complex::new(if i < nb { b_ctx[i] } else { 0.0 }, 0.0))
+        .collect();
 
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(m);
     let ifft = planner.plan_fft_inverse(m);
     fft.process(&mut a_buf);
     fft.process(&mut b_buf);
-    let mut prod: Vec<Complex<f64>> =
-        a_buf.iter().zip(b_buf.iter()).map(|(x, y)| x.conj() * y).collect();
+    let mut prod: Vec<Complex<f64>> = a_buf
+        .iter()
+        .zip(b_buf.iter())
+        .map(|(x, y)| x.conj() * y)
+        .collect();
     ifft.process(&mut prod);
     let scale = 1.0 / m as f64;
 
@@ -101,7 +106,11 @@ pub fn lag_correlation_curve_fft(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<
         let var_b = sum_b2 - sum_b * sum_b / n as f64;
         let numerator = sum_ab - mean_a * sum_b;
         let denom = (var_a * var_b).sqrt();
-        let r = if denom <= f64::EPSILON { 0.0 } else { (numerator / denom).clamp(-1.0, 1.0) };
+        let r = if denom <= f64::EPSILON {
+            0.0
+        } else {
+            (numerator / denom).clamp(-1.0, 1.0)
+        };
         out.push((lag, finite(r)));
     }
     out
@@ -140,7 +149,12 @@ pub fn lag_correlation_curve_auto(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec
 /// Returns empty when `n == 0`, `base_hi < base_lo`, or `base_hi + n > b.len()`; the caller scores any
 /// out-of-band start with the naive per-placement path (and treats an out-of-bounds seam window as `0.0`, as
 /// `fill_seam_correlations` does).
-pub fn seam_correlation_over_bases(a: &[f64], b: &[f64], base_lo: usize, base_hi: usize) -> Vec<f64> {
+pub fn seam_correlation_over_bases(
+    a: &[f64],
+    b: &[f64],
+    base_lo: usize,
+    base_hi: usize,
+) -> Vec<f64> {
     let n = a.len();
     if n == 0 || base_hi < base_lo || base_hi + n > b.len() {
         return Vec::new();
@@ -173,7 +187,9 @@ pub fn seam_local_peak(
     if n < 8 || anchor_start + n > b_mono.len() {
         return None;
     }
-    let max_lag = max_lag.min(anchor_start).min(b_mono.len() - (anchor_start + n));
+    let max_lag = max_lag
+        .min(anchor_start)
+        .min(b_mono.len() - (anchor_start + n));
     let b_ctx = &b_mono[anchor_start - max_lag..anchor_start + n + max_lag];
     let curve = lag_correlation_curve_auto(a_seam, b_ctx, max_lag as i64);
     let &(peak_lag, peak_r) = curve
@@ -197,7 +213,9 @@ mod tests {
         let n = 2000usize;
         let mut seed = 0x1234_5678_9abc_def0u64;
         let mut rng = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         let a: Vec<f64> = (0..n).map(|_| rng()).collect();
@@ -210,7 +228,10 @@ mod tests {
         let (r, lag, peak_z) = seam_local_peak(&a, &b, anchor_start, max_lag).expect("peak");
         assert!(r > 0.99, "seam recovers at its offset: r={r}");
         assert_eq!(lag, true_lag, "finds the seam-local lag, not lag 0");
-        assert!(peak_z.is_some_and(|z| z > 5.0), "unique peak has a high z-score: {peak_z:?}");
+        assert!(
+            peak_z.is_some_and(|z| z > 5.0),
+            "unique peak has a high z-score: {peak_z:?}"
+        );
 
         let lag0 = normalized_correlation(&a, &b[anchor_start..anchor_start + n]);
         assert!(lag0 < 0.5, "lag-0 score misses the offset seam: {lag0}");
@@ -220,7 +241,9 @@ mod tests {
         let mut seed = seed | 1;
         (0..n)
             .map(|_| {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0) * scale
             })
             .collect()
@@ -261,12 +284,21 @@ mod tests {
             let b = noise(0x1357 ^ extra as u64, n + extra, 1.0);
             let base_lo = 5usize;
             let base_hi = extra - 3; // in-band; leaves room for the n-length window at base_hi
-            // Sanity: this case actually exercises the intended branch.
-            let over_crossover = (n as u64) * (2 * (base_hi - base_lo) as u64 + 1) > FFT_CROSSOVER_OPS;
-            assert_eq!(over_crossover, label == "fft", "{label}: wrong auto branch for the test size");
+                                     // Sanity: this case actually exercises the intended branch.
+            let over_crossover =
+                (n as u64) * (2 * (base_hi - base_lo) as u64 + 1) > FFT_CROSSOVER_OPS;
+            assert_eq!(
+                over_crossover,
+                label == "fft",
+                "{label}: wrong auto branch for the test size"
+            );
 
             let band = seam_correlation_over_bases(&a, &b, base_lo, base_hi);
-            assert_eq!(band.len(), base_hi - base_lo + 1, "{label}: dense band length");
+            assert_eq!(
+                band.len(),
+                base_hi - base_lo + 1,
+                "{label}: dense band length"
+            );
             for i in (0..band.len()).step_by((band.len() / 50).max(1)) {
                 let base = base_lo + i;
                 let naive = normalized_correlation(&a, &b[base..base + n]);
@@ -283,9 +315,18 @@ mod tests {
         // Out-of-band / degenerate inputs return empty (caller falls back to the naive per-placement path).
         let a = noise(1, 32, 1.0);
         let b = noise(2, 100, 1.0);
-        assert!(seam_correlation_over_bases(&a, &b, 80, 80).is_empty(), "base_hi + n past b.len()");
-        assert!(seam_correlation_over_bases(&a, &b, 5, 4).is_empty(), "base_hi < base_lo");
-        assert!(seam_correlation_over_bases(&[], &b, 0, 0).is_empty(), "empty template");
+        assert!(
+            seam_correlation_over_bases(&a, &b, 80, 80).is_empty(),
+            "base_hi + n past b.len()"
+        );
+        assert!(
+            seam_correlation_over_bases(&a, &b, 5, 4).is_empty(),
+            "base_hi < base_lo"
+        );
+        assert!(
+            seam_correlation_over_bases(&[], &b, 0, 0).is_empty(),
+            "empty template"
+        );
     }
 
     #[test]
@@ -352,7 +393,10 @@ mod tests {
         let b_ctx = noise(0x2468, total, 0.001);
         let naive = lag_correlation_curve(&a, &b_ctx, max_lag);
         let auto = lag_correlation_curve_auto(&a, &b_ctx, max_lag);
-        assert_eq!(naive, auto, "small probe: auto must take the naive path bit-for-bit");
+        assert_eq!(
+            naive, auto,
+            "small probe: auto must take the naive path bit-for-bit"
+        );
 
         // Full sweep (production seam-local / baseline-lag class): auto must match naive within the FFT
         // epsilon (it took the FFT path), not bit-for-bit.
@@ -367,7 +411,10 @@ mod tests {
         assert_curves_equivalent(&a, &b_ctx, max_lag, "auto_full_sweep_vs_naive");
         let auto = lag_correlation_curve_auto(&a, &b_ctx, max_lag);
         let fft = lag_correlation_curve_fft(&a, &b_ctx, max_lag);
-        assert_eq!(auto, fft, "full sweep: auto must take the fft path bit-for-bit (same fn)");
+        assert_eq!(
+            auto, fft,
+            "full sweep: auto must take the fft path bit-for-bit (same fn)"
+        );
     }
 
     #[test]

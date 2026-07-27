@@ -48,7 +48,8 @@ fn build_codec_registry() -> CodecRegistry {
 
     #[cfg(feature = "ac3")]
     {
-        registry.register_audio_decoder::<crate::infrastructure::symphonia::oxideav_ac3::Ac3Decoder>();
+        registry
+            .register_audio_decoder::<crate::infrastructure::symphonia::oxideav_ac3::Ac3Decoder>();
     }
 
     registry

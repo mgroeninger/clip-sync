@@ -1,8 +1,8 @@
 use std::time::Duration;
 
+use crate::domain::query_localization::{AlignmentModeUsed, QueryLocalization};
 use crate::domain::ClipLabel;
 use crate::domain::ClipWindow;
-use crate::domain::query_localization::{AlignmentModeUsed, QueryLocalization};
 
 /// Chromaprint item sequence for one prepared mono clip.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,7 +127,12 @@ pub struct HighRateAnchorRefinement {
 
 impl HighRateAnchorRefinement {
     pub fn offset_after_secs(&self) -> f64 {
-        self.offset_before_secs + if self.applied { self.adjustment_secs } else { 0.0 }
+        self.offset_before_secs
+            + if self.applied {
+                self.adjustment_secs
+            } else {
+                0.0
+            }
     }
 }
 
@@ -279,13 +284,18 @@ pub fn periodic_ambiguity_period(
     clip_duration_secs: Option<f64>,
 ) -> Option<f64> {
     let raw = match (&report.a, &report.b) {
-        (Some(a), Some(b)) if is_strong_repetition_finding(a, min_repetition_confidence)
-            && is_strong_repetition_finding(b, min_repetition_confidence) =>
+        (Some(a), Some(b))
+            if is_strong_repetition_finding(a, min_repetition_confidence)
+                && is_strong_repetition_finding(b, min_repetition_confidence) =>
         {
             Some(a.lag_secs.min(b.lag_secs))
         }
-        (Some(a), _) if is_strong_repetition_finding(a, min_repetition_confidence) => Some(a.lag_secs),
-        (_, Some(b)) if is_strong_repetition_finding(b, min_repetition_confidence) => Some(b.lag_secs),
+        (Some(a), _) if is_strong_repetition_finding(a, min_repetition_confidence) => {
+            Some(a.lag_secs)
+        }
+        (_, Some(b)) if is_strong_repetition_finding(b, min_repetition_confidence) => {
+            Some(b.lag_secs)
+        }
         _ => None,
     };
     raw.map(|period| {
@@ -337,17 +347,9 @@ pub fn set_offset_ambiguous_mod_from_start_clip(
         return;
     };
     let clip_duration_secs = clip.window_end_secs - clip.window_start_secs;
-    let Some(period) = clip
-        .repetition
-        .as_ref()
-        .and_then(|report| {
-            periodic_ambiguity_period(
-                report,
-                min_repetition_confidence,
-                Some(clip_duration_secs),
-            )
-        })
-    else {
+    let Some(period) = clip.repetition.as_ref().and_then(|report| {
+        periodic_ambiguity_period(report, min_repetition_confidence, Some(clip_duration_secs))
+    }) else {
         return;
     };
     result.offset_ambiguous_mod_secs = Some(period);
@@ -411,20 +413,16 @@ pub fn build_alignment_result(
         })
         .collect();
 
-    let start_aligned =
-        clip_with_label(&clips, ClipLabel::Start).is_some_and(|clip| clip.aligned);
+    let start_aligned = clip_with_label(&clips, ClipLabel::Start).is_some_and(|clip| clip.aligned);
 
     let end_aligned = clip_with_label(&clips, ClipLabel::End).map(|clip| clip.aligned);
 
-    let aligned_offsets: Vec<f64> = clips
-        .iter()
-        .filter_map(|clip| clip.offset_secs)
-        .collect();
+    let aligned_offsets: Vec<f64> = clips.iter().filter_map(|clip| clip.offset_secs).collect();
 
-    let offsets_consistent =
-        aligned_offsets.len() <= 1 || aligned_offsets.windows(2).all(|pair| {
-            (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
-        });
+    let offsets_consistent = aligned_offsets.len() <= 1
+        || aligned_offsets
+            .windows(2)
+            .all(|pair| (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS);
 
     let offset_drift_secs = compute_offset_drift(&clips);
 
@@ -483,9 +481,9 @@ pub fn refresh_alignment_drift_summary(result: &mut AlignmentResult) {
         .filter_map(|clip| clip.offset_secs)
         .collect();
     result.offsets_consistent = aligned_offsets.len() <= 1
-        || aligned_offsets.windows(2).all(|pair| {
-            (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS
-        });
+        || aligned_offsets
+            .windows(2)
+            .all(|pair| (pair[0] - pair[1]).abs() <= OFFSET_AGREEMENT_TOLERANCE_SECS);
     result.offset_drift_secs = compute_offset_drift(&result.clips);
 }
 
@@ -823,8 +821,18 @@ mod tests {
     #[test]
     fn should_downgrade_periodic_ambiguity_boundary_at_period_minus_one() {
         let report = strong_repetition_report(10.0);
-        assert!(should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 9.0));
-        assert!(!should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 8.9));
+        assert!(should_downgrade_periodic_ambiguity(
+            &report,
+            0.5,
+            Some(60.0),
+            9.0
+        ));
+        assert!(!should_downgrade_periodic_ambiguity(
+            &report,
+            0.5,
+            Some(60.0),
+            8.9
+        ));
     }
 
     #[test]
@@ -851,7 +859,12 @@ mod tests {
             }),
             b: None,
         };
-        assert!(!should_downgrade_periodic_ambiguity(&report, 0.5, Some(60.0), 13.0));
+        assert!(!should_downgrade_periodic_ambiguity(
+            &report,
+            0.5,
+            Some(60.0),
+            13.0
+        ));
     }
 
     #[test]
@@ -863,12 +876,36 @@ mod tests {
         };
 
         let cases = [
-            (Some(finding(30.0)), None, 30.0, true, "exact lag match on a"),
-            (None, Some(finding(30.0)), -30.0, true, "exact lag match on b with negative offset"),
-            (Some(finding(45.0)), None, 30.0, false, "lag differs from offset"),
+            (
+                Some(finding(30.0)),
+                None,
+                30.0,
+                true,
+                "exact lag match on a",
+            ),
+            (
+                None,
+                Some(finding(30.0)),
+                -30.0,
+                true,
+                "exact lag match on b with negative offset",
+            ),
+            (
+                Some(finding(45.0)),
+                None,
+                30.0,
+                false,
+                "lag differs from offset",
+            ),
             (None, None, 30.0, false, "no findings"),
             (Some(finding(29.0)), None, 30.0, true, "lower 1 s boundary"),
-            (Some(finding(28.9)), None, 30.0, false, "beyond lower 1 s boundary"),
+            (
+                Some(finding(28.9)),
+                None,
+                30.0,
+                false,
+                "beyond lower 1 s boundary",
+            ),
             (Some(finding(31.0)), None, 30.0, true, "upper 1 s boundary"),
             (
                 Some(finding(30.5)),
@@ -1032,7 +1069,10 @@ mod tests {
             confidence: 0.2,
         }];
 
-        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
+        let result = build_alignment_result(
+            report_input(&windows, &estimates, None, None),
+            default_policy(),
+        );
         assert!(!result.start_aligned);
         assert_eq!(result.end_aligned, None);
         assert_eq!(result.recommended_offset_secs, None);
@@ -1047,7 +1087,10 @@ mod tests {
             confidence: 0.95,
         }];
 
-        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
+        let result = build_alignment_result(
+            report_input(&windows, &estimates, None, None),
+            default_policy(),
+        );
         assert_eq!(result.end_aligned, None);
         assert!(result.start_aligned);
     }
@@ -1069,7 +1112,10 @@ mod tests {
             },
         ];
 
-        let result = build_alignment_result(report_input(&windows, &estimates, None, None), default_policy());
+        let result = build_alignment_result(
+            report_input(&windows, &estimates, None, None),
+            default_policy(),
+        );
         assert!(!result.offsets_consistent);
         assert_eq!(result.recommended_offset_secs, None);
         assert!((result.offset_drift_secs.unwrap() - 10.0).abs() < 0.01);

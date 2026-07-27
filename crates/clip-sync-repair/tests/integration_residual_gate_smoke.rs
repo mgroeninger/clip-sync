@@ -124,7 +124,10 @@ fn assert_patch_gating_equivalent(
                 base_pcm.sample_rate, actual_pcm.sample_rate,
                 "{label}: pcm sample_rate"
             );
-            assert_eq!(base_pcm.channels, actual_pcm.channels, "{label}: pcm channels");
+            assert_eq!(
+                base_pcm.channels, actual_pcm.channels,
+                "{label}: pcm channels"
+            );
             assert_eq!(
                 base_pcm.samples, actual_pcm.samples,
                 "{label}: patched PCM must be byte-identical when gate is off"
@@ -274,7 +277,10 @@ fn off_no_regression_baseline() {
 
     // F4 decoy fixture: off must match pre-gate regardless of what veto would do if enabled.
     let f4_profiles = [
-        ("f4_decoy calibration-shaped patch", calibration_shaped_off()),
+        (
+            "f4_decoy calibration-shaped patch",
+            calibration_shaped_off(),
+        ),
         ("f4_decoy production_fit", production_fit_off()),
     ];
     for (label, repair) in f4_profiles {

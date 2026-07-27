@@ -13,7 +13,9 @@
 use clip_sync_repair_harness::gap_fingerprint_corpus::{
     curated_gap_cell_projected_rows, curated_gap_cell_rows,
 };
-use clip_sync_repair_harness::golden_baseline::{baseline_from_rows, diff_baselines, TIER2_ABS_EPS};
+use clip_sync_repair_harness::golden_baseline::{
+    baseline_from_rows, diff_baselines, TIER2_ABS_EPS,
+};
 
 #[test]
 fn projection_preserves_curated_golden_baseline() {
@@ -30,6 +32,11 @@ fn projection_preserves_curated_golden_baseline() {
         "projection changed {} decision-axis field(s) across {} curated gaps:\n{}",
         diffs.len(),
         old.gap_count,
-        diffs.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
+        diffs
+            .iter()
+            .take(30)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n"),
     );
 }

@@ -8,18 +8,19 @@ use crate::application::align_videos::{AlignVideos, AlignVideosRequest};
 use crate::application::config::{AlignConfig, AlignmentMode, ClipConfig};
 use crate::application::error::AppError;
 use crate::application::ports::{Aligner, Fingerprinter, MediaReader};
-use crate::test_support::audio_fixtures::{
-    write_looped_chirp_wav_pair, write_near_silence_wav_pair, write_offset_chirp_wav_pair,
-    write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
-    write_query_reference_b_longer_chirp_pair, write_query_reference_chirp_pair, write_repeated_segment_wav_pair, write_tone_wav,
-    write_tone_wav_at_frequency, write_two_clip_inconsistent_pair, ChirpDelayOn,
-};
 use crate::application::testing::corpus_sources::{
     self, find_source, load_sources, source_cache_path,
 };
-use crate::test_support::ffmpeg_util::{self, EncodeFormat};
 use crate::domain::AlignmentModeUsed;
 use crate::domain::AlignmentResult;
+use crate::test_support::audio_fixtures::{
+    write_looped_chirp_wav_pair, write_near_silence_wav_pair, write_offset_chirp_wav_pair,
+    write_offset_chirp_wav_pair_with_delay, write_piecewise_offset_chirp_pair,
+    write_query_reference_b_longer_chirp_pair, write_query_reference_chirp_pair,
+    write_repeated_segment_wav_pair, write_tone_wav, write_tone_wav_at_frequency,
+    write_two_clip_inconsistent_pair, ChirpDelayOn,
+};
+use crate::test_support::ffmpeg_util::{self, EncodeFormat};
 
 /// Short clips to keep Tier-B fixtures under the ~5 MB repo budget (see tests/corpus/README.md).
 const DEFAULT_SAMPLE_RATE: u32 = 11_025;
@@ -300,7 +301,9 @@ fn write_chirp_pair_wavs(
             write_looped_chirp_wav_pair(dir, sample_rate, total_secs, offset_secs)
         }
         Some("query_reference_chirp_pair") => {
-            let reference_secs = case.total_secs.expect("query_reference_chirp_pair needs total_secs");
+            let reference_secs = case
+                .total_secs
+                .expect("query_reference_chirp_pair needs total_secs");
             let query_anchor_secs = case
                 .query_anchor_secs
                 .expect("query_reference_chirp_pair needs query_anchor_secs");
@@ -402,10 +405,7 @@ fn encode_or_rename_pair(
     wav_a: PathBuf,
     wav_b: PathBuf,
 ) -> (PathBuf, PathBuf) {
-    let format = case
-        .format
-        .as_deref()
-        .expect("generated case needs format");
+    let format = case.format.as_deref().expect("generated case needs format");
     let (path_a, path_b) = if format == "cross_mp3_mp4" {
         (
             dir.join(format!("{}_a.mp3", case.id)),
@@ -541,18 +541,8 @@ fn generate_into(base: &Path, case: &CorpusCase, defaults: &CorpusDefaults) -> G
     let temp = tempfile::tempdir_in(dir).expect("tempdir");
     let mut paths = generate_case_pair(case, defaults);
     let case_dir = temp.path();
-    let a = case_dir.join(
-        paths
-            .video_a
-            .file_name()
-            .expect("generated a filename"),
-    );
-    let b = case_dir.join(
-        paths
-            .video_b
-            .file_name()
-            .expect("generated b filename"),
-    );
+    let a = case_dir.join(paths.video_a.file_name().expect("generated a filename"));
+    let b = case_dir.join(paths.video_b.file_name().expect("generated b filename"));
     std::fs::rename(&paths.video_a, &a).expect("move external a");
     std::fs::rename(&paths.video_b, &b).expect("move external b");
     paths._temp = temp;
@@ -562,9 +552,7 @@ fn generate_into(base: &Path, case: &CorpusCase, defaults: &CorpusDefaults) -> G
 }
 
 pub fn build_config(case: &CorpusCase, defaults: &CorpusDefaults) -> AlignConfig {
-    let clip_length_secs = case
-        .clip_length_secs
-        .unwrap_or(defaults.clip_length_secs);
+    let clip_length_secs = case.clip_length_secs.unwrap_or(defaults.clip_length_secs);
     let num_clips = case.num_clips.unwrap_or(defaults.num_clips);
 
     let mut config = AlignConfig {
@@ -641,12 +629,7 @@ where
     FP: Fingerprinter,
     AL: Aligner,
 {
-    run_corpus_case_with_config(
-        use_case,
-        video_a,
-        video_b,
-        build_config(case, defaults),
-    )
+    run_corpus_case_with_config(use_case, video_a, video_b, build_config(case, defaults))
 }
 
 /// Logs recommended offset vs oracle for third-party source cases (`--nocapture`).
@@ -661,10 +644,7 @@ pub fn log_source_offset_precision(
     let Some(expected) = case.expected_offset_secs else {
         return;
     };
-    let tolerance_ms = case
-        .tolerance_secs
-        .unwrap_or(defaults.tolerance_secs)
-        * 1000.0;
+    let tolerance_ms = case.tolerance_secs.unwrap_or(defaults.tolerance_secs) * 1000.0;
     match result.recommended_offset_secs {
         Some(actual) => {
             let error_ms = (actual - expected).abs() * 1000.0;
@@ -718,9 +698,7 @@ pub fn assert_corpus_expectations(
         let actual = result
             .recommended_offset_secs
             .unwrap_or_else(|| panic!("case {}: missing recommended offset", case.id));
-        let tolerance = case
-            .tolerance_secs
-            .unwrap_or(defaults.tolerance_secs);
+        let tolerance = case.tolerance_secs.unwrap_or(defaults.tolerance_secs);
         assert!(
             (actual - expected_offset).abs() <= tolerance,
             "case {}: offset {actual}, expected {expected_offset} ± {tolerance}",
@@ -758,15 +736,13 @@ pub fn assert_corpus_expectations(
         assert_eq!(
             verify.verified, expect_verified,
             "case {}: offset_verification={verify:?} recommended_offset={:?}",
-            case.id,
-            result.recommended_offset_secs
+            case.id, result.recommended_offset_secs
         );
         if expect_verified {
             assert!(
                 !verify.skipped,
                 "case {}: verified hold-out must not be skipped: {:?}",
-                case.id,
-                verify.skip_reason
+                case.id, verify.skip_reason
             );
             assert!(
                 verify.confidence >= defaults.min_confidence,
@@ -799,12 +775,8 @@ pub fn assert_corpus_expectations(
             .query_localization
             .as_ref()
             .unwrap_or_else(|| panic!("case {}: expected query_localization", case.id));
-        let tolerance = case
-            .tolerance_secs
-            .unwrap_or(defaults.tolerance_secs);
-        let expect_anchor = case
-            .expect_anchor_on_reference_secs
-            .unwrap_or(expect_clip);
+        let tolerance = case.tolerance_secs.unwrap_or(defaults.tolerance_secs);
+        let expect_anchor = case.expect_anchor_on_reference_secs.unwrap_or(expect_clip);
         assert!(
             (loc.anchor_ref_secs - expect_anchor).abs() <= tolerance,
             "case {}: anchor_ref_secs {} expected {expect_anchor} ± {tolerance}",
@@ -879,30 +851,18 @@ pub fn write_committed_wav_fixtures() {
     let wav_dir = corpus_root().join("wav");
     std::fs::create_dir_all(&wav_dir).expect("create wav dir");
 
-    let (baseline_a, baseline_b) = write_offset_chirp_wav_pair(
-        &wav_dir,
-        DEFAULT_SAMPLE_RATE,
-        DEFAULT_TOTAL_SECS,
-        0,
-    );
+    let (baseline_a, baseline_b) =
+        write_offset_chirp_wav_pair(&wav_dir, DEFAULT_SAMPLE_RATE, DEFAULT_TOTAL_SECS, 0);
     std::fs::rename(&baseline_a, wav_dir.join("baseline_0s_a.wav")).expect("rename baseline a");
     std::fs::rename(&baseline_b, wav_dir.join("baseline_0s_b.wav")).expect("rename baseline b");
 
-    let (leader_a, leader_b) = write_offset_chirp_wav_pair(
-        &wav_dir,
-        DEFAULT_SAMPLE_RATE,
-        DEFAULT_TOTAL_SECS,
-        3,
-    );
+    let (leader_a, leader_b) =
+        write_offset_chirp_wav_pair(&wav_dir, DEFAULT_SAMPLE_RATE, DEFAULT_TOTAL_SECS, 3);
     std::fs::rename(&leader_a, wav_dir.join("leader_3s_a.wav")).expect("rename leader a");
     std::fs::rename(&leader_b, wav_dir.join("leader_3s_b.wav")).expect("rename leader b");
 
-    let (chirp_temp_a, chirp_temp_b) = write_offset_chirp_wav_pair(
-        &wav_dir,
-        DEFAULT_SAMPLE_RATE,
-        NEGATIVE_CASE_SECS,
-        0,
-    );
+    let (chirp_temp_a, chirp_temp_b) =
+        write_offset_chirp_wav_pair(&wav_dir, DEFAULT_SAMPLE_RATE, NEGATIVE_CASE_SECS, 0);
     std::fs::rename(&chirp_temp_a, wav_dir.join("chirp_a.wav")).expect("rename chirp a");
     let _ = std::fs::remove_file(chirp_temp_b);
 
@@ -924,7 +884,9 @@ pub fn run_wrong_offset_verification_probe(
 ) -> crate::domain::OffsetVerification {
     use std::time::Duration;
 
-    use crate::application::config::{AlignConfig, AlignmentConfig, ChromaprintPreset, ClipConfig, ValidationConfig};
+    use crate::application::config::{
+        AlignConfig, AlignmentConfig, ChromaprintPreset, ClipConfig, ValidationConfig,
+    };
     use crate::application::offset_verification::{
         apply_offset_verification, OffsetVerificationDeps, OffsetVerificationInput,
     };
@@ -1098,16 +1060,12 @@ mod tests {
             &progress,
         );
 
-        for case in manifest
-            .case
-            .iter()
-            .filter(|case| {
-                case.tier == tier
-                    && !case.ignore
-                    && !case.probe_only
-                    && case.requires_source == source_only
-            })
-        {
+        for case in manifest.case.iter().filter(|case| {
+            case.tier == tier
+                && !case.ignore
+                && !case.probe_only
+                && case.requires_source == source_only
+        }) {
             if case.requires_ffmpeg && !ffmpeg_util::ffmpeg_available() {
                 eprintln!("skipping case {}: ffmpeg unavailable", case.id);
                 continue;
@@ -1118,8 +1076,7 @@ mod tests {
             }
 
             let started = std::time::Instant::now();
-            let (_guard, video_a, video_b) =
-                resolve_case_paths(case, &manifest.defaults);
+            let (_guard, video_a, video_b) = resolve_case_paths(case, &manifest.defaults);
 
             if tier == CorpusTier::Committed {
                 assert!(
@@ -1153,14 +1110,8 @@ mod tests {
                     log_source_offset_precision(case, &manifest.defaults, &result);
                 }
             } else {
-                let result = run_corpus_case(
-                    &use_case,
-                    case,
-                    &manifest.defaults,
-                    video_a,
-                    video_b,
-                )
-                .unwrap_or_else(|error| panic!("case {} failed: {error}", case.id));
+                let result = run_corpus_case(&use_case, case, &manifest.defaults, video_a, video_b)
+                    .unwrap_or_else(|error| panic!("case {} failed: {error}", case.id));
 
                 assert_corpus_expectations(case, &manifest.defaults, &result);
                 log_source_offset_precision(case, &manifest.defaults, &result);
@@ -1236,7 +1187,9 @@ mod tests {
         let wrong_offset = case
             .probe_wrong_verification_offset_secs
             .expect("manifest must set probe_wrong_verification_offset_secs");
-        let clip_length_secs = case.clip_length_secs.unwrap_or(manifest.defaults.clip_length_secs);
+        let clip_length_secs = case
+            .clip_length_secs
+            .unwrap_or(manifest.defaults.clip_length_secs);
         let target_sample_rate = case
             .sample_rate
             .unwrap_or(manifest.defaults.target_sample_rate);
@@ -1293,7 +1246,9 @@ mod tests {
             "period alias should set verify_inconclusive"
         );
         assert!(
-            alias_verify.independent_offset_secs.is_some_and(|o| (o - true_offset_secs).abs() < 1.5),
+            alias_verify
+                .independent_offset_secs
+                .is_some_and(|o| (o - true_offset_secs).abs() < 1.5),
             "parallel recheck should recover true offset ~{true_offset_secs}, got {:?}",
             alias_verify.independent_offset_secs
         );
@@ -1304,8 +1259,8 @@ mod tests {
         use crate::application::config::ChromaprintPreset;
         use crate::application::testing::fakes::FakeProgressReporter;
         use crate::infrastructure::chromaprint::{
-        ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
-    };
+            ChromaprintAligner, ChromaprintClipRepetitionDetector, ChromaprintFingerprinter,
+        };
         use crate::infrastructure::symphonia::SymphoniaMediaReader;
 
         let manifest = load_manifest();
@@ -1334,16 +1289,13 @@ mod tests {
             &ChromaprintClipRepetitionDetector,
             &progress,
         );
-        let result = run_corpus_case_with_config(
-            &use_case,
-            paths.video_a,
-            paths.video_b,
-            config,
-        )
-        .expect("align looped pair");
+        let result = run_corpus_case_with_config(&use_case, paths.video_a, paths.video_b, config)
+            .expect("align looped pair");
 
         assert!(
-            result.offset_ambiguous_mod_secs.is_some_and(|t| (t - 10.0).abs() < 3.0),
+            result
+                .offset_ambiguous_mod_secs
+                .is_some_and(|t| (t - 10.0).abs() < 3.0),
             "strong repetition should set fundamental period ~10s, got {:?}",
             result.offset_ambiguous_mod_secs
         );
@@ -1451,9 +1403,15 @@ mod tests {
         let actual = result
             .recommended_offset_secs
             .expect("repeated_segment_in_clip should recommend offset");
-        let tolerance = case.tolerance_secs.unwrap_or(manifest.defaults.tolerance_secs);
+        let tolerance = case
+            .tolerance_secs
+            .unwrap_or(manifest.defaults.tolerance_secs);
         assert!(
-            (actual - case.expected_offset_secs.expect("expected offset in manifest")).abs()
+            (actual
+                - case
+                    .expected_offset_secs
+                    .expect("expected offset in manifest"))
+            .abs()
                 <= tolerance,
             "offset {actual}, expected {} ± {tolerance}",
             case.expected_offset_secs.unwrap()
@@ -1607,8 +1565,8 @@ mod tests {
             &ChromaprintClipRepetitionDetector,
             &progress,
         );
-        let result = run_corpus_case(&use_case, case, &manifest.defaults, video_a, video_b)
-            .expect("align");
+        let result =
+            run_corpus_case(&use_case, case, &manifest.defaults, video_a, video_b).expect("align");
         assert_corpus_expectations(case, &manifest.defaults, &result);
     }
 

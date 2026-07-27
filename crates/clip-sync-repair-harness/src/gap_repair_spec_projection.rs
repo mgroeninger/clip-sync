@@ -71,9 +71,9 @@ mod tests {
             Class::NoPlacement => GapRepairCell::NoPlacement,
             Class::SilenceSplice => GapRepairCell::SilenceSplice,
             Class::BracketPatch => GapRepairCell::BracketPatch,
-            Class::ProgramQuietEarly
-            | Class::DonorAlignedDecline
-            | Class::ProgramQuietExtreme => GapRepairCell::ProgramQuiet,
+            Class::ProgramQuietEarly | Class::DonorAlignedDecline | Class::ProgramQuietExtreme => {
+                GapRepairCell::ProgramQuiet
+            }
             Class::Decorrelated => GapRepairCell::Decorrelated,
             Class::ResidualVeto => GapRepairCell::ResidualVeto,
             Class::Unfillable => GapRepairCell::Unfillable,
@@ -92,29 +92,87 @@ mod tests {
 
     fn expect_axes(class: Class) -> ExpectAxes {
         match class {
-            Class::NoPlacement => ExpectAxes { bracket_exhausted: false, program_quiet_skip: false, donor_continuous: None, dualfit_pass: None },
-            Class::ProgramQuietEarly => ExpectAxes { bracket_exhausted: false, program_quiet_skip: true, donor_continuous: None, dualfit_pass: None },
-            Class::SilenceSplice => ExpectAxes { bracket_exhausted: true, program_quiet_skip: false, donor_continuous: Some(true), dualfit_pass: Some(true) },
-            Class::DonorAlignedDecline => ExpectAxes { bracket_exhausted: true, program_quiet_skip: false, donor_continuous: Some(false), dualfit_pass: Some(true) },
-            Class::ProgramQuietExtreme => ExpectAxes { bracket_exhausted: true, program_quiet_skip: true, donor_continuous: Some(false), dualfit_pass: Some(true) },
-            Class::BracketPatch => ExpectAxes { bracket_exhausted: false, program_quiet_skip: false, donor_continuous: None, dualfit_pass: None },
-            Class::Decorrelated => ExpectAxes { bracket_exhausted: true, program_quiet_skip: false, donor_continuous: Some(true), dualfit_pass: Some(false) },
-            Class::ResidualVeto => ExpectAxes { bracket_exhausted: true, program_quiet_skip: false, donor_continuous: Some(true), dualfit_pass: None },
-            Class::Unfillable => ExpectAxes { bracket_exhausted: false, program_quiet_skip: false, donor_continuous: None, dualfit_pass: None },
+            Class::NoPlacement => ExpectAxes {
+                bracket_exhausted: false,
+                program_quiet_skip: false,
+                donor_continuous: None,
+                dualfit_pass: None,
+            },
+            Class::ProgramQuietEarly => ExpectAxes {
+                bracket_exhausted: false,
+                program_quiet_skip: true,
+                donor_continuous: None,
+                dualfit_pass: None,
+            },
+            Class::SilenceSplice => ExpectAxes {
+                bracket_exhausted: true,
+                program_quiet_skip: false,
+                donor_continuous: Some(true),
+                dualfit_pass: Some(true),
+            },
+            Class::DonorAlignedDecline => ExpectAxes {
+                bracket_exhausted: true,
+                program_quiet_skip: false,
+                donor_continuous: Some(false),
+                dualfit_pass: Some(true),
+            },
+            Class::ProgramQuietExtreme => ExpectAxes {
+                bracket_exhausted: true,
+                program_quiet_skip: true,
+                donor_continuous: Some(false),
+                dualfit_pass: Some(true),
+            },
+            Class::BracketPatch => ExpectAxes {
+                bracket_exhausted: false,
+                program_quiet_skip: false,
+                donor_continuous: None,
+                dualfit_pass: None,
+            },
+            Class::Decorrelated => ExpectAxes {
+                bracket_exhausted: true,
+                program_quiet_skip: false,
+                donor_continuous: Some(true),
+                dualfit_pass: Some(false),
+            },
+            Class::ResidualVeto => ExpectAxes {
+                bracket_exhausted: true,
+                program_quiet_skip: false,
+                donor_continuous: Some(true),
+                dualfit_pass: None,
+            },
+            Class::Unfillable => ExpectAxes {
+                bracket_exhausted: false,
+                program_quiet_skip: false,
+                donor_continuous: None,
+                dualfit_pass: None,
+            },
         }
     }
 
     // --- fixture builders -------------------------------------------------------------------------------
 
     fn donor(silence_fraction: f64, continuous: bool) -> DonorInterior {
-        DonorInterior { rms_db: -20.0, silence_fraction, longest_silence_ms: 0.0, continuous }
+        DonorInterior {
+            rms_db: -20.0,
+            silence_fraction,
+            longest_silence_ms: 0.0,
+            continuous,
+        }
     }
 
     fn seam(gate_pass: bool, post_seam_r: f64, post_seam_global_r: f64) -> SeamLocalTags {
         SeamLocalTags {
-            pre_seam_r: 0.96, post_seam_r, post_seam_global_r,
-            trim_frames: 240, gate_pass, pre_lag: 4, post_lag: -4,
-            pre_seam_prom: None, post_seam_prom: None, pre_seam_z: None, post_seam_z: None,
+            pre_seam_r: 0.96,
+            post_seam_r,
+            post_seam_global_r,
+            trim_frames: 240,
+            gate_pass,
+            pre_lag: 4,
+            post_lag: -4,
+            pre_seam_prom: None,
+            post_seam_prom: None,
+            pre_seam_z: None,
+            post_seam_z: None,
         }
     }
 
@@ -136,7 +194,13 @@ mod tests {
         donor_aligned: Option<DonorInterior>,
         donor_nominal: Option<DonorInterior>,
     ) -> GapRepairTags {
-        GapRepairTags { gate, seam_local, donor_aligned, donor_nominal, ..GapRepairTags::default() }
+        GapRepairTags {
+            gate,
+            seam_local,
+            donor_aligned,
+            donor_nominal,
+            ..GapRepairTags::default()
+        }
     }
 
     fn spec(verdict: GapRepairVerdict, tags_ctx: GapRepairTags) -> GapRepairSpec {
@@ -145,8 +209,15 @@ mod tests {
             a_start_secs: 5.0,
             a_end_secs: 5.4,
             gap_offset_secs: 0.1,
-            refined: RefinedGapFrames { start_frame: 240_000, end_frame: 259_200 },
-            b_extract: BExtractWindow { start_frame: 0, end_frame: 0, b_mapped_start_frame: 0 },
+            refined: RefinedGapFrames {
+                start_frame: 240_000,
+                end_frame: 259_200,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
             crossfade_secs: 0.01,
             verdict,
             tags_ctx,
@@ -155,33 +226,50 @@ mod tests {
 
     fn corr_reason() -> GapPatchSkipReason {
         GapPatchSkipReason::CorrelationBelowThreshold {
-            pre_correlation: 0.96, post_correlation: 0.95, min_correlation: 0.5, best_attempt: None,
+            pre_correlation: 0.96,
+            post_correlation: 0.95,
+            min_correlation: 0.5,
+            best_attempt: None,
         }
     }
 
     fn silence_splice_strategy() -> GapRepairStrategy {
         GapRepairStrategy::SilenceSplice {
             fill: Vec::new(),
-            pre_seam_r: 0.96, post_seam_r: 0.95,
-            pre_lag: 4, post_lag: -4, trim_frames: 240,
-            residual: None, confidence: FillConfidence::High,
+            pre_seam_r: 0.96,
+            post_seam_r: 0.95,
+            pre_lag: 4,
+            post_lag: -4,
+            trim_frames: 240,
+            residual: None,
+            confidence: FillConfidence::High,
         }
     }
 
     fn bracket_strategy() -> GapRepairStrategy {
         GapRepairStrategy::Bracket {
-            alignment: FillAlignment { start_frame: 100, fill_frames: 19_200, pre_correlation: 0.9, post_correlation: 0.9 },
+            alignment: FillAlignment {
+                start_frame: 100,
+                fill_frames: 19_200,
+                pre_correlation: 0.9,
+                post_correlation: 0.9,
+            },
             window_gap_frames: 19_200,
             structure_start_frame: 100,
             structure_trusted: true,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
-            seam_pre: 0.9, seam_post: 0.9, used_splice: false,
+            seam_pre: 0.9,
+            seam_post: 0.9,
+            used_splice: false,
             confidence: FillConfidence::High,
-            gap_start_adjust_frames: 0, gap_end_adjust_frames: 0,
-            fit_used_boundary_grid: false, fit_boundary_grid_cells: None,
-            residual: None, normalize_gain: 1.0,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            normalize_gain: 1.0,
         }
     }
 
@@ -191,24 +279,51 @@ mod tests {
         let good_seam = || seam(true, 0.95, 0.40); // gate_pass + step-real (0.95 − 0.40 ≥ 0.15)
         match class {
             Class::NoPlacement => spec(
-                GapRepairVerdict::skip_with_cell(GapRepairCell::NoPlacement, GapPatchSkipReason::BoundaryAlignmentFailed),
+                GapRepairVerdict::skip_with_cell(
+                    GapRepairCell::NoPlacement,
+                    GapPatchSkipReason::BoundaryAlignmentFailed,
+                ),
                 tags(gate(0, 0, None), None, None, None),
             ),
             Class::ProgramQuietEarly => spec(
-                GapRepairVerdict::skip_with_cell(GapRepairCell::ProgramQuiet, GapPatchSkipReason::ProgramQuiet),
+                GapRepairVerdict::skip_with_cell(
+                    GapRepairCell::ProgramQuiet,
+                    GapPatchSkipReason::ProgramQuiet,
+                ),
                 tags(gate(0, 0, None), None, None, Some(donor(0.9, false))),
             ),
             Class::SilenceSplice => spec(
                 GapRepairVerdict::Patch(silence_splice_strategy()),
-                tags(gate(4, 0, Some("waveform_floor")), Some(good_seam()), Some(donor(0.05, true)), Some(donor(0.10, true))),
+                tags(
+                    gate(4, 0, Some("waveform_floor")),
+                    Some(good_seam()),
+                    Some(donor(0.05, true)),
+                    Some(donor(0.10, true)),
+                ),
             ),
             Class::DonorAlignedDecline => spec(
-                GapRepairVerdict::skip_with_cell(GapRepairCell::ProgramQuiet, GapPatchSkipReason::ProgramQuiet),
-                tags(gate(4, 0, Some("waveform_floor")), Some(good_seam()), Some(donor(0.6, false)), Some(donor(0.10, true))),
+                GapRepairVerdict::skip_with_cell(
+                    GapRepairCell::ProgramQuiet,
+                    GapPatchSkipReason::ProgramQuiet,
+                ),
+                tags(
+                    gate(4, 0, Some("waveform_floor")),
+                    Some(good_seam()),
+                    Some(donor(0.6, false)),
+                    Some(donor(0.10, true)),
+                ),
             ),
             Class::ProgramQuietExtreme => spec(
-                GapRepairVerdict::skip_with_cell(GapRepairCell::ProgramQuiet, GapPatchSkipReason::ProgramQuiet),
-                tags(gate(4, 0, Some("waveform_floor")), Some(good_seam()), Some(donor(0.6, false)), Some(donor(0.95, false))),
+                GapRepairVerdict::skip_with_cell(
+                    GapRepairCell::ProgramQuiet,
+                    GapPatchSkipReason::ProgramQuiet,
+                ),
+                tags(
+                    gate(4, 0, Some("waveform_floor")),
+                    Some(good_seam()),
+                    Some(donor(0.6, false)),
+                    Some(donor(0.95, false)),
+                ),
             ),
             Class::BracketPatch => spec(
                 GapRepairVerdict::Patch(bracket_strategy()),
@@ -216,20 +331,37 @@ mod tests {
             ),
             Class::Decorrelated => spec(
                 GapRepairVerdict::skip_with_cell(GapRepairCell::Decorrelated, corr_reason()),
-                tags(gate(4, 0, Some("waveform_floor")), Some(seam(false, 0.5, 0.45)), Some(donor(0.05, true)), Some(donor(0.05, true))),
+                tags(
+                    gate(4, 0, Some("waveform_floor")),
+                    Some(seam(false, 0.5, 0.45)),
+                    Some(donor(0.05, true)),
+                    Some(donor(0.05, true)),
+                ),
             ),
             Class::ResidualVeto => spec(
                 GapRepairVerdict::skip_with_cell(
                     GapRepairCell::ResidualVeto,
                     GapPatchSkipReason::ResidualHeadroomExceeded {
-                        pre_correlation: 0.9, post_correlation: 0.9, headroom_db: 3.0,
-                        floor_pre_db: -40.0, floor_post_db: -40.0, margin_db: 1.0,
+                        pre_correlation: 0.9,
+                        post_correlation: 0.9,
+                        headroom_db: 3.0,
+                        floor_pre_db: -40.0,
+                        floor_post_db: -40.0,
+                        margin_db: 1.0,
                     },
                 ),
-                tags(gate(4, 0, Some("residual")), None, Some(donor(0.05, true)), Some(donor(0.05, true))),
+                tags(
+                    gate(4, 0, Some("residual")),
+                    None,
+                    Some(donor(0.05, true)),
+                    Some(donor(0.05, true)),
+                ),
             ),
             Class::Unfillable => spec(
-                GapRepairVerdict::skip_with_cell(GapRepairCell::Unfillable, GapPatchSkipReason::BExtractFailed),
+                GapRepairVerdict::skip_with_cell(
+                    GapRepairCell::Unfillable,
+                    GapPatchSkipReason::BExtractFailed,
+                ),
                 tags(gate(0, 0, None), None, None, None),
             ),
         }
@@ -237,7 +369,9 @@ mod tests {
 
     /// The production export projection under test: spec → `GapFingerprint` → serialize → frozen `gap_row`.
     fn project_to_row(spec: &GapRepairSpec) -> GapRow {
-        let fp = clip_sync_repair::application::gap_fingerprint::spec_to_fingerprint_summary(spec, 48_000, 2, None, None);
+        let fp = clip_sync_repair::application::gap_fingerprint::spec_to_fingerprint_summary(
+            spec, 48_000, 2, None, None,
+        );
         let gaps_json = serde_json::to_string(&[fp]).unwrap();
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("1");
@@ -261,10 +395,24 @@ mod tests {
             // (2) Projection faithfulness — through the frozen gap_row reader.
             let axes = expect_axes(class);
             let row = project_to_row(&spec);
-            assert_eq!(row.bracket_exhausted(), axes.bracket_exhausted, "{class:?} bracket_exhausted");
-            assert_eq!(row.donor_continuous, axes.donor_continuous, "{class:?} donor_continuous");
-            assert_eq!(row.dualfit_pass, axes.dualfit_pass, "{class:?} dualfit_pass");
-            assert_eq!(row.program_quiet_skip(), axes.program_quiet_skip, "{class:?} program_quiet_skip");
+            assert_eq!(
+                row.bracket_exhausted(),
+                axes.bracket_exhausted,
+                "{class:?} bracket_exhausted"
+            );
+            assert_eq!(
+                row.donor_continuous, axes.donor_continuous,
+                "{class:?} donor_continuous"
+            );
+            assert_eq!(
+                row.dualfit_pass, axes.dualfit_pass,
+                "{class:?} dualfit_pass"
+            );
+            assert_eq!(
+                row.program_quiet_skip(),
+                axes.program_quiet_skip,
+                "{class:?} program_quiet_skip"
+            );
         }
     }
 
@@ -284,7 +432,11 @@ mod tests {
         assert_eq!(row.structure_min, Some(0.7), "structure_min");
         assert_eq!(row.seam_min, Some(0.5), "seam_min");
         assert_eq!(row.best_bracket_seam, Some(0.6), "best_bracket_seam");
-        assert_eq!(row.closest_failure_stage.as_deref(), Some("waveform_floor"), "closest_failure_stage");
+        assert_eq!(
+            row.closest_failure_stage.as_deref(),
+            Some("waveform_floor"),
+            "closest_failure_stage"
+        );
     }
 
     /// A Silence-splice keeps its cell across the `dual_fit` flag; only the projections move. Guards against
@@ -296,7 +448,12 @@ mod tests {
         // dual_fit off → same axes, but declined: Skip { cell: SilenceSplice }.
         let declined = spec(
             GapRepairVerdict::skip_with_cell(GapRepairCell::SilenceSplice, corr_reason()),
-            tags(gate(4, 0, Some("waveform_floor")), Some(seam(true, 0.95, 0.40)), Some(donor(0.05, true)), Some(donor(0.10, true))),
+            tags(
+                gate(4, 0, Some("waveform_floor")),
+                Some(seam(true, 0.95, 0.40)),
+                Some(donor(0.05, true)),
+                Some(donor(0.10, true)),
+            ),
         );
 
         assert_eq!(patched.cell(), GapRepairCell::SilenceSplice);
@@ -304,7 +461,13 @@ mod tests {
 
         let rp = project_to_row(&patched);
         let rd = project_to_row(&declined);
-        assert!(rp.patched() && !rp.dualfit_target(), "repaired: patch tier, no longer a pending target");
-        assert!(!rd.patched() && rd.dualfit_target(), "declined: skip tier, still a pending dual-fit target");
+        assert!(
+            rp.patched() && !rp.dualfit_target(),
+            "repaired: patch tier, no longer a pending target"
+        );
+        assert!(
+            !rd.patched() && rd.dualfit_target(),
+            "declined: skip tier, still a pending dual-fit target"
+        );
     }
 }

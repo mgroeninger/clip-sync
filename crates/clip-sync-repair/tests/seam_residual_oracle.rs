@@ -52,7 +52,11 @@ fn build_broadband_oracle(rate: u32, channels: usize, noise_amp: f64) -> EnergyS
         let in_gap = (gap_start..gap_end).contains(&f);
         for c in 0..ch {
             let idx = f * ch + c;
-            let a_val = if in_gap { 0.0 } else { m + lcg(&mut seed_a) * noise_amp };
+            let a_val = if in_gap {
+                0.0
+            } else {
+                m + lcg(&mut seed_a) * noise_amp
+            };
             let b_val = m + lcg(&mut seed_b) * noise_amp;
             a[idx] = (a_val / 32767.0).clamp(-1.0, 1.0) as f32;
             b[idx] = (b_val / 32767.0).clamp(-1.0, 1.0) as f32;
@@ -196,8 +200,7 @@ fn broadband_oracle_veto_rescue_patches_marginal() {
     assert!(
         verdict.informative,
         "same-master oracle floor should be informative: floor pre={:.1} post={:.1}",
-        verdict.floor_pre_db,
-        verdict.floor_post_db,
+        verdict.floor_pre_db, verdict.floor_post_db,
     );
     assert!(
         verdict.worst_headroom_db() <= DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -225,20 +228,35 @@ fn run_oracle_config(
     let gap = result.summary.gaps.first().expect("one gap");
     let headroom = gap.residual.map_or(f64::NAN, |v| v.worst_headroom_db());
     match &gap.status {
-        GapPatchStatus::Patched { pre_correlation, post_correlation, .. } => {
-            ("patched".into(), *pre_correlation, *post_correlation, headroom)
-        }
+        GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            ..
+        } => (
+            "patched".into(),
+            *pre_correlation,
+            *post_correlation,
+            headroom,
+        ),
         GapPatchStatus::Skipped { reason } => match reason {
             GapPatchSkipReason::CorrelationBelowThreshold {
                 pre_correlation,
                 post_correlation,
                 ..
-            } => ("skipped_corr".into(), *pre_correlation, *post_correlation, headroom),
+            } => (
+                "skipped_corr".into(),
+                *pre_correlation,
+                *post_correlation,
+                headroom,
+            ),
             other => (format!("skipped:{other:?}"), f64::NAN, f64::NAN, headroom),
         },
-        GapPatchStatus::NotPlanned { reason } => {
-            (format!("not_planned:{reason:?}"), f64::NAN, f64::NAN, headroom)
-        }
+        GapPatchStatus::NotPlanned { reason } => (
+            format!("not_planned:{reason:?}"),
+            f64::NAN,
+            f64::NAN,
+            headroom,
+        ),
     }
 }
 
@@ -276,7 +294,8 @@ fn seam_residual_h2_placement_experiment() {
         ("full_grid", &full_grid, false), // per-cell residual would be costly; only need patch/skip
         ("structure_iso", &structure_iso, true),
     ] {
-        let (status, pre, post, headroom) = run_oracle_config(temp.path(), &fixture, repair, measure);
+        let (status, pre, post, headroom) =
+            run_oracle_config(temp.path(), &fixture, repair, measure);
         println!("{label},{status},{pre:.3},{post:.3},{headroom:.1}");
     }
 }
@@ -332,7 +351,10 @@ fn seam_residual_oracle_csv() {
         v.floor_pre_db,
         v.floor_post_db,
     );
-    assert!(v.informative, "same-master oracle should have informative floor");
+    assert!(
+        v.informative,
+        "same-master oracle should have informative floor"
+    );
     assert!(
         v.worst_headroom_db() < 6.0,
         "headroom at the true fill should be small after the raw-window fix, got {:.1} dB",
@@ -371,7 +393,11 @@ fn seam_residual_oracle_center_dominant_6ch() {
     println!(
         "center_dominant_oracle,multichannel,true_fill,\
          chosen_pre={:.1},chosen_post={:.1},floor_pre={:.1},floor_post={:.1},headroom={:.1}",
-        v.chosen_pre_db, v.chosen_post_db, v.floor_pre_db, v.floor_post_db, v.worst_headroom_db(),
+        v.chosen_pre_db,
+        v.chosen_post_db,
+        v.floor_pre_db,
+        v.floor_post_db,
+        v.worst_headroom_db(),
     );
 
     // The center channel cancels (same-master) even though five of six channels are decorrelated
@@ -379,8 +405,7 @@ fn seam_residual_oracle_center_dominant_6ch() {
     assert!(
         v.informative,
         "center-channel cancellation should establish the regime: floor pre={:.1} post={:.1}",
-        v.floor_pre_db,
-        v.floor_post_db,
+        v.floor_pre_db, v.floor_post_db,
     );
     assert!(
         v.worst_headroom_db() < 6.0,

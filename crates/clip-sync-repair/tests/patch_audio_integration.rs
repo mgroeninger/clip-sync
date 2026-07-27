@@ -17,16 +17,16 @@ use clip_sync::{
     AlignmentResult, ClipLabel, ClipMatch, MediaReader, MediaSession, SymphoniaMediaReader,
 };
 use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
+use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
-use clip_sync_repair::domain::{
-    FillMode, FillOffsetMode, GapSignatureMode, FitBoundarySearch, RepairProfile,
-};
+use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::FillConfidence;
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
-use clip_sync_repair::application::ports::PatchedAudioWriter;
-use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
+use clip_sync_repair::domain::{
+    FillMode, FillOffsetMode, FitBoundarySearch, GapSignatureMode, RepairProfile,
+};
+use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
@@ -211,9 +211,7 @@ fn write_stereo_sine_with_gaps(
 
     for frame in 0..total_frames {
         let t = frame as f64 / sample_rate as f64;
-        let silent = gaps
-            .iter()
-            .any(|&(start, end)| t >= start && t < end);
+        let silent = gaps.iter().any(|&(start, end)| t >= start && t < end);
         let s = if silent {
             0i16
         } else {
@@ -238,7 +236,10 @@ fn interpolated_fill_offset_secs(
 fn read_stereo_i16(path: &Path) -> (WavSpec, Vec<i16>) {
     let mut reader = WavReader::open(path).expect("open wav");
     let spec = reader.spec();
-    let samples: Vec<i16> = reader.samples::<i16>().map(|s| s.expect("sample")).collect();
+    let samples: Vec<i16> = reader
+        .samples::<i16>()
+        .map(|s| s.expect("sample"))
+        .collect();
     (spec, samples)
 }
 
@@ -279,12 +280,7 @@ fn patch_wav_noise_region(
 }
 
 /// Zero-fill a stereo WAV region (per channel).
-fn patch_wav_silence_region(
-    path: &Path,
-    sample_rate: u32,
-    start_secs: f64,
-    end_secs: f64,
-) {
+fn patch_wav_silence_region(path: &Path, sample_rate: u32, start_secs: f64, end_secs: f64) {
     let (spec, mut samples) = read_stereo_i16(path);
     let channels = spec.channels as usize;
     let start = (start_secs * sample_rate as f64) as usize * channels;
@@ -505,7 +501,9 @@ fn assert_hard_gap_skipped_interpolated_only(summary: &clip_sync_repair::domain:
     }
 }
 
-fn assert_fit_interpolated_only_patches_bridge_gaps(summary: &clip_sync_repair::domain::PatchSummary) {
+fn assert_fit_interpolated_only_patches_bridge_gaps(
+    summary: &clip_sync_repair::domain::PatchSummary,
+) {
     assert_eq!(
         summary.patched_count, 4,
         "fit bridge gaps should patch under interpolated offset, hard gap should not, got {:?}",
@@ -554,7 +552,13 @@ fn assert_patch_anchors_exclude_structure_trusted(
     }
 }
 
-fn rms_region(samples: &[f32], sample_rate: u32, channels: u16, start_secs: f64, end_secs: f64) -> f32 {
+fn rms_region(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+    start_secs: f64,
+    end_secs: f64,
+) -> f32 {
     let start = (start_secs * sample_rate as f64) as usize * channels as usize;
     let end = (end_secs * sample_rate as f64) as usize * channels as usize;
     let end = end.min(samples.len());
@@ -562,7 +566,13 @@ fn rms_region(samples: &[f32], sample_rate: u32, channels: u16, start_secs: f64,
         return 0.0;
     }
     let slice = &samples[start..end];
-    let sum_sq: f64 = slice.iter().map(|&s| { let v = s as f64; v * v }).sum();
+    let sum_sq: f64 = slice
+        .iter()
+        .map(|&s| {
+            let v = s as f64;
+            v * v
+        })
+        .sum();
     (sum_sq / slice.len() as f64).sqrt() as f32
 }
 
@@ -838,7 +848,10 @@ fn patch_audio_fills_gap_in_stereo_wav() {
     );
 
     let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    assert!(pre_rms > 100.0 / 32767.0, "pre-gap region should have audio, got rms={pre_rms}");
+    assert!(
+        pre_rms > 100.0 / 32767.0,
+        "pre-gap region should have audio, got rms={pre_rms}"
+    );
 
     let post_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 9.0);
     assert!(
@@ -930,7 +943,10 @@ fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
     );
 
     let pre_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    assert!(pre_rms > 100.0 / 32767.0, "pre-gap audio should be preserved, got rms={pre_rms}");
+    assert!(
+        pre_rms > 100.0 / 32767.0,
+        "pre-gap audio should be preserved, got rms={pre_rms}"
+    );
 
     assert_eq!(result.summary.patched_count, 1);
     assert_eq!(result.summary.skipped_count, 0);
@@ -981,9 +997,20 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
     const GAP_INNER_START: f64 = 3.5;
     const GAP_INNER_END: f64 = 5.5;
 
-    let gap_unnorm =
-        rms_region(&unnormalized, SAMPLE_RATE, CHANNELS, GAP_INNER_START, GAP_INNER_END);
-    let gap_norm = rms_region(&normalized, SAMPLE_RATE, CHANNELS, GAP_INNER_START, GAP_INNER_END);
+    let gap_unnorm = rms_region(
+        &unnormalized,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_INNER_START,
+        GAP_INNER_END,
+    );
+    let gap_norm = rms_region(
+        &normalized,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_INNER_START,
+        GAP_INNER_END,
+    );
 
     assert!(
         gap_unnorm < pre_rms * 0.4,
@@ -1005,7 +1032,11 @@ fn patch_audio_resamples_b_when_sample_rates_differ() {
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, RATE_B, 440.0, 16_000.0);
 
     let request = patch_request(
-        make_report(fixture.path_a, fixture.path_b, stereo_compatible_diff_rate()),
+        make_report(
+            fixture.path_a,
+            fixture.path_b,
+            stereo_compatible_diff_rate(),
+        ),
         false,
         5.0,
         // Resampler phase at the seam can depress correlation slightly; isolate resample behaviour.
@@ -1013,7 +1044,10 @@ fn patch_audio_resamples_b_when_sample_rates_differ() {
     );
 
     let (samples, sample_rate, channels) = patch_to_samples(request, 10);
-    assert_eq!(sample_rate, SAMPLE_RATE, "output should be at A's native rate");
+    assert_eq!(
+        sample_rate, SAMPLE_RATE,
+        "output should be at A's native rate"
+    );
     assert_eq!(channels, CHANNELS);
 
     let gap_rms = rms_region(&samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
@@ -1058,7 +1092,10 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
     let gap_close = rms_region(&samples, SAMPLE_RATE, CHANNELS, 5.9, 6.0);
     let post_first = rms_region(&samples, SAMPLE_RATE, CHANNELS, 6.0, 6.1);
 
-    assert!(pre_last > 100.0 / 32767.0, "pre-gap should stay loud, got rms={pre_last}");
+    assert!(
+        pre_last > 100.0 / 32767.0,
+        "pre-gap should stay loud, got rms={pre_last}"
+    );
     assert!(
         gap_open > pre_last * 0.5,
         "gap opening should not dip to silence (pre={pre_last}, open={gap_open})"
@@ -1067,7 +1104,10 @@ fn patch_audio_aligns_shifted_b_fill_to_a_borders() {
         gap_close > pre_last * 0.5,
         "gap closing should not dip to silence (pre={pre_last}, close={gap_close})"
     );
-    assert!(post_first > 100.0 / 32767.0, "post-gap should stay loud, got rms={post_first}");
+    assert!(
+        post_first > 100.0 / 32767.0,
+        "post-gap should stay loud, got rms={post_first}"
+    );
 }
 
 #[test]
@@ -1333,11 +1373,20 @@ fn patch_audio_dual_fit_rescues_inverted_post_border() {
         patched.summary.gaps
     );
     match &patched.summary.gaps[0].status {
-        GapPatchStatus::Patched { dual_fit_used: true, .. } => {}
+        GapPatchStatus::Patched {
+            dual_fit_used: true,
+            ..
+        } => {}
         other => panic!("expected a dual-fit-rescued patch (dual_fit_used), got {other:?}"),
     }
     let pcm = expect_pcm(&patched);
-    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, SHORT_GAP_END);
+    let gap_rms = rms_region(
+        &pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_START,
+        SHORT_GAP_END,
+    );
     assert!(
         gap_rms > 100.0 / 32767.0,
         "dual-fit-rescued gap should contain audio, rms={gap_rms}"
@@ -1378,11 +1427,7 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
         ..gap
     };
 
-    let report = make_report(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-    );
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
         gaps: vec![gap],
         ..report
@@ -1470,7 +1515,13 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
     }
 
     let pcm = expect_pcm(&patched);
-    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, SHORT_GAP_END);
+    let gap_rms = rms_region(
+        &pcm.samples,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_START,
+        SHORT_GAP_END,
+    );
     assert!(
         gap_rms > 100.0 / 32767.0,
         "gap should contain audio after one-strong-seam patch, rms={gap_rms}"
@@ -1511,11 +1562,7 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         b_has_energy: true,
     };
 
-    let report = make_report(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-    );
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
         gaps: vec![gap],
         ..report
@@ -1758,11 +1805,7 @@ fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
         },
     );
 
-    let report = make_report(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-    );
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
         gaps: vec![default_gap()],
         ..report
@@ -1833,11 +1876,7 @@ fn patch_audio_fit_mode_high_confidence_on_clean_fixture() {
     // B is continuous — a real dropout has donor content at the mapped span (G5/D11).
     write_stereo_sine_wav(&path_b, SAMPLE_RATE, TOTAL_SECS, 440.0, 16_000.0);
 
-    let report = make_report(
-        path_a,
-        path_b,
-        stereo_identical_compat(SAMPLE_RATE),
-    );
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
         gaps: vec![default_gap()],
         ..report
@@ -1904,11 +1943,7 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         b_has_energy: true,
     };
 
-    let alignment = make_drift_alignment(
-        START_OFFSET,
-        END_OFFSET,
-        f64::from(TIMELINE_SECS),
-    );
+    let alignment = make_drift_alignment(START_OFFSET, END_OFFSET, f64::from(TIMELINE_SECS));
     let report = make_report_with_alignment(
         path_a,
         path_b,
@@ -1925,13 +1960,7 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
     };
 
     let recommended = run_patch(
-        patch_request_with_options(
-            report.clone(),
-            false,
-            5.0,
-            0.35,
-            recommended_opts,
-        ),
+        patch_request_with_options(report.clone(), false, 5.0, 0.35, recommended_opts),
         10,
     );
     assert_eq!(
@@ -2000,7 +2029,9 @@ fn patch_audio_fit_default_repeat_penalty_patches_clean_fixture() {
             confidence: FillConfidence::High,
             ..
         } => {}
-        other => panic!("expected high-confidence patch with default repeat penalty, got {other:?}"),
+        other => {
+            panic!("expected high-confidence patch with default repeat penalty, got {other:?}")
+        }
     }
 }
 
@@ -2144,13 +2175,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
     };
 
     let interpolated_only = run_patch(
-        patch_request_with_options(
-            fixture.report.clone(),
-            false,
-            5.0,
-            0.35,
-            interpolated_opts,
-        ),
+        patch_request_with_options(fixture.report.clone(), false, 5.0, 0.35, interpolated_opts),
         10,
     );
     assert!(
@@ -2166,13 +2191,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
     assert_hard_gap_skipped_interpolated_only(&interpolated_only.summary);
 
     let anchored = run_patch(
-        patch_request_with_options(
-            fixture.report.clone(),
-            false,
-            5.0,
-            0.35,
-            opts.clone(),
-        ),
+        patch_request_with_options(fixture.report.clone(), false, 5.0, 0.35, opts.clone()),
         10,
     );
     assert!(
@@ -2226,13 +2245,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
     let mut exclusion_opts = anchored_retry_drift_gate_patch_options();
     exclusion_opts.strong_structure_trust = 0.90;
     let exclusion = run_patch(
-        patch_request_with_options(
-            fixture.report,
-            false,
-            5.0,
-            0.35,
-            exclusion_opts,
-        ),
+        patch_request_with_options(fixture.report, false, 5.0, 0.35, exclusion_opts),
         10,
     );
     assert!(
@@ -2248,7 +2261,7 @@ fn patch_audio_anchored_retry_pass2_recovers_hard_gap_gate_mode() {
         "expected structure-trusted interior patch under default gate trust, got {:?}",
         exclusion.summary.gaps
     );
-    assert_patch_anchors_exclude_structure_trusted(&exclusion.summary    );
+    assert_patch_anchors_exclude_structure_trusted(&exclusion.summary);
 }
 
 #[test]
@@ -2309,11 +2322,7 @@ fn patch_audio_anchored_retry_marginal_flag_without_anchors_skips_pass2() {
 
     let report = GapReport {
         gaps: vec![default_gap()],
-        ..make_report(
-            path_a,
-            path_b,
-            stereo_identical_compat(SAMPLE_RATE),
-        )
+        ..make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE))
     };
 
     let mut opts = fast_fit_patch_options();
@@ -2365,11 +2374,7 @@ fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
 
     let report = GapReport {
         gaps: vec![default_gap()],
-        ..make_report(
-            path_a,
-            path_b,
-            stereo_identical_compat(SAMPLE_RATE),
-        )
+        ..make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE))
     };
 
     // Marginal tier is excluded from the anchor table.

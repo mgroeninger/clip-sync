@@ -11,8 +11,8 @@ use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::{effective_fill_absolute_floor, FillConfidence};
 use crate::domain::patch_result::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
 use crate::domain::policies::SeamResidualVerdict;
-use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 use crate::domain::repair_profile::FitBoundarySearch;
+use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 
 /// Residual cancellation band (W-layer; guide `residual_band`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -67,7 +67,9 @@ pub fn classify_residual_band(verdict: &SeamResidualVerdict, margin_db: f64) -> 
 }
 
 /// Derive run-level donor relation from per-gap residual verdicts (≥70% informative → same_master).
-pub fn derive_donor_relation(gaps: &[crate::domain::patch_result::GapPatchOutcome]) -> Option<DonorRelation> {
+pub fn derive_donor_relation(
+    gaps: &[crate::domain::patch_result::GapPatchOutcome],
+) -> Option<DonorRelation> {
     let measured: Vec<_> = gaps.iter().filter_map(|g| g.residual.as_ref()).collect();
     if measured.is_empty() {
         return None;
@@ -416,7 +418,9 @@ pub fn derive_gap_tags_from_patch_outcome(
                 };
                 (tier, seam)
             }
-            GapPatchSkipReason::ProgramQuiet => (PatchTier::NotApplicable, SeamShape::NotApplicable),
+            GapPatchSkipReason::ProgramQuiet => {
+                (PatchTier::NotApplicable, SeamShape::NotApplicable)
+            }
             _ => (PatchTier::NotApplicable, SeamShape::NotApplicable),
         },
     };
@@ -570,7 +574,10 @@ fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
 
 /// Compact suffix for the human gap table status column: ` [marginal · post-strong]`.
 pub fn format_gap_tags_status_suffix(tags: &GapTags) -> String {
-    match (tags.patch_tier.status_label(), tags.seam_shape.status_label()) {
+    match (
+        tags.patch_tier.status_label(),
+        tags.seam_shape.status_label(),
+    ) {
         (None, None) => String::new(),
         (Some(tier), None) => format!(" [{tier}]"),
         (None, Some(seam)) => format!(" [{seam}]"),
@@ -639,10 +646,7 @@ mod tests {
             min_correlation: 0.35,
             best_attempt: None,
         };
-        derive_gap_tags_from_patch_outcome(
-            &GapPatchTierInput::Skipped(&reason),
-            patch_ctx(),
-        )
+        derive_gap_tags_from_patch_outcome(&GapPatchTierInput::Skipped(&reason), patch_ctx())
     }
 
     fn tags_from_patched(pre: f64, post: f64, confidence: FillConfidence) -> GapTags {
@@ -702,10 +706,7 @@ mod tests {
         );
         assert_eq!(tags.patch_tier, PatchTier::StructureFail);
         assert_eq!(tags.seam_shape, SeamShape::NotApplicable);
-        assert_eq!(
-            format_gap_tags_status_suffix(&tags),
-            " [structure fail]"
-        );
+        assert_eq!(format_gap_tags_status_suffix(&tags), " [structure fail]");
     }
 
     #[test]
@@ -849,9 +850,7 @@ mod tests {
 
     #[test]
     fn residual_band_cancels_when_informative_low_headroom() {
-        use crate::domain::policies::{
-            SeamFloorProbe, SeamFloorSource, SeamResidualVerdict,
-        };
+        use crate::domain::policies::{SeamFloorProbe, SeamFloorSource, SeamResidualVerdict};
         let verdict = SeamResidualVerdict::from_parts_with_placement(
             &SeamFloorProbe {
                 residual_db: -40.0,
@@ -889,9 +888,7 @@ mod tests {
 
     #[test]
     fn residual_band_correlates_only_when_headroom_high() {
-        use crate::domain::policies::{
-            SeamFloorProbe, SeamFloorSource, SeamResidualVerdict,
-        };
+        use crate::domain::policies::{SeamFloorProbe, SeamFloorSource, SeamResidualVerdict};
         let verdict = SeamResidualVerdict::from_parts_with_placement(
             &SeamFloorProbe {
                 residual_db: -20.0,

@@ -24,9 +24,7 @@ use clip_sync_repair_harness::gap_fingerprint_corpus::{
 };
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
 fn resolve(dir: &str) -> PathBuf {
@@ -110,7 +108,9 @@ fn main() -> ExitCode {
     print!("{}", report.trustworthy_text());
 
     if std::env::var("GAP_FP_CSV").as_deref() == Ok("1") {
-        let path = repo_root().join("target").join("gap_fingerprint_corpus.csv");
+        let path = repo_root()
+            .join("target")
+            .join("gap_fingerprint_corpus.csv");
         match std::fs::write(&path, report.csv()) {
             Ok(()) => eprintln!("wrote {}", path.display()),
             Err(e) => eprintln!("failed to write {}: {e}", path.display()),

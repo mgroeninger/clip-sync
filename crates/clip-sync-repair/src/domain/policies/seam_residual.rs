@@ -341,7 +341,15 @@ fn measure_window_at_delta(
     max_lag: i64,
     lag_center: i64,
 ) -> SeamFloorProbe {
-    measure_a_win_at_delta(&window.a_win, window.a_lo, window.source, b_mono, delta, max_lag, lag_center)
+    measure_a_win_at_delta(
+        &window.a_win,
+        window.a_lo,
+        window.source,
+        b_mono,
+        delta,
+        max_lag,
+        lag_center,
+    )
 }
 
 /// Measure `(chosen, floor)` for one raw window against one B timeline: floor at the nominal mapping
@@ -389,15 +397,13 @@ pub fn seam_floor_probe(
     gap_end_frame: usize,
 ) -> SeamFloorProbe {
     match select_reference_window(params, side, gap_start_frame, gap_end_frame) {
-        Some(window) => {
-            measure_window_at_delta(
-                &window,
-                params.b_mono,
-                params.a_to_b_delta,
-                params.max_lag_frames,
-                0,
-            )
-        }
+        Some(window) => measure_window_at_delta(
+            &window,
+            params.b_mono,
+            params.a_to_b_delta,
+            params.max_lag_frames,
+            0,
+        ),
         None => SeamFloorProbe::none(),
     }
 }
@@ -470,7 +476,11 @@ pub fn seam_chosen_and_floor_multichannel(
         // Mono downmix fallback — one entry, identical signal path to `seam_chosen_and_floor`.
         let (chosen, floor) =
             seam_chosen_and_floor(params, side, gap_start_frame, gap_end_frame, chosen_delta);
-        return vec![SeamChannelResidual { channel: 0, chosen, floor }];
+        return vec![SeamChannelResidual {
+            channel: 0,
+            chosen,
+            floor,
+        }];
     }
 
     // Shared frame range: walk outward until *any* selected channel carries usable audio, so quiet
@@ -508,7 +518,13 @@ pub fn seam_chosen_and_floor_multichannel(
     let a_wins: Vec<Vec<f64>> = usable
         .iter()
         .map(|&ch| {
-            interleaved_channel_timeline_f64(params.a_samples, channels, ch, frames.a_lo, frames.a_hi)
+            interleaved_channel_timeline_f64(
+                params.a_samples,
+                channels,
+                ch,
+                frames.a_lo,
+                frames.a_hi,
+            )
         })
         .collect();
     let shared_floor_lag = shared_alignment_lag(
@@ -550,7 +566,11 @@ pub fn seam_chosen_and_floor_multichannel(
                 0,
                 shared_chosen_lag,
             );
-            SeamChannelResidual { channel: ch, chosen, floor }
+            SeamChannelResidual {
+                channel: ch,
+                chosen,
+                floor,
+            }
         })
         .collect()
 }
@@ -783,16 +803,13 @@ impl SeamResidualVerdict {
     ///
     /// Ignores sides where either value is non-finite (unmeasured floor or chosen).
     pub fn worst_headroom_db(&self) -> f64 {
-        let headrooms = [self.chosen_pre_db - self.floor_pre_db, self.chosen_post_db - self.floor_post_db]
-            .into_iter()
-            .filter(|h| h.is_finite());
-        headrooms.fold(f64::NAN, |acc, h| {
-            if acc.is_nan() {
-                h
-            } else {
-                acc.max(h)
-            }
-        })
+        let headrooms = [
+            self.chosen_pre_db - self.floor_pre_db,
+            self.chosen_post_db - self.floor_post_db,
+        ]
+        .into_iter()
+        .filter(|h| h.is_finite());
+        headrooms.fold(f64::NAN, |acc, h| if acc.is_nan() { h } else { acc.max(h) })
     }
 
     /// Worst-side chosen-placement residual (higher = less cancellation).
@@ -810,13 +827,7 @@ fn worst_finite_max(values: [f64; 2]) -> f64 {
     values
         .into_iter()
         .filter(|v| v.is_finite())
-        .fold(f64::NAN, |acc, v| {
-            if acc.is_nan() {
-                v
-            } else {
-                acc.max(v)
-            }
-        })
+        .fold(f64::NAN, |acc, v| if acc.is_nan() { v } else { acc.max(v) })
 }
 
 /// Side summary for the scalar verdict fields: the worst-headroom channel's `(chosen_db, floor_db,
@@ -849,8 +860,8 @@ fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::seam_scoring::seam_score_channel_indices;
+    use super::*;
 
     /// Build interleaved f32 A samples (normalized) from per-channel f64 timelines (raw level).
     fn interleave_a(channels_f64: &[Vec<f64>], norm: f64) -> Vec<f32> {
@@ -866,7 +877,12 @@ mod tests {
     }
 
     fn probe_at(db: f64) -> SeamFloorProbe {
-        SeamFloorProbe { source: SeamFloorSource::Border, residual_db: db, gain: 1.0, best_lag: 0 }
+        SeamFloorProbe {
+            source: SeamFloorSource::Border,
+            residual_db: db,
+            gain: 1.0,
+            best_lag: 0,
+        }
     }
 
     #[test]
@@ -880,35 +896,62 @@ mod tests {
         let b_mono: Vec<f64> = (0..200)
             .map(|i| (i as f64 * 0.21).sin() * 1000.0 + (i as f64 * 0.07).cos() * 400.0)
             .collect();
-        let a_pre: Vec<f64> = b_mono[start - pre_window..start].iter().map(|s| s * 0.5).collect();
+        let a_pre: Vec<f64> = b_mono[start - pre_window..start]
+            .iter()
+            .map(|s| s * 0.5)
+            .collect();
         let a_post: Vec<f64> = b_mono[start + gap_frames..start + gap_frames + post_window]
             .iter()
             .map(|s| s * 0.5)
             .collect();
 
-        let pre = seam_residual_for_side(&a_pre, &b_mono, |lag| {
-            let lo = start as i64 - pre_window as i64 + lag;
-            let hi = start as i64 + lag;
-            if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
-                return None;
-            }
-            Some((lo as usize, hi as usize))
-        }, 512, 0)
+        let pre = seam_residual_for_side(
+            &a_pre,
+            &b_mono,
+            |lag| {
+                let lo = start as i64 - pre_window as i64 + lag;
+                let hi = start as i64 + lag;
+                if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
+                    return None;
+                }
+                Some((lo as usize, hi as usize))
+            },
+            512,
+            0,
+        )
         .expect("pre lag fit");
-        let post = seam_residual_for_side(&a_post, &b_mono, |lag| {
-            let tail = (start + gap_frames) as i64;
-            let lo = tail + lag;
-            let hi = tail + post_window as i64 + lag;
-            if lo < 0 || hi > b_mono.len() as i64 {
-                return None;
-            }
-            Some((lo as usize, hi as usize))
-        }, 512, 0)
+        let post = seam_residual_for_side(
+            &a_post,
+            &b_mono,
+            |lag| {
+                let tail = (start + gap_frames) as i64;
+                let lo = tail + lag;
+                let hi = tail + post_window as i64 + lag;
+                if lo < 0 || hi > b_mono.len() as i64 {
+                    return None;
+                }
+                Some((lo as usize, hi as usize))
+            },
+            512,
+            0,
+        )
         .expect("post lag fit");
         assert_eq!(pre.best_lag, 0, "true lag is 0, got {}", pre.best_lag);
-        assert!(pre.residual_db < -60.0, "expected deep cancellation, got {} dB", pre.residual_db);
-        assert!((pre.gain - 0.5).abs() < 1e-6, "expected gain ~0.5, got {}", pre.gain);
-        assert!(post.residual_db < -60.0, "expected deep cancellation, got {} dB", post.residual_db);
+        assert!(
+            pre.residual_db < -60.0,
+            "expected deep cancellation, got {} dB",
+            pre.residual_db
+        );
+        assert!(
+            (pre.gain - 0.5).abs() < 1e-6,
+            "expected gain ~0.5, got {}",
+            pre.gain
+        );
+        assert!(
+            post.residual_db < -60.0,
+            "expected deep cancellation, got {} dB",
+            post.residual_db
+        );
     }
 
     #[test]
@@ -923,17 +966,31 @@ mod tests {
         let hi = (start as i64 + true_lag) as usize;
         let a_pre: Vec<f64> = b_mono[lo..hi].to_vec();
 
-        let pre = seam_residual_for_side(&a_pre, &b_mono, |lag| {
-            let b_lo = start as i64 - pre_window as i64 + lag;
-            let b_hi = start as i64 + lag;
-            if b_lo < 0 || b_hi > b_mono.len() as i64 || b_hi <= b_lo {
-                return None;
-            }
-            Some((b_lo as usize, b_hi as usize))
-        }, 64, 0)
+        let pre = seam_residual_for_side(
+            &a_pre,
+            &b_mono,
+            |lag| {
+                let b_lo = start as i64 - pre_window as i64 + lag;
+                let b_hi = start as i64 + lag;
+                if b_lo < 0 || b_hi > b_mono.len() as i64 || b_hi <= b_lo {
+                    return None;
+                }
+                Some((b_lo as usize, b_hi as usize))
+            },
+            64,
+            0,
+        )
         .expect("pre lag fit");
-        assert_eq!(pre.best_lag, true_lag, "expected lag {true_lag}, got {}", pre.best_lag);
-        assert!(pre.residual_db < -60.0, "shifted copy should cancel, got {} dB", pre.residual_db);
+        assert_eq!(
+            pre.best_lag, true_lag,
+            "expected lag {true_lag}, got {}",
+            pre.best_lag
+        );
+        assert!(
+            pre.residual_db < -60.0,
+            "shifted copy should cancel, got {} dB",
+            pre.residual_db
+        );
     }
 
     #[test]
@@ -950,10 +1007,7 @@ mod tests {
             .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
             .collect();
         // A = same master, half level (nominal map is exact → delta 0).
-        let a_samples: Vec<f32> = b_mono
-            .iter()
-            .map(|&s| (s * 0.5 / 4000.0) as f32)
-            .collect();
+        let a_samples: Vec<f32> = b_mono.iter().map(|&s| (s * 0.5 / 4000.0) as f32).collect();
 
         let params = SeamFloorParams {
             a_samples: &a_samples,
@@ -969,11 +1023,19 @@ mod tests {
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
         assert_eq!(pre.source, SeamFloorSource::Border);
-        assert!(pre.residual_db < -60.0, "border floor should cancel, got {}", pre.residual_db);
+        assert!(
+            pre.residual_db < -60.0,
+            "border floor should cancel, got {}",
+            pre.residual_db
+        );
 
         let post = seam_floor_probe(&params, SeamSide::Post, gap_start, gap_end);
         assert_eq!(post.source, SeamFloorSource::Border);
-        assert!(post.residual_db < -60.0, "post floor should cancel, got {}", post.residual_db);
+        assert!(
+            post.residual_db < -60.0,
+            "post floor should cancel, got {}",
+            post.residual_db
+        );
     }
 
     #[test]
@@ -1008,8 +1070,16 @@ mod tests {
             max_lag_frames: 512,
         };
         let pre = seam_floor_probe(&params, SeamSide::Pre, gap_start, gap_end);
-        assert_eq!(pre.source, SeamFloorSource::Walked, "should walk past the quiet border");
-        assert!(pre.residual_db < -60.0, "walked floor should still cancel, got {}", pre.residual_db);
+        assert_eq!(
+            pre.source,
+            SeamFloorSource::Walked,
+            "should walk past the quiet border"
+        );
+        assert!(
+            pre.residual_db < -60.0,
+            "walked floor should still cancel, got {}",
+            pre.residual_db
+        );
     }
 
     #[test]
@@ -1039,11 +1109,18 @@ mod tests {
             absolute_silence_rms: 33.0 / 32767.0,
             max_lag_frames: 512,
         };
-        let (chosen, floor) =
-            seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, 0);
+        let (chosen, floor) = seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, 0);
         assert_eq!(chosen.source, SeamFloorSource::Border);
-        assert!(chosen.residual_db < -60.0, "chosen should cancel: {}", chosen.residual_db);
-        assert!(floor.residual_db < -60.0, "floor should cancel: {}", floor.residual_db);
+        assert!(
+            chosen.residual_db < -60.0,
+            "chosen should cancel: {}",
+            chosen.residual_db
+        );
+        assert!(
+            floor.residual_db < -60.0,
+            "floor should cancel: {}",
+            floor.residual_db
+        );
 
         let verdict = SeamResidualVerdict::from_parts(&chosen, &chosen, &floor, &floor);
         assert!(
@@ -1051,7 +1128,10 @@ mod tests {
             "headroom should be ~0 at correct placement, got {}",
             verdict.worst_headroom_db()
         );
-        assert!(verdict.informative, "same-master floor should be informative");
+        assert!(
+            verdict.informative,
+            "same-master floor should be informative"
+        );
     }
 
     #[test]
@@ -1083,7 +1163,11 @@ mod tests {
         };
         let (chosen, floor) =
             seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, slide);
-        assert!(floor.residual_db < -60.0, "floor should cancel: {}", floor.residual_db);
+        assert!(
+            floor.residual_db < -60.0,
+            "floor should cancel: {}",
+            floor.residual_db
+        );
         assert!(
             chosen.residual_db < -60.0,
             "lag-centered chosen should cancel within reach: {}",
@@ -1145,7 +1229,11 @@ mod tests {
         // stays within region 2) → no cancellation.
         let (chosen, floor) =
             seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, half as i64);
-        assert!(floor.residual_db < -60.0, "floor should cancel at nominal: {}", floor.residual_db);
+        assert!(
+            floor.residual_db < -60.0,
+            "floor should cancel at nominal: {}",
+            floor.residual_db
+        );
         assert!(
             chosen.residual_db > -6.0,
             "chosen should not cancel into different content: {}",
@@ -1174,16 +1262,25 @@ mod tests {
         let fc_b: Vec<f64> = (0..total)
             .map(|i| (i as f64 * 0.17).sin() * 4000.0 + (i as f64 * 0.4).cos() * 1500.0)
             .collect();
-        let fl_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.53).sin() * 2000.0).collect();
-        let fr_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.91).cos() * 2000.0).collect();
+        let fl_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.53).sin() * 2000.0)
+            .collect();
+        let fr_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.91).cos() * 2000.0)
+            .collect();
         let b_ch = vec![fl_b.clone(), fr_b.clone(), fc_b.clone()];
-        let b_mono: Vec<f64> =
-            (0..total).map(|i| (fl_b[i] + fr_b[i] + fc_b[i]) / 3.0).collect();
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| (fl_b[i] + fr_b[i] + fc_b[i]) / 3.0)
+            .collect();
 
         // A: FC is B's center at half level (same master). FL/FR are *different* noise.
         let fc_a: Vec<f64> = fc_b.iter().map(|s| s * 0.5).collect();
-        let fl_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.37).cos() * 2000.0).collect();
-        let fr_a: Vec<f64> = (0..total).map(|i| (i as f64 * 0.71).sin() * 2000.0).collect();
+        let fl_a: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.37).cos() * 2000.0)
+            .collect();
+        let fr_a: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.71).sin() * 2000.0)
+            .collect();
         let a_samples = interleave_a(&[fl_a, fr_a, fc_a], 4000.0);
 
         let params = |window: usize| SeamFloorParams {
@@ -1212,20 +1309,37 @@ mod tests {
         );
 
         let mc_pre = seam_chosen_and_floor_multichannel(
-            &params(window), &b_ch, &[2], SeamSide::Pre, gap_start, gap_end, 0,
+            &params(window),
+            &b_ch,
+            &[2],
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            0,
         );
         let mc_post = seam_chosen_and_floor_multichannel(
-            &params(window), &b_ch, &[2], SeamSide::Post, gap_start, gap_end, 0,
+            &params(window),
+            &b_ch,
+            &[2],
+            SeamSide::Post,
+            gap_start,
+            gap_end,
+            0,
         );
         let mc = SeamResidualVerdict::from_channel_residuals(
-            &mc_pre, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512,
+            &mc_pre,
+            &mc_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            0,
+            512,
         );
 
         let (chosen_pre, floor_pre) =
             seam_chosen_and_floor(&params(window), SeamSide::Pre, gap_start, gap_end, 0);
         let (chosen_post, floor_post) =
             seam_chosen_and_floor(&params(window), SeamSide::Post, gap_start, gap_end, 0);
-        let mono = SeamResidualVerdict::from_parts(&chosen_pre, &chosen_post, &floor_pre, &floor_post);
+        let mono =
+            SeamResidualVerdict::from_parts(&chosen_pre, &chosen_post, &floor_pre, &floor_post);
 
         assert!(
             mc.worst_floor_db() < -40.0,
@@ -1238,7 +1352,10 @@ mod tests {
             mono.worst_floor_db(),
             mc.worst_floor_db()
         );
-        assert!(mc.informative, "center cancellation establishes the same-master regime");
+        assert!(
+            mc.informative,
+            "center cancellation establishes the same-master regime"
+        );
         assert!(
             mc.worst_headroom_db().abs() < 1.0,
             "headroom at truth should be ~0, got {}",
@@ -1256,12 +1373,19 @@ mod tests {
         let gap_end = 1000usize;
         let window = 128usize;
 
-        let l_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.17).sin() * 4000.0).collect();
-        let r_b: Vec<f64> = (0..total).map(|i| (i as f64 * 0.4).cos() * 4000.0).collect();
+        let l_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0)
+            .collect();
+        let r_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.4).cos() * 4000.0)
+            .collect();
         let b_ch = vec![l_b.clone(), r_b.clone()];
         let b_mono: Vec<f64> = (0..total).map(|i| (l_b[i] + r_b[i]) / 2.0).collect();
         let a_samples = interleave_a(
-            &[l_b.iter().map(|s| s * 0.5).collect(), r_b.iter().map(|s| s * 0.5).collect()],
+            &[
+                l_b.iter().map(|s| s * 0.5).collect(),
+                r_b.iter().map(|s| s * 0.5).collect(),
+            ],
             4000.0,
         );
 
@@ -1279,24 +1403,57 @@ mod tests {
         };
 
         let mc_pre = seam_chosen_and_floor_multichannel(
-            &params(window), &b_ch, &[0, 1], SeamSide::Pre, gap_start, gap_end, 0,
+            &params(window),
+            &b_ch,
+            &[0, 1],
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            0,
         );
         let mc_post = seam_chosen_and_floor_multichannel(
-            &params(window), &b_ch, &[0, 1], SeamSide::Post, gap_start, gap_end, 0,
+            &params(window),
+            &b_ch,
+            &[0, 1],
+            SeamSide::Post,
+            gap_start,
+            gap_end,
+            0,
         );
         let mc = SeamResidualVerdict::from_channel_residuals(
-            &mc_pre, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512,
+            &mc_pre,
+            &mc_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            0,
+            512,
         );
         assert_eq!(mc_pre.len(), 2, "both stereo channels measured");
 
         let (cp, fp) = seam_chosen_and_floor(&params(window), SeamSide::Pre, gap_start, gap_end, 0);
-        let (cq, fq) = seam_chosen_and_floor(&params(window), SeamSide::Post, gap_start, gap_end, 0);
+        let (cq, fq) =
+            seam_chosen_and_floor(&params(window), SeamSide::Post, gap_start, gap_end, 0);
         let mono = SeamResidualVerdict::from_parts(&cp, &cq, &fp, &fq);
 
-        assert!(mc.worst_floor_db() < -40.0, "per-channel cancels: {}", mc.worst_floor_db());
-        assert!(mono.worst_floor_db() < -40.0, "mono cancels: {}", mono.worst_floor_db());
-        assert!(mc.worst_headroom_db().abs() < 1.0, "mc headroom ~0: {}", mc.worst_headroom_db());
-        assert!(mono.worst_headroom_db().abs() < 1.0, "mono headroom ~0: {}", mono.worst_headroom_db());
+        assert!(
+            mc.worst_floor_db() < -40.0,
+            "per-channel cancels: {}",
+            mc.worst_floor_db()
+        );
+        assert!(
+            mono.worst_floor_db() < -40.0,
+            "mono cancels: {}",
+            mono.worst_floor_db()
+        );
+        assert!(
+            mc.worst_headroom_db().abs() < 1.0,
+            "mc headroom ~0: {}",
+            mc.worst_headroom_db()
+        );
+        assert!(
+            mono.worst_headroom_db().abs() < 1.0,
+            "mono headroom ~0: {}",
+            mono.worst_headroom_db()
+        );
         assert!(mc.informative && mono.informative);
     }
 
@@ -1328,7 +1485,13 @@ mod tests {
         };
 
         let mc = seam_chosen_and_floor_multichannel(
-            &params, &b_ch, &[], SeamSide::Pre, gap_start, gap_end, 0,
+            &params,
+            &b_ch,
+            &[],
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            0,
         );
         let (chosen, floor) = seam_chosen_and_floor(&params, SeamSide::Pre, gap_start, gap_end, 0);
 
@@ -1367,14 +1530,21 @@ mod tests {
         let b_ch0 = prng(999);
         let b_ch1 = vec![0.0f64; total];
         let b_ch = vec![b_ch0.clone(), b_ch1.clone(), b_ch2.clone()];
-        let b_mono: Vec<f64> =
-            (0..total).map(|i| (b_ch0[i] + b_ch1[i] + b_ch2[i]) / 3.0).collect();
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| (b_ch0[i] + b_ch1[i] + b_ch2[i]) / 3.0)
+            .collect();
 
         // A: ch2 is B's signal at half level, shifted by +3 frames (the true lag); ch0 is loud,
         // unrelated to ch0's B; ch1 silent.
         let shift = true_lag as usize;
         let a_ch2: Vec<f64> = (0..total)
-            .map(|i| if i + shift < total { sig[i + shift] * 0.5 } else { 0.0 })
+            .map(|i| {
+                if i + shift < total {
+                    sig[i + shift] * 0.5
+                } else {
+                    0.0
+                }
+            })
             .collect();
         let a_ch0 = prng(7777);
         let a_samples = interleave_a(&[a_ch0, b_ch1.clone(), a_ch2], 4000.0);
@@ -1394,12 +1564,26 @@ mod tests {
 
         // Both loud channels are selected (within 20 dB); ch1 is silent and excluded by the caller.
         let mc = seam_chosen_and_floor_multichannel(
-            &params, &b_ch, &[0, 2], SeamSide::Pre, gap_start, gap_end, 0,
+            &params,
+            &b_ch,
+            &[0, 2],
+            SeamSide::Pre,
+            gap_start,
+            gap_end,
+            0,
         );
-        let by_ch = |ch: usize| mc.iter().find(|c| c.channel == ch).expect("channel present");
+        let by_ch = |ch: usize| {
+            mc.iter()
+                .find(|c| c.channel == ch)
+                .expect("channel present")
+        };
 
         // Shared lag came from the matching channel: BOTH channels were measured at lag +3.
-        assert_eq!(by_ch(2).floor.best_lag, true_lag, "matching channel sets the shared lag");
+        assert_eq!(
+            by_ch(2).floor.best_lag,
+            true_lag,
+            "matching channel sets the shared lag"
+        );
         assert_eq!(
             by_ch(0).floor.best_lag,
             true_lag,
@@ -1417,20 +1601,43 @@ mod tests {
         );
 
         let mc_post = seam_chosen_and_floor_multichannel(
-            &params, &b_ch, &[0, 2], SeamSide::Post, gap_start, gap_end, 0,
+            &params,
+            &b_ch,
+            &[0, 2],
+            SeamSide::Post,
+            gap_start,
+            gap_end,
+            0,
         );
-        let verdict =
-            SeamResidualVerdict::from_channel_residuals(&mc, &mc_post, DEFAULT_RESIDUAL_FLOOR_OK_DB, 0, 512);
-        assert!(verdict.informative, "matching channel establishes the same-master regime");
+        let verdict = SeamResidualVerdict::from_channel_residuals(
+            &mc,
+            &mc_post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            0,
+            512,
+        );
+        assert!(
+            verdict.informative,
+            "matching channel establishes the same-master regime"
+        );
     }
 
     #[test]
     fn from_channel_residuals_worst_headroom_and_best_floor_informative() {
         // Aggregation: a well-cancelling channel and a channel that cancels at nominal (low floor)
         // but not at the chosen placement (high chosen) → the bad channel drives `worst_headroom_db`.
-        let good = SeamChannelResidual { channel: 0, chosen: probe_at(-50.0), floor: probe_at(-50.0) };
-        let bad = SeamChannelResidual { channel: 2, chosen: probe_at(-2.0), floor: probe_at(-45.0) };
-        let v = SeamResidualVerdict::from_channel_residuals(&[good, bad], &[good, bad], -15.0, 0, 0);
+        let good = SeamChannelResidual {
+            channel: 0,
+            chosen: probe_at(-50.0),
+            floor: probe_at(-50.0),
+        };
+        let bad = SeamChannelResidual {
+            channel: 2,
+            chosen: probe_at(-2.0),
+            floor: probe_at(-45.0),
+        };
+        let v =
+            SeamResidualVerdict::from_channel_residuals(&[good, bad], &[good, bad], -15.0, 0, 0);
         assert!(
             (v.worst_headroom_db() - 43.0).abs() < 0.5,
             "worst channel should drive headroom, got {}",
@@ -1439,10 +1646,22 @@ mod tests {
 
         // Decoupling: a noisy surround whose floor never cancels (−3 dB > floor_ok) must NOT flip
         // `informative` off when another selected channel established the regime (best floor −50 dB).
-        let center = SeamChannelResidual { channel: 2, chosen: probe_at(-50.0), floor: probe_at(-50.0) };
-        let surround = SeamChannelResidual { channel: 4, chosen: probe_at(-3.0), floor: probe_at(-3.0) };
+        let center = SeamChannelResidual {
+            channel: 2,
+            chosen: probe_at(-50.0),
+            floor: probe_at(-50.0),
+        };
+        let surround = SeamChannelResidual {
+            channel: 4,
+            chosen: probe_at(-3.0),
+            floor: probe_at(-3.0),
+        };
         let v2 = SeamResidualVerdict::from_channel_residuals(
-            &[center, surround], &[center, surround], -15.0, 0, 0,
+            &[center, surround],
+            &[center, surround],
+            -15.0,
+            0,
+            0,
         );
         assert!(
             v2.informative,
@@ -1478,7 +1697,9 @@ mod tests {
     fn seam_floor_probe_none_when_all_quiet() {
         // No energetic reference anywhere → source None.
         let total = 1000usize;
-        let b_mono: Vec<f64> = (0..total).map(|i| (i as f64 * 0.2).sin() * 4000.0).collect();
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.2).sin() * 4000.0)
+            .collect();
         let a_samples = vec![0.0f32; total];
         let params = SeamFloorParams {
             a_samples: &a_samples,
@@ -1499,7 +1720,6 @@ mod tests {
         let verdict = SeamResidualVerdict::from_parts(&none, &none, &none, &none);
         assert!(!verdict.informative);
     }
-
 
     #[test]
     fn seam_residual_verdict_partial_eq_treats_nan_as_equal() {
@@ -1528,15 +1748,24 @@ mod tests {
             .map(|i| (i as f64 * 0.3).sin() * 1000.0)
             .collect();
 
-        let fit = seam_residual_for_side(&a_pre, &b_mono, |lag| {
-            let lo = start as i64 - pre_window as i64 + lag;
-            let hi = start as i64 + lag;
-            if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
-                return None;
-            }
-            Some((lo as usize, hi as usize))
-        }, 64, 0);
-        assert!(fit.is_none(), "silent B should abstain, not report ~0 dB residual");
+        let fit = seam_residual_for_side(
+            &a_pre,
+            &b_mono,
+            |lag| {
+                let lo = start as i64 - pre_window as i64 + lag;
+                let hi = start as i64 + lag;
+                if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
+                    return None;
+                }
+                Some((lo as usize, hi as usize))
+            },
+            64,
+            0,
+        );
+        assert!(
+            fit.is_none(),
+            "silent B should abstain, not report ~0 dB residual"
+        );
     }
 
     #[test]
@@ -1550,15 +1779,25 @@ mod tests {
             .map(|i| (i as f64 * 1.7 + 0.5).cos() * 1000.0)
             .collect();
 
-        let pre = seam_residual_for_side(&a_pre, &b_mono, |lag| {
-            let lo = start as i64 - pre_window as i64 + lag;
-            let hi = start as i64 + lag;
-            if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
-                return None;
-            }
-            Some((lo as usize, hi as usize))
-        }, 64, 0)
+        let pre = seam_residual_for_side(
+            &a_pre,
+            &b_mono,
+            |lag| {
+                let lo = start as i64 - pre_window as i64 + lag;
+                let hi = start as i64 + lag;
+                if lo < 0 || hi > b_mono.len() as i64 || hi <= lo {
+                    return None;
+                }
+                Some((lo as usize, hi as usize))
+            },
+            64,
+            0,
+        )
         .expect("pre lag fit");
-        assert!(pre.residual_db > -6.0, "unrelated audio should not cancel, got {} dB", pre.residual_db);
+        assert!(
+            pre.residual_db > -6.0,
+            "unrelated audio should not cancel, got {} dB",
+            pre.residual_db
+        );
     }
 }

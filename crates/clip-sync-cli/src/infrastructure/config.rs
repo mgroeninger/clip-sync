@@ -110,7 +110,10 @@ mod tests {
     #[test]
     fn flags_misspelled_key_inside_known_table() {
         let raw = "[alignment]\nmin_mtch_score = 0.3\n";
-        assert_eq!(unknown_keys(raw), vec!["alignment.min_mtch_score".to_string()]);
+        assert_eq!(
+            unknown_keys(raw),
+            vec!["alignment.min_mtch_score".to_string()]
+        );
     }
 
     #[test]

@@ -1,13 +1,13 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clip_sync::{
-    AlignmentReport, AlignmentResult, AppError, ClipLabel, ClipMatch, ClipRepetitionReport,
-    ConfigError, DomainError, FingerprintError, HighRateRefinement, MediaError, MediaExtent,
-    OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome, RepetitionFinding,
-    TimelineOverlap, build_query_alignment_result,
-};
 use clip_sync::testing::alignment_fixtures::{minimal_alignment_result, start_clip_match};
+use clip_sync::{
+    build_query_alignment_result, AlignmentReport, AlignmentResult, AppError, ClipLabel, ClipMatch,
+    ClipRepetitionReport, ConfigError, DomainError, FingerprintError, HighRateRefinement,
+    MediaError, MediaExtent, OffsetVerification, QueryLocalization, ReferenceLocalizationOutcome,
+    RepetitionFinding, TimelineOverlap,
+};
 use clip_sync_cli::infrastructure::cli::exit_code::exit_code_for;
 use clip_sync_cli::infrastructure::cli::output::{format_human_output, format_json_output};
 use clip_sync_cli::infrastructure::config::{OutputConfig, OutputFormat};
@@ -174,7 +174,8 @@ fn write_full_surface_alignment_golden() {
     let json = format_json_output(&full_surface_alignment_result());
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/full_surface_alignment.json");
-    std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+    std::fs::create_dir_all(path.parent().expect("fixture parent dir"))
+        .expect("create fixtures dir");
     std::fs::write(&path, json).expect("write golden fixture");
 }
 
@@ -186,7 +187,8 @@ fn write_inconclusive_verification_golden() {
     let json = format_json_output(&inconclusive_verify_alignment_result());
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/inconclusive_verification_alignment.json");
-    std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+    std::fs::create_dir_all(path.parent().expect("fixture parent dir"))
+        .expect("create fixtures dir");
     std::fs::write(&path, json).expect("write golden fixture");
 }
 
@@ -219,9 +221,15 @@ fn aligned_result_serializes_to_expected_json_shape() {
     let json = serde_json::to_string_pretty(&AlignmentReport::from(&result)).expect("serialize");
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
-    assert!(value["start_aligned"].is_boolean(), "start_aligned must be boolean");
+    assert!(
+        value["start_aligned"].is_boolean(),
+        "start_aligned must be boolean"
+    );
     assert!(value["clips"].is_array(), "clips must be array");
-    assert!(!value["clips"].as_array().unwrap().is_empty(), "clips must be non-empty");
+    assert!(
+        !value["clips"].as_array().unwrap().is_empty(),
+        "clips must be non-empty"
+    );
     assert!(
         value["recommended_offset_secs"].is_number(),
         "recommended_offset_secs must be a number when aligned"
@@ -474,7 +482,10 @@ fn aligned_result_roundtrips_through_json() {
     // because serde_json::Value::Object uses BTreeMap, but semantic equality holds.)
     let json2 = serde_json::to_string(&value).expect("re-serialize");
     let value2: serde_json::Value = serde_json::from_str(&json2).expect("re-parse");
-    assert_eq!(value, value2, "JSON content must be stable across re-serialization");
+    assert_eq!(
+        value, value2,
+        "JSON content must be stable across re-serialization"
+    );
 }
 
 // --- Exit code mapping ---
@@ -514,9 +525,7 @@ fn fingerprint_error_maps_to_exit_5() {
 
 #[test]
 fn alignment_error_maps_to_exit_6() {
-    let err = AppError::Alignment(clip_sync::AlignmentError::EngineFailed(
-        "no match".into(),
-    ));
+    let err = AppError::Alignment(clip_sync::AlignmentError::EngineFailed("no match".into()));
     assert_eq!(exit_code_u8(&err), 6);
 }
 
@@ -529,10 +538,16 @@ fn align_json_repetition_object_when_flag_on() {
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let clip = &value["clips"][0];
-    assert!(clip["repetition"].is_object(), "repetition must be an object when flag on");
+    assert!(
+        clip["repetition"].is_object(),
+        "repetition must be an object when flag on"
+    );
 
     let rep = &clip["repetition"];
-    assert!(rep["a"].is_object(), "a must be an object when finding present");
+    assert!(
+        rep["a"].is_object(),
+        "a must be an object when finding present"
+    );
     assert!((rep["a"]["lag_secs"].as_f64().unwrap() - 30.0).abs() < 0.01);
     assert!(rep["b"].is_null(), "b must be null when no finding");
 }
@@ -555,7 +570,10 @@ fn align_json_no_repetition_key_when_flag_off() {
 #[test]
 fn align_human_shows_repeat_line() {
     let result = result_with_repetition(Some(30.0), None);
-    let config = OutputConfig { format: OutputFormat::Human, show_diagnostics: false };
+    let config = OutputConfig {
+        format: OutputFormat::Human,
+        show_diagnostics: false,
+    };
     let output = format_human_output(config.show_diagnostics, &result);
 
     assert!(
@@ -618,7 +636,10 @@ fn make_verification(
     }
 }
 
-fn make_inconclusive_verification(confidence: f32, independent_offset_secs: f64) -> OffsetVerification {
+fn make_inconclusive_verification(
+    confidence: f32,
+    independent_offset_secs: f64,
+) -> OffsetVerification {
     OffsetVerification {
         independent_offset_secs: Some(independent_offset_secs),
         parallel_recheck_delta_secs: Some(10.0),
@@ -755,8 +776,14 @@ fn query_human_leads_with_match_on_a_not_offset() {
 fn query_human_verbose_shows_offset_and_b_span() {
     let result = build_query_alignment_result(sample_query_localization(), 0.3);
     let output = format_human_output(true, &result);
-    assert!(output.contains("Offset:"), "expected offset in verbose: {output}");
-    assert!(output.contains("Clip on B:"), "expected B span in verbose: {output}");
+    assert!(
+        output.contains("Offset:"),
+        "expected offset in verbose: {output}"
+    );
+    assert!(
+        output.contains("Clip on B:"),
+        "expected B span in verbose: {output}"
+    );
 }
 
 #[test]
@@ -822,7 +849,10 @@ fn verify_json_present_when_some() {
     let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
     let verify = &value["offset_verification"];
-    assert!(verify.is_object(), "offset_verification must be an object when Some");
+    assert!(
+        verify.is_object(),
+        "offset_verification must be an object when Some"
+    );
     assert_eq!(verify["verified"], true);
     assert!((verify["confidence"].as_f64().unwrap() - 0.85).abs() < 0.01);
     assert!(

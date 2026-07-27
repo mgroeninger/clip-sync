@@ -51,8 +51,8 @@ fn db(db: f64) -> f32 {
 /// Deterministic, decorrelated broadband noise in [-amp, amp]. Same `seed` ⇒ same waveform;
 /// different seeds give independent streams (splitmix64 finalizer over seed:frame).
 fn noise(seed: u32, frame: usize) -> f32 {
-    let mut z = (((seed as u64) << 32) | (frame as u64 & 0xffff_ffff))
-        .wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z =
+        (((seed as u64) << 32) | (frame as u64 & 0xffff_ffff)).wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
@@ -113,7 +113,12 @@ fn build_fixture() -> Fixture {
     write_noise(&mut b, gap.0, gap.1, 5, bg);
     write_speech(&mut b, gap.0, gap.1, 200.0, db(-30.0));
 
-    Fixture { a, b, gap_start: gap.0, gap_end: gap.1 }
+    Fixture {
+        a,
+        b,
+        gap_start: gap.0,
+        gap_end: gap.1,
+    }
 }
 
 fn anchor_params(gap_frames: usize) -> AnchorSeamParams {
@@ -187,7 +192,10 @@ fn anchor_rescue_on_noise_bracketed_gap() {
     let fx = build_fixture();
     let b_mono: Vec<f64> = fx.b.iter().map(|&s| s as f64).collect();
     let gap_frames = fx.gap_end - fx.gap_start;
-    let scan_hole = RefinedGapFrames { start_frame: fx.gap_start, end_frame: fx.gap_end };
+    let scan_hole = RefinedGapFrames {
+        start_frame: fx.gap_start,
+        end_frame: fx.gap_end,
+    };
     let params = anchor_params(gap_frames);
     let window = secs(0.20);
 
@@ -204,18 +212,19 @@ fn anchor_rescue_on_noise_bracketed_gap() {
 
     // (a) anchors
     let set = list_anchor_candidates_a(&fx.a, 1, scan_hole, &params);
-    let show = |label: &str, cands: &[clip_sync_repair::domain::gap_anchor_seam::AnchorCandidate]| {
-        println!("\n=== {label} anchors ===");
-        for c in cands {
-            println!(
-                "  frame {:>7} ({:.3}s)  {:?}  prominence={:.4}",
-                c.frame,
-                c.frame as f64 / RATE as f64,
-                c.source,
-                c.prominence,
-            );
-        }
-    };
+    let show =
+        |label: &str, cands: &[clip_sync_repair::domain::gap_anchor_seam::AnchorCandidate]| {
+            println!("\n=== {label} anchors ===");
+            for c in cands {
+                println!(
+                    "  frame {:>7} ({:.3}s)  {:?}  prominence={:.4}",
+                    c.frame,
+                    c.frame as f64 / RATE as f64,
+                    c.source,
+                    c.prominence,
+                );
+            }
+        };
     show("pre", &set.pre);
     show("post", &set.post);
 
@@ -375,7 +384,9 @@ fn anchor_rescue_under_global_b_offset() {
         // Histogram of failure stages among non-passing brackets.
         let mut stages = std::collections::BTreeMap::new();
         for b in s.brackets.iter().filter(|b| !b.passed_gate) {
-            *stages.entry(b.failure_stage.unwrap_or("?")).or_insert(0usize) += 1;
+            *stages
+                .entry(b.failure_stage.unwrap_or("?"))
+                .or_insert(0usize) += 1;
         }
         let detail = match best {
             Some((m, mv)) => format!("best min={:.3} move={} frames", m, mv),

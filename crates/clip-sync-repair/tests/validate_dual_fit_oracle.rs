@@ -21,7 +21,9 @@ use clip_sync_repair_harness::dual_fit_oracle::{
     DualFitOracleManifest,
 };
 use clip_sync_repair_harness::floor_oracle::require_validation_env;
-use clip_sync_repair_harness::residual_gate::{production_fit_repair_config, run_built_floor_oracle_cfg};
+use clip_sync_repair_harness::residual_gate::{
+    production_fit_repair_config, run_built_floor_oracle_cfg,
+};
 
 fn manifest_case<'a>(manifest: &'a DualFitOracleManifest, id: &str) -> &'a DualFitOracleCase {
     manifest
@@ -44,7 +46,8 @@ fn dual_fit_rescues_real_media_jump_cut_wav() {
     require_case_sources(case);
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let built = build_stepped_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+    let built =
+        build_stepped_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
 
     let mut repair = production_fit_repair_config(ResidualGateMode::Off);
     repair.dual_fit = true;
@@ -83,7 +86,8 @@ fn dual_fit_rescues_real_media_jump_cut_aac() {
     require_case_sources(case);
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let built = build_stepped_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
+    let built =
+        build_stepped_floor_oracle_pair(&temp.path().join(&case.id), case, &manifest.defaults);
 
     let mut repair = production_fit_repair_config(ResidualGateMode::Off);
     repair.dual_fit = true;

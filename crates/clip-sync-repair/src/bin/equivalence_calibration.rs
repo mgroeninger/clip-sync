@@ -25,7 +25,9 @@ use clip_sync_repair::application::gap_fingerprint::GapCorpus;
 use clip_sync_repair::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
 
 #[derive(Parser)]
-#[command(about = "Diff the scan-block equivalence gate against the fine-bin fingerprint reference")]
+#[command(
+    about = "Diff the scan-block equivalence gate against the fine-bin fingerprint reference"
+)]
 struct Args {
     /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
     /// of numbered corpora for a one-line-per-pair roll-up.
@@ -76,7 +78,12 @@ impl Summary {
 
 /// Tally `(scan, reference)` verdict pairs. `None` on either side ⇒ unpaired (not compared).
 fn summarize<'a>(
-    pairs: impl Iterator<Item = (Option<&'a GapEquivalenceVerdict>, Option<&'a GapEquivalenceVerdict>)>,
+    pairs: impl Iterator<
+        Item = (
+            Option<&'a GapEquivalenceVerdict>,
+            Option<&'a GapEquivalenceVerdict>,
+        ),
+    >,
 ) -> Summary {
     let mut s = Summary::default();
     for (scan, refv) in pairs {
@@ -101,7 +108,12 @@ fn summarize<'a>(
 /// `(scan, reference)` verdict pairs for a corpus, in gap order.
 fn corpus_pairs(
     corpus: &GapCorpus,
-) -> impl Iterator<Item = (Option<&GapEquivalenceVerdict>, Option<&GapEquivalenceVerdict>)> {
+) -> impl Iterator<
+    Item = (
+        Option<&GapEquivalenceVerdict>,
+        Option<&GapEquivalenceVerdict>,
+    ),
+> {
     corpus
         .gaps
         .iter()
@@ -149,10 +161,15 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     let block_ms = corpus.source.scan_recipe.scan_block_ms.unwrap_or(250);
     println!(
         "  {:<4} {:<20} {:<16} {:<16} {:<26} verdict",
-        "gap", "range", format!("scan({block_ms}ms)"), "ref(fine)", "Δ(ref−scan)",
+        "gap",
+        "range",
+        format!("scan({block_ms}ms)"),
+        "ref(fine)",
+        "Δ(ref−scan)",
     );
     for fp in &corpus.gaps {
-        let (Some(refv), Some(scanv)) = (fp.equivalence.as_ref(), fp.scan_equivalence.as_ref()) else {
+        let (Some(refv), Some(scanv)) = (fp.equivalence.as_ref(), fp.scan_equivalence.as_ref())
+        else {
             continue;
         };
         let verdict = match pair_verdict(scanv, refv) {
@@ -193,20 +210,34 @@ fn print_rollup(parent: &Path) -> ExitCode {
         }
     };
     if dirs.is_empty() {
-        eprintln!("no corpora found under {} (expected numbered subdirs each with corpus.json)", parent.display());
+        eprintln!(
+            "no corpora found under {} (expected numbered subdirs each with corpus.json)",
+            parent.display()
+        );
         return ExitCode::from(2);
     }
     // Numeric-aware order (1, 2, …, 10) with a lexical fallback.
     dirs.sort_by_key(|p| {
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         (name.parse::<u64>().unwrap_or(u64::MAX), name)
     });
 
-    println!("  {:<16} {:<6} {:<5} {:<8} {:<8} verdict", "pair", "gaps", "cmp", "diverg", "danger");
+    println!(
+        "  {:<16} {:<6} {:<5} {:<8} {:<8} verdict",
+        "pair", "gaps", "cmp", "diverg", "danger"
+    );
     let mut total = Summary::default();
     let mut read_errors = 0usize;
     for d in &dirs {
-        let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let name = d
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
         let corpus: GapCorpus = match load(&d.join("corpus.json")) {
             Ok(c) => c,
             Err(e) => {
@@ -239,7 +270,11 @@ fn print_rollup(parent: &Path) -> ExitCode {
         total.compared,
         total.divergent,
         total.dangerous,
-        if total.dangerous > 0 { "⚠ DANGEROUS" } else { "ok" },
+        if total.dangerous > 0 {
+            "⚠ DANGEROUS"
+        } else {
+            "ok"
+        },
     );
     println!(
         "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (scan-drop / ref-keep)",
@@ -296,10 +331,15 @@ fn load<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clip_sync_repair::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
+    use clip_sync_repair::domain::gap_equivalence::{
+        classify_gap_equivalence, GapEquivalenceParams,
+    };
 
     fn on() -> GapEquivalenceParams {
-        GapEquivalenceParams { enabled: true, ..Default::default() }
+        GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        }
     }
     fn dropout() -> GapEquivalenceVerdict {
         classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on()) // repairable_dropout (keep)
@@ -325,12 +365,18 @@ mod tests {
 
     #[test]
     fn scan_keeps_but_reference_drops_is_safe() {
-        assert_eq!(pair_verdict(&dropout(), &shared()), PairVerdict::SafeDiverge);
+        assert_eq!(
+            pair_verdict(&dropout(), &shared()),
+            PairVerdict::SafeDiverge
+        );
     }
 
     #[test]
     fn both_drop_different_classes_is_safe() {
-        assert_eq!(pair_verdict(&shared(), &ambient()), PairVerdict::SafeDiverge);
+        assert_eq!(
+            pair_verdict(&shared(), &ambient()),
+            PairVerdict::SafeDiverge
+        );
     }
 
     #[test]
@@ -360,8 +406,26 @@ mod tests {
 
     #[test]
     fn summary_add_accumulates() {
-        let mut a = Summary { compared: 3, divergent: 1, dangerous: 0, unpaired: 0 };
-        a.add(Summary { compared: 2, divergent: 1, dangerous: 1, unpaired: 1 });
-        assert_eq!(a, Summary { compared: 5, divergent: 2, dangerous: 1, unpaired: 1 });
+        let mut a = Summary {
+            compared: 3,
+            divergent: 1,
+            dangerous: 0,
+            unpaired: 0,
+        };
+        a.add(Summary {
+            compared: 2,
+            divergent: 1,
+            dangerous: 1,
+            unpaired: 1,
+        });
+        assert_eq!(
+            a,
+            Summary {
+                compared: 5,
+                divergent: 2,
+                dangerous: 1,
+                unpaired: 1
+            }
+        );
     }
 }

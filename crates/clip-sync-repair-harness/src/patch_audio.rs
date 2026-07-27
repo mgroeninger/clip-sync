@@ -11,8 +11,8 @@ use clip_sync_repair::application::{
 };
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
-    CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch,
-    GapPatchStatus, GapSignatureMode, RepairProfile, TrackCompatibility,
+    CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch, GapPatchStatus,
+    GapSignatureMode, RepairProfile, TrackCompatibility,
 };
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
     gap_report_times, structure_heavy_weights, structure_slide_secs, EnergySignatureFixture,
@@ -360,11 +360,7 @@ pub fn run_fit_production_defaults_smoke() {
     // B is continuous — donor audio at the nominal span (A-only gap; G5 must not skip).
     write_stereo_sine_with_gap(&path_b, SINE_SAMPLE_RATE, 10, 0, 0, 440.0, 16_000.0);
 
-    let report = make_report(
-        path_a,
-        path_b,
-        stereo_identical_compat(SINE_SAMPLE_RATE),
-    );
+    let report = make_report(path_a, path_b, stereo_identical_compat(SINE_SAMPLE_RATE));
 
     let options = PatchTestOptions {
         fill_mode: FillMode::Fit,
@@ -423,10 +419,7 @@ pub fn energy_sig_patch_diagnostic(
                 "haystack unified: start={} full_B={} slide={:.6}s",
                 haystack.alignment.start_frame,
                 haystack.alignment.start_frame + extract_start,
-                structure_slide_secs(
-                    fixture,
-                    haystack.alignment.start_frame + extract_start,
-                ),
+                structure_slide_secs(fixture, haystack.alignment.start_frame + extract_start,),
             );
         }
         None => eprintln!("haystack unified: None (structure search failed on sliced B)"),
@@ -457,13 +450,18 @@ pub fn energy_sig_patch_diagnostic(
 fn gap_align_slide_secs(result: &PatchAudioResult, gap_idx: usize) -> Option<f64> {
     match &result.summary.gaps[gap_idx].status {
         GapPatchStatus::Patched {
-            align_adjustment_secs, ..
+            align_adjustment_secs,
+            ..
         } => Some(*align_adjustment_secs),
         _ => None,
     }
 }
 
-fn slide_within_bin(fixture: &EnergySignatureFixture, slide_secs: f64, truth_slide_secs: f64) -> bool {
+fn slide_within_bin(
+    fixture: &EnergySignatureFixture,
+    slide_secs: f64,
+    truth_slide_secs: f64,
+) -> bool {
     let bin_secs = fixture.bin_frames() as f64 / fixture.sample_rate as f64;
     (slide_secs - truth_slide_secs).abs() <= bin_secs * 1.1
 }
@@ -532,8 +530,8 @@ pub fn assert_energy_integration_patch(
         "{test_id}: expected patch, got {:?}",
         result.summary.gaps
     );
-    let slide = gap_align_slide_secs(&result, 0)
-        .unwrap_or_else(|| panic!("{test_id}: patched gap slide"));
+    let slide =
+        gap_align_slide_secs(&result, 0).unwrap_or_else(|| panic!("{test_id}: patched gap slide"));
     let truth = expected_slide_secs
         .unwrap_or_else(|| structure_slide_secs(fixture, fixture.true_fill_start));
     assert!(

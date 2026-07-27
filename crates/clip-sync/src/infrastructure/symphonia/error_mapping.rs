@@ -91,7 +91,9 @@ pub fn warn_partial_decode(
     track_duration_secs: Option<f64>,
 ) -> MediaError {
     match &error {
-        MediaError::DecodeFailed { track: t, detail, .. } => {
+        MediaError::DecodeFailed {
+            track: t, detail, ..
+        } => {
             let near_track_end = track_duration_secs
                 .map(|duration| window_end_secs >= duration - NEAR_TRACK_END_TOLERANCE_SECS)
                 .unwrap_or(false);
@@ -381,7 +383,11 @@ mod tests {
     #[test]
     fn maps_seek_error_during_decode() {
         let path = Path::new("test.wav");
-        let error = map_decode_loop_error(path, 1, SymphoniaError::SeekError(SeekErrorKind::Unseekable));
+        let error = map_decode_loop_error(
+            path,
+            1,
+            SymphoniaError::SeekError(SeekErrorKind::Unseekable),
+        );
         assert!(matches!(error, MediaError::SeekFailed { .. }));
     }
 
@@ -420,7 +426,10 @@ mod tests {
             2,
             SymphoniaError::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "eof")),
         );
-        assert!(matches!(media_error, MediaError::DecodeFailed { track: 2, .. }));
+        assert!(matches!(
+            media_error,
+            MediaError::DecodeFailed { track: 2, .. }
+        ));
         let app_error = crate::application::error::AppError::Media(media_error);
         assert!(
             chain_reaches_io_error(&app_error),

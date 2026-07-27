@@ -41,7 +41,8 @@ fn i2_f1_bool_domain_closer_to_decoy_than_energy() {
         .expect("I2 bool domain");
     let truth = structure_slide_secs(&fixture, fixture.true_fill_start);
     let energy_dist = (structure_slide_secs(&fixture, energy.alignment.start_frame) - truth).abs();
-    let bool_dist = (structure_slide_secs(&fixture, bool_match.alignment.start_frame) - truth).abs();
+    let bool_dist =
+        (structure_slide_secs(&fixture, bool_match.alignment.start_frame) - truth).abs();
     assert!(
         bool_match.alignment.start_frame == fixture.b_decoy_fill_start()
             || bool_match.alignment.start_frame == fixture.nominal_fill_start

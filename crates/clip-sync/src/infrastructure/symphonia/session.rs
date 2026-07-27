@@ -19,7 +19,7 @@ use crate::infrastructure::symphonia::error_mapping::{
 };
 use crate::infrastructure::symphonia::extract::{
     extract_interleaved_with_state, extract_mono_with_state, scan_interleaved_buckets_with_state,
-    scan_mono_buckets_with_state, InterleavedBucketScan, scan_track_decodable_extent,
+    scan_mono_buckets_with_state, scan_track_decodable_extent, InterleavedBucketScan,
     TimelineSkewTracker,
 };
 use crate::infrastructure::symphonia::probe::{open_format_reader, probe_media_reusable};
@@ -39,10 +39,7 @@ impl MediaReader for SymphoniaMediaReader {
                 path,
                 "open",
                 None,
-                MediaError::unsupported_format(format!(
-                    "no audio tracks in {}",
-                    path.display()
-                )),
+                MediaError::unsupported_format(format!("no audio tracks in {}", path.display())),
             ));
         }
 
@@ -201,15 +198,20 @@ impl MediaSession for SymphoniaMediaSession {
         Ok(())
     }
 
-    fn track_decodable_extent(&mut self, track: &AudioTrack) -> Result<Option<Duration>, MediaError> {
+    fn track_decodable_extent(
+        &mut self,
+        track: &AudioTrack,
+    ) -> Result<Option<Duration>, MediaError> {
         ensure_regular_file(&self.path)?;
 
-        let container_duration = track.duration.filter(|value| !value.is_zero()).ok_or(
-            MediaError::decode_failed(
-                track.index,
-                "missing track duration for decodable extent scan",
-            ),
-        )?;
+        let container_duration =
+            track
+                .duration
+                .filter(|value| !value.is_zero())
+                .ok_or(MediaError::decode_failed(
+                    track.index,
+                    "missing track duration for decodable extent scan",
+                ))?;
 
         let path = self.path.clone();
         let extent = scan_track_decodable_extent(

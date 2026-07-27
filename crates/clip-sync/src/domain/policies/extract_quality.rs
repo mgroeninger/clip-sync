@@ -79,7 +79,11 @@ mod tests {
 
     #[test]
     fn end_clip_extract_unreliable_when_tail_padding_exceeds_threshold() {
-        let window = ClipWindow::new(Duration::from_secs(5280), Duration::from_secs(6180), ClipLabel::End);
+        let window = ClipWindow::new(
+            Duration::from_secs(5280),
+            Duration::from_secs(6180),
+            ClipLabel::End,
+        );
         let expected = window.sample_count_at(48_000);
         let decoded = (expected as f64 * 0.94) as usize;
         let clip = MonoPcmClip {

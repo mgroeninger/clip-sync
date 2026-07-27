@@ -1,13 +1,11 @@
-use std::path::{Path, PathBuf};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use clip_sync::SymphoniaMediaReader;
 
-use crate::energy_signature_fixtures::{
-    build_speech_peaks_offset_from_throat, write_pcm_wav,
-};
+use crate::energy_signature_fixtures::{build_speech_peaks_offset_from_throat, write_pcm_wav};
 use crate::test_align::{no_op_alignment, zero_offset_alignment, NeverCalledAligner};
 use crate::NoOpProgressReporter;
 
@@ -68,14 +66,30 @@ impl Default for GapCorpusDefaults {
     }
 }
 
-fn default_scan_block_ms() -> u64 { 250 }
-fn default_silence_peak_fraction() -> f32 { 0.01 }
-fn default_absolute_silence_floor() -> f32 { 33.0_f32 / 32767.0 }
-fn default_min_gap_ms() -> u64 { 1_000 }
-fn default_silence_hold_ms() -> u64 { 500 }
-fn default_tolerance_secs() -> f64 { 0.3 }
-fn default_sample_rate() -> u32 { DEFAULT_SAMPLE_RATE }
-fn default_patch_max_wall_secs() -> f64 { 90.0 }
+fn default_scan_block_ms() -> u64 {
+    250
+}
+fn default_silence_peak_fraction() -> f32 {
+    0.01
+}
+fn default_absolute_silence_floor() -> f32 {
+    33.0_f32 / 32767.0
+}
+fn default_min_gap_ms() -> u64 {
+    1_000
+}
+fn default_silence_hold_ms() -> u64 {
+    500
+}
+fn default_tolerance_secs() -> f64 {
+    0.3
+}
+fn default_sample_rate() -> u32 {
+    DEFAULT_SAMPLE_RATE
+}
+fn default_patch_max_wall_secs() -> f64 {
+    90.0
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -177,10 +191,9 @@ pub fn corpus_root() -> PathBuf {
 
 pub fn load_manifest() -> GapCorpusManifest {
     let path = corpus_root().join("manifest.toml");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    toml::from_str(&text)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
 /// Resolved media paths for a corpus case. Keep `_guard` alive for generated tier.
@@ -192,10 +205,7 @@ pub struct ResolvedCasePaths {
 }
 
 /// Resolve A/B paths and optional temp guard for a case.
-pub fn resolve_case_paths(
-    case: &GapCorpusCase,
-    defaults: &GapCorpusDefaults,
-) -> ResolvedCasePaths {
+pub fn resolve_case_paths(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> ResolvedCasePaths {
     match case.tier {
         GapCorpusTier::Committed => {
             let root = corpus_root();
@@ -365,18 +375,13 @@ fn zero_interleaved_frame_ranges(
                 }
             } else {
                 let base = frame * channels as usize;
-                for sample in samples
-                    .iter_mut()
-                    .skip(base)
-                    .take(channels as usize)
-                {
+                for sample in samples.iter_mut().skip(base).take(channels as usize) {
                     *sample = 0;
                 }
             }
         }
     }
-    let mut writer =
-        WavWriter::create(path, wav_spec(sample_rate, channels)).expect("create wav");
+    let mut writer = WavWriter::create(path, wav_spec(sample_rate, channels)).expect("create wav");
     for s in samples {
         writer.write_sample(s).expect("write sample");
     }
@@ -454,11 +459,8 @@ pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> 
     let video_b = match case.generator.as_deref().unwrap_or("zeroed_chirp") {
         "w5_speech_peaks_throat" => {
             let peak_offset = case.peak_offset_secs.unwrap_or(1.0);
-            let mut fixture = build_speech_peaks_offset_from_throat(
-                sample_rate,
-                channels as usize,
-                peak_offset,
-            );
+            let mut fixture =
+                build_speech_peaks_offset_from_throat(sample_rate, channels as usize, peak_offset);
             let gap_start = fixture.gap_start;
             let gap_end = fixture.gap_end;
             apply_quiet_chirp_bed_where_silent(
@@ -467,7 +469,12 @@ pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> 
                 sample_rate,
                 0.08,
             );
-            zero_f32_frames(&mut fixture.a_samples, channels as usize, gap_start, gap_end);
+            zero_f32_frames(
+                &mut fixture.a_samples,
+                channels as usize,
+                gap_start,
+                gap_end,
+            );
             write_pcm_wav(&path, sample_rate, channels as usize, &fixture.a_samples);
             let path_b = temp.path().join("b.wav");
             write_pcm_wav(&path_b, sample_rate, channels as usize, &fixture.b_samples);
@@ -475,71 +482,76 @@ pub fn generate_case_wav(case: &GapCorpusCase, defaults: &GapCorpusDefaults) -> 
         }
         generator => {
             match generator {
-        "quiet_chirp" => {
-            let amp = f64::from(case.amplitude_fraction.unwrap_or(0.05));
-            if channels == 1 {
-                let samples = (0..total_samples)
-                    .map(|i| (chirp_sample(sample_rate, i) as f64 * amp).round() as i16);
-                write_mono_wav(&path, sample_rate, samples);
-            } else {
-                write_interleaved_wav(
-                    &path,
-                    sample_rate,
-                    channels,
-                    symmetric_stereo_chirp_frames(sample_rate, total_samples, amp),
-                );
-            }
-        }
-        "asymmetric_channels" => {
-            assert!(
-                channels >= 2,
-                "asymmetric_channels generator requires channels >= 2"
-            );
-            let hot = case.hot_channel.unwrap_or(0);
-            write_interleaved_wav(
-                &path,
-                sample_rate,
-                channels,
-                asymmetric_stereo_chirp_frames(sample_rate, total_samples, hot, fraction),
-            );
-        }
-        "partial_channel_gap" => {
-            assert!(
-                channels >= 2,
-                "partial_channel_gap generator requires channels >= 2"
-            );
-            if channels == 2 {
-                write_interleaved_wav(
-                    &path,
-                    sample_rate,
-                    2,
-                    symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
-                );
-            } else {
-                let samples = (0..total_samples).flat_map(|i| {
-                    let s = (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16;
-                    std::iter::repeat_n(s, channels as usize)
-                });
-                write_interleaved_wav(&path, sample_rate, channels, samples);
-            }
-            let gap_ch = case.gap_channel.unwrap_or(1);
-            zero_wav_segments_interleaved(&path, sample_rate, &case.gap_segments, Some(gap_ch));
-        }
-        "zeroed_chirp" if channels > 1 => {
-            write_interleaved_wav(
-                &path,
-                sample_rate,
-                channels,
-                symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
-            );
-            zero_wav_segments_interleaved(&path, sample_rate, &case.gap_segments, None);
-        }
-        _ => {
-            let samples = (0..total_samples)
-                .map(|i| (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16);
-            write_mono_wav(&path, sample_rate, samples);
-            zero_wav_segments(&path, sample_rate, &case.gap_segments);
-        }
+                "quiet_chirp" => {
+                    let amp = f64::from(case.amplitude_fraction.unwrap_or(0.05));
+                    if channels == 1 {
+                        let samples = (0..total_samples)
+                            .map(|i| (chirp_sample(sample_rate, i) as f64 * amp).round() as i16);
+                        write_mono_wav(&path, sample_rate, samples);
+                    } else {
+                        write_interleaved_wav(
+                            &path,
+                            sample_rate,
+                            channels,
+                            symmetric_stereo_chirp_frames(sample_rate, total_samples, amp),
+                        );
+                    }
+                }
+                "asymmetric_channels" => {
+                    assert!(
+                        channels >= 2,
+                        "asymmetric_channels generator requires channels >= 2"
+                    );
+                    let hot = case.hot_channel.unwrap_or(0);
+                    write_interleaved_wav(
+                        &path,
+                        sample_rate,
+                        channels,
+                        asymmetric_stereo_chirp_frames(sample_rate, total_samples, hot, fraction),
+                    );
+                }
+                "partial_channel_gap" => {
+                    assert!(
+                        channels >= 2,
+                        "partial_channel_gap generator requires channels >= 2"
+                    );
+                    if channels == 2 {
+                        write_interleaved_wav(
+                            &path,
+                            sample_rate,
+                            2,
+                            symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
+                        );
+                    } else {
+                        let samples = (0..total_samples).flat_map(|i| {
+                            let s = (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16;
+                            std::iter::repeat_n(s, channels as usize)
+                        });
+                        write_interleaved_wav(&path, sample_rate, channels, samples);
+                    }
+                    let gap_ch = case.gap_channel.unwrap_or(1);
+                    zero_wav_segments_interleaved(
+                        &path,
+                        sample_rate,
+                        &case.gap_segments,
+                        Some(gap_ch),
+                    );
+                }
+                "zeroed_chirp" if channels > 1 => {
+                    write_interleaved_wav(
+                        &path,
+                        sample_rate,
+                        channels,
+                        symmetric_stereo_chirp_frames(sample_rate, total_samples, fraction),
+                    );
+                    zero_wav_segments_interleaved(&path, sample_rate, &case.gap_segments, None);
+                }
+                _ => {
+                    let samples = (0..total_samples)
+                        .map(|i| (chirp_sample(sample_rate, i) as f64 * fraction).round() as i16);
+                    write_mono_wav(&path, sample_rate, samples);
+                    zero_wav_segments(&path, sample_rate, &case.gap_segments);
+                }
             }
             None
         }
@@ -566,13 +578,27 @@ pub fn write_committed_wav_fixtures() {
     let path = wav_dir.join("leading_16s_a.wav");
     let samples = (0..total_samples).map(|i| chirp_sample(rate, i));
     write_mono_wav(&path, rate, samples);
-    zero_wav_segments(&path, rate, &[GapSegment { start_secs: 0.0, end_secs: 16.0 }]);
+    zero_wav_segments(
+        &path,
+        rate,
+        &[GapSegment {
+            start_secs: 0.0,
+            end_secs: 16.0,
+        }],
+    );
 
     // 2. mid_2s_a.wav — chirp with a 2-second gap in the middle.
     let path = wav_dir.join("mid_2s_a.wav");
     let samples = (0..total_samples).map(|i| chirp_sample(rate, i));
     write_mono_wav(&path, rate, samples);
-    zero_wav_segments(&path, rate, &[GapSegment { start_secs: 14.0, end_secs: 16.0 }]);
+    zero_wav_segments(
+        &path,
+        rate,
+        &[GapSegment {
+            start_secs: 14.0,
+            end_secs: 16.0,
+        }],
+    );
 
     // 3. multi_gap_a.wav — three gaps at 3s, 13s, and 23s.
     // Silence regions are aligned to scanner block boundaries (block_samples = round(0.25 * rate))
@@ -588,17 +614,21 @@ pub fn write_committed_wav_fixtures() {
         let sample = (secs * f64::from(rate)).round() as usize;
         (sample / block_samples) * block_samples
     };
-    zero_wav_sample_ranges(&path, rate, &[
-        (block_floor(3.0),  block_floor(5.0)),   // 2s gap, blocks 12–21
-        (block_floor(13.0), block_floor(15.0)),  // 2s gap, blocks 52–59
-        (block_floor(23.0), block_floor(25.0)),  // 2s gap, blocks 92–99
-    ]);
+    zero_wav_sample_ranges(
+        &path,
+        rate,
+        &[
+            (block_floor(3.0), block_floor(5.0)),   // 2s gap, blocks 12–21
+            (block_floor(13.0), block_floor(15.0)), // 2s gap, blocks 52–59
+            (block_floor(23.0), block_floor(25.0)), // 2s gap, blocks 92–99
+        ],
+    );
 
     // 4. quiet_no_gap_a.wav — chirp at 5% amplitude; should produce no gaps.
     let path = wav_dir.join("quiet_no_gap_a.wav");
     let fraction = 0.05f64;
-    let samples = (0..total_samples)
-        .map(|i| (chirp_sample(rate, i) as f64 * fraction).round() as i16);
+    let samples =
+        (0..total_samples).map(|i| (chirp_sample(rate, i) as f64 * fraction).round() as i16);
     write_mono_wav(&path, rate, samples);
 
     // 5. stereo_mid_gap_2s_a.wav — both channels share a 2s gap (mirror of mid_2s_a).
@@ -874,9 +904,11 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);
 
-    for case in manifest.case.iter().filter(|c| {
-        c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing
-    }) {
+    for case in manifest
+        .case
+        .iter()
+        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing)
+    {
         let max_wall_secs = case
             .max_patch_wall_secs
             .unwrap_or(manifest.defaults.patch_max_wall_secs);
@@ -923,7 +955,8 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
         );
 
         let patch_request = patch_audio_request_for_corpus_timing(report);
-        let crossfade_ms = clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let crossfade_ms =
+            clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
         let started = std::time::Instant::now();
         let result: PatchAudioResult = patch
             .execute(patch_request, crossfade_ms)
@@ -932,11 +965,7 @@ pub fn run_gap_corpus_patch_timing_cases(tier: GapCorpusTier) {
         let elapsed = started.elapsed();
         eprintln!(
             "case {}: patch {} gap(s) ({} patched, {} skipped) in {:.2?} (channels={channels})",
-            case.id,
-            fillable,
-            result.summary.patched_count,
-            result.summary.skipped_count,
-            elapsed,
+            case.id, fillable, result.summary.patched_count, result.summary.skipped_count, elapsed,
         );
 
         if case.patch_timing_expect_patched {
@@ -970,9 +999,11 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
     let scan = ScanGaps::new(&media_reader, &progress, &aligner);
     let patch = PatchAudio::new(&media_reader, &progress);
 
-    for case in manifest.case.iter().filter(|c| {
-        c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing
-    }) {
+    for case in manifest
+        .case
+        .iter()
+        .filter(|c| c.tier == tier && !c.ignore && !c.expected_gaps.is_empty() && c.patch_timing)
+    {
         let resolved = resolve_case_paths(case, &manifest.defaults);
         let video_a = resolved.video_a.clone();
         let temp_b = tempfile::tempdir().expect("tempdir for reference B");
@@ -990,17 +1021,15 @@ pub fn run_gap_corpus_patch_timing_production_cases(tier: GapCorpusTier) {
 
         let started = std::time::Instant::now();
         let patch_request = patch_audio_request_from_defaults(report);
-        let crossfade_ms = clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
+        let crossfade_ms =
+            clip_sync_repair::infrastructure::config::RepairConfig::default().crossfade_ms;
         let result = patch
             .execute(patch_request, crossfade_ms)
             .unwrap_or_else(|e| panic!("case {} patch failed: {e}", case.id));
         let elapsed = started.elapsed();
         eprintln!(
             "case {}: production-default patch in {:.2?} ({} patched, {} skipped)",
-            case.id,
-            elapsed,
-            result.summary.patched_count,
-            result.summary.skipped_count,
+            case.id, elapsed, result.summary.patched_count, result.summary.skipped_count,
         );
     }
 }
@@ -1009,6 +1038,9 @@ const W5_CORPUS_CASE_ID: &str = "generated_w5_speech_peaks_anchor";
 
 /// W5 production corpus: speech peaks offset from silent throat — scan, domain anchors, default auto patch.
 pub fn run_gap_corpus_w5_anchor_seam_case() {
+    use crate::energy_signature_production::{
+        gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
+    };
     use clip_sync_repair::application::PatchAudio;
     use clip_sync_repair::domain::gap_anchor_seam::{
         list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamMode, AnchorSeamParams,
@@ -1018,9 +1050,6 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
     use clip_sync_repair::domain::policies::refine_gap_frames;
     use clip_sync_repair::domain::{FillMode, GapSignatureMode, ResidualGateMode};
     use clip_sync_repair::infrastructure::config::RepairConfig;
-    use crate::energy_signature_production::{
-        gap_report_from_energy_fixture, patch_request_from_repair, production_fit_weights_config,
-    };
 
     let manifest = load_manifest();
     let case = manifest
@@ -1052,14 +1081,16 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
     };
     let set = list_anchor_candidates_a(&fixture.a_samples, channels, scan, &anchor_params);
     assert!(
-        set.pre.iter().any(|c| {
-            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
-        }),
+        set.pre
+            .iter()
+            .any(|c| { c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined }),
         "W5: expected salient pre-anchor before throat"
     );
     let brackets = list_feasible_anchor_brackets(&set, scan, &anchor_params);
     assert!(
-        brackets.iter().any(|b| b.refined.start_frame < scan.start_frame),
+        brackets
+            .iter()
+            .any(|b| b.refined.start_frame < scan.start_frame),
         "W5: expected feasible bracket with pre-anchor before throat"
     );
 
@@ -1075,7 +1106,8 @@ pub fn run_gap_corpus_w5_anchor_seam_case() {
 
     let (_, _, frames) = read_wav_metadata(&video_a);
     let duration_secs = frames as f64 / f64::from(sample_rate);
-    let scan_request = build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
+    let scan_request =
+        build_scan_request(video_a.clone(), video_b.clone(), case, &manifest.defaults);
     let report = scan_gaps
         .scan_after_alignment(scan_request, zero_offset_alignment(duration_secs))
         .unwrap_or_else(|e| panic!("case {} scan failed: {e}", case.id))

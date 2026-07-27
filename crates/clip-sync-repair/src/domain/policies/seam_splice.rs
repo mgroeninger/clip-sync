@@ -168,14 +168,8 @@ mod tests {
             single_lag_alignment: true,
         };
 
-        let (pre_cf, post_cf) = fill_splice_seam_correlations(
-            &fill,
-            &a_pre,
-            &a_post,
-            pre_window,
-            post_window,
-            ctx,
-        );
+        let (pre_cf, post_cf) =
+            fill_splice_seam_correlations(&fill, &a_pre, &a_post, pre_window, post_window, ctx);
         let (pre_no_cf, post_no_cf) = fill_splice_seam_correlations(
             &fill,
             &a_pre,
@@ -192,8 +186,14 @@ mod tests {
             },
         );
 
-        assert!(pre_cf > pre_no_cf + 0.5, "pre should score bleed tail on A timeline");
-        assert!(post_cf > post_no_cf + 0.5, "post should score fade head on A timeline");
+        assert!(
+            pre_cf > pre_no_cf + 0.5,
+            "pre should score bleed tail on A timeline"
+        );
+        assert!(
+            post_cf > post_no_cf + 0.5,
+            "post should score fade head on A timeline"
+        );
         assert!(pre_cf > 0.9 && post_cf > 0.9);
     }
 
@@ -225,7 +225,9 @@ mod tests {
 
         // The fill's own head/tail ramp — matches the border templates (what seam-local search
         // validated) almost perfectly, but is monotonically opposite the raw A spike-then-drop above.
-        let fill = vec![10.0, 20.0, 30.0, 40.0, 0.0, 0.0, 0.0, 0.0, 40.0, 30.0, 20.0, 10.0];
+        let fill = vec![
+            10.0, 20.0, 30.0, 40.0, 0.0, 0.0, 0.0, 0.0, 40.0, 30.0, 20.0, 10.0,
+        ];
         let a_pre = vec![1.0, 2.0, 3.0, 4.0];
         let a_post = vec![4.0, 3.0, 2.0, 1.0];
 
@@ -306,7 +308,10 @@ mod tests {
             (a[gap_start] - fill_level).abs() < 1e-5,
             "gap should start at full fill level, not a silence ramp"
         );
-        assert!((a[gap_start + 1] - fill_level).abs() < 1e-5, "gap interior should be pure fill");
+        assert!(
+            (a[gap_start + 1] - fill_level).abs() < 1e-5,
+            "gap interior should be pure fill"
+        );
         assert!(
             a[gap_start - 1] > 3_000.0 / 32767.0,
             "pre-gap tail should bleed into fill before the gap boundary"

@@ -1,8 +1,8 @@
 mod codec_registry;
 mod duration;
+pub mod error_mapping;
 mod extract;
 mod extract_loop;
-pub mod error_mapping;
 mod probe;
 mod session;
 

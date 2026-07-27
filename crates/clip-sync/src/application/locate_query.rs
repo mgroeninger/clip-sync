@@ -391,10 +391,9 @@ fn select_best_cluster(
     // Each cluster keeps its highest-confidence representative.
     let mut clusters: Vec<Candidate> = Vec::new();
     for cand in candidates {
-        if let Some(rep) = clusters
-            .iter_mut()
-            .find(|rep| (rep.anchor_ref_secs - cand.anchor_ref_secs).abs() <= ANCHOR_CLUSTER_TOLERANCE_SECS)
-        {
+        if let Some(rep) = clusters.iter_mut().find(|rep| {
+            (rep.anchor_ref_secs - cand.anchor_ref_secs).abs() <= ANCHOR_CLUSTER_TOLERANCE_SECS
+        }) {
             if cand.confidence > rep.confidence {
                 *rep = *cand;
             }
@@ -440,10 +439,9 @@ fn refine_query_anchor<RS: MediaSession>(
     progress: &dyn ProgressReporter,
 ) -> f64 {
     let hay_start = (refine.coarse_anchor_ref_secs - refine.search_radius_secs).max(0.0);
-    let hay_end = (refine.coarse_anchor_ref_secs
-        + refine.query_duration_secs
-        + refine.search_radius_secs)
-        .min(refine.reference_effective_secs);
+    let hay_end =
+        (refine.coarse_anchor_ref_secs + refine.query_duration_secs + refine.search_radius_secs)
+            .min(refine.reference_effective_secs);
     if hay_end - hay_start < refine.query_duration_secs * 0.5 {
         return refine.coarse_anchor_ref_secs;
     }
@@ -453,7 +451,8 @@ fn refine_query_anchor<RS: MediaSession>(
         Duration::from_secs_f64(hay_end),
         ClipLabel::Interior,
     );
-    let haystack = match reference.extract_mono(reference_track, &window, progress, "query-refine") {
+    let haystack = match reference.extract_mono(reference_track, &window, progress, "query-refine")
+    {
         Ok(clip) => clip,
         Err(_) => return refine.coarse_anchor_ref_secs,
     };

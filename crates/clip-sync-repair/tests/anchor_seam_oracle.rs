@@ -4,8 +4,8 @@
 //! Domain + pipeline oracles for editorial anchor search; distinct from sine-seam rows in
 //! `patch_audio_integration.rs` and harness-backed SP01–SP03 in `integration_energy_patch.rs`.
 
-use clip_sync::SymphoniaMediaReader;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::SymphoniaMediaReader;
 
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
 use clip_sync_repair::domain::gap_anchor_seam::{
@@ -13,11 +13,11 @@ use clip_sync_repair::domain::gap_anchor_seam::{
     AnchorSeamSide, AnchorSource,
 };
 use clip_sync_repair::domain::gap_tags::{FitPathTag, PatchTier, SeamShape};
+use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::domain::{
     FillConfidence, FillMode, FitBoundarySearch, GapPatchOutcome, GapPatchStatus, GapSignatureMode,
     ResidualGateMode,
 };
-use clip_sync_repair::domain::policies::{refine_gap_frames, RefinedGapFrames};
 use clip_sync_repair::infrastructure::config::RepairConfig;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_c3_speech_boundary_asymmetric_post, build_f4_decoy_production,
@@ -33,7 +33,10 @@ use clip_sync_repair_harness::patch_audio::{energy_sig_patch_options, patch_requ
 /// Default `RepairConfig` ships `anchor_seam_mode = auto` (integration tier / `pr-repair`).
 #[test]
 fn default_repair_config_anchor_seam_mode_is_auto() {
-    assert_eq!(RepairConfig::default().anchor_seam_mode, AnchorSeamMode::Auto);
+    assert_eq!(
+        RepairConfig::default().anchor_seam_mode,
+        AnchorSeamMode::Auto
+    );
 
     let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
     let temp = tempfile::tempdir().expect("tempdir");
@@ -112,22 +115,19 @@ fn anchor_candidates_pick_speech_peak_not_throat() {
     let fixture = build_speech_peaks_offset_from_throat(48_000, 1, 1.0);
     let scan = refined_scan_hole(&fixture);
     let params = anchor_params(&fixture);
-    let set = list_anchor_candidates_a(
-        &fixture.a_samples,
-        fixture.channels,
-        scan,
-        &params,
-    );
+    let set = list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params);
     assert!(
-        set.pre.iter().any(|c| {
-            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
-        }),
+        set.pre
+            .iter()
+            .any(|c| { c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined }),
         "expected salient pre-anchor before throat (not scan edge): {:?}",
         set.pre
     );
     let brackets = list_feasible_anchor_brackets(&set, scan, &params);
     assert!(
-        brackets.iter().any(|b| b.refined.start_frame < scan.start_frame),
+        brackets
+            .iter()
+            .any(|b| b.refined.start_frame < scan.start_frame),
         "expected bracket with pre-anchor before throat"
     );
 }
@@ -162,7 +162,10 @@ fn anchor_seam_pipeline_patches_speech_peaks_fixture() {
         .execute(request, RepairConfig::default().crossfade_ms)
         .expect("patch");
     assert!(
-        matches!(response.summary.gaps[0].status, GapPatchStatus::Patched { .. }),
+        matches!(
+            response.summary.gaps[0].status,
+            GapPatchStatus::Patched { .. }
+        ),
         "expected patched gap, got {:?}",
         response.summary.gaps[0].status
     );
@@ -330,16 +333,11 @@ fn a2_c3_post_onset_anchor_near_speech_boundary() {
     let fixture = build_c3_speech_boundary_asymmetric_post(48_000, 1, 0.05);
     let scan = refined_scan_hole(&fixture);
     let params = anchor_params(&fixture);
-    let set = list_anchor_candidates_a(
-        &fixture.a_samples,
-        fixture.channels,
-        scan,
-        &params,
-    );
+    let set = list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params);
     assert!(
-        set.post.iter().any(|c| {
-            c.frame > scan.end_frame && c.source != AnchorSource::ScanRefined
-        }),
+        set.post
+            .iter()
+            .any(|c| { c.frame > scan.end_frame && c.source != AnchorSource::ScanRefined }),
         "A2: expected post anchor at speech onset after throat, got {:?}",
         set.post
     );
@@ -486,15 +484,17 @@ fn w5_fixture_throat_symmetric_weak_and_brackets_exist() {
     let params = anchor_params(&fixture);
     let set = list_anchor_candidates_a(&fixture.a_samples, fixture.channels, scan, &params);
     assert!(
-        set.pre.iter().any(|c| {
-            c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined
-        }),
+        set.pre
+            .iter()
+            .any(|c| { c.frame < scan.start_frame && c.source != AnchorSource::ScanRefined }),
         "A6: expected pre-anchor before throat: {:?}",
         set.pre
     );
     let brackets = list_feasible_anchor_brackets(&set, scan, &params);
     assert!(
-        brackets.iter().any(|b| b.move_frames > 0 && b.refined.start_frame < scan.start_frame),
+        brackets
+            .iter()
+            .any(|b| b.move_frames > 0 && b.refined.start_frame < scan.start_frame),
         "A6: expected movable bracket with pre-anchor before throat: {:?}",
         brackets
     );
@@ -530,8 +530,14 @@ fn w5_anchor_rescue_pipeline_engages_anchor_seam_auto() {
     let gap = &response.summary.gaps[0];
     let facts = routing_facts(gap);
     assert!(facts.patched, "expected patched gap, got {:?}", gap.status);
-    assert!(facts.anchor_seam_used, "A6 auto: anchor path must win: {facts:?}");
-    assert!(facts.anchor_move_nonzero, "A6 auto: expected bracket move: {facts:?}");
+    assert!(
+        facts.anchor_seam_used,
+        "A6 auto: anchor path must win: {facts:?}"
+    );
+    assert!(
+        facts.anchor_move_nonzero,
+        "A6 auto: expected bracket move: {facts:?}"
+    );
     assert!(
         matches!(
             facts.patch_tier,
@@ -557,7 +563,9 @@ fn w5_anchor_rescue_pipeline_engages_anchor_seam_force() {
     let gap = &response.summary.gaps[0];
     let facts = routing_facts(gap);
     assert!(facts.patched);
-    assert!(facts.anchor_seam_used, "A6b force: anchor path must win: {facts:?}");
+    assert!(
+        facts.anchor_seam_used,
+        "A6b force: anchor path must win: {facts:?}"
+    );
     assert!(facts.anchor_move_nonzero);
 }
-

@@ -7,12 +7,14 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --features diagnostic-tests --test diag_patch_audio -- --nocapture`
 
+use clip_sync_repair::domain::GapSignatureMode;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
     build_f1_integration, build_f2_integration,
 };
 use clip_sync_repair_fixtures::energy_signature_production::gap_report_from_energy_fixture;
-use clip_sync_repair::domain::GapSignatureMode;
-use clip_sync_repair_harness::patch_audio::{energy_sig_patch_diagnostic, energy_sig_patch_options};
+use clip_sync_repair_harness::patch_audio::{
+    energy_sig_patch_diagnostic, energy_sig_patch_options,
+};
 
 const ENERGY_SIG_RATE: u32 = 48_000;
 const CHANNELS: usize = 2;

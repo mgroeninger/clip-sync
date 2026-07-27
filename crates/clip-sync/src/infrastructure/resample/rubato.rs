@@ -67,11 +67,7 @@ fn resample_mono_pcm(clip: &MonoPcmClip, target_rate: u32) -> MonoPcmClip {
 
     let samples = output
         .into_iter()
-        .map(|sample| {
-            sample
-                .round()
-                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-        })
+        .map(|sample| sample.round().clamp(i16::MIN as f32, i16::MAX as f32) as i16)
         .collect();
 
     MonoPcmClip {
@@ -98,7 +94,7 @@ fn linear_resample_fallback(
 
     let output_len = ((clip.samples.len() as u64 * u64::from(target_rate))
         / u64::from(clip.sample_rate))
-        .max(1) as usize;
+    .max(1) as usize;
     let mut output = Vec::with_capacity(output_len);
     let input = &clip.samples;
     let input_len = input.len();
@@ -198,7 +194,10 @@ fn linear_resample_f32(
     to_rate: u32,
     trigger: &'static str,
 ) -> Vec<f32> {
-    warn!(from_rate, to_rate, trigger, "falling back to linear interleaved resample");
+    warn!(
+        from_rate,
+        to_rate, trigger, "falling back to linear interleaved resample"
+    );
     let output_len =
         ((input.len() as f64 * f64::from(to_rate)) / f64::from(from_rate)).ceil() as usize;
     let mut output = Vec::with_capacity(output_len);
@@ -251,10 +250,21 @@ mod tests {
         // Both channels should be near their original values; no cross-channel leakage.
         let left_avg: f64 =
             out.iter().step_by(2).map(|&s| s as f64).sum::<f64>() / out_frames as f64;
-        let right_avg: f64 =
-            out.iter().skip(1).step_by(2).map(|&s| s as f64).sum::<f64>() / out_frames as f64;
-        assert!(left_avg > 0.0, "left channel should stay positive, avg={left_avg}");
-        assert!(right_avg < 0.0, "right channel should stay negative, avg={right_avg}");
+        let right_avg: f64 = out
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .map(|&s| s as f64)
+            .sum::<f64>()
+            / out_frames as f64;
+        assert!(
+            left_avg > 0.0,
+            "left channel should stay positive, avg={left_avg}"
+        );
+        assert!(
+            right_avg < 0.0,
+            "right channel should stay negative, avg={right_avg}"
+        );
     }
 
     #[test]

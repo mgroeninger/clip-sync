@@ -28,8 +28,7 @@ const G003_FINGERPRINT: &str = "tests/gap_corpus/fingerprints/g003_timing_offset
 fn timing_offset_fixture_reproduces_g003_signature() {
     let seam_offset_ms = 16.0;
     let drift_ppm = -4_500.0; // g003-like skew; lag decreases with time → |pre| > |post| (−16 vs −8 ms)
-    let fixture =
-        build_w5_timing_offset_seam(SR, 1, 1.0, 0.3, seam_offset_ms, drift_ppm);
+    let fixture = build_w5_timing_offset_seam(SR, 1, 1.0, 0.3, seam_offset_ms, drift_ppm);
 
     // Probe inside the collar with a guard so the shifted B window never crosses into the throat fill
     // (which would dilute the recovered peak). A short 80 ms window keeps within-window lag drift well
@@ -86,9 +85,20 @@ fn timing_offset_fixture_reproduces_g003_signature() {
 fn timing_offset_fixture_envelope_is_preserved() {
     let fixture = build_w5_timing_offset_seam(SR, 1, 1.0, 0.3, 16.0, -8_000.0);
     let collar = (0.2 * f64::from(SR)) as usize;
-    let a_rms = rms(&fixture.a_samples, fixture.gap_start - collar, fixture.gap_start);
-    let b_rms = rms(&fixture.b_samples, fixture.gap_start - collar, fixture.gap_start);
-    assert!(a_rms > 0.01, "collar should carry content: a_rms={a_rms:.4}");
+    let a_rms = rms(
+        &fixture.a_samples,
+        fixture.gap_start - collar,
+        fixture.gap_start,
+    );
+    let b_rms = rms(
+        &fixture.b_samples,
+        fixture.gap_start - collar,
+        fixture.gap_start,
+    );
+    assert!(
+        a_rms > 0.01,
+        "collar should carry content: a_rms={a_rms:.4}"
+    );
     assert!(
         (a_rms - b_rms).abs() / a_rms < 0.2,
         "collar RMS should survive the resample: a={a_rms:.4} b={b_rms:.4}"
@@ -131,7 +141,10 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
     let gap = &corpus.gaps[0];
     assert_eq!(gap.index, 3, "g003");
 
-    let lag = gap.lag.as_ref().expect("full-tier g003 carries a lag fingerprint");
+    let lag = gap
+        .lag
+        .as_ref()
+        .expect("full-tier g003 carries a lag fingerprint");
     assert!(
         !lag.pre_anchor.is_empty() && !lag.post_anchor.is_empty(),
         "g003 lag fingerprint has pre and post seams"
@@ -139,8 +152,15 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
     // Every measured seam (mono + selected channel) recovers under a shift → timing_offset, not
     // decorrelated. This is the discriminator the synthetic fixture reproduces (see Phase B test).
     for s in lag.pre_anchor.iter().chain(lag.post_anchor.iter()) {
-        assert_eq!(s.verdict, LagVerdict::TimingOffset, "g003 seam verdict: {s:?}");
-        assert!(s.peak_r > 0.9, "g003 recovers strongly under a shift: {s:?}");
+        assert_eq!(
+            s.verdict,
+            LagVerdict::TimingOffset,
+            "g003 seam verdict: {s:?}"
+        );
+        assert!(
+            s.peak_r > 0.9,
+            "g003 recovers strongly under a shift: {s:?}"
+        );
         assert!(s.lag0_r.abs() < 0.35, "g003 seam dead at lag 0: {s:?}");
     }
 

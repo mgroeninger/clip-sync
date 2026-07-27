@@ -3,7 +3,9 @@
 //! silence (`donor_interior_nominal`) come from the fingerprint's **existing** measurements — no new decode,
 //! no seam/residual math.
 
-use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams, GapEquivalenceVerdict};
+use crate::domain::gap_equivalence::{
+    classify_gap_equivalence, GapEquivalenceParams, GapEquivalenceVerdict,
+};
 use crate::domain::pcm::interleaved_to_mono;
 
 /// dBFS a fully-silent span floors to — kept identical to the fingerprint's `to_db` / `LevelProfile`
@@ -57,7 +59,10 @@ mod tests {
     use crate::domain::gap_equivalence::GapEquivalenceClass;
 
     fn on() -> GapEquivalenceParams {
-        GapEquivalenceParams { enabled: true, ..Default::default() }
+        GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        }
     }
 
     /// A silent gap (dig-silence) with an occupied donor → RepairableDropout (end-to-end from PCM).
@@ -67,7 +72,11 @@ mod tests {
         let v = measure_gap_equivalence(&a, 1, 0, 48_000, -50.0, Some(0.0), &on());
         assert_eq!(v.class, GapEquivalenceClass::RepairableDropout);
         // Digital silence floors at SILENCE_FLOOR_DB (−120), the same scale as noise_floor_db.
-        assert_eq!(v.a_gap_rms_db.unwrap(), -120.0, "silent span floors at −120: {v:?}");
+        assert_eq!(
+            v.a_gap_rms_db.unwrap(),
+            -120.0,
+            "silent span floors at −120: {v:?}"
+        );
     }
 
     /// Room-tone A (a few dB below the noise floor) with a silent donor → SharedSilence.

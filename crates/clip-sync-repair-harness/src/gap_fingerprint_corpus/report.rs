@@ -57,7 +57,9 @@ fn linfit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
         return None;
     }
     let nf = n as f64;
-    let (sx, sy) = pts.iter().fold((0.0, 0.0), |(ax, ay), &(x, y)| (ax + x, ay + y));
+    let (sx, sy) = pts
+        .iter()
+        .fold((0.0, 0.0), |(ax, ay), &(x, y)| (ax + x, ay + y));
     let (mx, my) = (sx / nf, sy / nf);
     let (mut sxx, mut sxy) = (0.0, 0.0);
     for &(x, y) in pts {
@@ -69,7 +71,12 @@ fn linfit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
     }
     let slope = sxy / sxx;
     let b = my - slope * mx;
-    let resid = (pts.iter().map(|&(x, y)| (y - (slope * x + b)).powi(2)).sum::<f64>() / nf).sqrt();
+    let resid = (pts
+        .iter()
+        .map(|&(x, y)| (y - (slope * x + b)).powi(2))
+        .sum::<f64>()
+        / nf)
+        .sqrt();
     Some((slope, resid))
 }
 
@@ -101,7 +108,10 @@ impl CorpusReport {
 
     /// Rows with a matchable B seam (the honest analysis denominator — excludes tails and no-lag gaps).
     pub fn matched(&self) -> Vec<&GapRow> {
-        self.rows.iter().filter(|r| r.kind == GapKind::Matched).collect()
+        self.rows
+            .iter()
+            .filter(|r| r.kind == GapKind::Matched)
+            .collect()
     }
 
     /// Human summary aimed at the P0 go/no-go. The denominator is **matched** gaps (B carries seam
@@ -132,7 +142,9 @@ impl CorpusReport {
         // Plan kind (vocabulary validation — today the fingerprint only emits `fillable`).
         let mut plan: BTreeMap<String, usize> = BTreeMap::new();
         for r in &self.rows {
-            *plan.entry(r.plan_kind.clone().unwrap_or_else(|| "(none)".into())).or_default() += 1;
+            *plan
+                .entry(r.plan_kind.clone().unwrap_or_else(|| "(none)".into()))
+                .or_default() += 1;
         }
         let plan_str: Vec<String> = plan.iter().map(|(k, c)| format!("{k} {c}")).collect();
         let _ = writeln!(s, "plan_kind: {}", plan_str.join(" · "));
@@ -150,9 +162,14 @@ impl CorpusReport {
         // Verdict mix among matched.
         let mut verdicts: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &matched {
-            *verdicts.entry(r.verdict.as_deref().unwrap_or("(none)")).or_default() += 1;
+            *verdicts
+                .entry(r.verdict.as_deref().unwrap_or("(none)"))
+                .or_default() += 1;
         }
-        let vstr: Vec<String> = verdicts.iter().map(|(v, c)| format!("{v} {c} ({})", pct(*c, m))).collect();
+        let vstr: Vec<String> = verdicts
+            .iter()
+            .map(|(v, c)| format!("{v} {c} ({})", pct(*c, m)))
+            .collect();
         let _ = writeln!(s, "── among matched ({m}) ──");
         let _ = writeln!(s, "  verdict: {}", vstr.join(" · "));
 
@@ -165,7 +182,10 @@ impl CorpusReport {
                 "  uniqueness: (no second_peak_r — re-fingerprint with the current binary to populate)"
             );
         } else if let Some((mn, md, _)) = stats(margins.clone()) {
-            let suspect = margins.iter().filter(|&&v| v < LOW_UNIQUENESS_MARGIN).count();
+            let suspect = margins
+                .iter()
+                .filter(|&&v| v < LOW_UNIQUENESS_MARGIN)
+                .count();
             let _ = writeln!(
                 s,
                 "  uniqueness: {suspect}/{} periodicity-suspect (margin < {:.2}); margin min {mn:.2} / median {md:.2}",
@@ -193,7 +213,10 @@ impl CorpusReport {
                         && r.residual_headroom_db.is_some_and(|h| h <= 0.0)
                 })
                 .count();
-            let headrooms: Vec<f64> = with_resid.iter().filter_map(|r| r.residual_headroom_db).collect();
+            let headrooms: Vec<f64> = with_resid
+                .iter()
+                .filter_map(|r| r.residual_headroom_db)
+                .collect();
             if let Some((mn, md, mx)) = stats(headrooms) {
                 let _ = writeln!(
                     s,
@@ -205,7 +228,10 @@ impl CorpusReport {
 
         // Outcome among matched.
         let mpatched = matched.iter().filter(|r| r.patched()).count();
-        let mskipped = matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).count();
+        let mskipped = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip"))
+            .count();
         let _ = writeln!(
             s,
             "  outcome: patched {mpatched} ({}) · skipped {mskipped} ({})",
@@ -221,7 +247,10 @@ impl CorpusReport {
                     && r.outcome_tier.as_deref() == Some("skip")
             })
             .collect();
-        let constant = addr.iter().filter(|r| r.skew == SkewClass::Constant).count();
+        let constant = addr
+            .iter()
+            .filter(|r| r.skew == SkewClass::Constant)
+            .count();
         let drift = addr.iter().filter(|r| r.skew == SkewClass::Drift).count();
         let _ = writeln!(
             s,
@@ -229,12 +258,21 @@ impl CorpusReport {
             addr.len(),
             pct(addr.len(), m)
         );
-        let _ = writeln!(s, "    constant (single shift): {constant}   drift (needs time-warp): {drift}");
+        let _ = writeln!(
+            s,
+            "    constant (single shift): {constant}   drift (needs time-warp): {drift}"
+        );
         if let Some((mn, md, mx)) = stats(addr.iter().filter_map(|r| r.drift_ms()).collect()) {
-            let _ = writeln!(s, "    pre↔post drift ms  min {mn:.2} / median {md:.2} / max {mx:.2}");
+            let _ = writeln!(
+                s,
+                "    pre↔post drift ms  min {mn:.2} / median {md:.2} / max {mx:.2}"
+            );
         }
         if let Some((mn, md, mx)) = stats(addr.iter().filter_map(|r| r.max_offset_ms()).collect()) {
-            let _ = writeln!(s, "    seam offset ms     min {mn:.2} / median {md:.2} / max {mx:.2}");
+            let _ = writeln!(
+                s,
+                "    seam offset ms     min {mn:.2} / median {md:.2} / max {mx:.2}"
+            );
         }
         if let Some((mn, md, _)) = stats(
             addr.iter()
@@ -244,7 +282,10 @@ impl CorpusReport {
                 })
                 .collect(),
         ) {
-            let _ = writeln!(s, "    min(peak_r) pre/post  worst {mn:.3} / median {md:.3} (recover floor 0.5)");
+            let _ = writeln!(
+                s,
+                "    min(peak_r) pre/post  worst {mn:.3} / median {md:.3} (recover floor 0.5)"
+            );
         }
 
         // Contrast: decorrelated skips (genuinely unfixable).
@@ -255,14 +296,20 @@ impl CorpusReport {
                     && r.outcome_tier.as_deref() == Some("skip")
             })
             .count();
-        let _ = writeln!(s, "    (contrast) decorrelated AND skipped = {decorr_skipped}");
+        let _ = writeln!(
+            s,
+            "    (contrast) decorrelated AND skipped = {decorr_skipped}"
+        );
 
         // Registration decomposition (decision seam): offset (where in B — a shiftable clip-drift
         // residual) vs step (the pre↔post discontinuity). `step ≈ 0` ⇒ clean constant offset; large
         // `step` ⇒ the A↔B timeline steps at the gap (an edit/length divergence, not shift- or
         // warp-recoverable). NOTE: a large step alone does not prove real divergence vs a spurious lag
         // lock — `uniqueness_margin` decides that (needs the current binary's `second_peak_r`).
-        let steps_abs: Vec<f64> = matched.iter().filter_map(|r| r.seam_step_ms().map(f64::abs)).collect();
+        let steps_abs: Vec<f64> = matched
+            .iter()
+            .filter_map(|r| r.seam_step_ms().map(f64::abs))
+            .collect();
         if !steps_abs.is_empty() {
             let clean = steps_abs.iter().filter(|&&v| v < CLEAN_STEP_MS).count();
             let _ = writeln!(
@@ -272,11 +319,22 @@ impl CorpusReport {
                 CLEAN_STEP_MS,
                 steps_abs.len() - clean
             );
-            if let Some((mn, md, mx)) = stats(matched.iter().filter_map(|r| r.seam_mid_ms().map(f64::abs)).collect()) {
-                let _ = writeln!(s, "    |offset| ms (shiftable): min {mn:.1} / median {md:.1} / max {mx:.1}");
+            if let Some((mn, md, mx)) = stats(
+                matched
+                    .iter()
+                    .filter_map(|r| r.seam_mid_ms().map(f64::abs))
+                    .collect(),
+            ) {
+                let _ = writeln!(
+                    s,
+                    "    |offset| ms (shiftable): min {mn:.1} / median {md:.1} / max {mx:.1}"
+                );
             }
             if let Some((mn, md, mx)) = stats(steps_abs.clone()) {
-                let _ = writeln!(s, "    |step| ms (divergence) : min {mn:.1} / median {md:.1} / max {mx:.1}");
+                let _ = writeln!(
+                    s,
+                    "    |step| ms (divergence) : min {mn:.1} / median {md:.1} / max {mx:.1}"
+                );
             }
         }
 
@@ -302,10 +360,16 @@ impl CorpusReport {
     pub fn mechanism_text(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();
-        let _ = writeln!(s, "=== mechanism: is the step clip drift, or a local discontinuity? ===");
+        let _ = writeln!(
+            s,
+            "=== mechanism: is the step clip drift, or a local discontinuity? ==="
+        );
 
         // (1) Offset trend per pair — clip drift ⇒ a consistent slope with small residual.
-        let _ = writeln!(s, "offset (mid) vs gap time, per pair  [drift ⇒ residual ≪ offset-spread]:");
+        let _ = writeln!(
+            s,
+            "offset (mid) vs gap time, per pair  [drift ⇒ residual ≪ offset-spread]:"
+        );
         let mut by_pair: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
         for r in self.matched() {
             if let (Some(t), Some(mid)) = (r.a_start_secs, r.seam_mid_ms()) {
@@ -372,7 +436,10 @@ impl CorpusReport {
         for (label, q) in candidates {
             let resid = quantization_residual(&steps, q);
             let ratio = resid / (q / 12.0_f64.sqrt());
-            let _ = writeln!(s, "    {label:<13} (q={q:5.1} ms): residual {resid:4.1} ms  ({ratio:.2}× chance)");
+            let _ = writeln!(
+                s,
+                "    {label:<13} (q={q:5.1} ms): residual {resid:4.1} ms  ({ratio:.2}× chance)"
+            );
             if best.is_none_or(|(_, br)| ratio < br) {
                 best = Some((label, ratio));
             }
@@ -399,7 +466,10 @@ impl CorpusReport {
         let matched = self.matched();
         let unique: Vec<&&GapRow> = matched
             .iter()
-            .filter(|r| r.uniqueness_margin.is_some_and(|m| m >= LOW_UNIQUENESS_MARGIN))
+            .filter(|r| {
+                r.uniqueness_margin
+                    .is_some_and(|m| m >= LOW_UNIQUENESS_MARGIN)
+            })
             .collect();
         let confirmed: Vec<&&&GapRow> = unique
             .iter()
@@ -413,7 +483,10 @@ impl CorpusReport {
             .filter(|r| r.seam_step_ms().is_some_and(|st| st.abs() < CLEAN_STEP_MS))
             .count();
 
-        let _ = writeln!(s, "=== trustworthy funnel (is any clean recoverable offset left?) ===");
+        let _ = writeln!(
+            s,
+            "=== trustworthy funnel (is any clean recoverable offset left?) ==="
+        );
         let _ = writeln!(
             s,
             "  matched {} → unique (margin ≥ {:.2}) {} → +residual-confirmed {} → +clean step (<{:.0} ms) {}",
@@ -425,10 +498,16 @@ impl CorpusReport {
             clean
         );
         if unique.is_empty() {
-            let _ = writeln!(s, "  → no unique-peak gaps: every match is periodicity-suspect. Rescue NO-GO.");
+            let _ = writeln!(
+                s,
+                "  → no unique-peak gaps: every match is periodicity-suspect. Rescue NO-GO."
+            );
             return s;
         }
-        let _ = writeln!(s, "  high-uniqueness survivors (pair idx | offset step uniq | residual | outcome):");
+        let _ = writeln!(
+            s,
+            "  high-uniqueness survivors (pair idx | offset step uniq | residual | outcome):"
+        );
         for r in &unique {
             let _ = writeln!(
                 s,
@@ -456,9 +535,14 @@ impl CorpusReport {
         let mut s = String::new();
         let matched = self.matched();
         let patched: Vec<&&GapRow> = matched.iter().filter(|r| r.patched()).collect();
-        let skipped: Vec<&&GapRow> =
-            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
-        let _ = writeln!(s, "=== gate decision: structure (placement) vs seam (waveform) ===");
+        let skipped: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip"))
+            .collect();
+        let _ = writeln!(
+            s,
+            "=== gate decision: structure (placement) vs seam (waveform) ==="
+        );
 
         let group = |label: &str, g: &[&&GapRow], out: &mut String| {
             let st = stats(g.iter().filter_map(|r| r.structure_min).collect());
@@ -479,14 +563,18 @@ impl CorpusReport {
         // Skip reasons (closest bracket's failure stage).
         let mut stages: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &skipped {
-            *stages.entry(r.closest_failure_stage.as_deref().unwrap_or("(none)")).or_default() += 1;
+            *stages
+                .entry(r.closest_failure_stage.as_deref().unwrap_or("(none)"))
+                .or_default() += 1;
         }
         let _ = writeln!(s, "  skipped failure stages (closest bracket): {stages:?}");
 
         // The hypothesis test: structure passed (≥ 0.5) but waveform seam below the High floor (0.35).
         let placed_but_rejected = skipped
             .iter()
-            .filter(|r| r.structure_min.is_some_and(|v| v >= 0.5) && r.seam_min.is_some_and(|v| v < 0.35))
+            .filter(|r| {
+                r.structure_min.is_some_and(|v| v >= 0.5) && r.seam_min.is_some_and(|v| v < 0.35)
+            })
             .count();
         let _ = writeln!(
             s,
@@ -511,10 +599,15 @@ impl CorpusReport {
              post) — see the silence-splice view for the ±600 ms baseline_lag truth)"
         );
         let matched = self.matched();
-        let skipped: Vec<&&GapRow> =
-            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        let skipped: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip"))
+            .collect();
         if skipped.iter().all(|r| r.seam_diag.is_none()) {
-            let _ = writeln!(s, "  (no seam probe — re-fingerprint with the current binary to populate)");
+            let _ = writeln!(
+                s,
+                "  (no seam probe — re-fingerprint with the current binary to populate)"
+            );
             return s;
         }
         let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
@@ -531,7 +624,9 @@ impl CorpusReport {
             .iter()
             .filter(|r| {
                 r.seam_min.is_some_and(|w| w < 0.35)
-                    && r.seam_bandlimited_r.unwrap_or(0.0).max(r.seam_spectrum_r.unwrap_or(0.0))
+                    && r.seam_bandlimited_r
+                        .unwrap_or(0.0)
+                        .max(r.seam_spectrum_r.unwrap_or(0.0))
                         >= SEAM_ROBUST_R
             })
             .count();
@@ -588,12 +683,18 @@ impl CorpusReport {
             }
         }
         if classified == 0 {
-            let _ = writeln!(s, "  (no per-side baseline_lag peaks — nothing to classify)");
+            let _ = writeln!(
+                s,
+                "  (no per-side baseline_lag peaks — nothing to classify)"
+            );
             return s;
         }
         let tstr: Vec<String> = tally.iter().map(|(k, c)| format!("{k} {c}")).collect();
         let _ = writeln!(s, "  among matched ({classified}): {}", tstr.join(" · "));
-        let recoverable = matched.iter().filter(|r| r.both_sides_recoverable()).count();
+        let recoverable = matched
+            .iter()
+            .filter(|r| r.both_sides_recoverable())
+            .count();
         let _ = writeln!(
             s,
             "  both-sides-recoverable (peak_r ≥ {:.2} each AND uniqueness ≥ {:.2} or peak_z ≥ {:.0}/prom ≥ {:.2}): {}/{}",
@@ -602,9 +703,15 @@ impl CorpusReport {
         // Search-exhausted steps: a shoulder peak was clipped at ±max_lag, so `step` is GIGO and the gap is
         // excluded from `dualfit_candidate` (ledger A5/C6). A nonzero count here means widen the lag sweep.
         let edge_pinned = matched.iter().filter(|r| r.step_edge_pinned()).count();
-        let edge_pinned_known = matched.iter().filter(|r| r.splice_edge_pinned.is_some()).count();
+        let edge_pinned_known = matched
+            .iter()
+            .filter(|r| r.splice_edge_pinned.is_some())
+            .count();
         if edge_pinned_known == 0 {
-            let _ = writeln!(s, "  edge-pinned steps: — (pre-flag fingerprint; re-scan to populate)");
+            let _ = writeln!(
+                s,
+                "  edge-pinned steps: — (pre-flag fingerprint; re-scan to populate)"
+            );
         } else {
             let _ = writeln!(
                 s,
@@ -614,10 +721,15 @@ impl CorpusReport {
         }
 
         // The skipped gaps in detail — these are the repair targets.
-        let skipped: Vec<&&GapRow> =
-            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
+        let skipped: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip"))
+            .collect();
         if !skipped.is_empty() {
-            let _ = writeln!(s, "  skipped gaps (pre peak@lag | post peak@lag | step | uniq → class):");
+            let _ = writeln!(
+                s,
+                "  skipped gaps (pre peak@lag | post peak@lag | step | uniq → class):"
+            );
             for r in &skipped {
                 let base_cls = r.splice_diag().map(|d| d.as_str()).unwrap_or("—");
                 let cls = if r.step_edge_pinned() {
@@ -625,7 +737,10 @@ impl CorpusReport {
                 } else {
                     base_cls.to_string()
                 };
-                let z = r.uniqueness_z.map(|v| format!("z {v:.1}")).unwrap_or_else(|| "z —".into());
+                let z = r
+                    .uniqueness_z
+                    .map(|v| format!("z {v:.1}"))
+                    .unwrap_or_else(|| "z —".into());
                 let _ = writeln!(
                     s,
                     "    {:<12} g{:<3} | pre {:.3}@{:>7.1} | post {:.3}@{:>7.1} | step {:>7.1} | uniq {:.2} {} → {}",
@@ -644,8 +759,10 @@ impl CorpusReport {
         }
 
         // One-sided-dead anywhere is the signal that would revive a cross-encoding validator — call it out.
-        let dead: Vec<&&GapRow> =
-            matched.iter().filter(|r| r.splice_diag() == Some(SpliceDiag::OneSidedDead)).collect();
+        let dead: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.splice_diag() == Some(SpliceDiag::OneSidedDead))
+            .collect();
         let _ = writeln!(
             s,
             "  one-sided-dead (a shoulder aligns at NO lag — would revive cross-encoding): {}",
@@ -677,12 +794,18 @@ impl CorpusReport {
             "=== occupancy: fillable dropout vs program-quiet (nominal-span B silence, registration-independent) ==="
         );
         let matched = self.matched();
-        let have: Vec<&&GapRow> = matched.iter().filter(|r| r.donor_nominal_silence.is_some()).collect();
+        let have: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.donor_nominal_silence.is_some())
+            .collect();
         if have.is_empty() {
             let _ = writeln!(s, "  (no donor_interior_nominal in corpus — re-scan with the current binary to populate)");
             return s;
         }
-        let quiet = have.iter().filter(|r| r.program_quiet() == Some(true)).count();
+        let quiet = have
+            .iter()
+            .filter(|r| r.program_quiet() == Some(true))
+            .count();
         let _ = writeln!(
             s,
             "  among matched with nominal donor ({}): dropout {} · program-quiet {} (B ≥ {:.0}% silent at the same program time)",
@@ -693,14 +816,19 @@ impl CorpusReport {
         );
         let skip_quiet: Vec<&&GapRow> = matched
             .iter()
-            .filter(|r| r.outcome_tier.as_deref() == Some("skip") && r.program_quiet() == Some(true))
+            .filter(|r| {
+                r.outcome_tier.as_deref() == Some("skip") && r.program_quiet() == Some(true)
+            })
             .collect();
         let _ = writeln!(
             s,
             "  → skipped-and-program-quiet: {} — correctly skipped, NOT fill misses (drop from the addressable denominator)",
             skip_quiet.len()
         );
-        let disagree = have.iter().filter(|r| r.donor_span_disagrees() == Some(true)).count();
+        let disagree = have
+            .iter()
+            .filter(|r| r.donor_span_disagrees() == Some(true))
+            .count();
         let _ = writeln!(
             s,
             "  nominal-vs-aligned donor disagreement (registration moved span onto other content): {}/{}",
@@ -708,9 +836,15 @@ impl CorpusReport {
             have.len()
         );
         if !skip_quiet.is_empty() {
-            let _ = writeln!(s, "  program-quiet skips (A gapflr/nflr | B gapflr/nflr | Bsil nom/aln | step):");
+            let _ = writeln!(
+                s,
+                "  program-quiet skips (A gapflr/nflr | B gapflr/nflr | Bsil nom/aln | step):"
+            );
             for r in &skip_quiet {
-                let o = |v: Option<f64>| v.map(|x| format!("{x:6.1}")).unwrap_or_else(|| "   —  ".into());
+                let o = |v: Option<f64>| {
+                    v.map(|x| format!("{x:6.1}"))
+                        .unwrap_or_else(|| "   —  ".into())
+                };
                 let _ = writeln!(
                     s,
                     "    {:<12} g{:<3} | A {}/{} | B {}/{} | {:.2}/{:.2} | step {:>7.1}",
@@ -741,7 +875,10 @@ impl CorpusReport {
             "=== dual-fit viability (scan-native splice_dualfit; per-shoulder placement, gate-equiv seam @ lag 0) ==="
         );
         let matched = self.matched();
-        let measured: Vec<&&GapRow> = matched.iter().filter(|r| r.dualfit_pass.is_some()).collect();
+        let measured: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.dualfit_pass.is_some())
+            .collect();
         if measured.is_empty() {
             let _ = writeln!(
                 s,
@@ -749,15 +886,25 @@ impl CorpusReport {
             );
             return s;
         }
-        let pass = measured.iter().filter(|r| r.dualfit_pass == Some(true)).count();
-        let _ = writeln!(s, "  among matched with splice_dualfit ({}): {pass} would pass a length-reconciled fill", measured.len());
+        let pass = measured
+            .iter()
+            .filter(|r| r.dualfit_pass == Some(true))
+            .count();
+        let _ = writeln!(
+            s,
+            "  among matched with splice_dualfit ({}): {pass} would pass a length-reconciled fill",
+            measured.len()
+        );
 
         // The decision cohort: bracket-exhausted skips (0 brackets pass) — the dual-fit targets.
         let skips: Vec<&&GapRow> = matched
             .iter()
             .filter(|r| r.outcome_tier.as_deref() == Some("skip") && r.brackets_passing == 0)
             .collect();
-        let skip_pass = skips.iter().filter(|r| r.dualfit_pass == Some(true)).count();
+        let skip_pass = skips
+            .iter()
+            .filter(|r| r.dualfit_pass == Some(true))
+            .count();
         let _ = writeln!(
             s,
             "  bracket-exhausted skips: {}/{} would pass dual-fit (the C3 answer)",
@@ -793,8 +940,14 @@ impl CorpusReport {
                 "  skipped gaps (dualfit pre | post | post@pre-off | seam-prom | donor | step | br → verdict):"
             );
             for r in &skips {
-                let glob = r.dualfit_post_global_r.map(|v| format!("{v:>6.3}")).unwrap_or_else(|| "  —  ".into());
-                let prom = r.dualfit_seam_prom.map(|v| format!("{v:.2}")).unwrap_or_else(|| " — ".into());
+                let glob = r
+                    .dualfit_post_global_r
+                    .map(|v| format!("{v:>6.3}"))
+                    .unwrap_or_else(|| "  —  ".into());
+                let prom = r
+                    .dualfit_seam_prom
+                    .map(|v| format!("{v:.2}"))
+                    .unwrap_or_else(|| " — ".into());
                 let donor = match r.donor_continuous {
                     Some(true) => "cont",
                     Some(false) => "BROKEN",
@@ -839,9 +992,14 @@ impl CorpusReport {
         let mut s = String::new();
         let matched = self.matched();
         let patched: Vec<&&GapRow> = matched.iter().filter(|r| r.patched()).collect();
-        let skipped: Vec<&&GapRow> =
-            matched.iter().filter(|r| r.outcome_tier.as_deref() == Some("skip")).collect();
-        let _ = writeln!(s, "=== dual-fit scope: patch/skip is bracket success, NOT step magnitude (C1) ===");
+        let skipped: Vec<&&GapRow> = matched
+            .iter()
+            .filter(|r| r.outcome_tier.as_deref() == Some("skip"))
+            .collect();
+        let _ = writeln!(
+            s,
+            "=== dual-fit scope: patch/skip is bracket success, NOT step magnitude (C1) ==="
+        );
 
         // Bracket-pass vs outcome (they should coincide).
         let patched_with_pass = patched.iter().filter(|r| r.brackets_passing > 0).count();
@@ -853,7 +1011,13 @@ impl CorpusReport {
         );
 
         // Step does NOT separate patch from skip — show the overlapping ranges.
-        let step_abs = |g: &[&&GapRow]| stats(g.iter().filter_map(|r| r.seam_step_ms().map(f64::abs)).collect());
+        let step_abs = |g: &[&&GapRow]| {
+            stats(
+                g.iter()
+                    .filter_map(|r| r.seam_step_ms().map(f64::abs))
+                    .collect(),
+            )
+        };
         if let (Some((pn, pm, px)), Some((sn, sm, sx))) = (step_abs(&patched), step_abs(&skipped)) {
             let _ = writeln!(s, "  |step| ms  patched: {pn:.1}/{pm:.1}/{px:.1}  ·  skipped: {sn:.1}/{sm:.1}/{sx:.1}  (overlap ⇒ step is not the discriminator)");
         }
@@ -865,9 +1029,16 @@ impl CorpusReport {
 
         // D11: program-quiet skips (B silent at the same program time) leave the addressable denominator —
         // there is nothing to fill, so they are not dual-fit misses. Report the rate over addressable skips.
-        let program_quiet: Vec<&&GapRow> = skipped.iter().filter(|r| r.program_quiet_skip()).copied().collect();
-        let addressable: Vec<&&GapRow> =
-            skipped.iter().filter(|r| !r.program_quiet_skip()).copied().collect();
+        let program_quiet: Vec<&&GapRow> = skipped
+            .iter()
+            .filter(|r| r.program_quiet_skip())
+            .copied()
+            .collect();
+        let addressable: Vec<&&GapRow> = skipped
+            .iter()
+            .filter(|r| !r.program_quiet_skip())
+            .copied()
+            .collect();
         let cand = addressable.iter().filter(|r| r.dualfit_candidate()).count();
         let _ = writeln!(
             s,
@@ -875,7 +1046,10 @@ impl CorpusReport {
             addressable.len(),
             program_quiet.len(),
         );
-        let _ = writeln!(s, "  skipped gaps (step | brackets pass/total | best-seam | recoverable → candidate?):");
+        let _ = writeln!(
+            s,
+            "  skipped gaps (step | brackets pass/total | best-seam | recoverable → candidate?):"
+        );
         for r in &skipped {
             let verdict = if r.program_quiet_skip() {
                 "program-quiet".to_string()
@@ -893,7 +1067,11 @@ impl CorpusReport {
                 r.brackets_passing,
                 r.brackets_total,
                 r.best_bracket_seam.unwrap_or(f64::NAN),
-                if r.both_sides_recoverable() { "recoverable" } else { "not-recov  " },
+                if r.both_sides_recoverable() {
+                    "recoverable"
+                } else {
+                    "not-recov  "
+                },
                 verdict,
             );
         }

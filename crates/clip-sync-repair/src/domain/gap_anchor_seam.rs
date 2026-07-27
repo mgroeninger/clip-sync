@@ -4,10 +4,10 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ports::PcmCorrelator;
 use crate::domain::gap_energy::energy_bins;
 use crate::domain::gap_structure::{activity_bins, StructureMatchParams};
 use crate::domain::policies::{is_silent_frame, RefinedGapFrames};
+use crate::domain::ports::PcmCorrelator;
 
 /// When to search for matchable editorial boundaries instead of the scan throat alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -263,18 +263,8 @@ pub fn list_anchor_candidates_a(
     ));
 
     AnchorCandidateSet {
-        pre: finalize_side_candidates(
-            pre,
-            AnchorSeamSide::Pre,
-            scan_hole.start_frame,
-            params,
-        ),
-        post: finalize_side_candidates(
-            post,
-            AnchorSeamSide::Post,
-            scan_hole.end_frame,
-            params,
-        ),
+        pre: finalize_side_candidates(pre, AnchorSeamSide::Pre, scan_hole.start_frame, params),
+        post: finalize_side_candidates(post, AnchorSeamSide::Post, scan_hole.end_frame, params),
     }
 }
 
@@ -423,13 +413,8 @@ fn energy_peak_candidates(bins: &[f32], ctx: &AnchorSideScanCtx<'_>) -> Vec<Anch
         if prominence < ctx.params.min_prominence {
             continue;
         }
-        let frame = bin_to_anchor_frame(
-            i,
-            ctx.bin_frames,
-            ctx.origin_frame,
-            ctx.side,
-            ctx.scan_edge,
-        );
+        let frame =
+            bin_to_anchor_frame(i, ctx.bin_frames, ctx.origin_frame, ctx.side, ctx.scan_edge);
         if !anchor_matchable_on_a(ctx.samples, ctx.channels, frame, ctx.side, ctx.params) {
             continue;
         }
@@ -466,13 +451,9 @@ fn bool_transition_candidates(
             continue;
         }
         let frame = match ctx.side {
-            AnchorSeamSide::Pre => bin_to_anchor_frame(
-                i,
-                ctx.bin_frames,
-                ctx.origin_frame,
-                ctx.side,
-                ctx.scan_edge,
-            ),
+            AnchorSeamSide::Pre => {
+                bin_to_anchor_frame(i, ctx.bin_frames, ctx.origin_frame, ctx.side, ctx.scan_edge)
+            }
             AnchorSeamSide::Post => ctx
                 .origin_frame
                 .saturating_add(i * ctx.bin_frames)
@@ -591,7 +572,15 @@ pub fn matchability_at_anchor(args: &MatchabilityAtAnchorArgs<'_>) -> AnchorMatc
         // `CLIP_SYNC_SPAN_TIMING` is set (Level A).
         let _s = tracing::info_span!("local_anchor_xcorr").entered();
         correlator.and_then(|c| {
-            local_anchor_xcorr_peak(c, templates, placement, side, pre_window, post_window, max_lag_frames)
+            local_anchor_xcorr_peak(
+                c,
+                templates,
+                placement,
+                side,
+                pre_window,
+                post_window,
+                max_lag_frames,
+            )
         })
     } else {
         None
@@ -776,7 +765,9 @@ mod tests {
         };
         let set = list_anchor_candidates_a(&samples, 1, scan, &test_params());
         assert!(
-            set.pre.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            set.pre
+                .iter()
+                .any(|c| c.source == AnchorSource::BoolTransition),
             "expected bool transition: {:?}",
             set.pre
         );
@@ -793,7 +784,9 @@ mod tests {
         write_active(&mut falling_pre, 0, 290, 0.6);
         let set = list_anchor_candidates_a(&falling_pre, 1, scan, &test_params());
         assert!(
-            !set.pre.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            !set.pre
+                .iter()
+                .any(|c| c.source == AnchorSource::BoolTransition),
             "falling pre edge must not produce bool transition: {:?}",
             set.pre
         );
@@ -803,7 +796,9 @@ mod tests {
         write_active(&mut rising_post, 400, 700, 0.6);
         let set = list_anchor_candidates_a(&rising_post, 1, scan, &test_params());
         assert!(
-            !set.post.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            !set.post
+                .iter()
+                .any(|c| c.source == AnchorSource::BoolTransition),
             "rising post edge must not produce bool transition: {:?}",
             set.post
         );
@@ -814,12 +809,16 @@ mod tests {
         write_active(&mut samples, 350, 390, 0.6);
         let set = list_anchor_candidates_a(&samples, 1, scan, &test_params());
         assert!(
-            set.pre.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            set.pre
+                .iter()
+                .any(|c| c.source == AnchorSource::BoolTransition),
             "expected rising pre transition: {:?}",
             set.pre
         );
         assert!(
-            set.post.iter().any(|c| c.source == AnchorSource::BoolTransition),
+            set.post
+                .iter()
+                .any(|c| c.source == AnchorSource::BoolTransition),
             "expected falling post transition: {:?}",
             set.post
         );
@@ -1069,10 +1068,11 @@ mod tests {
         assert!(
             with.matchable,
             "xcorr should rescue ambiguous pre anchor: pearson={} xcorr={:?}",
-            with.pearson,
-            with.xcorr_peak
+            with.pearson, with.xcorr_peak
         );
-        assert!(with.xcorr_peak.is_some_and(|p| p >= f64::from(params.min_xcorr_peak)));
+        assert!(with
+            .xcorr_peak
+            .is_some_and(|p| p >= f64::from(params.min_xcorr_peak)));
     }
 
     #[test]

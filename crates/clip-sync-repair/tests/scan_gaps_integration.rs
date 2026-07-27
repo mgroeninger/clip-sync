@@ -10,9 +10,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use clip_sync::ClipConfig;
 use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;
 use clip_sync::testing::fakes::FakeProgressReporter;
+use clip_sync::ClipConfig;
 use clip_sync::{AlignConfig, SymphoniaMediaReader};
 use clip_sync_repair::application::{ScanGaps, ScanGapsRequest};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
@@ -69,18 +69,9 @@ fn aligned_chirp_config() -> AlignConfig {
 #[test]
 fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
-    zero_wav_segment(
-        &path_a,
-        SAMPLE_RATE,
-        SILENT_START_SECS,
-        SILENT_END_SECS,
-    );
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
 
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
@@ -138,12 +129,8 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
 #[test]
 fn execute_detects_short_two_second_gap() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
     // Mute a 2-second window in A — the minimum realistic gap we care about detecting.
     zero_wav_segment(&path_a, SAMPLE_RATE, 40, 42);
 
@@ -172,11 +159,20 @@ fn execute_detects_short_two_second_gap() {
     let gap = report
         .gaps
         .iter()
-        .find(|g| (g.video_a_start_secs - 40.0).abs() < 0.5 && (g.video_a_end_secs - 42.0).abs() < 0.5)
+        .find(|g| {
+            (g.video_a_start_secs - 40.0).abs() < 0.5 && (g.video_a_end_secs - 42.0).abs() < 0.5
+        })
         .expect("should detect the 2-second gap near t=40s");
 
-    assert!(gap.b_has_energy, "B should have audio at the corresponding position");
-    assert!(gap.duration_secs() >= 1.5, "gap should be at least 1.5s, got {}s", gap.duration_secs());
+    assert!(
+        gap.b_has_energy,
+        "B should have audio at the corresponding position"
+    );
+    assert!(
+        gap.duration_secs() >= 1.5,
+        "gap should be at least 1.5s, got {}s",
+        gap.duration_secs()
+    );
 }
 
 /// Smoke test: B is a dual-track MP4 (2ch AAC + 6ch AC-3). The pipeline should select a
@@ -190,12 +186,8 @@ fn ac3_dual_track_b_scan_detects_gap() {
     }
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b_wav) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
+    let (path_a, path_b_wav) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
     zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
 
     let path_b_mp4 = temp.path().join("b_dual_ac3.mp4");

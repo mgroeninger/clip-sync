@@ -8,10 +8,11 @@ use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::{SeekMode, SeekTo};
 use symphonia::core::units::{Duration as MediaDuration, Time, TimeBase, Timestamp};
 
+use super::extract_loop;
 use crate::application::error::MediaError;
 use crate::application::ports::ProgressReporter;
 use crate::domain::{
-    AudioTrack, AudioTimelineSkew, ClipWindow, InterleavedScanBucket, MonoPcmClip, MonoScanBucket,
+    AudioTimelineSkew, AudioTrack, ClipWindow, InterleavedScanBucket, MonoPcmClip, MonoScanBucket,
     MultiChannelPcm,
 };
 use crate::infrastructure::symphonia::duration::symphonia_time_to_std;
@@ -20,7 +21,6 @@ use crate::infrastructure::symphonia::error_mapping::{
     NEAR_TRACK_END_TOLERANCE_SECS,
 };
 use crate::infrastructure::symphonia::session::{ensure_track_decoder, MediaIoState};
-use super::extract_loop;
 use tracing::{debug, warn};
 
 /// Tracks the maximum |PTS − sample-clock| observed during a sequential scan.
@@ -166,7 +166,14 @@ pub(crate) fn extract_mono_with_state(
     let mut sink = extract_loop::MonoExtractSink::new();
     let mut scratch = Vec::new();
     extract_loop::run_extract_decode_loop(
-        extract_loop::ExtractLoopParams { path, state, track, window, progress, label },
+        extract_loop::ExtractLoopParams {
+            path,
+            state,
+            track,
+            window,
+            progress,
+            label,
+        },
         &mut sink,
         &mut scratch,
     )
@@ -240,9 +247,7 @@ pub(crate) fn scan_mono_buckets_with_state(
     let mut last_reported = 0_u64;
 
     let estimated_total_samples = track.duration.and_then(|duration| {
-        sample_rate.map(|rate| {
-            (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64
-        })
+        sample_rate.map(|rate| (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64)
     });
 
     let emit_full_bucket = |buf: &mut Vec<i16>,
@@ -397,7 +402,9 @@ pub(crate) fn scan_mono_buckets_with_state(
         )?;
 
         if let Some(estimated) = estimated_total_samples {
-            if bucket_buf.len().saturating_add(bucket_index as usize * capacity)
+            if bucket_buf
+                .len()
+                .saturating_add(bucket_index as usize * capacity)
                 .saturating_sub(last_reported as usize)
                 >= rate as usize / 2
             {
@@ -525,41 +532,40 @@ pub(crate) fn scan_interleaved_buckets_with_state(
     let mut last_reported = 0_u64;
 
     let estimated_total_frames = track.duration.and_then(|duration| {
-        sample_rate.map(|rate| {
-            (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64
-        })
+        sample_rate.map(|rate| (duration.as_secs_f64() * f64::from(rate)).ceil().max(0.0) as u64)
     });
 
-    let emit_full_bucket = |buf: &mut Vec<f32>,
-                            frame_capacity: usize,
-                            ch: usize,
-                            index: &mut u64,
-                            rate: u32,
-                            skips: u32,
-                            on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>|
-     -> Result<(), MediaError> {
-        let sample_capacity = frame_capacity.saturating_mul(ch);
-        while buf.len() >= sample_capacity {
-            let samples: Vec<f32> = buf.drain(..sample_capacity).collect();
-            let start_secs = *index as f64 * bucket_secs;
-            let end_secs = start_secs + bucket_secs;
-            *index += 1;
-            on_bucket(InterleavedScanBucket {
-                start_secs,
-                end_secs,
-                pcm: MultiChannelPcm {
-                    sample_rate: rate,
-                    channels: ch as u16,
-                    samples,
-                    decode_error_skips: skips,
-                    decoded_frame_count: None,
-                    compressed_bytes: None,
-                    source_bit_depth: None,
-                },
-            })?;
-        }
-        Ok(())
-    };
+    let emit_full_bucket =
+        |buf: &mut Vec<f32>,
+         frame_capacity: usize,
+         ch: usize,
+         index: &mut u64,
+         rate: u32,
+         skips: u32,
+         on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>|
+         -> Result<(), MediaError> {
+            let sample_capacity = frame_capacity.saturating_mul(ch);
+            while buf.len() >= sample_capacity {
+                let samples: Vec<f32> = buf.drain(..sample_capacity).collect();
+                let start_secs = *index as f64 * bucket_secs;
+                let end_secs = start_secs + bucket_secs;
+                *index += 1;
+                on_bucket(InterleavedScanBucket {
+                    start_secs,
+                    end_secs,
+                    pcm: MultiChannelPcm {
+                        sample_rate: rate,
+                        channels: ch as u16,
+                        samples,
+                        decode_error_skips: skips,
+                        decoded_frame_count: None,
+                        compressed_bytes: None,
+                        source_bit_depth: None,
+                    },
+                })?;
+            }
+            Ok(())
+        };
 
     loop {
         let packet = match state.format.next_packet() {
@@ -789,7 +795,14 @@ pub(crate) fn extract_interleaved_with_state(
     let mut sink = extract_loop::InterleavedExtractSink::new(track);
     let mut scratch = Vec::new();
     extract_loop::run_extract_decode_loop(
-        extract_loop::ExtractLoopParams { path, state, track, window, progress, label },
+        extract_loop::ExtractLoopParams {
+            path,
+            state,
+            track,
+            window,
+            progress,
+            label,
+        },
         &mut sink,
         &mut scratch,
     )
@@ -969,7 +982,11 @@ pub(super) fn timestamp_to_sample(ts: Timestamp, time_base: TimeBase, sample_rat
         .unwrap_or(0)
 }
 
-pub(super) fn media_duration_to_frames(dur: MediaDuration, time_base: TimeBase, sample_rate: u32) -> u32 {
+pub(super) fn media_duration_to_frames(
+    dur: MediaDuration,
+    time_base: TimeBase,
+    sample_rate: u32,
+) -> u32 {
     let ts = Timestamp::try_from(dur.get()).unwrap_or(Timestamp::ZERO);
     timestamp_to_sample(ts, time_base, sample_rate).min(u32::MAX as u64) as u32
 }
@@ -1076,7 +1093,13 @@ fn raw_seek(
     let time = Time::try_new(secs, start.subsec_nanos())
         .unwrap_or_else(|| Time::try_new(secs, 0).expect("valid time"));
     format
-        .seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(track_id) })
+        .seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time,
+                track_id: Some(track_id),
+            },
+        )
         .map(|_| ())
 }
 
@@ -1095,7 +1118,10 @@ pub(super) fn seek_with_recovery(
         Err(e) => e,
     };
 
-    if matches!(first_err, SymphoniaError::SeekError(SeekErrorKind::OutOfRange)) {
+    if matches!(
+        first_err,
+        SymphoniaError::SeekError(SeekErrorKind::OutOfRange)
+    ) {
         return Err(map_seek_error(
             path,
             track_id,
@@ -1232,15 +1258,16 @@ mod tail_clip_tests {
             Some(6240.033),
             48_000,
         );
-        assert!(matches!(disposition, super::ShortfallDisposition::Pad { .. }));
+        assert!(matches!(
+            disposition,
+            super::ShortfallDisposition::Pad { .. }
+        ));
     }
 
     #[test]
     fn seek_boundary_partial_rejects_when_too_little_decoded() {
         assert!(!super::seek_boundary_partial_acceptable(
-            20_000_000,
-            44_640_000,
-            true,
+            20_000_000, 44_640_000, true,
         ));
     }
 
@@ -1284,6 +1311,9 @@ mod tail_clip_tests {
             Some(6180.0),
             48_000,
         );
-        assert!(matches!(disposition, super::ShortfallDisposition::Pad { .. }));
+        assert!(matches!(
+            disposition,
+            super::ShortfallDisposition::Pad { .. }
+        ));
     }
 }

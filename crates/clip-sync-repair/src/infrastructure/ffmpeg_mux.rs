@@ -109,7 +109,14 @@ fn trim_ffmpeg_stderr(stderr: &str) -> String {
         return "ffmpeg failed with no stderr output".into();
     }
 
-    let tail: Vec<&str> = lines.into_iter().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: Vec<&str> = lines
+        .into_iter()
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     let message = tail.join("; ");
     const MAX_LEN: usize = 500;
     if message.len() <= MAX_LEN {
@@ -153,7 +160,10 @@ fn probe_media_duration_ms(path: &Path) -> Option<u64> {
         return None;
     }
 
-    let secs: f64 = String::from_utf8_lossy(&output.stdout).trim().parse().ok()?;
+    let secs: f64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()?;
     if !secs.is_finite() || secs <= 0.0 {
         return None;
     }
@@ -176,9 +186,8 @@ fn pcm_duration_secs(pcm: &MultiChannelPcm) -> Option<f64> {
 }
 
 fn validate_mux_duration(pcm: &MultiChannelPcm, video_secs: f64) -> Result<(), RepairError> {
-    let pcm_secs = pcm_duration_secs(pcm).ok_or_else(|| {
-        RepairError::Mux("patched audio has no decodable duration".into())
-    })?;
+    let pcm_secs = pcm_duration_secs(pcm)
+        .ok_or_else(|| RepairError::Mux("patched audio has no decodable duration".into()))?;
     if (pcm_secs - video_secs).abs() > MUX_DURATION_ERROR_SECS {
         return Err(RepairError::Mux(format_mux_duration_error(
             pcm_secs, video_secs,
@@ -314,9 +323,8 @@ impl MediaMuxer for FfmpegMediaMuxer {
     ) -> Result<(), RepairError> {
         validate_pcm_layout(replacement_audio)?;
 
-        let video_ms = probe_media_duration_ms(source_video).ok_or_else(|| {
-            RepairError::Mux("could not probe video duration via ffprobe".into())
-        })?;
+        let video_ms = probe_media_duration_ms(source_video)
+            .ok_or_else(|| RepairError::Mux("could not probe video duration via ffprobe".into()))?;
         validate_mux_duration(replacement_audio, video_ms as f64 / 1000.0)?;
 
         // Mux to a sibling temp path, then rename on success so a failed run
@@ -355,8 +363,7 @@ impl MediaMuxer for FfmpegMediaMuxer {
 
         progress.phase("Muxing video with patched audio...");
         let duration_ms = mux_duration_ms_from_probe(Some(video_ms), replacement_audio);
-        match run_ffmpeg_mux_with_progress(&args, replacement_audio, depth, progress, duration_ms)
-        {
+        match run_ffmpeg_mux_with_progress(&args, replacement_audio, depth, progress, duration_ms) {
             Ok(()) => {
                 // persist closes the handle then renames into place (Windows-safe).
                 tmp.persist(output).map_err(|err| {
@@ -471,7 +478,10 @@ mod tests {
 
     #[test]
     fn mux_partial_suffix_preserves_container_extension() {
-        assert_eq!(mux_partial_suffix(Path::new("repaired.mp4")), ".partial.mp4");
+        assert_eq!(
+            mux_partial_suffix(Path::new("repaired.mp4")),
+            ".partial.mp4"
+        );
         assert_eq!(mux_partial_suffix(Path::new("out.MKV")), ".partial.MKV");
         assert_eq!(mux_partial_suffix(Path::new("noext")), ".partial");
     }
@@ -572,7 +582,10 @@ mod tests {
     #[test]
     fn parse_progress_out_time_ms_reads_ffmpeg_progress_line() {
         // ffmpeg emits microseconds; we convert to ms
-        assert_eq!(parse_progress_out_time_ms("out_time_ms=12345000"), Some(12345));
+        assert_eq!(
+            parse_progress_out_time_ms("out_time_ms=12345000"),
+            Some(12345)
+        );
         assert_eq!(parse_progress_out_time_ms("out_time_ms=500"), Some(0));
         assert_eq!(parse_progress_out_time_ms("progress=continue"), None);
     }
@@ -681,7 +694,9 @@ Error: no video stream\n";
 
         let sample_rate = 44_100u32;
         let samples: Vec<f32> = (0..(sample_rate * 2) as usize)
-            .map(|i| f32::sin(i as f32 * 2.0 * std::f32::consts::PI * 880.0 / sample_rate as f32) * 0.488)
+            .map(|i| {
+                f32::sin(i as f32 * 2.0 * std::f32::consts::PI * 880.0 / sample_rate as f32) * 0.488
+            })
             .collect();
         let pcm = clip_sync::MultiChannelPcm {
             sample_rate,

@@ -21,13 +21,19 @@ pub fn project_corpus(orig: &GapCorpus) -> GapCorpus {
         .iter()
         .map(|fp| {
             let spec = fingerprint_to_spec(fp);
-            let x = FingerprintXSet { b_levels: fp.b_levels.clone(), ..Default::default() };
+            let x = FingerprintXSet {
+                b_levels: fp.b_levels.clone(),
+                ..Default::default()
+            };
             // `None` real_brackets: the spec (from stored tags) carries only bracket counts, not per-bracket
             // rows, so synthesize. `golden_baseline` reads counts, not rows, so this is faithful for the diff.
             spec_to_fingerprint_summary(&spec, fp.sample_rate, fp.channels, Some(x), None)
         })
         .collect();
-    GapCorpus { source: orig.source.clone(), gaps }
+    GapCorpus {
+        source: orig.source.clone(),
+        gaps,
+    }
 }
 
 /// `golden_baseline` for a single in-memory corpus — write it to a one-pair temp tree and analyze it through
@@ -37,7 +43,11 @@ pub fn golden_baseline_of_corpus(corpus: &GapCorpus) -> GoldenBaseline {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().join("pair");
     std::fs::create_dir_all(&dir).expect("mkdir");
-    std::fs::write(dir.join("corpus.json"), serde_json::to_string(corpus).expect("serialize")).expect("write");
+    std::fs::write(
+        dir.join("corpus.json"),
+        serde_json::to_string(corpus).expect("serialize"),
+    )
+    .expect("write");
     analyze_dirs(&[dir], 1.0, 30.0).golden_baseline()
 }
 

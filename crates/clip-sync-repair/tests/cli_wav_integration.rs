@@ -6,10 +6,10 @@
 //!
 //! Run: `cargo test -p clip-sync-repair --test cli_wav_integration`
 
-use std::path::Path;
-use std::process::Command;
 use clip_sync::testing::audio_fixtures::write_offset_chirp_wav_pair;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use std::path::Path;
+use std::process::Command;
 
 const SAMPLE_RATE: u32 = 44_100;
 const TOTAL_SECS: u32 = 120;
@@ -53,7 +53,13 @@ fn rms_region_mono(samples: &[i16], sample_rate: u32, start_secs: f64, end_secs:
         return 0.0;
     }
     let slice = &samples[start..end];
-    let sum_sq: f64 = slice.iter().map(|&s| { let v = f64::from(s); v * v }).sum();
+    let sum_sq: f64 = slice
+        .iter()
+        .map(|&s| {
+            let v = f64::from(s);
+            v * v
+        })
+        .sum();
     (sum_sq / slice.len() as f64).sqrt() as f32
 }
 
@@ -61,18 +67,9 @@ fn rms_region_mono(samples: &[i16], sample_rate: u32, start_secs: f64, end_secs:
 #[test]
 fn cli_scan_and_wav_writes_patched_output() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (path_a, path_b) = write_offset_chirp_wav_pair(
-        temp.path(),
-        SAMPLE_RATE,
-        TOTAL_SECS,
-        OFFSET_SECS,
-    );
-    zero_wav_segment(
-        &path_a,
-        SAMPLE_RATE,
-        SILENT_START_SECS,
-        SILENT_END_SECS,
-    );
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
 
     let out_wav = temp.path().join("patched.wav");
     let config_path = temp.path().join("repair.toml");
@@ -106,7 +103,10 @@ scan_both = false
         .status()
         .expect("run clip-sync-repair");
 
-    assert!(status.success(), "CLI should exit 0 on successful scan + WAV write");
+    assert!(
+        status.success(),
+        "CLI should exit 0 on successful scan + WAV write"
+    );
     assert!(out_wav.exists(), "patched WAV should exist");
 
     let mut reader = WavReader::open(&out_wav).expect("open patched wav");

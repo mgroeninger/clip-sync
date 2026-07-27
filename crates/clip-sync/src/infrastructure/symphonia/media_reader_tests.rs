@@ -16,13 +16,13 @@ use super::extract::{
 };
 use super::probe::probe_media_reusable;
 use super::session::{CachedTrackDecoder, MediaIoState, SymphoniaMediaReader};
-use crate::infrastructure::symphonia::session::ensure_track_decoder;
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaReader, MediaSession, ProgressReporter};
 use crate::domain::{
     AudioTrack, ClipLabel, ClipWindow, InterleavedScanBucket, MediaSource, MonoPcmClip,
     MonoScanBucket, MultiChannelPcm,
 };
+use crate::infrastructure::symphonia::session::ensure_track_decoder;
 
 struct NoopProgress;
 
@@ -322,7 +322,14 @@ fn scan_interleaved_buckets_emits_full_frame_windows() {
     };
 
     session
-        .scan_interleaved_buckets(&tracks[0], 1.0, &NoopProgress, "scan", &mut collect, &mut None)
+        .scan_interleaved_buckets(
+            &tracks[0],
+            1.0,
+            &NoopProgress,
+            "scan",
+            &mut collect,
+            &mut None,
+        )
         .unwrap();
 
     assert_eq!(buckets.len(), 4);
@@ -379,7 +386,10 @@ fn extract_window_skips_pre_window_audio() {
         .map(|sample| sample.abs())
         .max()
         .unwrap_or(0);
-    assert!(peak > 1_000, "expected high-amplitude samples in second half window");
+    assert!(
+        peak > 1_000,
+        "expected high-amplitude samples in second half window"
+    );
 }
 
 fn write_split_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
@@ -429,7 +439,10 @@ fn probe_and_extract_mkv_container() {
     );
     let clip = session_extract_mono(&path, &tracks[0], &window, "mkv");
     let expected = tracks[0].sample_rate as usize;
-    assert!((clip.samples.len() as i64 - expected as i64).abs() <= sample_count_tolerance(tracks[0].sample_rate) as i64);
+    assert!(
+        (clip.samples.len() as i64 - expected as i64).abs()
+            <= sample_count_tolerance(tracks[0].sample_rate) as i64
+    );
 }
 
 #[cfg(feature = "ffmpeg-tests")]
@@ -462,7 +475,10 @@ fn probe_and_extract_mp4_container() {
     );
     let clip = session_extract_mono(&path, &tracks[0], &window, "mp4");
     let expected = tracks[0].sample_rate as usize;
-    assert!((clip.samples.len() as i64 - expected as i64).abs() <= sample_count_tolerance(tracks[0].sample_rate) as i64);
+    assert!(
+        (clip.samples.len() as i64 - expected as i64).abs()
+            <= sample_count_tolerance(tracks[0].sample_rate) as i64
+    );
 }
 
 #[cfg(all(feature = "he-aac", feature = "ffmpeg-tests"))]
@@ -501,7 +517,12 @@ fn probe_and_extract_he_aac_mp4_container() {
         (clip.samples.len() as i64 - expected as i64).abs()
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
-    let peak = clip.samples.iter().map(|sample| sample.abs()).max().unwrap_or(0);
+    let peak = clip
+        .samples
+        .iter()
+        .map(|sample| sample.abs())
+        .max()
+        .unwrap_or(0);
     assert!(
         peak > 100,
         "expected non-silent PCM from HE-AAC decode, peak={peak}"
@@ -547,7 +568,12 @@ fn probe_and_extract_he_aac_surround_mp4_container() {
         (clip.samples.len() as i64 - expected as i64).abs()
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
-    let peak = clip.samples.iter().map(|sample| sample.abs()).max().unwrap_or(0);
+    let peak = clip
+        .samples
+        .iter()
+        .map(|sample| sample.abs())
+        .max()
+        .unwrap_or(0);
     assert!(
         peak > 100,
         "expected non-silent downmixed PCM from HE-AAC 5.1 decode, peak={peak}"
@@ -617,7 +643,9 @@ fn write_stereo_split_tone_wav(path: &Path, sample_rate: u32, seconds: u32) {
 
 #[test]
 fn append_interleaved_frames_in_window_keeps_channels() {
-    use symphonia::core::audio::{layouts, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef};
+    use symphonia::core::audio::{
+        layouts, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+    };
 
     let spec = AudioSpec::new(44_100, layouts::CHANNEL_LAYOUT_STEREO);
     let mut buffer = AudioBuffer::<f32>::new(spec, 2);
@@ -646,7 +674,10 @@ fn append_interleaved_frames_in_window_keeps_channels() {
     assert_eq!(out.len(), 4);
     assert!(out[0] > 0.0, "frame 0 left should be positive");
     assert!(out[1] < 0.0, "frame 0 right should be negative");
-    assert!(out[2] > 0.0 && out[3] > 0.0, "frame 1 both channels positive");
+    assert!(
+        out[2] > 0.0 && out[3] > 0.0,
+        "frame 1 both channels positive"
+    );
     assert!(out[2] > out[3], "left (0.5) should exceed right (0.25)");
 }
 
@@ -671,10 +702,27 @@ fn extract_interleaved_preserves_stereo_channels() {
     assert_eq!(clip.frames(), 44_100);
     assert_eq!(clip.samples.len(), 44_100 * 2);
 
-    let left_peak = clip.samples.iter().step_by(2).map(|s| s.abs()).fold(0.0f32, f32::max);
-    let right_peak = clip.samples.iter().skip(1).step_by(2).map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(left_peak > 1_000.0 / 32767.0, "left channel should carry the tone, peak={left_peak}");
-    assert_eq!(right_peak, 0.0, "right channel was silent; downmix would leak energy here");
+    let left_peak = clip
+        .samples
+        .iter()
+        .step_by(2)
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max);
+    let right_peak = clip
+        .samples
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        left_peak > 1_000.0 / 32767.0,
+        "left channel should carry the tone, peak={left_peak}"
+    );
+    assert_eq!(
+        right_peak, 0.0,
+        "right channel was silent; downmix would leak energy here"
+    );
 }
 
 #[test]
@@ -692,11 +740,12 @@ fn extract_interleaved_midfile_window_seeks_correctly() {
     let clip = session_extract_interleaved(&path, &tracks[0], &window, "split");
 
     assert_eq!(clip.channels, 2);
-    assert!(
-        (clip.frames() as i64 - 44_100).abs() <= sample_count_tolerance(44_100) as i64
-    );
+    assert!((clip.frames() as i64 - 44_100).abs() <= sample_count_tolerance(44_100) as i64);
     let peak = clip.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(peak > 1_000.0 / 32767.0, "mid-file window should contain the loud second half, peak={peak}");
+    assert!(
+        peak > 1_000.0 / 32767.0,
+        "mid-file window should contain the loud second half, peak={peak}"
+    );
 }
 
 #[test]
@@ -744,7 +793,11 @@ struct InjectingDecoder {
 
 impl InjectingDecoder {
     fn new(inner: Box<dyn AudioDecoder>, fail_on_calls: Vec<usize>) -> Self {
-        Self { inner, fail_on_calls, call_count: 0 }
+        Self {
+            inner,
+            fail_on_calls,
+            call_count: 0,
+        }
     }
 }
 
@@ -767,7 +820,10 @@ impl AudioDecoder for InjectingDecoder {
         self.inner.codec_params()
     }
 
-    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> symphonia::core::errors::Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(
+        &mut self,
+        packet: &PacketRef<'_>,
+    ) -> symphonia::core::errors::Result<GenericAudioBufferRef<'_>> {
         self.call_count += 1;
         if self.fail_on_calls.contains(&self.call_count) {
             return Err(SymphoniaError::DecodeError("injected fault"));
@@ -810,9 +866,15 @@ fn mono_and_interleaved_same_skip_count_on_corrupt_fixture() {
     let (interleaved_track, mut interleaved_state) = make_state_with_injector(vec![3, 5]);
 
     let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
-    let mono_result =
-        extract_mono_with_state(&path, &mut mono_state, &mono_track, &window, &NoopProgress, "m")
-            .unwrap();
+    let mono_result = extract_mono_with_state(
+        &path,
+        &mut mono_state,
+        &mono_track,
+        &window,
+        &NoopProgress,
+        "m",
+    )
+    .unwrap();
     let interleaved_result = extract_interleaved_with_state(
         &path,
         &mut interleaved_state,
@@ -824,11 +886,9 @@ fn mono_and_interleaved_same_skip_count_on_corrupt_fixture() {
     .unwrap();
 
     assert_eq!(
-        mono_result.decode_error_skips,
-        interleaved_result.decode_error_skips,
+        mono_result.decode_error_skips, interleaved_result.decode_error_skips,
         "mono ({}) and interleaved ({}) reported different skip counts on the same corrupt fixture",
-        mono_result.decode_error_skips,
-        interleaved_result.decode_error_skips,
+        mono_result.decode_error_skips, interleaved_result.decode_error_skips,
     );
     assert_eq!(mono_result.decode_error_skips, 2);
 }
@@ -856,15 +916,17 @@ fn extract_mono_decode_errors_are_counted() {
 
     let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
     let result =
-        extract_mono_with_state(&path, &mut state, track, &window, &NoopProgress, "test")
-            .unwrap();
+        extract_mono_with_state(&path, &mut state, track, &window, &NoopProgress, "test").unwrap();
 
     assert_eq!(
         result.decode_error_skips, 2,
         "expected exactly 2 injected skips, got {}",
         result.decode_error_skips
     );
-    assert!(!result.samples.is_empty(), "should still produce audio after decode errors");
+    assert!(
+        !result.samples.is_empty(),
+        "should still produce audio after decode errors"
+    );
 }
 
 #[test]
@@ -898,7 +960,10 @@ fn extract_interleaved_decode_errors_are_counted() {
         "expected exactly 2 injected skips, got {}",
         result.decode_error_skips
     );
-    assert!(result.frames() > 0, "should still produce audio after decode errors");
+    assert!(
+        result.frames() > 0,
+        "should still produce audio after decode errors"
+    );
     assert_eq!(result.channels, 2, "channel count should be preserved");
 }
 
@@ -951,7 +1016,10 @@ fn probe_and_extract_ac3_surround_mp4() {
         (pcm.frames() as i64 - expected as i64).abs()
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
-    assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
+    assert_eq!(
+        pcm.channels, 6,
+        "interleaved extract should preserve all 6 channels"
+    );
     let peak = pcm.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(
         peak > 100.0 / 32767.0,
@@ -978,11 +1046,7 @@ fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
         ClipLabel::Interior,
     );
     // Early window: forces a backward seek when extracted after `late`.
-    let early = ClipWindow::new(
-        Duration::ZERO,
-        Duration::from_millis(500),
-        ClipLabel::Start,
-    );
+    let early = ClipWindow::new(Duration::ZERO, Duration::from_millis(500), ClipLabel::Start);
 
     let late1 = session
         .extract_mono(track, &late, &NoopProgress, "late1")
@@ -1004,7 +1068,8 @@ fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
         late1.samples.len()
     );
     assert_eq!(
-        late1.samples, late2.samples,
+        late1.samples,
+        late2.samples,
         "re-extract after backward seek must be bit-exact (path={})",
         path.display()
     );
@@ -1018,7 +1083,8 @@ fn assert_backward_seek_bit_exact(path: &Path, check_cross_session: bool) {
             .extract_mono(&fresh_tracks[0], &late, &NoopProgress, "fresh")
             .unwrap_or_else(|e| panic!("fresh extract from {}: {e}", path.display()));
         assert_eq!(
-            late1.samples, late_fresh.samples,
+            late1.samples,
+            late_fresh.samples,
             "backward-seek re-extract must match fresh session (path={})",
             path.display()
         );
@@ -1140,9 +1206,7 @@ fn track_decodable_extent_shorter_than_patched_container_duration() {
     let extent = session
         .track_decodable_extent(track)
         .expect("track_decodable_extent should succeed");
-    let extent_secs = extent
-        .unwrap_or(track.duration.unwrap())
-        .as_secs_f64();
+    let extent_secs = extent.unwrap_or(track.duration.unwrap()).as_secs_f64();
 
     assert!(
         extent_secs < container_secs * 0.8,
@@ -1211,7 +1275,10 @@ fn extract_surround_aac_mp4_after_track_decodable_extent() {
     let mut session = reader.open(&MediaSource::new(&path)).unwrap();
     let tracks = session.list_tracks().unwrap();
     let track = &tracks[0];
-    assert!(track.decodable, "5.1 AAC-LC should be decodable with he-aac build");
+    assert!(
+        track.decodable,
+        "5.1 AAC-LC should be decodable with he-aac build"
+    );
     assert_eq!(track.channels, 6);
 
     session.track_decodable_extent(track).unwrap();
@@ -1265,7 +1332,10 @@ fn probe_and_extract_eac3_surround_mp4() {
         (pcm.frames() as i64 - expected as i64).abs()
             <= sample_count_tolerance(tracks[0].sample_rate) as i64
     );
-    assert_eq!(pcm.channels, 6, "interleaved extract should preserve all 6 channels");
+    assert_eq!(
+        pcm.channels, 6,
+        "interleaved extract should preserve all 6 channels"
+    );
     let peak = pcm.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(
         peak > 100.0 / 32767.0,

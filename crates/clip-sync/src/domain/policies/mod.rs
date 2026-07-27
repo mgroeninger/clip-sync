@@ -9,17 +9,13 @@
 //! holdout  ←  clip_planning   (secs_to_duration only)
 //! ```
 
-mod track_selection;
 mod clip_planning;
 mod extract_quality;
 mod holdout;
+mod track_selection;
 
 // Re-export the full pre-split `pub` surface (some symbols are only used via
 // `crate::domain::policies::` / submodule internals, not via `domain::` re-exports).
-#[allow(unused_imports)]
-pub use track_selection::{
-    order_track_pairs_for_alignment, select_best_track, select_track_for_reference,
-};
 #[allow(unused_imports)]
 pub use clip_planning::{
     attach_symmetric_planning_report_metadata, clip_windows_paired, clip_windows_with_options,
@@ -33,7 +29,11 @@ pub use extract_quality::{
 #[allow(unused_imports)]
 pub use holdout::{
     anchor_holdout_candidates, holdout_b_window_for_offset, holdout_pick_duration,
-    holdout_window_centered_in, holdout_window_candidates, holdout_window_feasible,
+    holdout_window_candidates, holdout_window_centered_in, holdout_window_feasible,
     mapped_region_holdout_candidates, parallel_holdout_window_candidates, pick_holdout_window,
     resolve_holdout_candidates,
+};
+#[allow(unused_imports)]
+pub use track_selection::{
+    order_track_pairs_for_alignment, select_best_track, select_track_for_reference,
 };

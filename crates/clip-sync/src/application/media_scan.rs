@@ -16,9 +16,7 @@ use std::time::Duration;
 
 use crate::application::error::MediaError;
 use crate::application::ports::{MediaSession, ProgressReporter};
-use crate::domain::{
-    AudioTrack, ClipLabel, ClipWindow, InterleavedScanBucket, MonoScanBucket,
-};
+use crate::domain::{AudioTrack, ClipLabel, ClipWindow, InterleavedScanBucket, MonoScanBucket};
 
 /// Within this many seconds of declared track end, seek/decode failures terminate the
 /// fallback scan loop with `Ok(())` instead of propagating or skipping a bucket.
@@ -33,13 +31,14 @@ pub fn scan_mono_buckets_via_windows<MS: MediaSession + ?Sized>(
     label: &str,
     on_bucket: &mut dyn FnMut(MonoScanBucket) -> Result<(), MediaError>,
 ) -> Result<(), MediaError> {
-    let duration = track
-        .duration
-        .filter(|value| !value.is_zero())
-        .ok_or(MediaError::decode_failed(
-            track.index,
-            "missing track duration for sequential scan",
-        ))?;
+    let duration =
+        track
+            .duration
+            .filter(|value| !value.is_zero())
+            .ok_or(MediaError::decode_failed(
+                track.index,
+                "missing track duration for sequential scan",
+            ))?;
     let total_secs = duration.as_secs_f64();
     let mut pos = 0.0f64;
 
@@ -79,13 +78,14 @@ pub fn scan_interleaved_buckets_via_windows<MS: MediaSession + ?Sized>(
     label: &str,
     on_bucket: &mut dyn FnMut(InterleavedScanBucket) -> Result<(), MediaError>,
 ) -> Result<(), MediaError> {
-    let duration = track
-        .duration
-        .filter(|value| !value.is_zero())
-        .ok_or(MediaError::decode_failed(
-            track.index,
-            "missing track duration for sequential scan",
-        ))?;
+    let duration =
+        track
+            .duration
+            .filter(|value| !value.is_zero())
+            .ok_or(MediaError::decode_failed(
+                track.index,
+                "missing track duration for sequential scan",
+            ))?;
     let total_secs = duration.as_secs_f64();
     let mut pos = 0.0f64;
 
@@ -141,7 +141,11 @@ mod tests {
             fail_window: Option<(f64, f64)>,
             fail_kind: ScanFailKind,
         ) -> Self {
-            Self { track_duration_secs, fail_window, fail_kind }
+            Self {
+                track_duration_secs,
+                fail_window,
+                fail_kind,
+            }
         }
     }
 
@@ -206,21 +210,16 @@ mod tests {
 
     #[test]
     fn scan_swallows_decode_failed_near_end() {
-        let mut session =
-            ScanTestSession::new(10.0, Some((8.0, 10.0)), ScanFailKind::DecodeFailed);
+        let mut session = ScanTestSession::new(10.0, Some((8.0, 10.0)), ScanFailKind::DecodeFailed);
         let starts = scan_bucket_starts(&mut session).expect("scan should return Ok");
         assert_eq!(starts, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
     }
 
     #[test]
     fn scan_skips_decode_failed_mid_file() {
-        let mut session =
-            ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::DecodeFailed);
+        let mut session = ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::DecodeFailed);
         let starts = scan_bucket_starts(&mut session).expect("scan should return Ok");
-        assert_eq!(
-            starts,
-            vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0]
-        );
+        assert_eq!(starts, vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0]);
     }
 
     #[test]

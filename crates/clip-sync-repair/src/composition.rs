@@ -10,11 +10,11 @@ use crate::application::error::RepairError;
 #[cfg(feature = "calibration")]
 use crate::application::patch_audio::decode_ab;
 use crate::application::run_repair::{
-    PendingAfterScan, PendingRepairWrite, RepairRunInput, RepairRunOutcome, run_repair,
+    run_repair, PendingAfterScan, PendingRepairWrite, RepairRunInput, RepairRunOutcome,
 };
+use crate::application::scan_gaps::ScanGapsRequest;
 #[cfg(feature = "calibration")]
 use crate::domain::GapReport;
-use crate::application::scan_gaps::ScanGapsRequest;
 use crate::infrastructure::aligner::SymphoniaAligner;
 use crate::infrastructure::cli::{
     self, args::Args, exit_code::exit_code_for, output::print_repair_output,
@@ -65,11 +65,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
         args.video_b.display()
     ));
 
-    let input = repair_run_input(
-        &config,
-        args.video_a.clone(),
-        args.video_b.clone(),
-    )?;
+    let input = repair_run_input(&config, args.video_a.clone(), args.video_b.clone())?;
     let outcome = run_repair_with_defaults(input, &progress)?;
 
     #[cfg(feature = "calibration")]
@@ -109,12 +105,23 @@ fn dump_gap_fingerprints(
             Some((config.repair.min_gap_secs() * 1000.0).round() as u64);
         corpus.source.scan_recipe.absolute_silence_rms = Some(config.repair.absolute_silence_rms);
     };
-    let dump = |sub: &str, mut corpus: crate::application::gap_fingerprint::GapCorpus| -> Result<(), RepairError> {
+    let dump = |sub: &str,
+                mut corpus: crate::application::gap_fingerprint::GapCorpus|
+     -> Result<(), RepairError> {
         complete_recipe(&mut corpus);
-        let out = if sub.is_empty() { dir.to_path_buf() } else { dir.join(sub) };
-        let n = crate::application::gap_fingerprint::write_corpus_dir(&corpus, &out)
-            .map_err(|e| RepairError::Config(format!("write gap corpus to {}: {e}", out.display())))?;
-        progress.phase(&format!("wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}", out.display()));
+        let out = if sub.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(sub)
+        };
+        let n =
+            crate::application::gap_fingerprint::write_corpus_dir(&corpus, &out).map_err(|e| {
+                RepairError::Config(format!("write gap corpus to {}: {e}", out.display()))
+            })?;
+        progress.phase(&format!(
+            "wrote corpus.json + {n} per-gap fingerprints + manifest.json to {}",
+            out.display()
+        ));
         Ok(())
     };
     // The dump is characterized from decode via the shared projection (8g.4a/8g.4b); the old per-bracket
@@ -275,12 +282,11 @@ fn print_repair_outcome(
         .and({
             #[cfg(feature = "ffmpeg-mux")]
             {
-                config
+                config.repair.output.video_path.as_deref().or(config
                     .repair
                     .output
-                    .video_path
-                    .as_deref()
-                    .or(config.repair.output.wav_path.as_deref())
+                    .wav_path
+                    .as_deref())
             }
             #[cfg(not(feature = "ffmpeg-mux"))]
             {

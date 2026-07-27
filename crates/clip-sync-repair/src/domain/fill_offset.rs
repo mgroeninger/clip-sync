@@ -54,7 +54,13 @@ pub fn fill_offset_secs(
     mode: FillOffsetMode,
     gap_time_on_a_secs: f64,
 ) -> Option<f64> {
-    resolve_gap_offset_secs(alignment, mode, gap_time_on_a_secs, None, AnchoredRetryPass::First)
+    resolve_gap_offset_secs(
+        alignment,
+        mode,
+        gap_time_on_a_secs,
+        None,
+        AnchoredRetryPass::First,
+    )
 }
 
 /// Resolve per-gap B offset, optionally using patch anchors from a prior pass.
@@ -68,7 +74,9 @@ pub fn resolve_gap_offset_secs(
     match mode {
         FillOffsetMode::Recommended => alignment.recommended_offset_secs,
         FillOffsetMode::Interpolated => clip_only_offset_secs(alignment, gap_time_on_a_secs),
-        FillOffsetMode::Anchored => anchored_offset_secs(alignment, gap_time_on_a_secs, patch_anchors),
+        FillOffsetMode::Anchored => {
+            anchored_offset_secs(alignment, gap_time_on_a_secs, patch_anchors)
+        }
         FillOffsetMode::AnchoredRetry => match anchored_retry_pass {
             AnchoredRetryPass::First => clip_only_offset_secs(alignment, gap_time_on_a_secs),
             AnchoredRetryPass::Second => {
@@ -78,12 +86,8 @@ pub fn resolve_gap_offset_secs(
     }
 }
 
-fn clip_only_offset_secs(
-    alignment: &ScanAlignment,
-    gap_time_on_a_secs: f64,
-) -> Option<f64> {
-    interpolated_offset_secs(alignment, gap_time_on_a_secs)
-        .or(alignment.recommended_offset_secs)
+fn clip_only_offset_secs(alignment: &ScanAlignment, gap_time_on_a_secs: f64) -> Option<f64> {
+    interpolated_offset_secs(alignment, gap_time_on_a_secs).or(alignment.recommended_offset_secs)
 }
 
 fn anchored_offset_secs(
@@ -134,10 +138,7 @@ pub(crate) fn interpolated_offset_secs(
     Some(start_offset + drift * fraction)
 }
 
-fn clip_offset_and_anchor(
-    alignment: &ScanAlignment,
-    label: ClipRole,
-) -> Option<(f64, f64)> {
+fn clip_offset_and_anchor(alignment: &ScanAlignment, label: ClipRole) -> Option<(f64, f64)> {
     let clip = alignment
         .clips
         .iter()
@@ -157,12 +158,7 @@ mod tests {
     #[test]
     fn recommended_mode_uses_headline_offset() {
         let alignment = test_two_clip_alignment(-7.326, -6.674);
-        let offset = fill_offset_secs(
-            &alignment,
-            FillOffsetMode::Recommended,
-            1610.0,
-        )
-        .unwrap();
+        let offset = fill_offset_secs(&alignment, FillOffsetMode::Recommended, 1610.0).unwrap();
         assert!((offset - (-7.0)).abs() < 0.01);
     }
 
@@ -170,12 +166,8 @@ mod tests {
     fn interpolated_offset_at_start_anchor_matches_start_clip() {
         let alignment = test_two_clip_alignment(-7.326, -6.674);
         let start_anchor = 450.0;
-        let offset = fill_offset_secs(
-            &alignment,
-            FillOffsetMode::Interpolated,
-            start_anchor,
-        )
-        .unwrap();
+        let offset =
+            fill_offset_secs(&alignment, FillOffsetMode::Interpolated, start_anchor).unwrap();
         assert!((offset - (-7.326)).abs() < 0.001);
     }
 
@@ -210,7 +202,8 @@ mod tests {
             AnchoredRetryPass::First,
         )
         .unwrap();
-        let interpolated = fill_offset_secs(&alignment, FillOffsetMode::Interpolated, 75.0).unwrap();
+        let interpolated =
+            fill_offset_secs(&alignment, FillOffsetMode::Interpolated, 75.0).unwrap();
         assert!((clip - interpolated).abs() < 1e-9);
     }
 

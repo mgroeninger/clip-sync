@@ -323,7 +323,9 @@ pub struct StructureScores {
 
 /// Read a `Vec<(f64, f64)>` where a dead channel's Pearson was non-finite and serialized as JSON `null`
 /// (same reason as [`de_null_as_nan`]); map each `null` back to `NaN` so a corpus fingerprint round-trips.
-fn de_pairs_null_as_nan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<(f64, f64)>, D::Error> {
+fn de_pairs_null_as_nan<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<(f64, f64)>, D::Error> {
     let raw: Vec<(Option<f64>, Option<f64>)> = Vec::deserialize(d)?;
     Ok(raw
         .into_iter()
@@ -542,7 +544,6 @@ pub struct SpliceDualfit {
     pub post_seam_z: Option<f64>,
 }
 
-
 /// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
 /// agree with the fine-waveform peak lag (segment identity at macro scale; §3.6a). `prominence` is the
 /// margin over the tallest rival envelope peak.
@@ -594,11 +595,27 @@ mod tests {
     fn source_id_stable_and_distinguishing() {
         let a: Vec<f32> = (0..10_000).map(|i| noise(7, i) as f32).collect();
         let b: Vec<f32> = (0..10_000).map(|i| noise(8, i) as f32).collect();
-        assert_eq!(source_id(&a, 48_000, 2), source_id(&a, 48_000, 2), "deterministic");
+        assert_eq!(
+            source_id(&a, 48_000, 2),
+            source_id(&a, 48_000, 2),
+            "deterministic"
+        );
         assert_eq!(source_id(&a, 48_000, 2).len(), 16, "16 hex chars");
-        assert_ne!(source_id(&a, 48_000, 2), source_id(&b, 48_000, 2), "different audio → different id");
-        assert_ne!(source_id(&a, 48_000, 2), source_id(&a, 44_100, 2), "sample rate is part of identity");
-        assert_ne!(source_id(&a, 48_000, 2), source_id(&a, 48_000, 6), "channels are part of identity");
+        assert_ne!(
+            source_id(&a, 48_000, 2),
+            source_id(&b, 48_000, 2),
+            "different audio → different id"
+        );
+        assert_ne!(
+            source_id(&a, 48_000, 2),
+            source_id(&a, 44_100, 2),
+            "sample rate is part of identity"
+        );
+        assert_ne!(
+            source_id(&a, 48_000, 2),
+            source_id(&a, 48_000, 6),
+            "channels are part of identity"
+        );
     }
 
     #[test]

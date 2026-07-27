@@ -127,24 +127,9 @@ fn write_query_fixture(temp: &Path) -> (PathBuf, PathBuf) {
     let path_a = temp.join("long_a.wav");
     let path_b = temp.join("short_b.wav");
     write_mono_chirp(&path_a, SAMPLE_RATE, A_TOTAL_SECS);
-    write_chirp_slice(
-        &path_b,
-        SAMPLE_RATE,
-        QUERY_ANCHOR_SECS,
-        QUERY_DURATION_SECS,
-    );
-    mute_segment(
-        &path_a,
-        SAMPLE_RATE,
-        GAP_INSIDE_START,
-        GAP_INSIDE_END,
-    );
-    mute_segment(
-        &path_a,
-        SAMPLE_RATE,
-        GAP_OUTSIDE_START,
-        GAP_OUTSIDE_END,
-    );
+    write_chirp_slice(&path_b, SAMPLE_RATE, QUERY_ANCHOR_SECS, QUERY_DURATION_SECS);
+    mute_segment(&path_a, SAMPLE_RATE, GAP_INSIDE_START, GAP_INSIDE_END);
+    mute_segment(&path_a, SAMPLE_RATE, GAP_OUTSIDE_START, GAP_OUTSIDE_END);
     (path_a, path_b)
 }
 
@@ -152,22 +137,18 @@ fn write_b_longer_query_fixture(temp: &Path) -> (PathBuf, PathBuf) {
     let path_a = temp.join("short_a.wav");
     let path_b = temp.join("long_b.wav");
     write_mono_chirp(&path_b, SAMPLE_RATE, A_TOTAL_SECS);
-    write_chirp_slice(
-        &path_a,
-        SAMPLE_RATE,
-        QUERY_ANCHOR_SECS,
-        QUERY_DURATION_SECS,
-    );
-    mute_segment(
-        &path_a,
-        SAMPLE_RATE,
-        GAP_INSIDE_A_START,
-        GAP_INSIDE_A_END,
-    );
+    write_chirp_slice(&path_a, SAMPLE_RATE, QUERY_ANCHOR_SECS, QUERY_DURATION_SECS);
+    mute_segment(&path_a, SAMPLE_RATE, GAP_INSIDE_A_START, GAP_INSIDE_A_END);
     (path_a, path_b)
 }
 
-fn mono_region(samples: &[f32], channels: u16, sample_rate: u32, start_secs: f64, end_secs: f64) -> Vec<f32> {
+fn mono_region(
+    samples: &[f32],
+    channels: u16,
+    sample_rate: u32,
+    start_secs: f64,
+    end_secs: f64,
+) -> Vec<f32> {
     let ch = usize::from(channels.max(1));
     let start = (start_secs * f64::from(sample_rate)).round() as usize * ch;
     let end = (end_secs * f64::from(sample_rate)).round() as usize * ch;
@@ -178,7 +159,9 @@ fn mono_region(samples: &[f32], channels: u16, sample_rate: u32, start_secs: f64
         .collect()
 }
 
-fn patch_inside_gap(report: clip_sync_repair::domain::GapReport) -> clip_sync_repair::application::PatchAudioResult {
+fn patch_inside_gap(
+    report: clip_sync_repair::domain::GapReport,
+) -> clip_sync_repair::application::PatchAudioResult {
     let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
     // Seeded from production (`..RepairConfig::default().patch_settings()`), same structural
     // pattern as harness `patch_request_with_options` (config-bundles plan P3 step 1;
@@ -408,11 +391,8 @@ fn repair_b_longer_query_gap_inside_region_patched_with_donor_audio() {
         interior_start,
         interior_end,
     );
-    let filled_rms: f64 = filled
-        .iter()
-        .map(|&s| s as f64 * s as f64)
-        .sum::<f64>()
-        / filled.len().max(1) as f64;
+    let filled_rms: f64 =
+        filled.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / filled.len().max(1) as f64;
     assert!(
         filled_rms.sqrt() > 500.0 / 32767.0,
         "patched gap interior should contain donor audio, rms={}",

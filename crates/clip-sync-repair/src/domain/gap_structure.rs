@@ -3,7 +3,7 @@
 //! Matches active/silent edit patterns in a window around A's dropout against B,
 //! then optionally fine-tunes start position with the same representation.
 
-use crate::domain::policies::{FillAlignment, is_silent_frame};
+use crate::domain::policies::{is_silent_frame, FillAlignment};
 
 /// Binned active/silent pattern on each side of A's gap (index 0 = nearest the dropout).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +111,10 @@ pub fn build_gap_context_signature(
         absolute_silence_rms,
     );
 
-    GapContextSignature { pre_bins, post_bins }
+    GapContextSignature {
+        pre_bins,
+        post_bins,
+    }
 }
 
 /// Locate a B fill bracket by matching A's surrounding edit structure.
@@ -238,8 +241,8 @@ fn fine_polish_structure_start(
     let mut best_start = start;
     let mut best_score = f64::NEG_INFINITY;
 
-    for delta in -(params.max_fine_adjustment_frames as i64)
-        ..=(params.max_fine_adjustment_frames as i64)
+    for delta in
+        -(params.max_fine_adjustment_frames as i64)..=(params.max_fine_adjustment_frames as i64)
     {
         let candidate = start as i64 + delta;
         if candidate < 0 {
@@ -265,8 +268,7 @@ fn fine_polish_structure_start(
             1.0,
         );
         if candidate > nominal_start {
-            let late_frac =
-                (candidate - nominal_start) as f64 / params.gap_frames.max(1) as f64;
+            let late_frac = (candidate - nominal_start) as f64 / params.gap_frames.max(1) as f64;
             score -= 0.08 * late_frac;
         }
         let better = score > best_score + SCORE_TIE_EPSILON
@@ -313,29 +315,27 @@ fn search_best_fill_start(
     let mut best_pre = f64::NEG_INFINITY;
     let mut best_score = f64::NEG_INFINITY;
 
-    let consider = |start: usize,
-                        best_start: &mut usize,
-                        best_pre: &mut f64,
-                        best_score: &mut f64| {
-        if start < pre_span || start > search_max {
-            return;
-        }
-        let pre_score = score_pre_match(signature, timeline, start, params);
-        if !pre_score.is_finite() {
-            return;
-        }
-        let nominal_bias = NOMINAL_BIAS_PER_BIN
-            * start.abs_diff(nominal_fill_start) as f64 / params.bin_frames.max(1) as f64;
-        let score = pre_score - nominal_bias;
-        let better = score > *best_score + SCORE_TIE_EPSILON
-            || (score >= *best_score - SCORE_TIE_EPSILON
-                && prefer_start(start, *best_start, nominal_fill_start));
-        if better {
-            *best_score = score;
-            *best_pre = pre_score;
-            *best_start = start;
-        }
-    };
+    let consider =
+        |start: usize, best_start: &mut usize, best_pre: &mut f64, best_score: &mut f64| {
+            if start < pre_span || start > search_max {
+                return;
+            }
+            let pre_score = score_pre_match(signature, timeline, start, params);
+            if !pre_score.is_finite() {
+                return;
+            }
+            let nominal_bias = NOMINAL_BIAS_PER_BIN * start.abs_diff(nominal_fill_start) as f64
+                / params.bin_frames.max(1) as f64;
+            let score = pre_score - nominal_bias;
+            let better = score > *best_score + SCORE_TIE_EPSILON
+                || (score >= *best_score - SCORE_TIE_EPSILON
+                    && prefer_start(start, *best_start, nominal_fill_start));
+            if better {
+                *best_score = score;
+                *best_pre = pre_score;
+                *best_start = start;
+            }
+        };
 
     if nominal_fill_start >= pre_span {
         consider(
@@ -377,8 +377,8 @@ fn search_best_fill_end(
     let end_min = fill_start
         .saturating_add(params.gap_frames)
         .saturating_sub(params.fill_length_slack_frames);
-    let end_max = (fill_start + params.gap_frames + params.fill_length_slack_frames)
-        .min(total_frames);
+    let end_max =
+        (fill_start + params.gap_frames + params.fill_length_slack_frames).min(total_frames);
     if end_min > end_max || end_min + post_span > total_frames {
         return None;
     }
@@ -390,37 +390,36 @@ fn search_best_fill_end(
     let mut best_post = f64::NEG_INFINITY;
     let mut best_score = f64::NEG_INFINITY;
 
-    let consider =
-        |end: usize, best_end: &mut usize, best_post: &mut f64, best_score: &mut f64| {
-            if end < end_min || end > end_max || end + post_span > total_frames {
-                return;
-            }
-            let fill_len = end.saturating_sub(fill_start);
-            let min_fill = (params.gap_frames / 4)
-                .max(params.bin_frames)
-                .max(1);
-            let max_fill = params.gap_frames.saturating_add(params.fill_length_slack_frames);
-            if fill_len < min_fill || fill_len > max_fill {
-                return;
-            }
-            let post_score = score_post_match(signature, timeline, end, params);
-            if !post_score.is_finite() {
-                return;
-            }
-            let len_penalty = LENGTH_MISMATCH_PENALTY
-                * fill_len.abs_diff(params.gap_frames) as f64 / params.gap_frames.max(1) as f64;
-            let nominal_bias = NOMINAL_BIAS_PER_BIN
-                * end.abs_diff(nominal_fill_end) as f64 / params.bin_frames.max(1) as f64;
-            let score = post_score - len_penalty - nominal_bias;
-            let better = score > *best_score + SCORE_TIE_EPSILON
-                || (score >= *best_score - SCORE_TIE_EPSILON
-                    && prefer_end(end, *best_end, nominal_fill_end));
-            if better {
-                *best_score = score;
-                *best_post = post_score;
-                *best_end = end;
-            }
-        };
+    let consider = |end: usize, best_end: &mut usize, best_post: &mut f64, best_score: &mut f64| {
+        if end < end_min || end > end_max || end + post_span > total_frames {
+            return;
+        }
+        let fill_len = end.saturating_sub(fill_start);
+        let min_fill = (params.gap_frames / 4).max(params.bin_frames).max(1);
+        let max_fill = params
+            .gap_frames
+            .saturating_add(params.fill_length_slack_frames);
+        if fill_len < min_fill || fill_len > max_fill {
+            return;
+        }
+        let post_score = score_post_match(signature, timeline, end, params);
+        if !post_score.is_finite() {
+            return;
+        }
+        let len_penalty = LENGTH_MISMATCH_PENALTY * fill_len.abs_diff(params.gap_frames) as f64
+            / params.gap_frames.max(1) as f64;
+        let nominal_bias = NOMINAL_BIAS_PER_BIN * end.abs_diff(nominal_fill_end) as f64
+            / params.bin_frames.max(1) as f64;
+        let score = post_score - len_penalty - nominal_bias;
+        let better = score > *best_score + SCORE_TIE_EPSILON
+            || (score >= *best_score - SCORE_TIE_EPSILON
+                && prefer_end(end, *best_end, nominal_fill_end));
+        if better {
+            *best_score = score;
+            *best_post = post_score;
+            *best_end = end;
+        }
+    };
 
     consider(best_end, &mut best_end, &mut best_post, &mut best_score);
 
@@ -466,12 +465,12 @@ pub(crate) fn combined_structure_score(
         nominal_end,
     } = placement;
     let fill_len = end.saturating_sub(start);
-    let len_penalty = LENGTH_MISMATCH_PENALTY
-        * fill_len.abs_diff(params.gap_frames) as f64 / params.gap_frames.max(1) as f64;
+    let len_penalty = LENGTH_MISMATCH_PENALTY * fill_len.abs_diff(params.gap_frames) as f64
+        / params.gap_frames.max(1) as f64;
     let nominal_bias = NOMINAL_BIAS_PER_BIN
         * nominal_bias_scale
         * (start.abs_diff(nominal_start) + end.abs_diff(nominal_end)) as f64
-            / params.bin_frames.max(1) as f64;
+        / params.bin_frames.max(1) as f64;
     pre_score + post_score - len_penalty - nominal_bias
 }
 
@@ -639,15 +638,8 @@ mod tests {
 
         let sig = build_gap_context_signature(&a, channels, gap_start, gap_end, 50, &params);
 
-        let alignment = match_gap_structure_in_b(
-            &sig,
-            &b,
-            channels,
-            gap_start,
-            gap_end,
-            &params,
-        )
-        .expect("structure match");
+        let alignment = match_gap_structure_in_b(&sig, &b, channels, gap_start, gap_end, &params)
+            .expect("structure match");
         assert!(
             alignment.start_frame.abs_diff(gap_start) <= 3,
             "expected fill near {gap_start}, got {}",

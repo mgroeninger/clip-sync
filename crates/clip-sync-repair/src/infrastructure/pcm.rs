@@ -28,7 +28,10 @@ pub fn validate_pcm_layout(audio: &MultiChannelPcm) -> Result<(), RepairError> {
 }
 
 /// Rejects outputs that cannot be represented in a classic WAV file at the given depth.
-pub fn validate_pcm_for_wav(audio: &MultiChannelPcm, depth: WavBitDepth) -> Result<(), RepairError> {
+pub fn validate_pcm_for_wav(
+    audio: &MultiChannelPcm,
+    depth: WavBitDepth,
+) -> Result<(), RepairError> {
     validate_pcm_layout(audio)?;
     let bytes = pcm_data_bytes(audio, depth);
     if bytes > MAX_CLASSIC_WAV_DATA_BYTES {
@@ -50,7 +53,11 @@ pub fn f32_to_i24(s: f32) -> i32 {
 }
 
 /// Writes `f32` samples as little-endian PCM at the requested bit depth.
-pub fn write_pcm_le<W: Write>(writer: &mut W, samples: &[f32], depth: WavBitDepth) -> io::Result<()> {
+pub fn write_pcm_le<W: Write>(
+    writer: &mut W,
+    samples: &[f32],
+    depth: WavBitDepth,
+) -> io::Result<()> {
     match depth {
         WavBitDepth::Int16 => write_pcm_s16le(writer, samples),
         WavBitDepth::Int24 => write_pcm_s24le(writer, samples),
@@ -61,7 +68,9 @@ fn write_pcm_s16le<W: Write>(writer: &mut W, samples: &[f32]) -> io::Result<()> 
     for chunk in samples.chunks(PCM_WRITE_CHUNK_BYTES / 2) {
         let mut buf = Vec::with_capacity(chunk.len() * 2);
         for &s in chunk {
-            let v = (s * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+            let v = (s * 32767.0)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
             buf.extend_from_slice(&v.to_le_bytes());
         }
         writer.write_all(&buf)?;
@@ -113,7 +122,10 @@ mod tests {
         let sample_count = (MAX_CLASSIC_WAV_DATA_BYTES / 2 + 1) as usize;
         let audio = pcm(1, sample_count);
         let err = validate_pcm_for_wav(&audio, WavBitDepth::Int16).expect_err("over limit");
-        assert!(err.to_string().contains("classic WAV limit"), "unexpected: {err}");
+        assert!(
+            err.to_string().contains("classic WAV limit"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]
@@ -121,7 +133,10 @@ mod tests {
         let sample_count = (MAX_CLASSIC_WAV_DATA_BYTES / 3 + 1) as usize;
         let audio = pcm(1, sample_count);
         let err = validate_pcm_for_wav(&audio, WavBitDepth::Int24).expect_err("over limit");
-        assert!(err.to_string().contains("classic WAV limit"), "unexpected: {err}");
+        assert!(
+            err.to_string().contains("classic WAV limit"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]

@@ -15,14 +15,13 @@ use crate::domain::gap_structure::{
     FillBracketPlacement, GapContextSignature, StructureMatchParams,
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
-use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::pcm::interleaved_to_mono;
+use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_repeat_correlations_band, fill_seam_correlations,
-    fill_seam_correlations_band,
-    fill_seam_correlations_with_channels, fill_splice_seam_correlations_interleaved,
-    seam_score_channels, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
-    SpliceSeamContext,
+    fill_seam_correlations_band, fill_seam_correlations_with_channels,
+    fill_splice_seam_correlations_interleaved, seam_score_channels, BorderSeamTemplates,
+    FillAlignment, SeamPlacement, SeamTemplates, SpliceSeamContext,
 };
 
 const SCORE_TIE_EPSILON: f64 = 1e-9;
@@ -201,10 +200,7 @@ pub fn classify_fill_waveform_confidence(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResidualGateError {
     PearsonBelowFloor(f64),
-    HeadroomExceeded {
-        headroom_db: f64,
-        margin_db: f64,
-    },
+    HeadroomExceeded { headroom_db: f64, margin_db: f64 },
 }
 
 /// Compose Pearson waveform tiering with the residual headroom gate (fit mode).
@@ -400,8 +396,8 @@ pub fn unified_fit_score(
     let mut score =
         weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
     if placement.start > placement.nominal_start {
-        let late_frac = (placement.start - placement.nominal_start) as f64
-            / params.gap_frames.max(1) as f64;
+        let late_frac =
+            (placement.start - placement.nominal_start) as f64 / params.gap_frames.max(1) as f64;
         score -= LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
     }
     score
@@ -555,11 +551,9 @@ fn unified_fit_score_with_repeat(
     if wf > 0.0 && score.is_finite() {
         let penalty = match repeat_source {
             RepeatPenaltySource::Fixed(penalty) => penalty,
-            RepeatPenaltySource::Banded(corr) => repeat_penalty_from_correlations(
-                corr,
-                candidate.wave_pre,
-                candidate.wave_post,
-            ),
+            RepeatPenaltySource::Banded(corr) => {
+                repeat_penalty_from_correlations(corr, candidate.wave_pre, candidate.wave_post)
+            }
             RepeatPenaltySource::PerCandidate => repeat_penalty_at_placement(
                 waveform,
                 candidate.placement.start,
@@ -765,12 +759,16 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         total_frames,
     )?;
 
-    let (mut best_end, _) =
-        unified_search_best_fill_end(input.signature, &search, best_start, post_span, total_frames)?;
+    let (mut best_end, _) = unified_search_best_fill_end(
+        input.signature,
+        &search,
+        best_start,
+        post_span,
+        total_frames,
+    )?;
 
     let matched_fill_len = best_end.saturating_sub(best_start);
-    let polished_start =
-        unified_fine_polish_start(input.signature, &search, best_start, best_end);
+    let polished_start = unified_fine_polish_start(input.signature, &search, best_start, best_end);
     best_start = polished_start;
     best_end = best_start + matched_fill_len;
 
@@ -942,14 +940,14 @@ fn unified_search_best_fill_start(
                 )
             },
         );
-            let better = score > *best_score + SCORE_TIE_EPSILON
-                || (score >= *best_score - SCORE_TIE_EPSILON
-                    && prefer_start(start, *best_start, nominal_start));
-            if better {
-                *best_score = score;
-                *best_start = start;
-            }
-        };
+        let better = score > *best_score + SCORE_TIE_EPSILON
+            || (score >= *best_score - SCORE_TIE_EPSILON
+                && prefer_start(start, *best_start, nominal_start));
+        if better {
+            *best_score = score;
+            *best_start = start;
+        }
+    };
 
     // Perf instrumentation (Level E, TEMP-production-repair-perf-plan.md §2.3/§2.4): split each unified search
     // into the SPARSE coarse pass vs the DENSE integer refine — the distribution that decides prefix-sum vs FFT
@@ -1146,8 +1144,8 @@ fn unified_search_best_fill_end(
     let end_min = fill_start
         .saturating_add(params.gap_frames)
         .saturating_sub(params.fill_length_slack_frames);
-    let end_max = (fill_start + params.gap_frames + params.fill_length_slack_frames)
-        .min(total_frames);
+    let end_max =
+        (fill_start + params.gap_frames + params.fill_length_slack_frames).min(total_frames);
     if end_min > end_max || end_min + post_span > total_frames {
         return None;
     }
@@ -1195,10 +1193,10 @@ fn unified_search_best_fill_end(
             return;
         }
         let fill_len = end.saturating_sub(fill_start);
-        let min_fill = (params.gap_frames / 4)
-            .max(params.bin_frames)
-            .max(1);
-        let max_fill = params.gap_frames.saturating_add(params.fill_length_slack_frames);
+        let min_fill = (params.gap_frames / 4).max(params.bin_frames).max(1);
+        let max_fill = params
+            .gap_frames
+            .saturating_add(params.fill_length_slack_frames);
         if fill_len < min_fill || fill_len > max_fill {
             return;
         }
@@ -1309,8 +1307,8 @@ fn unified_fine_polish_start(
     let timers = CandidateTimers::default();
     let mut polish_n = 0u64;
     let polish_guard = polish_span.enter();
-    for delta in -(params.max_fine_adjustment_frames as i64)
-        ..=(params.max_fine_adjustment_frames as i64)
+    for delta in
+        -(params.max_fine_adjustment_frames as i64)..=(params.max_fine_adjustment_frames as i64)
     {
         polish_n += 1;
         let candidate = start as i64 + delta;
@@ -1392,11 +1390,7 @@ pub fn match_gap_structure_only_in_b(
     )
 }
 
-
-fn fill_anchor_better(
-    head: (f64, f64),
-    tail: (f64, f64),
-) -> bool {
+fn fill_anchor_better(head: (f64, f64), tail: (f64, f64)) -> bool {
     let (pre_h, post_h) = head;
     let (pre_t, post_t) = tail;
     let min_h = pre_h.min(post_h);
@@ -1435,7 +1429,12 @@ pub const DUALFIT_INTERIOR_EDGE_GUARD_FRAMES: usize = 64;
 
 /// Start frame of the `window`-frame interior span with the lowest mean-square energy, kept ≥ `edge_guard`
 /// frames from each end. The least-audible place to cut or hold.
-fn lowest_energy_interior_start(fill: &[f32], channels: usize, window: usize, edge_guard: usize) -> usize {
+fn lowest_energy_interior_start(
+    fill: &[f32],
+    channels: usize,
+    window: usize,
+    edge_guard: usize,
+) -> usize {
     let ch = channels.max(1);
     let n = fill.len() / ch;
     let window = window.max(1);
@@ -1568,12 +1567,8 @@ pub fn score_extend_short_fill_to_gap_frames(
     let mut out = fill_interleaved.to_vec();
     let score_at_length = |samples: &[f32]| {
         let padded = fit_fill_to_gap_frames(samples, channels, gap_frames);
-        let (pre, post) = fill_splice_seam_correlations_interleaved(
-            &padded,
-            channels,
-            borders,
-            seam_ctx,
-        );
+        let (pre, post) =
+            fill_splice_seam_correlations_interleaved(&padded, channels, borders, seam_ctx);
         (pre.min(post), padded)
     };
     let (mut best_min, _) = score_at_length(&out);
@@ -1607,8 +1602,8 @@ pub fn score_extend_short_fill_to_gap_frames(
         );
 
         let score_ok = min_score >= best_min - SCORE_TIE_EPSILON;
-        let repeat_ok = next_repeat <= REPEAT_CORR_THRESHOLD
-            && next_repeat <= prev_repeat + SCORE_TIE_EPSILON;
+        let repeat_ok =
+            next_repeat <= REPEAT_CORR_THRESHOLD && next_repeat <= prev_repeat + SCORE_TIE_EPSILON;
 
         if score_ok && repeat_ok {
             out = trial;
@@ -1671,18 +1666,10 @@ pub fn pick_fill_length_anchor(
     let skip_samples = skip_frames * channels;
     let trim_head = fill_interleaved[skip_samples..].to_vec();
 
-    let seams_tail = fill_splice_seam_correlations_interleaved(
-        &trim_tail,
-        channels,
-        borders,
-        seam_ctx,
-    );
-    let seams_head = fill_splice_seam_correlations_interleaved(
-        &trim_head,
-        channels,
-        borders,
-        seam_ctx,
-    );
+    let seams_tail =
+        fill_splice_seam_correlations_interleaved(&trim_tail, channels, borders, seam_ctx);
+    let seams_head =
+        fill_splice_seam_correlations_interleaved(&trim_head, channels, borders, seam_ctx);
 
     if fill_anchor_better(seams_head, seams_tail) {
         trim_head
@@ -1690,7 +1677,6 @@ pub fn pick_fill_length_anchor(
         trim_tail
     }
 }
-
 
 /// Frame step for waveform slide search (finer when the radius is small).
 pub fn waveform_search_step(max_adjustment_frames: usize) -> usize {
@@ -1743,8 +1729,7 @@ pub fn search_best_waveform_placement(
             let best_delta = best_start.abs_diff(structure_start);
             let better = score > best_score + SCORE_TIE_EPSILON
                 || (score >= best_score - SCORE_TIE_EPSILON
-                    && (delta < best_delta
-                        || (delta == best_delta && start < best_start)));
+                    && (delta < best_delta || (delta == best_delta && start < best_start)));
             if better {
                 best_score = score;
                 best_start = start;
@@ -1759,8 +1744,13 @@ pub fn search_best_waveform_placement(
         let refine_min = best_start.saturating_sub(step.saturating_sub(1));
         let refine_max = (best_start + step.saturating_sub(1)).min(search_max);
         for candidate in refine_min..=refine_max {
-            if !placement_in_bounds(candidate, gap_frames, pre_window, post_window, b_total_frames)
-            {
+            if !placement_in_bounds(
+                candidate,
+                gap_frames,
+                pre_window,
+                post_window,
+                b_total_frames,
+            ) {
                 continue;
             }
             let (pre, post) = fill_seam_correlations(
@@ -1777,8 +1767,7 @@ pub fn search_best_waveform_placement(
             let best_delta = best_start.abs_diff(structure_start);
             let better = score > best_score + SCORE_TIE_EPSILON
                 || (score >= best_score - SCORE_TIE_EPSILON
-                    && (delta < best_delta
-                        || (delta == best_delta && candidate < best_start)));
+                    && (delta < best_delta || (delta == best_delta && candidate < best_start)));
             if better {
                 best_score = score;
                 best_start = candidate;
@@ -1812,9 +1801,7 @@ fn placement_in_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{
-        SeamFloorSource, SeamResidualVerdict,
-    };
+    use crate::domain::policies::{SeamFloorSource, SeamResidualVerdict};
 
     #[test]
     fn interior_trim_cuts_in_the_quiet_valley() {
@@ -1823,7 +1810,8 @@ mod tests {
         let bridge: Vec<f32> = (0..1000)
             .map(|i| if (400..600).contains(&i) { 0.001 } else { 0.5 })
             .collect();
-        let out = trim_at_lowest_energy_interior(&bridge, 1, 900, DUALFIT_INTERIOR_EDGE_GUARD_FRAMES);
+        let out =
+            trim_at_lowest_energy_interior(&bridge, 1, 900, DUALFIT_INTERIOR_EDGE_GUARD_FRAMES);
         assert_eq!(out.len(), 900, "trimmed to gap length");
         let loud = |v: &[f32]| v.iter().filter(|&&x| x > 0.4).count();
         assert_eq!(loud(&bridge), loud(&out), "trim removed only quiet frames");
@@ -1834,9 +1822,21 @@ mod tests {
         let ch = 2;
         let bridge = vec![0.1f32; 500 * ch]; // 500 frames
         let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 500, guard).len(), 500 * ch, "equal");
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 450, guard).len(), 450 * ch, "trim");
-        assert_eq!(trim_at_lowest_energy_interior(&bridge, ch, 600, guard).len(), 600 * ch, "pad");
+        assert_eq!(
+            trim_at_lowest_energy_interior(&bridge, ch, 500, guard).len(),
+            500 * ch,
+            "equal"
+        );
+        assert_eq!(
+            trim_at_lowest_energy_interior(&bridge, ch, 450, guard).len(),
+            450 * ch,
+            "trim"
+        );
+        assert_eq!(
+            trim_at_lowest_energy_interior(&bridge, ch, 600, guard).len(),
+            600 * ch,
+            "pad"
+        );
     }
 
     fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {
@@ -1861,24 +1861,14 @@ mod tests {
         v.placement_slide_frames = 600;
         v.max_lag_frames = 480;
         assert!(v.beyond_lag_reach());
-        let out = apply_residual_to_confidence(
-            Ok(FillConfidence::High),
-            &v,
-            6.0,
-            false,
-        );
+        let out = apply_residual_to_confidence(Ok(FillConfidence::High), &v, 6.0, false);
         assert_eq!(out, Ok(FillConfidence::High));
     }
 
     #[test]
     fn apply_residual_abstains_when_uninformative() {
         let pearson = Ok(FillConfidence::High);
-        let out = apply_residual_to_confidence(
-            pearson,
-            &verdict(false, 100.0),
-            6.0,
-            false,
-        );
+        let out = apply_residual_to_confidence(pearson, &verdict(false, 100.0), 6.0, false);
         assert_eq!(out, Ok(FillConfidence::High));
     }
 
@@ -1896,25 +1886,15 @@ mod tests {
 
     #[test]
     fn apply_residual_rescues_dead_zone_when_enabled() {
-        let out = apply_residual_to_confidence(
-            Err(0.13),
-            &verdict(true, 0.0),
-            6.0,
-            true,
-        )
-        .expect("rescue");
+        let out = apply_residual_to_confidence(Err(0.13), &verdict(true, 0.0), 6.0, true)
+            .expect("rescue");
         assert_eq!(out, FillConfidence::Marginal);
     }
 
     #[test]
     fn apply_residual_leaves_dead_zone_when_headroom_high() {
-        let err = apply_residual_to_confidence(
-            Err(0.13),
-            &verdict(true, 20.0),
-            6.0,
-            true,
-        )
-        .unwrap_err();
+        let err =
+            apply_residual_to_confidence(Err(0.13), &verdict(true, 20.0), 6.0, true).unwrap_err();
         assert!(matches!(err, ResidualGateError::PearsonBelowFloor(_)));
     }
 
@@ -2003,8 +1983,13 @@ mod tests {
         let lead_in_frames = 3usize;
         let gap_frames = 48usize;
         let post_frames = 200usize;
-        let (b_samples, true_gap_start) =
-            build_b_haystack_with_dropout_offset(rate, pre_frames, lead_in_frames, gap_frames, post_frames);
+        let (b_samples, true_gap_start) = build_b_haystack_with_dropout_offset(
+            rate,
+            pre_frames,
+            lead_in_frames,
+            gap_frames,
+            post_frames,
+        );
         let b_mono = interleaved_to_mono(&b_samples, 1);
         let b_ch = interleaved_to_channels(&b_samples, 1);
 
@@ -2046,7 +2031,8 @@ mod tests {
         );
 
         assert_eq!(
-            best.start_frame, true_gap_start,
+            best.start_frame,
+            true_gap_start,
             "expected waveform slide +{lead_in_frames}, got +{}",
             best.start_frame.saturating_sub(structure_start)
         );
@@ -2366,8 +2352,14 @@ mod tests {
     #[test]
     fn band_agreement_treats_infinities_as_equal_and_nan_as_divergence() {
         assert!(band_agrees_with_naive(0.5, 0.5));
-        assert!(band_agrees_with_naive(0.5, 0.5 + FFT_SEAM_DISCREPANCY_TOL * 0.5));
-        assert!(!band_agrees_with_naive(0.5, 0.5 + FFT_SEAM_DISCREPANCY_TOL * 10.0));
+        assert!(band_agrees_with_naive(
+            0.5,
+            0.5 + FFT_SEAM_DISCREPANCY_TOL * 0.5
+        ));
+        assert!(!band_agrees_with_naive(
+            0.5,
+            0.5 + FFT_SEAM_DISCREPANCY_TOL * 10.0
+        ));
 
         assert!(band_agrees_with_naive(f64::NEG_INFINITY, f64::NEG_INFINITY));
         assert!(band_agrees_with_naive(f64::INFINITY, f64::INFINITY));
@@ -2618,12 +2610,8 @@ mod tests {
         let gap_frames = 4usize;
         let pre_w = 2usize;
         let post_w = 2usize;
-        let a_pre: Vec<f64> = (0..pre_w)
-            .map(|i| (i as f64 * 0.8).sin())
-            .collect();
-        let a_post: Vec<f64> = (0..post_w)
-            .map(|i| ((i + 4) as f64 * 0.5).cos())
-            .collect();
+        let a_pre: Vec<f64> = (0..pre_w).map(|i| (i as f64 * 0.8).sin()).collect();
+        let a_post: Vec<f64> = (0..post_w).map(|i| ((i + 4) as f64 * 0.5).cos()).collect();
         let a_pre_ch = vec![a_pre.clone()];
         let a_post_ch = vec![a_post.clone()];
         let pre: Vec<f32> = a_pre.iter().map(|&v| v as f32).collect();
@@ -2780,7 +2768,15 @@ mod tests {
         let nominal_start = 100usize;
         let nominal_end = 140usize;
         let with_penalty = unified_fit_score_with_repeat(
-            fit_candidate(0.9, 0.9, 0.2, nominal_start, nominal_end, nominal_start, nominal_end),
+            fit_candidate(
+                0.9,
+                0.9,
+                0.2,
+                nominal_start,
+                nominal_end,
+                nominal_start,
+                nominal_end,
+            ),
             &params,
             weights,
             &waveform_penalized,
@@ -2789,7 +2785,15 @@ mod tests {
             &CandidateTimers::default(),
         );
         let without_penalty = unified_fit_score_with_repeat(
-            fit_candidate(0.9, 0.9, 0.2, nominal_start, nominal_end, nominal_start, nominal_end),
+            fit_candidate(
+                0.9,
+                0.9,
+                0.2,
+                nominal_start,
+                nominal_end,
+                nominal_start,
+                nominal_end,
+            ),
             &params,
             weights,
             &waveform_off,
@@ -2810,9 +2814,7 @@ mod tests {
         let gap_frames = 48_000usize;
         let seam_window = 12_000usize;
         let border_frames = 96_000usize;
-        let a_post: Vec<f64> = (0..seam_window)
-            .map(|i| (i as f64 * 0.12).sin())
-            .collect();
+        let a_post: Vec<f64> = (0..seam_window).map(|i| (i as f64 * 0.12).sin()).collect();
         let a_pre: Vec<f64> = vec![0.05; seam_window];
 
         let mut b_speech = vec![0.02f64; gap_frames + seam_window];
@@ -2855,7 +2857,15 @@ mod tests {
                 repeat_penalty_weight: 0.4,
             };
             unified_fit_score_with_repeat(
-                fit_candidate(0.85, 0.95, wave_min, nominal_start, nominal_end, nominal_start, nominal_end),
+                fit_candidate(
+                    0.85,
+                    0.95,
+                    wave_min,
+                    nominal_start,
+                    nominal_end,
+                    nominal_start,
+                    nominal_end,
+                ),
                 &params,
                 weights,
                 &waveform,

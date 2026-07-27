@@ -232,7 +232,9 @@ fn query_fingerprint() -> crate::domain::Fingerprint {
 #[test]
 #[ignore = "Q0 spike — expensive; run explicitly with --ignored"]
 fn coarse_search_finds_known_anchor() {
-    let mut session = ChirpReferenceSession { duration_secs: A_SECS };
+    let mut session = ChirpReferenceSession {
+        duration_secs: A_SECS,
+    };
     let query_fp = query_fingerprint();
 
     let outcome = coarse_locate(&mut session, &query_fp, B_SECS, STRIDE_SECS, BUCKET_SECS);
@@ -265,7 +267,9 @@ fn coarse_search_finds_known_anchor() {
 #[test]
 #[ignore = "Q0 spike — expensive; run explicitly with --ignored"]
 fn coarse_search_ring_buffer_bounded_memory() {
-    let mut session = ChirpReferenceSession { duration_secs: A_SECS };
+    let mut session = ChirpReferenceSession {
+        duration_secs: A_SECS,
+    };
     let query_fp = query_fingerprint();
 
     let outcome = coarse_locate(&mut session, &query_fp, B_SECS, STRIDE_SECS, BUCKET_SECS);

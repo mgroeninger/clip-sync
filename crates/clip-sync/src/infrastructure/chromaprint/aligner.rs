@@ -7,9 +7,7 @@ use crate::application::error::AlignmentError;
 use crate::application::ports::Aligner;
 use crate::domain::{ClipMatchEstimate, Fingerprint};
 use crate::infrastructure::chromaprint::config::configuration_for_preset;
-use crate::infrastructure::chromaprint::matching::{
-    segment_confidence, select_best_segment,
-};
+use crate::infrastructure::chromaprint::matching::{segment_confidence, select_best_segment};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ChromaprintAligner {
@@ -51,8 +49,8 @@ fn find_offset(
     }
 
     let config = configuration_for_preset(preset);
-    let segments = match_fingerprints(left.items(), right.items(), &config)
-        .map_err(map_match_error)?;
+    let segments =
+        match_fingerprints(left.items(), right.items(), &config).map_err(map_match_error)?;
 
     let selection = select_best_segment(&segments);
     let Some((segment, ambiguous)) = selection else {
@@ -84,9 +82,9 @@ fn find_offset(
 
 fn map_match_error(error: MatchError) -> AlignmentError {
     match error {
-        MatchError::FingerprintTooLong { index } => AlignmentError::EngineFailed(format!(
-            "fingerprint {index} is too long to compare"
-        )),
+        MatchError::FingerprintTooLong { index } => {
+            AlignmentError::EngineFailed(format!("fingerprint {index} is too long to compare"))
+        }
     }
 }
 
@@ -100,7 +98,9 @@ mod tests {
     use crate::infrastructure::chromaprint::ChromaprintFingerprinter;
 
     fn fingerprint(clip: &MonoPcmClip) -> Fingerprint {
-        ChromaprintFingerprinter::default().fingerprint(clip).unwrap()
+        ChromaprintFingerprinter::default()
+            .fingerprint(clip)
+            .unwrap()
     }
 
     fn tone_samples(sample_rate: u32, start_index: u64, count: usize) -> Vec<i16> {
@@ -136,8 +136,14 @@ mod tests {
         let left = fingerprint(&clip);
         let right = fingerprint(&clip);
 
-        let estimate = ChromaprintAligner::default().find_offset(&left, &right).unwrap();
-        assert!(estimate.confidence >= 0.5, "confidence={}", estimate.confidence);
+        let estimate = ChromaprintAligner::default()
+            .find_offset(&left, &right)
+            .unwrap();
+        assert!(
+            estimate.confidence >= 0.5,
+            "confidence={}",
+            estimate.confidence
+        );
         assert!(
             estimate.offset_secs.abs() < 0.25,
             "offset={}",
@@ -175,7 +181,9 @@ mod tests {
             20,
         ));
 
-        let estimate = ChromaprintAligner::default().find_offset(&left, &right).unwrap();
+        let estimate = ChromaprintAligner::default()
+            .find_offset(&left, &right)
+            .unwrap();
         assert!(
             estimate.confidence >= 0.3,
             "confidence={}",

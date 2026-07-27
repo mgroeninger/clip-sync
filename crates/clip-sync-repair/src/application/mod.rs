@@ -1,10 +1,10 @@
-pub mod error;
 pub mod align_bridge;
+pub mod error;
 pub mod fit_routing;
-#[doc(hidden)]
-pub mod gate_oracle;
 pub mod gap_equivalence;
 pub mod gap_fingerprint;
+#[doc(hidden)]
+pub mod gate_oracle;
 pub mod mux_bitrate;
 pub mod patch_audio;
 pub mod patch_region;

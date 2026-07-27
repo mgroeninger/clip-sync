@@ -1,15 +1,15 @@
 use std::sync::Mutex;
 
 use symphonia::core::audio::{
-    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
-    layouts,
+    layouts, AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels,
+    GenericAudioBufferRef,
 };
-use symphonia::core::codecs::CodecInfo;
 use symphonia::core::codecs::audio::well_known::{CODEC_ID_AC3, CODEC_ID_EAC3};
 use symphonia::core::codecs::audio::{
     AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
 };
 use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia::core::codecs::CodecInfo;
 use symphonia::core::errors::Error;
 use symphonia::core::packet::PacketRef;
 use symphonia::core::support_audio_codec;
@@ -46,9 +46,12 @@ impl Ac3Decoder {
         let sample_rate = params.sample_rate.unwrap_or(48_000);
         let is_eac3 = params.codec == CODEC_ID_EAC3;
 
-        let mut oxideav_params = oxideav_core::CodecParameters::audio(
-            oxideav_core::CodecId::new(if is_eac3 { "eac3" } else { "ac3" }),
-        );
+        let mut oxideav_params =
+            oxideav_core::CodecParameters::audio(oxideav_core::CodecId::new(if is_eac3 {
+                "eac3"
+            } else {
+                "ac3"
+            }));
         // params.channels is often None for AC-3 in MP4: Symphonia's isomp4 demuxer reads
         // the dac3 box but does not populate AudioCodecParameters.channels from it.
         // oxideav reads channel config from the bitstream, so passing None is fine here.
@@ -68,9 +71,10 @@ impl Ac3Decoder {
         .map_err(|_| Error::DecodeError("ac3: decoder init failed"))?;
 
         // Use the container's channel layout if available; otherwise defer to first decode.
-        let buf = params.channels.clone().map(|ch| {
-            AudioBuffer::new(AudioSpec::new(sample_rate, ch), BUF_CAPACITY)
-        });
+        let buf = params
+            .channels
+            .clone()
+            .map(|ch| AudioBuffer::new(AudioSpec::new(sample_rate, ch), BUF_CAPACITY));
         let empty_buf = AudioBuffer::new(
             AudioSpec::new(sample_rate, layouts::CHANNEL_LAYOUT_STEREO),
             0,
@@ -213,8 +217,9 @@ impl AudioDecoder for Ac3Decoder {
         // Lazily initialize the buffer on the first decoded frame when the container
         // did not supply a channel layout (common for AC-3 in MP4).
         if self.buf.is_none() {
-            let layout = ac3_channel_layout(n_ch)
-                .ok_or(Error::DecodeError("ac3: unsupported channel count from bitstream"))?;
+            let layout = ac3_channel_layout(n_ch).ok_or(Error::DecodeError(
+                "ac3: unsupported channel count from bitstream",
+            ))?;
             self.buf = Some(AudioBuffer::new(
                 AudioSpec::new(self.sample_rate, layout.clone()),
                 BUF_CAPACITY.max(samples_total),
@@ -350,7 +355,10 @@ mod tests {
             drain_packet(&mut decoder, &dummy_packet(), &mut scratch).expect("drain succeeds");
 
         assert_eq!(n_ch, 2);
-        assert_eq!(samples_total, 5, "3 + 2 samples per channel across two frames");
+        assert_eq!(
+            samples_total, 5,
+            "3 + 2 samples per channel across two frames"
+        );
         // Interleaved: frame A (L0 R0 L1 R1 L2 R2) then frame B (L0 R0 L1 R1).
         assert_eq!(
             scratch,

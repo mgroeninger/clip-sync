@@ -18,7 +18,10 @@ pub(crate) fn template_mean_square(samples: &[f64]) -> f64 {
 /// energy. Lets seam scoring follow the channel(s) that actually hold content (e.g. a
 /// center-dominant 5.1 mix where front L/R are near-silent) instead of assuming front L/R.
 /// Returns empty when every channel is near-silent, so the caller falls back to the mono mix.
-pub(crate) fn seam_score_channel_indices(a_pre_ch: &[Vec<f64>], a_post_ch: &[Vec<f64>]) -> Vec<usize> {
+pub(crate) fn seam_score_channel_indices(
+    a_pre_ch: &[Vec<f64>],
+    a_post_ch: &[Vec<f64>],
+) -> Vec<usize> {
     let n = a_pre_ch.len().min(a_post_ch.len());
     if n == 0 {
         return Vec::new();
@@ -46,10 +49,7 @@ pub(crate) fn seam_pearson(left: &[f64], right: &[f64]) -> f64 {
 }
 
 fn best_channel_correlation(scores: &[f64]) -> f64 {
-    scores
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max)
+    scores.iter().copied().fold(f64::NEG_INFINITY, f64::max)
 }
 
 /// Borrowed A-side border templates and B-side haystack audio for seam correlation.
@@ -102,7 +102,14 @@ pub fn fill_repeat_correlations(
     placement: SeamPlacement,
     repeat_window_frames: usize,
 ) -> (f64, f64) {
-    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        b_mono,
+        b_ch,
+    } = *templates;
     let SeamPlacement {
         start,
         gap_frames,
@@ -110,18 +117,10 @@ pub fn fill_repeat_correlations(
         post_window,
     } = placement;
 
-    let pre_repeat_window = effective_repeat_window_frames(
-        repeat_window_frames,
-        gap_frames,
-        a_pre.len(),
-        pre_window,
-    );
-    let post_repeat_window = effective_repeat_window_frames(
-        repeat_window_frames,
-        gap_frames,
-        a_post.len(),
-        post_window,
-    );
+    let pre_repeat_window =
+        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_pre.len(), pre_window);
+    let post_repeat_window =
+        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_post.len(), post_window);
 
     let repeat_pre = if !a_pre.is_empty()
         && start + pre_repeat_window <= b_mono.len()
@@ -192,10 +191,7 @@ pub fn fill_repeat_correlations(
                 );
                 let tail = start + gap_frames.saturating_sub(w);
                 if w <= border_len && tail + w <= b_ch.len() {
-                    Some(seam_pearson(
-                        &a_ch[..w],
-                        &b_ch[tail..tail + w],
-                    ))
+                    Some(seam_pearson(&a_ch[..w], &b_ch[tail..tail + w]))
                 } else {
                     None
                 }
@@ -236,7 +232,13 @@ fn repeat_side_band(
 ) -> Option<Vec<f64>> {
     // The POST side compares A's head against the fill's TAIL, so its B base trails `start` by
     // `gap_frames − w`; the PRE side reads at `start` itself.
-    let base_offset = |w: usize| if tail { 0 } else { gap_frames.saturating_sub(w) };
+    let base_offset = |w: usize| {
+        if tail {
+            0
+        } else {
+            gap_frames.saturating_sub(w)
+        }
+    };
     let mono_offset = base_offset(mono_window);
 
     // The one start-dependent term shared by the mono scoring gate (`:127` / `:139`) and the OUTER channel gate
@@ -357,7 +359,14 @@ pub(crate) fn fill_repeat_correlations_band(
         return None;
     }
     let width = start_hi - start_lo + 1;
-    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        b_mono,
+        b_ch,
+    } = *templates;
 
     // Start-independent (this is the precondition that makes banding possible at all): the effective windows
     // derive only from the gap/border/seam geometry, none of which moves with `start`.
@@ -396,8 +405,6 @@ pub(crate) fn fill_repeat_correlations_band(
     )?;
     Some(pre.into_iter().zip(post).collect())
 }
-
-
 
 /// A-side gap bounds for splice-aware seam scoring on decoded PCM.
 #[derive(Clone, Copy)]
@@ -493,10 +500,7 @@ fn score_splice_pre_seam_border(fill_mono: &[f64], a_pre: &[f64], pre_window: us
     if w == 0 {
         return 0.0;
     }
-    seam_pearson(
-        &a_pre[a_pre.len() - w..],
-        &fill_mono[..w],
-    )
+    seam_pearson(&a_pre[a_pre.len() - w..], &fill_mono[..w])
 }
 
 fn score_splice_post_seam(
@@ -601,36 +605,18 @@ pub fn fill_splice_seam_correlations_interleaved(
         if ch_fill.len() != gap_frames {
             continue;
         }
-        let pre = score_splice_pre_seam_channel(
-            &ch_fill,
-            &a_pre_ch[ch],
-            pre_window,
-            ctx,
-            ch,
-        );
+        let pre = score_splice_pre_seam_channel(&ch_fill, &a_pre_ch[ch], pre_window, ctx, ch);
         if pre.is_finite() && pre > f64::NEG_INFINITY {
             pre_scores.push(pre);
         }
-        let post = score_splice_post_seam_channel(
-            &ch_fill,
-            &a_post_ch[ch],
-            post_window,
-            ctx,
-            ch,
-        );
+        let post = score_splice_post_seam_channel(&ch_fill, &a_post_ch[ch], post_window, ctx, ch);
         if post.is_finite() && post > f64::NEG_INFINITY {
             post_scores.push(post);
         }
     }
 
-    let mono = fill_splice_seam_correlations(
-        &fill_mono,
-        a_pre,
-        a_post,
-        pre_window,
-        post_window,
-        ctx,
-    );
+    let mono =
+        fill_splice_seam_correlations(&fill_mono, a_pre, a_post, pre_window, post_window, ctx);
     let pre = if pre_scores.is_empty() {
         mono.0
     } else {
@@ -755,20 +741,29 @@ pub(crate) fn fill_seam_correlations_with_channels(
     placement: SeamPlacement,
     score_channels: &[usize],
 ) -> (f64, f64) {
-    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
-    let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
+    let SeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        b_mono,
+        b_ch,
+    } = *templates;
+    let SeamPlacement {
+        start,
+        gap_frames,
+        pre_window,
+        post_window,
+    } = placement;
     let use_channels = b_ch.len() > 1
         && a_pre_ch.len() == b_ch.len()
         && a_post_ch.len() == b_ch.len()
         && a_pre_ch.iter().any(|ch| !ch.is_empty());
 
-    let score_pre = pre_window > 0
-        && !a_pre.is_empty()
-        && start >= pre_window
-        && start <= b_mono.len();
-    let score_post = post_window > 0
-        && !a_post.is_empty()
-        && start + gap_frames + post_window <= b_mono.len();
+    let score_pre =
+        pre_window > 0 && !a_pre.is_empty() && start >= pre_window && start <= b_mono.len();
+    let score_post =
+        post_window > 0 && !a_post.is_empty() && start + gap_frames + post_window <= b_mono.len();
 
     if !use_channels {
         let pre = if score_pre {
@@ -862,7 +857,14 @@ pub(crate) fn fill_seam_correlations_band(
         return None;
     }
     let width = start_hi - start_lo + 1;
-    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+    let SeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        b_mono,
+        b_ch,
+    } = *templates;
 
     let use_channels = b_ch.len() > 1
         && a_pre_ch.len() == b_ch.len()
@@ -981,7 +983,11 @@ fn mono_seam_band(
     if !score || a.len() < window {
         return Some(vec![0.0; width]);
     }
-    let template: &[f64] = if tail { &a[a.len() - window..] } else { &a[..window] };
+    let template: &[f64] = if tail {
+        &a[a.len() - window..]
+    } else {
+        &a[..window]
+    };
     let band = seam_correlation_over_bases(template, b_mono, base_lo, base_hi);
     (band.len() == width).then_some(band)
 }
@@ -998,7 +1004,10 @@ fn combine_seam_band(width: usize, score: bool, mono: &[f64], ch_bands: &[Vec<f6
                     0.0
                 }
             } else {
-                ch_bands.iter().map(|b| b[i]).fold(f64::NEG_INFINITY, f64::max)
+                ch_bands
+                    .iter()
+                    .map(|b| b[i])
+                    .fold(f64::NEG_INFINITY, f64::max)
             }
         })
         .collect()
@@ -1021,15 +1030,30 @@ pub fn seam_channel_diagnostics(
     templates: &SeamTemplates<'_>,
     placement: SeamPlacement,
 ) -> SeamChannelDiagnostics {
-    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
-    let SeamPlacement { start, gap_frames, pre_window, post_window } = placement;
+    let SeamTemplates {
+        a_pre,
+        a_post,
+        a_pre_ch,
+        a_post_ch,
+        b_mono,
+        b_ch,
+    } = *templates;
+    let SeamPlacement {
+        start,
+        gap_frames,
+        pre_window,
+        post_window,
+    } = placement;
 
     let pre_fits = |len: usize| pre_window > 0 && start >= pre_window && start <= len;
     let post_fits = |len: usize| post_window > 0 && start + gap_frames + post_window <= len;
 
     let mut per_channel = Vec::with_capacity(b_ch.len());
     for ch in 0..b_ch.len() {
-        let pre = if ch < a_pre_ch.len() && a_pre_ch[ch].len() >= pre_window && pre_fits(b_ch[ch].len()) {
+        let pre = if ch < a_pre_ch.len()
+            && a_pre_ch[ch].len() >= pre_window
+            && pre_fits(b_ch[ch].len())
+        {
             seam_pearson(
                 &a_pre_ch[ch][a_pre_ch[ch].len() - pre_window..],
                 &b_ch[ch][start - pre_window..start],
@@ -1075,7 +1099,6 @@ pub fn seam_channel_diagnostics(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1084,7 +1107,9 @@ mod tests {
         let mut s = seed | 1;
         (0..n)
             .map(|_| {
-                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 ((s >> 33) as f64 / (1u64 << 30) as f64) - 1.0
             })
             .collect()
@@ -1103,7 +1128,9 @@ mod tests {
         let nch = 3usize;
         let a_pre_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(100 + c as u64, 256)).collect();
         let a_post_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(200 + c as u64, 256)).collect();
-        let b_ch: Vec<Vec<f64>> = (0..nch).map(|c| det_noise(300 + c as u64, total_b)).collect();
+        let b_ch: Vec<Vec<f64>> = (0..nch)
+            .map(|c| det_noise(300 + c as u64, total_b))
+            .collect();
         let a_pre = det_noise(1, 256);
         let a_post = det_noise(2, 256);
         let b_mono = det_noise(3, total_b);
@@ -1117,14 +1144,25 @@ mod tests {
             b_ch: &b_ch,
         };
         let band = fill_seam_correlations_band(
-            &templates, gap_frames, pre_window, post_window, &score_channels, start_lo, start_hi,
+            &templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            &score_channels,
+            start_lo,
+            start_hi,
         )
         .expect("band applies for interior starts");
         assert_eq!(band.len(), start_hi - start_lo + 1);
         for (i, &(pre, post)) in band.iter().enumerate() {
             let (npre, npost) = fill_seam_correlations_with_channels(
                 &templates,
-                SeamPlacement { start: start_lo + i, gap_frames, pre_window, post_window },
+                SeamPlacement {
+                    start: start_lo + i,
+                    gap_frames,
+                    pre_window,
+                    post_window,
+                },
                 &score_channels,
             );
             assert!(
@@ -1145,13 +1183,24 @@ mod tests {
             b_ch: &empty,
         };
         let mband = fill_seam_correlations_band(
-            &mono_templates, gap_frames, pre_window, post_window, &[], start_lo, start_hi,
+            &mono_templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            &[],
+            start_lo,
+            start_hi,
         )
         .expect("mono band applies");
         for (i, &(pre, post)) in mband.iter().enumerate() {
             let (npre, npost) = fill_seam_correlations_with_channels(
                 &mono_templates,
-                SeamPlacement { start: start_lo + i, gap_frames, pre_window, post_window },
+                SeamPlacement {
+                    start: start_lo + i,
+                    gap_frames,
+                    pre_window,
+                    post_window,
+                },
                 &[],
             );
             assert!(
@@ -1198,7 +1247,12 @@ mod tests {
             let start = start_lo + i;
             let (npre, npost) = fill_repeat_correlations(
                 templates,
-                SeamPlacement { start, gap_frames, pre_window, post_window },
+                SeamPlacement {
+                    start,
+                    gap_frames,
+                    pre_window,
+                    post_window,
+                },
                 repeat_window_frames,
             );
             assert!(
@@ -1255,7 +1309,14 @@ mod tests {
             "case A must exercise the FFT branch"
         );
         assert_repeat_band_matches(
-            &templates, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi, "fft",
+            &templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            lo,
+            hi,
+            "fft",
         );
 
         // --- B. Naive branch. Same data, narrow band: even the largest template (mono 300) stays under. ---
@@ -1265,7 +1326,14 @@ mod tests {
             "case B must exercise the naive branch"
         );
         assert_repeat_band_matches(
-            &templates, gap_frames, pre_window, post_window, repeat_window_frames, nlo, nhi, "naive",
+            &templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            nlo,
+            nhi,
+            "naive",
         );
 
         // --- C. §2.1 #3: the OUTER channel gate is phrased against the MONO window and `b_mono`. With a short
@@ -1273,7 +1341,10 @@ mod tests {
         // channel's own (shorter) window fits comfortably inside its own full-length `b_ch`**. A band that
         // only ported the per-channel `start + w <= b_ch.len()` checks returns real correlations here. ---
         let b_mono_short = det_noise(4, 6100);
-        let short_mono = SeamTemplates { b_mono: &b_mono_short, ..copy_templates(&templates) };
+        let short_mono = SeamTemplates {
+            b_mono: &b_mono_short,
+            ..copy_templates(&templates)
+        };
         assert!(
             5900 + 300 > b_mono_short.len() && 6000 + 300 > b_mono_short.len(),
             "case C: the mono gate must fail uniformly across the band"
@@ -1283,15 +1354,30 @@ mod tests {
             "case C is only meaningful if the per-channel windows would have fit"
         );
         assert_repeat_band_matches(
-            &short_mono, gap_frames, pre_window, post_window, repeat_window_frames, 5900, 6000,
+            &short_mono,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            5900,
+            6000,
             "outer-gate-fails",
         );
 
         // --- D. §2.1 #5: mono's start-independent conjunct fails (empty `a_pre`) ⇒ mono contributes a literal
         // `0.0`, NOT `NEG_INFINITY`, while the channel set still scores normally. ---
-        let no_pre = SeamTemplates { a_pre: &[], ..copy_templates(&templates) };
+        let no_pre = SeamTemplates {
+            a_pre: &[],
+            ..copy_templates(&templates)
+        };
         assert_repeat_band_matches(
-            &no_pre, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+            &no_pre,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            lo,
+            hi,
             "empty-a-pre",
         );
 
@@ -1307,7 +1393,13 @@ mod tests {
             ..copy_templates(&templates)
         };
         assert_repeat_band_matches(
-            &mono_media, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+            &mono_media,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            lo,
+            hi,
             "single-channel",
         );
 
@@ -1319,10 +1411,19 @@ mod tests {
             lo + 200 <= ragged[1].len() && hi + 200 > ragged[1].len(),
             "case F: channel 1 must straddle its bound"
         );
-        let ragged_templates = SeamTemplates { b_ch: &ragged, ..copy_templates(&templates) };
+        let ragged_templates = SeamTemplates {
+            b_ch: &ragged,
+            ..copy_templates(&templates)
+        };
         assert!(
             fill_repeat_correlations_band(
-                &ragged_templates, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+                &ragged_templates,
+                gap_frames,
+                pre_window,
+                post_window,
+                repeat_window_frames,
+                lo,
+                hi,
             )
             .is_none(),
             "case F: non-uniform per-channel bound must decline"
@@ -1348,9 +1449,15 @@ mod tests {
             effective_repeat_window_frames(96_000, 48_000, 79_200, 12_000),
             12_000
         );
-        assert_eq!(effective_repeat_window_frames(96_000, 48_000, 79_200, 0), 48_000);
+        assert_eq!(
+            effective_repeat_window_frames(96_000, 48_000, 79_200, 0),
+            48_000
+        );
         // Previously `repeat_window > a_post.len()` disabled repeat_post entirely.
-        assert_eq!(effective_repeat_window_frames(96_000, 48_000, 12_000, 12_000), 12_000);
+        assert_eq!(
+            effective_repeat_window_frames(96_000, 48_000, 12_000, 12_000),
+            12_000
+        );
     }
 
     #[test]
@@ -1358,9 +1465,7 @@ mod tests {
         let gap_frames = 48_000usize;
         let seam_window = 12_000usize;
         let border_frames = 96_000usize;
-        let a_post: Vec<f64> = (0..seam_window)
-            .map(|i| (i as f64 * 0.12).sin())
-            .collect();
+        let a_post: Vec<f64> = (0..seam_window).map(|i| (i as f64 * 0.12).sin()).collect();
         let mut fill = vec![0.02f64; gap_frames];
         fill[gap_frames - seam_window..].copy_from_slice(&a_post);
         let templates = SeamTemplates {
@@ -1377,8 +1482,7 @@ mod tests {
             pre_window: 0,
             post_window: seam_window,
         };
-        let (_, repeat_speech) =
-            fill_repeat_correlations(&templates, placement, border_frames);
+        let (_, repeat_speech) = fill_repeat_correlations(&templates, placement, border_frames);
         assert!(
             repeat_speech > 0.55,
             "speech copied into fill tail should register repeat_post, got {repeat_speech}"
@@ -1403,9 +1507,7 @@ mod tests {
         let gap_frames = 48_000usize;
         let seam_window = 12_000usize;
         let border_frames = 96_000usize;
-        let a_post: Vec<f64> = (0..seam_window)
-            .map(|i| (i as f64 * 0.15).cos())
-            .collect();
+        let a_post: Vec<f64> = (0..seam_window).map(|i| (i as f64 * 0.15).cos()).collect();
         let mut haystack = vec![0.02f64; gap_frames + seam_window];
         haystack[gap_frames..].copy_from_slice(&a_post);
         let templates = SeamTemplates {
@@ -1422,8 +1524,7 @@ mod tests {
             pre_window: 0,
             post_window: seam_window,
         };
-        let (_, repeat_interior) =
-            fill_repeat_correlations(&templates, placement, border_frames);
+        let (_, repeat_interior) = fill_repeat_correlations(&templates, placement, border_frames);
         assert!(
             repeat_interior < 0.3,
             "haystack past fill end must not inflate repeat_post, got {repeat_interior}"
@@ -1475,8 +1576,10 @@ mod tests {
         let mut b_center = vec![0.0f64; 20];
         b_center[0..8].copy_from_slice(&center_pre); // pre window [start-8 .. start]
         b_center[12..20].copy_from_slice(&center_post); // post window [start+gap .. +8]
-        // Front B channels: anti-correlated noise — would drag the score down if scored.
-        let front_b: Vec<f64> = (0..20).map(|i| if i % 2 == 0 { -5.0 } else { 5.0 }).collect();
+                                                        // Front B channels: anti-correlated noise — would drag the score down if scored.
+        let front_b: Vec<f64> = (0..20)
+            .map(|i| if i % 2 == 0 { -5.0 } else { 5.0 })
+            .collect();
         let b_ch = vec![front_b.clone(), front_b.clone(), b_center.clone()];
 
         let templates = SeamTemplates {
@@ -1494,11 +1597,15 @@ mod tests {
             post_window,
         };
         let (pre, post) = fill_seam_correlations(&templates, placement);
-        assert!(pre > 0.9, "pre seam should track the center channel, got {pre}");
-        assert!(post > 0.9, "post seam should track the center channel, got {post}");
+        assert!(
+            pre > 0.9,
+            "pre seam should track the center channel, got {pre}"
+        );
+        assert!(
+            post > 0.9,
+            "post seam should track the center channel, got {post}"
+        );
     }
-
-
 
     #[test]
     fn seam_pearson_invariant_under_positive_scale() {

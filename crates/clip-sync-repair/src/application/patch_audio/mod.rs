@@ -2,13 +2,13 @@ use clip_sync::{format_time_range_verbose, MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
 use crate::domain::{
-    fill_offset::{AnchoredRetryPass, FillOffsetMode},
     diagnostics::{pcm_container_duration_skew, PCM_CONTAINER_WARN_SECS},
+    fill_offset::{AnchoredRetryPass, FillOffsetMode},
     format_repair_profile_verbose,
-    inactive_repair_flag_notes,
     gap_fill::{build_gap_fill_plan, format_align_fill_regions_phase},
     gap_repair_spec::{GapRepairSpec, GapRepairVerdict},
     gap_tags::{FillTierThresholds, GapTags, GapTagsPatchContext},
+    inactive_repair_flag_notes,
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
     patch_result::PatchSummary,
     policies,
@@ -21,14 +21,14 @@ mod log;
 mod region;
 mod request;
 
-pub use request::{PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
 pub use geometry::FillWindowFrames;
+pub use request::{PatchAudioRequest, PatchAudioResult, PatchRequestSettings};
 
-pub(crate) use decode::{decode_ab, DecodedAb};
-pub(crate) use geometry::border_frames_from_secs;
 use anchor_retry::{
     build_patch_anchor_candidates, patch_anchor_policy, run_anchored_retry_pass, AnchoredRetryState,
 };
+pub(crate) use decode::{decode_ab, DecodedAb};
+pub(crate) use geometry::border_frames_from_secs;
 use geometry::repair_patch_config_view;
 use log::log_gap_tags_verbose;
 use region::{
@@ -47,7 +47,6 @@ enum PatchRunKind {
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
-
 
 pub struct PatchAudio<'r, MR: MediaReader> {
     media_reader: &'r MR,
@@ -124,9 +123,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         .entered();
 
         if kind == PatchRunKind::Preview {
-            self.progress.phase(
-                "Repair preview: characterizing gaps (no splice / write; pass-1 only)...",
-            );
+            self.progress
+                .phase("Repair preview: characterizing gaps (no splice / write; pass-1 only)...");
         }
 
         self.progress.phase_verbose(&format_repair_profile_verbose(
@@ -138,8 +136,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         ));
         let patch_config_view = repair_patch_config_view(&request);
         for note in inactive_repair_flag_notes(patch_config_view) {
-            self.progress
-                .phase_verbose(&format!("repair note: {note}"));
+            self.progress.phase_verbose(&format!("repair note: {note}"));
         }
 
         // Steps 2–6: decode A + B (shared with the gap-fingerprint diagnostic).
@@ -156,8 +153,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         let channels = a_pcm.channels as usize;
         let sample_rate = a_pcm.sample_rate;
-        let max_refine_frames =
-            (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+        let max_refine_frames = (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
         let region_ctx = RegionPatchContext {
             channels,
             sample_rate,
@@ -168,8 +164,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         let region_count = plan.regions.len() as u64;
 
-        self.progress
-            .phase(&format_align_fill_regions_phase(&plan));
+        self.progress.phase(&format_align_fill_regions_phase(&plan));
 
         // 6c: two passes — characterize ALL regions (decisions), then execute ALL patches (PCM) — instead
         // of the per-region `prepare_region_patch` shim. Same components (`characterize_region` +
@@ -184,7 +179,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             Vec::with_capacity(plan.regions.len());
         for (index, region) in plan.regions.iter().enumerate() {
             let gap_num = index as u64 + 1;
-            self.progress.progress("patch-characterize", gap_num, region_count);
+            self.progress
+                .progress("patch-characterize", gap_num, region_count);
             self.progress.phase_verbose(&format!(
                 "  gap {gap_num}/{region_count}: A {}",
                 format_time_range_verbose(region.a_start_secs, region.a_end_secs)
@@ -242,8 +238,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
-        for ((spec, tag_ctx), (index, region)) in
-            characterizations.into_iter().zip(plan.regions.iter().enumerate())
+        for ((spec, tag_ctx), (index, region)) in characterizations
+            .into_iter()
+            .zip(plan.regions.iter().enumerate())
         {
             let gap_num = index as u64 + 1;
             self.progress.progress("patch-gap", gap_num, region_count);
@@ -336,12 +333,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Step 9: Apply patches to A samples.
         let patch_count = patches.len() as u64;
         if patch_count > 0 {
-            self.progress.phase(&format!("Splicing {patch_count} fill(s) into timeline..."));
+            self.progress
+                .phase(&format!("Splicing {patch_count} fill(s) into timeline..."));
         }
         if patch_count > 0 {
             let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
             for (index, patch) in patches.iter().enumerate() {
-                self.progress.progress("patch-splice", index as u64 + 1, patch_count);
+                self.progress
+                    .progress("patch-splice", index as u64 + 1, patch_count);
                 let b_gained: Vec<f32> = patch
                     .b_samples
                     .iter()

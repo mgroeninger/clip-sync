@@ -14,6 +14,15 @@ use std::time::Instant;
 
 use clip_sync::MultiChannelPcm;
 
+use crate::energy_signature_fixtures::{
+    build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift, gap_report_times,
+    EnergySignatureFixture,
+};
+use crate::energy_signature_production::{
+    gap_report_from_energy_fixture, oracle_baseline_throat_pearson_opt,
+    oracle_nominal_throat_pearson, patch_request_from_repair, production_geometry_params,
+};
+use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 use clip_sync_repair::application::gate_oracle::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
     oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateDerived,
@@ -26,15 +35,6 @@ use clip_sync_repair::domain::gap_anchor_seam::{
 use clip_sync_repair::domain::policies::RefinedGapFrames;
 use clip_sync_repair::domain::FillConfidence;
 use clip_sync_repair::infrastructure::config::RepairConfig;
-use crate::energy_signature_fixtures::{
-    build_w5_symmetric_weak_throat_anchor_rescue_with_b_shift, gap_report_times,
-    EnergySignatureFixture,
-};
-use crate::energy_signature_production::{
-    gap_report_from_energy_fixture, oracle_baseline_throat_pearson_opt,
-    oracle_nominal_throat_pearson, patch_request_from_repair, production_geometry_params,
-};
-use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 
 /// Pearson High floor (`min_fill_correlation`) for the A6 oracle.
 const HIGH_FLOOR: f64 = 0.35;
@@ -327,7 +327,11 @@ fn context_from_fixture(
         fixture.channels,
         silence_peak_fraction,
     );
-    let a_pcm = pcm_from_samples(fixture.a_samples.clone(), fixture.sample_rate, fixture.channels);
+    let a_pcm = pcm_from_samples(
+        fixture.a_samples.clone(),
+        fixture.sample_rate,
+        fixture.channels,
+    );
     let b_haystack = slice_b_interleaved(
         &fixture.b_samples,
         ch,
@@ -417,7 +421,11 @@ fn score_brackets(ctx: &W5CellContext) -> Vec<W5BracketGateScore> {
         .collect()
 }
 
-fn scores_from_ctx(ctx: &W5CellContext, cell: W5AnchorRescueCell, wall_ms: u64) -> W5AnchorRescueCellScores {
+fn scores_from_ctx(
+    ctx: &W5CellContext,
+    cell: W5AnchorRescueCell,
+    wall_ms: u64,
+) -> W5AnchorRescueCellScores {
     W5AnchorRescueCellScores {
         cell,
         nominal_pre: ctx.nominal.0,
@@ -540,9 +548,7 @@ pub fn classify_w5_cell(eval: &W5CellEvaluation) -> W5AnchorRescueRegime {
     if scores.baseline_min() >= HIGH_FLOOR {
         return W5AnchorRescueRegime::BaselineHigh;
     }
-    let anchor_bracket_high = scores
-        .max_bracket_min()
-        .is_some_and(|m| m >= HIGH_FLOOR);
+    let anchor_bracket_high = scores.max_bracket_min().is_some_and(|m| m >= HIGH_FLOOR);
     let anchor_won = matches!(eval.joint_winner, W5JointWinner::Anchor { .. });
     if anchor_bracket_high && anchor_won {
         return W5AnchorRescueRegime::AnchorRescuePossible;

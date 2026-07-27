@@ -86,9 +86,7 @@ pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<Strin
 
 pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
     let ch = result.channels.max(1);
-    let to_secs = |sample: usize| {
-        sample as f64 / ch as f64 / f64::from(result.sample_rate)
-    };
+    let to_secs = |sample: usize| sample as f64 / ch as f64 / f64::from(result.sample_rate);
     let fill_start = result.b_search_start_secs + to_secs(result.fill_start_sample);
     let fill_end = result.b_search_start_secs + to_secs(result.fill_end_sample);
     let mut slide = format!("structure slide {:+.3}s", result.structure_slide_secs);
@@ -121,13 +119,19 @@ pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
     )
 }
 
-pub(super) fn log_gap_fill_plan_verbose(progress: &dyn ProgressReporter, plan: &GapFillPlanLog<'_>) {
+pub(super) fn log_gap_fill_plan_verbose(
+    progress: &dyn ProgressReporter,
+    plan: &GapFillPlanLog<'_>,
+) {
     for line in format_gap_fill_plan_lines(plan) {
         progress.phase_verbose(&line);
     }
 }
 
-pub(super) fn log_gap_fill_result_verbose(progress: &dyn ProgressReporter, result: &GapFillResultLog) {
+pub(super) fn log_gap_fill_result_verbose(
+    progress: &dyn ProgressReporter,
+    result: &GapFillResultLog,
+) {
     progress.phase_verbose(&format_gap_fill_result_line(result));
 }
 
@@ -198,12 +202,7 @@ pub(super) fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &Margi
                 log.gaps,
                 log.a_start_secs,
                 log.a_end_secs,
-                &format_gap_fill_marginal_warn_reason(
-                    log.pre,
-                    log.post,
-                    log.min,
-                    log.anchor_seam,
-                ),
+                &format_gap_fill_marginal_warn_reason(log.pre, log.post, log.min, log.anchor_seam,),
             )
         );
     }
@@ -239,7 +238,9 @@ mod tests {
             b_search_end_secs: 80.0,
             signature_mode_label: "energy",
         });
-        assert!(lines.iter().any(|l| l.contains("fill offset +61.199s (interpolated)")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("fill offset +61.199s (interpolated)")));
         assert!(lines.iter().any(|l| l.contains("A gap (refined):")));
         assert!(lines.iter().any(|l| l.contains("0:00.100 – 0:02.900")));
         assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));

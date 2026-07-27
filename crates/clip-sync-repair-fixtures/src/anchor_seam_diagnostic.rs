@@ -7,7 +7,9 @@ use clip_sync_repair::domain::gap_anchor_seam::{
     DEFAULT_ANCHOR_MATCH_XCORR_AMBIGUOUS_BAND,
 };
 use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
-use clip_sync_repair::domain::policies::{self, refine_gap_frames, RefinedGapFrames, SeamTemplates};
+use clip_sync_repair::domain::policies::{
+    self, refine_gap_frames, RefinedGapFrames, SeamTemplates,
+};
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
 
@@ -43,7 +45,8 @@ fn source_label(source: AnchorSource) -> &'static str {
 }
 
 /// CSV header for [`print_anchor_seam_diagnostic`].
-pub const ANCHOR_SEAM_DIAG_HEADER: &str = "fixture,scan_start,scan_end,record,side,frame,source,prominence,rms,\
+pub const ANCHOR_SEAM_DIAG_HEADER: &str =
+    "fixture,scan_start,scan_end,record,side,frame,source,prominence,rms,\
 bracket_pre,bracket_post,bracket_move,pearson_pre,pearson_post,xcorr_pre,xcorr_post,matchable";
 
 /// Print anchor candidates, feasible brackets, and per-anchor matchability (stdout).
@@ -118,26 +121,30 @@ pub fn print_anchor_seam_diagnostic(fixture: &EnergySignatureFixture, label: &st
             pre_window: pre_w,
             post_window: post_w,
         };
-        let pre_m = matchability_at_anchor(&clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
-            templates: &templates,
-            placement,
-            side: AnchorSeamSide::Pre,
-            pre_window: pre_w,
-            post_window: post_w,
-            params: &match_params,
-            correlator: Some(&correlator),
-            max_lag_frames: max_lag,
-        });
-        let post_m = matchability_at_anchor(&clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
-            templates: &templates,
-            placement,
-            side: AnchorSeamSide::Post,
-            pre_window: pre_w,
-            post_window: post_w,
-            params: &match_params,
-            correlator: Some(&correlator),
-            max_lag_frames: max_lag,
-        });
+        let pre_m = matchability_at_anchor(
+            &clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
+                templates: &templates,
+                placement,
+                side: AnchorSeamSide::Pre,
+                pre_window: pre_w,
+                post_window: post_w,
+                params: &match_params,
+                correlator: Some(&correlator),
+                max_lag_frames: max_lag,
+            },
+        );
+        let post_m = matchability_at_anchor(
+            &clip_sync_repair::domain::gap_anchor_seam::MatchabilityAtAnchorArgs {
+                templates: &templates,
+                placement,
+                side: AnchorSeamSide::Post,
+                pre_window: pre_w,
+                post_window: post_w,
+                params: &match_params,
+                correlator: Some(&correlator),
+                max_lag_frames: max_lag,
+            },
+        );
         let matchable = anchor_bracket_both_matchable(
             &templates,
             placement,

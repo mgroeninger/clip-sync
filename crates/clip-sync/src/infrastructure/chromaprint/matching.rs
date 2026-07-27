@@ -23,8 +23,7 @@ pub(crate) fn select_best_segment(segments: &[Segment]) -> Option<(&Segment, boo
             cluster.1 += segment.items_count as f64 / (segment.score + 1.0);
             cluster.2 += segment.items_count;
             if segment.score < cluster.3.score
-                || (segment.score == cluster.3.score
-                    && segment.items_count > cluster.3.items_count)
+                || (segment.score == cluster.3.score && segment.items_count > cluster.3.items_count)
             {
                 cluster.3 = segment;
             }
@@ -53,9 +52,8 @@ pub(crate) fn select_best_segment(segments: &[Segment]) -> Option<(&Segment, boo
     });
 
     let best = clusters.first()?;
-    let ambiguous = clusters.len() > 1
-        && clusters[1].1 >= best.1 * 0.75
-        && (clusters[1].0 - best.0).abs() > 2;
+    let ambiguous =
+        clusters.len() > 1 && clusters[1].1 >= best.1 * 0.75 && (clusters[1].0 - best.0).abs() > 2;
 
     Some((best.3, ambiguous))
 }

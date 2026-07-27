@@ -280,9 +280,9 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
 #[cfg(test)]
 mod cli_override_tests {
     use super::*;
-    use clip_sync::AlignmentMode;
     use crate::domain::FillOffsetMode;
     use crate::infrastructure::config::RepairAppConfig;
+    use clip_sync::AlignmentMode;
 
     #[test]
     fn query_reference_cli_overrides_config() {
@@ -308,12 +308,7 @@ mod cli_override_tests {
     fn no_structure_trust_cli_overrides_config() {
         use clap::Parser;
 
-        let args = Args::parse_from([
-            "clip-sync-repair",
-            "a.wav",
-            "b.wav",
-            "--no-structure-trust",
-        ]);
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--no-structure-trust"]);
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
         assert!(config.repair.disable_structure_trust);
@@ -405,7 +400,10 @@ mod cli_override_tests {
         ]);
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
-        assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::AnchoredRetry);
+        assert_eq!(
+            config.repair.fill_offset_mode,
+            FillOffsetMode::AnchoredRetry
+        );
         assert_eq!(
             config.repair.gap_signature_mode,
             crate::domain::GapSignatureMode::Energy
@@ -507,8 +505,7 @@ mod cli_override_tests {
         ])
         .unwrap_err();
         assert!(
-            err.to_string().contains("quick")
-                && err.to_string().contains("full"),
+            err.to_string().contains("quick") && err.to_string().contains("full"),
             "unexpected clap error: {err}"
         );
     }
@@ -599,12 +596,7 @@ mod cli_override_tests {
     fn no_dual_fit_cli_overrides_config() {
         use clap::Parser;
 
-        let args = Args::parse_from([
-            "clip-sync-repair",
-            "a.wav",
-            "b.wav",
-            "--no-dual-fit",
-        ]);
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--no-dual-fit"]);
         let mut config = RepairAppConfig::default();
         assert!(config.repair.dual_fit);
         apply_cli_overrides(&mut config, &args);

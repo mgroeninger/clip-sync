@@ -98,10 +98,15 @@ pub fn try_dual_fit(
 
     // Fit each shoulder at its seam-local lag around the NOMINAL b_mapped.
     let Some(pre_start) = b_mapped_start.checked_sub(w) else {
-        tracing::debug!(b_mapped_start, w, "dual_fit: declined — pre seam window runs before B start");
+        tracing::debug!(
+            b_mapped_start,
+            w,
+            "dual_fit: declined — pre seam window runs before B start"
+        );
         return None;
     };
-    let Some((pre_r, pre_lag, pre_z)) = seam_local_peak(a_pre, b_mono, pre_start, p.max_lag_frames) else {
+    let Some((pre_r, pre_lag, pre_z)) = seam_local_peak(a_pre, b_mono, pre_start, p.max_lag_frames)
+    else {
         tracing::debug!(
             pre_start,
             max_lag_frames = p.max_lag_frames,
@@ -111,7 +116,9 @@ pub fn try_dual_fit(
         return None;
     };
     let b_post_nominal = b_mapped_start + p.gap_frames;
-    let Some((post_r, post_lag, post_z)) = seam_local_peak(a_post, b_mono, b_post_nominal, p.max_lag_frames) else {
+    let Some((post_r, post_lag, post_z)) =
+        seam_local_peak(a_post, b_mono, b_post_nominal, p.max_lag_frames)
+    else {
         tracing::debug!(
             b_post_nominal,
             max_lag_frames = p.max_lag_frames,
@@ -148,13 +155,21 @@ pub fn try_dual_fit(
     let b_pre_seam = (b_mapped_start as i64 + pre_lag).max(0) as usize;
     let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
     if b_post_seam <= b_pre_seam {
-        tracing::debug!(b_pre_seam, b_post_seam, "dual_fit: declined — seam-local shoulders cross/collapse");
+        tracing::debug!(
+            b_pre_seam,
+            b_post_seam,
+            "dual_fit: declined — seam-local shoulders cross/collapse"
+        );
         return None;
     }
 
     // step-real: post seam at the PRE lag (step forced 0) must be materially worse than at its own lag.
     let b_post_global = b_pre_seam + p.gap_frames;
-    let post_global = if b_post_global + w <= b_mono.len() { normalized_correlation(a_post, &b_mono[b_post_global..b_post_global + w]) } else { f64::NAN };
+    let post_global = if b_post_global + w <= b_mono.len() {
+        normalized_correlation(a_post, &b_mono[b_post_global..b_post_global + w])
+    } else {
+        f64::NAN
+    };
     if post_r
         .partial_cmp(&(post_global + p.step_real_margin))
         .is_none_or(|ord| ord == std::cmp::Ordering::Less)
@@ -169,7 +184,13 @@ pub fn try_dual_fit(
     }
 
     // Donor: aligned bridge continuous (something to fill) ∧ nominal not program-quiet (content, not silence).
-    let Some(aligned) = donor_interior_at(b_mono, b_pre_seam, b_post_seam, p.a_gap_floor_db, p.sample_rate) else {
+    let Some(aligned) = donor_interior_at(
+        b_mono,
+        b_pre_seam,
+        b_post_seam,
+        p.a_gap_floor_db,
+        p.sample_rate,
+    ) else {
         tracing::debug!(
             b_pre_seam,
             b_post_seam,
@@ -191,7 +212,13 @@ pub fn try_dual_fit(
     // `seam_local_peak` searches (cheap gate first). Left here deliberately: dual-fit is a per-gap rescue path
     // (not a hot loop), so the reorder is a readability nicety, not a measured win — do it only when next
     // touching this function, and keep the accept/reject decision identical.
-    if program_quiet_at_nominal(b_mono, b_mapped_start, p.gap_frames, p.a_gap_floor_db, p.sample_rate) {
+    if program_quiet_at_nominal(
+        b_mono,
+        b_mapped_start,
+        p.gap_frames,
+        p.a_gap_floor_db,
+        p.sample_rate,
+    ) {
         tracing::debug!("dual_fit: declined — nominal donor span is program-quiet");
         return None;
     }
@@ -199,7 +226,11 @@ pub fn try_dual_fit(
     // Assemble: B bridge (interleaved) between the seam-local shoulders → interior-trim to the gap length.
     let b_total = b_samples.len() / ch;
     if b_post_seam > b_total {
-        tracing::debug!(b_post_seam, b_total, "dual_fit: declined — post seam runs past decoded B window");
+        tracing::debug!(
+            b_post_seam,
+            b_total,
+            "dual_fit: declined — post seam runs past decoded B window"
+        );
         return None;
     }
     let bridge = &b_samples[b_pre_seam * ch..b_post_seam * ch];
@@ -223,7 +254,9 @@ mod tests {
     use super::*;
 
     fn mono_to_interleaved(m: &[f64], ch: usize) -> Vec<f32> {
-        m.iter().flat_map(|&x| std::iter::repeat_n(x as f32, ch)).collect()
+        m.iter()
+            .flat_map(|&x| std::iter::repeat_n(x as f32, ch))
+            .collect()
     }
 
     #[test]
@@ -239,7 +272,9 @@ mod tests {
         // Broadband source so shifts genuinely decorrelate.
         let mut seed = 0xDEAD_BEEF_1234_5678u64;
         let mut rng = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         // Long B content the fill draws from.
@@ -266,9 +301,19 @@ mod tests {
             a_gap_floor_db: -60.0,
         };
 
-        let r = try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p)
-            .expect("dual-fit target");
-        assert!(r.pre_seam_r > 0.9 && r.post_seam_r > 0.9, "both seams recover: {r:?}");
+        let r = try_dual_fit(
+            &a_pre_mono,
+            &a_post_mono,
+            &b_mono,
+            &b_samples,
+            b_mapped_start,
+            &p,
+        )
+        .expect("dual-fit target");
+        assert!(
+            r.pre_seam_r > 0.9 && r.post_seam_r > 0.9,
+            "both seams recover: {r:?}"
+        );
         assert_eq!(r.fill.len(), gap * ch, "fill is exactly the gap length");
         assert_eq!(r.trim_frames, step, "trim = the step");
     }
@@ -305,7 +350,9 @@ mod tests {
         // step-real gate reject the fixture, since every nearby lag would score about as well).
         let mut seed = 0xDEAD_BEEF_1234_5678u64;
         let mut rng = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         let bn = 40_000usize;
@@ -332,8 +379,15 @@ mod tests {
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
         };
-        let r = try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p)
-            .expect("dual-fit target");
+        let r = try_dual_fit(
+            &a_pre_mono,
+            &a_post_mono,
+            &b_mono,
+            &b_samples,
+            b_mapped_start,
+            &p,
+        )
+        .expect("dual-fit target");
 
         // The fix: production classifies confidence from these — the correct assembled-seam scores.
         assert!(
@@ -391,7 +445,9 @@ mod tests {
 
         let mut seed = 0x0BAD_C0DE_1234_5678u64;
         let mut rng = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         let bn = 80_000usize;
@@ -438,7 +494,9 @@ mod tests {
         let gap = 4000usize;
         let mut seed = 1u64;
         let mut rng = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
         };
         let bn = 40_000usize;
@@ -463,7 +521,15 @@ mod tests {
             a_gap_floor_db: -60.0,
         };
         assert!(
-            try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p).is_none(),
+            try_dual_fit(
+                &a_pre_mono,
+                &a_post_mono,
+                &b_mono,
+                &b_samples,
+                b_mapped_start,
+                &p
+            )
+            .is_none(),
             "program-quiet donor is declined"
         );
     }

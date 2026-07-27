@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use clip_sync::{
-    format_end_clip_anchor_line, format_high_rate_refinement_lines, format_offset_verification_lines,
-    format_query_localization_lines, format_symmetric_clip_window_line, format_time_range,
-    format_timestamp, AlignmentReport, ClipLabelReport,
+    format_end_clip_anchor_line, format_high_rate_refinement_lines,
+    format_offset_verification_lines, format_query_localization_lines,
+    format_symmetric_clip_window_line, format_time_range, format_timestamp, AlignmentReport,
+    ClipLabelReport,
 };
 use serde::Serialize;
 
@@ -11,9 +12,9 @@ use crate::application::error::RepairError;
 use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
+    diagnostics::collect_repair_warnings, format_gap_patch_skip_reason, gap_tags::PatchTier,
     CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport,
-    PatchSummary, TrackCompatibility, diagnostics::collect_repair_warnings,
-    format_gap_patch_skip_reason, gap_tags::PatchTier,
+    PatchSummary, TrackCompatibility,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -67,7 +68,9 @@ fn format_human(
             .map(|c| format!("{:.2}", c.confidence))
             .unwrap_or_default();
 
-        out.push_str(&format!("Alignment: offset {offset}  confidence {confidence}\n"));
+        out.push_str(&format!(
+            "Alignment: offset {offset}  confidence {confidence}\n"
+        ));
 
         if align.clips.len() > 1 {
             for clip in &align.clips {
@@ -152,7 +155,11 @@ fn format_human(
     }
 
     if let Some(agreement) = &report.gap_offset_agreement {
-        let verdict = if agreement.agrees { "AGREE" } else { "MISMATCH" };
+        let verdict = if agreement.agrees {
+            "AGREE"
+        } else {
+            "MISMATCH"
+        };
         out.push_str(&format!(
             "Cross-chk: silence-based {:+.3}s vs alignment {:+.3}s  (Δ {:.3}s — {verdict})\n",
             agreement.silence_based_offset_secs,
@@ -213,7 +220,8 @@ pub fn format_unified_gap_report(
 
     let mut out = String::new();
     out.push_str(&format_unified_gap_header(report, patch, repair_preview));
-    if let Some(summary_line) = patch.and_then(|summary| format_patch_duration_summary(report, summary))
+    if let Some(summary_line) =
+        patch.and_then(|summary| format_patch_duration_summary(report, summary))
     {
         out.push_str(&summary_line);
     }
@@ -280,7 +288,10 @@ fn gap_table_uses_markers(report: &GapReport, patch: &PatchSummary) -> bool {
     patch.gaps.iter().enumerate().any(|(i, outcome)| {
         let priority = gap_display_priority(Some(outcome));
         priority != GapDisplayPriority::Patched
-            || report.gaps.get(i).is_some_and(|g| g.duration_secs() >= LONG_GAP_SECS)
+            || report
+                .gaps
+                .get(i)
+                .is_some_and(|g| g.duration_secs() >= LONG_GAP_SECS)
     })
 }
 
@@ -297,8 +308,7 @@ fn format_gap_duration(duration_secs: f64, priority: GapDisplayPriority) -> Stri
         && matches!(
             priority,
             GapDisplayPriority::Skipped | GapDisplayPriority::NotPlanned
-        )
-    {
+        ) {
         "!"
     } else {
         ""
@@ -325,7 +335,10 @@ fn notable_skipped_gap_refs(report: &GapReport, patch: &PatchSummary) -> Vec<usi
         .enumerate()
         .filter_map(|(i, outcome)| {
             if matches!(outcome.status, GapPatchStatus::Skipped { .. }) {
-                Some((i + 1, report.gaps.get(i).map(Gap::duration_secs).unwrap_or(0.0)))
+                Some((
+                    i + 1,
+                    report.gaps.get(i).map(Gap::duration_secs).unwrap_or(0.0),
+                ))
             } else {
                 None
             }
@@ -388,7 +401,11 @@ fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Op
             GapPatchStatus::Skipped { .. } => {
                 skipped_secs += duration_secs;
                 if longest_skip.is_none_or(|(_, dur, _)| duration_secs > dur) {
-                    let start_secs = report.gaps.get(i).map(|g| g.video_a_start_secs).unwrap_or(0.0);
+                    let start_secs = report
+                        .gaps
+                        .get(i)
+                        .map(|g| g.video_a_start_secs)
+                        .unwrap_or(0.0);
                     longest_skip = Some((i + 1, duration_secs, start_secs));
                 }
             }
@@ -458,9 +475,7 @@ fn format_unified_gap_header(
 
 fn format_patch_slide_suffix(align_adjustment_secs: f64, waveform_adjustment_secs: f64) -> String {
     if waveform_adjustment_secs.abs() > 0.000_5 {
-        format!(
-            "slide={align_adjustment_secs:+.3}s (wf {waveform_adjustment_secs:+.3}s)"
-        )
+        format!("slide={align_adjustment_secs:+.3}s (wf {waveform_adjustment_secs:+.3}s)")
     } else {
         format!("slide={align_adjustment_secs:+.3}s")
     }
@@ -572,9 +587,7 @@ fn format_unified_gap_status(
         }
         GapPatchStatus::NotPlanned { reason } => match reason {
             GapFillSkipReason::NotFillable => "unfillable".into(),
-            GapFillSkipReason::OutsideReferenceCoverage => {
-                "skipped (outside clip coverage)".into()
-            }
+            GapFillSkipReason::OutsideReferenceCoverage => "skipped (outside clip coverage)".into(),
             other => format!("not planned: {}", format_fill_skip_reason(other)),
         },
     };
@@ -614,13 +627,16 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         recommended_offset_secs: report.alignment.recommended_offset_secs,
         offsets_consistent: report.alignment.offsets_consistent,
         offset_drift_secs: report.alignment.offset_drift_secs,
-        start_overlap: report.alignment.start_overlap.map(|ov| clip_sync::TimelineOverlap {
-            video_a_start_secs: ov.video_a_start_secs,
-            video_a_end_secs: ov.video_a_end_secs,
-            video_b_start_secs: ov.video_b_start_secs,
-            video_b_end_secs: ov.video_b_end_secs,
-            shared_length_secs: ov.shared_length_secs,
-        }),
+        start_overlap: report
+            .alignment
+            .start_overlap
+            .map(|ov| clip_sync::TimelineOverlap {
+                video_a_start_secs: ov.video_a_start_secs,
+                video_a_end_secs: ov.video_a_end_secs,
+                video_b_start_secs: ov.video_b_start_secs,
+                video_b_end_secs: ov.video_b_end_secs,
+                shared_length_secs: ov.shared_length_secs,
+            }),
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: None,
@@ -628,7 +644,10 @@ fn print_human(report: &GapReport) -> Result<(), RepairError> {
         query_localization: None,
         end_clip_anchor: None,
     };
-    print!("{}", format_human(report, &alignment, None, None, false, None));
+    print!(
+        "{}",
+        format_human(report, &alignment, None, None, false, None)
+    );
     Ok(())
 }
 
@@ -640,13 +659,16 @@ fn print_json(report: &GapReport) -> Result<(), RepairError> {
         recommended_offset_secs: report.alignment.recommended_offset_secs,
         offsets_consistent: report.alignment.offsets_consistent,
         offset_drift_secs: report.alignment.offset_drift_secs,
-        start_overlap: report.alignment.start_overlap.map(|ov| clip_sync::TimelineOverlap {
-            video_a_start_secs: ov.video_a_start_secs,
-            video_a_end_secs: ov.video_a_end_secs,
-            video_b_start_secs: ov.video_b_start_secs,
-            video_b_end_secs: ov.video_b_end_secs,
-            shared_length_secs: ov.shared_length_secs,
-        }),
+        start_overlap: report
+            .alignment
+            .start_overlap
+            .map(|ov| clip_sync::TimelineOverlap {
+                video_a_start_secs: ov.video_a_start_secs,
+                video_a_end_secs: ov.video_a_end_secs,
+                video_b_start_secs: ov.video_b_start_secs,
+                video_b_end_secs: ov.video_b_end_secs,
+                shared_length_secs: ov.shared_length_secs,
+            }),
         high_rate_refinement: None,
         offset_verification: None,
         offset_ambiguous_mod_secs: None,
@@ -694,10 +716,12 @@ impl GapScanJson {
             scan_block_ms: report.scan_block_ms,
             silence_peak_fraction: report.silence_peak_fraction,
             limit_fill_to_mapped_region: report.limit_fill_to_mapped_region,
-            audio_timeline_skew: report.audio_timeline_skew.map(|skew| clip_sync::AudioTimelineSkew {
-                pts_secs: skew.pts_secs,
-                sample_clock_secs: skew.sample_clock_secs,
-                delta_secs: skew.delta_secs,
+            audio_timeline_skew: report.audio_timeline_skew.map(|skew| {
+                clip_sync::AudioTimelineSkew {
+                    pts_secs: skew.pts_secs,
+                    sample_clock_secs: skew.sample_clock_secs,
+                    delta_secs: skew.delta_secs,
+                }
             }),
         }
     }
@@ -756,7 +780,10 @@ fn print_json_with_patch(
     alignment_detail: &clip_sync::AlignmentResult,
     patch: Option<&PatchSummary>,
 ) -> Result<(), RepairError> {
-    println!("{}", format_repair_json_output(report, alignment_detail, patch)?);
+    println!(
+        "{}",
+        format_repair_json_output(report, alignment_detail, patch)?
+    );
     Ok(())
 }
 
@@ -831,7 +858,9 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
         GapFillSkipReason::TrackLayoutMismatch => "track layout mismatch",
         GapFillSkipReason::TrackCompatibilityUnavailable => "track compatibility unavailable",
         GapFillSkipReason::OutsideReferenceCoverage => "outside clip coverage",
-        GapFillSkipReason::AlreadyMatchesReference => "already matches reference (equivalent silence)",
+        GapFillSkipReason::AlreadyMatchesReference => {
+            "already matches reference (equivalent silence)"
+        }
     }
 }
 
@@ -849,8 +878,8 @@ mod tests {
         GapPatchStatus, PatchSummary, TrackCompatibility,
     };
     use clip_sync::{
-        AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport,
-        HighRateRefinement, OffsetVerification, RepetitionFinding, TimelineOverlap,
+        AlignmentResult, ClipLabel, ClipMatch, ClipRepetitionReport, HighRateRefinement,
+        OffsetVerification, RepetitionFinding, TimelineOverlap,
     };
 
     /// `include_str!` on Windows can embed CRLF from checkout; serde JSON uses LF.
@@ -1112,12 +1141,19 @@ mod tests {
     #[test]
     fn scan_table_shows_equivalence_classification() {
         use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
-        let on = GapEquivalenceParams { enabled: true, ..Default::default() };
+        let on = GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
 
         let mut report = minimal_report();
         // One shared-silence gap (drop) — the single gap in `minimal_report`.
-        report.gap_equivalence =
-            vec![classify_gap_equivalence(Some(-108.0), Some(-46.0), Some(1.0), &on)];
+        report.gap_equivalence = vec![classify_gap_equivalence(
+            Some(-108.0),
+            Some(-46.0),
+            Some(1.0),
+            &on,
+        )];
 
         // Scan-only (no patch summary): the advisory tag appears.
         let text = super::format_unified_gap_report(&report, None, false, false);
@@ -1127,8 +1163,12 @@ mod tests {
         );
 
         // Repairable dropout renders its own tag.
-        report.gap_equivalence =
-            vec![classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on)];
+        report.gap_equivalence = vec![classify_gap_equivalence(
+            Some(-106.0),
+            Some(-47.0),
+            Some(0.0),
+            &on,
+        )];
         let text = super::format_unified_gap_report(&report, None, false, false);
         assert!(text.contains("[equiv: dropout]"), "{text}");
 
@@ -1146,10 +1186,12 @@ mod tests {
         let report = full_surface_gap_report();
         let alignment_detail = full_surface_alignment_detail();
         let patch = full_surface_patch_summary();
-        let json = format_repair_json_output(&report, &alignment_detail, Some(&patch)).expect("serialize");
+        let json =
+            format_repair_json_output(&report, &alignment_detail, Some(&patch)).expect("serialize");
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/full_surface_repair.json");
-        std::fs::create_dir_all(path.parent().expect("fixture parent dir")).expect("create fixtures dir");
+        std::fs::create_dir_all(path.parent().expect("fixture parent dir"))
+            .expect("create fixtures dir");
         std::fs::write(&path, json).expect("write golden fixture");
     }
 
@@ -1159,7 +1201,8 @@ mod tests {
         let report = full_surface_gap_report();
         let alignment_detail = full_surface_alignment_detail();
         let patch = full_surface_patch_summary();
-        let json = format_repair_json_output(&report, &alignment_detail, Some(&patch)).expect("serialize");
+        let json =
+            format_repair_json_output(&report, &alignment_detail, Some(&patch)).expect("serialize");
         assert_eq!(
             normalize_golden_newlines(&json),
             normalize_golden_newlines(include_str!("../../../tests/fixtures/full_surface_repair.json")),
@@ -1171,8 +1214,9 @@ mod tests {
     fn json_report_is_valid_json() {
         let report = minimal_report();
         let alignment_detail = minimal_alignment_detail();
-        let json = serde_json::to_string(&super::GapScanJson::from_parts(&report, &alignment_detail))
-            .expect("serialize");
+        let json =
+            serde_json::to_string(&super::GapScanJson::from_parts(&report, &alignment_detail))
+                .expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert!(value["gaps"].is_array());
         assert_eq!(value["gaps"][0]["b_has_energy"], true);
@@ -1225,9 +1269,7 @@ mod tests {
 
     #[test]
     fn human_patch_summary_lists_patched_and_skipped_gaps() {
-        use crate::domain::{
-            GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, PatchSummary,
-        };
+        use crate::domain::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, PatchSummary};
 
         let summary = PatchSummary::from_outcomes(vec![
             gap_patch_outcome(
@@ -1426,12 +1468,22 @@ mod tests {
     #[test]
     fn json_failed_alignment_null_b_timeline_fields() {
         let (report, alignment_detail) = failed_alignment_report();
-        let json = serde_json::to_string(&super::GapScanJson::from_parts(&report, &alignment_detail))
-            .expect("serialize");
+        let json =
+            serde_json::to_string(&super::GapScanJson::from_parts(&report, &alignment_detail))
+                .expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(value["alignment"]["recommended_offset_secs"], serde_json::Value::Null);
-        assert_eq!(value["gaps"][0]["video_b_start_secs"], serde_json::Value::Null);
-        assert_eq!(value["gaps"][0]["video_b_end_secs"], serde_json::Value::Null);
+        assert_eq!(
+            value["alignment"]["recommended_offset_secs"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["gaps"][0]["video_b_start_secs"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["gaps"][0]["video_b_end_secs"],
+            serde_json::Value::Null
+        );
         assert_eq!(value["gaps"][0]["b_has_energy"], false);
     }
 
@@ -1509,11 +1561,11 @@ mod tests {
 
     #[test]
     fn unified_gap_report_shows_anchor_trusted_patch_detail() {
-        use crate::domain::{
-            FillMode, FillTierThresholds, GapPatchTierInput, GapTagsPatchContext,
-            derive_gap_tags_from_patch_outcome,
-        };
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
+        use crate::domain::{
+            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchTierInput,
+            GapTagsPatchContext,
+        };
 
         let report = minimal_report();
         let alignment_detail = minimal_alignment_detail();
@@ -1553,7 +1605,10 @@ mod tests {
             },
         );
         let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome::new(
-            0.0, 60.0, status, tags.clone(),
+            0.0,
+            60.0,
+            status,
+            tags.clone(),
         )]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
@@ -1585,11 +1640,11 @@ mod tests {
 
     #[test]
     fn unified_gap_report_shows_dual_fit_patch_detail() {
-        use crate::domain::{
-            FillMode, FillTierThresholds, GapPatchTierInput, GapTagsPatchContext,
-            derive_gap_tags_from_patch_outcome,
-        };
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
+        use crate::domain::{
+            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchTierInput,
+            GapTagsPatchContext,
+        };
 
         let report = minimal_report();
         let alignment_detail = minimal_alignment_detail();
@@ -1629,7 +1684,10 @@ mod tests {
             },
         );
         let summary = PatchSummary::from_outcomes(vec![GapPatchOutcome::new(
-            0.0, 60.0, status, tags.clone(),
+            0.0,
+            60.0,
+            status,
+            tags.clone(),
         )]);
 
         let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
@@ -1815,7 +1873,14 @@ mod tests {
             ),
         ]);
 
-        let text = super::format_human(&report, &alignment_detail, Some(&summary), None, false, None);
+        let text = super::format_human(
+            &report,
+            &alignment_detail,
+            Some(&summary),
+            None,
+            false,
+            None,
+        );
         assert!(text.contains("alignment unstable"));
         assert!(text.contains("review gap #2"));
         assert!(text.contains("repaired 2.0s of audio"));
@@ -1823,7 +1888,8 @@ mod tests {
         assert!(text.contains(">2 "));
         assert!(text.contains("231.7s!"));
 
-        let verbose = super::format_human(&report, &alignment_detail, Some(&summary), None, true, None);
+        let verbose =
+            super::format_human(&report, &alignment_detail, Some(&summary), None, true, None);
         assert!(verbose.contains("End anchor: shared timeline"));
         assert!(verbose.contains("End clip A"));
     }
@@ -1903,7 +1969,6 @@ mod tests {
 
     #[test]
     fn human_output_includes_repair_timeline_warnings() {
-        
         use crate::domain::align::TimelineOverlap as DomainOverlap;
 
         let mut report = minimal_report();

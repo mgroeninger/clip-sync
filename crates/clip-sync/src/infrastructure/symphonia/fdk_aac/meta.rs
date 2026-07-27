@@ -1,4 +1,4 @@
-use symphonia::core::audio::{Channels, layouts};
+use symphonia::core::audio::{layouts, Channels};
 use symphonia::core::errors::Result;
 use symphonia::core::io::{BitReaderLtr, ReadBitsLtr};
 
@@ -55,9 +55,7 @@ impl M4AInfo {
         // Prefer a defined table index so ADTS headers stay valid. Escape-rate
         // streams whose Hz is not in the table cannot be wrapped as ADTS.
         self.sample_rate_index = sample_rate_index(self.sample_rate).ok_or(
-            symphonia::core::errors::Error::DecodeError(
-                "aac: sample rate has no ADTS table index",
-            ),
+            symphonia::core::errors::Error::DecodeError("aac: sample rate has no ADTS table index"),
         )?;
 
         validate!(self.sample_rate > 0);

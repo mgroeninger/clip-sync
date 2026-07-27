@@ -156,7 +156,9 @@ pub fn repair_profile_override_notes(
     let bundle = profile.bundle();
     let mut notes = Vec::new();
     if (fill_border_search_secs - bundle.fill_border_search_secs).abs() > f64::EPSILON {
-        notes.push(format!("fill_border_search_secs={fill_border_search_secs:.1}"));
+        notes.push(format!(
+            "fill_border_search_secs={fill_border_search_secs:.1}"
+        ));
     }
     if gap_end_extend_on_post_seam_fail != bundle.gap_end_extend_on_post_seam_fail {
         notes.push(format!(
@@ -226,8 +228,8 @@ pub fn gap_extension_slack_secs(view: RepairPatchConfigView) -> f64 {
     if view.gap_end_extend_max_ms == 0 {
         return 0.0;
     }
-    let extension_enabled = view.gap_end_extend_on_post_seam_fail
-        || view.gap_start_extend_on_pre_seam_fail;
+    let extension_enabled =
+        view.gap_end_extend_on_post_seam_fail || view.gap_start_extend_on_pre_seam_fail;
     if !extension_enabled {
         return 0.0;
     }
@@ -254,14 +256,12 @@ pub fn inactive_repair_flag_notes(view: RepairPatchConfigView) -> Vec<String> {
             );
         }
         if !view.short_gap_one_strong_seam_fallback {
-            notes.push(
-                "no-short-gap-one-strong-seam: no effect with fill_mode=fit".into(),
-            );
+            notes.push("no-short-gap-one-strong-seam: no effect with fill_mode=fit".into());
         }
 
         let grid_may_run = boundary_grid_may_run(view);
-        let extension_any = view.gap_end_extend_on_post_seam_fail
-            || view.gap_start_extend_on_pre_seam_fail;
+        let extension_any =
+            view.gap_end_extend_on_post_seam_fail || view.gap_start_extend_on_pre_seam_fail;
 
         if !grid_may_run {
             if extension_any || view.gap_end_extend_max_ms > 0 {
@@ -279,12 +279,10 @@ pub fn inactive_repair_flag_notes(view: RepairPatchConfigView) -> Vec<String> {
             );
         }
 
-        if view.fill_anchor_retry_marginal
-            && view.fill_offset_mode != FillOffsetMode::AnchoredRetry
+        if view.fill_anchor_retry_marginal && view.fill_offset_mode != FillOffsetMode::AnchoredRetry
         {
             notes.push(
-                "fill-anchor-retry-marginal: only applies with --fill-offset anchored-retry"
-                    .into(),
+                "fill-anchor-retry-marginal: only applies with --fill-offset anchored-retry".into(),
             );
         }
         if view.fill_anchor_search_prior_weight > 0.0

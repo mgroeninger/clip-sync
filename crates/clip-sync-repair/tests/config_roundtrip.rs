@@ -43,7 +43,10 @@ fn repair_fixture_deserializes_and_validates() {
         .align
         .validate()
         .expect("align config should be valid");
-    config.repair.validate().expect("repair config should be valid");
+    config
+        .repair
+        .validate()
+        .expect("repair config should be valid");
 }
 
 #[test]
@@ -77,6 +80,7 @@ fn repair_fixture_roundtrips_through_toml() {
     // value round-trip compares equal to a bare TOML deserialize.
     config.repair.profile_field_mask = Default::default();
     let serialized = toml::to_string(&config).expect("serialize RepairAppConfig");
-    let reparsed: RepairAppConfig = toml::from_str(&serialized).expect("re-parse serialized config");
+    let reparsed: RepairAppConfig =
+        toml::from_str(&serialized).expect("re-parse serialized config");
     assert_eq!(config, reparsed);
 }
